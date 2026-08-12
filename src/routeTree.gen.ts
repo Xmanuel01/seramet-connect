@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
+import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as OrdersRouteImport } from './routes/orders'
@@ -31,6 +32,11 @@ const AiRoute = AiRouteImport.update({
 const ApprovalsRoute = ApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CommandCentreRoute = CommandCentreRouteImport.update({
+  id: '/command-centre',
+  path: '/command-centre',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/command-centre': typeof CommandCentreRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
@@ -73,6 +80,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/command-centre': typeof CommandCentreRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
@@ -84,6 +92,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/command-centre': typeof CommandCentreRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/approvals'
+    | '/command-centre'
     | '/inventory'
     | '/kitchen'
     | '/orders'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/approvals'
+    | '/command-centre'
     | '/inventory'
     | '/kitchen'
     | '/orders'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/ai'
     | '/approvals'
+    | '/command-centre'
     | '/inventory'
     | '/kitchen'
     | '/orders'
@@ -127,6 +139,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AiRoute: typeof AiRoute
   ApprovalsRoute: typeof ApprovalsRoute
+  CommandCentreRoute: typeof CommandCentreRoute
   InventoryRoute: typeof InventoryRoute
   KitchenRoute: typeof KitchenRoute
   OrdersRoute: typeof OrdersRoute
@@ -155,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/approvals'
       fullPath: '/approvals'
       preLoaderRoute: typeof ApprovalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/command-centre': {
+      id: '/command-centre'
+      path: '/command-centre'
+      fullPath: '/command-centre'
+      preLoaderRoute: typeof CommandCentreRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -199,6 +219,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AiRoute: AiRoute,
   ApprovalsRoute: ApprovalsRoute,
+  CommandCentreRoute: CommandCentreRoute,
   InventoryRoute: InventoryRoute,
   KitchenRoute: KitchenRoute,
   OrdersRoute: OrdersRoute,
