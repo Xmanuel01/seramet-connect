@@ -19,6 +19,7 @@ import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
+import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as TablesRouteImport } from './routes/tables'
 
 const IndexRoute = IndexRouteImport.update({
@@ -71,6 +72,11 @@ const PosRoute = PosRouteImport.update({
   path: '/pos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProcurementRoute = ProcurementRouteImport.update({
+  id: '/procurement',
+  path: '/procurement',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TablesRoute = TablesRouteImport.update({
   id: '/tables',
   path: '/tables',
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/procurement': typeof ProcurementRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRoutesByTo {
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/procurement': typeof ProcurementRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRoutesById {
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/procurement': typeof ProcurementRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRouteTypes {
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/orders'
     | '/people'
     | '/pos'
+    | '/procurement'
     | '/tables'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -143,6 +153,7 @@ export interface FileRouteTypes {
     | '/orders'
     | '/people'
     | '/pos'
+    | '/procurement'
     | '/tables'
   id:
     | '__root__'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/orders'
     | '/people'
     | '/pos'
+    | '/procurement'
     | '/tables'
   fileRoutesById: FileRoutesById
 }
@@ -170,6 +182,7 @@ export interface RootRouteChildren {
   OrdersRoute: typeof OrdersRoute
   PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
+  ProcurementRoute: typeof ProcurementRoute
   TablesRoute: typeof TablesRoute
 }
 
@@ -245,6 +258,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/procurement': {
+      id: '/procurement'
+      path: '/procurement'
+      fullPath: '/procurement'
+      preLoaderRoute: typeof ProcurementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tables': {
       id: '/tables'
       path: '/tables'
@@ -266,6 +286,7 @@ const rootRouteChildren: RootRouteChildren = {
   OrdersRoute: OrdersRoute,
   PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
+  ProcurementRoute: ProcurementRoute,
   TablesRoute: TablesRoute,
 }
 export const routeTree = rootRouteImport
