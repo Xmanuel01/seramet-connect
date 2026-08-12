@@ -17,6 +17,7 @@ import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as TablesRouteImport } from './routes/tables'
 
@@ -60,6 +61,11 @@ const OrdersRoute = OrdersRouteImport.update({
   path: '/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PeopleRoute = PeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PosRoute = PosRouteImport.update({
   id: '/pos',
   path: '/pos',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
+  '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/tables': typeof TablesRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
+  '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/tables': typeof TablesRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
+  '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/tables': typeof TablesRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/kitchen'
     | '/orders'
+    | '/people'
     | '/pos'
     | '/tables'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/kitchen'
     | '/orders'
+    | '/people'
     | '/pos'
     | '/tables'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/kitchen'
     | '/orders'
+    | '/people'
     | '/pos'
     | '/tables'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   KitchenRoute: typeof KitchenRoute
   OrdersRoute: typeof OrdersRoute
+  PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
   TablesRoute: typeof TablesRoute
 }
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/people': {
+      id: '/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof PeopleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pos': {
       id: '/pos'
       path: '/pos'
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   KitchenRoute: KitchenRoute,
   OrdersRoute: OrdersRoute,
+  PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
   TablesRoute: TablesRoute,
 }
