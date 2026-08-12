@@ -22,6 +22,7 @@ import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TablesRouteImport } from './routes/tables'
 
 const IndexRoute = IndexRouteImport.update({
@@ -89,6 +90,11 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TablesRoute = TablesRouteImport.update({
   id: '/tables',
   path: '/tables',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRoutesByTo {
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRoutesById {
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
   '/reports': typeof ReportsRoute
+  '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
 export interface FileRouteTypes {
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/pos'
     | '/procurement'
     | '/reports'
+    | '/settings'
     | '/tables'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/pos'
     | '/procurement'
     | '/reports'
+    | '/settings'
     | '/tables'
   id:
     | '__root__'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/pos'
     | '/procurement'
     | '/reports'
+    | '/settings'
     | '/tables'
   fileRoutesById: FileRoutesById
 }
@@ -209,6 +221,7 @@ export interface RootRouteChildren {
   PosRoute: typeof PosRoute
   ProcurementRoute: typeof ProcurementRoute
   ReportsRoute: typeof ReportsRoute
+  SettingsRoute: typeof SettingsRoute
   TablesRoute: typeof TablesRoute
 }
 
@@ -305,6 +318,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tables': {
       id: '/tables'
       path: '/tables'
@@ -329,6 +349,7 @@ const rootRouteChildren: RootRouteChildren = {
   PosRoute: PosRoute,
   ProcurementRoute: ProcurementRoute,
   ReportsRoute: ReportsRoute,
+  SettingsRoute: SettingsRoute,
   TablesRoute: TablesRoute,
 }
 export const routeTree = rootRouteImport
