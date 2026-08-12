@@ -14,6 +14,7 @@ import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as CustomersRouteImport } from './routes/customers'
+import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as KitchenRouteImport } from './routes/kitchen'
@@ -48,6 +49,11 @@ const CommandCentreRoute = CommandCentreRouteImport.update({
 const CustomersRoute = CustomersRouteImport.update({
   id: '/customers',
   path: '/customers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignSystemRoute = DesignSystemRouteImport.update({
+  id: '/design-system',
+  path: '/design-system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FinanceRoute = FinanceRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
   '/customers': typeof CustomersRoute
+  '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
   '/customers': typeof CustomersRoute
+  '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
   '/customers': typeof CustomersRoute
+  '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/kitchen': typeof KitchenRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/command-centre'
     | '/customers'
+    | '/design-system'
     | '/finance'
     | '/inventory'
     | '/kitchen'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/command-centre'
     | '/customers'
+    | '/design-system'
     | '/finance'
     | '/inventory'
     | '/kitchen'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/approvals'
     | '/command-centre'
     | '/customers'
+    | '/design-system'
     | '/finance'
     | '/inventory'
     | '/kitchen'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   ApprovalsRoute: typeof ApprovalsRoute
   CommandCentreRoute: typeof CommandCentreRoute
   CustomersRoute: typeof CustomersRoute
+  DesignSystemRoute: typeof DesignSystemRoute
   FinanceRoute: typeof FinanceRoute
   InventoryRoute: typeof InventoryRoute
   KitchenRoute: typeof KitchenRoute
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       path: '/customers'
       fullPath: '/customers'
       preLoaderRoute: typeof CustomersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design-system': {
+      id: '/design-system'
+      path: '/design-system'
+      fullPath: '/design-system'
+      preLoaderRoute: typeof DesignSystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/finance': {
@@ -341,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApprovalsRoute: ApprovalsRoute,
   CommandCentreRoute: CommandCentreRoute,
   CustomersRoute: CustomersRoute,
+  DesignSystemRoute: DesignSystemRoute,
   FinanceRoute: FinanceRoute,
   InventoryRoute: InventoryRoute,
   KitchenRoute: KitchenRoute,
