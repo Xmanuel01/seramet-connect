@@ -19,11 +19,15 @@ import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
+import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
+import { Route as PrepRouteImport } from './routes/prep'
 import { Route as ProcurementRouteImport } from './routes/procurement'
+import { Route as ProductionRouteImport } from './routes/production'
 import { Route as ReceiptsRouteImport } from './routes/receipts'
+import { Route as RecipesRouteImport } from './routes/recipes'
 import { Route as RefundsRouteImport } from './routes/refunds'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ReservationsRouteImport } from './routes/reservations'
@@ -81,6 +85,11 @@ const KitchenRoute = KitchenRouteImport.update({
   path: '/kitchen',
   getParentRoute: () => rootRouteImport,
 } as any)
+const KitchenAnalyticsRoute = KitchenAnalyticsRouteImport.update({
+  id: '/kitchen-analytics',
+  path: '/kitchen-analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrdersRoute = OrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -96,14 +105,29 @@ const PosRoute = PosRouteImport.update({
   path: '/pos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrepRoute = PrepRouteImport.update({
+  id: '/prep',
+  path: '/prep',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProcurementRoute = ProcurementRouteImport.update({
   id: '/procurement',
   path: '/procurement',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProductionRoute = ProductionRouteImport.update({
+  id: '/production',
+  path: '/production',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReceiptsRoute = ReceiptsRouteImport.update({
   id: '/receipts',
   path: '/receipts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecipesRoute = RecipesRouteImport.update({
+  id: '/recipes',
+  path: '/recipes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RefundsRoute = RefundsRouteImport.update({
@@ -148,11 +172,15 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
+  '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
+  '/production': typeof ProductionRoute
   '/receipts': typeof ReceiptsRoute
+  '/recipes': typeof RecipesRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRoute
@@ -171,11 +199,15 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
+  '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
+  '/production': typeof ProductionRoute
   '/receipts': typeof ReceiptsRoute
+  '/recipes': typeof RecipesRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRoute
@@ -195,11 +227,15 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
+  '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
+  '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
+  '/production': typeof ProductionRoute
   '/receipts': typeof ReceiptsRoute
+  '/recipes': typeof RecipesRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/reservations': typeof ReservationsRoute
@@ -220,11 +256,15 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/invoices'
     | '/kitchen'
+    | '/kitchen-analytics'
     | '/orders'
     | '/people'
     | '/pos'
+    | '/prep'
     | '/procurement'
+    | '/production'
     | '/receipts'
+    | '/recipes'
     | '/refunds'
     | '/reports'
     | '/reservations'
@@ -243,11 +283,15 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/invoices'
     | '/kitchen'
+    | '/kitchen-analytics'
     | '/orders'
     | '/people'
     | '/pos'
+    | '/prep'
     | '/procurement'
+    | '/production'
     | '/receipts'
+    | '/recipes'
     | '/refunds'
     | '/reports'
     | '/reservations'
@@ -266,11 +310,15 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/invoices'
     | '/kitchen'
+    | '/kitchen-analytics'
     | '/orders'
     | '/people'
     | '/pos'
+    | '/prep'
     | '/procurement'
+    | '/production'
     | '/receipts'
+    | '/recipes'
     | '/refunds'
     | '/reports'
     | '/reservations'
@@ -290,11 +338,15 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
+  KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
   OrdersRoute: typeof OrdersRoute
   PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
+  PrepRoute: typeof PrepRoute
   ProcurementRoute: typeof ProcurementRoute
+  ProductionRoute: typeof ProductionRoute
   ReceiptsRoute: typeof ReceiptsRoute
+  RecipesRoute: typeof RecipesRoute
   RefundsRoute: typeof RefundsRoute
   ReportsRoute: typeof ReportsRoute
   ReservationsRoute: typeof ReservationsRoute
@@ -375,6 +427,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KitchenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/kitchen-analytics': {
+      id: '/kitchen-analytics'
+      path: '/kitchen-analytics'
+      fullPath: '/kitchen-analytics'
+      preLoaderRoute: typeof KitchenAnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/orders': {
       id: '/orders'
       path: '/orders'
@@ -396,6 +455,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/prep': {
+      id: '/prep'
+      path: '/prep'
+      fullPath: '/prep'
+      preLoaderRoute: typeof PrepRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/procurement': {
       id: '/procurement'
       path: '/procurement'
@@ -403,11 +469,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProcurementRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/production': {
+      id: '/production'
+      path: '/production'
+      fullPath: '/production'
+      preLoaderRoute: typeof ProductionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/receipts': {
       id: '/receipts'
       path: '/receipts'
       fullPath: '/receipts'
       preLoaderRoute: typeof ReceiptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recipes': {
+      id: '/recipes'
+      path: '/recipes'
+      fullPath: '/recipes'
+      preLoaderRoute: typeof RecipesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/refunds': {
@@ -466,11 +546,15 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
+  KitchenAnalyticsRoute: KitchenAnalyticsRoute,
   OrdersRoute: OrdersRoute,
   PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
+  PrepRoute: PrepRoute,
   ProcurementRoute: ProcurementRoute,
+  ProductionRoute: ProductionRoute,
   ReceiptsRoute: ReceiptsRoute,
+  RecipesRoute: RecipesRoute,
   RefundsRoute: RefundsRoute,
   ReportsRoute: ReportsRoute,
   ReservationsRoute: ReservationsRoute,
