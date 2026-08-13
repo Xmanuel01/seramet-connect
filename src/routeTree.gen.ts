@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdjustmentsRouteImport } from './routes/adjustments'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
@@ -21,6 +22,7 @@ import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
 import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as ParRouteImport } from './routes/par'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
@@ -33,11 +35,21 @@ import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as StockCountRouteImport } from './routes/stock-count'
 import { Route as TablesRouteImport } from './routes/tables'
+import { Route as TransfersRouteImport } from './routes/transfers'
+import { Route as WarehousesRouteImport } from './routes/warehouses'
+import { Route as WastageRouteImport } from './routes/wastage'
+import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdjustmentsRoute = AdjustmentsRouteImport.update({
+  id: '/adjustments',
+  path: '/adjustments',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AiRoute = AiRouteImport.update({
@@ -93,6 +105,11 @@ const KitchenAnalyticsRoute = KitchenAnalyticsRouteImport.update({
 const OrdersRoute = OrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ParRoute = ParRouteImport.update({
+  id: '/par',
+  path: '/par',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PeopleRoute = PeopleRouteImport.update({
@@ -155,14 +172,40 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StockCountRoute = StockCountRouteImport.update({
+  id: '/stock-count',
+  path: '/stock-count',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TablesRoute = TablesRouteImport.update({
   id: '/tables',
   path: '/tables',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TransfersRoute = TransfersRouteImport.update({
+  id: '/transfers',
+  path: '/transfers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WarehousesRoute = WarehousesRouteImport.update({
+  id: '/warehouses',
+  path: '/warehouses',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WastageRoute = WastageRouteImport.update({
+  id: '/wastage',
+  path: '/wastage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ItemsSkuRoute = ItemsSkuRouteImport.update({
+  id: '/items/$sku',
+  path: '/items/$sku',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
@@ -174,6 +217,7 @@ export interface FileRoutesByFullPath {
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
+  '/par': typeof ParRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
@@ -186,10 +230,16 @@ export interface FileRoutesByFullPath {
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
+  '/stock-count': typeof StockCountRoute
   '/tables': typeof TablesRoute
+  '/transfers': typeof TransfersRoute
+  '/warehouses': typeof WarehousesRoute
+  '/wastage': typeof WastageRoute
+  '/items/$sku': typeof ItemsSkuRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
@@ -201,6 +251,7 @@ export interface FileRoutesByTo {
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
+  '/par': typeof ParRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
@@ -213,11 +264,17 @@ export interface FileRoutesByTo {
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
+  '/stock-count': typeof StockCountRoute
   '/tables': typeof TablesRoute
+  '/transfers': typeof TransfersRoute
+  '/warehouses': typeof WarehousesRoute
+  '/wastage': typeof WastageRoute
+  '/items/$sku': typeof ItemsSkuRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
   '/command-centre': typeof CommandCentreRoute
@@ -229,6 +286,7 @@ export interface FileRoutesById {
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/orders': typeof OrdersRoute
+  '/par': typeof ParRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
@@ -241,12 +299,18 @@ export interface FileRoutesById {
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
+  '/stock-count': typeof StockCountRoute
   '/tables': typeof TablesRoute
+  '/transfers': typeof TransfersRoute
+  '/warehouses': typeof WarehousesRoute
+  '/wastage': typeof WastageRoute
+  '/items/$sku': typeof ItemsSkuRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/adjustments'
     | '/ai'
     | '/approvals'
     | '/command-centre'
@@ -258,6 +322,7 @@ export interface FileRouteTypes {
     | '/kitchen'
     | '/kitchen-analytics'
     | '/orders'
+    | '/par'
     | '/people'
     | '/pos'
     | '/prep'
@@ -270,10 +335,16 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/returns'
     | '/settings'
+    | '/stock-count'
     | '/tables'
+    | '/transfers'
+    | '/warehouses'
+    | '/wastage'
+    | '/items/$sku'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/adjustments'
     | '/ai'
     | '/approvals'
     | '/command-centre'
@@ -285,6 +356,7 @@ export interface FileRouteTypes {
     | '/kitchen'
     | '/kitchen-analytics'
     | '/orders'
+    | '/par'
     | '/people'
     | '/pos'
     | '/prep'
@@ -297,10 +369,16 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/returns'
     | '/settings'
+    | '/stock-count'
     | '/tables'
+    | '/transfers'
+    | '/warehouses'
+    | '/wastage'
+    | '/items/$sku'
   id:
     | '__root__'
     | '/'
+    | '/adjustments'
     | '/ai'
     | '/approvals'
     | '/command-centre'
@@ -312,6 +390,7 @@ export interface FileRouteTypes {
     | '/kitchen'
     | '/kitchen-analytics'
     | '/orders'
+    | '/par'
     | '/people'
     | '/pos'
     | '/prep'
@@ -324,11 +403,17 @@ export interface FileRouteTypes {
     | '/reservations'
     | '/returns'
     | '/settings'
+    | '/stock-count'
     | '/tables'
+    | '/transfers'
+    | '/warehouses'
+    | '/wastage'
+    | '/items/$sku'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdjustmentsRoute: typeof AdjustmentsRoute
   AiRoute: typeof AiRoute
   ApprovalsRoute: typeof ApprovalsRoute
   CommandCentreRoute: typeof CommandCentreRoute
@@ -340,6 +425,7 @@ export interface RootRouteChildren {
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
   OrdersRoute: typeof OrdersRoute
+  ParRoute: typeof ParRoute
   PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
@@ -352,7 +438,12 @@ export interface RootRouteChildren {
   ReservationsRoute: typeof ReservationsRoute
   ReturnsRoute: typeof ReturnsRoute
   SettingsRoute: typeof SettingsRoute
+  StockCountRoute: typeof StockCountRoute
   TablesRoute: typeof TablesRoute
+  TransfersRoute: typeof TransfersRoute
+  WarehousesRoute: typeof WarehousesRoute
+  WastageRoute: typeof WastageRoute
+  ItemsSkuRoute: typeof ItemsSkuRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -362,6 +453,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/adjustments': {
+      id: '/adjustments'
+      path: '/adjustments'
+      fullPath: '/adjustments'
+      preLoaderRoute: typeof AdjustmentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ai': {
@@ -439,6 +537,13 @@ declare module '@tanstack/react-router' {
       path: '/orders'
       fullPath: '/orders'
       preLoaderRoute: typeof OrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/par': {
+      id: '/par'
+      path: '/par'
+      fullPath: '/par'
+      preLoaderRoute: typeof ParRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/people': {
@@ -525,6 +630,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/stock-count': {
+      id: '/stock-count'
+      path: '/stock-count'
+      fullPath: '/stock-count'
+      preLoaderRoute: typeof StockCountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tables': {
       id: '/tables'
       path: '/tables'
@@ -532,11 +644,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TablesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/transfers': {
+      id: '/transfers'
+      path: '/transfers'
+      fullPath: '/transfers'
+      preLoaderRoute: typeof TransfersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/warehouses': {
+      id: '/warehouses'
+      path: '/warehouses'
+      fullPath: '/warehouses'
+      preLoaderRoute: typeof WarehousesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wastage': {
+      id: '/wastage'
+      path: '/wastage'
+      fullPath: '/wastage'
+      preLoaderRoute: typeof WastageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/items/$sku': {
+      id: '/items/$sku'
+      path: '/items/$sku'
+      fullPath: '/items/$sku'
+      preLoaderRoute: typeof ItemsSkuRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdjustmentsRoute: AdjustmentsRoute,
   AiRoute: AiRoute,
   ApprovalsRoute: ApprovalsRoute,
   CommandCentreRoute: CommandCentreRoute,
@@ -548,6 +689,7 @@ const rootRouteChildren: RootRouteChildren = {
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,
   OrdersRoute: OrdersRoute,
+  ParRoute: ParRoute,
   PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
@@ -560,7 +702,12 @@ const rootRouteChildren: RootRouteChildren = {
   ReservationsRoute: ReservationsRoute,
   ReturnsRoute: ReturnsRoute,
   SettingsRoute: SettingsRoute,
+  StockCountRoute: StockCountRoute,
   TablesRoute: TablesRoute,
+  TransfersRoute: TransfersRoute,
+  WarehousesRoute: WarehousesRoute,
+  WastageRoute: WastageRoute,
+  ItemsSkuRoute: ItemsSkuRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
