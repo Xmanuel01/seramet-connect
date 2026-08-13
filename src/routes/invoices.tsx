@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
-import { DataTable, SearchInput, Toolbar } from "@/components/app/Tabs";
+import { DataTable, SearchInput } from "@/components/app/Tabs";
 import { ksh } from "@/data/mock";
 
 export const Route = createFileRoute("/invoices")({
@@ -38,7 +38,6 @@ function Invoices() {
       <Panel className="mt-4">
         <PanelHead title="All invoices" sub="5 of 128 invoices" right={<SearchInput placeholder="Search invoice or customer…" />} />
         <div className="px-4 pt-3"><Chips items={["Branch: All", "Status: Open", "Period: This month"]} /></div>
-        <Toolbar />
         <DataTable cols={["Invoice", "Customer", "Branch", "Issued", "Due", { l: "Amount", r: true }, { l: "Outstanding", r: true }, "Status"]}>
           {rows.map((r) => (
             <tr key={r.id} className="hover:bg-secondary/50">

@@ -33,7 +33,7 @@ const movement = [
 
 function ItemDetail() {
   const { sku } = Route.useParams();
-  const item = inventoryItems.find((i) => i.sku === sku) ?? inventoryItems[0];
+  const item = (inventoryItems.find((i) => i.sku === sku) ?? inventoryItems[0])!;
   return (
     <AppShell
       title={item.name}

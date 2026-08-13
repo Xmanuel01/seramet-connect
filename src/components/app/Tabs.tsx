@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function Tabs({ tabs, children }: { tabs: string[]; children?: (t: string) => ReactNode }) {
-  const [active, setActive] = useState(tabs[0]);
+  const [active, setActive] = useState(tabs[0] ?? "");
   return (
     <div>
       <div className="flex flex-wrap items-center gap-1 border-b border-border">
