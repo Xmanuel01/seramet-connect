@@ -17,12 +17,17 @@ import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as ProcurementRouteImport } from './routes/procurement'
+import { Route as ReceiptsRouteImport } from './routes/receipts'
+import { Route as RefundsRouteImport } from './routes/refunds'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as ReservationsRouteImport } from './routes/reservations'
+import { Route as ReturnsRouteImport } from './routes/returns'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TablesRouteImport } from './routes/tables'
 
@@ -66,6 +71,11 @@ const InventoryRoute = InventoryRouteImport.update({
   path: '/inventory',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InvoicesRoute = InvoicesRouteImport.update({
+  id: '/invoices',
+  path: '/invoices',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KitchenRoute = KitchenRouteImport.update({
   id: '/kitchen',
   path: '/kitchen',
@@ -91,9 +101,29 @@ const ProcurementRoute = ProcurementRouteImport.update({
   path: '/procurement',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReceiptsRoute = ReceiptsRouteImport.update({
+  id: '/receipts',
+  path: '/receipts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RefundsRoute = RefundsRouteImport.update({
+  id: '/refunds',
+  path: '/refunds',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReservationsRoute = ReservationsRouteImport.update({
+  id: '/reservations',
+  path: '/reservations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReturnsRoute = ReturnsRouteImport.update({
+  id: '/returns',
+  path: '/returns',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -116,12 +146,17 @@ export interface FileRoutesByFullPath {
   '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
+  '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
+  '/receipts': typeof ReceiptsRoute
+  '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/reservations': typeof ReservationsRoute
+  '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
@@ -134,12 +169,17 @@ export interface FileRoutesByTo {
   '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
+  '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
+  '/receipts': typeof ReceiptsRoute
+  '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/reservations': typeof ReservationsRoute
+  '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
@@ -153,12 +193,17 @@ export interface FileRoutesById {
   '/design-system': typeof DesignSystemRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
+  '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/orders': typeof OrdersRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/procurement': typeof ProcurementRoute
+  '/receipts': typeof ReceiptsRoute
+  '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/reservations': typeof ReservationsRoute
+  '/returns': typeof ReturnsRoute
   '/settings': typeof SettingsRoute
   '/tables': typeof TablesRoute
 }
@@ -173,12 +218,17 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/finance'
     | '/inventory'
+    | '/invoices'
     | '/kitchen'
     | '/orders'
     | '/people'
     | '/pos'
     | '/procurement'
+    | '/receipts'
+    | '/refunds'
     | '/reports'
+    | '/reservations'
+    | '/returns'
     | '/settings'
     | '/tables'
   fileRoutesByTo: FileRoutesByTo
@@ -191,12 +241,17 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/finance'
     | '/inventory'
+    | '/invoices'
     | '/kitchen'
     | '/orders'
     | '/people'
     | '/pos'
     | '/procurement'
+    | '/receipts'
+    | '/refunds'
     | '/reports'
+    | '/reservations'
+    | '/returns'
     | '/settings'
     | '/tables'
   id:
@@ -209,12 +264,17 @@ export interface FileRouteTypes {
     | '/design-system'
     | '/finance'
     | '/inventory'
+    | '/invoices'
     | '/kitchen'
     | '/orders'
     | '/people'
     | '/pos'
     | '/procurement'
+    | '/receipts'
+    | '/refunds'
     | '/reports'
+    | '/reservations'
+    | '/returns'
     | '/settings'
     | '/tables'
   fileRoutesById: FileRoutesById
@@ -228,12 +288,17 @@ export interface RootRouteChildren {
   DesignSystemRoute: typeof DesignSystemRoute
   FinanceRoute: typeof FinanceRoute
   InventoryRoute: typeof InventoryRoute
+  InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   OrdersRoute: typeof OrdersRoute
   PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
   ProcurementRoute: typeof ProcurementRoute
+  ReceiptsRoute: typeof ReceiptsRoute
+  RefundsRoute: typeof RefundsRoute
   ReportsRoute: typeof ReportsRoute
+  ReservationsRoute: typeof ReservationsRoute
+  ReturnsRoute: typeof ReturnsRoute
   SettingsRoute: typeof SettingsRoute
   TablesRoute: typeof TablesRoute
 }
@@ -296,6 +361,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InventoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/invoices': {
+      id: '/invoices'
+      path: '/invoices'
+      fullPath: '/invoices'
+      preLoaderRoute: typeof InvoicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/kitchen': {
       id: '/kitchen'
       path: '/kitchen'
@@ -331,11 +403,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProcurementRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/receipts': {
+      id: '/receipts'
+      path: '/receipts'
+      fullPath: '/receipts'
+      preLoaderRoute: typeof ReceiptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/refunds': {
+      id: '/refunds'
+      path: '/refunds'
+      fullPath: '/refunds'
+      preLoaderRoute: typeof RefundsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reports': {
       id: '/reports'
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reservations': {
+      id: '/reservations'
+      path: '/reservations'
+      fullPath: '/reservations'
+      preLoaderRoute: typeof ReservationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/returns': {
+      id: '/returns'
+      path: '/returns'
+      fullPath: '/returns'
+      preLoaderRoute: typeof ReturnsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -364,12 +464,17 @@ const rootRouteChildren: RootRouteChildren = {
   DesignSystemRoute: DesignSystemRoute,
   FinanceRoute: FinanceRoute,
   InventoryRoute: InventoryRoute,
+  InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   OrdersRoute: OrdersRoute,
   PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
   ProcurementRoute: ProcurementRoute,
+  ReceiptsRoute: ReceiptsRoute,
+  RefundsRoute: RefundsRoute,
   ReportsRoute: ReportsRoute,
+  ReservationsRoute: ReservationsRoute,
+  ReturnsRoute: ReturnsRoute,
   SettingsRoute: SettingsRoute,
   TablesRoute: TablesRoute,
 }
