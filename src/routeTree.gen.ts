@@ -29,6 +29,7 @@ import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DecisionsRouteImport } from './routes/decisions'
+import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
@@ -37,9 +38,11 @@ import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
+import { Route as LeaveRouteImport } from './routes/leave'
 import { Route as LoyaltyRouteImport } from './routes/loyalty'
 import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as MenuImportRouteImport } from './routes/menu-import'
+import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as OnlineOrdersRouteImport } from './routes/online-orders'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as ParRouteImport } from './routes/par'
@@ -63,6 +66,7 @@ import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequisitionsRouteImport } from './routes/requisitions'
 import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
+import { Route as RidersRouteImport } from './routes/riders'
 import { Route as ScheduleRouteImport } from './routes/schedule'
 import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
 import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
@@ -179,6 +183,11 @@ const DecisionsRoute = DecisionsRouteImport.update({
   path: '/decisions',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeliveryRoute = DeliveryRouteImport.update({
+  id: '/delivery',
+  path: '/delivery',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
@@ -219,6 +228,11 @@ const KitchenAnalyticsRoute = KitchenAnalyticsRouteImport.update({
   path: '/kitchen-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LeaveRoute = LeaveRouteImport.update({
+  id: '/leave',
+  path: '/leave',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoyaltyRoute = LoyaltyRouteImport.update({
   id: '/loyalty',
   path: '/loyalty',
@@ -232,6 +246,11 @@ const MarketingRoute = MarketingRouteImport.update({
 const MenuImportRoute = MenuImportRouteImport.update({
   id: '/menu-import',
   path: '/menu-import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnlineOrdersRoute = OnlineOrdersRouteImport.update({
@@ -349,6 +368,11 @@ const ReturnsRoute = ReturnsRouteImport.update({
   path: '/returns',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RidersRoute = RidersRouteImport.update({
+  id: '/riders',
+  path: '/riders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScheduleRoute = ScheduleRouteImport.update({
   id: '/schedule',
   path: '/schedule',
@@ -446,6 +470,7 @@ export interface FileRoutesByFullPath {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -454,9 +479,11 @@ export interface FileRoutesByFullPath {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -480,6 +507,7 @@ export interface FileRoutesByFullPath {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -517,6 +545,7 @@ export interface FileRoutesByTo {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -525,9 +554,11 @@ export interface FileRoutesByTo {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -551,6 +582,7 @@ export interface FileRoutesByTo {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -589,6 +621,7 @@ export interface FileRoutesById {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -597,9 +630,11 @@ export interface FileRoutesById {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -623,6 +658,7 @@ export interface FileRoutesById {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -662,6 +698,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -670,9 +707,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -696,6 +735,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -733,6 +773,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -741,9 +782,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -767,6 +810,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -804,6 +848,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -812,9 +857,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -838,6 +885,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -876,6 +924,7 @@ export interface RootRouteChildren {
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
   DecisionsRoute: typeof DecisionsRoute
+  DeliveryRoute: typeof DeliveryRoute
   DesignSystemRoute: typeof DesignSystemRoute
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
@@ -884,9 +933,11 @@ export interface RootRouteChildren {
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
+  LeaveRoute: typeof LeaveRoute
   LoyaltyRoute: typeof LoyaltyRoute
   MarketingRoute: typeof MarketingRoute
   MenuImportRoute: typeof MenuImportRoute
+  NotificationsRoute: typeof NotificationsRoute
   OnlineOrdersRoute: typeof OnlineOrdersRoute
   OrdersRoute: typeof OrdersRoute
   ParRoute: typeof ParRoute
@@ -910,6 +961,7 @@ export interface RootRouteChildren {
   RequisitionsRoute: typeof RequisitionsRoute
   ReservationsRoute: typeof ReservationsRoute
   ReturnsRoute: typeof ReturnsRoute
+  RidersRoute: typeof RidersRoute
   ScheduleRoute: typeof ScheduleRoute
   SerametPrintersRoute: typeof SerametPrintersRoute
   SerametSetupRoute: typeof SerametSetupRoute
@@ -1069,6 +1121,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DecisionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/delivery': {
+      id: '/delivery'
+      path: '/delivery'
+      fullPath: '/delivery'
+      preLoaderRoute: typeof DeliveryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design-system': {
       id: '/design-system'
       path: '/design-system'
@@ -1125,6 +1184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KitchenAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/leave': {
+      id: '/leave'
+      path: '/leave'
+      fullPath: '/leave'
+      preLoaderRoute: typeof LeaveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/loyalty': {
       id: '/loyalty'
       path: '/loyalty'
@@ -1144,6 +1210,13 @@ declare module '@tanstack/react-router' {
       path: '/menu-import'
       fullPath: '/menu-import'
       preLoaderRoute: typeof MenuImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/online-orders': {
@@ -1307,6 +1380,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReturnsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/riders': {
+      id: '/riders'
+      path: '/riders'
+      fullPath: '/riders'
+      preLoaderRoute: typeof RidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/schedule': {
       id: '/schedule'
       path: '/schedule'
@@ -1436,6 +1516,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
   DecisionsRoute: DecisionsRoute,
+  DeliveryRoute: DeliveryRoute,
   DesignSystemRoute: DesignSystemRoute,
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
@@ -1444,9 +1525,11 @@ const rootRouteChildren: RootRouteChildren = {
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,
+  LeaveRoute: LeaveRoute,
   LoyaltyRoute: LoyaltyRoute,
   MarketingRoute: MarketingRoute,
   MenuImportRoute: MenuImportRoute,
+  NotificationsRoute: NotificationsRoute,
   OnlineOrdersRoute: OnlineOrdersRoute,
   OrdersRoute: OrdersRoute,
   ParRoute: ParRoute,
@@ -1470,6 +1553,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequisitionsRoute: RequisitionsRoute,
   ReservationsRoute: ReservationsRoute,
   ReturnsRoute: ReturnsRoute,
+  RidersRoute: RidersRoute,
   ScheduleRoute: ScheduleRoute,
   SerametPrintersRoute: SerametPrintersRoute,
   SerametSetupRoute: SerametSetupRoute,
