@@ -38,9 +38,11 @@ import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
+import { Route as LeaveRouteImport } from './routes/leave'
 import { Route as LoyaltyRouteImport } from './routes/loyalty'
 import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as MenuImportRouteImport } from './routes/menu-import'
+import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as OnlineOrdersRouteImport } from './routes/online-orders'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as ParRouteImport } from './routes/par'
@@ -226,6 +228,11 @@ const KitchenAnalyticsRoute = KitchenAnalyticsRouteImport.update({
   path: '/kitchen-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LeaveRoute = LeaveRouteImport.update({
+  id: '/leave',
+  path: '/leave',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoyaltyRoute = LoyaltyRouteImport.update({
   id: '/loyalty',
   path: '/loyalty',
@@ -239,6 +246,11 @@ const MarketingRoute = MarketingRouteImport.update({
 const MenuImportRoute = MenuImportRouteImport.update({
   id: '/menu-import',
   path: '/menu-import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnlineOrdersRoute = OnlineOrdersRouteImport.update({
@@ -467,9 +479,11 @@ export interface FileRoutesByFullPath {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -540,9 +554,11 @@ export interface FileRoutesByTo {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -614,9 +630,11 @@ export interface FileRoutesById {
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/leave': typeof LeaveRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
   '/menu-import': typeof MenuImportRoute
+  '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
@@ -689,9 +707,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -762,9 +782,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -835,9 +857,11 @@ export interface FileRouteTypes {
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/leave'
     | '/loyalty'
     | '/marketing'
     | '/menu-import'
+    | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
@@ -909,9 +933,11 @@ export interface RootRouteChildren {
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
+  LeaveRoute: typeof LeaveRoute
   LoyaltyRoute: typeof LoyaltyRoute
   MarketingRoute: typeof MarketingRoute
   MenuImportRoute: typeof MenuImportRoute
+  NotificationsRoute: typeof NotificationsRoute
   OnlineOrdersRoute: typeof OnlineOrdersRoute
   OrdersRoute: typeof OrdersRoute
   ParRoute: typeof ParRoute
@@ -1158,6 +1184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KitchenAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/leave': {
+      id: '/leave'
+      path: '/leave'
+      fullPath: '/leave'
+      preLoaderRoute: typeof LeaveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/loyalty': {
       id: '/loyalty'
       path: '/loyalty'
@@ -1177,6 +1210,13 @@ declare module '@tanstack/react-router' {
       path: '/menu-import'
       fullPath: '/menu-import'
       preLoaderRoute: typeof MenuImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/online-orders': {
@@ -1485,9 +1525,11 @@ const rootRouteChildren: RootRouteChildren = {
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,
+  LeaveRoute: LeaveRoute,
   LoyaltyRoute: LoyaltyRoute,
   MarketingRoute: MarketingRoute,
   MenuImportRoute: MenuImportRoute,
+  NotificationsRoute: NotificationsRoute,
   OnlineOrdersRoute: OnlineOrdersRoute,
   OrdersRoute: OrdersRoute,
   ParRoute: ParRoute,
