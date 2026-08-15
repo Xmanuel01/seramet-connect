@@ -29,6 +29,7 @@ import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DecisionsRouteImport } from './routes/decisions'
+import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
@@ -63,6 +64,7 @@ import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequisitionsRouteImport } from './routes/requisitions'
 import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
+import { Route as RidersRouteImport } from './routes/riders'
 import { Route as ScheduleRouteImport } from './routes/schedule'
 import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
 import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
@@ -177,6 +179,11 @@ const CustomersRoute = CustomersRouteImport.update({
 const DecisionsRoute = DecisionsRouteImport.update({
   id: '/decisions',
   path: '/decisions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeliveryRoute = DeliveryRouteImport.update({
+  id: '/delivery',
+  path: '/delivery',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
@@ -349,6 +356,11 @@ const ReturnsRoute = ReturnsRouteImport.update({
   path: '/returns',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RidersRoute = RidersRouteImport.update({
+  id: '/riders',
+  path: '/riders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ScheduleRoute = ScheduleRouteImport.update({
   id: '/schedule',
   path: '/schedule',
@@ -446,6 +458,7 @@ export interface FileRoutesByFullPath {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -480,6 +493,7 @@ export interface FileRoutesByFullPath {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -517,6 +531,7 @@ export interface FileRoutesByTo {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -551,6 +566,7 @@ export interface FileRoutesByTo {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -589,6 +605,7 @@ export interface FileRoutesById {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/decisions': typeof DecisionsRoute
+  '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -623,6 +640,7 @@ export interface FileRoutesById {
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
@@ -662,6 +680,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -696,6 +715,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -733,6 +753,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -767,6 +788,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -804,6 +826,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/decisions'
+    | '/delivery'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -838,6 +861,7 @@ export interface FileRouteTypes {
     | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/riders'
     | '/schedule'
     | '/seramet-printers'
     | '/seramet-setup'
@@ -876,6 +900,7 @@ export interface RootRouteChildren {
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
   DecisionsRoute: typeof DecisionsRoute
+  DeliveryRoute: typeof DeliveryRoute
   DesignSystemRoute: typeof DesignSystemRoute
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
@@ -910,6 +935,7 @@ export interface RootRouteChildren {
   RequisitionsRoute: typeof RequisitionsRoute
   ReservationsRoute: typeof ReservationsRoute
   ReturnsRoute: typeof ReturnsRoute
+  RidersRoute: typeof RidersRoute
   ScheduleRoute: typeof ScheduleRoute
   SerametPrintersRoute: typeof SerametPrintersRoute
   SerametSetupRoute: typeof SerametSetupRoute
@@ -1067,6 +1093,13 @@ declare module '@tanstack/react-router' {
       path: '/decisions'
       fullPath: '/decisions'
       preLoaderRoute: typeof DecisionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/delivery': {
+      id: '/delivery'
+      path: '/delivery'
+      fullPath: '/delivery'
+      preLoaderRoute: typeof DeliveryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/design-system': {
@@ -1307,6 +1340,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReturnsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/riders': {
+      id: '/riders'
+      path: '/riders'
+      fullPath: '/riders'
+      preLoaderRoute: typeof RidersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/schedule': {
       id: '/schedule'
       path: '/schedule'
@@ -1436,6 +1476,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
   DecisionsRoute: DecisionsRoute,
+  DeliveryRoute: DeliveryRoute,
   DesignSystemRoute: DesignSystemRoute,
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
@@ -1470,6 +1511,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequisitionsRoute: RequisitionsRoute,
   ReservationsRoute: ReservationsRoute,
   ReturnsRoute: ReturnsRoute,
+  RidersRoute: RidersRoute,
   ScheduleRoute: ScheduleRoute,
   SerametPrintersRoute: SerametPrintersRoute,
   SerametSetupRoute: SerametSetupRoute,
