@@ -13,30 +13,67 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdjustmentsRouteImport } from './routes/adjustments'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
+import { Route as AssetsRouteImport } from './routes/assets'
+import { Route as AttendanceRouteImport } from './routes/attendance'
+import { Route as AuditTrailRouteImport } from './routes/audit-trail'
+import { Route as BalanceSheetRouteImport } from './routes/balance-sheet'
+import { Route as BarRouteImport } from './routes/bar'
+import { Route as BranchesRouteImport } from './routes/branches'
+import { Route as BreakagesRouteImport } from './routes/breakages'
+import { Route as CashFlowRouteImport } from './routes/cash-flow'
+import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
+import { Route as ComplaintsRouteImport } from './routes/complaints'
+import { Route as CostControlRouteImport } from './routes/cost-control'
+import { Route as CrmRouteImport } from './routes/crm'
+import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
+import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
+import { Route as EmployeesRouteImport } from './routes/employees'
+import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
+import { Route as LoyaltyRouteImport } from './routes/loyalty'
+import { Route as MarketingRouteImport } from './routes/marketing'
+import { Route as MenuImportRouteImport } from './routes/menu-import'
+import { Route as OnlineOrdersRouteImport } from './routes/online-orders'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as ParRouteImport } from './routes/par'
+import { Route as PayablesRouteImport } from './routes/payables'
+import { Route as PayrollRouteImport } from './routes/payroll'
+import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as ProductionRouteImport } from './routes/production'
+import { Route as ProfitLossRouteImport } from './routes/profit-loss'
+import { Route as PurchaseOrdersRouteImport } from './routes/purchase-orders'
 import { Route as ReceiptsRouteImport } from './routes/receipts'
+import { Route as ReceivablesRouteImport } from './routes/receivables'
+import { Route as ReceivingRouteImport } from './routes/receiving'
 import { Route as RecipesRouteImport } from './routes/recipes'
+import { Route as ReconciliationRouteImport } from './routes/reconciliation'
 import { Route as RefundsRouteImport } from './routes/refunds'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as RequisitionsRouteImport } from './routes/requisitions'
 import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
+import { Route as ScheduleRouteImport } from './routes/schedule'
+import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
+import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StockCountRouteImport } from './routes/stock-count'
+import { Route as StockDetailRouteImport } from './routes/stock-detail'
+import { Route as SupplierBillsRouteImport } from './routes/supplier-bills'
+import { Route as SupplierPerformanceRouteImport } from './routes/supplier-performance'
+import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TablesRouteImport } from './routes/tables'
+import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
 import { Route as WastageRouteImport } from './routes/wastage'
@@ -62,9 +99,74 @@ const ApprovalsRoute = ApprovalsRouteImport.update({
   path: '/approvals',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsRoute = AssetsRouteImport.update({
+  id: '/assets',
+  path: '/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttendanceRoute = AttendanceRouteImport.update({
+  id: '/attendance',
+  path: '/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuditTrailRoute = AuditTrailRouteImport.update({
+  id: '/audit-trail',
+  path: '/audit-trail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BalanceSheetRoute = BalanceSheetRouteImport.update({
+  id: '/balance-sheet',
+  path: '/balance-sheet',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BarRoute = BarRouteImport.update({
+  id: '/bar',
+  path: '/bar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BranchesRoute = BranchesRouteImport.update({
+  id: '/branches',
+  path: '/branches',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BreakagesRoute = BreakagesRouteImport.update({
+  id: '/breakages',
+  path: '/breakages',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CashFlowRoute = CashFlowRouteImport.update({
+  id: '/cash-flow',
+  path: '/cash-flow',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CategoriesRoute = CategoriesRouteImport.update({
+  id: '/categories',
+  path: '/categories',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CommandCentreRoute = CommandCentreRouteImport.update({
   id: '/command-centre',
   path: '/command-centre',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ComplaintsRoute = ComplaintsRouteImport.update({
+  id: '/complaints',
+  path: '/complaints',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CostControlRoute = CostControlRouteImport.update({
+  id: '/cost-control',
+  path: '/cost-control',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmPipelineRoute = CrmPipelineRouteImport.update({
+  id: '/crm-pipeline',
+  path: '/crm-pipeline',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CustomersRoute = CustomersRouteImport.update({
@@ -72,9 +174,24 @@ const CustomersRoute = CustomersRouteImport.update({
   path: '/customers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DecisionsRoute = DecisionsRouteImport.update({
+  id: '/decisions',
+  path: '/decisions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EmployeesRoute = EmployeesRouteImport.update({
+  id: '/employees',
+  path: '/employees',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExpensesRoute = ExpensesRouteImport.update({
+  id: '/expenses',
+  path: '/expenses',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FinanceRoute = FinanceRouteImport.update({
@@ -102,6 +219,26 @@ const KitchenAnalyticsRoute = KitchenAnalyticsRouteImport.update({
   path: '/kitchen-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoyaltyRoute = LoyaltyRouteImport.update({
+  id: '/loyalty',
+  path: '/loyalty',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketingRoute = MarketingRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MenuImportRoute = MenuImportRouteImport.update({
+  id: '/menu-import',
+  path: '/menu-import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnlineOrdersRoute = OnlineOrdersRouteImport.update({
+  id: '/online-orders',
+  path: '/online-orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrdersRoute = OrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
@@ -110,6 +247,21 @@ const OrdersRoute = OrdersRouteImport.update({
 const ParRoute = ParRouteImport.update({
   id: '/par',
   path: '/par',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayablesRoute = PayablesRouteImport.update({
+  id: '/payables',
+  path: '/payables',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayrollRoute = PayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PendingRoute = PendingRouteImport.update({
+  id: '/pending',
+  path: '/pending',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PeopleRoute = PeopleRouteImport.update({
@@ -137,14 +289,39 @@ const ProductionRoute = ProductionRouteImport.update({
   path: '/production',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProfitLossRoute = ProfitLossRouteImport.update({
+  id: '/profit-loss',
+  path: '/profit-loss',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PurchaseOrdersRoute = PurchaseOrdersRouteImport.update({
+  id: '/purchase-orders',
+  path: '/purchase-orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReceiptsRoute = ReceiptsRouteImport.update({
   id: '/receipts',
   path: '/receipts',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReceivablesRoute = ReceivablesRouteImport.update({
+  id: '/receivables',
+  path: '/receivables',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReceivingRoute = ReceivingRouteImport.update({
+  id: '/receiving',
+  path: '/receiving',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RecipesRoute = RecipesRouteImport.update({
   id: '/recipes',
   path: '/recipes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReconciliationRoute = ReconciliationRouteImport.update({
+  id: '/reconciliation',
+  path: '/reconciliation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RefundsRoute = RefundsRouteImport.update({
@@ -157,6 +334,11 @@ const ReportsRoute = ReportsRouteImport.update({
   path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RequisitionsRoute = RequisitionsRouteImport.update({
+  id: '/requisitions',
+  path: '/requisitions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReservationsRoute = ReservationsRouteImport.update({
   id: '/reservations',
   path: '/reservations',
@@ -165,6 +347,21 @@ const ReservationsRoute = ReservationsRouteImport.update({
 const ReturnsRoute = ReturnsRouteImport.update({
   id: '/returns',
   path: '/returns',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScheduleRoute = ScheduleRouteImport.update({
+  id: '/schedule',
+  path: '/schedule',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SerametPrintersRoute = SerametPrintersRouteImport.update({
+  id: '/seramet-printers',
+  path: '/seramet-printers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SerametSetupRoute = SerametSetupRouteImport.update({
+  id: '/seramet-setup',
+  path: '/seramet-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -177,9 +374,34 @@ const StockCountRoute = StockCountRouteImport.update({
   path: '/stock-count',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StockDetailRoute = StockDetailRouteImport.update({
+  id: '/stock-detail',
+  path: '/stock-detail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupplierBillsRoute = SupplierBillsRouteImport.update({
+  id: '/supplier-bills',
+  path: '/supplier-bills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupplierPerformanceRoute = SupplierPerformanceRouteImport.update({
+  id: '/supplier-performance',
+  path: '/supplier-performance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuppliersRoute = SuppliersRouteImport.update({
+  id: '/suppliers',
+  path: '/suppliers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TablesRoute = TablesRouteImport.update({
   id: '/tables',
   path: '/tables',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TransfersRoute = TransfersRouteImport.update({
@@ -208,30 +430,67 @@ export interface FileRoutesByFullPath {
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/assets': typeof AssetsRoute
+  '/attendance': typeof AttendanceRoute
+  '/audit-trail': typeof AuditTrailRoute
+  '/balance-sheet': typeof BalanceSheetRoute
+  '/bar': typeof BarRoute
+  '/branches': typeof BranchesRoute
+  '/breakages': typeof BreakagesRoute
+  '/cash-flow': typeof CashFlowRoute
+  '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
+  '/complaints': typeof ComplaintsRoute
+  '/cost-control': typeof CostControlRoute
+  '/crm': typeof CrmRoute
+  '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/decisions': typeof DecisionsRoute
   '/design-system': typeof DesignSystemRoute
+  '/employees': typeof EmployeesRoute
+  '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/loyalty': typeof LoyaltyRoute
+  '/marketing': typeof MarketingRoute
+  '/menu-import': typeof MenuImportRoute
+  '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
+  '/payables': typeof PayablesRoute
+  '/payroll': typeof PayrollRoute
+  '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
+  '/profit-loss': typeof ProfitLossRoute
+  '/purchase-orders': typeof PurchaseOrdersRoute
   '/receipts': typeof ReceiptsRoute
+  '/receivables': typeof ReceivablesRoute
+  '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/schedule': typeof ScheduleRoute
+  '/seramet-printers': typeof SerametPrintersRoute
+  '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
   '/stock-count': typeof StockCountRoute
+  '/stock-detail': typeof StockDetailRoute
+  '/supplier-bills': typeof SupplierBillsRoute
+  '/supplier-performance': typeof SupplierPerformanceRoute
+  '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
+  '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
@@ -242,30 +501,67 @@ export interface FileRoutesByTo {
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/assets': typeof AssetsRoute
+  '/attendance': typeof AttendanceRoute
+  '/audit-trail': typeof AuditTrailRoute
+  '/balance-sheet': typeof BalanceSheetRoute
+  '/bar': typeof BarRoute
+  '/branches': typeof BranchesRoute
+  '/breakages': typeof BreakagesRoute
+  '/cash-flow': typeof CashFlowRoute
+  '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
+  '/complaints': typeof ComplaintsRoute
+  '/cost-control': typeof CostControlRoute
+  '/crm': typeof CrmRoute
+  '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/decisions': typeof DecisionsRoute
   '/design-system': typeof DesignSystemRoute
+  '/employees': typeof EmployeesRoute
+  '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/loyalty': typeof LoyaltyRoute
+  '/marketing': typeof MarketingRoute
+  '/menu-import': typeof MenuImportRoute
+  '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
+  '/payables': typeof PayablesRoute
+  '/payroll': typeof PayrollRoute
+  '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
+  '/profit-loss': typeof ProfitLossRoute
+  '/purchase-orders': typeof PurchaseOrdersRoute
   '/receipts': typeof ReceiptsRoute
+  '/receivables': typeof ReceivablesRoute
+  '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/schedule': typeof ScheduleRoute
+  '/seramet-printers': typeof SerametPrintersRoute
+  '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
   '/stock-count': typeof StockCountRoute
+  '/stock-detail': typeof StockDetailRoute
+  '/supplier-bills': typeof SupplierBillsRoute
+  '/supplier-performance': typeof SupplierPerformanceRoute
+  '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
+  '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
@@ -277,30 +573,67 @@ export interface FileRoutesById {
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
+  '/assets': typeof AssetsRoute
+  '/attendance': typeof AttendanceRoute
+  '/audit-trail': typeof AuditTrailRoute
+  '/balance-sheet': typeof BalanceSheetRoute
+  '/bar': typeof BarRoute
+  '/branches': typeof BranchesRoute
+  '/breakages': typeof BreakagesRoute
+  '/cash-flow': typeof CashFlowRoute
+  '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
+  '/complaints': typeof ComplaintsRoute
+  '/cost-control': typeof CostControlRoute
+  '/crm': typeof CrmRoute
+  '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/decisions': typeof DecisionsRoute
   '/design-system': typeof DesignSystemRoute
+  '/employees': typeof EmployeesRoute
+  '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
+  '/loyalty': typeof LoyaltyRoute
+  '/marketing': typeof MarketingRoute
+  '/menu-import': typeof MenuImportRoute
+  '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
+  '/payables': typeof PayablesRoute
+  '/payroll': typeof PayrollRoute
+  '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
+  '/profit-loss': typeof ProfitLossRoute
+  '/purchase-orders': typeof PurchaseOrdersRoute
   '/receipts': typeof ReceiptsRoute
+  '/receivables': typeof ReceivablesRoute
+  '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
+  '/reconciliation': typeof ReconciliationRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
+  '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
   '/returns': typeof ReturnsRoute
+  '/schedule': typeof ScheduleRoute
+  '/seramet-printers': typeof SerametPrintersRoute
+  '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
   '/stock-count': typeof StockCountRoute
+  '/stock-detail': typeof StockDetailRoute
+  '/supplier-bills': typeof SupplierBillsRoute
+  '/supplier-performance': typeof SupplierPerformanceRoute
+  '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
+  '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
@@ -313,30 +646,67 @@ export interface FileRouteTypes {
     | '/adjustments'
     | '/ai'
     | '/approvals'
+    | '/assets'
+    | '/attendance'
+    | '/audit-trail'
+    | '/balance-sheet'
+    | '/bar'
+    | '/branches'
+    | '/breakages'
+    | '/cash-flow'
+    | '/categories'
     | '/command-centre'
+    | '/complaints'
+    | '/cost-control'
+    | '/crm'
+    | '/crm-pipeline'
     | '/customers'
+    | '/decisions'
     | '/design-system'
+    | '/employees'
+    | '/expenses'
     | '/finance'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/loyalty'
+    | '/marketing'
+    | '/menu-import'
+    | '/online-orders'
     | '/orders'
     | '/par'
+    | '/payables'
+    | '/payroll'
+    | '/pending'
     | '/people'
     | '/pos'
     | '/prep'
     | '/procurement'
     | '/production'
+    | '/profit-loss'
+    | '/purchase-orders'
     | '/receipts'
+    | '/receivables'
+    | '/receiving'
     | '/recipes'
+    | '/reconciliation'
     | '/refunds'
     | '/reports'
+    | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/schedule'
+    | '/seramet-printers'
+    | '/seramet-setup'
     | '/settings'
     | '/stock-count'
+    | '/stock-detail'
+    | '/supplier-bills'
+    | '/supplier-performance'
+    | '/suppliers'
     | '/tables'
+    | '/tasks'
     | '/transfers'
     | '/warehouses'
     | '/wastage'
@@ -347,30 +717,67 @@ export interface FileRouteTypes {
     | '/adjustments'
     | '/ai'
     | '/approvals'
+    | '/assets'
+    | '/attendance'
+    | '/audit-trail'
+    | '/balance-sheet'
+    | '/bar'
+    | '/branches'
+    | '/breakages'
+    | '/cash-flow'
+    | '/categories'
     | '/command-centre'
+    | '/complaints'
+    | '/cost-control'
+    | '/crm'
+    | '/crm-pipeline'
     | '/customers'
+    | '/decisions'
     | '/design-system'
+    | '/employees'
+    | '/expenses'
     | '/finance'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/loyalty'
+    | '/marketing'
+    | '/menu-import'
+    | '/online-orders'
     | '/orders'
     | '/par'
+    | '/payables'
+    | '/payroll'
+    | '/pending'
     | '/people'
     | '/pos'
     | '/prep'
     | '/procurement'
     | '/production'
+    | '/profit-loss'
+    | '/purchase-orders'
     | '/receipts'
+    | '/receivables'
+    | '/receiving'
     | '/recipes'
+    | '/reconciliation'
     | '/refunds'
     | '/reports'
+    | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/schedule'
+    | '/seramet-printers'
+    | '/seramet-setup'
     | '/settings'
     | '/stock-count'
+    | '/stock-detail'
+    | '/supplier-bills'
+    | '/supplier-performance'
+    | '/suppliers'
     | '/tables'
+    | '/tasks'
     | '/transfers'
     | '/warehouses'
     | '/wastage'
@@ -381,30 +788,67 @@ export interface FileRouteTypes {
     | '/adjustments'
     | '/ai'
     | '/approvals'
+    | '/assets'
+    | '/attendance'
+    | '/audit-trail'
+    | '/balance-sheet'
+    | '/bar'
+    | '/branches'
+    | '/breakages'
+    | '/cash-flow'
+    | '/categories'
     | '/command-centre'
+    | '/complaints'
+    | '/cost-control'
+    | '/crm'
+    | '/crm-pipeline'
     | '/customers'
+    | '/decisions'
     | '/design-system'
+    | '/employees'
+    | '/expenses'
     | '/finance'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
+    | '/loyalty'
+    | '/marketing'
+    | '/menu-import'
+    | '/online-orders'
     | '/orders'
     | '/par'
+    | '/payables'
+    | '/payroll'
+    | '/pending'
     | '/people'
     | '/pos'
     | '/prep'
     | '/procurement'
     | '/production'
+    | '/profit-loss'
+    | '/purchase-orders'
     | '/receipts'
+    | '/receivables'
+    | '/receiving'
     | '/recipes'
+    | '/reconciliation'
     | '/refunds'
     | '/reports'
+    | '/requisitions'
     | '/reservations'
     | '/returns'
+    | '/schedule'
+    | '/seramet-printers'
+    | '/seramet-setup'
     | '/settings'
     | '/stock-count'
+    | '/stock-detail'
+    | '/supplier-bills'
+    | '/supplier-performance'
+    | '/suppliers'
     | '/tables'
+    | '/tasks'
     | '/transfers'
     | '/warehouses'
     | '/wastage'
@@ -416,30 +860,67 @@ export interface RootRouteChildren {
   AdjustmentsRoute: typeof AdjustmentsRoute
   AiRoute: typeof AiRoute
   ApprovalsRoute: typeof ApprovalsRoute
+  AssetsRoute: typeof AssetsRoute
+  AttendanceRoute: typeof AttendanceRoute
+  AuditTrailRoute: typeof AuditTrailRoute
+  BalanceSheetRoute: typeof BalanceSheetRoute
+  BarRoute: typeof BarRoute
+  BranchesRoute: typeof BranchesRoute
+  BreakagesRoute: typeof BreakagesRoute
+  CashFlowRoute: typeof CashFlowRoute
+  CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
+  ComplaintsRoute: typeof ComplaintsRoute
+  CostControlRoute: typeof CostControlRoute
+  CrmRoute: typeof CrmRoute
+  CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
+  DecisionsRoute: typeof DecisionsRoute
   DesignSystemRoute: typeof DesignSystemRoute
+  EmployeesRoute: typeof EmployeesRoute
+  ExpensesRoute: typeof ExpensesRoute
   FinanceRoute: typeof FinanceRoute
   InventoryRoute: typeof InventoryRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
+  LoyaltyRoute: typeof LoyaltyRoute
+  MarketingRoute: typeof MarketingRoute
+  MenuImportRoute: typeof MenuImportRoute
+  OnlineOrdersRoute: typeof OnlineOrdersRoute
   OrdersRoute: typeof OrdersRoute
   ParRoute: typeof ParRoute
+  PayablesRoute: typeof PayablesRoute
+  PayrollRoute: typeof PayrollRoute
+  PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   ProcurementRoute: typeof ProcurementRoute
   ProductionRoute: typeof ProductionRoute
+  ProfitLossRoute: typeof ProfitLossRoute
+  PurchaseOrdersRoute: typeof PurchaseOrdersRoute
   ReceiptsRoute: typeof ReceiptsRoute
+  ReceivablesRoute: typeof ReceivablesRoute
+  ReceivingRoute: typeof ReceivingRoute
   RecipesRoute: typeof RecipesRoute
+  ReconciliationRoute: typeof ReconciliationRoute
   RefundsRoute: typeof RefundsRoute
   ReportsRoute: typeof ReportsRoute
+  RequisitionsRoute: typeof RequisitionsRoute
   ReservationsRoute: typeof ReservationsRoute
   ReturnsRoute: typeof ReturnsRoute
+  ScheduleRoute: typeof ScheduleRoute
+  SerametPrintersRoute: typeof SerametPrintersRoute
+  SerametSetupRoute: typeof SerametSetupRoute
   SettingsRoute: typeof SettingsRoute
   StockCountRoute: typeof StockCountRoute
+  StockDetailRoute: typeof StockDetailRoute
+  SupplierBillsRoute: typeof SupplierBillsRoute
+  SupplierPerformanceRoute: typeof SupplierPerformanceRoute
+  SuppliersRoute: typeof SuppliersRoute
   TablesRoute: typeof TablesRoute
+  TasksRoute: typeof TasksRoute
   TransfersRoute: typeof TransfersRoute
   WarehousesRoute: typeof WarehousesRoute
   WastageRoute: typeof WastageRoute
@@ -476,11 +957,102 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApprovalsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets': {
+      id: '/assets'
+      path: '/assets'
+      fullPath: '/assets'
+      preLoaderRoute: typeof AssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attendance': {
+      id: '/attendance'
+      path: '/attendance'
+      fullPath: '/attendance'
+      preLoaderRoute: typeof AttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/audit-trail': {
+      id: '/audit-trail'
+      path: '/audit-trail'
+      fullPath: '/audit-trail'
+      preLoaderRoute: typeof AuditTrailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/balance-sheet': {
+      id: '/balance-sheet'
+      path: '/balance-sheet'
+      fullPath: '/balance-sheet'
+      preLoaderRoute: typeof BalanceSheetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/bar': {
+      id: '/bar'
+      path: '/bar'
+      fullPath: '/bar'
+      preLoaderRoute: typeof BarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/branches': {
+      id: '/branches'
+      path: '/branches'
+      fullPath: '/branches'
+      preLoaderRoute: typeof BranchesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/breakages': {
+      id: '/breakages'
+      path: '/breakages'
+      fullPath: '/breakages'
+      preLoaderRoute: typeof BreakagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cash-flow': {
+      id: '/cash-flow'
+      path: '/cash-flow'
+      fullPath: '/cash-flow'
+      preLoaderRoute: typeof CashFlowRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/categories': {
+      id: '/categories'
+      path: '/categories'
+      fullPath: '/categories'
+      preLoaderRoute: typeof CategoriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/command-centre': {
       id: '/command-centre'
       path: '/command-centre'
       fullPath: '/command-centre'
       preLoaderRoute: typeof CommandCentreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/complaints': {
+      id: '/complaints'
+      path: '/complaints'
+      fullPath: '/complaints'
+      preLoaderRoute: typeof ComplaintsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cost-control': {
+      id: '/cost-control'
+      path: '/cost-control'
+      fullPath: '/cost-control'
+      preLoaderRoute: typeof CostControlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm-pipeline': {
+      id: '/crm-pipeline'
+      path: '/crm-pipeline'
+      fullPath: '/crm-pipeline'
+      preLoaderRoute: typeof CrmPipelineRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/customers': {
@@ -490,11 +1062,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CustomersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/decisions': {
+      id: '/decisions'
+      path: '/decisions'
+      fullPath: '/decisions'
+      preLoaderRoute: typeof DecisionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design-system': {
       id: '/design-system'
       path: '/design-system'
       fullPath: '/design-system'
       preLoaderRoute: typeof DesignSystemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/employees': {
+      id: '/employees'
+      path: '/employees'
+      fullPath: '/employees'
+      preLoaderRoute: typeof EmployeesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/expenses': {
+      id: '/expenses'
+      path: '/expenses'
+      fullPath: '/expenses'
+      preLoaderRoute: typeof ExpensesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/finance': {
@@ -532,6 +1125,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KitchenAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/loyalty': {
+      id: '/loyalty'
+      path: '/loyalty'
+      fullPath: '/loyalty'
+      preLoaderRoute: typeof LoyaltyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/menu-import': {
+      id: '/menu-import'
+      path: '/menu-import'
+      fullPath: '/menu-import'
+      preLoaderRoute: typeof MenuImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/online-orders': {
+      id: '/online-orders'
+      path: '/online-orders'
+      fullPath: '/online-orders'
+      preLoaderRoute: typeof OnlineOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/orders': {
       id: '/orders'
       path: '/orders'
@@ -544,6 +1165,27 @@ declare module '@tanstack/react-router' {
       path: '/par'
       fullPath: '/par'
       preLoaderRoute: typeof ParRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payables': {
+      id: '/payables'
+      path: '/payables'
+      fullPath: '/payables'
+      preLoaderRoute: typeof PayablesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payroll': {
+      id: '/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof PayrollRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pending': {
+      id: '/pending'
+      path: '/pending'
+      fullPath: '/pending'
+      preLoaderRoute: typeof PendingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/people': {
@@ -581,6 +1223,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProductionRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/profit-loss': {
+      id: '/profit-loss'
+      path: '/profit-loss'
+      fullPath: '/profit-loss'
+      preLoaderRoute: typeof ProfitLossRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/purchase-orders': {
+      id: '/purchase-orders'
+      path: '/purchase-orders'
+      fullPath: '/purchase-orders'
+      preLoaderRoute: typeof PurchaseOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/receipts': {
       id: '/receipts'
       path: '/receipts'
@@ -588,11 +1244,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReceiptsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/receivables': {
+      id: '/receivables'
+      path: '/receivables'
+      fullPath: '/receivables'
+      preLoaderRoute: typeof ReceivablesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/receiving': {
+      id: '/receiving'
+      path: '/receiving'
+      fullPath: '/receiving'
+      preLoaderRoute: typeof ReceivingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/recipes': {
       id: '/recipes'
       path: '/recipes'
       fullPath: '/recipes'
       preLoaderRoute: typeof RecipesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reconciliation': {
+      id: '/reconciliation'
+      path: '/reconciliation'
+      fullPath: '/reconciliation'
+      preLoaderRoute: typeof ReconciliationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/refunds': {
@@ -609,6 +1286,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/requisitions': {
+      id: '/requisitions'
+      path: '/requisitions'
+      fullPath: '/requisitions'
+      preLoaderRoute: typeof RequisitionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reservations': {
       id: '/reservations'
       path: '/reservations'
@@ -621,6 +1305,27 @@ declare module '@tanstack/react-router' {
       path: '/returns'
       fullPath: '/returns'
       preLoaderRoute: typeof ReturnsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schedule': {
+      id: '/schedule'
+      path: '/schedule'
+      fullPath: '/schedule'
+      preLoaderRoute: typeof ScheduleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/seramet-printers': {
+      id: '/seramet-printers'
+      path: '/seramet-printers'
+      fullPath: '/seramet-printers'
+      preLoaderRoute: typeof SerametPrintersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/seramet-setup': {
+      id: '/seramet-setup'
+      path: '/seramet-setup'
+      fullPath: '/seramet-setup'
+      preLoaderRoute: typeof SerametSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -637,11 +1342,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StockCountRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/stock-detail': {
+      id: '/stock-detail'
+      path: '/stock-detail'
+      fullPath: '/stock-detail'
+      preLoaderRoute: typeof StockDetailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/supplier-bills': {
+      id: '/supplier-bills'
+      path: '/supplier-bills'
+      fullPath: '/supplier-bills'
+      preLoaderRoute: typeof SupplierBillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/supplier-performance': {
+      id: '/supplier-performance'
+      path: '/supplier-performance'
+      fullPath: '/supplier-performance'
+      preLoaderRoute: typeof SupplierPerformanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/suppliers': {
+      id: '/suppliers'
+      path: '/suppliers'
+      fullPath: '/suppliers'
+      preLoaderRoute: typeof SuppliersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tables': {
       id: '/tables'
       path: '/tables'
       fullPath: '/tables'
       preLoaderRoute: typeof TablesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/transfers': {
@@ -680,30 +1420,67 @@ const rootRouteChildren: RootRouteChildren = {
   AdjustmentsRoute: AdjustmentsRoute,
   AiRoute: AiRoute,
   ApprovalsRoute: ApprovalsRoute,
+  AssetsRoute: AssetsRoute,
+  AttendanceRoute: AttendanceRoute,
+  AuditTrailRoute: AuditTrailRoute,
+  BalanceSheetRoute: BalanceSheetRoute,
+  BarRoute: BarRoute,
+  BranchesRoute: BranchesRoute,
+  BreakagesRoute: BreakagesRoute,
+  CashFlowRoute: CashFlowRoute,
+  CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
+  ComplaintsRoute: ComplaintsRoute,
+  CostControlRoute: CostControlRoute,
+  CrmRoute: CrmRoute,
+  CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
+  DecisionsRoute: DecisionsRoute,
   DesignSystemRoute: DesignSystemRoute,
+  EmployeesRoute: EmployeesRoute,
+  ExpensesRoute: ExpensesRoute,
   FinanceRoute: FinanceRoute,
   InventoryRoute: InventoryRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,
+  LoyaltyRoute: LoyaltyRoute,
+  MarketingRoute: MarketingRoute,
+  MenuImportRoute: MenuImportRoute,
+  OnlineOrdersRoute: OnlineOrdersRoute,
   OrdersRoute: OrdersRoute,
   ParRoute: ParRoute,
+  PayablesRoute: PayablesRoute,
+  PayrollRoute: PayrollRoute,
+  PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   ProcurementRoute: ProcurementRoute,
   ProductionRoute: ProductionRoute,
+  ProfitLossRoute: ProfitLossRoute,
+  PurchaseOrdersRoute: PurchaseOrdersRoute,
   ReceiptsRoute: ReceiptsRoute,
+  ReceivablesRoute: ReceivablesRoute,
+  ReceivingRoute: ReceivingRoute,
   RecipesRoute: RecipesRoute,
+  ReconciliationRoute: ReconciliationRoute,
   RefundsRoute: RefundsRoute,
   ReportsRoute: ReportsRoute,
+  RequisitionsRoute: RequisitionsRoute,
   ReservationsRoute: ReservationsRoute,
   ReturnsRoute: ReturnsRoute,
+  ScheduleRoute: ScheduleRoute,
+  SerametPrintersRoute: SerametPrintersRoute,
+  SerametSetupRoute: SerametSetupRoute,
   SettingsRoute: SettingsRoute,
   StockCountRoute: StockCountRoute,
+  StockDetailRoute: StockDetailRoute,
+  SupplierBillsRoute: SupplierBillsRoute,
+  SupplierPerformanceRoute: SupplierPerformanceRoute,
+  SuppliersRoute: SuppliersRoute,
   TablesRoute: TablesRoute,
+  TasksRoute: TasksRoute,
   TransfersRoute: TransfersRoute,
   WarehousesRoute: WarehousesRoute,
   WastageRoute: WastageRoute,

@@ -1,26 +1,74 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Chips, Metric, Panel, PanelHead, Segmented, Status, TD, TH } from "@/components/app/ui";
+import {
+  Btn,
+  Chips,
+  Metric,
+  Panel,
+  PanelHead,
+  Segmented,
+  Status,
+  TD,
+  TH,
+} from "@/components/app/ui";
 import { decisions, ksh } from "@/data/mock";
 
 export const Route = createFileRoute("/approvals")({
   head: () => ({
     meta: [
-      { title: "Approval Centre — Seramet" },
-      { name: "description", content: "One queue for purchase orders, refunds, variances, overtime and price changes." },
-      { property: "og:title", content: "Approval Centre — Seramet" },
-      { property: "og:description", content: "A single decision queue for managers and directors." },
+      { title: "Approval Centre - Seramet" },
+      {
+        name: "description",
+        content: "One queue for purchase orders, refunds, variances, overtime and price changes.",
+      },
+      { property: "og:title", content: "Approval Centre - Seramet" },
+      {
+        property: "og:description",
+        content: "A single decision queue for managers and directors.",
+      },
     ],
   }),
   component: Approvals,
 });
 
 const audit = [
-  { t: "12:41", u: "Joan A.", act: "Refund requested", mod: "Sales", rec: "#1798", old: "Paid", now: "Refund pending" },
-  { t: "12:18", u: "Kelvin M.", act: "PO submitted", mod: "Procurement", rec: "PO-2026-0182", old: "Draft", now: "Awaiting approval" },
-  { t: "11:52", u: "Amina W.", act: "Cash variance logged", mod: "Finance", rec: "Till 2", old: "—", now: "KSh 850 short" },
-  { t: "10:07", u: "Chef Musa", act: "Waste entry", mod: "Inventory", rec: "WST-0442", old: "—", now: "2.4 kg beef" },
+  {
+    t: "12:41",
+    u: "Joan A.",
+    act: "Refund requested",
+    mod: "Sales",
+    rec: "#1798",
+    old: "Paid",
+    now: "Refund pending",
+  },
+  {
+    t: "12:18",
+    u: "Kelvin M.",
+    act: "PO submitted",
+    mod: "Procurement",
+    rec: "PO-2026-0182",
+    old: "Draft",
+    now: "Awaiting approval",
+  },
+  {
+    t: "11:52",
+    u: "Amina W.",
+    act: "Cash variance logged",
+    mod: "Finance",
+    rec: "Till 2",
+    old: "-",
+    now: "KSh 850 short",
+  },
+  {
+    t: "10:07",
+    u: "Chef Musa",
+    act: "Waste entry",
+    mod: "Inventory",
+    rec: "WST-0442",
+    old: "-",
+    now: "2.4 kg beef",
+  },
 ];
 
 function Approvals() {
@@ -28,8 +76,17 @@ function Approvals() {
   return (
     <AppShell
       title="Approval centre"
-      subtitle="4 decisions pending · KSh 69,750 total value"
-      actions={<><Segmented options={["All", "Finance", "Inventory", "Procurement", "HR"]} value={tab} onChange={setTab} /><Btn variant="primary">Approve all safe</Btn></>}
+      subtitle="4 decisions pending  -  KSh 69,750 total value"
+      actions={
+        <>
+          <Segmented
+            options={["All", "Finance", "Inventory", "Procurement", "HR"]}
+            value={tab}
+            onChange={setTab}
+          />
+          <Btn variant="primary">Approve all safe</Btn>
+        </>
+      }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Pending" value={4} />
@@ -54,7 +111,9 @@ function Approvals() {
             </div>
             <p className="mt-2.5 rounded-md bg-secondary/60 px-3 py-2 text-[12px]">{d.reason}</p>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>{d.by}</span><span>·</span><span>{d.time}</span>
+              <span>{d.by}</span>
+              <span> - </span>
+              <span>{d.time}</span>
               <Status className="ml-auto">Pending</Status>
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2">
@@ -67,10 +126,54 @@ function Approvals() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead title="Audit trail" sub="Immutable record of every change" right={<Btn>Export</Btn>} />
-        <div className="overflow-x-auto">
+        <PanelHead
+          title="Audit trail"
+          sub="Immutable record of every change"
+          right={<Btn>Export</Btn>}
+        />
+        <div className="grid gap-3 p-3 md:hidden">
+          {audit.map((a) => (
+            <article key={a.t} className="rounded-lg border border-border bg-card p-3 shadow-card">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold">{a.act}</div>
+                  <div className="text-[12px] text-muted-foreground">
+                    {a.u} - {a.mod}
+                  </div>
+                </div>
+                <span className="num rounded-md bg-secondary px-2 py-1 text-[11px] font-semibold">
+                  {a.t}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">Record </span>
+                  <span className="num font-semibold">{a.rec}</span>
+                </div>
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">Old </span>
+                  <span className="font-semibold">{a.old}</span>
+                </div>
+              </div>
+              <div className="mt-2 rounded-md bg-accent px-2.5 py-2 text-[12px] font-semibold text-accent-foreground">
+                {a.now}
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[820px]">
-            <thead><tr><TH>Time</TH><TH>User</TH><TH>Action</TH><TH>Module</TH><TH>Record</TH><TH>Old value</TH><TH>New value</TH></tr></thead>
+            <thead>
+              <tr>
+                <TH>Time</TH>
+                <TH>User</TH>
+                <TH>Action</TH>
+                <TH>Module</TH>
+                <TH>Record</TH>
+                <TH>Old value</TH>
+                <TH>New value</TH>
+              </tr>
+            </thead>
             <tbody>
               {audit.map((a) => (
                 <tr key={a.t} className="hover:bg-secondary/50">

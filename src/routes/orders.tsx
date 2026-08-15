@@ -1,59 +1,197 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh, orders } from "@/data/mock";
+import { ksh } from "@/data/mock";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
+import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { TransactionEngine } from "@/lib/transaction-engine";
 
 export const Route = createFileRoute("/orders")({
   head: () => ({
     meta: [
-      { title: "Orders — Seramet" },
-      { name: "description", content: "Every dine-in, take away, delivery and online order with payment and status." },
-      { property: "og:title", content: "Orders — Seramet" },
-      { property: "og:description", content: "All channels, payments and order statuses in one table." },
+      { title: "Orders - Seramet" },
+      {
+        name: "description",
+        content: "Every dine-in, take away, delivery and online order with payment and status.",
+      },
+      { property: "og:title", content: "Orders - Seramet" },
+      {
+        property: "og:description",
+        content: "All channels, payments and order statuses in one table.",
+      },
     ],
   }),
   component: Orders,
 });
 
 function Orders() {
+  const { branch, branchLabel } = useAppContext();
+  const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
+  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
+  const { state, apply } = useTransactionEngine();
+  const rows = state.orders
+    .filter((order) => branch === "All Branches" || order.branch === branch)
+    .filter((order) => !periodDate || order.createdAt.slice(0, 10) === periodDate);
+  const netSales = rows.reduce((sum, order) => sum + order.total, 0);
+  const unpaid = rows
+    .filter((order) => order.paymentStatus !== "PAID")
+    .reduce((sum, order) => sum + order.total, 0);
+  const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
+  const heldOrder = rows.find((order) => order.status === "HELD");
+
+  const resumeHeld = () => {
+    if (!heldOrder) return;
+    apply((current) => TransactionEngine.releaseHeldOrder(current, heldOrder.id, "Amina W."));
+  };
+
+  const cancelOpen = () => {
+    const order = rows.find((item) => !["PAID", "CANCELLED"].includes(item.status));
+    if (!order) return;
+    apply((current) =>
+      TransactionEngine.cancelOrder(current, order.id, {
+        user: "Emmanuel K.",
+        reason: "Manager cancellation with reason captured",
+        affectedItems: order.lines.map((line) => line.name),
+      }),
+    );
+  };
+
+  const toggleOrder = (orderId: string) => {
+    setSelectedOrders((current) =>
+      current.includes(orderId) ? current.filter((id) => id !== orderId) : [...current, orderId],
+    );
+  };
+
   return (
     <AppShell
       title="Orders"
-      subtitle="308 orders today across 2 branches"
-      actions={<><Btn>Saved views</Btn><Btn>Export</Btn><Btn variant="primary">New order</Btn></>}
+      subtitle={`${rows.length} visible orders today - ${branchLabel}`}
+      actions={
+        <>
+          <Btn>Saved views</Btn>
+          <Btn>Print selected bill</Btn>
+          <Btn onClick={cancelOpen}>Cancel with reason</Btn>
+          <Btn variant="primary" onClick={resumeHeld}>
+            Resume held
+          </Btn>
+        </>
+      }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Orders" value={308} delta={4.1} />
-        <Metric label="Net sales" value={184420} money delta={8.4} />
-        <Metric label="Unpaid bills" value={11360} money />
-        <Metric label="Cancelled" value={4} delta={-20} invert />
+        <Metric label="Orders" value={rows.length} delta={4.1} />
+        <Metric label="Net sales" value={netSales} money delta={8.4} />
+        <Metric label="Unpaid bills" value={unpaid} money />
+        <Metric label="Cancelled" value={cancelled} delta={-20} invert />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="All orders" sub="Live · refreshed 20 seconds ago" right={<Btn>Columns</Btn>} />
+        <PanelHead
+          title="All orders"
+          sub="Permanent order history - no hard deletion"
+          right={<Btn>Columns</Btn>}
+        />
         <div className="border-b border-border px-4 py-3">
-          <Chips items={["Date: Today", "Branch: All", "Channel: All", "Status: Any"]} />
+          <Chips
+            items={[
+              {
+                label: "Period",
+                value: formatFilterDate(periodDate),
+                dateValue: periodDate,
+                onDateChange: setPeriodDate,
+                onClear: () => setPeriodDate(""),
+              },
+              { label: "Scope", value: branchLabel },
+              { label: "Channel", value: "All" },
+              { label: "Status", value: "Any" },
+              { label: "Retention", value: "Permanent" },
+            ]}
+            onClear={() => setPeriodDate("")}
+          />
         </div>
-        <div className="overflow-x-auto">
+        <div className="grid gap-3 p-3 md:hidden">
+          {rows.map((order) => (
+            <article
+              key={order.id}
+              className="rounded-lg border border-border bg-card p-3 shadow-card"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="num text-[13px] font-bold">{order.id}</div>
+                  <div className="truncate text-[12px] text-muted-foreground">
+                    {order.customer} - {order.channel}
+                  </div>
+                </div>
+                <div className="num shrink-0 text-[14px] font-bold">{ksh(order.total)}</div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">Created </span>
+                  <span className="num font-semibold">{order.createdAt.slice(11, 16)}</span>
+                </div>
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">Source </span>
+                  <span className="font-semibold">{order.channel}</span>
+                </div>
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">Owner </span>
+                  <span className="font-semibold">{order.cashier}</span>
+                </div>
+                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
+                  <Status>{order.paymentStatus}</Status>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <Status>{order.status}</Status>
+                <Btn>Open</Btn>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[960px]">
             <thead>
               <tr>
-                <TH>Order</TH><TH>Time</TH><TH>Customer / table</TH><TH>Channel</TH><TH>Branch</TH>
-                <TH>Employee</TH><TH className="text-right">Amount</TH><TH>Payment</TH><TH>Status</TH><TH />
+                <TH>
+                  <span className="sr-only">Select</span>
+                </TH>
+                <TH>Order</TH>
+                <TH>Time</TH>
+                <TH>Customer / table</TH>
+                <TH>Channel</TH>
+                <TH>Employee</TH>
+                <TH className="text-right">Amount</TH>
+                <TH>Payment</TH>
+                <TH>Status</TH>
+                <TH>Audit</TH>
               </tr>
             </thead>
             <tbody>
-              {orders.map((o) => (
-                <tr key={o.id} className="hover:bg-secondary/50">
-                  <TD className="num font-semibold">{o.id}</TD>
-                  <TD className="num text-muted-foreground">{o.time}</TD>
-                  <TD className="font-medium">{o.who}</TD>
-                  <TD className="text-muted-foreground">{o.channel}</TD>
-                  <TD className="text-muted-foreground">{o.branch}</TD>
-                  <TD className="text-muted-foreground">{o.emp}</TD>
-                  <TD className="num text-right font-semibold">{ksh(o.amount)}</TD>
-                  <TD><Status>{o.pay === "Pending" ? "Pending" : o.pay}</Status></TD>
-                  <TD><Status>{o.status}</Status></TD>
-                  <TD className="text-right text-muted-foreground">···</TD>
+              {rows.map((order) => (
+                <tr key={order.id} className="hover:bg-secondary/50">
+                  <TD>
+                    <input
+                      type="checkbox"
+                      checked={selectedOrders.includes(order.id)}
+                      onChange={() => toggleOrder(order.id)}
+                      className="h-4 w-4 accent-primary"
+                    />
+                  </TD>
+                  <TD className="num font-semibold">{order.id}</TD>
+                  <TD className="num text-muted-foreground">{order.createdAt.slice(11, 16)}</TD>
+                  <TD className="font-medium">{order.customer}</TD>
+                  <TD className="text-muted-foreground">{order.channel}</TD>
+                  <TD className="text-muted-foreground">{order.cashier}</TD>
+                  <TD className="num text-right font-semibold">{ksh(order.total)}</TD>
+                  <TD>
+                    <Status>{order.paymentStatus}</Status>
+                  </TD>
+                  <TD>
+                    <Status>{order.status}</Status>
+                  </TD>
+                  <TD className="text-right text-muted-foreground">
+                    {order.cancellation ? "reason captured" : "immutable"}
+                  </TD>
                 </tr>
               ))}
             </tbody>

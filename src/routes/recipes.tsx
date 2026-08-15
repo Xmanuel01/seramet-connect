@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
@@ -7,9 +7,9 @@ import { ksh } from "@/data/mock";
 export const Route = createFileRoute("/recipes")({
   head: () => ({
     meta: [
-      { title: "Recipes — Seramet" },
+      { title: "Recipes - Seramet" },
       { name: "description", content: "Recipe costing, portion control and live margin per dish." },
-      { property: "og:title", content: "Recipes — Seramet" },
+      { property: "og:title", content: "Recipes - Seramet" },
       { property: "og:description", content: "Costed recipes with portion control and margins." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -37,7 +37,16 @@ const lines = [
 
 function Recipes() {
   return (
-    <AppShell title="Recipes" subtitle="Costing and portion control" actions={<><Btn>Import</Btn><Btn variant="primary">New recipe</Btn></>}>
+    <AppShell
+      title="Recipes"
+      subtitle="Costing and portion control"
+      actions={
+        <>
+          <Btn>Import</Btn>
+          <Btn variant="primary">New recipe</Btn>
+        </>
+      }
+    >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Costed recipes" value={86} />
         <Metric label="Average food cost" value="33.4" suffix="%" delta={3.1} invert />
@@ -46,22 +55,39 @@ function Recipes() {
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel>
-          <PanelHead title="Recipe library" right={<SearchInput placeholder="Search dish…" />} />
-          <DataTable cols={["Dish", "Yield", { l: "Cost", r: true }, { l: "Price", r: true }, { l: "Margin", r: true }, "Status"]}>
+          <PanelHead title="Recipe library" right={<SearchInput placeholder="Search dish..." />} />
+          <DataTable
+            cols={[
+              "Dish",
+              "Yield",
+              { l: "Cost", r: true },
+              { l: "Price", r: true },
+              { l: "Margin", r: true },
+              "Status",
+            ]}
+          >
             {recipes.map((r) => (
               <tr key={r.dish} className="hover:bg-secondary/50">
                 <TD className="font-semibold">{r.dish}</TD>
                 <TD className="text-muted-foreground">{r.yield}</TD>
                 <TD className="num text-right">{ksh(r.cost)}</TD>
                 <TD className="num text-right">{ksh(r.price)}</TD>
-                <TD className="num text-right font-semibold">{Math.round(((r.price - r.cost) / r.price) * 100)}%</TD>
-                <TD><Status>{r.status}</Status></TD>
+                <TD className="num text-right font-semibold">
+                  {Math.round(((r.price - r.cost) / r.price) * 100)}%
+                </TD>
+                <TD>
+                  <Status>{r.status}</Status>
+                </TD>
               </tr>
             ))}
           </DataTable>
         </Panel>
         <Panel>
-          <PanelHead title="Chicken Biryani" sub="Recipe card · 1 portion" right={<Btn>Edit</Btn>} />
+          <PanelHead
+            title="Chicken Biryani"
+            sub="Recipe card  -  1 portion"
+            right={<Btn>Edit</Btn>}
+          />
           <DataTable cols={["Ingredient", "Quantity", { l: "Cost", r: true }]}>
             {lines.map((l) => (
               <tr key={l.ing}>
@@ -72,9 +98,18 @@ function Recipes() {
             ))}
           </DataTable>
           <div className="space-y-1.5 border-t border-border px-4 py-3 text-[13px]">
-            <div className="flex justify-between"><span className="text-muted-foreground">Total cost</span><span className="num font-semibold">{ksh(402)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Selling price</span><span className="num font-semibold">{ksh(1200)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Gross margin</span><span className="num font-bold text-success">66.5%</span></div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total cost</span>
+              <span className="num font-semibold">{ksh(402)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Selling price</span>
+              <span className="num font-semibold">{ksh(1200)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Gross margin</span>
+              <span className="num font-bold text-success">66.5%</span>
+            </div>
           </div>
         </Panel>
       </div>

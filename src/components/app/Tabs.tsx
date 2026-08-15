@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+﻿import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function Tabs({ tabs, children }: { tabs: string[]; children?: (t: string) => ReactNode }) {
@@ -30,7 +30,7 @@ export function Toolbar({ children }: { children: ReactNode }) {
   return <div className="mb-3 flex flex-wrap items-center gap-2">{children}</div>;
 }
 
-export function SearchInput({ placeholder = "Search…" }: { placeholder?: string }) {
+export function SearchInput({ placeholder = "Search..." }: { placeholder?: string }) {
   return (
     <input
       placeholder={placeholder}
@@ -39,32 +39,43 @@ export function SearchInput({ placeholder = "Search…" }: { placeholder?: strin
   );
 }
 
-export function DataTable({ cols, children }: { cols: (string | { l: string; r?: boolean })[]; children: ReactNode }) {
+export function DataTable({
+  cols,
+  children,
+  mobileCards,
+}: {
+  cols: (string | { l: string; r?: boolean })[];
+  children: ReactNode;
+  mobileCards?: ReactNode;
+}) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px]">
-        <thead>
-          <tr>
-            {cols.map((c) => {
-              const label = typeof c === "string" ? c : c.l;
-              const right = typeof c === "string" ? false : c.r;
-              return (
-                <th
-                  key={label}
-                  className={cn(
-                    "sticky top-0 whitespace-nowrap border-b border-border bg-card px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground",
-                    right && "text-right",
-                  )}
-                >
-                  {label}
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
+    <>
+      {mobileCards && <div className="grid gap-3 md:hidden">{mobileCards}</div>}
+      <div className={cn("overflow-x-auto", mobileCards && "hidden md:block")}>
+        <table className="w-full min-w-[720px]">
+          <thead>
+            <tr>
+              {cols.map((c) => {
+                const label = typeof c === "string" ? c : c.l;
+                const right = typeof c === "string" ? false : c.r;
+                return (
+                  <th
+                    key={label}
+                    className={cn(
+                      "sticky top-0 whitespace-nowrap border-b border-border bg-card px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground",
+                      right && "text-right",
+                    )}
+                  >
+                    {label}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

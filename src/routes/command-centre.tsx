@@ -1,6 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-  Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -9,10 +17,17 @@ import { alerts, branchPerf, decisions, health, ksh, revenueTrend } from "@/data
 export const Route = createFileRoute("/command-centre")({
   head: () => ({
     meta: [
-      { title: "Command Centre — Seramet" },
-      { name: "description", content: "Company-wide business intelligence: health, profitability, risks and pending decisions." },
-      { property: "og:title", content: "Command Centre — Seramet" },
-      { property: "og:description", content: "Whole-company health, risks and decisions for directors." },
+      { title: "Command Centre - Seramet" },
+      {
+        name: "description",
+        content:
+          "Company-wide business intelligence: health, profitability, risks and pending decisions.",
+      },
+      { property: "og:title", content: "Command Centre - Seramet" },
+      {
+        property: "og:description",
+        content: "Whole-company health, risks and decisions for directors.",
+      },
     ],
   }),
   component: CommandCentre,
@@ -36,8 +51,13 @@ function CommandCentre() {
   return (
     <AppShell
       title="Command centre"
-      subtitle="Mona Swahili · all branches · month to date"
-      actions={<><Btn>Month to date</Btn><Btn variant="primary">Board pack</Btn></>}
+      subtitle="Mona Swahili  -  all branches  -  month to date"
+      actions={
+        <>
+          <Btn>Month to date</Btn>
+          <Btn variant="primary">Board pack</Btn>
+        </>
+      }
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="grid gap-4">
@@ -54,11 +74,37 @@ function CommandCentre() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={forecast} margin={{ left: -14, right: 8, top: 8 }}>
                   <CartesianGrid stroke="var(--color-border)" vertical={false} />
-                  <XAxis dataKey="d" tickLine={false} axisLine={false} fontSize={11} stroke="var(--color-muted-foreground)" />
-                  <YAxis tickFormatter={(v) => `${v / 1000000}M`} tickLine={false} axisLine={false} fontSize={11} stroke="var(--color-muted-foreground)" />
-                  <Tooltip formatter={(v: number) => ksh(v)} contentStyle={{ borderRadius: 10, fontSize: 12 }} />
-                  <Line dataKey="actual" stroke="var(--color-primary)" strokeWidth={2.4} dot={false} />
-                  <Line dataKey="plan" stroke="var(--color-muted-foreground)" strokeWidth={1.6} strokeDasharray="5 4" dot={false} />
+                  <XAxis
+                    dataKey="d"
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={11}
+                    stroke="var(--color-muted-foreground)"
+                  />
+                  <YAxis
+                    tickFormatter={(v) => `${v / 1000000}M`}
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={11}
+                    stroke="var(--color-muted-foreground)"
+                  />
+                  <Tooltip
+                    formatter={(v: number) => ksh(v)}
+                    contentStyle={{ borderRadius: 10, fontSize: 12 }}
+                  />
+                  <Line
+                    dataKey="actual"
+                    stroke="var(--color-primary)"
+                    strokeWidth={2.4}
+                    dot={false}
+                  />
+                  <Line
+                    dataKey="plan"
+                    stroke="var(--color-muted-foreground)"
+                    strokeWidth={1.6}
+                    strokeDasharray="5 4"
+                    dot={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -71,10 +117,30 @@ function CommandCentre() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={revenueTrend} margin={{ left: -20, right: 8, top: 6 }}>
                     <CartesianGrid stroke="var(--color-border)" vertical={false} />
-                    <XAxis dataKey="d" tickLine={false} axisLine={false} fontSize={11} stroke="var(--color-muted-foreground)" />
-                    <YAxis tickFormatter={(v) => `${v / 1000}k`} tickLine={false} axisLine={false} fontSize={11} stroke="var(--color-muted-foreground)" />
-                    <Tooltip formatter={(v: number) => ksh(v)} contentStyle={{ borderRadius: 10, fontSize: 12 }} />
-                    <Bar dataKey="sales" fill="var(--color-primary)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                    <XAxis
+                      dataKey="d"
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      stroke="var(--color-muted-foreground)"
+                    />
+                    <YAxis
+                      tickFormatter={(v) => `${v / 1000}k`}
+                      tickLine={false}
+                      axisLine={false}
+                      fontSize={11}
+                      stroke="var(--color-muted-foreground)"
+                    />
+                    <Tooltip
+                      formatter={(v: number) => ksh(v)}
+                      contentStyle={{ borderRadius: 10, fontSize: 12 }}
+                    />
+                    <Bar
+                      dataKey="sales"
+                      fill="var(--color-primary)"
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={28}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -82,14 +148,23 @@ function CommandCentre() {
             <Panel>
               <PanelHead title="Branch comparison" sub="Month to date" />
               <table className="w-full">
-                <thead><tr><TH>Branch</TH><TH className="text-right">Sales</TH><TH className="text-right">Margin</TH><TH>Status</TH></tr></thead>
+                <thead>
+                  <tr>
+                    <TH>Branch</TH>
+                    <TH className="text-right">Sales</TH>
+                    <TH className="text-right">Margin</TH>
+                    <TH>Status</TH>
+                  </tr>
+                </thead>
                 <tbody>
                   {branchPerf.map((b) => (
                     <tr key={b.branch}>
                       <TD className="font-semibold">{b.branch}</TD>
                       <TD className="num text-right">{ksh(b.sales * 26)}</TD>
                       <TD className="num text-right">{b.margin}%</TD>
-                      <TD><Status>{b.status}</Status></TD>
+                      <TD>
+                        <Status>{b.status}</Status>
+                      </TD>
                     </tr>
                   ))}
                 </tbody>
@@ -98,14 +173,26 @@ function CommandCentre() {
           </div>
 
           <Panel>
-            <PanelHead title="Risk register" sub="Owned and reviewed weekly" right={<Btn>Add risk</Btn>} />
+            <PanelHead
+              title="Risk register"
+              sub="Owned and reviewed weekly"
+              right={<Btn>Add risk</Btn>}
+            />
             <table className="w-full">
-              <thead><tr><TH>Risk</TH><TH>Impact</TH><TH>Owner</TH></tr></thead>
+              <thead>
+                <tr>
+                  <TH>Risk</TH>
+                  <TH>Impact</TH>
+                  <TH>Owner</TH>
+                </tr>
+              </thead>
               <tbody>
                 {risks.map((r) => (
                   <tr key={r.r}>
                     <TD className="font-medium">{r.r}</TD>
-                    <TD><Status>{r.impact === "High" ? "Critical" : "Attention"}</Status></TD>
+                    <TD>
+                      <Status>{r.impact === "High" ? "Critical" : "Attention"}</Status>
+                    </TD>
                     <TD className="text-muted-foreground">{r.owner}</TD>
                   </tr>
                 ))}
@@ -118,7 +205,9 @@ function CommandCentre() {
           <Panel className="p-4">
             <div className="flex items-center gap-3">
               <div className="grid h-16 w-16 place-items-center rounded-full bg-accent">
-                <span className="num text-[19px] font-extrabold text-accent-foreground">{health.score}</span>
+                <span className="num text-[19px] font-extrabold text-accent-foreground">
+                  {health.score}
+                </span>
               </div>
               <div>
                 <div className="text-[13px] font-semibold">Business health</div>
@@ -127,7 +216,10 @@ function CommandCentre() {
             </div>
             <ul className="mt-3 space-y-1.5">
               {health.signals.map((s) => (
-                <li key={s.name} className="flex items-center justify-between rounded-md bg-secondary/50 px-2 py-1.5 text-[12px] font-medium">
+                <li
+                  key={s.name}
+                  className="flex items-center justify-between rounded-md bg-secondary/50 px-2 py-1.5 text-[12px] font-medium"
+                >
                   {s.name}
                   <Status>{s.state}</Status>
                 </li>
@@ -136,7 +228,15 @@ function CommandCentre() {
           </Panel>
 
           <Panel>
-            <PanelHead title="Pending decisions" sub="4 waiting on you" right={<Link to="/approvals" className="text-[12px] font-semibold text-primary">Open</Link>} />
+            <PanelHead
+              title="Pending decisions"
+              sub="4 waiting on you"
+              right={
+                <Link to="/approvals" className="text-[12px] font-semibold text-primary">
+                  Open
+                </Link>
+              }
+            />
             <ul className="divide-y divide-border">
               {decisions.map((d) => (
                 <li key={d.title} className="px-4 py-3">
@@ -144,7 +244,9 @@ function CommandCentre() {
                     <span className="text-[13px] font-semibold leading-snug">{d.title}</span>
                     <span className="num shrink-0 text-[13px] font-bold">{ksh(d.value)}</span>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{d.by} · {d.time}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {d.by} - {d.time}
+                  </p>
                 </li>
               ))}
             </ul>
@@ -156,7 +258,9 @@ function CommandCentre() {
               {alerts.slice(0, 4).map((a) => (
                 <li key={a.title} className="px-4 py-2.5 text-[12px]">
                   <div className="font-semibold">{a.title}</div>
-                  <div className="text-muted-foreground">{a.branch} · {a.time}</div>
+                  <div className="text-muted-foreground">
+                    {a.branch} - {a.time}
+                  </div>
                 </li>
               ))}
             </ul>

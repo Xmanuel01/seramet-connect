@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { Sparkles, Send } from "lucide-react";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/data/mock";
@@ -7,10 +8,17 @@ import { ksh } from "@/data/mock";
 export const Route = createFileRoute("/ai")({
   head: () => ({
     meta: [
-      { title: "Seramet AI — Ask your business" },
-      { name: "description", content: "Ask questions about sales, cost, stock and staff and get answers with charts and actions." },
+      { title: "Seramet AI - Ask your business" },
+      {
+        name: "description",
+        content:
+          "Ask questions about sales, cost, stock and staff and get answers with charts and actions.",
+      },
       { property: "og:title", content: "Seramet AI" },
-      { property: "og:description", content: "Answers with metrics, tables and recommended actions." },
+      {
+        property: "og:description",
+        content: "Answers with metrics, tables and recommended actions.",
+      },
     ],
   }),
   component: AI,
@@ -32,24 +40,43 @@ const drivers = [
 ];
 
 function AI() {
+  const [question, setQuestion] = useState("Why did food cost increase this week?");
+  const [activeQuestion, setActiveQuestion] = useState(question);
+
+  const ask = (value = question) => {
+    setQuestion(value);
+    setActiveQuestion(value);
+  };
+
   return (
-    <AppShell title="Ask Seramet" subtitle="Grounded in your live sales, stock, payroll and supplier data">
+    <AppShell
+      title="Ask Seramet"
+      subtitle="Grounded in your live sales, stock, payroll and supplier data"
+    >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div className="grid gap-4">
           <Panel className="p-4">
             <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/50 px-3 py-2.5">
               <Sparkles className="h-4 w-4 shrink-0 text-primary" />
               <input
-                defaultValue="Why did food cost increase this week?"
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
                 className="w-full bg-transparent text-[14px] outline-none"
               />
-              <button className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
+              <button
+                onClick={() => ask()}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground"
+              >
                 <Send className="h-4 w-4" />
               </button>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {suggestions.map((s) => (
-                <button key={s} className="rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground">
+                <button
+                  key={s}
+                  onClick={() => ask(s)}
+                  className="rounded-md border border-border px-2.5 py-1.5 text-[12px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
                   {s}
                 </button>
               ))}
@@ -57,14 +84,21 @@ function AI() {
           </Panel>
 
           <Panel>
-            <PanelHead title="Food cost alert" sub="Answer generated from 7 days of sales, stock movement and supplier bills" />
+            <PanelHead title="Food cost alert" sub={`Answer for: ${activeQuestion}`} />
             <div className="space-y-4 p-4">
               <p className="text-[14px] leading-relaxed">
-                Food cost increased from <strong className="num">31.2%</strong> to <strong className="num">36.4%</strong> at
-                Westlands over the last 7 days. Three drivers explain 94% of the change.
+                Food cost increased from <strong className="num">31.2%</strong> to{" "}
+                <strong className="num">36.4%</strong> at Westlands over the last 7 days. Three
+                drivers explain 94% of the change.
               </p>
               <table className="w-full">
-                <thead><tr><TH>Driver</TH><TH className="text-right">Impact</TH><TH>Explanation</TH></tr></thead>
+                <thead>
+                  <tr>
+                    <TH>Driver</TH>
+                    <TH className="text-right">Impact</TH>
+                    <TH>Explanation</TH>
+                  </tr>
+                </thead>
                 <tbody>
                   {drivers.map((d) => (
                     <tr key={d.name}>
@@ -78,7 +112,9 @@ function AI() {
               <div className="rounded-lg border border-warning/30 bg-warning-soft p-3">
                 <div className="text-[13px] font-semibold text-warning">Suggested actions</div>
                 <ul className="mt-1.5 list-inside list-disc space-y-1 text-[13px]">
-                  <li>Review beef portioning against the Chicken Biryani and Beef Dry Fry recipes</li>
+                  <li>
+                    Review beef portioning against the Chicken Biryani and Beef Dry Fry recipes
+                  </li>
                   <li>Confirm the 12% price increase from Main Meat Supplier is contractual</li>
                   <li>Audit the 9 waste entries logged by the evening kitchen shift</li>
                 </ul>
@@ -95,8 +131,16 @@ function AI() {
         <Panel className="p-4">
           <h2 className="text-[14px] font-semibold">Recent threads</h2>
           <ul className="mt-3 space-y-2 text-[13px]">
-            {["Stock at risk this week", "Overtime by branch", "Slowest kitchen hours", "Loyalty impact on AOV"].map((t) => (
-              <li key={t} className="rounded-md border border-border px-3 py-2 text-muted-foreground hover:bg-secondary hover:text-foreground">
+            {[
+              "Stock at risk this week",
+              "Overtime by branch",
+              "Slowest kitchen hours",
+              "Loyalty impact on AOV",
+            ].map((t) => (
+              <li
+                key={t}
+                className="rounded-md border border-border px-3 py-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
                 {t}
               </li>
             ))}
