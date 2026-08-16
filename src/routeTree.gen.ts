@@ -53,6 +53,7 @@ import { Route as PayablesRouteImport } from './routes/payables'
 import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
+import { Route as PerformanceRouteImport } from './routes/performance'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as ProcurementRouteImport } from './routes/procurement'
@@ -64,6 +65,7 @@ import { Route as ReceivablesRouteImport } from './routes/receivables'
 import { Route as ReceivingRouteImport } from './routes/receiving'
 import { Route as RecipesRouteImport } from './routes/recipes'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
+import { Route as RecruitmentRouteImport } from './routes/recruitment'
 import { Route as RefundsRouteImport } from './routes/refunds'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequisitionsRouteImport } from './routes/requisitions'
@@ -307,6 +309,11 @@ const PeopleRoute = PeopleRouteImport.update({
   path: '/people',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PerformanceRoute = PerformanceRouteImport.update({
+  id: '/performance',
+  path: '/performance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PosRoute = PosRouteImport.update({
   id: '/pos',
   path: '/pos',
@@ -360,6 +367,11 @@ const RecipesRoute = RecipesRouteImport.update({
 const ReconciliationRoute = ReconciliationRouteImport.update({
   id: '/reconciliation',
   path: '/reconciliation',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecruitmentRoute = RecruitmentRouteImport.update({
+  id: '/recruitment',
+  path: '/recruitment',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RefundsRoute = RefundsRouteImport.update({
@@ -518,6 +530,7 @@ export interface FileRoutesByFullPath {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -529,6 +542,7 @@ export interface FileRoutesByFullPath {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -597,6 +611,7 @@ export interface FileRoutesByTo {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -608,6 +623,7 @@ export interface FileRoutesByTo {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -677,6 +693,7 @@ export interface FileRoutesById {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -688,6 +705,7 @@ export interface FileRoutesById {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -758,6 +776,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -769,6 +788,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -837,6 +857,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -848,6 +869,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -916,6 +938,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -927,6 +950,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -996,6 +1020,7 @@ export interface RootRouteChildren {
   PayrollRoute: typeof PayrollRoute
   PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
+  PerformanceRoute: typeof PerformanceRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   ProcurementRoute: typeof ProcurementRoute
@@ -1007,6 +1032,7 @@ export interface RootRouteChildren {
   ReceivingRoute: typeof ReceivingRoute
   RecipesRoute: typeof RecipesRoute
   ReconciliationRoute: typeof ReconciliationRoute
+  RecruitmentRoute: typeof RecruitmentRoute
   RefundsRoute: typeof RefundsRoute
   ReportsRoute: typeof ReportsRoute
   RequisitionsRoute: typeof RequisitionsRoute
@@ -1341,6 +1367,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PeopleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/performance': {
+      id: '/performance'
+      path: '/performance'
+      fullPath: '/performance'
+      preLoaderRoute: typeof PerformanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pos': {
       id: '/pos'
       path: '/pos'
@@ -1416,6 +1449,13 @@ declare module '@tanstack/react-router' {
       path: '/reconciliation'
       fullPath: '/reconciliation'
       preLoaderRoute: typeof ReconciliationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recruitment': {
+      id: '/recruitment'
+      path: '/recruitment'
+      fullPath: '/recruitment'
+      preLoaderRoute: typeof RecruitmentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/refunds': {
@@ -1620,6 +1660,7 @@ const rootRouteChildren: RootRouteChildren = {
   PayrollRoute: PayrollRoute,
   PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
+  PerformanceRoute: PerformanceRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   ProcurementRoute: ProcurementRoute,
@@ -1631,6 +1672,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReceivingRoute: ReceivingRoute,
   RecipesRoute: RecipesRoute,
   ReconciliationRoute: ReconciliationRoute,
+  RecruitmentRoute: RecruitmentRoute,
   RefundsRoute: RefundsRoute,
   ReportsRoute: ReportsRoute,
   RequisitionsRoute: RequisitionsRoute,
