@@ -20,6 +20,7 @@ import { Route as BalanceSheetRouteImport } from './routes/balance-sheet'
 import { Route as BarRouteImport } from './routes/bar'
 import { Route as BranchesRouteImport } from './routes/branches'
 import { Route as BreakagesRouteImport } from './routes/breakages'
+import { Route as CampaignsRouteImport } from './routes/campaigns'
 import { Route as CashFlowRouteImport } from './routes/cash-flow'
 import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
@@ -34,6 +35,8 @@ import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as FinanceRouteImport } from './routes/finance'
+import { Route as GeneralLedgerRouteImport } from './routes/general-ledger'
+import { Route as IntegrationsRouteImport } from './routes/integrations'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
@@ -50,6 +53,7 @@ import { Route as PayablesRouteImport } from './routes/payables'
 import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
+import { Route as PerformanceRouteImport } from './routes/performance'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as ProcurementRouteImport } from './routes/procurement'
@@ -61,6 +65,7 @@ import { Route as ReceivablesRouteImport } from './routes/receivables'
 import { Route as ReceivingRouteImport } from './routes/receiving'
 import { Route as RecipesRouteImport } from './routes/recipes'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
+import { Route as RecruitmentRouteImport } from './routes/recruitment'
 import { Route as RefundsRouteImport } from './routes/refunds'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequisitionsRouteImport } from './routes/requisitions'
@@ -68,6 +73,7 @@ import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
 import { Route as RidersRouteImport } from './routes/riders'
 import { Route as ScheduleRouteImport } from './routes/schedule'
+import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
 import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -138,6 +144,11 @@ const BreakagesRoute = BreakagesRouteImport.update({
   path: '/breakages',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CampaignsRoute = CampaignsRouteImport.update({
+  id: '/campaigns',
+  path: '/campaigns',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CashFlowRoute = CashFlowRouteImport.update({
   id: '/cash-flow',
   path: '/cash-flow',
@@ -206,6 +217,16 @@ const ExpensesRoute = ExpensesRouteImport.update({
 const FinanceRoute = FinanceRouteImport.update({
   id: '/finance',
   path: '/finance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GeneralLedgerRoute = GeneralLedgerRouteImport.update({
+  id: '/general-ledger',
+  path: '/general-ledger',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntegrationsRoute = IntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -288,6 +309,11 @@ const PeopleRoute = PeopleRouteImport.update({
   path: '/people',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PerformanceRoute = PerformanceRouteImport.update({
+  id: '/performance',
+  path: '/performance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PosRoute = PosRouteImport.update({
   id: '/pos',
   path: '/pos',
@@ -343,6 +369,11 @@ const ReconciliationRoute = ReconciliationRouteImport.update({
   path: '/reconciliation',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RecruitmentRoute = RecruitmentRouteImport.update({
+  id: '/recruitment',
+  path: '/recruitment',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const RefundsRoute = RefundsRouteImport.update({
   id: '/refunds',
   path: '/refunds',
@@ -376,6 +407,11 @@ const RidersRoute = RidersRouteImport.update({
 const ScheduleRoute = ScheduleRouteImport.update({
   id: '/schedule',
   path: '/schedule',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SegmentsRoute = SegmentsRouteImport.update({
+  id: '/segments',
+  path: '/segments',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SerametPrintersRoute = SerametPrintersRouteImport.update({
@@ -461,6 +497,7 @@ export interface FileRoutesByFullPath {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -475,6 +512,8 @@ export interface FileRoutesByFullPath {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -491,6 +530,7 @@ export interface FileRoutesByFullPath {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -502,6 +542,7 @@ export interface FileRoutesByFullPath {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -509,6 +550,7 @@ export interface FileRoutesByFullPath {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -536,6 +578,7 @@ export interface FileRoutesByTo {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -550,6 +593,8 @@ export interface FileRoutesByTo {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -566,6 +611,7 @@ export interface FileRoutesByTo {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -577,6 +623,7 @@ export interface FileRoutesByTo {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -584,6 +631,7 @@ export interface FileRoutesByTo {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -612,6 +660,7 @@ export interface FileRoutesById {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -626,6 +675,8 @@ export interface FileRoutesById {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -642,6 +693,7 @@ export interface FileRoutesById {
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
+  '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/procurement': typeof ProcurementRoute
@@ -653,6 +705,7 @@ export interface FileRoutesById {
   '/receiving': typeof ReceivingRoute
   '/recipes': typeof RecipesRoute
   '/reconciliation': typeof ReconciliationRoute
+  '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
@@ -660,6 +713,7 @@ export interface FileRoutesById {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -689,6 +743,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -703,6 +758,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -719,6 +776,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -730,6 +788,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -737,6 +796,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -764,6 +824,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -778,6 +839,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -794,6 +857,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -805,6 +869,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -812,6 +877,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -839,6 +905,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -853,6 +920,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -869,6 +938,7 @@ export interface FileRouteTypes {
     | '/payroll'
     | '/pending'
     | '/people'
+    | '/performance'
     | '/pos'
     | '/prep'
     | '/procurement'
@@ -880,6 +950,7 @@ export interface FileRouteTypes {
     | '/receiving'
     | '/recipes'
     | '/reconciliation'
+    | '/recruitment'
     | '/refunds'
     | '/reports'
     | '/requisitions'
@@ -887,6 +958,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -915,6 +987,7 @@ export interface RootRouteChildren {
   BarRoute: typeof BarRoute
   BranchesRoute: typeof BranchesRoute
   BreakagesRoute: typeof BreakagesRoute
+  CampaignsRoute: typeof CampaignsRoute
   CashFlowRoute: typeof CashFlowRoute
   CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
@@ -929,6 +1002,8 @@ export interface RootRouteChildren {
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
   FinanceRoute: typeof FinanceRoute
+  GeneralLedgerRoute: typeof GeneralLedgerRoute
+  IntegrationsRoute: typeof IntegrationsRoute
   InventoryRoute: typeof InventoryRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
@@ -945,6 +1020,7 @@ export interface RootRouteChildren {
   PayrollRoute: typeof PayrollRoute
   PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
+  PerformanceRoute: typeof PerformanceRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   ProcurementRoute: typeof ProcurementRoute
@@ -956,6 +1032,7 @@ export interface RootRouteChildren {
   ReceivingRoute: typeof ReceivingRoute
   RecipesRoute: typeof RecipesRoute
   ReconciliationRoute: typeof ReconciliationRoute
+  RecruitmentRoute: typeof RecruitmentRoute
   RefundsRoute: typeof RefundsRoute
   ReportsRoute: typeof ReportsRoute
   RequisitionsRoute: typeof RequisitionsRoute
@@ -963,6 +1040,7 @@ export interface RootRouteChildren {
   ReturnsRoute: typeof ReturnsRoute
   RidersRoute: typeof RidersRoute
   ScheduleRoute: typeof ScheduleRoute
+  SegmentsRoute: typeof SegmentsRoute
   SerametPrintersRoute: typeof SerametPrintersRoute
   SerametSetupRoute: typeof SerametSetupRoute
   SettingsRoute: typeof SettingsRoute
@@ -1056,6 +1134,13 @@ declare module '@tanstack/react-router' {
       path: '/breakages'
       fullPath: '/breakages'
       preLoaderRoute: typeof BreakagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/campaigns': {
+      id: '/campaigns'
+      path: '/campaigns'
+      fullPath: '/campaigns'
+      preLoaderRoute: typeof CampaignsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cash-flow': {
@@ -1154,6 +1239,20 @@ declare module '@tanstack/react-router' {
       path: '/finance'
       fullPath: '/finance'
       preLoaderRoute: typeof FinanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/general-ledger': {
+      id: '/general-ledger'
+      path: '/general-ledger'
+      fullPath: '/general-ledger'
+      preLoaderRoute: typeof GeneralLedgerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations': {
+      id: '/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof IntegrationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -1268,6 +1367,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PeopleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/performance': {
+      id: '/performance'
+      path: '/performance'
+      fullPath: '/performance'
+      preLoaderRoute: typeof PerformanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pos': {
       id: '/pos'
       path: '/pos'
@@ -1345,6 +1451,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReconciliationRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/recruitment': {
+      id: '/recruitment'
+      path: '/recruitment'
+      fullPath: '/recruitment'
+      preLoaderRoute: typeof RecruitmentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/refunds': {
       id: '/refunds'
       path: '/refunds'
@@ -1392,6 +1505,13 @@ declare module '@tanstack/react-router' {
       path: '/schedule'
       fullPath: '/schedule'
       preLoaderRoute: typeof ScheduleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/segments': {
+      id: '/segments'
+      path: '/segments'
+      fullPath: '/segments'
+      preLoaderRoute: typeof SegmentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/seramet-printers': {
@@ -1507,6 +1627,7 @@ const rootRouteChildren: RootRouteChildren = {
   BarRoute: BarRoute,
   BranchesRoute: BranchesRoute,
   BreakagesRoute: BreakagesRoute,
+  CampaignsRoute: CampaignsRoute,
   CashFlowRoute: CashFlowRoute,
   CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
@@ -1521,6 +1642,8 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
   FinanceRoute: FinanceRoute,
+  GeneralLedgerRoute: GeneralLedgerRoute,
+  IntegrationsRoute: IntegrationsRoute,
   InventoryRoute: InventoryRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
@@ -1537,6 +1660,7 @@ const rootRouteChildren: RootRouteChildren = {
   PayrollRoute: PayrollRoute,
   PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
+  PerformanceRoute: PerformanceRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   ProcurementRoute: ProcurementRoute,
@@ -1548,6 +1672,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReceivingRoute: ReceivingRoute,
   RecipesRoute: RecipesRoute,
   ReconciliationRoute: ReconciliationRoute,
+  RecruitmentRoute: RecruitmentRoute,
   RefundsRoute: RefundsRoute,
   ReportsRoute: ReportsRoute,
   RequisitionsRoute: RequisitionsRoute,
@@ -1555,6 +1680,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReturnsRoute: ReturnsRoute,
   RidersRoute: RidersRoute,
   ScheduleRoute: ScheduleRoute,
+  SegmentsRoute: SegmentsRoute,
   SerametPrintersRoute: SerametPrintersRoute,
   SerametSetupRoute: SerametSetupRoute,
   SettingsRoute: SettingsRoute,
