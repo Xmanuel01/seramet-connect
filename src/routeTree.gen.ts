@@ -20,6 +20,7 @@ import { Route as BalanceSheetRouteImport } from './routes/balance-sheet'
 import { Route as BarRouteImport } from './routes/bar'
 import { Route as BranchesRouteImport } from './routes/branches'
 import { Route as BreakagesRouteImport } from './routes/breakages'
+import { Route as CampaignsRouteImport } from './routes/campaigns'
 import { Route as CashFlowRouteImport } from './routes/cash-flow'
 import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
@@ -70,6 +71,7 @@ import { Route as ReservationsRouteImport } from './routes/reservations'
 import { Route as ReturnsRouteImport } from './routes/returns'
 import { Route as RidersRouteImport } from './routes/riders'
 import { Route as ScheduleRouteImport } from './routes/schedule'
+import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
 import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -138,6 +140,11 @@ const BranchesRoute = BranchesRouteImport.update({
 const BreakagesRoute = BreakagesRouteImport.update({
   id: '/breakages',
   path: '/breakages',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CampaignsRoute = CampaignsRouteImport.update({
+  id: '/campaigns',
+  path: '/campaigns',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CashFlowRoute = CashFlowRouteImport.update({
@@ -390,6 +397,11 @@ const ScheduleRoute = ScheduleRouteImport.update({
   path: '/schedule',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SegmentsRoute = SegmentsRouteImport.update({
+  id: '/segments',
+  path: '/segments',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SerametPrintersRoute = SerametPrintersRouteImport.update({
   id: '/seramet-printers',
   path: '/seramet-printers',
@@ -473,6 +485,7 @@ export interface FileRoutesByFullPath {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -523,6 +536,7 @@ export interface FileRoutesByFullPath {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -550,6 +564,7 @@ export interface FileRoutesByTo {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -600,6 +615,7 @@ export interface FileRoutesByTo {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -628,6 +644,7 @@ export interface FileRoutesById {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
@@ -678,6 +695,7 @@ export interface FileRoutesById {
   '/returns': typeof ReturnsRoute
   '/riders': typeof RidersRoute
   '/schedule': typeof ScheduleRoute
+  '/segments': typeof SegmentsRoute
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
@@ -707,6 +725,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -757,6 +776,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -784,6 +804,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -834,6 +855,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -861,6 +883,7 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
@@ -911,6 +934,7 @@ export interface FileRouteTypes {
     | '/returns'
     | '/riders'
     | '/schedule'
+    | '/segments'
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
@@ -939,6 +963,7 @@ export interface RootRouteChildren {
   BarRoute: typeof BarRoute
   BranchesRoute: typeof BranchesRoute
   BreakagesRoute: typeof BreakagesRoute
+  CampaignsRoute: typeof CampaignsRoute
   CashFlowRoute: typeof CashFlowRoute
   CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
@@ -989,6 +1014,7 @@ export interface RootRouteChildren {
   ReturnsRoute: typeof ReturnsRoute
   RidersRoute: typeof RidersRoute
   ScheduleRoute: typeof ScheduleRoute
+  SegmentsRoute: typeof SegmentsRoute
   SerametPrintersRoute: typeof SerametPrintersRoute
   SerametSetupRoute: typeof SerametSetupRoute
   SettingsRoute: typeof SettingsRoute
@@ -1082,6 +1108,13 @@ declare module '@tanstack/react-router' {
       path: '/breakages'
       fullPath: '/breakages'
       preLoaderRoute: typeof BreakagesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/campaigns': {
+      id: '/campaigns'
+      path: '/campaigns'
+      fullPath: '/campaigns'
+      preLoaderRoute: typeof CampaignsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cash-flow': {
@@ -1434,6 +1467,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScheduleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/segments': {
+      id: '/segments'
+      path: '/segments'
+      fullPath: '/segments'
+      preLoaderRoute: typeof SegmentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/seramet-printers': {
       id: '/seramet-printers'
       path: '/seramet-printers'
@@ -1547,6 +1587,7 @@ const rootRouteChildren: RootRouteChildren = {
   BarRoute: BarRoute,
   BranchesRoute: BranchesRoute,
   BreakagesRoute: BreakagesRoute,
+  CampaignsRoute: CampaignsRoute,
   CashFlowRoute: CashFlowRoute,
   CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
@@ -1597,6 +1638,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReturnsRoute: ReturnsRoute,
   RidersRoute: RidersRoute,
   ScheduleRoute: ScheduleRoute,
+  SegmentsRoute: SegmentsRoute,
   SerametPrintersRoute: SerametPrintersRoute,
   SerametSetupRoute: SerametSetupRoute,
   SettingsRoute: SettingsRoute,
