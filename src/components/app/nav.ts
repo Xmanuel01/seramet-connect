@@ -38,6 +38,14 @@ import {
   FileSpreadsheet,
   Repeat2,
   Globe2,
+  Bike,
+  Megaphone,
+  Layers,
+  Bell,
+  Plug,
+  Award,
+  UserPlus,
+  CalendarX,
   type LucideIcon,
 } from "lucide-react";
 import type { AppRole } from "@/lib/app-context";
@@ -110,6 +118,8 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Returns", to: "/returns", icon: RotateCcw },
       { label: "Refunds", to: "/refunds", icon: RotateCcw },
+      { label: "Delivery", to: "/delivery", icon: Bike },
+      { label: "Riders", to: "/riders", icon: Bike },
     ],
   },
   {
@@ -170,6 +180,8 @@ export const navGroups: NavGroup[] = [
       { label: "CRM Pipeline", to: "/crm-pipeline", icon: GitBranch },
       { label: "Loyalty", to: "/loyalty", icon: HandCoins, capability: "LOYALTY" },
       { label: "Complaints", to: "/complaints", icon: ClipboardList },
+      { label: "Campaigns", to: "/campaigns", icon: Megaphone },
+      { label: "Segments", to: "/segments", icon: Layers },
     ],
   },
   {
@@ -181,6 +193,9 @@ export const navGroups: NavGroup[] = [
       { label: "Attendance", to: "/attendance", icon: ClipboardCheck },
       { label: "Schedule", to: "/schedule", icon: CalendarDays },
       { label: "Payroll", to: "/payroll", icon: Wallet },
+      { label: "Leave", to: "/leave", icon: CalendarX },
+      { label: "Performance", to: "/performance", icon: Award },
+      { label: "Recruitment", to: "/recruitment", icon: UserPlus },
     ],
   },
   {
@@ -196,6 +211,7 @@ export const navGroups: NavGroup[] = [
       { label: "Payables", to: "/payables", icon: Wallet },
       { label: "Receivables", to: "/receivables", icon: BadgeDollarSign },
       { label: "Assets", to: "/assets", icon: Boxes },
+      { label: "General Ledger", to: "/general-ledger", icon: Landmark },
     ],
   },
   {
@@ -225,6 +241,7 @@ export const navGroups: NavGroup[] = [
         ],
       },
       { label: "Audit Trail", to: "/audit-trail", icon: ClipboardList, roles: opsRoles },
+      { label: "Notifications", to: "/notifications", icon: Bell, roles: opsRoles },
     ],
   },
   {
@@ -247,6 +264,7 @@ export const navGroups: NavGroup[] = [
       { label: "Design System", to: "/design-system", icon: Component },
       { label: "Seramet Printers", to: "/seramet-printers", icon: Printer },
       { label: "Hardware Setup", to: "/seramet-setup", icon: Settings2 },
+      { label: "Integrations", to: "/integrations", icon: Plug },
       { label: "Settings", to: "/settings", icon: Settings },
     ],
   },
