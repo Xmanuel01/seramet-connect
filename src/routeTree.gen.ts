@@ -34,6 +34,8 @@ import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as FinanceRouteImport } from './routes/finance'
+import { Route as GeneralLedgerRouteImport } from './routes/general-ledger'
+import { Route as IntegrationsRouteImport } from './routes/integrations'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
@@ -206,6 +208,16 @@ const ExpensesRoute = ExpensesRouteImport.update({
 const FinanceRoute = FinanceRouteImport.update({
   id: '/finance',
   path: '/finance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GeneralLedgerRoute = GeneralLedgerRouteImport.update({
+  id: '/general-ledger',
+  path: '/general-ledger',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntegrationsRoute = IntegrationsRouteImport.update({
+  id: '/integrations',
+  path: '/integrations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InventoryRoute = InventoryRouteImport.update({
@@ -475,6 +487,8 @@ export interface FileRoutesByFullPath {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -550,6 +564,8 @@ export interface FileRoutesByTo {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -626,6 +642,8 @@ export interface FileRoutesById {
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
   '/finance': typeof FinanceRoute
+  '/general-ledger': typeof GeneralLedgerRoute
+  '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
@@ -703,6 +721,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -778,6 +798,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -853,6 +875,8 @@ export interface FileRouteTypes {
     | '/employees'
     | '/expenses'
     | '/finance'
+    | '/general-ledger'
+    | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
@@ -929,6 +953,8 @@ export interface RootRouteChildren {
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
   FinanceRoute: typeof FinanceRoute
+  GeneralLedgerRoute: typeof GeneralLedgerRoute
+  IntegrationsRoute: typeof IntegrationsRoute
   InventoryRoute: typeof InventoryRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
@@ -1154,6 +1180,20 @@ declare module '@tanstack/react-router' {
       path: '/finance'
       fullPath: '/finance'
       preLoaderRoute: typeof FinanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/general-ledger': {
+      id: '/general-ledger'
+      path: '/general-ledger'
+      fullPath: '/general-ledger'
+      preLoaderRoute: typeof GeneralLedgerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations': {
+      id: '/integrations'
+      path: '/integrations'
+      fullPath: '/integrations'
+      preLoaderRoute: typeof IntegrationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/inventory': {
@@ -1521,6 +1561,8 @@ const rootRouteChildren: RootRouteChildren = {
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
   FinanceRoute: FinanceRoute,
+  GeneralLedgerRoute: GeneralLedgerRoute,
+  IntegrationsRoute: IntegrationsRoute,
   InventoryRoute: InventoryRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
