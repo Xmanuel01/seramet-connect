@@ -21,11 +21,13 @@ import { Route as BalanceSheetRouteImport } from './routes/balance-sheet'
 import { Route as BarRouteImport } from './routes/bar'
 import { Route as BranchesRouteImport } from './routes/branches'
 import { Route as BreakagesRouteImport } from './routes/breakages'
+import { Route as BudgetsRouteImport } from './routes/budgets'
 import { Route as CampaignsRouteImport } from './routes/campaigns'
 import { Route as CashFlowRouteImport } from './routes/cash-flow'
 import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
+import { Route as CostCentresRouteImport } from './routes/cost-centres'
 import { Route as CostControlRouteImport } from './routes/cost-control'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
@@ -153,6 +155,11 @@ const BreakagesRoute = BreakagesRouteImport.update({
   path: '/breakages',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BudgetsRoute = BudgetsRouteImport.update({
+  id: '/budgets',
+  path: '/budgets',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CampaignsRoute = CampaignsRouteImport.update({
   id: '/campaigns',
   path: '/campaigns',
@@ -176,6 +183,11 @@ const CommandCentreRoute = CommandCentreRouteImport.update({
 const ComplaintsRoute = ComplaintsRouteImport.update({
   id: '/complaints',
   path: '/complaints',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CostCentresRoute = CostCentresRouteImport.update({
+  id: '/cost-centres',
+  path: '/cost-centres',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CostControlRoute = CostControlRouteImport.update({
@@ -522,11 +534,13 @@ export interface FileRoutesByFullPath {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
@@ -607,11 +621,13 @@ export interface FileRoutesByTo {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
@@ -693,11 +709,13 @@ export interface FileRoutesById {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
@@ -780,11 +798,13 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
@@ -865,11 +885,13 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
@@ -950,11 +972,13 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
@@ -1036,11 +1060,13 @@ export interface RootRouteChildren {
   BarRoute: typeof BarRoute
   BranchesRoute: typeof BranchesRoute
   BreakagesRoute: typeof BreakagesRoute
+  BudgetsRoute: typeof BudgetsRoute
   CampaignsRoute: typeof CampaignsRoute
   CashFlowRoute: typeof CashFlowRoute
   CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
   ComplaintsRoute: typeof ComplaintsRoute
+  CostCentresRoute: typeof CostCentresRoute
   CostControlRoute: typeof CostControlRoute
   CrmRoute: typeof CrmRoute
   CrmPipelineRoute: typeof CrmPipelineRoute
@@ -1195,6 +1221,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BreakagesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/budgets': {
+      id: '/budgets'
+      path: '/budgets'
+      fullPath: '/budgets'
+      preLoaderRoute: typeof BudgetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/campaigns': {
       id: '/campaigns'
       path: '/campaigns'
@@ -1228,6 +1261,13 @@ declare module '@tanstack/react-router' {
       path: '/complaints'
       fullPath: '/complaints'
       preLoaderRoute: typeof ComplaintsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cost-centres': {
+      id: '/cost-centres'
+      path: '/cost-centres'
+      fullPath: '/cost-centres'
+      preLoaderRoute: typeof CostCentresRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cost-control': {
@@ -1708,11 +1748,13 @@ const rootRouteChildren: RootRouteChildren = {
   BarRoute: BarRoute,
   BranchesRoute: BranchesRoute,
   BreakagesRoute: BreakagesRoute,
+  BudgetsRoute: BudgetsRoute,
   CampaignsRoute: CampaignsRoute,
   CashFlowRoute: CashFlowRoute,
   CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
   ComplaintsRoute: ComplaintsRoute,
+  CostCentresRoute: CostCentresRoute,
   CostControlRoute: CostControlRoute,
   CrmRoute: CrmRoute,
   CrmPipelineRoute: CrmPipelineRoute,
