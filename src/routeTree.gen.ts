@@ -58,6 +58,7 @@ import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PerformanceRouteImport } from './routes/performance'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
+import { Route as PrimeCostRouteImport } from './routes/prime-cost'
 import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as ProductionRouteImport } from './routes/production'
 import { Route as ProfitLossRouteImport } from './routes/profit-loss'
@@ -337,6 +338,11 @@ const PrepRoute = PrepRouteImport.update({
   path: '/prep',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrimeCostRoute = PrimeCostRouteImport.update({
+  id: '/prime-cost',
+  path: '/prime-cost',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProcurementRoute = ProcurementRouteImport.update({
   id: '/procurement',
   path: '/procurement',
@@ -553,6 +559,7 @@ export interface FileRoutesByFullPath {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -637,6 +644,7 @@ export interface FileRoutesByTo {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -722,6 +730,7 @@ export interface FileRoutesById {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -808,6 +817,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -892,6 +902,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -976,6 +987,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -1061,6 +1073,7 @@ export interface RootRouteChildren {
   PerformanceRoute: typeof PerformanceRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
+  PrimeCostRoute: typeof PrimeCostRoute
   ProcurementRoute: typeof ProcurementRoute
   ProductionRoute: typeof ProductionRoute
   ProfitLossRoute: typeof ProfitLossRoute
@@ -1441,6 +1454,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrepRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/prime-cost': {
+      id: '/prime-cost'
+      path: '/prime-cost'
+      fullPath: '/prime-cost'
+      preLoaderRoute: typeof PrimeCostRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/procurement': {
       id: '/procurement'
       path: '/procurement'
@@ -1725,6 +1745,7 @@ const rootRouteChildren: RootRouteChildren = {
   PerformanceRoute: PerformanceRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
+  PrimeCostRoute: PrimeCostRoute,
   ProcurementRoute: ProcurementRoute,
   ProductionRoute: ProductionRoute,
   ProfitLossRoute: ProfitLossRoute,
