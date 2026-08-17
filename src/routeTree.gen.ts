@@ -87,6 +87,7 @@ import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TablesRouteImport } from './routes/tables'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TransfersRouteImport } from './routes/transfers'
+import { Route as TrialBalanceRouteImport } from './routes/trial-balance'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
 import { Route as WastageRouteImport } from './routes/wastage'
 import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
@@ -481,6 +482,11 @@ const TransfersRoute = TransfersRouteImport.update({
   path: '/transfers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TrialBalanceRoute = TrialBalanceRouteImport.update({
+  id: '/trial-balance',
+  path: '/trial-balance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WarehousesRoute = WarehousesRouteImport.update({
   id: '/warehouses',
   path: '/warehouses',
@@ -576,6 +582,7 @@ export interface FileRoutesByFullPath {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
@@ -659,6 +666,7 @@ export interface FileRoutesByTo {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
@@ -743,6 +751,7 @@ export interface FileRoutesById {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
@@ -828,6 +837,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
@@ -911,6 +921,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
@@ -994,6 +1005,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
@@ -1078,6 +1090,7 @@ export interface RootRouteChildren {
   TablesRoute: typeof TablesRoute
   TasksRoute: typeof TasksRoute
   TransfersRoute: typeof TransfersRoute
+  TrialBalanceRoute: typeof TrialBalanceRoute
   WarehousesRoute: typeof WarehousesRoute
   WastageRoute: typeof WastageRoute
   ItemsSkuRoute: typeof ItemsSkuRoute
@@ -1631,6 +1644,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TransfersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/trial-balance': {
+      id: '/trial-balance'
+      path: '/trial-balance'
+      fullPath: '/trial-balance'
+      preLoaderRoute: typeof TrialBalanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/warehouses': {
       id: '/warehouses'
       path: '/warehouses'
@@ -1734,6 +1754,7 @@ const rootRouteChildren: RootRouteChildren = {
   TablesRoute: TablesRoute,
   TasksRoute: TasksRoute,
   TransfersRoute: TransfersRoute,
+  TrialBalanceRoute: TrialBalanceRoute,
   WarehousesRoute: WarehousesRoute,
   WastageRoute: WastageRoute,
   ItemsSkuRoute: ItemsSkuRoute,
