@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountingRouteImport } from './routes/accounting'
 import { Route as AdjustmentsRouteImport } from './routes/adjustments'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
@@ -92,6 +93,11 @@ import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountingRoute = AccountingRouteImport.update({
+  id: '/accounting',
+  path: '/accounting',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdjustmentsRoute = AdjustmentsRouteImport.update({
@@ -487,6 +493,7 @@ const ItemsSkuRoute = ItemsSkuRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -568,6 +575,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -650,6 +658,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -733,6 +742,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -814,6 +824,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -895,6 +906,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -977,6 +989,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountingRoute: typeof AccountingRoute
   AdjustmentsRoute: typeof AdjustmentsRoute
   AiRoute: typeof AiRoute
   ApprovalsRoute: typeof ApprovalsRoute
@@ -1064,6 +1077,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounting': {
+      id: '/accounting'
+      path: '/accounting'
+      fullPath: '/accounting'
+      preLoaderRoute: typeof AccountingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/adjustments': {
@@ -1617,6 +1637,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountingRoute: AccountingRoute,
   AdjustmentsRoute: AdjustmentsRoute,
   AiRoute: AiRoute,
   ApprovalsRoute: ApprovalsRoute,
