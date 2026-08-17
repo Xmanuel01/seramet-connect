@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountingRouteImport } from './routes/accounting'
 import { Route as AdjustmentsRouteImport } from './routes/adjustments'
 import { Route as AiRouteImport } from './routes/ai'
 import { Route as ApprovalsRouteImport } from './routes/approvals'
@@ -20,15 +21,18 @@ import { Route as BalanceSheetRouteImport } from './routes/balance-sheet'
 import { Route as BarRouteImport } from './routes/bar'
 import { Route as BranchesRouteImport } from './routes/branches'
 import { Route as BreakagesRouteImport } from './routes/breakages'
+import { Route as BudgetsRouteImport } from './routes/budgets'
 import { Route as CampaignsRouteImport } from './routes/campaigns'
 import { Route as CashFlowRouteImport } from './routes/cash-flow'
 import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
+import { Route as CostCentresRouteImport } from './routes/cost-centres'
 import { Route as CostControlRouteImport } from './routes/cost-control'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
+import { Route as DailySalesJournalRouteImport } from './routes/daily-sales-journal'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
@@ -56,6 +60,7 @@ import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PerformanceRouteImport } from './routes/performance'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
+import { Route as PrimeCostRouteImport } from './routes/prime-cost'
 import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as ProductionRouteImport } from './routes/production'
 import { Route as ProfitLossRouteImport } from './routes/profit-loss'
@@ -85,6 +90,7 @@ import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TablesRouteImport } from './routes/tables'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TransfersRouteImport } from './routes/transfers'
+import { Route as TrialBalanceRouteImport } from './routes/trial-balance'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
 import { Route as WastageRouteImport } from './routes/wastage'
 import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
@@ -92,6 +98,11 @@ import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountingRoute = AccountingRouteImport.update({
+  id: '/accounting',
+  path: '/accounting',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdjustmentsRoute = AdjustmentsRouteImport.update({
@@ -144,6 +155,11 @@ const BreakagesRoute = BreakagesRouteImport.update({
   path: '/breakages',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BudgetsRoute = BudgetsRouteImport.update({
+  id: '/budgets',
+  path: '/budgets',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CampaignsRoute = CampaignsRouteImport.update({
   id: '/campaigns',
   path: '/campaigns',
@@ -169,6 +185,11 @@ const ComplaintsRoute = ComplaintsRouteImport.update({
   path: '/complaints',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CostCentresRoute = CostCentresRouteImport.update({
+  id: '/cost-centres',
+  path: '/cost-centres',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CostControlRoute = CostControlRouteImport.update({
   id: '/cost-control',
   path: '/cost-control',
@@ -187,6 +208,11 @@ const CrmPipelineRoute = CrmPipelineRouteImport.update({
 const CustomersRoute = CustomersRouteImport.update({
   id: '/customers',
   path: '/customers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DailySalesJournalRoute = DailySalesJournalRouteImport.update({
+  id: '/daily-sales-journal',
+  path: '/daily-sales-journal',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DecisionsRoute = DecisionsRouteImport.update({
@@ -322,6 +348,11 @@ const PosRoute = PosRouteImport.update({
 const PrepRoute = PrepRouteImport.update({
   id: '/prep',
   path: '/prep',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrimeCostRoute = PrimeCostRouteImport.update({
+  id: '/prime-cost',
+  path: '/prime-cost',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProcurementRoute = ProcurementRouteImport.update({
@@ -469,6 +500,11 @@ const TransfersRoute = TransfersRouteImport.update({
   path: '/transfers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TrialBalanceRoute = TrialBalanceRouteImport.update({
+  id: '/trial-balance',
+  path: '/trial-balance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WarehousesRoute = WarehousesRouteImport.update({
   id: '/warehouses',
   path: '/warehouses',
@@ -487,6 +523,7 @@ const ItemsSkuRoute = ItemsSkuRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -497,15 +534,18 @@ export interface FileRoutesByFullPath {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
@@ -533,6 +573,7 @@ export interface FileRoutesByFullPath {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -562,12 +603,14 @@ export interface FileRoutesByFullPath {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -578,15 +621,18 @@ export interface FileRoutesByTo {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
@@ -614,6 +660,7 @@ export interface FileRoutesByTo {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -643,6 +690,7 @@ export interface FileRoutesByTo {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
@@ -650,6 +698,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/accounting': typeof AccountingRoute
   '/adjustments': typeof AdjustmentsRoute
   '/ai': typeof AiRoute
   '/approvals': typeof ApprovalsRoute
@@ -660,15 +709,18 @@ export interface FileRoutesById {
   '/bar': typeof BarRoute
   '/branches': typeof BranchesRoute
   '/breakages': typeof BreakagesRoute
+  '/budgets': typeof BudgetsRoute
   '/campaigns': typeof CampaignsRoute
   '/cash-flow': typeof CashFlowRoute
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
+  '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/design-system': typeof DesignSystemRoute
@@ -696,6 +748,7 @@ export interface FileRoutesById {
   '/performance': typeof PerformanceRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
+  '/prime-cost': typeof PrimeCostRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
@@ -725,6 +778,7 @@ export interface FileRoutesById {
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/transfers': typeof TransfersRoute
+  '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
@@ -733,6 +787,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -743,15 +798,18 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
+    | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
     | '/design-system'
@@ -779,6 +837,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -808,12 +867,14 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -824,15 +885,18 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
+    | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
     | '/design-system'
@@ -860,6 +924,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -889,12 +954,14 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
   id:
     | '__root__'
     | '/'
+    | '/accounting'
     | '/adjustments'
     | '/ai'
     | '/approvals'
@@ -905,15 +972,18 @@ export interface FileRouteTypes {
     | '/bar'
     | '/branches'
     | '/breakages'
+    | '/budgets'
     | '/campaigns'
     | '/cash-flow'
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cost-centres'
     | '/cost-control'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
+    | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
     | '/design-system'
@@ -941,6 +1011,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/pos'
     | '/prep'
+    | '/prime-cost'
     | '/procurement'
     | '/production'
     | '/profit-loss'
@@ -970,6 +1041,7 @@ export interface FileRouteTypes {
     | '/tables'
     | '/tasks'
     | '/transfers'
+    | '/trial-balance'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
@@ -977,6 +1049,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountingRoute: typeof AccountingRoute
   AdjustmentsRoute: typeof AdjustmentsRoute
   AiRoute: typeof AiRoute
   ApprovalsRoute: typeof ApprovalsRoute
@@ -987,15 +1060,18 @@ export interface RootRouteChildren {
   BarRoute: typeof BarRoute
   BranchesRoute: typeof BranchesRoute
   BreakagesRoute: typeof BreakagesRoute
+  BudgetsRoute: typeof BudgetsRoute
   CampaignsRoute: typeof CampaignsRoute
   CashFlowRoute: typeof CashFlowRoute
   CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
   ComplaintsRoute: typeof ComplaintsRoute
+  CostCentresRoute: typeof CostCentresRoute
   CostControlRoute: typeof CostControlRoute
   CrmRoute: typeof CrmRoute
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
+  DailySalesJournalRoute: typeof DailySalesJournalRoute
   DecisionsRoute: typeof DecisionsRoute
   DeliveryRoute: typeof DeliveryRoute
   DesignSystemRoute: typeof DesignSystemRoute
@@ -1023,6 +1099,7 @@ export interface RootRouteChildren {
   PerformanceRoute: typeof PerformanceRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
+  PrimeCostRoute: typeof PrimeCostRoute
   ProcurementRoute: typeof ProcurementRoute
   ProductionRoute: typeof ProductionRoute
   ProfitLossRoute: typeof ProfitLossRoute
@@ -1052,6 +1129,7 @@ export interface RootRouteChildren {
   TablesRoute: typeof TablesRoute
   TasksRoute: typeof TasksRoute
   TransfersRoute: typeof TransfersRoute
+  TrialBalanceRoute: typeof TrialBalanceRoute
   WarehousesRoute: typeof WarehousesRoute
   WastageRoute: typeof WastageRoute
   ItemsSkuRoute: typeof ItemsSkuRoute
@@ -1064,6 +1142,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/accounting': {
+      id: '/accounting'
+      path: '/accounting'
+      fullPath: '/accounting'
+      preLoaderRoute: typeof AccountingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/adjustments': {
@@ -1136,6 +1221,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BreakagesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/budgets': {
+      id: '/budgets'
+      path: '/budgets'
+      fullPath: '/budgets'
+      preLoaderRoute: typeof BudgetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/campaigns': {
       id: '/campaigns'
       path: '/campaigns'
@@ -1171,6 +1263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ComplaintsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/cost-centres': {
+      id: '/cost-centres'
+      path: '/cost-centres'
+      fullPath: '/cost-centres'
+      preLoaderRoute: typeof CostCentresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/cost-control': {
       id: '/cost-control'
       path: '/cost-control'
@@ -1197,6 +1296,13 @@ declare module '@tanstack/react-router' {
       path: '/customers'
       fullPath: '/customers'
       preLoaderRoute: typeof CustomersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/daily-sales-journal': {
+      id: '/daily-sales-journal'
+      path: '/daily-sales-journal'
+      fullPath: '/daily-sales-journal'
+      preLoaderRoute: typeof DailySalesJournalRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/decisions': {
@@ -1386,6 +1492,13 @@ declare module '@tanstack/react-router' {
       path: '/prep'
       fullPath: '/prep'
       preLoaderRoute: typeof PrepRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prime-cost': {
+      id: '/prime-cost'
+      path: '/prime-cost'
+      fullPath: '/prime-cost'
+      preLoaderRoute: typeof PrimeCostRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/procurement': {
@@ -1591,6 +1704,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TransfersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/trial-balance': {
+      id: '/trial-balance'
+      path: '/trial-balance'
+      fullPath: '/trial-balance'
+      preLoaderRoute: typeof TrialBalanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/warehouses': {
       id: '/warehouses'
       path: '/warehouses'
@@ -1617,6 +1737,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountingRoute: AccountingRoute,
   AdjustmentsRoute: AdjustmentsRoute,
   AiRoute: AiRoute,
   ApprovalsRoute: ApprovalsRoute,
@@ -1627,15 +1748,18 @@ const rootRouteChildren: RootRouteChildren = {
   BarRoute: BarRoute,
   BranchesRoute: BranchesRoute,
   BreakagesRoute: BreakagesRoute,
+  BudgetsRoute: BudgetsRoute,
   CampaignsRoute: CampaignsRoute,
   CashFlowRoute: CashFlowRoute,
   CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
   ComplaintsRoute: ComplaintsRoute,
+  CostCentresRoute: CostCentresRoute,
   CostControlRoute: CostControlRoute,
   CrmRoute: CrmRoute,
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
+  DailySalesJournalRoute: DailySalesJournalRoute,
   DecisionsRoute: DecisionsRoute,
   DeliveryRoute: DeliveryRoute,
   DesignSystemRoute: DesignSystemRoute,
@@ -1663,6 +1787,7 @@ const rootRouteChildren: RootRouteChildren = {
   PerformanceRoute: PerformanceRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
+  PrimeCostRoute: PrimeCostRoute,
   ProcurementRoute: ProcurementRoute,
   ProductionRoute: ProductionRoute,
   ProfitLossRoute: ProfitLossRoute,
@@ -1692,6 +1817,7 @@ const rootRouteChildren: RootRouteChildren = {
   TablesRoute: TablesRoute,
   TasksRoute: TasksRoute,
   TransfersRoute: TransfersRoute,
+  TrialBalanceRoute: TrialBalanceRoute,
   WarehousesRoute: WarehousesRoute,
   WastageRoute: WastageRoute,
   ItemsSkuRoute: ItemsSkuRoute,
