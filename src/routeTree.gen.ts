@@ -36,6 +36,7 @@ import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DailySalesJournalRouteImport } from './routes/daily-sales-journal'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as DeliveryRouteImport } from './routes/delivery'
+import { Route as DepreciationRouteImport } from './routes/depreciation'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
@@ -59,6 +60,7 @@ import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PerformanceRouteImport } from './routes/performance'
+import { Route as PeriodCloseRouteImport } from './routes/period-close'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as PrimeCostRouteImport } from './routes/prime-cost'
@@ -232,6 +234,11 @@ const DeliveryRoute = DeliveryRouteImport.update({
   path: '/delivery',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DepreciationRoute = DepreciationRouteImport.update({
+  id: '/depreciation',
+  path: '/depreciation',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
   id: '/design-system',
   path: '/design-system',
@@ -345,6 +352,11 @@ const PeopleRoute = PeopleRouteImport.update({
 const PerformanceRoute = PerformanceRouteImport.update({
   id: '/performance',
   path: '/performance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PeriodCloseRoute = PeriodCloseRouteImport.update({
+  id: '/period-close',
+  path: '/period-close',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PosRoute = PosRouteImport.update({
@@ -561,6 +573,7 @@ export interface FileRoutesByFullPath {
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -584,6 +597,7 @@ export interface FileRoutesByFullPath {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -650,6 +664,7 @@ export interface FileRoutesByTo {
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -673,6 +688,7 @@ export interface FileRoutesByTo {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -740,6 +756,7 @@ export interface FileRoutesById {
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -763,6 +780,7 @@ export interface FileRoutesById {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -831,6 +849,7 @@ export interface FileRouteTypes {
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -854,6 +873,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -920,6 +940,7 @@ export interface FileRouteTypes {
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -943,6 +964,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -1009,6 +1031,7 @@ export interface FileRouteTypes {
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -1032,6 +1055,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -1099,6 +1123,7 @@ export interface RootRouteChildren {
   DailySalesJournalRoute: typeof DailySalesJournalRoute
   DecisionsRoute: typeof DecisionsRoute
   DeliveryRoute: typeof DeliveryRoute
+  DepreciationRoute: typeof DepreciationRoute
   DesignSystemRoute: typeof DesignSystemRoute
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
@@ -1122,6 +1147,7 @@ export interface RootRouteChildren {
   PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
   PerformanceRoute: typeof PerformanceRoute
+  PeriodCloseRoute: typeof PeriodCloseRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   PrimeCostRoute: typeof PrimeCostRoute
@@ -1352,6 +1378,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeliveryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/depreciation': {
+      id: '/depreciation'
+      path: '/depreciation'
+      fullPath: '/depreciation'
+      preLoaderRoute: typeof DepreciationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/design-system': {
       id: '/design-system'
       path: '/design-system'
@@ -1511,6 +1544,13 @@ declare module '@tanstack/react-router' {
       path: '/performance'
       fullPath: '/performance'
       preLoaderRoute: typeof PerformanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/period-close': {
+      id: '/period-close'
+      path: '/period-close'
+      fullPath: '/period-close'
+      preLoaderRoute: typeof PeriodCloseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pos': {
@@ -1803,6 +1843,7 @@ const rootRouteChildren: RootRouteChildren = {
   DailySalesJournalRoute: DailySalesJournalRoute,
   DecisionsRoute: DecisionsRoute,
   DeliveryRoute: DeliveryRoute,
+  DepreciationRoute: DepreciationRoute,
   DesignSystemRoute: DesignSystemRoute,
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
@@ -1826,6 +1867,7 @@ const rootRouteChildren: RootRouteChildren = {
   PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
   PerformanceRoute: PerformanceRoute,
+  PeriodCloseRoute: PeriodCloseRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   PrimeCostRoute: PrimeCostRoute,
