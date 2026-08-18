@@ -73,7 +73,7 @@ const toneMap: Record<string, string> = {
   new: "bg-accent text-accent-foreground",
 };
 
-function statusText(children: ReactNode) {
+function statusText(children: ReactNode): string {
   return Children.toArray(children)
     .map((child) => {
       if (typeof child === "string" || typeof child === "number") return String(child);
@@ -353,9 +353,16 @@ export function TH({ children, className }: { children?: ReactNode; className?: 
   );
 }
 
-export function TD({ children, className }: { children: ReactNode; className?: string }) {
+export function TD({
+  children,
+  className,
+  ...rest
+}: React.TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={cn("border-b border-border px-3 py-2.5 text-[13px] align-middle", className)}>
+    <td
+      {...rest}
+      className={cn("border-b border-border px-3 py-2.5 text-[13px] align-middle", className)}
+    >
       {children}
     </td>
   );

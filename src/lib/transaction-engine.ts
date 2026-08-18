@@ -64,7 +64,7 @@ export type TransactionOrder = {
   branch: string;
   table?: string;
   customer: string;
-  channel: "Dine-In" | "Take Away" | "Delivery" | "Online";
+  channel: "Dine-In" | "Take Away" | "Delivery" | "Online" | "Uber Eats" | "Bolt Food" | "Glovo";
   cashier: string;
   waiter?: string;
   kitchenNote?: string;
