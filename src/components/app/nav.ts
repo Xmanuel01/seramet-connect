@@ -215,6 +215,22 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
+    group: "Accounting",
+    roles: financeRoles,
+    items: [
+      { label: "Accounting Hub", to: "/accounting", icon: Calculator },
+      { label: "Daily Sales Journal", to: "/daily-sales-journal", icon: ReceiptText },
+      { label: "Trial Balance", to: "/trial-balance", icon: Scale },
+      { label: "Prime Cost", to: "/prime-cost", icon: Calculator },
+      { label: "Budgets", to: "/budgets", icon: FileSpreadsheet },
+      { label: "Cost Centres", to: "/cost-centres", icon: GitBranch },
+      { label: "Tax Centre", to: "/tax-centre", icon: Landmark },
+      { label: "Credit & Debit Notes", to: "/credit-notes", icon: FileText },
+      { label: "Depreciation", to: "/depreciation", icon: Building2 },
+      { label: "Period Close", to: "/period-close", icon: ClipboardCheck },
+    ],
+  },
+  {
     group: "Management",
     roles: managementRoles,
     items: [

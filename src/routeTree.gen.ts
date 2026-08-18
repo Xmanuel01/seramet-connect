@@ -29,12 +29,14 @@ import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
 import { Route as CostCentresRouteImport } from './routes/cost-centres'
 import { Route as CostControlRouteImport } from './routes/cost-control'
+import { Route as CreditNotesRouteImport } from './routes/credit-notes'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DailySalesJournalRouteImport } from './routes/daily-sales-journal'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as DeliveryRouteImport } from './routes/delivery'
+import { Route as DepreciationRouteImport } from './routes/depreciation'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
 import { Route as ExpensesRouteImport } from './routes/expenses'
@@ -58,6 +60,7 @@ import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PerformanceRouteImport } from './routes/performance'
+import { Route as PeriodCloseRouteImport } from './routes/period-close'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as PrimeCostRouteImport } from './routes/prime-cost'
@@ -89,6 +92,7 @@ import { Route as SupplierPerformanceRouteImport } from './routes/supplier-perfo
 import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TablesRouteImport } from './routes/tables'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as TaxCentreRouteImport } from './routes/tax-centre'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TrialBalanceRouteImport } from './routes/trial-balance'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
@@ -195,6 +199,11 @@ const CostControlRoute = CostControlRouteImport.update({
   path: '/cost-control',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CreditNotesRoute = CreditNotesRouteImport.update({
+  id: '/credit-notes',
+  path: '/credit-notes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CrmRoute = CrmRouteImport.update({
   id: '/crm',
   path: '/crm',
@@ -223,6 +232,11 @@ const DecisionsRoute = DecisionsRouteImport.update({
 const DeliveryRoute = DeliveryRouteImport.update({
   id: '/delivery',
   path: '/delivery',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DepreciationRoute = DepreciationRouteImport.update({
+  id: '/depreciation',
+  path: '/depreciation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DesignSystemRoute = DesignSystemRouteImport.update({
@@ -338,6 +352,11 @@ const PeopleRoute = PeopleRouteImport.update({
 const PerformanceRoute = PerformanceRouteImport.update({
   id: '/performance',
   path: '/performance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PeriodCloseRoute = PeriodCloseRouteImport.update({
+  id: '/period-close',
+  path: '/period-close',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PosRoute = PosRouteImport.update({
@@ -495,6 +514,11 @@ const TasksRoute = TasksRouteImport.update({
   path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TaxCentreRoute = TaxCentreRouteImport.update({
+  id: '/tax-centre',
+  path: '/tax-centre',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TransfersRoute = TransfersRouteImport.update({
   id: '/transfers',
   path: '/transfers',
@@ -542,12 +566,14 @@ export interface FileRoutesByFullPath {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -571,6 +597,7 @@ export interface FileRoutesByFullPath {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -602,6 +629,7 @@ export interface FileRoutesByFullPath {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -629,12 +657,14 @@ export interface FileRoutesByTo {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -658,6 +688,7 @@ export interface FileRoutesByTo {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -689,6 +720,7 @@ export interface FileRoutesByTo {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -717,12 +749,14 @@ export interface FileRoutesById {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
+  '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
   '/expenses': typeof ExpensesRoute
@@ -746,6 +780,7 @@ export interface FileRoutesById {
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
   '/performance': typeof PerformanceRoute
+  '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
@@ -777,6 +812,7 @@ export interface FileRoutesById {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -806,12 +842,14 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -835,6 +873,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -866,6 +905,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -893,12 +933,14 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -922,6 +964,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -953,6 +996,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -980,12 +1024,14 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
     | '/decisions'
     | '/delivery'
+    | '/depreciation'
     | '/design-system'
     | '/employees'
     | '/expenses'
@@ -1009,6 +1055,7 @@ export interface FileRouteTypes {
     | '/pending'
     | '/people'
     | '/performance'
+    | '/period-close'
     | '/pos'
     | '/prep'
     | '/prime-cost'
@@ -1040,6 +1087,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -1068,12 +1116,14 @@ export interface RootRouteChildren {
   ComplaintsRoute: typeof ComplaintsRoute
   CostCentresRoute: typeof CostCentresRoute
   CostControlRoute: typeof CostControlRoute
+  CreditNotesRoute: typeof CreditNotesRoute
   CrmRoute: typeof CrmRoute
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
   DailySalesJournalRoute: typeof DailySalesJournalRoute
   DecisionsRoute: typeof DecisionsRoute
   DeliveryRoute: typeof DeliveryRoute
+  DepreciationRoute: typeof DepreciationRoute
   DesignSystemRoute: typeof DesignSystemRoute
   EmployeesRoute: typeof EmployeesRoute
   ExpensesRoute: typeof ExpensesRoute
@@ -1097,6 +1147,7 @@ export interface RootRouteChildren {
   PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
   PerformanceRoute: typeof PerformanceRoute
+  PeriodCloseRoute: typeof PeriodCloseRoute
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   PrimeCostRoute: typeof PrimeCostRoute
@@ -1128,6 +1179,7 @@ export interface RootRouteChildren {
   SuppliersRoute: typeof SuppliersRoute
   TablesRoute: typeof TablesRoute
   TasksRoute: typeof TasksRoute
+  TaxCentreRoute: typeof TaxCentreRoute
   TransfersRoute: typeof TransfersRoute
   TrialBalanceRoute: typeof TrialBalanceRoute
   WarehousesRoute: typeof WarehousesRoute
@@ -1277,6 +1329,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CostControlRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/credit-notes': {
+      id: '/credit-notes'
+      path: '/credit-notes'
+      fullPath: '/credit-notes'
+      preLoaderRoute: typeof CreditNotesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/crm': {
       id: '/crm'
       path: '/crm'
@@ -1317,6 +1376,13 @@ declare module '@tanstack/react-router' {
       path: '/delivery'
       fullPath: '/delivery'
       preLoaderRoute: typeof DeliveryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/depreciation': {
+      id: '/depreciation'
+      path: '/depreciation'
+      fullPath: '/depreciation'
+      preLoaderRoute: typeof DepreciationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/design-system': {
@@ -1478,6 +1544,13 @@ declare module '@tanstack/react-router' {
       path: '/performance'
       fullPath: '/performance'
       preLoaderRoute: typeof PerformanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/period-close': {
+      id: '/period-close'
+      path: '/period-close'
+      fullPath: '/period-close'
+      preLoaderRoute: typeof PeriodCloseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pos': {
@@ -1697,6 +1770,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tax-centre': {
+      id: '/tax-centre'
+      path: '/tax-centre'
+      fullPath: '/tax-centre'
+      preLoaderRoute: typeof TaxCentreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/transfers': {
       id: '/transfers'
       path: '/transfers'
@@ -1756,12 +1836,14 @@ const rootRouteChildren: RootRouteChildren = {
   ComplaintsRoute: ComplaintsRoute,
   CostCentresRoute: CostCentresRoute,
   CostControlRoute: CostControlRoute,
+  CreditNotesRoute: CreditNotesRoute,
   CrmRoute: CrmRoute,
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
   DailySalesJournalRoute: DailySalesJournalRoute,
   DecisionsRoute: DecisionsRoute,
   DeliveryRoute: DeliveryRoute,
+  DepreciationRoute: DepreciationRoute,
   DesignSystemRoute: DesignSystemRoute,
   EmployeesRoute: EmployeesRoute,
   ExpensesRoute: ExpensesRoute,
@@ -1785,6 +1867,7 @@ const rootRouteChildren: RootRouteChildren = {
   PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
   PerformanceRoute: PerformanceRoute,
+  PeriodCloseRoute: PeriodCloseRoute,
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   PrimeCostRoute: PrimeCostRoute,
@@ -1816,6 +1899,7 @@ const rootRouteChildren: RootRouteChildren = {
   SuppliersRoute: SuppliersRoute,
   TablesRoute: TablesRoute,
   TasksRoute: TasksRoute,
+  TaxCentreRoute: TaxCentreRoute,
   TransfersRoute: TransfersRoute,
   TrialBalanceRoute: TrialBalanceRoute,
   WarehousesRoute: WarehousesRoute,
