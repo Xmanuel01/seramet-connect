@@ -36,7 +36,7 @@ const history = [
   { doc: "GRN-0912", date: "12 Aug", branch: "Ngong Road", value: 73400, state: "Completed" },
 ];
 
-type SupplierRow = (typeof products)[number] | (typeof history)[number];
+type SupplierRow = Partial<(typeof products)[number]> & Partial<(typeof history)[number]>;
 
 function Suppliers() {
   return (
@@ -134,7 +134,7 @@ function Suppliers() {
                           </div>
                           <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                             <span className="text-muted-foreground">Value </span>
-                            <span className="num font-semibold">{ksh(row.last ?? row.value)}</span>
+                            <span className="num font-semibold">{ksh(row.last ?? row.value ?? 0)}</span>
                           </div>
                         </div>
                       </article>
@@ -148,7 +148,7 @@ function Suppliers() {
                         <TD className="num text-muted-foreground">{row.sku ?? row.date}</TD>
                         <TD className="text-muted-foreground">{row.change ?? row.branch}</TD>
                         <TD className="num text-right font-semibold">
-                          {ksh(row.last ?? row.value)}
+                          {ksh(row.last ?? row.value ?? 0)}
                         </TD>
                         <TD>
                           <Status>{row.status ?? row.state}</Status>

@@ -1237,7 +1237,7 @@ function makeZip(files: Record<string, string>) {
   write16(eocd, 10, Object.keys(files).length);
   write32(eocd, 12, centralSize);
   write32(eocd, 16, centralOffset);
-  return new Blob([...chunks, ...central, eocd]);
+  return new Blob([...chunks, ...central, eocd] as BlobPart[]);
 }
 
 function header(length: number) {
