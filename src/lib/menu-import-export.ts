@@ -35,7 +35,7 @@ export async function parseMenuFile(file: File): Promise<MenuImportPreview> {
     return validateMenuRows(rows, file.name, "xlsx");
   }
   if (name.endsWith(".csv") || name.endsWith(".txt")) {
-    return validateMenuRows(parseCsv(await file.text()), file.name, "csv");
+    return validateMenuRows(parseCsvRows(await file.text()), file.name, "csv");
   }
   return {
     sourceName: file.name,
@@ -53,7 +53,7 @@ export async function parseMenuFile(file: File): Promise<MenuImportPreview> {
 }
 
 export function parseMenuText(text: string, sourceName = "Pasted CSV"): MenuImportPreview {
-  return validateMenuRows(parseCsv(text), sourceName, "csv");
+  return validateMenuRows(parseCsvRows(text), sourceName, "csv");
 }
 
 export function confirmMenuImport(currentProducts: Product[], preview: MenuImportPreview) {
@@ -319,7 +319,7 @@ export function validateMenuRows(
   };
 }
 
-function parseCsv(text: string): RawMenuRow[] {
+export function parseCsvRows(text: string): RawMenuRow[] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
@@ -355,7 +355,7 @@ function parseCsv(text: string): RawMenuRow[] {
   );
 }
 
-async function parseXlsxRows(buffer: ArrayBuffer): Promise<RawMenuRow[]> {
+export async function parseXlsxRows(buffer: ArrayBuffer): Promise<RawMenuRow[]> {
   const files = await readZipEntries(buffer);
   const workbook = files.get("xl/workbook.xml") ?? "";
   const rels = files.get("xl/_rels/workbook.xml.rels") ?? "";
