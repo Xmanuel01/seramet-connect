@@ -29,6 +29,7 @@ import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
 import { Route as CostCentresRouteImport } from './routes/cost-centres'
 import { Route as CostControlRouteImport } from './routes/cost-control'
+import { Route as CreditNotesRouteImport } from './routes/credit-notes'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
@@ -89,6 +90,7 @@ import { Route as SupplierPerformanceRouteImport } from './routes/supplier-perfo
 import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as TablesRouteImport } from './routes/tables'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as TaxCentreRouteImport } from './routes/tax-centre'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TrialBalanceRouteImport } from './routes/trial-balance'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
@@ -193,6 +195,11 @@ const CostCentresRoute = CostCentresRouteImport.update({
 const CostControlRoute = CostControlRouteImport.update({
   id: '/cost-control',
   path: '/cost-control',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CreditNotesRoute = CreditNotesRouteImport.update({
+  id: '/credit-notes',
+  path: '/credit-notes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CrmRoute = CrmRouteImport.update({
@@ -495,6 +502,11 @@ const TasksRoute = TasksRouteImport.update({
   path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TaxCentreRoute = TaxCentreRouteImport.update({
+  id: '/tax-centre',
+  path: '/tax-centre',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TransfersRoute = TransfersRouteImport.update({
   id: '/transfers',
   path: '/transfers',
@@ -542,6 +554,7 @@ export interface FileRoutesByFullPath {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
@@ -602,6 +615,7 @@ export interface FileRoutesByFullPath {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -629,6 +643,7 @@ export interface FileRoutesByTo {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
@@ -689,6 +704,7 @@ export interface FileRoutesByTo {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -717,6 +733,7 @@ export interface FileRoutesById {
   '/complaints': typeof ComplaintsRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
+  '/credit-notes': typeof CreditNotesRoute
   '/crm': typeof CrmRoute
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
@@ -777,6 +794,7 @@ export interface FileRoutesById {
   '/suppliers': typeof SuppliersRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
+  '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
   '/warehouses': typeof WarehousesRoute
@@ -806,6 +824,7 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
@@ -866,6 +885,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -893,6 +913,7 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
@@ -953,6 +974,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -980,6 +1002,7 @@ export interface FileRouteTypes {
     | '/complaints'
     | '/cost-centres'
     | '/cost-control'
+    | '/credit-notes'
     | '/crm'
     | '/crm-pipeline'
     | '/customers'
@@ -1040,6 +1063,7 @@ export interface FileRouteTypes {
     | '/suppliers'
     | '/tables'
     | '/tasks'
+    | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
     | '/warehouses'
@@ -1068,6 +1092,7 @@ export interface RootRouteChildren {
   ComplaintsRoute: typeof ComplaintsRoute
   CostCentresRoute: typeof CostCentresRoute
   CostControlRoute: typeof CostControlRoute
+  CreditNotesRoute: typeof CreditNotesRoute
   CrmRoute: typeof CrmRoute
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
@@ -1128,6 +1153,7 @@ export interface RootRouteChildren {
   SuppliersRoute: typeof SuppliersRoute
   TablesRoute: typeof TablesRoute
   TasksRoute: typeof TasksRoute
+  TaxCentreRoute: typeof TaxCentreRoute
   TransfersRoute: typeof TransfersRoute
   TrialBalanceRoute: typeof TrialBalanceRoute
   WarehousesRoute: typeof WarehousesRoute
@@ -1275,6 +1301,13 @@ declare module '@tanstack/react-router' {
       path: '/cost-control'
       fullPath: '/cost-control'
       preLoaderRoute: typeof CostControlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/credit-notes': {
+      id: '/credit-notes'
+      path: '/credit-notes'
+      fullPath: '/credit-notes'
+      preLoaderRoute: typeof CreditNotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/crm': {
@@ -1697,6 +1730,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tax-centre': {
+      id: '/tax-centre'
+      path: '/tax-centre'
+      fullPath: '/tax-centre'
+      preLoaderRoute: typeof TaxCentreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/transfers': {
       id: '/transfers'
       path: '/transfers'
@@ -1756,6 +1796,7 @@ const rootRouteChildren: RootRouteChildren = {
   ComplaintsRoute: ComplaintsRoute,
   CostCentresRoute: CostCentresRoute,
   CostControlRoute: CostControlRoute,
+  CreditNotesRoute: CreditNotesRoute,
   CrmRoute: CrmRoute,
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
@@ -1816,6 +1857,7 @@ const rootRouteChildren: RootRouteChildren = {
   SuppliersRoute: SuppliersRoute,
   TablesRoute: TablesRoute,
   TasksRoute: TasksRoute,
+  TaxCentreRoute: TaxCentreRoute,
   TransfersRoute: TransfersRoute,
   TrialBalanceRoute: TrialBalanceRoute,
   WarehousesRoute: WarehousesRoute,
