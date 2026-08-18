@@ -36,7 +36,7 @@ const history = [
   { doc: "GRN-0912", date: "12 Aug", branch: "Ngong Road", value: 73400, state: "Completed" },
 ];
 
-type SupplierRow = (typeof products)[number] | (typeof history)[number];
+type SupplierRow = Partial<(typeof products)[number]> & Partial<(typeof history)[number]>;
 
 function Suppliers() {
   return (
