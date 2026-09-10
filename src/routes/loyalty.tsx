@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
+import { EmptyState } from "@/components/app/EmptyState";
+import { ksh } from "@/lib/currency";
+import { emptyRecords } from "@/lib/empty-records";
 
 type Member = {
   id: string;
@@ -19,53 +21,7 @@ export const Route = createFileRoute("/loyalty")({
   component: Loyalty,
 });
 
-const members: Member[] = [
-  {
-    id: "LY-001",
-    customer: "Kelvin Otieno",
-    tier: "Gold",
-    points: 4820,
-    balance: 184600,
-    lastVisit: "3 days",
-    status: "Active",
-  },
-  {
-    id: "LY-002",
-    customer: "Sarah Njeri",
-    tier: "Silver",
-    points: 2140,
-    balance: 68400,
-    lastVisit: "1 day",
-    status: "Active",
-  },
-  {
-    id: "LY-003",
-    customer: "Peter Kamau",
-    tier: "Bronze",
-    points: 880,
-    balance: 27800,
-    lastVisit: "18 days",
-    status: "Attention",
-  },
-  {
-    id: "LY-004",
-    customer: "Asha Mohamed",
-    tier: "Gold",
-    points: 5120,
-    balance: 224000,
-    lastVisit: "5 days",
-    status: "Active",
-  },
-  {
-    id: "LY-005",
-    customer: "Brian Oloo",
-    tier: "Silver",
-    points: 1720,
-    balance: 46100,
-    lastVisit: "41 days",
-    status: "Pending",
-  },
-];
+const members = emptyRecords<Member>();
 
 const columns: EnterpriseColumn<Member>[] = [
   { key: "customer", label: "Customer", sortable: true },
@@ -95,10 +51,10 @@ function Loyalty() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Members" value={1246} delta={8} />
-        <Metric label="Points issued" value={842000} />
-        <Metric label="Rewards redeemed" value={318} delta={12} />
-        <Metric label="Loyalty revenue" value={986400} money delta={9.2} />
+        <Metric label="Members" value={members.length} />
+        <Metric label="Points issued" value={0} />
+        <Metric label="Rewards redeemed" value={0} />
+        <Metric label="Loyalty revenue" value={0} money />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Panel>
@@ -114,28 +70,10 @@ function Loyalty() {
         </Panel>
         <Panel>
           <PanelHead title="Tiers and rewards" sub="Current configuration" />
-          <table className="w-full">
-            <thead>
-              <tr>
-                <TH>Tier</TH>
-                <TH className="text-right">Spend threshold</TH>
-                <TH>Reward</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ["Bronze", 0, "1 point / KSh 100"],
-                ["Silver", 50000, "1.5 points / KSh 100"],
-                ["Gold", 150000, "2 points / KSh 100"],
-              ].map(([tier, threshold, reward]) => (
-                <tr key={String(tier)}>
-                  <TD className="font-semibold">{tier}</TD>
-                  <TD className="num text-right">{ksh(Number(threshold))}</TD>
-                  <TD className="text-muted-foreground">{reward}</TD>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <EmptyState
+            title="No loyalty configuration"
+            description="Create tenant-specific tiers and rewards before enrolling members."
+          />
           <div className="border-t border-border p-3">
             <Btn className="w-full">Manual points adjustment</Btn>
           </div>

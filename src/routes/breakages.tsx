@@ -1,98 +1,86 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
+import { ksh } from "@/lib/currency";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
+import { TransactionEngine, type BreakageRecord } from "@/lib/transaction-engine";
 
-type Breakage = {
-  id: string;
-  item: string;
-  quantity: string;
-  reason: string;
-  employee: string;
-  branch: string;
-  value: number;
-  status: string;
-};
+type BreakageRow = BreakageRecord & { quantityLabel: string };
 
 export const Route = createFileRoute("/breakages")({
   head: () => ({ meta: [{ title: "Breakages - Seramet" }] }),
   component: Breakages,
 });
 
-const rows: Breakage[] = [
-  {
-    id: "BRK-001",
-    item: "Dinner plates",
-    quantity: "12 pcs",
-    reason: "Dropped tray",
-    employee: "Cecilia W.",
-    branch: "Westlands",
-    value: 9600,
-    status: "Pending",
-  },
-  {
-    id: "BRK-002",
-    item: "Glass tumblers",
-    quantity: "18 pcs",
-    reason: "Storage shelf collapse",
-    employee: "Brian O.",
-    branch: "Ngong Road",
-    value: 7200,
-    status: "Approved",
-  },
-  {
-    id: "BRK-003",
-    item: "POS scanner",
-    quantity: "1 pc",
-    reason: "Impact damage",
-    employee: "Amina W.",
-    branch: "Ngong Road",
-    value: 14800,
-    status: "Critical",
-  },
-];
-
-const columns: EnterpriseColumn<Breakage>[] = [
-  { key: "item", label: "Item", sortable: true },
-  { key: "quantity", label: "Quantity", sortable: true },
-  { key: "reason", label: "Reason", sortable: true },
-  { key: "employee", label: "Employee", sortable: true },
-  { key: "branch", label: "Branch", sortable: true },
-  {
-    key: "value",
-    label: "Value",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num font-semibold">{ksh(row.value)}</span>,
-  },
-  { key: "status", label: "Approval", render: (row) => <Status>{row.status}</Status> },
-];
-
 function Breakages() {
-  const { branch, branchLabel } = useAppContext();
-  const scopedRows = useBranchRows(rows);
-  const totalValue = scopedRows.reduce((sum, row) => sum + row.value, 0);
+  const navigate = useNavigate();
+  const { branch, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { state, mutate } = useTransactionEngine();
+  const rows: BreakageRow[] = state.breakageRecords
+    .filter((row) => matchesBranch(row.branch))
+    .map((row) => ({ ...row, quantityLabel: `${row.quantity} ${row.unit}` }));
+  const totalValue = rows.reduce((sum, row) => sum + row.value, 0);
+  const columns: EnterpriseColumn<BreakageRow>[] = [
+    { key: "item", label: "Item", sortable: true },
+    { key: "quantityLabel", label: "Quantity", sortable: true },
+    { key: "reason", label: "Reason", sortable: true },
+    { key: "requestedBy", label: "Employee", sortable: true },
+    { key: "branch", label: "Branch", sortable: true },
+    {
+      key: "value",
+      label: "Value",
+      align: "right",
+      sortable: true,
+      render: (row) => <span className="num font-semibold">{ksh(row.value)}</span>,
+    },
+    { key: "status", label: "Approval", render: (row) => <Status>{row.status}</Status> },
+    {
+      key: "id",
+      label: "Action",
+      render: (row) =>
+        row.status === "PENDING" ? (
+          <button
+            type="button"
+            onClick={() => void mutate("approveBreakage", { breakageId: row.id })}
+            className="text-[12px] font-semibold text-primary hover:underline"
+          >
+            Approve
+          </button>
+        ) : (
+          <span className="text-[12px] text-muted-foreground">-</span>
+        ),
+    },
+  ];
+
   return (
     <AppShell
       title="Breakages"
-      subtitle={`Damaged assets and service items requiring approval  -  ${branchLabel}`}
+      subtitle={`Damaged assets and service items requiring approval - ${branchLabel}`}
       actions={
         <>
           <Btn>Upload photo</Btn>
-          <Btn variant="primary">Record breakage</Btn>
+          <Btn variant="primary" onClick={() => void navigate({ to: "/wastage" })}>
+            Record breakage
+          </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Breakage value" value={totalValue} money invert />
+        <Metric label="Breakage value" value={totalValue} money invert={totalValue > 0} />
         <Metric
           label="Pending approval"
-          value={scopedRows.filter((row) => row.status === "Pending").length}
+          value={rows.filter((row) => row.status === "PENDING").length}
         />
-        <Metric label="Incidents" value={scopedRows.length} />
-        <Metric label="Recovered cost" value={Math.round(totalValue * 0.2)} money />
+        <Metric label="Incidents" value={rows.length} />
+        <Metric
+          label="Approved value"
+          value={rows
+            .filter((row) => row.status === "APPROVED")
+            .reduce((sum, row) => sum + row.value, 0)}
+          money
+        />
       </div>
       <Panel className="mt-4">
         <PanelHead
@@ -100,7 +88,7 @@ function Breakages() {
           sub="Reason, employee, value and manager approval state"
         />
         <EnterpriseTable
-          rows={scopedRows}
+          rows={rows}
           columns={columns}
           filters={[`Branch: ${branch}`, "Approval: Open"]}
         />

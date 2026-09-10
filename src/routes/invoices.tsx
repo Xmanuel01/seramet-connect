@@ -4,21 +4,14 @@ import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } 
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
-import {
-  TransactionEngine,
-  type BillingRecord,
-  type PaymentMethod,
-  type PaymentRecord,
-} from "@/lib/transaction-engine";
-import {
-  SerametPrintService,
-  type OrderForPrint,
-  type ProductionStation,
-} from "@/lib/seramet-print-service";
+import { TransactionEngine, type BillingRecord } from "@/lib/transaction-engine";
+import { SerametPrintService } from "@/lib/seramet-print-service";
+import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import {
   createDeliveryLog,
   createInvoicePdfBlob,
@@ -34,6 +27,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SettlementService, settlementReferenceLabel } from "@/payments/settlement-service";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { getSerametAccessToken } from "@/lib/access-token";
 
 export const Route = createFileRoute("/invoices")({
   head: () => ({
@@ -52,7 +48,10 @@ export const Route = createFileRoute("/invoices")({
   component: Invoices,
 });
 
-function invoiceDeliveryRecord(row: BillingRecord): InvoiceDeliveryRecord {
+function invoiceDeliveryRecord(
+  row: BillingRecord,
+  contact: { email: string; phone: string },
+): InvoiceDeliveryRecord {
   return {
     id: row.id,
     customer: row.customer,
@@ -62,8 +61,8 @@ function invoiceDeliveryRecord(row: BillingRecord): InvoiceDeliveryRecord {
     amount: row.total,
     paid: row.paid,
     status: row.status,
-    email: "accounts@mona.example",
-    phone: "254700111222",
+    email: contact.email,
+    phone: contact.phone,
     lines: row.lines.map((line) => ({
       description: line.name,
       quantity: line.quantity,
@@ -72,75 +71,102 @@ function invoiceDeliveryRecord(row: BillingRecord): InvoiceDeliveryRecord {
   };
 }
 
-function invoicePrintOrder(row: BillingRecord, payments: PaymentRecord[]): OrderForPrint {
-  const invoicePayments = payments.filter((payment) => payment.invoiceId === row.id);
-  return {
-    orderId: row.orderIds[0] ?? row.id,
-    branch: row.branch,
-    terminalId: `${row.branch.toUpperCase().replace(/[^A-Z0-9]/g, "")}-POS-01`,
-    table: row.table,
-    orderType:
-      row.customer.includes("Glovo") ||
-      row.customer.includes("Bolt") ||
-      row.customer.includes("Uber")
-        ? "Online"
-        : row.table
-          ? "Dine-In"
-          : "Take Away",
-    requestedBy: invoicePayments[0]?.cashier ?? "Emmanuel Obiambo",
-    cashier: invoicePayments[0]?.cashier ?? "Emmanuel Obiambo",
-    waiter: invoicePayments[0]?.cashier ?? "Emmanuel Obiambo",
-    createdAt: row.issuedAt,
-    customer: row.customer,
-    receiptNumber: row.paymentStatus === "PAID" ? row.id.replace(/^INV/i, "RCP") : undefined,
-    invoiceNumber: row.id,
-    paymentMethod: invoicePayments[0]?.method.replaceAll("_", " ") ?? undefined,
-    paymentReference: invoicePayments[0]?.reference,
-    paymentBreakdown: invoicePayments.map((payment) => ({
-      method: payment.method.replaceAll("_", " "),
-      amount: payment.amount,
-      reference: payment.reference,
-    })),
-    lines: row.lines.map((line) => ({
-      id: line.id,
-      name: line.name,
-      category: line.category,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      productionStation: (line.productionStation ?? "MAIN KITCHEN") as ProductionStation,
-      itemNote: line.itemNote,
-    })),
-    subtotal: row.subtotal,
-    tax: row.tax,
-    total: row.total,
-    paid: row.paid,
-  };
-}
-
 type PrintPreviewState = {
+  billingId: string;
   title: string;
   documentType: "BILL" | "RECEIPT" | "INVOICE";
   template: string;
   content: string;
 };
 
+function InvoiceDeliveryActions({
+  row,
+  openPrintTemplate,
+  downloadPdf,
+  openEmail,
+  openWhatsApp,
+}: {
+  row: BillingRecord;
+  openPrintTemplate: (
+    invoice: BillingRecord,
+    documentType: PrintPreviewState["documentType"],
+  ) => void;
+  downloadPdf: (invoice: BillingRecord) => void;
+  openEmail: (invoice: BillingRecord) => void;
+  openWhatsApp: (invoice: BillingRecord) => void;
+}) {
+  return (
+    <div className="flex gap-1.5">
+      <button
+        type="button"
+        onClick={() => openPrintTemplate(row, row.paymentStatus === "PAID" ? "RECEIPT" : "BILL")}
+        className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
+        title={row.paymentStatus === "PAID" ? "Preview receipt" : "Preview bill"}
+      >
+        <FileText className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={() => downloadPdf(row)}
+        className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
+        title="Download A4 PDF"
+      >
+        <Download className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={() => openEmail(row)}
+        className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
+        title="Email invoice"
+      >
+        <Mail className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={() => openWhatsApp(row)}
+        className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
+        title="Send WhatsApp invoice"
+      >
+        <MessageCircle className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 function Invoices() {
   const [deliveryLog, setDeliveryLog] = useState<DeliveryLogEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [settleInvoice, setSettleInvoice] = useState<BillingRecord | null>(null);
-  const [settlementMethod, setSettlementMethod] = useState<
-    "Credit" | "M-Pesa" | "Cash" | "Bank" | "Card" | "Pending"
-  >("M-Pesa");
-  const [mpesaReference, setMpesaReference] = useState("");
+  const [settlementMethod, setSettlementMethod] = useState("");
+  const [settlementReference, setSettlementReference] = useState("");
+  const [settlementCustomerPhone, setSettlementCustomerPhone] = useState("");
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [receiptPrompt, setReceiptPrompt] = useState<BillingRecord | null>(null);
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { branch, branchLabel } = useAppContext();
-  const { state, apply } = useTransactionEngine();
-  const rows = state.bills.filter((bill) => branch === "All Branches" || bill.branch === branch);
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { state, mutate, syncFromBackend } = useTransactionEngine();
+  const { printCustomerDocument } = useSerametPrintQueue(branchId);
+  const settlementService = new SettlementService();
+  const settlementMethods = settlementService.listMethods(activeTenantId);
+  const selectedSettlementMethod = settlementMethods.find(
+    (method) => method.id === settlementMethod,
+  );
+  let identity = { email: "", phone: "" };
+  let identityConfigurationError = "";
+  try {
+    const configuredIdentity = getConfigurationRepository().getDocumentIdentity(
+      activeTenantId,
+      branchId,
+    );
+    identity = { email: configuredIdentity.email, phone: configuredIdentity.phone };
+  } catch (error) {
+    identityConfigurationError =
+      error instanceof Error ? error.message : "Document identity is not configured";
+  }
+  const rows = state.bills.filter((bill) => matchesBranch(bill.branchId ?? bill.branch));
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
     .filter((row) => !periodDate || row.issuedAt.slice(0, 10) === periodDate)
@@ -156,7 +182,9 @@ function Invoices() {
   const overdue = activeRows
     .filter((row) => row.paymentStatus !== "PAID")
     .reduce((sum, row) => sum + row.total - row.paid, 0);
-  const showSettleColumn = activeRows.some((row) => row.paymentStatus !== "PAID");
+  const showSettleColumn = activeRows.some((row) =>
+    ["UNPAID", "PARTIAL"].includes(row.paymentStatus),
+  );
 
   const logDelivery = (entry: DeliveryLogEntry) => {
     setDeliveryLog((current) => [entry, ...current].slice(0, 8));
@@ -173,6 +201,7 @@ function Invoices() {
   };
 
   const settlementLabel = (invoice: BillingRecord) => {
+    if (invoice.paymentStatus === "PROVIDER_RECEIVABLE") return "Provider receivable";
     if (invoice.status === "PENDING") return "Pending";
     const methods = state.payments
       .filter((payment) => payment.invoiceId === invoice.id)
@@ -182,7 +211,7 @@ function Invoices() {
   };
 
   const downloadPdf = (invoice: BillingRecord) => {
-    const record = invoiceDeliveryRecord(invoice);
+    const record = invoiceDeliveryRecord(invoice, identity);
     const blob = createInvoicePdfBlob(record);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -197,35 +226,48 @@ function Invoices() {
     invoice: BillingRecord,
     documentType: PrintPreviewState["documentType"],
   ) => {
-    const profile = SerametPrintService.getBranchHardwareProfile(invoice.branch);
-    const job = SerametPrintService.createDocumentJob(
-      profile,
-      invoicePrintOrder(invoice, state.payments),
-      documentType,
-    );
-    setPrintPreview({
-      title: `${documentType === "INVOICE" ? "A4 tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
-      documentType,
-      template: job.template,
-      content: job.content,
-    });
-    logDelivery(
-      createDeliveryLog(
-        invoiceDeliveryRecord(invoice),
-        documentType === "RECEIPT" ? "PDF" : "PDF",
-        `Prepared ${job.template}`,
-      ),
-    );
+    try {
+      const profile = SerametPrintService.getBranchHardwareProfile(invoice.branch);
+      const job = SerametPrintService.createDocumentJob(
+        profile,
+        billingRecordToPrintOrder(invoice, state.payments, state.orders),
+        documentType,
+      );
+      setPrintPreview({
+        billingId: invoice.id,
+        title: `${documentType === "INVOICE" ? "A4 tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
+        documentType,
+        template: job.template,
+        content: job.content,
+      });
+      logDelivery(
+        createDeliveryLog(
+          invoiceDeliveryRecord(invoice, identity),
+          "PDF",
+          `Prepared ${job.template}`,
+        ),
+      );
+    } catch (error) {
+      setWarning(error instanceof Error ? error.message : "Printing is not configured.");
+    }
   };
 
   const openEmail = (invoice: BillingRecord) => {
-    const record = invoiceDeliveryRecord(invoice);
+    if (!identity.email) {
+      setWarning(identityConfigurationError || "No document email is configured for this branch.");
+      return;
+    }
+    const record = invoiceDeliveryRecord(invoice, identity);
     window.location.href = invoiceEmailLink(record);
     logDelivery(createDeliveryLog(record, "Email", record.email ?? "No email"));
   };
 
   const openWhatsApp = (invoice: BillingRecord) => {
-    const record = invoiceDeliveryRecord(invoice);
+    if (!identity.phone) {
+      setWarning(identityConfigurationError || "No document phone is configured for this branch.");
+      return;
+    }
+    const record = invoiceDeliveryRecord(invoice, identity);
     window.open(invoiceWhatsAppLink(record), "_blank", "noopener,noreferrer");
     logDelivery(createDeliveryLog(record, "WhatsApp", record.phone ?? "No phone"));
   };
@@ -236,9 +278,7 @@ function Invoices() {
       return;
     }
     const billIds = selectedBills.map((row) => row.id);
-    apply((current) =>
-      TransactionEngine.mergeBills(current, billIds, "Emmanuel K.", "Customer requested one bill"),
-    );
+    void mutate("mergeBills", { billIds, reason: "Customer requested one bill" });
     setSelectedIds([]);
   };
 
@@ -248,17 +288,13 @@ function Invoices() {
       setWarning("Select one invoice before splitting.");
       return;
     }
-    apply((current) =>
-      TransactionEngine.splitBill(
-        current,
-        bill.id,
-        [
-          { label: "Guest 1", amount: Math.floor(bill.total / 2) },
-          { label: "Guest 2", amount: bill.total - Math.floor(bill.total / 2) },
-        ],
-        "Amina W.",
-      ),
-    );
+    void mutate("splitBill", {
+      billId: bill.id,
+      splits: [
+        { label: "Guest 1", amount: Math.floor(bill.total / 2) },
+        { label: "Guest 2", amount: bill.total - Math.floor(bill.total / 2) },
+      ],
+    });
     setSelectedIds([]);
   };
 
@@ -274,100 +310,89 @@ function Invoices() {
   const openSettle = (invoice: BillingRecord) => {
     setSettleInvoice(invoice);
     setSettlementMethod(
-      invoice.customer.includes("Glovo") ||
-        invoice.customer.includes("Bolt") ||
-        invoice.customer.includes("Uber")
-        ? "Credit"
-        : "M-Pesa",
+      settlementService.recommendMethod(activeTenantId, invoice, state)?.id ??
+        settlementMethods[0]?.id ??
+        "",
     );
     setSettlementAmount(invoice.total - invoice.paid);
-    setMpesaReference("");
+    setSettlementReference("");
+    setSettlementCustomerPhone("");
   };
 
-  const paymentMethodForSettlement = (): PaymentMethod => {
-    if (settlementMethod === "Credit") return "CUSTOMER_CREDIT";
-    if (settlementMethod === "Cash") return "CASH";
-    if (settlementMethod === "Card") return "CARD";
-    if (settlementMethod === "Bank") return "BANK_TRANSFER";
-    return "MPESA_TILL_MANUAL";
-  };
-
-  const confirmSettlement = () => {
+  const confirmSettlement = async () => {
     if (!settleInvoice) return;
-    if (settlementMethod === "Pending") {
-      apply((current) => ({
-        ...current,
-        bills: current.bills.map((bill) =>
-          bill.id === settleInvoice.id ? { ...bill, status: "PENDING" } : bill,
-        ),
-        auditEvents: [
-          {
-            id: `AUD-PENDING-${Date.now()}`,
-            time: new Date().toISOString(),
-            actor: "Amina W.",
-            role: "Cashier",
-            branch: settleInvoice.branch,
-            module: "Invoices",
-            action: "Marked invoice pending",
-            record: settleInvoice.id,
-            before: settleInvoice.status,
-            after: "PENDING - settlement deferred after close",
-          },
-          ...current.auditEvents,
-        ],
-      }));
+    if (settlementMethod === "PENDING") {
+      await mutate("markBillPending", { invoiceId: settleInvoice.id, module: "Invoices" });
       setSettleInvoice(null);
       return;
     }
     if (settlementAmount <= 0) return;
     const amount = Math.min(settlementAmount, settleInvoice.total - settleInvoice.paid);
-    apply((current) => {
-      if (settlementMethod === "Cash") {
-        return TransactionEngine.recordCashPayment(current, settleInvoice.id, {
-          received: amount,
-          cashier: "Amina W.",
-          terminal: "WEST-POS-01",
-        });
+    const disposition = selectedSettlementMethod
+      ? settlementService.disposition(selectedSettlementMethod)
+      : undefined;
+    if (disposition === "PROVIDER_INITIATION_REQUIRED" && selectedSettlementMethod) {
+      if (selectedSettlementMethod.requiresCustomer && !settlementCustomerPhone.trim()) {
+        setWarning("Enter the customer phone before initiating this payment.");
+        return;
       }
-      if (settlementMethod === "Card") {
-        return TransactionEngine.recordCardPayment(current, settleInvoice.id, {
+      const operation =
+        selectedSettlementMethod.metadata["providerOperation"] === "QR_PAYMENT" ? "qr" : "prompt";
+      const response = await fetch(
+        `/api/seramet/payments/${encodeURIComponent(selectedSettlementMethod.code)}/${operation}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(getSerametAccessToken()
+              ? { Authorization: `Bearer ${getSerametAccessToken()}` }
+              : {}),
+            "x-seramet-user-id": currentUser.id,
+            "x-seramet-tenant-id": activeTenantId,
+            "x-seramet-branch-id": branchId,
+          },
+          body: JSON.stringify({
+            invoiceId: settleInvoice.id,
+            amount,
+            ...(settlementCustomerPhone.trim()
+              ? { customerPhone: settlementCustomerPhone.trim() }
+              : {}),
+            idempotencyKey: `invoice:${settleInvoice.id}:${selectedSettlementMethod.id}:${amount}`,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { message?: string };
+        setWarning(body.message ?? "Provider payment could not be initiated.");
+        return;
+      }
+      await syncFromBackend();
+      setWarning("Payment request initiated. The invoice stays open until verified confirmation.");
+      setSettleInvoice(null);
+      return;
+    }
+    try {
+      await mutate("settleInvoice", {
+        input: {
+          tenantId: activeTenantId,
+          invoiceId: settleInvoice.id,
+          paymentMethodId: settlementMethod,
           amount,
-          reference: `CARD-${Date.now()}`,
-          cashier: "Amina W.",
-          terminal: "CARD-WEST-01",
-          acquirer: "Card Acquirer",
-          batch: "BATCH-01",
-        });
-      }
-      if (settlementMethod === "Bank") {
-        return TransactionEngine.recordBankPayment(current, settleInvoice.id, {
-          amount,
-          reference: `BANK-${Date.now()}`,
-          cashier: "Amina W.",
-          bankAccount: "Mona Swahili Operating",
-          sender: settleInvoice.customer,
-        });
-      }
-      if (settlementMethod === "Credit") {
-        return TransactionEngine.applyPayment(current, settleInvoice.id, {
-          amount,
-          method: paymentMethodForSettlement(),
-          provider: "Partner Credit",
-          reference: `CREDIT-${settleInvoice.id}-${Date.now()}`,
-          cashier: "Amina W.",
-          terminal: "CHANNEL-CREDIT",
-          reconciliationStatus: "RECONCILED",
-          settlementStatus: "PENDING",
-        });
-      }
-      return TransactionEngine.recordManualTillPayment(current, settleInvoice.id, {
-        amount,
-        reference: `MPESA-${mpesaReference || Date.now()}`,
-        cashier: "Amina W.",
-        terminal: "WEST-POS-01",
+          reference: settlementReference,
+          cashier: currentUser.name,
+        },
       });
-    });
-    setReceiptPrompt(settleInvoice);
+    } catch (error) {
+      setWarning(error instanceof Error ? error.message : "Settlement could not be recorded.");
+      return;
+    }
+    if (disposition === "CONFIRMED") {
+      setReceiptPrompt(settleInvoice);
+    } else if (disposition === "AWAITING_VERIFICATION") {
+      setWarning("Payment reference recorded for verification. No paid receipt was generated.");
+    } else if (disposition === "ON_ACCOUNT") {
+      setWarning("Invoice posted to the configured customer receivable account.");
+    }
     setSettleInvoice(null);
   };
 
@@ -388,9 +413,8 @@ function Invoices() {
           label="Invoiced"
           value={activeRows.reduce((sum, row) => sum + row.total, 0)}
           money
-          delta={12.4}
         />
-        <Metric label="Outstanding" value={outstanding} money delta={4.8} invert />
+        <Metric label="Outstanding" value={outstanding} money invert />
         <Metric label="Paid" value={paid} money />
         <Metric
           label="Open / partial"
@@ -436,111 +460,167 @@ function Invoices() {
             }}
           />
         </div>
-        <DataTable
-          cols={[
-            "",
-            "Invoice",
-            "Orders",
-            "Customer",
-            { l: "Amount", r: true },
-            { l: "Outstanding", r: true },
-            "Status",
-            "Settlement",
-            ...(showSettleColumn ? ["Settle"] : []),
-            "Delivery",
-          ]}
-        >
-          {activeRows.map((row) => (
-            <tr key={row.id} className="hover:bg-secondary/50">
-              <TD>
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(row.id)}
-                  onChange={() => toggleInvoice(row.id)}
-                  className="h-4 w-4 accent-primary"
-                />
-              </TD>
-              <TD className="num font-semibold">{row.id}</TD>
-              <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
-              <TD>{row.customer}</TD>
-              <TD className="num text-right">{ksh(row.total)}</TD>
-              <TD className="num text-right font-semibold">{ksh(row.total - row.paid)}</TD>
-              <TD>
-                <Status>{row.status}</Status>
-              </TD>
-              <TD>
-                <Status>{settlementLabel(row)}</Status>
-              </TD>
-              {showSettleColumn && (
+        <div className="hidden md:block">
+          <DataTable
+            cols={[
+              "",
+              "Invoice",
+              "Orders",
+              "Customer",
+              { l: "Amount", r: true },
+              { l: "Outstanding", r: true },
+              "Status",
+              "Settlement",
+              ...(showSettleColumn ? ["Settle"] : []),
+              "Delivery",
+            ]}
+          >
+            {activeRows.map((row) => (
+              <tr key={row.id} className="hover:bg-secondary/50">
                 <TD>
-                  {row.paymentStatus !== "PAID" && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(row.id)}
+                    onChange={() => toggleInvoice(row.id)}
+                    className="h-4 w-4 accent-primary"
+                  />
+                </TD>
+                <TD className="num font-semibold">{row.id}</TD>
+                <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
+                <TD>{row.customer}</TD>
+                <TD className="num text-right">{ksh(row.total)}</TD>
+                <TD className="num text-right font-semibold">{ksh(row.total - row.paid)}</TD>
+                <TD>
+                  <Status>{row.status}</Status>
+                </TD>
+                <TD>
+                  <Status>{settlementLabel(row)}</Status>
+                </TD>
+                {showSettleColumn && (
+                  <TD>
+                    {["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
+                      <Btn onClick={() => openSettle(row)}>Settle</Btn>
+                    )}
+                  </TD>
+                )}
+                <TD>
+                  <InvoiceDeliveryActions
+                    row={row}
+                    openPrintTemplate={openPrintTemplate}
+                    downloadPdf={downloadPdf}
+                    openEmail={openEmail}
+                    openWhatsApp={openWhatsApp}
+                  />
+                </TD>
+              </tr>
+            ))}
+          </DataTable>
+        </div>
+        <div className="mt-3 divide-y divide-border border-t border-border md:hidden">
+          {activeRows.map((row) => (
+            <article key={row.id} className="space-y-3 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <label className="flex min-w-0 items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(row.id)}
+                    onChange={() => toggleInvoice(row.id)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                  />
+                  <span className="min-w-0">
+                    <span className="num block truncate text-[13px] font-bold">{row.id}</span>
+                    <span className="block truncate text-[12px] text-muted-foreground">
+                      {row.customer}
+                    </span>
+                  </span>
+                </label>
+                <Status>{settlementLabel(row)}</Status>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-[12px]">
+                <div>
+                  <span className="block text-muted-foreground">Amount</span>
+                  <span className="num font-semibold">{ksh(row.total)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="block text-muted-foreground">Outstanding</span>
+                  <span className="num font-bold">{ksh(row.total - row.paid)}</span>
+                </div>
+                <div className="col-span-2 min-w-0">
+                  <span className="block text-muted-foreground">Orders</span>
+                  <span className="num block truncate">{row.orderIds.join(", ")}</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Status>{row.status}</Status>
+                <div className="flex items-center gap-1.5">
+                  {showSettleColumn && ["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
                     <Btn onClick={() => openSettle(row)}>Settle</Btn>
                   )}
-                </TD>
-              )}
-              <TD>
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() =>
-                      openPrintTemplate(row, row.paymentStatus === "PAID" ? "RECEIPT" : "BILL")
-                    }
-                    className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
-                    title={row.paymentStatus === "PAID" ? "Preview receipt" : "Preview bill"}
-                  >
-                    <FileText className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => downloadPdf(row)}
-                    className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
-                    title="Download A4 PDF"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => openEmail(row)}
-                    className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
-                    title="Email invoice"
-                  >
-                    <Mail className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => openWhatsApp(row)}
-                    className="grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary"
-                    title="Send WhatsApp invoice"
-                  >
-                    <MessageCircle className="h-4 w-4" />
-                  </button>
+                  <InvoiceDeliveryActions
+                    row={row}
+                    openPrintTemplate={openPrintTemplate}
+                    downloadPdf={downloadPdf}
+                    openEmail={openEmail}
+                    openWhatsApp={openWhatsApp}
+                  />
                 </div>
-              </TD>
-            </tr>
+              </div>
+            </article>
           ))}
-        </DataTable>
+          {activeRows.length === 0 && (
+            <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+              No invoices match the current filters.
+            </div>
+          )}
+        </div>
       </Panel>
       <Panel className="mt-4">
         <PanelHead
           title="Delivery log"
           sub="PDF, email and WhatsApp delivery actions are recorded in-session"
         />
-        <DataTable cols={["Invoice", "Channel", "Destination", "Created", "Status"]}>
+        <div className="hidden md:block">
+          <DataTable cols={["Invoice", "Channel", "Destination", "Created", "Status"]}>
+            {deliveryLog.map((entry) => (
+              <tr key={entry.id} className="hover:bg-secondary/50">
+                <TD className="font-semibold">{entry.invoiceId}</TD>
+                <TD>{entry.channel}</TD>
+                <TD className="text-muted-foreground">{entry.destination}</TD>
+                <TD className="text-muted-foreground">{entry.createdAt}</TD>
+                <TD>
+                  <Status>{entry.status}</Status>
+                </TD>
+              </tr>
+            ))}
+            {deliveryLog.length === 0 && (
+              <tr>
+                <TD className="text-muted-foreground" colSpan={5}>
+                  No invoice delivery actions yet.
+                </TD>
+              </tr>
+            )}
+          </DataTable>
+        </div>
+        <div className="divide-y divide-border border-t border-border md:hidden">
           {deliveryLog.map((entry) => (
-            <tr key={entry.id} className="hover:bg-secondary/50">
-              <TD className="font-semibold">{entry.invoiceId}</TD>
-              <TD>{entry.channel}</TD>
-              <TD className="text-muted-foreground">{entry.destination}</TD>
-              <TD className="text-muted-foreground">{entry.createdAt}</TD>
-              <TD>
+            <article key={entry.id} className="space-y-2 px-4 py-3 text-[12px]">
+              <div className="flex items-center justify-between gap-3">
+                <span className="num font-bold">{entry.invoiceId}</span>
                 <Status>{entry.status}</Status>
-              </TD>
-            </tr>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">{entry.channel}</span>
+                <span className="text-right text-muted-foreground">{entry.createdAt}</span>
+              </div>
+              <div className="break-words text-muted-foreground">{entry.destination}</div>
+            </article>
           ))}
           {deliveryLog.length === 0 && (
-            <tr>
-              <TD className="text-muted-foreground" colSpan={5}>
-                No invoice delivery actions yet.
-              </TD>
-            </tr>
+            <div className="px-4 py-6 text-[12px] text-muted-foreground">
+              No invoice delivery actions yet.
+            </div>
           )}
-        </DataTable>
+        </div>
       </Panel>
       <Dialog open={!!settleInvoice} onOpenChange={(open) => !open && setSettleInvoice(null)}>
         <DialogContent className="max-w-[560px] border-border bg-card">
@@ -565,17 +645,21 @@ function Invoices() {
                   Settlement method
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {(["Credit", "M-Pesa", "Cash", "Bank", "Card", "Pending"] as const).map(
-                    (method) => (
-                      <button
-                        key={method}
-                        onClick={() => setSettlementMethod(method)}
-                        className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === method ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
-                      >
-                        {method}
-                      </button>
-                    ),
-                  )}
+                  {settlementMethods.map((method) => (
+                    <button
+                      key={method.id}
+                      onClick={() => setSettlementMethod(method.id)}
+                      className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === method.id ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
+                    >
+                      {method.displayName}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setSettlementMethod("PENDING")}
+                    className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === "PENDING" ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
+                  >
+                    Pending
+                  </button>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -589,33 +673,49 @@ function Invoices() {
                     className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
                   />
                 </label>
-                {settlementMethod === "M-Pesa" && (
+                {selectedSettlementMethod?.requiresReference && (
                   <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                    M-Pesa transaction code
+                    {settlementReferenceLabel(selectedSettlementMethod)}
                     <input
-                      maxLength={12}
-                      value={mpesaReference}
+                      maxLength={64}
+                      value={settlementReference}
                       onChange={(event) =>
-                        setMpesaReference(
+                        setSettlementReference(
                           event.target.value
-                            .replace(/[^a-z0-9]/gi, "")
+                            .replace(/[^a-z0-9._/-]/gi, "")
                             .toUpperCase()
-                            .slice(0, 12),
+                            .slice(0, 64),
                         )
                       }
                       className="h-10 rounded-md border border-border bg-card px-3 text-[13px] uppercase text-foreground outline-none"
-                      placeholder="TH7X8A1B2C"
+                      placeholder="Enter provider reference"
                     />
                   </label>
                 )}
+                {selectedSettlementMethod?.requiresCustomer &&
+                  selectedSettlementMethod.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
+                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                      Customer phone
+                      <input
+                        inputMode="tel"
+                        maxLength={16}
+                        value={settlementCustomerPhone}
+                        onChange={(event) =>
+                          setSettlementCustomerPhone(event.target.value.replace(/[^+0-9]/g, ""))
+                        }
+                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
+                        placeholder="2547XXXXXXXX"
+                      />
+                    </label>
+                  )}
               </div>
-              {settlementMethod === "Credit" && (
+              {selectedSettlementMethod?.category === "CREDIT" && (
                 <div className="rounded-md bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
                   Credit settlement posts to the customer or partner receivable account for later
                   reconciliation.
                 </div>
               )}
-              {settlementMethod === "Pending" && (
+              {settlementMethod === "PENDING" && (
                 <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                   Pending keeps the invoice open for later settlement after restaurant close.
                 </div>
@@ -623,7 +723,7 @@ function Invoices() {
               <div className="flex justify-end gap-2 border-t border-border pt-4">
                 <Btn onClick={() => setSettleInvoice(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={confirmSettlement}>
-                  {settlementMethod === "Pending" ? "Mark pending" : "Settle invoice"}
+                  {settlementMethod === "PENDING" ? "Mark pending" : "Settle invoice"}
                 </Btn>
               </div>
             </div>
@@ -645,7 +745,10 @@ function Invoices() {
             <Btn
               variant="primary"
               onClick={() => {
-                if (receiptPrompt) openPrintTemplate(receiptPrompt, "RECEIPT");
+                if (receiptPrompt) {
+                  const refreshed = state.bills.find((bill) => bill.id === receiptPrompt.id);
+                  openPrintTemplate(refreshed ?? receiptPrompt, "RECEIPT");
+                }
                 setReceiptPrompt(null);
               }}
             >
@@ -692,7 +795,23 @@ function Invoices() {
                 >
                   Download template
                 </Btn>
-                <Btn variant="primary" onClick={() => window.print()}>
+                <Btn
+                  variant="primary"
+                  onClick={() => {
+                    const source = state.bills.find((bill) => bill.id === printPreview.billingId);
+                    if (!source) {
+                      setWarning("The billing record is no longer available to print.");
+                      return;
+                    }
+                    const result = printCustomerDocument(
+                      billingRecordToPrintOrder(source, state.payments, state.orders),
+                      printPreview.documentType,
+                    );
+                    if (result.jobs.length === 0) {
+                      setWarning(result.skipped[0] ?? "Printing is not configured.");
+                    }
+                  }}
+                >
                   Print
                 </Btn>
               </div>

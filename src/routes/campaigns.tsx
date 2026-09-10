@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
+import { emptyRecords } from "@/lib/empty-records";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type Campaign = {
@@ -38,12 +39,7 @@ export const Route = createFileRoute("/campaigns")({
   component: Campaigns,
 });
 
-const rows: Campaign[] = [
-  { id: "CMP-31", name: "Weekend pilau offer", channel: "WhatsApp", segment: "Frequent diners", branch: "Westlands", sent: 480, redeemed: 96, revenue: 184000, status: "Completed" },
-  { id: "CMP-32", name: "Lapsed customer win-back", channel: "SMS", segment: "Lapsed 60 days", branch: "Ngong Road", sent: 320, redeemed: 28, revenue: 51200, status: "In progress" },
-  { id: "CMP-33", name: "Corporate lunch bundles", channel: "Email", segment: "Corporate accounts", branch: "Westlands", sent: 64, redeemed: 11, revenue: 226000, status: "In progress" },
-  { id: "CMP-34", name: "Birthday dessert voucher", channel: "WhatsApp", segment: "Birthday month", branch: "Ngong Road", sent: 0, redeemed: 0, revenue: 0, status: "Pending" },
-];
+const rows = emptyRecords<Campaign>();
 
 const columns: EnterpriseColumn<Campaign>[] = [
   { key: "name", label: "Campaign", sortable: true },

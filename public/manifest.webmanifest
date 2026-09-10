@@ -1,0 +1,23 @@
+{
+  "name": "Seramet Guest",
+  "short_name": "Seramet",
+  "description": "Restaurant menus, reservations and direct ordering powered by Seramet.",
+  "start_url": "/guest/",
+  "display": "standalone",
+  "background_color": "#f8f7f3",
+  "theme_color": "#147d64",
+  "icons": [
+    {
+      "src": "/brand/seramet-pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/seramet-pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

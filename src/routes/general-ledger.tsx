@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type JournalEntry = {
@@ -29,7 +30,8 @@ export const Route = createFileRoute("/general-ledger")({
       { property: "og:title", content: "General Ledger - Seramet" },
       {
         property: "og:description",
-        content: "Double-entry journal postings generated from sales, purchases, cash and expenses.",
+        content:
+          "Double-entry journal postings generated from sales, purchases, cash and expenses.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -38,15 +40,7 @@ export const Route = createFileRoute("/general-ledger")({
   component: GeneralLedger,
 });
 
-const rows: JournalEntry[] = [
-  { id: "JV-4401", date: "15 Aug", account: "Sales revenue", accountCode: "4000", source: "POS settlement", branch: "Westlands", debit: 0, credit: 184300, status: "Posted" },
-  { id: "JV-4401", date: "15 Aug", account: "Cash on hand", accountCode: "1010", source: "POS settlement", branch: "Westlands", debit: 96400, credit: 0, status: "Posted" },
-  { id: "JV-4401", date: "15 Aug", account: "M-Pesa clearing", accountCode: "1020", source: "POS settlement", branch: "Westlands", debit: 87900, credit: 0, status: "Posted" },
-  { id: "JV-4402", date: "15 Aug", account: "Inventory", accountCode: "1300", source: "Goods received GRN-118", branch: "Ngong Road", debit: 62400, credit: 0, status: "Posted" },
-  { id: "JV-4402", date: "15 Aug", account: "Accounts payable", accountCode: "2100", source: "Goods received GRN-118", branch: "Ngong Road", debit: 0, credit: 62400, status: "Posted" },
-  { id: "JV-4403", date: "15 Aug", account: "Utilities expense", accountCode: "6200", source: "Electricity token", branch: "Ngong Road", debit: 15000, credit: 0, status: "Draft" },
-  { id: "JV-4403", date: "15 Aug", account: "Bank", accountCode: "1030", source: "Electricity token", branch: "Ngong Road", debit: 0, credit: 15000, status: "Draft" },
-];
+const rows: JournalEntry[] = emptyRecords();
 
 const columns: EnterpriseColumn<JournalEntry>[] = [
   { key: "id", label: "Voucher", sortable: true },
@@ -72,20 +66,7 @@ const columns: EnterpriseColumn<JournalEntry>[] = [
   { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
 ];
 
-const chartOfAccounts = [
-  { code: "1010", name: "Cash on hand", type: "Asset" },
-  { code: "1020", name: "M-Pesa clearing", type: "Asset" },
-  { code: "1030", name: "Bank", type: "Asset" },
-  { code: "1200", name: "Accounts receivable", type: "Asset" },
-  { code: "1300", name: "Inventory", type: "Asset" },
-  { code: "1500", name: "Fixed assets", type: "Asset" },
-  { code: "2100", name: "Accounts payable", type: "Liability" },
-  { code: "2200", name: "Tax payable", type: "Liability" },
-  { code: "3000", name: "Owner equity", type: "Equity" },
-  { code: "4000", name: "Sales revenue", type: "Income" },
-  { code: "5000", name: "Cost of sales", type: "Expense" },
-  { code: "6200", name: "Utilities expense", type: "Expense" },
-];
+const chartOfAccounts = emptyRecords();
 
 function GeneralLedger() {
   const { branch, branchLabel } = useAppContext();
@@ -120,7 +101,7 @@ function GeneralLedger() {
         <EnterpriseTable
           rows={scopedRows}
           columns={columns}
-          filters={[`Branch: ${branch}`, "Period: Aug 2026"]}
+          filters={[`Branch: ${branch}`, "Period: Current"]}
         />
       </Panel>
       <Panel className="mt-4">
@@ -134,7 +115,9 @@ function GeneralLedger() {
               <span>
                 <span className="num text-muted-foreground">{account.code}</span> {account.name}
               </span>
-              <span className="text-[11px] font-semibold text-muted-foreground">{account.type}</span>
+              <span className="text-[11px] font-semibold text-muted-foreground">
+                {account.type}
+              </span>
             </div>
           ))}
         </div>

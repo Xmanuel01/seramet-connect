@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/accounting")({
@@ -26,14 +26,34 @@ export const Route = createFileRoute("/accounting")({
 });
 
 const modules: { to: string; label: string; sub: string }[] = [
-  { to: "/daily-sales-journal", label: "Daily sales journal", sub: "Z-report posted to the ledger each trading day" },
+  {
+    to: "/daily-sales-journal",
+    label: "Daily sales journal",
+    sub: "Z-report posted to the ledger each trading day",
+  },
   { to: "/general-ledger", label: "General ledger", sub: "Chart of accounts and journal vouchers" },
-  { to: "/trial-balance", label: "Trial balance", sub: "Debits and credits by account, per period" },
-  { to: "/prime-cost", label: "Prime cost", sub: "COGS + labour against sales, the restaurant KPI" },
+  {
+    to: "/trial-balance",
+    label: "Trial balance",
+    sub: "Debits and credits by account, per period",
+  },
+  {
+    to: "/prime-cost",
+    label: "Prime cost",
+    sub: "COGS + labour against sales, the restaurant KPI",
+  },
   { to: "/budgets", label: "Budgets", sub: "Branch budget vs actual with variance" },
-  { to: "/cost-centres", label: "Cost centres", sub: "Kitchen, bar, delivery and front of house P&L" },
+  {
+    to: "/cost-centres",
+    label: "Cost centres",
+    sub: "Kitchen, bar, delivery and front of house P&L",
+  },
   { to: "/tax-centre", label: "Tax centre", sub: "VAT, catering levy, withholding and PAYE" },
-  { to: "/credit-notes", label: "Credit & debit notes", sub: "Adjustments against invoices and supplier bills" },
+  {
+    to: "/credit-notes",
+    label: "Credit & debit notes",
+    sub: "Adjustments against invoices and supplier bills",
+  },
   { to: "/depreciation", label: "Depreciation", sub: "Fixed asset schedules and monthly charge" },
   { to: "/period-close", label: "Period close", sub: "Day-end, month-end checklist and lock" },
   { to: "/profit-loss", label: "Profit & loss", sub: "Income statement by branch and period" },

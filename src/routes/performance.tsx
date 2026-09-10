@@ -1,110 +1,101 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
-
-type Review = {
-  id: string;
-  employee: string;
-  role: string;
-  branch: string;
-  period: string;
-  score: number;
-  attendance: number;
-  reviewer: string;
-  status: string;
-};
+import { Btn, Metric, Panel, PanelHead, TD, TH } from "@/components/app/ui";
+import { useAppContext } from "@/lib/app-context";
+import {
+  configuredTenantCurrency,
+  formatDuration,
+  formatMinor,
+  ManagementReadModelState,
+  QualityStatus,
+} from "@/management/ui";
+import { useManagementIntelligence } from "@/management/use-management-intelligence";
 
 export const Route = createFileRoute("/performance")({
-  head: () => ({
-    meta: [
-      { title: "Performance Reviews - Seramet" },
-      {
-        name: "description",
-        content:
-          "Employee performance cycles with scores, attendance context, reviewer and approval state.",
-      },
-      { property: "og:title", content: "Performance Reviews - Seramet" },
-      {
-        property: "og:description",
-        content: "Run review cycles per branch with objective attendance and service data.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Staff Performance - Seramet" }] }),
   component: Performance,
 });
 
-const rows: Review[] = [
-  { id: "PRF-101", employee: "Amina W.", role: "Cashier", branch: "Westlands", period: "Q3 2026", score: 88, attendance: 97, reviewer: "Branch Manager", status: "Completed" },
-  { id: "PRF-102", employee: "Brian O.", role: "Storekeeper", branch: "Ngong Road", period: "Q3 2026", score: 74, attendance: 91, reviewer: "Branch Manager", status: "In progress" },
-  { id: "PRF-103", employee: "Cecilia W.", role: "Chef", branch: "Westlands", period: "Q3 2026", score: 92, attendance: 99, reviewer: "General Manager", status: "Approved" },
-  { id: "PRF-104", employee: "Dennis K.", role: "Rider", branch: "Ngong Road", period: "Q3 2026", score: 61, attendance: 82, reviewer: "Branch Manager", status: "Attention" },
-];
-
-const columns: EnterpriseColumn<Review>[] = [
-  { key: "employee", label: "Employee", sortable: true },
-  { key: "role", label: "Role", sortable: true },
-  { key: "branch", label: "Branch", sortable: true },
-  { key: "period", label: "Cycle", sortable: true },
-  {
-    key: "score",
-    label: "Score",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num font-semibold">{row.score}</span>,
-  },
-  {
-    key: "attendance",
-    label: "Attendance",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num">{row.attendance}%</span>,
-  },
-  { key: "reviewer", label: "Reviewer" },
-  { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
-];
-
 function Performance() {
-  const { branch, branchLabel } = useAppContext();
-  const scopedRows = useBranchRows(rows);
-  const avg = scopedRows.length
-    ? Math.round(scopedRows.reduce((sum, row) => sum + row.score, 0) / scopedRows.length)
-    : 0;
+  const { activeTenantId, branchLabel, platformState } = useAppContext();
+  const management = useManagementIntelligence();
+  const staff = management.control?.staff ?? [];
+  const currency =
+    management.control?.latest?.currency ??
+    configuredTenantCurrency(platformState.tenants, activeTenantId);
   return (
     <AppShell
       title="Performance"
-      subtitle={`Review cycles backed by attendance and service data  -  ${branchLabel}`}
-      actions={
-        <>
-          <Btn>Review template</Btn>
-          <Btn variant="primary">Start cycle</Btn>
-        </>
-      }
+      subtitle={`Factual attendance and service metrics - ${branchLabel}`}
+      actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Average score" value={avg} />
-        <Metric
-          label="Reviews open"
-          value={scopedRows.filter((row) => row.status === "In progress").length}
-        />
-        <Metric
-          label="Needs attention"
-          value={scopedRows.filter((row) => row.status === "Attention").length}
-          invert
-        />
-        <Metric label="Cycle" value="Q3 2026" />
-      </div>
-      <Panel className="mt-4">
-        <PanelHead title="Review register" sub="Scores are visible to managers only, in line with HR privacy" />
-        <EnterpriseTable
-          rows={scopedRows}
-          columns={columns}
-          filters={[`Branch: ${branch}`, "Cycle: Q3 2026"]}
-        />
-      </Panel>
+      <ManagementReadModelState
+        status={management.status}
+        error={management.error}
+        empty={staff.length === 0}
+      />
+      {management.status === "ready" && staff.length > 0 && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Metric label="Employees measured" value={staff.length} />
+            <Metric
+              label="Worked hours"
+              value={(staff.reduce((sum, row) => sum + row.workedMinutes, 0) / 60).toFixed(1)}
+            />
+            <Metric
+              label="Late minutes"
+              value={staff.reduce((sum, row) => sum + row.lateMinutes, 0)}
+            />
+            <Metric
+              label="Labour cost"
+              value={formatMinor(
+                staff.reduce((sum, row) => sum + row.labourCostMinor, 0),
+                currency,
+              )}
+            />
+          </div>
+          <Panel className="mt-4 overflow-x-auto">
+            <PanelHead
+              title="Operational staff facts"
+              sub="No opaque score or misconduct inference is calculated"
+            />
+            <table className="w-full min-w-[940px]">
+              <thead>
+                <tr>
+                  <TH>Employee</TH>
+                  <TH className="text-right">Hours</TH>
+                  <TH className="text-right">Late min</TH>
+                  <TH className="text-right">Orders</TH>
+                  <TH className="text-right">Net sales</TH>
+                  <TH className="text-right">AOV</TH>
+                  <TH className="text-right">Service time</TH>
+                  <TH className="text-right">Voids</TH>
+                  <TH>Quality</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {staff.map((row) => (
+                  <tr key={row.employeeId}>
+                    <TD className="font-semibold">{row.employeeName}</TD>
+                    <TD className="num text-right">{(row.workedMinutes / 60).toFixed(1)}</TD>
+                    <TD className="num text-right">{row.lateMinutes}</TD>
+                    <TD className="num text-right">{row.ordersHandled}</TD>
+                    <TD className="num text-right">{formatMinor(row.netSalesMinor, currency)}</TD>
+                    <TD className="num text-right">
+                      {formatMinor(row.averageOrderValueMinor, currency)}
+                    </TD>
+                    <TD className="num text-right">{formatDuration(row.averageServiceMs)}</TD>
+                    <TD className="num text-right">{row.voidRequests}</TD>
+                    <TD>
+                      <QualityStatus quality={row.quality} />
+                    </TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        </>
+      )}
     </AppShell>
   );
 }

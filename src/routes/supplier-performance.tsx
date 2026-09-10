@@ -1,121 +1,118 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { Btn, Metric, Panel, PanelHead, TD, TH } from "@/components/app/ui";
+import { useAppContext } from "@/lib/app-context";
+import {
+  configuredTenantCurrency,
+  formatBps,
+  formatMinor,
+  ManagementReadModelState,
+  QualityStatus,
+} from "@/management/ui";
+import { useManagementIntelligence } from "@/management/use-management-intelligence";
 
 export const Route = createFileRoute("/supplier-performance")({
   head: () => ({ meta: [{ title: "Supplier Performance - Seramet" }] }),
   component: SupplierPerformance,
 });
 
-const suppliers = [
-  {
-    name: "Main Meat Supplier",
-    spend: 842000,
-    onTime: 88,
-    quality: 3,
-    price: "+12%",
-    status: "Attention",
-  },
-  { name: "Samwest", spend: 612400, onTime: 96, quality: 1, price: "+2%", status: "Healthy" },
-  {
-    name: "Muthurwa Groceries",
-    spend: 318200,
-    onTime: 74,
-    quality: 5,
-    price: "+6%",
-    status: "Critical",
-  },
-  {
-    name: "Packaging Supplier",
-    spend: 148600,
-    onTime: 92,
-    quality: 0,
-    price: "0%",
-    status: "Healthy",
-  },
-];
-
 function SupplierPerformance() {
+  const { activeTenantId, branchLabel, platformState } = useAppContext();
+  const management = useManagementIntelligence();
+  const suppliers = management.control?.suppliers ?? [];
+  const currency =
+    management.control?.latest?.currency ??
+    configuredTenantCurrency(platformState.tenants, activeTenantId);
   return (
     <AppShell
       title="Supplier performance"
-      subtitle="Spend, on-time delivery, price changes and quality issues"
-      actions={
-        <>
-          <Btn>90 days</Btn>
-          <Btn>Export</Btn>
-        </>
-      }
+      subtitle={`Receipt, variance and payable evidence - ${branchLabel}`}
+      actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Purchasing spend" value={1921200} money />
-        <Metric label="On-time delivery" value={87} suffix="%" />
-        <Metric label="Price changes" value={4} invert />
-        <Metric label="Quality issues" value={9} invert />
-      </div>
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <Panel>
-          <PanelHead title="Spend by supplier" />
-          <div className="h-[260px] p-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={suppliers} margin={{ left: -8, right: 8 }}>
-                <CartesianGrid stroke="var(--color-border)" vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={11}
-                  stroke="var(--color-muted-foreground)"
-                />
-                <YAxis
-                  tickFormatter={(v) => `${Number(v) / 1000}k`}
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={11}
-                  stroke="var(--color-muted-foreground)"
-                />
-                <Tooltip
-                  formatter={(v: number) => ksh(v)}
-                  contentStyle={{ borderRadius: 10, fontSize: 12 }}
-                />
-                <Bar
-                  dataKey="spend"
-                  fill="var(--color-primary)"
-                  radius={[4, 4, 0, 0]}
-                  maxBarSize={32}
-                />
-              </BarChart>
-            </ResponsiveContainer>
+      <ManagementReadModelState
+        status={management.status}
+        error={management.error}
+        empty={suppliers.length === 0}
+      />
+      {management.status === "ready" && suppliers.length > 0 && (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Metric label="Suppliers" value={suppliers.length} />
+            <Metric
+              label="Purchase value"
+              value={formatMinor(
+                suppliers.reduce((sum, row) => sum + row.purchaseValueMinor, 0),
+                currency,
+              )}
+            />
+            <Metric
+              label="Outstanding payable"
+              value={formatMinor(
+                suppliers.reduce((sum, row) => sum + row.outstandingPayableMinor, 0),
+                currency,
+              )}
+            />
+            <Metric
+              label="Match exceptions"
+              value={suppliers.reduce((sum, row) => sum + row.invoiceMatchExceptions, 0)}
+            />
           </div>
-        </Panel>
-        <Panel>
-          <PanelHead title="Supplier scorecard" />
-          <table className="w-full">
-            <thead>
-              <tr>
-                <TH>Supplier</TH>
-                <TH className="text-right">On-time</TH>
-                <TH className="text-right">Issues</TH>
-                <TH>Status</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {suppliers.map((supplier) => (
-                <tr key={supplier.name}>
-                  <TD className="font-semibold">{supplier.name}</TD>
-                  <TD className="num text-right">{supplier.onTime}%</TD>
-                  <TD className="num text-right">{supplier.quality}</TD>
-                  <TD>
-                    <Status>{supplier.status}</Status>
-                  </TD>
+          <Panel className="mt-4 overflow-x-auto">
+            <PanelHead
+              title="Supplier evidence"
+              sub="No automatic supplier replacement recommendation"
+            />
+            <table className="w-full min-w-[980px]">
+              <thead>
+                <tr>
+                  <TH>Supplier</TH>
+                  <TH className="text-right">Purchases</TH>
+                  <TH className="text-right">Lead time</TH>
+                  <TH className="text-right">On time</TH>
+                  <TH className="text-right">Fill rate</TH>
+                  <TH className="text-right">Rejected qty</TH>
+                  <TH className="text-right">Price variance</TH>
+                  <TH className="text-right">Payable</TH>
+                  <TH>Quality</TH>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Panel>
-      </div>
+              </thead>
+              <tbody>
+                {suppliers.map((row) => (
+                  <tr key={row.supplierId}>
+                    <TD className="font-semibold">{row.supplierName}</TD>
+                    <TD className="num text-right">
+                      {formatMinor(row.purchaseValueMinor, row.currency)}
+                    </TD>
+                    <TD className="num text-right">
+                      {row.averageLeadTimeMinutes === null
+                        ? "Missing"
+                        : `${(row.averageLeadTimeMinutes / 1440).toFixed(1)} d`}
+                    </TD>
+                    <TD className="num text-right">
+                      {row.onTimeBps === null ? "Missing" : formatBps(row.onTimeBps)}
+                    </TD>
+                    <TD className="num text-right">
+                      {row.fillRateBps === null ? "Missing" : formatBps(row.fillRateBps)}
+                    </TD>
+                    <TD className="num text-right">
+                      {(row.rejectedQuantityMicro / 1_000_000).toFixed(3)}
+                    </TD>
+                    <TD className="num text-right">
+                      {formatMinor(row.priceVarianceMinor, row.currency)}
+                    </TD>
+                    <TD className="num text-right">
+                      {formatMinor(row.outstandingPayableMinor, row.currency)}
+                    </TD>
+                    <TD>
+                      <QualityStatus quality={row.quality} />
+                    </TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+        </>
+      )}
     </AppShell>
   );
 }

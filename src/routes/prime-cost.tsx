@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/prime-cost")({
@@ -10,12 +11,14 @@ export const Route = createFileRoute("/prime-cost")({
       { title: "Prime Cost - Seramet" },
       {
         name: "description",
-        content: "Weekly restaurant prime cost: theoretical vs actual food cost, beverage cost and labour cost.",
+        content:
+          "Weekly restaurant prime cost: theoretical vs actual food cost, beverage cost and labour cost.",
       },
       { property: "og:title", content: "Prime Cost - Seramet" },
       {
         property: "og:description",
-        content: "COGS plus labour as a percentage of sales, the single most important restaurant number.",
+        content:
+          "COGS plus labour as a percentage of sales, the single most important restaurant number.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
@@ -24,28 +27,11 @@ export const Route = createFileRoute("/prime-cost")({
   component: PrimeCost,
 });
 
-const cogs: [string, number, number, number][] = [
-  ["Opening inventory", 1322000, 0, 0],
-  ["Purchases", 1284600, 0, 0],
-  ["Transfers in / out", -18400, 0, 0],
-  ["Wastage and breakage", -42800, 0, 0],
-  ["Staff meals", -21600, 0, 0],
-  ["Closing inventory", -1161400, 0, 0],
-];
+const cogs: [string, number, number, number][] = emptyRecords();
 
-const weeks = [
-  { week: "Wk 29", sales: 968400, food: 31.2, bev: 22.4, labour: 24.8, status: "Healthy" },
-  { week: "Wk 30", sales: 1024800, food: 32.8, bev: 23.1, labour: 25.6, status: "Healthy" },
-  { week: "Wk 31", sales: 1108200, food: 34.6, bev: 24.4, labour: 26.1, status: "Attention" },
-  { week: "Wk 32", sales: 1027200, food: 33.0, bev: 23.6, labour: 25.4, status: "Healthy" },
-];
+const weeks = emptyRecords();
 
-const variances = [
-  { item: "Beef boneless", theoretical: 184600, actual: 201400, reason: "Portion drift on Nyama Choma" },
-  { item: "Cooking oil", theoretical: 42800, actual: 51200, reason: "Fryer not filtered daily" },
-  { item: "Soft drinks", theoretical: 96400, actual: 98100, reason: "Within tolerance" },
-  { item: "Chicken whole", theoretical: 128400, actual: 124800, reason: "Yield better than recipe" },
-];
+const variances = emptyRecords();
 
 function PrimeCost() {
   const { branchLabel } = useAppContext();
@@ -62,10 +48,10 @@ function PrimeCost() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Food cost" value={33.0} suffix="%" invert />
-        <Metric label="Beverage cost" value={23.6} suffix="%" invert />
-        <Metric label="Labour cost" value={25.4} suffix="%" invert />
-        <Metric label="Prime cost" value={58.4} suffix="%" invert />
+        <Metric label="Food cost" value={0} suffix="%" invert />
+        <Metric label="Beverage cost" value={0} suffix="%" invert />
+        <Metric label="Labour cost" value={0} suffix="%" invert />
+        <Metric label="Prime cost" value={0} suffix="%" invert />
       </div>
 
       <Panel className="mt-4">
@@ -97,7 +83,7 @@ function PrimeCost() {
       </Panel>
 
       <Panel className="mt-4">
-        <PanelHead title="Weekly trend" sub="Prime cost target is 60% of sales" />
+        <PanelHead title="Weekly trend" sub="Compared with the configured prime-cost target" />
         <table className="w-full">
           <thead>
             <tr>
@@ -151,7 +137,9 @@ function PrimeCost() {
                 <TD className="font-semibold">{row.item}</TD>
                 <TD className="num text-right text-muted-foreground">{ksh(row.theoretical)}</TD>
                 <TD className="num text-right">{ksh(row.actual)}</TD>
-                <TD className="num text-right font-semibold">{ksh(row.actual - row.theoretical)}</TD>
+                <TD className="num text-right font-semibold">
+                  {ksh(row.actual - row.theoretical)}
+                </TD>
                 <TD className="text-muted-foreground">{row.reason}</TD>
               </tr>
             ))}

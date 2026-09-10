@@ -1,33 +1,21 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/balance-sheet")({
   head: () => ({ meta: [{ title: "Balance Sheet - Seramet" }] }),
   component: BalanceSheet,
 });
 
-const rows = [
-  ["Assets", 2386400, 2210000, true],
-  ["Cash and bank", 486420, 412100, false],
-  ["Inventory", 1284600, 1322000, false],
-  ["Receivables", 312800, 341900, false],
-  ["Fixed assets", 302580, 134000, false],
-  ["Liabilities", 944200, 902400, true],
-  ["Accounts payable", 299000, 274200, false],
-  ["Payroll liabilities", 118600, 110800, false],
-  ["Loans and accruals", 526600, 517400, false],
-  ["Equity", 1442200, 1307600, true],
-  ["Retained earnings", 484900, 421000, false],
-  ["Current year profit", 957300, 886600, false],
-];
+const rows = emptyRecords();
 
 function BalanceSheet() {
   return (
     <AppShell
       title="Balance sheet"
-      subtitle="As at 12 August 2026 - all branches"
+      subtitle="Current reporting period - all authorized branches"
       actions={
         <>
           <Btn>Compare</Btn>
@@ -36,10 +24,10 @@ function BalanceSheet() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Assets" value={2386400} money />
-        <Metric label="Liabilities" value={944200} money />
-        <Metric label="Equity" value={1442200} money />
-        <Metric label="Current ratio" value="2.5x" />
+        <Metric label="Assets" value={0} money />
+        <Metric label="Liabilities" value={0} money />
+        <Metric label="Equity" value={0} money />
+        <Metric label="Current ratio" value="Not available" />
       </div>
       <Panel className="mt-4">
         <PanelHead

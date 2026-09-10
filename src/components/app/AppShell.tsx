@@ -1,11 +1,17 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bell,
+  AlertTriangle,
+  Building2,
+  Check,
   CheckCircle2,
   ChevronDown,
+  LogOut,
   ClipboardList,
   HelpCircle,
+  LockKeyhole,
   Menu,
   Moon,
   Package,
@@ -14,7 +20,6 @@ import {
   Plus,
   ReceiptText,
   Search,
-  Send,
   Sparkles,
   Sun,
   Trash2,
@@ -27,7 +32,9 @@ import { getVisibleNavGroups, roleCanAccessPath } from "./nav";
 import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
-import { useAppContext, type AppRole } from "@/lib/app-context";
+import { useAppContext } from "@/lib/app-context";
+import { permissions as permissionCodes } from "@/platform/permissions";
+import type { PermissionCode } from "@/platform/types";
 import { Btn } from "@/components/app/ui";
 import {
   DropdownMenu,
@@ -67,51 +74,23 @@ type WorkflowAction = {
   status?: string;
 };
 
-const initialNotifications: AppNotification[] = [
-  {
-    id: "n-approvals",
-    category: "Approvals",
-    message: "3 purchase orders await review",
-    to: "/approvals",
-    source: "PO approval queue",
-    read: false,
-    icon: WalletCards,
-  },
-  {
-    id: "n-inventory",
-    category: "Inventory",
-    message: "4 items are below PAR",
-    to: "/stock-detail",
-    source: "Inventory attention report",
-    read: false,
-    icon: Package,
-  },
-  {
-    id: "n-hr",
-    category: "HR",
-    message: "2 employees absent today",
-    to: "/attendance",
-    source: "Attendance exceptions",
-    read: false,
-    icon: Users,
-  },
-  {
-    id: "n-system",
-    category: "System",
-    message: "Nightly sales report is ready",
-    to: "/reports",
-    source: "Scheduled report run",
-    read: false,
-    icon: CheckCircle2,
-  },
-];
+function branchIdentityColor(branchId: string, configuredColor: unknown) {
+  if (typeof configuredColor === "string" && /^#[0-9a-f]{6}$/i.test(configuredColor)) {
+    return configuredColor;
+  }
+  let hash = 0;
+  for (const character of branchId) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return `hsl(${hash % 360} 58% 42%)`;
+}
+
+const initialNotifications: AppNotification[] = emptyRecords();
 
 const quickCreateOptions: {
   id: string;
   label: string;
   to: string;
   icon: IconType;
-  roles: AppRole[];
+  permission: PermissionCode;
   fields: string[];
 }[] = [
   {
@@ -119,7 +98,7 @@ const quickCreateOptions: {
     label: "New Sale",
     to: "/pos",
     icon: ReceiptText,
-    roles: ["General Manager", "Branch Manager", "Cashier"],
+    permission: permissionCodes.ordersCreate,
     fields: ["Table or customer", "Order channel", "Server"],
   },
   {
@@ -127,7 +106,7 @@ const quickCreateOptions: {
     label: "Purchase Order",
     to: "/procurement",
     icon: Truck,
-    roles: ["General Manager", "Branch Manager", "Storekeeper", "Accountant", "Chef"],
+    permission: permissionCodes.procurementCreate,
     fields: ["Supplier", "Needed by", "Branch"],
   },
   {
@@ -135,7 +114,7 @@ const quickCreateOptions: {
     label: "Expense",
     to: "/expenses",
     icon: WalletCards,
-    roles: ["General Manager", "Branch Manager", "Accountant"],
+    permission: permissionCodes.financeManage,
     fields: ["Vendor", "Amount", "Receipt reference"],
   },
   {
@@ -143,7 +122,7 @@ const quickCreateOptions: {
     label: "Stock Transfer",
     to: "/transfers",
     icon: Package,
-    roles: ["General Manager", "Branch Manager", "Storekeeper", "Chef"],
+    permission: permissionCodes.inventoryAdjust,
     fields: ["From store", "To store", "Item"],
   },
   {
@@ -151,7 +130,7 @@ const quickCreateOptions: {
     label: "Customer",
     to: "/customers",
     icon: Users,
-    roles: ["General Manager", "Branch Manager", "Cashier"],
+    permission: permissionCodes.ordersCreate,
     fields: ["Name", "Phone", "Segment"],
   },
   {
@@ -159,7 +138,7 @@ const quickCreateOptions: {
     label: "Waste Entry",
     to: "/wastage",
     icon: Trash2,
-    roles: ["General Manager", "Branch Manager", "Storekeeper", "Chef"],
+    permission: permissionCodes.wasteRecord,
     fields: ["Item", "Quantity", "Reason"],
   },
   {
@@ -167,7 +146,7 @@ const quickCreateOptions: {
     label: "Task",
     to: "/tasks",
     icon: ClipboardList,
-    roles: ["General Manager", "Branch Manager", "Accountant", "Storekeeper", "Chef", "Cashier"],
+    permission: permissionCodes.ordersUpdate,
     fields: ["Title", "Owner", "Due date"],
   },
 ];
@@ -193,13 +172,14 @@ export function AppShell({
   };
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [openNavGroups, setOpenNavGroups] = useState<Set<string>>(() => new Set());
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [mutedCategories, setMutedCategories] = useState<string[]>([]);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
-  const [quickCreateId, setQuickCreateId] = useState(quickCreateOptions[0].id);
+  const [quickCreateId, setQuickCreateId] = useState(quickCreateOptions[0]?.id ?? "");
   const [createdRecords, setCreatedRecords] = useState<
     { id: string; label: string; branch: string }[]
   >([]);
@@ -207,11 +187,50 @@ export function AppShell({
   const [workflowHistory, setWorkflowHistory] = useState<
     { id: string; label: string; branch: string; path: string }[]
   >([]);
-  const { branch, branches, setBranch, role, theme, toggleTheme, currentUser, canSwitchBranch } =
-    useAppContext();
-  const visibleNavGroups = getVisibleNavGroups(role, branch);
-  const path = useRouterState({ select: (s) => s.location.pathname });
+  const {
+    activeTenantId,
+    branchId,
+    branch,
+    setBranch,
+    role,
+    permissions,
+    moduleAccess,
+    theme,
+    toggleTheme,
+    currentUser,
+    canSwitchBranch,
+    canUseAllBranchScope,
+    switchableBranchRecords,
+    platformState,
+  } = useAppContext();
+  const companyName =
+    platformState.tenants.find((tenant) => tenant.id === activeTenantId)?.tradingName ??
+    "Business not configured";
+  const activeBranchRecord = platformState.branches.find((item) => item.id === branchId);
+  const activeBranchColor = branchIdentityColor(
+    activeBranchRecord?.id ?? branchId,
+    activeBranchRecord?.metadata["color"],
+  );
+  const visibleNavGroups = getVisibleNavGroups(
+    role,
+    branch,
+    permissions,
+    activeTenantId,
+    moduleAccess,
+  );
+  const path = useRouterState().location.pathname;
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const activeGroup = visibleNavGroups.find(
+      (group) => group.group && group.items.some((item) => item.to === path),
+    )?.group;
+    if (!activeGroup) return;
+    setOpenNavGroups((current) => {
+      if (current.has(activeGroup)) return current;
+      return new Set([...current, activeGroup]);
+    });
+  }, [path, visibleNavGroups]);
 
   const visibleNotifications = notifications.filter(
     (item) => !mutedCategories.includes(item.category),
@@ -220,13 +239,15 @@ export function AppShell({
   const availableQuickCreate = useMemo(
     () =>
       quickCreateOptions.filter(
-        (item) => item.roles.includes(role) && roleCanAccessPath(role, item.to, branch),
+        (item) =>
+          permissions.includes(item.permission) &&
+          roleCanAccessPath(role, item.to, branch, permissions, activeTenantId, moduleAccess),
       ),
-    [branch, role],
+    [activeTenantId, branch, moduleAccess, permissions, role],
   );
   const activeQuickCreate =
     availableQuickCreate.find((item) => item.id === quickCreateId) ?? availableQuickCreate[0];
-  const operatorName = lockedContext?.userName ?? "Emmanuel K.";
+  const operatorName = lockedContext?.userName ?? currentUser.name;
   const operatorInitials = operatorName
     .split(" ")
     .filter(Boolean)
@@ -240,7 +261,8 @@ export function AppShell({
       availableQuickCreate.length > 0 &&
       !availableQuickCreate.some((item) => item.id === quickCreateId)
     ) {
-      setQuickCreateId(availableQuickCreate[0].id);
+      const firstAvailable = availableQuickCreate[0];
+      if (firstAvailable) setQuickCreateId(firstAvailable.id);
     }
   }, [availableQuickCreate, quickCreateId]);
 
@@ -254,6 +276,76 @@ export function AppShell({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (!permissions.includes(permissionCodes.settingsIntegrationManage)) return;
+    let cancelled = false;
+    const refreshIntegrationAlerts = async () => {
+      try {
+        const response = await fetch("/api/seramet/integrations/diagnostics", {
+          headers: {
+            "x-seramet-tenant-id": activeTenantId,
+            "x-seramet-user-id": currentUser.id,
+          },
+        });
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          deadLetters?: { status: string }[];
+          events?: { status: string }[];
+          health?: { status: string; message: string }[];
+        };
+        if (cancelled || !payload.ok) return;
+        const deadLetters =
+          payload.deadLetters?.filter((item) => item.status === "OPEN").length ?? 0;
+        const mappingIssues =
+          payload.events?.filter((item) => item.status === "MAPPING_REQUIRED").length ?? 0;
+        const unhealthy = payload.health?.filter((item) => item.status !== "HEALTHY") ?? [];
+        const next: AppNotification[] = [];
+        if (deadLetters)
+          next.push({
+            id: "integration-dead-letter",
+            category: "Integrations",
+            message: `${deadLetters} integration event${deadLetters === 1 ? "" : "s"} need recovery`,
+            to: "/integrations",
+            source: "Integration dead-letter queue",
+            read: false,
+            icon: AlertTriangle,
+          });
+        if (mappingIssues)
+          next.push({
+            id: "integration-mapping",
+            category: "Integrations",
+            message: `${mappingIssues} external mapping issue${mappingIssues === 1 ? "" : "s"} need review`,
+            to: "/integrations",
+            source: "Integration mapping validation",
+            read: false,
+            icon: AlertTriangle,
+          });
+        if (unhealthy.length)
+          next.push({
+            id: "integration-health",
+            category: "Integrations",
+            message: `${unhealthy.length} provider connection${unhealthy.length === 1 ? "" : "s"} are not healthy`,
+            to: "/integrations",
+            source: unhealthy[0]?.message ?? "Integration health",
+            read: false,
+            icon: AlertTriangle,
+          });
+        setNotifications((current) => [
+          ...current.filter((item) => !item.id.startsWith("integration-")),
+          ...next,
+        ]);
+      } catch {
+        // The local POS remains operational while integration diagnostics are unavailable.
+      }
+    };
+    void refreshIntegrationAlerts();
+    const timer = window.setInterval(() => void refreshIntegrationAlerts(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeTenantId, currentUser.id, permissions]);
 
   useEffect(() => {
     const onWorkflowAction = (event: Event) => {
@@ -362,53 +454,105 @@ export function AppShell({
     window.dispatchEvent(new CustomEvent("seramet:workflow-action", { detail: { label } }));
   };
 
+  const toggleNavGroup = (group: string) => {
+    setOpenNavGroups((current) => {
+      const next = new Set(current);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  };
+
   const navContent = (isCollapsed = false, onNavigate?: () => void) => (
-    <nav className="flex-1 overflow-y-auto px-2 py-3">
-      {visibleNavGroups.map((g) => (
-        <div key={g.group} className="mb-1">
-          {g.group && !isCollapsed && (
-            <div className="px-3 pb-1 pt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-              {g.group}
-            </div>
-          )}
-          {g.items
-            .filter((i, idx) => (isCollapsed ? idx === 0 : true))
-            .map((item, idx, items) => {
-              const active =
-                item.to === path &&
-                items.findIndex((candidate) => candidate.to === item.to) === idx;
-              const Icon = item.icon;
-              const content = (
-                <span
-                  className={cn(
-                    "group flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
-                    active
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                    isCollapsed && "justify-center px-0",
-                  )}
-                >
-                  {Icon && <Icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.2 : 1.8} />}
-                  {!isCollapsed && <span className="truncate">{item.label}</span>}
+    <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Main navigation">
+      {visibleNavGroups.map((g) => {
+        const hasActiveItem = g.items.some((item) => item.to === path);
+        const isOpen = !g.group || isCollapsed || openNavGroups.has(g.group);
+        const GroupIcon = g.items.find((item) => item.icon)?.icon;
+        const groupId = `nav-group-${g.group.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
+        return (
+          <div key={g.group || "primary"} className="mb-1">
+            {g.group && !isCollapsed && (
+              <button
+                type="button"
+                className={cn(
+                  "group flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left text-[12px] font-semibold transition-colors",
+                  hasActiveItem || isOpen
+                    ? "bg-secondary/70 text-foreground"
+                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                )}
+                aria-expanded={isOpen}
+                aria-controls={groupId}
+                onClick={() => toggleNavGroup(g.group)}
+              >
+                {GroupIcon && (
+                  <GroupIcon
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      hasActiveItem ? "text-primary" : "text-muted-foreground",
+                    )}
+                    strokeWidth={1.9}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate">{g.group}</span>
+                <span className="min-w-5 rounded bg-background/80 px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums text-muted-foreground">
+                  {g.items.length}
                 </span>
-              );
-              return item.to ? (
-                <Link
-                  key={item.label + item.to}
-                  to={item.to}
-                  title={item.label}
-                  onClick={onNavigate}
-                >
-                  {content}
-                </Link>
-              ) : (
-                <div key={item.label} className="cursor-default opacity-70">
-                  {content}
-                </div>
-              );
-            })}
-        </div>
-      ))}
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                    isOpen && "rotate-180",
+                  )}
+                />
+              </button>
+            )}
+            <div
+              id={g.group ? groupId : undefined}
+              className={cn(
+                "space-y-0.5",
+                g.group && !isCollapsed && "ml-4 mt-1 border-l border-border/80 pl-2",
+                !isOpen && "hidden",
+              )}
+            >
+              {g.items.map((item, idx, items) => {
+                const active =
+                  item.to === path &&
+                  items.findIndex((candidate) => candidate.to === item.to) === idx;
+                const Icon = item.icon;
+                const content = (
+                  <span
+                    className={cn(
+                      "group flex min-h-9 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
+                      active
+                        ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-border/70"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                      isCollapsed && "justify-center px-0",
+                    )}
+                  >
+                    {Icon && <Icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.2 : 1.8} />}
+                    {!isCollapsed && <span className="truncate">{item.label}</span>}
+                  </span>
+                );
+                return item.to ? (
+                  <Link
+                    key={item.label + item.to}
+                    to={item.to}
+                    title={item.label}
+                    onClick={onNavigate}
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <div key={item.label} className="cursor-default opacity-70">
+                    {content}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </nav>
   );
 
@@ -506,46 +650,22 @@ export function AppShell({
               <Sparkles className="h-4 w-4 text-primary" />
               Ask Seramet
             </SheetTitle>
-            <SheetDescription>
-              Contextual help for the page you are viewing, with actions you can open immediately.
-            </SheetDescription>
+            <SheetDescription>Current scope: {branch}</SheetDescription>
           </SheetHeader>
           <div className="space-y-4 p-4">
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/60 px-3 py-2">
-              <input
-                className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
-                defaultValue="Explain the biggest risk on this page"
-              />
-              <button
-                onClick={() => dispatchWorkflowAction("Ask Seramet")}
-                className="grid h-8 w-8 place-items-center rounded-md bg-primary text-primary-foreground"
-              >
-                <Send className="h-4 w-4" />
-              </button>
+            <div className="rounded-md border border-border bg-secondary/60 p-3 text-[13px] text-muted-foreground">
+              Evidence is retrieved only after server-side permission and branch-scope checks.
             </div>
-            <article className="rounded-lg border border-warning/30 bg-warning-soft p-3">
-              <div className="text-[13px] font-semibold text-warning">Inventory attention</div>
-              <p className="mt-1 text-[13px] leading-relaxed">
-                Cooking Oil and Tomatoes are below PAR at {branch}. Seramet recommends generating
-                one purchase order and checking the last two wastage entries before approval.
-              </p>
-            </article>
-            <div className="grid gap-2 text-[13px]">
-              {[
-                "Create purchase recommendation",
-                "Open variance report",
-                "Create manager task",
-              ].map((action) => (
-                <button
-                  key={action}
-                  onClick={() => dispatchWorkflowAction(action)}
-                  className="flex items-center justify-between rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
-                >
-                  {action}
-                  <span className="text-muted-foreground">Open</span>
-                </button>
-              ))}
-            </div>
+            <Btn
+              variant="primary"
+              className="w-full"
+              onClick={() => {
+                setAiOpen(false);
+                void navigate({ to: "/ai" });
+              }}
+            >
+              <Sparkles className="h-4 w-4" /> Open Ask Seramet
+            </Btn>
           </div>
         </SheetContent>
       </Sheet>
@@ -583,11 +703,11 @@ export function AppShell({
           </div>
           <button
             onClick={() => setPaletteOpen(true)}
-            className="hidden h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-secondary/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary md:flex md:max-w-md"
+            className="hidden h-9 min-w-0 items-center gap-2 rounded-md border border-border bg-secondary/60 text-left text-sm text-muted-foreground transition-colors hover:bg-secondary md:flex md:w-9 md:flex-none md:justify-center md:px-2.5 xl:max-w-md xl:flex-1 xl:justify-start xl:px-3"
           >
             <Search className="h-4 w-4 shrink-0" />
-            <span className="truncate">Search orders, items, people...</span>
-            <kbd className="ml-auto shrink-0 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] font-semibold">
+            <span className="hidden truncate xl:inline">Search orders, items, people...</span>
+            <kbd className="ml-auto hidden shrink-0 rounded border border-border bg-card px-1.5 py-0.5 text-[10px] font-semibold xl:inline">
               Ctrl K
             </kbd>
           </button>
@@ -610,7 +730,7 @@ export function AppShell({
               </div>
             ) : (
               <>
-                <div className="hidden items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left sm:flex">
+                <div className="hidden items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left lg:flex">
                   <UserCog className="h-4 w-4 text-muted-foreground" />
                   <div className="min-w-0">
                     <div className="text-[11px] leading-tight text-muted-foreground">
@@ -621,10 +741,21 @@ export function AppShell({
                 </div>
                 {canSwitchBranch ? (
                   <DropdownMenu>
-                    <DropdownMenuTrigger className="flex max-w-[132px] items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left hover:bg-secondary sm:max-w-none sm:px-2.5">
+                    <DropdownMenuTrigger
+                      aria-label={`Change active branch. Current branch: ${branch}`}
+                      className="flex max-w-[164px] items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left hover:bg-secondary sm:max-w-none sm:px-2.5"
+                    >
+                      <span
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded text-[10px] font-bold text-white"
+                        style={{ backgroundColor: activeBranchColor }}
+                      >
+                        {branch === "All Branches"
+                          ? "ALL"
+                          : (activeBranchRecord?.code.slice(0, 3) ?? "BR")}
+                      </span>
                       <div className="min-w-0">
                         <div className="text-[11px] leading-tight text-muted-foreground">
-                          Mona Swahili
+                          {companyName}
                         </div>
                         <div className="truncate text-[13px] font-semibold leading-tight">
                           {branch}
@@ -632,26 +763,66 @@ export function AppShell({
                       </div>
                       <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuLabel>General manager branch scope</DropdownMenuLabel>
+                    <DropdownMenuContent align="end" className="min-w-[250px]">
+                      <DropdownMenuLabel>Authorized branch context</DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      {branches.map((b) => (
-                        <DropdownMenuItem key={b} onClick={() => setBranch(b)}>
-                          {b}
+                      {canUseAllBranchScope && (
+                        <DropdownMenuItem onClick={() => setBranch("All branches")}>
+                          <Building2 className="mr-2 h-4 w-4 text-muted-foreground" />
+                          <span className="flex-1">All branches</span>
+                          {branch === "All Branches" && <Check className="ml-2 h-4 w-4" />}
+                        </DropdownMenuItem>
+                      )}
+                      {canUseAllBranchScope && <DropdownMenuSeparator />}
+                      {switchableBranchRecords.map((branchOption) => (
+                        <DropdownMenuItem
+                          key={branchOption.id}
+                          onClick={() => setBranch(branchOption.id)}
+                        >
+                          <span
+                            className="mr-2 h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: branchIdentityColor(
+                                branchOption.id,
+                                branchOption.metadata["color"],
+                              ),
+                            }}
+                          />
+                          <span className="flex-1">
+                            <span className="block text-[13px] font-semibold">
+                              {branchOption.name}
+                            </span>
+                            <span className="block text-[10px] text-muted-foreground">
+                              {branchOption.code}
+                            </span>
+                          </span>
+                          {branchOption.id === branchId && branch !== "All Branches" && (
+                            <Check className="ml-2 h-4 w-4" />
+                          )}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
-                  <div className="flex max-w-[132px] items-center rounded-md border border-border px-2 py-1.5 text-left sm:max-w-none sm:px-2.5">
+                  <div
+                    className="flex max-w-[164px] items-center gap-2 rounded-md border border-border px-2 py-1.5 text-left sm:max-w-none sm:px-2.5"
+                    title="This branch is assigned by an administrator"
+                  >
+                    <span
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded text-[10px] font-bold text-white"
+                      style={{ backgroundColor: activeBranchColor }}
+                    >
+                      {activeBranchRecord?.code.slice(0, 3) ?? "BR"}
+                    </span>
                     <div className="min-w-0">
                       <div className="text-[11px] leading-tight text-muted-foreground">
-                        Mona Swahili
+                        {companyName} · {activeBranchRecord?.code ?? "Branch"}
                       </div>
                       <div className="truncate text-[13px] font-semibold leading-tight">
                         {branch}
                       </div>
                     </div>
+                    <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   </div>
                 )}
               </>
@@ -702,6 +873,24 @@ export function AppShell({
               ) : (
                 <Moon className="h-[18px] w-[18px] text-muted-foreground" />
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void fetch("/api/seramet/public/auth/logout", {
+                  method: "POST",
+                  credentials: "same-origin",
+                }).finally(() => {
+                  window.localStorage.removeItem("seramet.session.tenant-id");
+                  window.localStorage.removeItem("seramet.session.user-id");
+                  window.location.assign("/login");
+                });
+              }}
+              className="grid h-9 w-9 place-items-center rounded-md hover:bg-secondary"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-[18px] w-[18px] text-muted-foreground" />
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger className="relative grid h-9 w-9 place-items-center rounded-md hover:bg-secondary">

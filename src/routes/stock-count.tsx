@@ -3,7 +3,9 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { inventoryItems, ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/stock-count")({
   head: () => ({
@@ -27,25 +29,24 @@ export const Route = createFileRoute("/stock-count")({
 });
 
 function StockCount() {
-  const [counts, setCounts] = useState<Record<string, string>>({
-    "MEAT-001": "12.2",
-    "GROC-014": "8.4",
-    "GROC-002": "18",
-    "PROD-003": "5.1",
-  });
-  const rows = inventoryItems.map((i) => {
-    const physical =
-      counts[i.sku] === undefined || counts[i.sku] === "" ? null : Number(counts[i.sku]);
-    const variance = physical === null ? null : +(physical - i.stock).toFixed(2);
-    return { ...i, physical, variance };
-  });
+  const { branchLabel, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const rows = state.inventory
+    .filter((item) => matchesBranch(item.branchId ?? item.branch))
+    .map((i) => {
+      const physical =
+        counts[i.sku] === undefined || counts[i.sku] === "" ? null : Number(counts[i.sku]);
+      const variance = physical === null ? null : +(physical - i.stock).toFixed(2);
+      return { ...i, cost: i.averageCost, physical, variance };
+    });
   const counted = rows.filter((r) => r.physical !== null).length;
   const varianceValue = rows.reduce((s, r) => s + (r.variance ?? 0) * r.cost, 0);
 
   return (
     <AppShell
-      title="Stock count SC-2026-0042"
-      subtitle="Westlands Main Store  -  started 07:10 by Kelvin M."
+      title="Stock count"
+      subtitle={`${branchLabel} - draft physical count`}
       actions={
         <>
           <Btn>Save draft</Btn>
@@ -55,12 +56,7 @@ function StockCount() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Items in sheet" value={rows.length} />
-        <Metric
-          label="Counted"
-          value={counted}
-          note={`${rows.length - counted} remaining`}
-          delta={0}
-        />
+        <Metric label="Counted" value={counted} />
         <Metric label="Variance value" value={Math.round(varianceValue)} money />
         <Metric
           label="Items with variance"

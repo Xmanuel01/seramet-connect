@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2, Link2, RefreshCcw, ShieldAlert } from "lucide-react";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { TransactionEngine, transactionMetrics } from "@/lib/transaction-engine";
 import { useAppContext } from "@/lib/app-context";
+import { getProviderRegistry } from "@/integrations/provider-registry";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 export const Route = createFileRoute("/reconciliation")({
   head: () => ({
@@ -13,8 +16,7 @@ export const Route = createFileRoute("/reconciliation")({
       { title: "Reconciliation - Seramet" },
       {
         name: "description",
-        content:
-          "Match expected Seramet transactions against M-Pesa, bank, card, cash and TendePay feeds.",
+        content: "Match expected transactions against configured payment and settlement feeds.",
       },
       { property: "og:title", content: "Reconciliation - Seramet" },
       {
@@ -27,8 +29,19 @@ export const Route = createFileRoute("/reconciliation")({
 });
 
 function Reconciliation() {
-  const { state, apply } = useTransactionEngine();
-  const { branch, matchesBranch } = useAppContext();
+  const { state, mutate } = useTransactionEngine();
+  const { activeTenantId, branch, currentUser, matchesBranch } = useAppContext();
+  const [providerNotice, setProviderNotice] = useState("");
+  const configuration = getConfigurationRepository();
+  const paymentConnections = configuration
+    .listConnections(activeTenantId)
+    .filter((connection) =>
+      configuration
+        .listProviders()
+        .some(
+          (provider) => provider.id === connection.providerId && provider.category === "PAYMENT",
+        ),
+    );
   const metrics = transactionMetrics(state);
   const external = state.externalTransactions.filter((transaction) =>
     matchesBranch(transaction.branch ?? "All"),
@@ -53,58 +66,32 @@ function Reconciliation() {
     (transaction) => transaction.reconciliationStatus === "RECONCILED",
   );
 
-  const importMpesaFeed = () => {
-    const candidate = payments.find(
-      (payment) =>
-        payment.method === "MPESA_TILL_MANUAL" && payment.reconciliationStatus !== "RECONCILED",
-    );
-    if (!candidate) return;
-    apply((current) =>
-      TransactionEngine.importExternalTransaction(current, {
-        provider: "M-Pesa",
-        sourceAccount: "Customer Till Payment",
-        destination: "Till 123456",
-        branch: candidate.branch,
-        amount: candidate.amount,
-        direction: "INBOUND",
-        currency: "KES",
-        reference: candidate.reference,
-        timestamp: "2026-08-14T12:52:00+03:00",
-        description: `Till confirmation for ${candidate.invoiceId}`,
-        providerMetadata: { till: "123456" },
+  const checkProviders = async () => {
+    if (paymentConnections.length === 0) {
+      setProviderNotice("No payment provider connection is configured.");
+      return;
+    }
+    const results = await Promise.all(
+      paymentConnections.map(async (connection) => {
+        try {
+          const adapter = getProviderRegistry().resolve(connection);
+          const health = await adapter.healthCheck(connection);
+          return `${connection.displayName}: ${health.status.toLowerCase()}`;
+        } catch (error) {
+          return `${connection.displayName}: ${error instanceof Error ? error.message : "adapter unavailable"}`;
+        }
       }),
     );
-  };
-
-  const importTendePayExpense = () => {
-    apply((current) =>
-      TransactionEngine.importExternalTransaction(current, {
-        provider: "TendePay",
-        sourceAccount: "Mona Operating",
-        destination: "KPLC",
-        branch: branch === "All Branches" ? "Westlands" : branch,
-        amount: 18400,
-        direction: "OUTBOUND",
-        currency: "KES",
-        reference: `KPLC-${current.externalTransactions.length + 1}`,
-        timestamp: "2026-08-14T09:00:00+03:00",
-        description: "KPLC electricity payment awaiting authorized expense match",
-        providerMetadata: { category: "Utilities", adapter: "TendePayAdapter" },
-      }),
-    );
+    setProviderNotice(results.join("; "));
   };
 
   const closeDrawer = () => {
     const drawer = drawers.find((item) => item.status === "OPEN");
     if (!drawer) return;
-    apply((current) =>
-      TransactionEngine.closeCashDrawer(
-        current,
-        drawer.id,
-        drawer.expectedDrawer - 200,
-        "Emmanuel K.",
-      ),
-    );
+    void mutate("closeCashDrawer", {
+      drawerId: drawer.id,
+      physicalCount: drawer.expectedDrawer - 200,
+    });
   };
 
   const manualMatch = () => {
@@ -113,15 +100,11 @@ function Reconciliation() {
       (item) => item.direction === "INBOUND" && item.amount === payment?.amount,
     );
     if (!payment || !transaction) return;
-    apply((current) =>
-      TransactionEngine.manuallyReconcile(
-        current,
-        transaction.id,
-        payment.id,
-        "Finance",
-        "Manual review approved after verifying branch till statement.",
-      ),
-    );
+    void mutate("manuallyReconcile", {
+      externalTransactionId: transaction.id,
+      paymentId: payment.id,
+      notes: "Manual review approved after verifying branch till statement.",
+    });
   };
 
   return (
@@ -130,16 +113,20 @@ function Reconciliation() {
       subtitle={`Expected vs actual money movement - ${branch}`}
       actions={
         <>
-          <Btn onClick={importMpesaFeed}>
-            <RefreshCcw className="h-4 w-4" /> Import M-Pesa feed
+          <Btn onClick={() => void checkProviders()}>
+            <RefreshCcw className="h-4 w-4" /> Check providers
           </Btn>
-          <Btn onClick={importTendePayExpense}>Import TendePay expense</Btn>
           <Btn variant="primary" onClick={manualMatch}>
             <Link2 className="h-4 w-4" /> Manual match
           </Btn>
         </>
       }
     >
+      {providerNotice && (
+        <div className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium">
+          {providerNotice}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Expected sales" value={metrics.sales} money />
         <Metric label="Outstanding bills" value={metrics.outstanding} money invert />
@@ -151,7 +138,7 @@ function Reconciliation() {
         <Panel>
           <PanelHead
             title="External transaction feed"
-            sub="M-Pesa, bank, card/acquirer, TendePay and manual imports"
+            sub={`${paymentConnections.length} configured payment connection${paymentConnections.length === 1 ? "" : "s"}; webhook, statement and provider imports share this feed`}
             right={<Status>{unmatched.length} unmatched</Status>}
           />
           <div className="border-b border-border px-4 py-3">
@@ -248,7 +235,7 @@ function Reconciliation() {
             <PanelHead
               title="Cash drawer close"
               sub="Expected drawer vs physical count"
-              right={<Btn onClick={closeDrawer}>Close sample</Btn>}
+              right={<Btn onClick={closeDrawer}>Close drawer</Btn>}
             />
             <div className="divide-y divide-border">
               {drawers.map((drawer) => (

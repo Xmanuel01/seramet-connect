@@ -3,8 +3,8 @@ import { useMemo, useState } from "react";
 import { ArrowRightLeft, Copy, GripVertical, Minus, Plus } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { employees } from "@/data/mock";
 import { useBranchRows } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/schedule")({
@@ -36,29 +36,22 @@ const shiftOptions: ShiftCode[] = [
   "12:00-21:30",
   "16:00-23:00",
 ];
-const shiftFor = (employeeIndex: number, dayIndex: number): ShiftCode =>
-  (employeeIndex + dayIndex) % 4 === 0
-    ? "OFF"
-    : (employeeIndex + dayIndex) % 3 === 0
-      ? "12:00-21:30"
-      : "09:30-21:30";
+const configuredShift = (value: string): ShiftCode =>
+  shiftOptions.includes(value as ShiftCode) ? (value as ShiftCode) : "OFF";
 
 const cellKey = (employee: string, day: string) => `${employee}|${day}`;
 
 function Schedule() {
-  const branchEmployees = useBranchRows(employees);
-  const roster = branchEmployees.length > 0 ? branchEmployees : employees;
+  const { state } = useTransactionEngine();
+  const roster = useBranchRows(state.employees);
   const [shifts, setShifts] = useState<ShiftMap>(() =>
     Object.fromEntries(
-      employees.flatMap((employee, employeeIndex) =>
-        days.map((day, dayIndex) => [
-          cellKey(employee.name, day),
-          shiftFor(employeeIndex, dayIndex),
-        ]),
+      roster.flatMap((employee) =>
+        days.map((day) => [cellKey(employee.name, day), configuredShift(employee.shift)]),
       ),
     ),
   );
-  const [selected, setSelected] = useState(cellKey(roster[0]?.name ?? employees[0].name, "Mon"));
+  const [selected, setSelected] = useState(cellKey(roster[0]?.name ?? "Unassigned", "Mon"));
   const [dragging, setDragging] = useState<string | null>(null);
   const [moveSource, setMoveSource] = useState<string | null>(null);
 
@@ -117,7 +110,7 @@ function Schedule() {
   const resizeSelected = (delta: number) => {
     const index = shiftOptions.indexOf(selectedShift);
     const next = shiftOptions[Math.min(shiftOptions.length - 1, Math.max(0, index + delta))];
-    updateShift(selected, next);
+    updateShift(selected, next ?? "OFF");
   };
 
   const duplicateDay = (fromDay: string, toDay: string) => {
@@ -133,9 +126,9 @@ function Schedule() {
   const duplicateWeek = () => {
     setShifts((current) => {
       const next = { ...current };
-      roster.forEach((employee, employeeIndex) => {
-        days.forEach((day, dayIndex) => {
-          next[cellKey(employee.name, day)] = shiftFor(employeeIndex + 1, dayIndex);
+      roster.forEach((employee) => {
+        days.forEach((day) => {
+          next[cellKey(employee.name, day)] = configuredShift(employee.shift);
         });
       });
       return next;
@@ -147,7 +140,7 @@ function Schedule() {
   return (
     <AppShell
       title="Shift schedule"
-      subtitle="Week of 10 August - branch-aware coverage, conflicts and overtime"
+      subtitle="Branch-aware coverage, conflicts and overtime"
       actions={
         <>
           <Btn onClick={() => duplicateDay("Mon", "Tue")}>
@@ -160,14 +153,9 @@ function Schedule() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Scheduled shifts" value={stats.scheduled} />
-        <Metric label="Coverage gaps" value={stats.gaps} invert delta={stats.gaps ? 100 : -100} />
+        <Metric label="Coverage gaps" value={stats.gaps} invert />
         <Metric label="Conflicts" value={stats.conflicts} invert />
-        <Metric
-          label="Projected overtime"
-          value={`${stats.overtime}h`}
-          invert
-          delta={stats.overtime}
-        />
+        <Metric label="Projected overtime" value={`${stats.overtime}h`} invert />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -378,10 +366,10 @@ function renderShiftButton({
 function shiftHours(shift?: ShiftCode) {
   if (!shift || shift === "OFF") return 0;
   const [start, end] = shift.split("-");
-  return toHours(end) - toHours(start);
+  return toHours(end ?? "00:00") - toHours(start ?? "00:00");
 }
 
 function toHours(value: string) {
   const [hours, minutes] = value.split(":").map(Number);
-  return hours + minutes / 60;
+  return (hours ?? 0) + (minutes ?? 0) / 60;
 }

@@ -1,8 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { deriveBranchOperations } from "@/lib/restaurant-operations";
 
 export const Route = createFileRoute("/reports")({
   head: () => ({
@@ -34,17 +36,37 @@ const cats = [
   { name: "Management", n: 12, items: ["Board pack", "Branch scorecard", "Risk register"] },
 ];
 
-const preview = [
-  { branch: "Westlands", sales: 121480, orders: 172, margin: "61%", state: "Healthy" },
-  { branch: "Ngong Road", sales: 92940, orders: 136, margin: "56%", state: "Attention" },
-];
-
 function Reports() {
-  const { branch, branchLabel, matchesBranch } = useAppContext();
-  const scopedPreview = preview.filter((row) => matchesBranch(row.branch));
+  const { branch, branchLabel, branchRecords, branchScope } = useAppContext();
+  const { state } = useTransactionEngine();
+  const branchNames =
+    branchScope.type === "ALL"
+      ? branchRecords.map((configuredBranch) => configuredBranch.name)
+      : [branch];
+  const scopedPreview = branchNames.map((branchName) => {
+    const orders = state.orders.filter(
+      (order) => order.branch === branchName && !["CANCELLED", "REFUNDED"].includes(order.status),
+    );
+    const sales = orders.reduce((sum, order) => sum + order.total, 0);
+    const paidOrders = orders.filter((order) => order.paymentStatus === "PAID").length;
+    const paidRate = orders.length ? Math.round((paidOrders / orders.length) * 100) : 0;
+    const health = deriveBranchOperations(state, branchName);
+    return {
+      branch: branchName,
+      sales,
+      orders: orders.length,
+      paidRate,
+      state: health.label,
+    };
+  });
   const totalSales = scopedPreview.reduce((sum, row) => sum + row.sales, 0);
   const totalOrders = scopedPreview.reduce((sum, row) => sum + row.orders, 0);
   const avgOrder = totalOrders ? Math.round(totalSales / totalOrders) : 0;
+  const paidRate = totalOrders
+    ? Math.round(
+        scopedPreview.reduce((sum, row) => sum + row.orders * row.paidRate, 0) / totalOrders,
+      )
+    : 0;
   return (
     <AppShell
       title="Report centre"
@@ -52,10 +74,10 @@ function Reports() {
       actions={<Btn variant="primary">Build report</Btn>}
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Pinned" value={6} />
-        <Metric label="Recently used" value={12} />
-        <Metric label="Scheduled" value={9} />
-        <Metric label="Exports today" value={17} delta={24} />
+        <Metric label="Pinned" value={0} />
+        <Metric label="Recently used" value={0} />
+        <Metric label="Scheduled" value={0} />
+        <Metric label="Exports today" value={0} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -69,14 +91,10 @@ function Reports() {
             <Chips items={["Date: Today", `Branch: ${branch}`, "Channel: All"]} />
           </div>
           <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
-            <Metric label="Net sales" value={totalSales} money delta={8.4} />
-            <Metric label="Orders" value={totalOrders} delta={4.1} />
+            <Metric label="Net sales" value={totalSales} money />
+            <Metric label="Orders" value={totalOrders} />
             <Metric label="Average order" value={avgOrder} money />
-            <Metric
-              label="Gross margin"
-              value={scopedPreview.length === 1 ? Number.parseInt(scopedPreview[0].margin) : 59}
-              suffix="%"
-            />
+            <Metric label="Paid orders" value={paidRate} suffix="%" />
           </div>
           <div className="grid gap-3 p-3 md:hidden">
             {scopedPreview.map((r) => (
@@ -97,8 +115,8 @@ function Reports() {
                     <span className="num font-semibold">{r.orders}</span>
                   </div>
                   <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                    <span className="text-muted-foreground">Margin </span>
-                    <span className="num font-semibold">{r.margin}</span>
+                    <span className="text-muted-foreground">Paid </span>
+                    <span className="num font-semibold">{r.paidRate}%</span>
                   </div>
                 </div>
               </article>
@@ -111,7 +129,7 @@ function Reports() {
                   <TH>Branch</TH>
                   <TH className="text-right">Sales</TH>
                   <TH className="text-right">Orders</TH>
-                  <TH className="text-right">Margin</TH>
+                  <TH className="text-right">Paid rate</TH>
                   <TH>Status</TH>
                 </tr>
               </thead>
@@ -121,7 +139,7 @@ function Reports() {
                     <TD className="font-semibold">{r.branch}</TD>
                     <TD className="num text-right font-semibold">{ksh(r.sales)}</TD>
                     <TD className="num text-right">{r.orders}</TD>
-                    <TD className="num text-right">{r.margin}</TD>
+                    <TD className="num text-right">{r.paidRate}%</TD>
                     <TD>
                       <Status>{r.state}</Status>
                     </TD>

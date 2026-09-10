@@ -1,0 +1,105 @@
+{
+  "browser": [
+    {
+      "level": 0,
+      "names": [
+        "browserId",
+        "capabilities",
+        "tabs",
+        "user"
+      ]
+    },
+    {
+      "level": 1,
+      "names": [
+        "constructor",
+        "documentation",
+        "nameSession"
+      ]
+    },
+    {
+      "level": 2,
+      "names": [
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString"
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "level": 0,
+      "names": []
+    },
+    {
+      "level": 1,
+      "names": [
+        "constructor",
+        "new",
+        "selected",
+        "list",
+        "finalize",
+        "content",
+        "get"
+      ]
+    },
+    {
+      "level": 2,
+      "names": [
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString"
+      ]
+    }
+  ],
+  "user": [
+    {
+      "level": 0,
+      "names": []
+    },
+    {
+      "level": 1,
+      "names": [
+        "constructor",
+        "openTabs",
+        "claimTab",
+        "history"
+      ]
+    },
+    {
+      "level": 2,
+      "names": [
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString"
+      ]
+    }
+  ]
+}

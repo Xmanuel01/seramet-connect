@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type Req = {
@@ -20,35 +21,7 @@ export const Route = createFileRoute("/requisitions")({
   component: Requisitions,
 });
 
-const rows: Req[] = [
-  {
-    id: "REQ-001",
-    request: "Weekly meat replenishment",
-    branch: "Westlands",
-    requester: "Kelvin M.",
-    value: 58400,
-    age: "2h",
-    status: "Pending",
-  },
-  {
-    id: "REQ-002",
-    request: "Packaging top-up",
-    branch: "Ngong Road",
-    requester: "Faith N.",
-    value: 31600,
-    age: "5h",
-    status: "Approved",
-  },
-  {
-    id: "REQ-003",
-    request: "Produce emergency order",
-    branch: "Westlands",
-    requester: "Musa K.",
-    value: 22800,
-    age: "1d",
-    status: "Critical",
-  },
-];
+const rows: Req[] = emptyRecords();
 
 const columns: EnterpriseColumn<Req>[] = [
   { key: "request", label: "Request", sortable: true },

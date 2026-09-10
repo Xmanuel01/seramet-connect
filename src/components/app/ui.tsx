@@ -1,6 +1,6 @@
-import { Children, isValidElement, useRef, type ReactNode } from "react";
+import { Children, isValidElement, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
@@ -277,11 +277,12 @@ export function Btn({
   variant = "default",
   className,
   onClick,
-}: {
+  disabled = false,
+  type = "button",
+  ...buttonProps
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
   children: ReactNode;
   variant?: "default" | "primary" | "ghost" | "danger";
-  className?: string;
-  onClick?: () => void;
 }) {
   const v = {
     default: "border border-border bg-card hover:bg-secondary",
@@ -289,9 +290,10 @@ export function Btn({
     ghost: "text-muted-foreground hover:bg-secondary hover:text-foreground",
     danger: "bg-danger-soft text-danger hover:opacity-90",
   }[variant];
-  const handleClick = () => {
+  const handleClick: ButtonHTMLAttributes<HTMLButtonElement>["onClick"] = (event) => {
+    if (disabled) return;
     if (onClick) {
-      onClick();
+      onClick(event);
       return;
     }
     const label = getTextFromChildren(children).trim();
@@ -301,9 +303,12 @@ export function Btn({
 
   return (
     <button
+      {...buttonProps}
+      type={type}
       onClick={handleClick}
+      disabled={disabled}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors",
+        "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         v,
         className,
       )}
@@ -353,11 +358,7 @@ export function TH({ children, className }: { children?: ReactNode; className?: 
   );
 }
 
-export function TD({
-  children,
-  className,
-  ...rest
-}: React.TdHTMLAttributes<HTMLTableCellElement>) {
+export function TD({ children, className, ...rest }: React.TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td
       {...rest}

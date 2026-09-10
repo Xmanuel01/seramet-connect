@@ -1,8 +1,12 @@
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
+import { TransactionEngine } from "@/lib/transaction-engine";
+import { currentDateKey } from "@/lib/currency";
 
 type Rider = {
   id: string;
@@ -36,49 +40,6 @@ export const Route = createFileRoute("/riders")({
   component: Riders,
 });
 
-const rows: Rider[] = [
-  {
-    id: "RID-01",
-    name: "Kevin M.",
-    branch: "Westlands",
-    shift: "10:00 - 19:00",
-    clockedIn: "09:52",
-    activeTasks: 1,
-    completedToday: 6,
-    status: "Available",
-  },
-  {
-    id: "RID-02",
-    name: "Dennis K.",
-    branch: "Westlands",
-    shift: "12:00 - 21:00",
-    clockedIn: "11:58",
-    activeTasks: 2,
-    completedToday: 4,
-    status: "In progress",
-  },
-  {
-    id: "RID-03",
-    name: "Sharon A.",
-    branch: "Ngong Road",
-    shift: "10:00 - 19:00",
-    clockedIn: "-",
-    activeTasks: 0,
-    completedToday: 0,
-    status: "Absent",
-  },
-  {
-    id: "RID-04",
-    name: "Victor O.",
-    branch: "Ngong Road",
-    shift: "14:00 - 23:00",
-    clockedIn: "13:55",
-    activeTasks: 0,
-    completedToday: 2,
-    status: "Available",
-  },
-];
-
 const columns: EnterpriseColumn<Rider>[] = [
   { key: "name", label: "Rider", sortable: true },
   { key: "branch", label: "Branch", sortable: true },
@@ -92,10 +53,10 @@ const columns: EnterpriseColumn<Rider>[] = [
 const eligibility = [
   "Assigned to the branch",
   "On the current shift",
-  "Clocked in",
+  "Clocked in / not marked absent",
   "Available (not on break)",
   "Not overloaded",
-  "Not absent",
+  "Not on leave or off day",
 ];
 
 const strategies = [
@@ -107,20 +68,97 @@ const strategies = [
 ];
 
 function Riders() {
-  const { branch, branchLabel } = useAppContext();
-  const scopedRows = useBranchRows(rows);
+  const { branch, branchLabel, currentUser, isAllBranches, matchesBranch } = useAppContext();
+  const { state, mutate, backendStatus } = useTransactionEngine();
+  const [notice, setNotice] = useState("");
+  const today = currentDateKey();
+
+  const scopedRows = useMemo<Rider[]>(() => {
+    const employees = state.employees.filter(
+      (employee) =>
+        employee.active &&
+        employee.role === "Rider" &&
+        matchesBranch(employee.branchId ?? employee.branch),
+    );
+    return employees.map((employee) => {
+      const attendance = state.attendanceRecords.find(
+        (record) => record.employeeId === employee.id && record.date === today,
+      );
+      const ownOrders = state.orders.filter(
+        (order) =>
+          ["Delivery", "Online"].includes(order.channel) &&
+          order.branch === employee.branch &&
+          order.delivery?.rider === employee.name,
+      );
+      const activeTasks = ownOrders.filter(
+        (order) =>
+          order.delivery?.status !== "DELIVERED" &&
+          !["CANCELLED", "REFUNDED"].includes(order.status),
+      ).length;
+      const completedToday = ownOrders.filter(
+        (order) =>
+          order.delivery?.status === "DELIVERED" &&
+          (order.delivery.deliveredAt ?? "").slice(0, 10) === today,
+      ).length;
+      let status = attendance?.clockIn
+        ? activeTasks > 0
+          ? "In progress"
+          : "Available"
+        : "Not clocked in";
+      if (attendance?.status === "ABSENT") status = "Absent";
+      if (attendance?.status === "ON_LEAVE") status = "On leave";
+      if (attendance?.status === "OFF") status = "Off shift";
+      if (
+        !attendance?.clockIn &&
+        attendance &&
+        !["ABSENT", "ON_LEAVE", "OFF"].includes(attendance.status)
+      )
+        status = "Not clocked in";
+      return {
+        id: employee.id,
+        name: employee.name,
+        branch: employee.branch,
+        shift: employee.shift,
+        clockedIn: attendance?.clockIn ?? "-",
+        activeTasks,
+        completedToday,
+        status,
+      };
+    });
+  }, [matchesBranch, state.attendanceRecords, state.employees, state.orders, today]);
+
   const available = scopedRows.filter((row) => row.status === "Available");
+
+  const addRider = () => {
+    if (isAllBranches) {
+      setNotice("Select a single branch before adding a rider.");
+      return;
+    }
+    const name = window.prompt("Rider name");
+    if (!name?.trim()) return;
+    const shift = window.prompt("Shift (HH:MM-HH:MM)", "10:00-21:30") ?? "10:00-21:30";
+    void mutate("addRider", { name, branch, shift });
+    setNotice(`${name.trim()} added to the ${branch} rider roster.`);
+  };
+
   return (
     <AppShell
       title="Riders"
       subtitle={`Rider roster, eligibility and dispatch strategy  -  ${branchLabel}`}
       actions={
         <>
-          <Btn>Notify riders</Btn>
-          <Btn variant="primary">Add rider</Btn>
+          <Btn onClick={() => (window.location.href = "/delivery")}>View delivery queue</Btn>
+          <Btn variant="primary" onClick={addRider}>
+            Add rider
+          </Btn>
         </>
       }
     >
+      {notice && (
+        <div className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium">
+          {notice} <span className="ml-2 text-muted-foreground">Backend: {backendStatus}</span>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Riders on roster" value={scopedRows.length} />
         <Metric label="Available now" value={available.length} />
@@ -134,7 +172,7 @@ function Riders() {
         />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Rider roster" sub="Shift, clock-in state and current workload" />
+        <PanelHead title="Rider roster" sub="Live shift, attendance state and delivery workload" />
         <EnterpriseTable
           rows={scopedRows}
           columns={columns}
@@ -143,7 +181,7 @@ function Riders() {
       </Panel>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Panel>
-          <PanelHead title="Eligibility rules" sub="A rider must satisfy all of these to be notified" />
+          <PanelHead title="Eligibility rules" sub="A rider must satisfy these before assignment" />
           <ul className="space-y-2 px-4 py-4 text-[13px]">
             {eligibility.map((rule) => (
               <li key={rule} className="flex items-center gap-2">
@@ -156,7 +194,7 @@ function Riders() {
         <Panel>
           <PanelHead
             title="Assignment strategy"
-            sub="Configurable per branch - no default is applied silently"
+            sub="Manual assignment is active; automation can be enabled per branch later"
           />
           <div className="flex flex-wrap gap-2 px-4 py-4">
             {strategies.map((strategy) => (
@@ -164,8 +202,8 @@ function Riders() {
             ))}
           </div>
           <p className="border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
-            If no eligible rider is found, Seramet raises an operational alert instead of assigning
-            outside the branch.
+            If no eligible rider is found, Seramet leaves the task unassigned and exposes it in the
+            Delivery operations queue.
           </p>
         </Panel>
       </div>

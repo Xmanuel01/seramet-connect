@@ -1,11 +1,14 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { inventoryItems, ksh } from "@/data/mock";
-import { branchMetric, useAppContext, useBranchStores } from "@/lib/app-context";
+import { ksh } from "@/lib/currency";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
+import { TransactionEngine } from "@/lib/transaction-engine";
+import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -26,58 +29,150 @@ export const Route = createFileRoute("/inventory")({
 });
 
 function Inventory() {
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
-  const { branch, branchLabel } = useAppContext();
-  const scopedItems = inventoryItems.map((item) => {
-    const stock = Math.max(0.1, branchMetric(Math.round(item.stock * 10), branch) / 10);
-    const par = Math.max(1, branchMetric(item.par, branch));
-    const status = stock <= par * 0.35 ? "Critical" : stock <= par ? "Low" : "Healthy";
-    return { ...item, stock, par, status };
-  });
+  const [notice, setNotice] = useState("");
+  const {
+    branch,
+    branchId,
+    branchLabel,
+    currentUser,
+    isAllBranches,
+    matchesBranch,
+    platformState,
+    locale,
+  } = useAppContext();
+  const { state, mutate, backendStatus, persistenceMode } = useTransactionEngine();
+  const authoritative = persistenceMode === "authoritative";
+  const control = useInventoryControlCentre(authoritative);
+  const scopedItems = authoritative
+    ? control.data.flatMap((branchData) =>
+        branchData.items.map((item) => {
+          const unit =
+            branchData.units.find((row) => row.id === item.base_unit_id)?.symbol ?? "unit";
+          const stock = item.quantity_minor / 1_000_000;
+          const par = (item.target_quantity_minor ?? item.reorder_point_minor ?? 0) / 1_000_000;
+          const reorder = (item.reorder_point_minor ?? 0) / 1_000_000;
+          return {
+            id: item.id,
+            sku: item.sku ?? item.code,
+            name: item.name,
+            category: item.category_id ?? "Uncategorised",
+            cat: item.category_id ?? "Uncategorised",
+            unit,
+            stock,
+            par,
+            averageCost: item.average_unit_cost_minor / 100,
+            cost: item.average_unit_cost_minor / 100,
+            supplier: "Not assigned",
+            status: stock <= 0 ? "Out of stock" : stock <= reorder ? "Low stock" : "Healthy",
+            warehouseId: item.warehouse_id,
+            branchId: branchData.branchId,
+          };
+        }),
+      )
+    : TransactionEngine.getInventoryRows(state, branch).map((item) => ({
+        ...item,
+        cat: item.category,
+        cost: item.averageCost,
+        warehouseId: "",
+        branchId,
+      }));
   const rows = scopedItems.filter((i) => i.name.toLowerCase().includes(q.toLowerCase()));
   const needsReorder = rows.filter((item) => item.status !== "Healthy");
-  const inventoryValue = rows.reduce((sum, item) => sum + item.cost * item.stock, 0);
-  const warehouseRows = useBranchStores([
-    {
-      w: "Westlands Main Store",
-      qty: "12.6 kg",
-      note: "PAR 30 kg  -  reorder 15 kg",
-      store: "Westlands Main Store",
-    },
-    { w: "Westlands Kitchen", qty: "4.3 kg", note: "Reserved 2.0 kg", store: "Westlands Kitchen" },
-    {
-      w: "Ngong Main Store",
-      qty: "8.2 kg",
-      note: "Expected 20 kg tomorrow",
-      store: "Ngong Main Store",
-    },
-  ]);
+  const inventoryValue = authoritative
+    ? control.data.reduce((sum, row) => sum + row.summary.inventoryValueMinor / 100, 0)
+    : rows.reduce((sum, item) => sum + item.cost * item.stock, 0);
+  const wasteValue = state.wastageRecords
+    .filter((entry) => matchesBranch(entry.branchId ?? entry.branch) && entry.status === "APPROVED")
+    .reduce((sum, entry) => sum + entry.cost, 0);
+  const incomingStock = state.purchaseOrders
+    .filter(
+      (po) =>
+        matchesBranch(po.branchId ?? po.branch) && ["APPROVED", "PARTIAL"].includes(po.status),
+    )
+    .reduce(
+      (sum, po) =>
+        sum +
+        po.lines.reduce(
+          (lineSum, line) =>
+            lineSum + Math.max(0, line.quantity - line.receivedQuantity) * line.unitCost,
+          0,
+        ),
+      0,
+    );
+  const adjustmentVariance = state.stockMovements
+    .filter(
+      (movement) =>
+        matchesBranch(movement.branchId ?? movement.branch) && movement.type === "ADJUSTMENT",
+    )
+    .reduce((sum, movement) => sum + movement.quantity * movement.unitCost, 0);
+  const warehouseRows = authoritative
+    ? control.data.flatMap((branchData) => {
+        const groups = new Map<string, { quantity: number; value: number; reserved: number }>();
+        for (const item of branchData.items) {
+          const current = groups.get(item.warehouse_id) ?? { quantity: 0, value: 0, reserved: 0 };
+          current.quantity += item.quantity_minor / 1_000_000;
+          current.value += item.total_value_minor / 100;
+          current.reserved += item.quantity_reserved_minor / 1_000_000;
+          groups.set(item.warehouse_id, current);
+        }
+        return [...groups.entries()].map(([warehouseId, values]) => ({
+          w:
+            platformState.warehouses.find((warehouse) => warehouse.id === warehouseId)?.name ??
+            warehouseId,
+          qty: `${values.quantity.toLocaleString(locale, { maximumFractionDigits: 2 })} base units`,
+          note: `${ksh(values.value)} value  -  ${values.reserved.toLocaleString(locale, { maximumFractionDigits: 2 })} reserved`,
+        }));
+      })
+    : [];
   return (
     <AppShell
       title="Inventory"
-      subtitle={`${branchLabel} inventory  -  last count 3 days ago`}
+      subtitle={`${branchLabel} inventory - authoritative stock balances and movements`}
       actions={
         <>
-          <Btn>Import</Btn>
-          <Btn>Export</Btn>
-          <Btn variant="primary">Add item</Btn>
+          <Btn onClick={() => void navigate({ to: "/menu-import" })}>Import</Btn>
+          <Btn onClick={() => exportInventory(rows)}>Export</Btn>
+          <Btn variant="primary" onClick={() => void navigate({ to: "/cost-control" })}>
+            Add item
+          </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Metric label="Inventory value" value={inventoryValue} money delta={-2.1} />
-        <Metric label="Low stock" value={needsReorder.length} delta={33} invert />
-        <Metric label="Out of stock" value={rows.filter((item) => item.stock < 1).length} />
+        <Metric label="Inventory value" value={inventoryValue} money />
         <Metric
-          label="Stock variance"
-          value={branchMetric(-18400, branch)}
-          money
-          delta={12}
+          label="Low stock"
+          value={
+            authoritative
+              ? control.data.reduce((sum, row) => sum + row.summary.lowStockCount, 0)
+              : needsReorder.length
+          }
           invert
         />
-        <Metric label="Waste value" value={branchMetric(9240, branch)} money delta={-8.2} invert />
-        <Metric label="Incoming stock" value={branchMetric(214300, branch)} money delta={4.4} />
+        <Metric
+          label="Out of stock"
+          value={
+            authoritative
+              ? control.data.reduce((sum, row) => sum + row.summary.outOfStockCount, 0)
+              : rows.filter((item) => item.stock < 1).length
+          }
+        />
+        <Metric
+          label="Stock variance"
+          value={Math.round(adjustmentVariance)}
+          money
+          invert={adjustmentVariance < 0}
+        />
+        <Metric label="Waste value" value={Math.round(wasteValue)} money invert={wasteValue > 0} />
+        <Metric label="Incoming stock" value={Math.round(incomingStock)} money />
       </div>
+      {(notice || control.error) && (
+        <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+          {notice || control.error} Backend: {authoritative ? control.status : backendStatus}.
+        </div>
+      )}
 
       <Panel className="mt-4">
         <PanelHead
@@ -95,7 +190,12 @@ function Inventory() {
               className="w-full bg-transparent text-[13px] outline-none"
             />
           </div>
-          <Chips items={[`Branch: ${branch}`, "Status: Needs attention"]} />
+          <Chips
+            items={[
+              `Branch: ${branch}`,
+              needsReorder.length > 0 ? "Status: Needs attention" : "Status: No exceptions",
+            ]}
+          />
         </div>
         <div className="grid gap-3 p-3 md:hidden">
           {rows.map((i) => (
@@ -192,7 +292,8 @@ function Inventory() {
         </div>
         <div className="flex items-center justify-between px-4 py-3 text-[12px] text-muted-foreground">
           <span>
-            Showing {rows.length} of {branch === "All Branches" ? 154 : 77} items
+            Showing {rows.length} configured item{rows.length === 1 ? "" : "s"}
+            {isAllBranches ? " across all branches" : ""}
           </span>
           <div className="flex gap-1.5">
             <Btn>Previous</Btn>
@@ -206,7 +307,41 @@ function Inventory() {
           <PanelHead
             title="PAR shortfall"
             sub="Generate a purchase recommendation"
-            right={<Btn variant="primary">Generate PO</Btn>}
+            right={
+              <Btn
+                variant="primary"
+                onClick={() => {
+                  if (authoritative) {
+                    void control
+                      .recalculate()
+                      .then(() =>
+                        setNotice("Forecast and purchase recommendation recalculation queued."),
+                      )
+                      .catch((error: unknown) =>
+                        setNotice(
+                          error instanceof Error
+                            ? error.message
+                            : "Recalculation could not be queued",
+                        ),
+                      );
+                  } else {
+                    const result = TransactionEngine.generatePurchaseOrders(
+                      state,
+                      branch,
+                      currentUser.name,
+                    );
+                    void mutate("generatePurchaseOrders", { branch });
+                    setNotice(
+                      result.created.length > 0
+                        ? `Created ${result.created.join(", ")} from live PAR shortfalls.`
+                        : "No new PO created. Existing open POs already cover these supplier shortfalls.",
+                    );
+                  }
+                }}
+              >
+                Generate PO
+              </Btn>
+            }
           />
           <table className="w-full">
             <thead>
@@ -238,7 +373,7 @@ function Inventory() {
           </table>
         </Panel>
         <Panel>
-          <PanelHead title="Stock by warehouse" sub="Beef Boneless  -  MEAT-001" />
+          <PanelHead title="Stock by warehouse" sub="Authoritative branch and storage totals" />
           <ul className="divide-y divide-border">
             {warehouseRows.map((r) => (
               <li key={r.w} className="flex items-center justify-between px-4 py-3">
@@ -249,9 +384,49 @@ function Inventory() {
                 <span className="num text-[14px] font-bold">{r.qty}</span>
               </li>
             ))}
+            {!warehouseRows.length && (
+              <li className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+                Warehouse totals will appear after the first stock movement.
+              </li>
+            )}
           </ul>
         </Panel>
       </div>
     </AppShell>
   );
+}
+
+function exportInventory(
+  rows: Array<{
+    sku: string;
+    name: string;
+    cat: string;
+    stock: number;
+    unit: string;
+    cost: number;
+    status: string;
+  }>,
+) {
+  const values = [
+    ["sku", "name", "category", "stock", "unit", "average_cost", "inventory_value", "status"],
+    ...rows.map((row) => [
+      row.sku,
+      row.name,
+      row.cat,
+      row.stock,
+      row.unit,
+      row.cost,
+      row.stock * row.cost,
+      row.status,
+    ]),
+  ];
+  const csv = values
+    .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = `seramet-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(href);
 }

@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 
 type Category = {
   id: string;
@@ -19,44 +20,7 @@ export const Route = createFileRoute("/categories")({
   component: Categories,
 });
 
-const rows: Category[] = [
-  {
-    id: "CAT-001",
-    category: "Meat",
-    items: 18,
-    stockValue: 486200,
-    lowStock: 2,
-    margin: "58%",
-    status: "Attention",
-  },
-  {
-    id: "CAT-002",
-    category: "Groceries",
-    items: 42,
-    stockValue: 318400,
-    lowStock: 1,
-    margin: "64%",
-    status: "Healthy",
-  },
-  {
-    id: "CAT-003",
-    category: "Produce",
-    items: 36,
-    stockValue: 184600,
-    lowStock: 2,
-    margin: "61%",
-    status: "Critical",
-  },
-  {
-    id: "CAT-004",
-    category: "Packaging",
-    items: 14,
-    stockValue: 112800,
-    lowStock: 1,
-    margin: "-",
-    status: "Attention",
-  },
-];
+const rows: Category[] = emptyRecords();
 
 const columns: EnterpriseColumn<Category>[] = [
   { key: "category", label: "Category", sortable: true },
@@ -86,10 +50,10 @@ function Categories() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Categories" value={12} />
-        <Metric label="Stock value" value={1284600} money />
-        <Metric label="Critical categories" value={1} invert />
-        <Metric label="Low-stock items" value={6} invert />
+        <Metric label="Categories" value={0} />
+        <Metric label="Stock value" value={0} money />
+        <Metric label="Critical categories" value={0} invert />
+        <Metric label="Low-stock items" value={0} invert />
       </div>
       <Panel className="mt-4">
         <PanelHead title="Category table" sub="Search, sort, select, hide columns and export" />

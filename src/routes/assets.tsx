@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type Asset = {
@@ -22,52 +23,7 @@ export const Route = createFileRoute("/assets")({
   component: Assets,
 });
 
-const rows: Asset[] = [
-  {
-    id: "AST-001",
-    asset: "Commercial oven",
-    tag: "AST-OVN-01",
-    category: "Kitchen",
-    branch: "Westlands",
-    value: 286000,
-    condition: "Good",
-    nextService: "20 Aug",
-    status: "Active",
-  },
-  {
-    id: "AST-002",
-    asset: "POS Terminal 2",
-    tag: "AST-POS-02",
-    category: "Front Office",
-    branch: "Ngong Road",
-    value: 68000,
-    condition: "Good",
-    nextService: "14 Sep",
-    status: "Active",
-  },
-  {
-    id: "AST-003",
-    asset: "Upright freezer",
-    tag: "AST-FRZ-01",
-    category: "Kitchen",
-    branch: "Westlands",
-    value: 184000,
-    condition: "Service due",
-    nextService: "Today",
-    status: "Attention",
-  },
-  {
-    id: "AST-004",
-    asset: "Delivery bike",
-    tag: "AST-BKE-03",
-    category: "Delivery",
-    branch: "Ngong Road",
-    value: 142000,
-    condition: "Repair",
-    nextService: "Overdue",
-    status: "Critical",
-  },
-];
+const rows: Asset[] = emptyRecords();
 
 const columns: EnterpriseColumn<Asset>[] = [
   { key: "asset", label: "Asset", sortable: true },

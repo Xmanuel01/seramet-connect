@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type Expense = {
@@ -23,56 +24,7 @@ export const Route = createFileRoute("/expenses")({
   component: Expenses,
 });
 
-const rows: Expense[] = [
-  {
-    id: "EXP-001",
-    date: "13 Aug",
-    employee: "Joan A.",
-    category: "Transport",
-    branch: "Westlands",
-    vendor: "Bolt",
-    amount: 1840,
-    receipt: "IMG-1840.jpg",
-    status: "Pending",
-    approver: "Emmanuel K.",
-  },
-  {
-    id: "EXP-002",
-    date: "12 Aug",
-    employee: "Musa K.",
-    category: "Kitchen tools",
-    branch: "Westlands",
-    vendor: "KitchenPro",
-    amount: 12400,
-    receipt: "IMG-1240.jpg",
-    status: "Approved",
-    approver: "Emmanuel K.",
-  },
-  {
-    id: "EXP-003",
-    date: "11 Aug",
-    employee: "Amina W.",
-    category: "Airtime",
-    branch: "Ngong Road",
-    vendor: "Safaricom",
-    amount: 1500,
-    receipt: "MPESA-1500",
-    status: "Paid",
-    approver: "Finance",
-  },
-  {
-    id: "EXP-004",
-    date: "10 Aug",
-    employee: "Kelvin M.",
-    category: "Repairs",
-    branch: "Westlands",
-    vendor: "CoolTech",
-    amount: 28600,
-    receipt: "IMG-2860.jpg",
-    status: "Critical",
-    approver: "Finance",
-  },
-];
+const rows: Expense[] = emptyRecords();
 
 const columns: EnterpriseColumn<Expense>[] = [
   { key: "date", label: "Date", sortable: true },
@@ -109,7 +61,7 @@ function Expenses() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Expenses MTD" value={total} money delta={3.1} invert />
+        <Metric label="Expenses MTD" value={total} money invert />
         <Metric
           label="Pending approval"
           value={scopedRows.filter((row) => row.status === "Pending").length}
@@ -119,7 +71,7 @@ function Expenses() {
           value={scopedRows.filter((row) => row.receipt.startsWith("IMG")).length}
           invert
         />
-        <Metric label="Avg approval time" value="4.2h" />
+        <Metric label="Avg approval time" value="Not available" />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Panel>

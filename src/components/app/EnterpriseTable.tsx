@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, Columns3, Download, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, Columns3, Database, Download, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Btn, Chips, Status, TD, TH } from "@/components/app/ui";
 import {
@@ -114,7 +114,7 @@ export function EnterpriseTable<T extends { id: string }>({
             {columns.map((col) => (
               <DropdownMenuCheckboxItem
                 key={col.key}
-                checked={visible[col.key]}
+                checked={visible[col.key] ?? false}
                 onCheckedChange={(checked) =>
                   setVisible((current) => ({ ...current, [col.key]: Boolean(checked) }))
                 }
@@ -156,6 +156,17 @@ export function EnterpriseTable<T extends { id: string }>({
       </div>
 
       <div className="grid gap-3 p-3 md:hidden">
+        {pageRows.length === 0 && (
+          <div className="grid min-h-44 place-items-center px-6 text-center">
+            <div>
+              <Database className="mx-auto h-6 w-6 text-muted-foreground" />
+              <p className="mt-2 text-[13px] font-semibold">No records yet</p>
+              <p className="mt-1 text-[12px] text-muted-foreground">
+                New records will appear here after they are created.
+              </p>
+            </div>
+          </div>
+        )}
         {pageRows.map((row) => {
           const primary = visibleColumns[0];
           const secondary = visibleColumns.slice(1, 3);
@@ -276,6 +287,17 @@ export function EnterpriseTable<T extends { id: string }>({
             </tr>
           </thead>
           <tbody>
+            {pageRows.length === 0 && (
+              <tr>
+                <TD className="px-6 py-12 text-center" colSpan={visibleColumns.length + 2}>
+                  <Database className="mx-auto h-6 w-6 text-muted-foreground" />
+                  <p className="mt-2 text-[13px] font-semibold">No records yet</p>
+                  <p className="mt-1 text-[12px] text-muted-foreground">
+                    New records will appear here after they are created.
+                  </p>
+                </TD>
+              </tr>
+            )}
             {pageRows.map((row) => (
               <Fragment key={row.id}>
                 <tr className="hover:bg-secondary/50">

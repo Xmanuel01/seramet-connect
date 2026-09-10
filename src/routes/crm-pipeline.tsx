@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 export const Route = createFileRoute("/crm-pipeline")({
@@ -18,74 +19,7 @@ export const Route = createFileRoute("/crm-pipeline")({
 });
 
 const stages = ["New", "Contacted", "Qualified", "Proposal", "Won", "Lost"];
-const leads = [
-  {
-    id: "L-1182",
-    stage: "New",
-    customer: "Kilimani Catering",
-    company: "Kilimani Events",
-    branch: "Westlands",
-    value: 124000,
-    owner: "Joan A.",
-    next: "Call buyer",
-    age: "1d",
-  },
-  {
-    id: "L-1174",
-    stage: "Contacted",
-    customer: "Asha Mohamed",
-    company: "Office lunch account",
-    branch: "Ngong Road",
-    value: 86000,
-    owner: "Brian O.",
-    next: "Send menu",
-    age: "3d",
-  },
-  {
-    id: "L-1159",
-    stage: "Qualified",
-    customer: "Westlands Gym",
-    company: "Corporate meals",
-    branch: "Westlands",
-    value: 214000,
-    owner: "Emmanuel K.",
-    next: "Pricing review",
-    age: "6d",
-  },
-  {
-    id: "L-1140",
-    stage: "Proposal",
-    customer: "Nairobi Studio",
-    company: "Crew catering",
-    branch: "Westlands",
-    value: 172000,
-    owner: "Joan A.",
-    next: "Follow up",
-    age: "9d",
-  },
-  {
-    id: "L-1126",
-    stage: "Won",
-    customer: "Sarit Retail Team",
-    company: "Staff meals",
-    branch: "Westlands",
-    value: 268000,
-    owner: "Emmanuel K.",
-    next: "Create account",
-    age: "12d",
-  },
-  {
-    id: "L-1098",
-    stage: "Lost",
-    customer: "Ngong School",
-    company: "Term catering",
-    branch: "Ngong Road",
-    value: 92000,
-    owner: "Brian O.",
-    next: "Archive",
-    age: "18d",
-  },
-];
+const leads = emptyRecords();
 
 function CrmPipeline() {
   const { branchLabel } = useAppContext();
@@ -103,13 +37,13 @@ function CrmPipeline() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Pipeline value" value={pipelineValue} money delta={14} />
+        <Metric label="Pipeline value" value={pipelineValue} money />
         <Metric
           label="Open leads"
           value={scopedLeads.filter((lead) => !["Won", "Lost"].includes(lead.stage)).length}
         />
-        <Metric label="Weighted forecast" value={Math.round(pipelineValue * 0.44)} money />
-        <Metric label="Avg age" value="6.4d" />
+        <Metric label="Weighted forecast" value="Not available" />
+        <Metric label="Avg age" value="Not available" />
       </div>
 
       <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-3">

@@ -17,6 +17,18 @@ const token = process.env.SERAMET_BRIDGE_TOKEN || config.token;
 const dataDir =
   process.env.SERAMET_BRIDGE_DATA_DIR || config.dataDir || join(homedir(), ".seramet-print-bridge");
 const dryRun = String(process.env.SERAMET_BRIDGE_DRY_RUN ?? config.dryRun ?? "false") === "true";
+const allowedOrigins = new Set(
+  (
+    config.allowedOrigins ?? [
+      "http://127.0.0.1:5173",
+      "http://localhost:5173",
+      "http://127.0.0.1:5178",
+      "http://localhost:5178",
+      "http://127.0.0.1:3000",
+      "http://localhost:3000",
+    ]
+  ).map((origin) => String(origin).replace(/\/$/, "")),
+);
 
 if (!token || token.length < 16) {
   console.error("SERAMET_BRIDGE_TOKEN must be set to a secret value of at least 16 characters.");
@@ -27,7 +39,7 @@ await mkdir(dataDir, { recursive: true });
 
 const server = createServer(async (request, response) => {
   try {
-    setCors(response);
+    setCors(request, response);
     if (request.method === "OPTIONS") {
       sendJson(response, 204, {});
       return;
@@ -38,7 +50,6 @@ const server = createServer(async (request, response) => {
         ok: true,
         dryRun,
         platform: platform(),
-        dataDir,
         version: "1.0.0",
       });
       return;
@@ -56,7 +67,12 @@ const server = createServer(async (request, response) => {
       const body = await readJson(request);
       const validation = validateJob(body);
       if (!validation.valid) {
-        await logEvent("rejected", { reason: validation.message, job: body });
+        await logEvent("rejected", {
+          reason: validation.message,
+          jobId: body?.id,
+          orderId: body?.orderId,
+          documentType: body?.documentType,
+        });
         sendJson(response, 400, { accepted: false, message: validation.message });
         return;
       }
@@ -140,6 +156,18 @@ async function discoverPrinters() {
 async function printSpoolFile(filePath, printerName) {
   try {
     if (platform() === "win32") {
+      if (printerName) {
+        await exec("powershell.exe", [
+          "-NoProfile",
+          "-Command",
+          `Get-Content -Raw -LiteralPath ${quotePs(filePath)} | Out-Printer -Name ${quotePs(printerName)}`,
+        ]);
+        return {
+          printed: true,
+          command: "Out-Printer -Name",
+          message: `Sent to Windows printer ${printerName}`,
+        };
+      }
       await exec("powershell.exe", [
         "-NoProfile",
         "-Command",
@@ -148,7 +176,7 @@ async function printSpoolFile(filePath, printerName) {
       return {
         printed: true,
         command: "Start-Process -Verb Print",
-        message: "Sent to Windows print spooler",
+        message: "Sent to the Windows default printer",
       };
     }
     const args = printerName ? ["-d", printerName, filePath] : [filePath];
@@ -177,7 +205,12 @@ function exec(command, args) {
 
 async function readJson(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > 256_000) throw new Error("Print job request is too large");
+    chunks.push(chunk);
+  }
   return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 
@@ -186,8 +219,12 @@ function sendJson(response, status, payload) {
   response.end(status === 204 ? "" : JSON.stringify(payload));
 }
 
-function setCors(response) {
-  response.setHeader("Access-Control-Allow-Origin", "http://127.0.0.1:5178");
+function setCors(request, response) {
+  const origin = request.headers.origin;
+  if (origin && allowedOrigins.has(origin.replace(/\/$/, ""))) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   response.setHeader(
     "Access-Control-Allow-Headers",

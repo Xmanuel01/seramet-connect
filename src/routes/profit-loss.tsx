@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
+import { EmptyState } from "@/components/app/EmptyState";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh, pnl } from "@/data/mock";
+import { ksh } from "@/lib/currency";
+import { emptyRecords } from "@/lib/empty-records";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/profit-loss")({
@@ -24,10 +26,21 @@ export const Route = createFileRoute("/profit-loss")({
 });
 
 function ProfitLoss() {
+  const pnl = emptyRecords<{
+    label: string;
+    value: number;
+    budget?: number;
+    previousPeriod?: number;
+    previousYear?: number;
+    indent?: boolean;
+    bold?: boolean;
+    total?: boolean;
+    strong?: boolean;
+  }>();
   return (
     <AppShell
       title="Profit & loss"
-      subtitle="Actual vs budget - 1-12 August 2026 - all branches"
+      subtitle="Posted actuals and configured budget comparison"
       actions={
         <>
           <Btn>Branch: All</Btn>
@@ -37,10 +50,10 @@ function ProfitLoss() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Revenue" value={4862400} money delta={7.6} />
-        <Metric label="Gross margin" value={66.6} suffix="%" delta={1.2} />
-        <Metric label="Operating profit" value={1053500} money delta={4.8} />
-        <Metric label="Net profit" value={957300} money delta={4.2} />
+        <Metric label="Revenue" value="Not available" />
+        <Metric label="Gross margin" value="Not available" />
+        <Metric label="Operating profit" value="Not available" />
+        <Metric label="Net profit" value="Not available" />
       </div>
 
       <Panel className="mt-4">
@@ -49,11 +62,16 @@ function ProfitLoss() {
           sub="Expandable account groups with budget and previous-period comparison"
           right={<Status>Draft</Status>}
         />
+        {pnl.length === 0 && (
+          <EmptyState
+            title="No posted financial activity"
+            description="The statement will populate from posted journals after pilot transactions begin."
+          />
+        )}
         <div className="grid gap-2 p-3 md:hidden">
           {pnl.map((row) => {
             const actual = Math.abs(row.value);
-            const budget = Math.round(actual * (row.value > 0 ? 0.96 : 1.04));
-            const variance = actual - budget;
+            const variance = row.budget === undefined ? undefined : actual - row.budget;
             return (
               <article
                 key={row.label}
@@ -79,23 +97,28 @@ function ProfitLoss() {
                   </div>
                   <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                     <span className="block text-muted-foreground">Budget</span>
-                    <span className="num font-semibold">{ksh(budget)}</span>
+                    <span className="num font-semibold">
+                      {row.budget === undefined ? "-" : ksh(row.budget)}
+                    </span>
                   </div>
                   <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                     <span className="block text-muted-foreground">Variance</span>
                     <span
                       className={cn(
                         "num font-semibold",
-                        variance >= 0 ? "text-success" : "text-danger",
+                        variance !== undefined && (variance >= 0 ? "text-success" : "text-danger"),
                       )}
                     >
-                      {variance >= 0 ? "+" : "-"}
-                      {ksh(Math.abs(variance))}
+                      {variance === undefined
+                        ? "-"
+                        : `${variance >= 0 ? "+" : "-"}${ksh(Math.abs(variance))}`}
                     </span>
                   </div>
                   <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                     <span className="block text-muted-foreground">Prev year</span>
-                    <span className="num font-semibold">{ksh(Math.round(actual * 0.88))}</span>
+                    <span className="num font-semibold">
+                      {row.previousYear === undefined ? "-" : ksh(row.previousYear)}
+                    </span>
                   </div>
                 </div>
               </article>
@@ -117,8 +140,7 @@ function ProfitLoss() {
             <tbody>
               {pnl.map((row) => {
                 const actual = Math.abs(row.value);
-                const budget = Math.round(actual * (row.value > 0 ? 0.96 : 1.04));
-                const variance = actual - budget;
+                const variance = row.budget === undefined ? undefined : actual - row.budget;
                 return (
                   <tr key={row.label} className={cn(row.total && "bg-secondary/50")}>
                     <TD
@@ -131,21 +153,24 @@ function ProfitLoss() {
                       {row.label}
                     </TD>
                     <TD className="num text-right font-semibold">{ksh(actual)}</TD>
-                    <TD className="num text-right text-muted-foreground">{ksh(budget)}</TD>
+                    <TD className="num text-right text-muted-foreground">
+                      {row.budget === undefined ? "-" : ksh(row.budget)}
+                    </TD>
                     <TD
                       className={cn(
                         "num text-right font-semibold",
-                        variance >= 0 ? "text-success" : "text-danger",
+                        variance !== undefined && (variance >= 0 ? "text-success" : "text-danger"),
                       )}
                     >
-                      {variance >= 0 ? "+" : "-"}
-                      {ksh(Math.abs(variance))}
+                      {variance === undefined
+                        ? "-"
+                        : `${variance >= 0 ? "+" : "-"}${ksh(Math.abs(variance))}`}
                     </TD>
                     <TD className="num text-right text-muted-foreground">
-                      {ksh(Math.round(actual * 0.94))}
+                      {row.previousPeriod === undefined ? "-" : ksh(row.previousPeriod)}
                     </TD>
                     <TD className="num text-right text-muted-foreground">
-                      {ksh(Math.round(actual * 0.88))}
+                      {row.previousYear === undefined ? "-" : ksh(row.previousYear)}
                     </TD>
                   </tr>
                 );
@@ -154,25 +179,6 @@ function ProfitLoss() {
           </table>
         </div>
       </Panel>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        {[
-          ["Westlands", "KSh 642,800", "20.4%", "Healthy"],
-          ["Ngong Road", "KSh 314,500", "16.2%", "Attention"],
-          ["Shared overhead", "KSh -186,200", "-", "Pending"],
-        ].map(([name, profit, margin, status]) => (
-          <Panel key={name} className="p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-[14px] font-semibold">{name}</div>
-                <div className="num mt-1 text-[20px] font-bold">{profit}</div>
-                <div className="mt-1 text-[12px] text-muted-foreground">Net margin {margin}</div>
-              </div>
-              <Status>{status}</Status>
-            </div>
-          </Panel>
-        ))}
-      </div>
     </AppShell>
   );
 }

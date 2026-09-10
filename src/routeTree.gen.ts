@@ -39,23 +39,31 @@ import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DepreciationRouteImport } from './routes/depreciation'
 import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as EmployeesRouteImport } from './routes/employees'
+import { Route as EnterpriseRouteImport } from './routes/enterprise'
 import { Route as ExpensesRouteImport } from './routes/expenses'
+import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as GeneralLedgerRouteImport } from './routes/general-ledger'
+import { Route as GiftCardsRouteImport } from './routes/gift-cards'
+import { Route as GuestServiceRouteImport } from './routes/guest-service'
+import { Route as HostRouteImport } from './routes/host'
 import { Route as IntegrationsRouteImport } from './routes/integrations'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
 import { Route as LeaveRouteImport } from './routes/leave'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as LoyaltyRouteImport } from './routes/loyalty'
 import { Route as MarketingRouteImport } from './routes/marketing'
+import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as MenuImportRouteImport } from './routes/menu-import'
 import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as OnlineOrdersRouteImport } from './routes/online-orders'
 import { Route as OrdersRouteImport } from './routes/orders'
 import { Route as ParRouteImport } from './routes/par'
 import { Route as PayablesRouteImport } from './routes/payables'
+import { Route as PaymentControlRouteImport } from './routes/payment-control'
 import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PendingRouteImport } from './routes/pending'
 import { Route as PeopleRouteImport } from './routes/people'
@@ -64,10 +72,12 @@ import { Route as PeriodCloseRouteImport } from './routes/period-close'
 import { Route as PosRouteImport } from './routes/pos'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as PrimeCostRouteImport } from './routes/prime-cost'
+import { Route as PrivacyRequestsRouteImport } from './routes/privacy-requests'
 import { Route as ProcurementRouteImport } from './routes/procurement'
 import { Route as ProductionRouteImport } from './routes/production'
 import { Route as ProfitLossRouteImport } from './routes/profit-loss'
 import { Route as PurchaseOrdersRouteImport } from './routes/purchase-orders'
+import { Route as QrManagementRouteImport } from './routes/qr-management'
 import { Route as ReceiptsRouteImport } from './routes/receipts'
 import { Route as ReceivablesRouteImport } from './routes/receivables'
 import { Route as ReceivingRouteImport } from './routes/receiving'
@@ -75,6 +85,7 @@ import { Route as RecipesRouteImport } from './routes/recipes'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
 import { Route as RecruitmentRouteImport } from './routes/recruitment'
 import { Route as RefundsRouteImport } from './routes/refunds'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequisitionsRouteImport } from './routes/requisitions'
 import { Route as ReservationsRouteImport } from './routes/reservations'
@@ -90,14 +101,24 @@ import { Route as StockDetailRouteImport } from './routes/stock-detail'
 import { Route as SupplierBillsRouteImport } from './routes/supplier-bills'
 import { Route as SupplierPerformanceRouteImport } from './routes/supplier-performance'
 import { Route as SuppliersRouteImport } from './routes/suppliers'
+import { Route as SystemHealthRouteImport } from './routes/system-health'
 import { Route as TablesRouteImport } from './routes/tables'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TaxCentreRouteImport } from './routes/tax-centre'
 import { Route as TransfersRouteImport } from './routes/transfers'
 import { Route as TrialBalanceRouteImport } from './routes/trial-balance'
+import { Route as VouchersRouteImport } from './routes/vouchers'
+import { Route as WaitlistRouteImport } from './routes/waitlist'
 import { Route as WarehousesRouteImport } from './routes/warehouses'
 import { Route as WastageRouteImport } from './routes/wastage'
+import { Route as GuestRestaurantRouteImport } from './routes/guest.$restaurant'
 import { Route as ItemsSkuRouteImport } from './routes/items.$sku'
+import { Route as GuestRestaurantIndexRouteImport } from './routes/guest.$restaurant.index'
+import { Route as GuestRestaurantAccountRouteImport } from './routes/guest.$restaurant.account'
+import { Route as GuestRestaurantMenuRouteImport } from './routes/guest.$restaurant.menu'
+import { Route as GuestRestaurantReserveRouteImport } from './routes/guest.$restaurant.reserve'
+import { Route as GuestRestaurantReservationTokenRouteImport } from './routes/guest.$restaurant.reservation.$token'
+import { Route as GuestRestaurantTrackTokenRouteImport } from './routes/guest.$restaurant.track.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -249,9 +270,19 @@ const EmployeesRoute = EmployeesRouteImport.update({
   path: '/employees',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EnterpriseRoute = EnterpriseRouteImport.update({
+  id: '/enterprise',
+  path: '/enterprise',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExpensesRoute = ExpensesRouteImport.update({
   id: '/expenses',
   path: '/expenses',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FeedbackRoute = FeedbackRouteImport.update({
+  id: '/feedback',
+  path: '/feedback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FinanceRoute = FinanceRouteImport.update({
@@ -262,6 +293,21 @@ const FinanceRoute = FinanceRouteImport.update({
 const GeneralLedgerRoute = GeneralLedgerRouteImport.update({
   id: '/general-ledger',
   path: '/general-ledger',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GiftCardsRoute = GiftCardsRouteImport.update({
+  id: '/gift-cards',
+  path: '/gift-cards',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GuestServiceRoute = GuestServiceRouteImport.update({
+  id: '/guest-service',
+  path: '/guest-service',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HostRoute = HostRouteImport.update({
+  id: '/host',
+  path: '/host',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntegrationsRoute = IntegrationsRouteImport.update({
@@ -294,6 +340,11 @@ const LeaveRoute = LeaveRouteImport.update({
   path: '/leave',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoyaltyRoute = LoyaltyRouteImport.update({
   id: '/loyalty',
   path: '/loyalty',
@@ -302,6 +353,11 @@ const LoyaltyRoute = LoyaltyRouteImport.update({
 const MarketingRoute = MarketingRouteImport.update({
   id: '/marketing',
   path: '/marketing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketplaceRoute = MarketplaceRouteImport.update({
+  id: '/marketplace',
+  path: '/marketplace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MenuImportRoute = MenuImportRouteImport.update({
@@ -332,6 +388,11 @@ const ParRoute = ParRouteImport.update({
 const PayablesRoute = PayablesRouteImport.update({
   id: '/payables',
   path: '/payables',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaymentControlRoute = PaymentControlRouteImport.update({
+  id: '/payment-control',
+  path: '/payment-control',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PayrollRoute = PayrollRouteImport.update({
@@ -374,6 +435,11 @@ const PrimeCostRoute = PrimeCostRouteImport.update({
   path: '/prime-cost',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrivacyRequestsRoute = PrivacyRequestsRouteImport.update({
+  id: '/privacy-requests',
+  path: '/privacy-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProcurementRoute = ProcurementRouteImport.update({
   id: '/procurement',
   path: '/procurement',
@@ -392,6 +458,11 @@ const ProfitLossRoute = ProfitLossRouteImport.update({
 const PurchaseOrdersRoute = PurchaseOrdersRouteImport.update({
   id: '/purchase-orders',
   path: '/purchase-orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QrManagementRoute = QrManagementRouteImport.update({
+  id: '/qr-management',
+  path: '/qr-management',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReceiptsRoute = ReceiptsRouteImport.update({
@@ -427,6 +498,11 @@ const RecruitmentRoute = RecruitmentRouteImport.update({
 const RefundsRoute = RefundsRouteImport.update({
   id: '/refunds',
   path: '/refunds',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsRoute = ReportsRouteImport.update({
@@ -504,6 +580,11 @@ const SuppliersRoute = SuppliersRouteImport.update({
   path: '/suppliers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SystemHealthRoute = SystemHealthRouteImport.update({
+  id: '/system-health',
+  path: '/system-health',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TablesRoute = TablesRouteImport.update({
   id: '/tables',
   path: '/tables',
@@ -529,6 +610,16 @@ const TrialBalanceRoute = TrialBalanceRouteImport.update({
   path: '/trial-balance',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VouchersRoute = VouchersRouteImport.update({
+  id: '/vouchers',
+  path: '/vouchers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WaitlistRoute = WaitlistRouteImport.update({
+  id: '/waitlist',
+  path: '/waitlist',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WarehousesRoute = WarehousesRouteImport.update({
   id: '/warehouses',
   path: '/warehouses',
@@ -539,11 +630,48 @@ const WastageRoute = WastageRouteImport.update({
   path: '/wastage',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GuestRestaurantRoute = GuestRestaurantRouteImport.update({
+  id: '/guest/$restaurant',
+  path: '/guest/$restaurant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ItemsSkuRoute = ItemsSkuRouteImport.update({
   id: '/items/$sku',
   path: '/items/$sku',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GuestRestaurantIndexRoute = GuestRestaurantIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => GuestRestaurantRoute,
+} as any)
+const GuestRestaurantAccountRoute = GuestRestaurantAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => GuestRestaurantRoute,
+} as any)
+const GuestRestaurantMenuRoute = GuestRestaurantMenuRouteImport.update({
+  id: '/menu',
+  path: '/menu',
+  getParentRoute: () => GuestRestaurantRoute,
+} as any)
+const GuestRestaurantReserveRoute = GuestRestaurantReserveRouteImport.update({
+  id: '/reserve',
+  path: '/reserve',
+  getParentRoute: () => GuestRestaurantRoute,
+} as any)
+const GuestRestaurantReservationTokenRoute =
+  GuestRestaurantReservationTokenRouteImport.update({
+    id: '/reservation/$token',
+    path: '/reservation/$token',
+    getParentRoute: () => GuestRestaurantRoute,
+  } as any)
+const GuestRestaurantTrackTokenRoute =
+  GuestRestaurantTrackTokenRouteImport.update({
+    id: '/track/$token',
+    path: '/track/$token',
+    getParentRoute: () => GuestRestaurantRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -576,23 +704,31 @@ export interface FileRoutesByFullPath {
   '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
+  '/enterprise': typeof EnterpriseRoute
   '/expenses': typeof ExpensesRoute
+  '/feedback': typeof FeedbackRoute
   '/finance': typeof FinanceRoute
   '/general-ledger': typeof GeneralLedgerRoute
+  '/gift-cards': typeof GiftCardsRoute
+  '/guest-service': typeof GuestServiceRoute
+  '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/leave': typeof LeaveRoute
+  '/login': typeof LoginRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
+  '/marketplace': typeof MarketplaceRoute
   '/menu-import': typeof MenuImportRoute
   '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
   '/payables': typeof PayablesRoute
+  '/payment-control': typeof PaymentControlRoute
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
@@ -601,10 +737,12 @@ export interface FileRoutesByFullPath {
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
+  '/privacy-requests': typeof PrivacyRequestsRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
+  '/qr-management': typeof QrManagementRoute
   '/receipts': typeof ReceiptsRoute
   '/receivables': typeof ReceivablesRoute
   '/receiving': typeof ReceivingRoute
@@ -612,6 +750,7 @@ export interface FileRoutesByFullPath {
   '/reconciliation': typeof ReconciliationRoute
   '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
+  '/register': typeof RegisterRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
@@ -627,14 +766,24 @@ export interface FileRoutesByFullPath {
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
+  '/system-health': typeof SystemHealthRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
+  '/vouchers': typeof VouchersRoute
+  '/waitlist': typeof WaitlistRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
+  '/guest/$restaurant': typeof GuestRestaurantRouteWithChildren
   '/items/$sku': typeof ItemsSkuRoute
+  '/guest/$restaurant/account': typeof GuestRestaurantAccountRoute
+  '/guest/$restaurant/menu': typeof GuestRestaurantMenuRoute
+  '/guest/$restaurant/reserve': typeof GuestRestaurantReserveRoute
+  '/guest/$restaurant/': typeof GuestRestaurantIndexRoute
+  '/guest/$restaurant/reservation/$token': typeof GuestRestaurantReservationTokenRoute
+  '/guest/$restaurant/track/$token': typeof GuestRestaurantTrackTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -667,23 +816,31 @@ export interface FileRoutesByTo {
   '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
+  '/enterprise': typeof EnterpriseRoute
   '/expenses': typeof ExpensesRoute
+  '/feedback': typeof FeedbackRoute
   '/finance': typeof FinanceRoute
   '/general-ledger': typeof GeneralLedgerRoute
+  '/gift-cards': typeof GiftCardsRoute
+  '/guest-service': typeof GuestServiceRoute
+  '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/leave': typeof LeaveRoute
+  '/login': typeof LoginRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
+  '/marketplace': typeof MarketplaceRoute
   '/menu-import': typeof MenuImportRoute
   '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
   '/payables': typeof PayablesRoute
+  '/payment-control': typeof PaymentControlRoute
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
@@ -692,10 +849,12 @@ export interface FileRoutesByTo {
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
+  '/privacy-requests': typeof PrivacyRequestsRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
+  '/qr-management': typeof QrManagementRoute
   '/receipts': typeof ReceiptsRoute
   '/receivables': typeof ReceivablesRoute
   '/receiving': typeof ReceivingRoute
@@ -703,6 +862,7 @@ export interface FileRoutesByTo {
   '/reconciliation': typeof ReconciliationRoute
   '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
+  '/register': typeof RegisterRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
@@ -718,14 +878,23 @@ export interface FileRoutesByTo {
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
+  '/system-health': typeof SystemHealthRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
+  '/vouchers': typeof VouchersRoute
+  '/waitlist': typeof WaitlistRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
   '/items/$sku': typeof ItemsSkuRoute
+  '/guest/$restaurant/account': typeof GuestRestaurantAccountRoute
+  '/guest/$restaurant/menu': typeof GuestRestaurantMenuRoute
+  '/guest/$restaurant/reserve': typeof GuestRestaurantReserveRoute
+  '/guest/$restaurant': typeof GuestRestaurantIndexRoute
+  '/guest/$restaurant/reservation/$token': typeof GuestRestaurantReservationTokenRoute
+  '/guest/$restaurant/track/$token': typeof GuestRestaurantTrackTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -759,23 +928,31 @@ export interface FileRoutesById {
   '/depreciation': typeof DepreciationRoute
   '/design-system': typeof DesignSystemRoute
   '/employees': typeof EmployeesRoute
+  '/enterprise': typeof EnterpriseRoute
   '/expenses': typeof ExpensesRoute
+  '/feedback': typeof FeedbackRoute
   '/finance': typeof FinanceRoute
   '/general-ledger': typeof GeneralLedgerRoute
+  '/gift-cards': typeof GiftCardsRoute
+  '/guest-service': typeof GuestServiceRoute
+  '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
   '/leave': typeof LeaveRoute
+  '/login': typeof LoginRoute
   '/loyalty': typeof LoyaltyRoute
   '/marketing': typeof MarketingRoute
+  '/marketplace': typeof MarketplaceRoute
   '/menu-import': typeof MenuImportRoute
   '/notifications': typeof NotificationsRoute
   '/online-orders': typeof OnlineOrdersRoute
   '/orders': typeof OrdersRoute
   '/par': typeof ParRoute
   '/payables': typeof PayablesRoute
+  '/payment-control': typeof PaymentControlRoute
   '/payroll': typeof PayrollRoute
   '/pending': typeof PendingRoute
   '/people': typeof PeopleRoute
@@ -784,10 +961,12 @@ export interface FileRoutesById {
   '/pos': typeof PosRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
+  '/privacy-requests': typeof PrivacyRequestsRoute
   '/procurement': typeof ProcurementRoute
   '/production': typeof ProductionRoute
   '/profit-loss': typeof ProfitLossRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
+  '/qr-management': typeof QrManagementRoute
   '/receipts': typeof ReceiptsRoute
   '/receivables': typeof ReceivablesRoute
   '/receiving': typeof ReceivingRoute
@@ -795,6 +974,7 @@ export interface FileRoutesById {
   '/reconciliation': typeof ReconciliationRoute
   '/recruitment': typeof RecruitmentRoute
   '/refunds': typeof RefundsRoute
+  '/register': typeof RegisterRoute
   '/reports': typeof ReportsRoute
   '/requisitions': typeof RequisitionsRoute
   '/reservations': typeof ReservationsRoute
@@ -810,14 +990,24 @@ export interface FileRoutesById {
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
+  '/system-health': typeof SystemHealthRoute
   '/tables': typeof TablesRoute
   '/tasks': typeof TasksRoute
   '/tax-centre': typeof TaxCentreRoute
   '/transfers': typeof TransfersRoute
   '/trial-balance': typeof TrialBalanceRoute
+  '/vouchers': typeof VouchersRoute
+  '/waitlist': typeof WaitlistRoute
   '/warehouses': typeof WarehousesRoute
   '/wastage': typeof WastageRoute
+  '/guest/$restaurant': typeof GuestRestaurantRouteWithChildren
   '/items/$sku': typeof ItemsSkuRoute
+  '/guest/$restaurant/account': typeof GuestRestaurantAccountRoute
+  '/guest/$restaurant/menu': typeof GuestRestaurantMenuRoute
+  '/guest/$restaurant/reserve': typeof GuestRestaurantReserveRoute
+  '/guest/$restaurant/': typeof GuestRestaurantIndexRoute
+  '/guest/$restaurant/reservation/$token': typeof GuestRestaurantReservationTokenRoute
+  '/guest/$restaurant/track/$token': typeof GuestRestaurantTrackTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -852,23 +1042,31 @@ export interface FileRouteTypes {
     | '/depreciation'
     | '/design-system'
     | '/employees'
+    | '/enterprise'
     | '/expenses'
+    | '/feedback'
     | '/finance'
     | '/general-ledger'
+    | '/gift-cards'
+    | '/guest-service'
+    | '/host'
     | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
     | '/leave'
+    | '/login'
     | '/loyalty'
     | '/marketing'
+    | '/marketplace'
     | '/menu-import'
     | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
     | '/payables'
+    | '/payment-control'
     | '/payroll'
     | '/pending'
     | '/people'
@@ -877,10 +1075,12 @@ export interface FileRouteTypes {
     | '/pos'
     | '/prep'
     | '/prime-cost'
+    | '/privacy-requests'
     | '/procurement'
     | '/production'
     | '/profit-loss'
     | '/purchase-orders'
+    | '/qr-management'
     | '/receipts'
     | '/receivables'
     | '/receiving'
@@ -888,6 +1088,7 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/recruitment'
     | '/refunds'
+    | '/register'
     | '/reports'
     | '/requisitions'
     | '/reservations'
@@ -903,14 +1104,24 @@ export interface FileRouteTypes {
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
+    | '/system-health'
     | '/tables'
     | '/tasks'
     | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
+    | '/vouchers'
+    | '/waitlist'
     | '/warehouses'
     | '/wastage'
+    | '/guest/$restaurant'
     | '/items/$sku'
+    | '/guest/$restaurant/account'
+    | '/guest/$restaurant/menu'
+    | '/guest/$restaurant/reserve'
+    | '/guest/$restaurant/'
+    | '/guest/$restaurant/reservation/$token'
+    | '/guest/$restaurant/track/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -943,23 +1154,31 @@ export interface FileRouteTypes {
     | '/depreciation'
     | '/design-system'
     | '/employees'
+    | '/enterprise'
     | '/expenses'
+    | '/feedback'
     | '/finance'
     | '/general-ledger'
+    | '/gift-cards'
+    | '/guest-service'
+    | '/host'
     | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
     | '/leave'
+    | '/login'
     | '/loyalty'
     | '/marketing'
+    | '/marketplace'
     | '/menu-import'
     | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
     | '/payables'
+    | '/payment-control'
     | '/payroll'
     | '/pending'
     | '/people'
@@ -968,10 +1187,12 @@ export interface FileRouteTypes {
     | '/pos'
     | '/prep'
     | '/prime-cost'
+    | '/privacy-requests'
     | '/procurement'
     | '/production'
     | '/profit-loss'
     | '/purchase-orders'
+    | '/qr-management'
     | '/receipts'
     | '/receivables'
     | '/receiving'
@@ -979,6 +1200,7 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/recruitment'
     | '/refunds'
+    | '/register'
     | '/reports'
     | '/requisitions'
     | '/reservations'
@@ -994,14 +1216,23 @@ export interface FileRouteTypes {
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
+    | '/system-health'
     | '/tables'
     | '/tasks'
     | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
+    | '/vouchers'
+    | '/waitlist'
     | '/warehouses'
     | '/wastage'
     | '/items/$sku'
+    | '/guest/$restaurant/account'
+    | '/guest/$restaurant/menu'
+    | '/guest/$restaurant/reserve'
+    | '/guest/$restaurant'
+    | '/guest/$restaurant/reservation/$token'
+    | '/guest/$restaurant/track/$token'
   id:
     | '__root__'
     | '/'
@@ -1034,23 +1265,31 @@ export interface FileRouteTypes {
     | '/depreciation'
     | '/design-system'
     | '/employees'
+    | '/enterprise'
     | '/expenses'
+    | '/feedback'
     | '/finance'
     | '/general-ledger'
+    | '/gift-cards'
+    | '/guest-service'
+    | '/host'
     | '/integrations'
     | '/inventory'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
     | '/leave'
+    | '/login'
     | '/loyalty'
     | '/marketing'
+    | '/marketplace'
     | '/menu-import'
     | '/notifications'
     | '/online-orders'
     | '/orders'
     | '/par'
     | '/payables'
+    | '/payment-control'
     | '/payroll'
     | '/pending'
     | '/people'
@@ -1059,10 +1298,12 @@ export interface FileRouteTypes {
     | '/pos'
     | '/prep'
     | '/prime-cost'
+    | '/privacy-requests'
     | '/procurement'
     | '/production'
     | '/profit-loss'
     | '/purchase-orders'
+    | '/qr-management'
     | '/receipts'
     | '/receivables'
     | '/receiving'
@@ -1070,6 +1311,7 @@ export interface FileRouteTypes {
     | '/reconciliation'
     | '/recruitment'
     | '/refunds'
+    | '/register'
     | '/reports'
     | '/requisitions'
     | '/reservations'
@@ -1085,14 +1327,24 @@ export interface FileRouteTypes {
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
+    | '/system-health'
     | '/tables'
     | '/tasks'
     | '/tax-centre'
     | '/transfers'
     | '/trial-balance'
+    | '/vouchers'
+    | '/waitlist'
     | '/warehouses'
     | '/wastage'
+    | '/guest/$restaurant'
     | '/items/$sku'
+    | '/guest/$restaurant/account'
+    | '/guest/$restaurant/menu'
+    | '/guest/$restaurant/reserve'
+    | '/guest/$restaurant/'
+    | '/guest/$restaurant/reservation/$token'
+    | '/guest/$restaurant/track/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1126,23 +1378,31 @@ export interface RootRouteChildren {
   DepreciationRoute: typeof DepreciationRoute
   DesignSystemRoute: typeof DesignSystemRoute
   EmployeesRoute: typeof EmployeesRoute
+  EnterpriseRoute: typeof EnterpriseRoute
   ExpensesRoute: typeof ExpensesRoute
+  FeedbackRoute: typeof FeedbackRoute
   FinanceRoute: typeof FinanceRoute
   GeneralLedgerRoute: typeof GeneralLedgerRoute
+  GiftCardsRoute: typeof GiftCardsRoute
+  GuestServiceRoute: typeof GuestServiceRoute
+  HostRoute: typeof HostRoute
   IntegrationsRoute: typeof IntegrationsRoute
   InventoryRoute: typeof InventoryRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
   LeaveRoute: typeof LeaveRoute
+  LoginRoute: typeof LoginRoute
   LoyaltyRoute: typeof LoyaltyRoute
   MarketingRoute: typeof MarketingRoute
+  MarketplaceRoute: typeof MarketplaceRoute
   MenuImportRoute: typeof MenuImportRoute
   NotificationsRoute: typeof NotificationsRoute
   OnlineOrdersRoute: typeof OnlineOrdersRoute
   OrdersRoute: typeof OrdersRoute
   ParRoute: typeof ParRoute
   PayablesRoute: typeof PayablesRoute
+  PaymentControlRoute: typeof PaymentControlRoute
   PayrollRoute: typeof PayrollRoute
   PendingRoute: typeof PendingRoute
   PeopleRoute: typeof PeopleRoute
@@ -1151,10 +1411,12 @@ export interface RootRouteChildren {
   PosRoute: typeof PosRoute
   PrepRoute: typeof PrepRoute
   PrimeCostRoute: typeof PrimeCostRoute
+  PrivacyRequestsRoute: typeof PrivacyRequestsRoute
   ProcurementRoute: typeof ProcurementRoute
   ProductionRoute: typeof ProductionRoute
   ProfitLossRoute: typeof ProfitLossRoute
   PurchaseOrdersRoute: typeof PurchaseOrdersRoute
+  QrManagementRoute: typeof QrManagementRoute
   ReceiptsRoute: typeof ReceiptsRoute
   ReceivablesRoute: typeof ReceivablesRoute
   ReceivingRoute: typeof ReceivingRoute
@@ -1162,6 +1424,7 @@ export interface RootRouteChildren {
   ReconciliationRoute: typeof ReconciliationRoute
   RecruitmentRoute: typeof RecruitmentRoute
   RefundsRoute: typeof RefundsRoute
+  RegisterRoute: typeof RegisterRoute
   ReportsRoute: typeof ReportsRoute
   RequisitionsRoute: typeof RequisitionsRoute
   ReservationsRoute: typeof ReservationsRoute
@@ -1177,13 +1440,17 @@ export interface RootRouteChildren {
   SupplierBillsRoute: typeof SupplierBillsRoute
   SupplierPerformanceRoute: typeof SupplierPerformanceRoute
   SuppliersRoute: typeof SuppliersRoute
+  SystemHealthRoute: typeof SystemHealthRoute
   TablesRoute: typeof TablesRoute
   TasksRoute: typeof TasksRoute
   TaxCentreRoute: typeof TaxCentreRoute
   TransfersRoute: typeof TransfersRoute
   TrialBalanceRoute: typeof TrialBalanceRoute
+  VouchersRoute: typeof VouchersRoute
+  WaitlistRoute: typeof WaitlistRoute
   WarehousesRoute: typeof WarehousesRoute
   WastageRoute: typeof WastageRoute
+  GuestRestaurantRoute: typeof GuestRestaurantRouteWithChildren
   ItemsSkuRoute: typeof ItemsSkuRoute
 }
 
@@ -1399,11 +1666,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmployeesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/enterprise': {
+      id: '/enterprise'
+      path: '/enterprise'
+      fullPath: '/enterprise'
+      preLoaderRoute: typeof EnterpriseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/expenses': {
       id: '/expenses'
       path: '/expenses'
       fullPath: '/expenses'
       preLoaderRoute: typeof ExpensesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/feedback': {
+      id: '/feedback'
+      path: '/feedback'
+      fullPath: '/feedback'
+      preLoaderRoute: typeof FeedbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/finance': {
@@ -1418,6 +1699,27 @@ declare module '@tanstack/react-router' {
       path: '/general-ledger'
       fullPath: '/general-ledger'
       preLoaderRoute: typeof GeneralLedgerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/gift-cards': {
+      id: '/gift-cards'
+      path: '/gift-cards'
+      fullPath: '/gift-cards'
+      preLoaderRoute: typeof GiftCardsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/guest-service': {
+      id: '/guest-service'
+      path: '/guest-service'
+      fullPath: '/guest-service'
+      preLoaderRoute: typeof GuestServiceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/host': {
+      id: '/host'
+      path: '/host'
+      fullPath: '/host'
+      preLoaderRoute: typeof HostRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/integrations': {
@@ -1462,6 +1764,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LeaveRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/loyalty': {
       id: '/loyalty'
       path: '/loyalty'
@@ -1474,6 +1783,13 @@ declare module '@tanstack/react-router' {
       path: '/marketing'
       fullPath: '/marketing'
       preLoaderRoute: typeof MarketingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketplace': {
+      id: '/marketplace'
+      path: '/marketplace'
+      fullPath: '/marketplace'
+      preLoaderRoute: typeof MarketplaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/menu-import': {
@@ -1516,6 +1832,13 @@ declare module '@tanstack/react-router' {
       path: '/payables'
       fullPath: '/payables'
       preLoaderRoute: typeof PayablesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payment-control': {
+      id: '/payment-control'
+      path: '/payment-control'
+      fullPath: '/payment-control'
+      preLoaderRoute: typeof PaymentControlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/payroll': {
@@ -1574,6 +1897,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrimeCostRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/privacy-requests': {
+      id: '/privacy-requests'
+      path: '/privacy-requests'
+      fullPath: '/privacy-requests'
+      preLoaderRoute: typeof PrivacyRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/procurement': {
       id: '/procurement'
       path: '/procurement'
@@ -1600,6 +1930,13 @@ declare module '@tanstack/react-router' {
       path: '/purchase-orders'
       fullPath: '/purchase-orders'
       preLoaderRoute: typeof PurchaseOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/qr-management': {
+      id: '/qr-management'
+      path: '/qr-management'
+      fullPath: '/qr-management'
+      preLoaderRoute: typeof QrManagementRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/receipts': {
@@ -1649,6 +1986,13 @@ declare module '@tanstack/react-router' {
       path: '/refunds'
       fullPath: '/refunds'
       preLoaderRoute: typeof RefundsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports': {
@@ -1756,6 +2100,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SuppliersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/system-health': {
+      id: '/system-health'
+      path: '/system-health'
+      fullPath: '/system-health'
+      preLoaderRoute: typeof SystemHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tables': {
       id: '/tables'
       path: '/tables'
@@ -1791,6 +2142,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TrialBalanceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/vouchers': {
+      id: '/vouchers'
+      path: '/vouchers'
+      fullPath: '/vouchers'
+      preLoaderRoute: typeof VouchersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/waitlist': {
+      id: '/waitlist'
+      path: '/waitlist'
+      fullPath: '/waitlist'
+      preLoaderRoute: typeof WaitlistRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/warehouses': {
       id: '/warehouses'
       path: '/warehouses'
@@ -1805,6 +2170,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WastageRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/guest/$restaurant': {
+      id: '/guest/$restaurant'
+      path: '/guest/$restaurant'
+      fullPath: '/guest/$restaurant'
+      preLoaderRoute: typeof GuestRestaurantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/items/$sku': {
       id: '/items/$sku'
       path: '/items/$sku'
@@ -1812,8 +2184,72 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ItemsSkuRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/guest/$restaurant/': {
+      id: '/guest/$restaurant/'
+      path: '/'
+      fullPath: '/guest/$restaurant/'
+      preLoaderRoute: typeof GuestRestaurantIndexRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
+    '/guest/$restaurant/account': {
+      id: '/guest/$restaurant/account'
+      path: '/account'
+      fullPath: '/guest/$restaurant/account'
+      preLoaderRoute: typeof GuestRestaurantAccountRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
+    '/guest/$restaurant/menu': {
+      id: '/guest/$restaurant/menu'
+      path: '/menu'
+      fullPath: '/guest/$restaurant/menu'
+      preLoaderRoute: typeof GuestRestaurantMenuRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
+    '/guest/$restaurant/reserve': {
+      id: '/guest/$restaurant/reserve'
+      path: '/reserve'
+      fullPath: '/guest/$restaurant/reserve'
+      preLoaderRoute: typeof GuestRestaurantReserveRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
+    '/guest/$restaurant/reservation/$token': {
+      id: '/guest/$restaurant/reservation/$token'
+      path: '/reservation/$token'
+      fullPath: '/guest/$restaurant/reservation/$token'
+      preLoaderRoute: typeof GuestRestaurantReservationTokenRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
+    '/guest/$restaurant/track/$token': {
+      id: '/guest/$restaurant/track/$token'
+      path: '/track/$token'
+      fullPath: '/guest/$restaurant/track/$token'
+      preLoaderRoute: typeof GuestRestaurantTrackTokenRouteImport
+      parentRoute: typeof GuestRestaurantRoute
+    }
   }
 }
+
+interface GuestRestaurantRouteChildren {
+  GuestRestaurantAccountRoute: typeof GuestRestaurantAccountRoute
+  GuestRestaurantMenuRoute: typeof GuestRestaurantMenuRoute
+  GuestRestaurantReserveRoute: typeof GuestRestaurantReserveRoute
+  GuestRestaurantIndexRoute: typeof GuestRestaurantIndexRoute
+  GuestRestaurantReservationTokenRoute: typeof GuestRestaurantReservationTokenRoute
+  GuestRestaurantTrackTokenRoute: typeof GuestRestaurantTrackTokenRoute
+}
+
+const GuestRestaurantRouteChildren: GuestRestaurantRouteChildren = {
+  GuestRestaurantAccountRoute: GuestRestaurantAccountRoute,
+  GuestRestaurantMenuRoute: GuestRestaurantMenuRoute,
+  GuestRestaurantReserveRoute: GuestRestaurantReserveRoute,
+  GuestRestaurantIndexRoute: GuestRestaurantIndexRoute,
+  GuestRestaurantReservationTokenRoute: GuestRestaurantReservationTokenRoute,
+  GuestRestaurantTrackTokenRoute: GuestRestaurantTrackTokenRoute,
+}
+
+const GuestRestaurantRouteWithChildren = GuestRestaurantRoute._addFileChildren(
+  GuestRestaurantRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -1846,23 +2282,31 @@ const rootRouteChildren: RootRouteChildren = {
   DepreciationRoute: DepreciationRoute,
   DesignSystemRoute: DesignSystemRoute,
   EmployeesRoute: EmployeesRoute,
+  EnterpriseRoute: EnterpriseRoute,
   ExpensesRoute: ExpensesRoute,
+  FeedbackRoute: FeedbackRoute,
   FinanceRoute: FinanceRoute,
   GeneralLedgerRoute: GeneralLedgerRoute,
+  GiftCardsRoute: GiftCardsRoute,
+  GuestServiceRoute: GuestServiceRoute,
+  HostRoute: HostRoute,
   IntegrationsRoute: IntegrationsRoute,
   InventoryRoute: InventoryRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,
   LeaveRoute: LeaveRoute,
+  LoginRoute: LoginRoute,
   LoyaltyRoute: LoyaltyRoute,
   MarketingRoute: MarketingRoute,
+  MarketplaceRoute: MarketplaceRoute,
   MenuImportRoute: MenuImportRoute,
   NotificationsRoute: NotificationsRoute,
   OnlineOrdersRoute: OnlineOrdersRoute,
   OrdersRoute: OrdersRoute,
   ParRoute: ParRoute,
   PayablesRoute: PayablesRoute,
+  PaymentControlRoute: PaymentControlRoute,
   PayrollRoute: PayrollRoute,
   PendingRoute: PendingRoute,
   PeopleRoute: PeopleRoute,
@@ -1871,10 +2315,12 @@ const rootRouteChildren: RootRouteChildren = {
   PosRoute: PosRoute,
   PrepRoute: PrepRoute,
   PrimeCostRoute: PrimeCostRoute,
+  PrivacyRequestsRoute: PrivacyRequestsRoute,
   ProcurementRoute: ProcurementRoute,
   ProductionRoute: ProductionRoute,
   ProfitLossRoute: ProfitLossRoute,
   PurchaseOrdersRoute: PurchaseOrdersRoute,
+  QrManagementRoute: QrManagementRoute,
   ReceiptsRoute: ReceiptsRoute,
   ReceivablesRoute: ReceivablesRoute,
   ReceivingRoute: ReceivingRoute,
@@ -1882,6 +2328,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReconciliationRoute: ReconciliationRoute,
   RecruitmentRoute: RecruitmentRoute,
   RefundsRoute: RefundsRoute,
+  RegisterRoute: RegisterRoute,
   ReportsRoute: ReportsRoute,
   RequisitionsRoute: RequisitionsRoute,
   ReservationsRoute: ReservationsRoute,
@@ -1897,13 +2344,17 @@ const rootRouteChildren: RootRouteChildren = {
   SupplierBillsRoute: SupplierBillsRoute,
   SupplierPerformanceRoute: SupplierPerformanceRoute,
   SuppliersRoute: SuppliersRoute,
+  SystemHealthRoute: SystemHealthRoute,
   TablesRoute: TablesRoute,
   TasksRoute: TasksRoute,
   TaxCentreRoute: TaxCentreRoute,
   TransfersRoute: TransfersRoute,
   TrialBalanceRoute: TrialBalanceRoute,
+  VouchersRoute: VouchersRoute,
+  WaitlistRoute: WaitlistRoute,
   WarehousesRoute: WarehousesRoute,
   WastageRoute: WastageRoute,
+  GuestRestaurantRoute: GuestRestaurantRouteWithChildren,
   ItemsSkuRoute: ItemsSkuRoute,
 }
 export const routeTree = rootRouteImport

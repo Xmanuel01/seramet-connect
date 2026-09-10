@@ -1,8 +1,9 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { emptyRecords } from "@/lib/empty-records";
+import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/adjustments")({
   head: () => ({
@@ -24,48 +25,7 @@ export const Route = createFileRoute("/adjustments")({
   component: Adjustments,
 });
 
-const rows = [
-  {
-    id: "ADJ-0221",
-    item: "Beef Boneless",
-    qty: "-0.4 kg",
-    reason: "Count variance",
-    store: "Westlands Main",
-    by: "Kelvin M.",
-    value: -248,
-    status: "Approved",
-  },
-  {
-    id: "ADJ-0220",
-    item: "Cooking Oil",
-    qty: "-1.6 L",
-    reason: "Spillage",
-    store: "Westlands Kitchen",
-    by: "Musa K.",
-    value: -496,
-    status: "Pending",
-  },
-  {
-    id: "ADJ-0219",
-    item: "Tomatoes",
-    qty: "+2.0 kg",
-    reason: "Receiving error correction",
-    store: "Ngong Main",
-    by: "Faith N.",
-    value: 240,
-    status: "Approved",
-  },
-  {
-    id: "ADJ-0218",
-    item: "Aluminium Foil",
-    qty: "-1 roll",
-    reason: "Damaged",
-    store: "Westlands Main",
-    by: "Kelvin M.",
-    value: -340,
-    status: "Rejected",
-  },
-];
+const rows = emptyRecords();
 
 function Adjustments() {
   return (
@@ -80,10 +40,10 @@ function Adjustments() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Adjustments (30d)" value={42} delta={-9} invert />
-        <Metric label="Net value impact" value={-18400} money invert delta={6} />
-        <Metric label="Awaiting approval" value={1} />
-        <Metric label="Rejected" value={3} />
+        <Metric label="Adjustments (30d)" value={0} invert />
+        <Metric label="Net value impact" value={0} money invert />
+        <Metric label="Awaiting approval" value={0} />
+        <Metric label="Rejected" value={0} />
       </div>
       <Panel className="mt-4">
         <PanelHead title="Adjustment register" sub="Immutable - corrections create new entries" />

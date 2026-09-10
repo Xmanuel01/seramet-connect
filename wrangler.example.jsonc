@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "seramet-staging",
+  "main": ".output/server/index.mjs",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "no_bundle": true,
+  "assets": { "binding": "ASSETS", "directory": ".output/public" },
+  "hyperdrive": [{ "binding": "SERAMET_HYPERDRIVE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],
+  "r2_buckets": [{ "binding": "SERAMET_OBJECTS", "bucket_name": "REPLACE_WITH_R2_BUCKET" }],
+  "queues": {
+    "producers": [{ "binding": "SERAMET_WORK_QUEUE", "queue": "REPLACE_WITH_QUEUE" }],
+    "consumers": [
+      {
+        "queue": "REPLACE_WITH_QUEUE",
+        "max_batch_size": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "REPLACE_WITH_DLQ",
+      },
+    ],
+  },
+  "services": [{ "binding": "SERAMET_MALWARE_SCANNER", "service": "REPLACE_WITH_SCANNER_SERVICE" }],
+  "triggers": { "crons": ["*/1 * * * *"] },
+  "vars": {
+    "SERAMET_ENVIRONMENT": "staging",
+    "SERAMET_DATABASE_PROVIDER": "postgres",
+    "SERAMET_IDENTITY_PROVIDER": "supabase",
+    "SERAMET_REQUIRE_BEARER": "true",
+    "SERAMET_SECRET_STORE": "cloudflare-worker-secrets",
+    "SERAMET_ALLOW_TEST_PROVIDERS": "false",
+    "SERAMET_ENABLE_DEV_AUTH": "false",
+    "SERAMET_ENABLE_LOCAL_DATABASE": "false",
+    "SERAMET_SUPABASE_URL": "https://REPLACE.supabase.co",
+    "SERAMET_SUPABASE_PUBLISHABLE_KEY": "REPLACE_WITH_PUBLISHABLE_KEY",
+    "SERAMET_PUBLIC_ORIGIN": "https://staging.example.com",
+    "SERAMET_CALLBACK_BASE_URL": "https://staging.example.com",
+  },
+}

@@ -1,0 +1,21 @@
+export type Product = {
+  id: string;
+  itemCode?: string;
+  sku?: string;
+  name: string;
+  category: string;
+  price: number;
+  priceMinor?: number;
+  currency?: string;
+  taxRuleId?: string;
+  serviceChargeApplicable?: boolean;
+  prep: number;
+  imageFilename?: string;
+  imageUrl?: string;
+  popular?: boolean;
+  out?: boolean;
+  productionStation?: string;
+  branchAvailability?: Partial<Record<string, boolean>>;
+  branchPrices?: Partial<Record<string, number>>;
+  importSource?: "manager" | "menu-import";
+};

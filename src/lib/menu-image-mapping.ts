@@ -1,4 +1,4 @@
-import type { Product } from "@/data/mock";
+import type { Product } from "@/lib/menu-product";
 
 export type MenuImageMapping = {
   fileName: string;
@@ -42,9 +42,8 @@ export function mapImageNamesToMenu(fileNames: string[], products: Product[]): M
     return {
       fileName,
       itemKey,
-      itemName: product?.name,
-      productId: product?.id,
       status: product ? "Matched" : "Unmatched",
+      ...(product ? { itemName: product.name, productId: product.id } : {}),
     };
   });
 }

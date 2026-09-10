@@ -1,22 +1,16 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/cash-flow")({
   head: () => ({ meta: [{ title: "Cash Flow - Seramet" }] }),
   component: CashFlow,
 });
 
-const rows = [
-  ["Opening cash", 421600],
-  ["Operating activities", 284200],
-  ["Investing activities", -128400],
-  ["Financing activities", -91200],
-  ["Net cash movement", 64600],
-  ["Closing cash", 486200],
-];
+const rows = emptyRecords();
 
 function CashFlow() {
   return (
@@ -31,10 +25,10 @@ function CashFlow() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Opening cash" value={421600} money />
-        <Metric label="Operating" value={284200} money delta={11} />
-        <Metric label="Net movement" value={64600} money />
-        <Metric label="Closing cash" value={486200} money />
+        <Metric label="Opening cash" value={0} money />
+        <Metric label="Operating" value={0} money />
+        <Metric label="Net movement" value={0} money />
+        <Metric label="Closing cash" value={0} money />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel>

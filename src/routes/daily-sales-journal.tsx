@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/daily-sales-journal")({
@@ -25,26 +26,9 @@ export const Route = createFileRoute("/daily-sales-journal")({
   component: DailySalesJournal,
 });
 
-const journal: [string, string, number, number][] = [
-  ["1010", "Cash on hand", 96400, 0],
-  ["1020", "M-Pesa clearing", 187900, 0],
-  ["1025", "Card settlement clearing", 64200, 0],
-  ["1200", "Accounts receivable - corporate", 18400, 0],
-  ["4000", "Food sales", 0, 268300],
-  ["4010", "Beverage sales", 0, 58900],
-  ["4020", "Delivery fees", 0, 6200],
-  ["4900", "Discounts and comps", 9100, 0],
-  ["2200", "VAT payable (16%)", 0, 34760],
-  ["2210", "Catering levy (2%)", 0, 4344],
-  ["6900", "Cash over / short", 104, 0],
-];
+const journal: [string, string, number, number][] = emptyRecords();
 
-const tenders = [
-  { tender: "Cash", declared: 96400, system: 96296, variance: 104, status: "Attention" },
-  { tender: "M-Pesa", declared: 187900, system: 187900, variance: 0, status: "Reconciled" },
-  { tender: "Card", declared: 64200, system: 64200, variance: 0, status: "Reconciled" },
-  { tender: "Credit / account", declared: 18400, system: 18400, variance: 0, status: "Reconciled" },
-];
+const tenders = emptyRecords();
 
 function DailySalesJournal() {
   const { branchLabel } = useAppContext();
@@ -53,7 +37,7 @@ function DailySalesJournal() {
   return (
     <AppShell
       title="Daily sales journal"
-      subtitle={`Z-report JV for 16 August 2026  -  ${branchLabel}`}
+      subtitle={`Z-report journal for the selected business date - ${branchLabel}`}
       actions={
         <>
           <Btn>Print Z report</Btn>
@@ -62,15 +46,15 @@ function DailySalesJournal() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Gross sales" value={333400} money />
-        <Metric label="Tax collected" value={39104} money />
-        <Metric label="Net takings" value={366900} money />
-        <Metric label="Cash variance" value={104} money invert />
+        <Metric label="Gross sales" value={0} money />
+        <Metric label="Tax collected" value={0} money />
+        <Metric label="Net takings" value={0} money />
+        <Metric label="Cash variance" value={0} money invert />
       </div>
 
       <Panel className="mt-4">
         <PanelHead
-          title="Journal voucher JV-DS-0816"
+          title="Daily sales journal"
           sub="Balanced automatically from the day's settled orders"
           right={<Status>{debit === credit ? "Balanced" : "Out of balance"}</Status>}
         />

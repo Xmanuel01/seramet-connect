@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useBranchRows } from "@/lib/app-context";
 
 export const Route = createFileRoute("/payables")({
@@ -17,48 +18,7 @@ export const Route = createFileRoute("/payables")({
   component: Payables,
 });
 
-const rows = [
-  {
-    supplier: "Main Meat Supplier",
-    invoice: "MMS-2291",
-    branch: "Westlands",
-    due: "14 Aug",
-    amount: 128400,
-    paid: 60000,
-    age: "12 d",
-    status: "Partial",
-  },
-  {
-    supplier: "Samwest",
-    invoice: "SW-8842",
-    branch: "Westlands",
-    due: "18 Aug",
-    amount: 96200,
-    paid: 96200,
-    age: "-",
-    status: "Paid",
-  },
-  {
-    supplier: "Muthurwa Groceries",
-    invoice: "MG-0471",
-    branch: "Ngong Road",
-    due: "09 Aug",
-    amount: 42800,
-    paid: 0,
-    age: "3 d overdue",
-    status: "Critical",
-  },
-  {
-    supplier: "Packaging Supplier",
-    invoice: "PKG-1120",
-    branch: "Ngong Road",
-    due: "22 Aug",
-    amount: 31600,
-    paid: 0,
-    age: "-",
-    status: "Pending",
-  },
-];
+const rows = emptyRecords();
 
 function Payables() {
   const payableRows = useBranchRows(rows);
@@ -83,7 +43,7 @@ function Payables() {
         <Metric label="Outstanding" value={outstanding} money invert />
         <Metric label="Overdue" value={overdue} money invert />
         <Metric label="Invoices" value={payableRows.length} />
-        <Metric label="Paid this week" value={96200} money />
+        <Metric label="Paid this week" value={0} money />
       </div>
       <Panel className="mt-4">
         <PanelHead

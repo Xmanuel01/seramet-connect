@@ -1,8 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { formatDate, ksh } from "@/lib/currency";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
+import { TransactionEngine, type PurchaseOrderRecord } from "@/lib/transaction-engine";
 
 export const Route = createFileRoute("/purchase-orders")({
   head: () => ({
@@ -18,59 +21,56 @@ export const Route = createFileRoute("/purchase-orders")({
   component: PurchaseOrders,
 });
 
-const purchaseOrders = [
-  {
-    id: "PO-2026-0182",
-    supplier: "Main Meat Supplier",
-    branch: "Westlands",
-    created: "13 Aug",
-    expected: "14 Aug",
-    amount: 58400,
-    received: 0,
-    status: "Pending",
-  },
-  {
-    id: "PO-2026-0181",
-    supplier: "Samwest",
-    branch: "Westlands",
-    created: "12 Aug",
-    expected: "15 Aug",
-    amount: 96200,
-    received: 96200,
-    status: "Received",
-  },
-  {
-    id: "PO-2026-0179",
-    supplier: "Muthurwa Groceries",
-    branch: "Ngong Road",
-    created: "11 Aug",
-    expected: "13 Aug",
-    amount: 42800,
-    received: 21800,
-    status: "Partial",
-  },
-  {
-    id: "PO-2026-0176",
-    supplier: "Packaging Supplier",
-    branch: "Ngong Road",
-    created: "09 Aug",
-    expected: "16 Aug",
-    amount: 31600,
-    received: 0,
-    status: "Approved",
-  },
-];
+function shortDate(iso: string) {
+  return formatDate(iso, {
+    day: "2-digit",
+    month: "short",
+  });
+}
+
+function displayStatus(status: PurchaseOrderRecord["status"]) {
+  return status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 function PurchaseOrders() {
-  const { branch, branchLabel } = useAppContext();
-  const rows =
-    branch === "All Branches"
-      ? purchaseOrders
-      : purchaseOrders.filter((row) => row.branch === branch);
+  const [notice, setNotice] = useState("");
+  const { branch, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { state, mutate, backendStatus } = useTransactionEngine();
+  const rows = state.purchaseOrders
+    .filter((row) => matchesBranch(row.branchId ?? row.branch))
+    .map((po) => {
+      const received = po.lines.reduce(
+        (sum, line) => sum + line.receivedQuantity * line.unitCost,
+        0,
+      );
+      return {
+        ...po,
+        created: shortDate(po.createdAt),
+        expected: shortDate(po.expectedAt),
+        amount: po.total,
+        received,
+        displayStatus: displayStatus(po.status),
+      };
+    });
   const openValue = rows
-    .filter((row) => row.status !== "Received")
+    .filter((row) => row.status !== "RECEIVED")
     .reduce((sum, row) => sum + row.amount - row.received, 0);
-  const pending = rows.filter((row) => row.status === "Pending").length;
+  const pending = rows.filter((row) => row.status === "PENDING_APPROVAL").length;
+
+  const generate = () => {
+    const result = TransactionEngine.generatePurchaseOrders(state, branch, currentUser.name);
+    void mutate("generatePurchaseOrders", { branch });
+    setNotice(
+      result.created.length
+        ? `Created ${result.created.join(", ")} from live PAR shortfalls.`
+        : "No PO created. Existing open POs already cover the current shortfalls.",
+    );
+  };
+
+  const approve = (id: string) => {
+    void mutate("approvePurchaseOrder", { purchaseOrderId: id });
+    setNotice(`${id} approved and is now available for receiving.`);
+  };
 
   return (
     <AppShell
@@ -80,7 +80,9 @@ function PurchaseOrders() {
         <>
           <Btn>Saved views</Btn>
           <Btn>Export</Btn>
-          <Btn variant="primary">New purchase order</Btn>
+          <Btn variant="primary" onClick={generate}>
+            New purchase order
+          </Btn>
         </>
       }
     >
@@ -88,11 +90,13 @@ function PurchaseOrders() {
         <Metric label="Visible POs" value={rows.length} />
         <Metric label="Open value" value={openValue} money invert />
         <Metric label="Pending approval" value={pending} invert />
-        <Metric
-          label="Received today"
-          value={rows.filter((row) => row.status === "Received").length}
-        />
+        <Metric label="Received" value={rows.filter((row) => row.status === "RECEIVED").length} />
       </div>
+      {notice && (
+        <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+          {notice} Backend: {backendStatus}.
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Purchase order register"
@@ -102,6 +106,11 @@ function PurchaseOrders() {
         <div className="border-b border-border px-4 py-3">
           <Chips items={[`Branch: ${branch}`, "Status: All", "Expected: Next 7 days"]} />
         </div>
+        {rows.length === 0 && (
+          <div className="p-6 text-center text-[13px] text-muted-foreground">
+            No purchase orders yet. Generate one from current PAR shortfalls.
+          </div>
+        )}
         <div className="grid gap-3 p-3 md:hidden">
           {rows.map((po) => (
             <article
@@ -115,7 +124,7 @@ function PurchaseOrders() {
                     {po.supplier} - {po.branch}
                   </div>
                 </div>
-                <Status>{po.status}</Status>
+                <Status>{po.displayStatus}</Status>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
                 <div className="rounded-md bg-secondary/60 px-2 py-1.5">
@@ -131,11 +140,16 @@ function PurchaseOrders() {
                   <span className="font-semibold">{po.expected}</span>
                 </div>
               </div>
+              {po.status === "PENDING_APPROVAL" && (
+                <Btn className="mt-3 w-full" variant="primary" onClick={() => approve(po.id)}>
+                  Approve PO
+                </Btn>
+              )}
             </article>
           ))}
         </div>
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[960px]">
             <thead>
               <tr>
                 <TH>PO</TH>
@@ -147,6 +161,7 @@ function PurchaseOrders() {
                 <TH className="text-right">Received</TH>
                 <TH className="text-right">Open</TH>
                 <TH>Status</TH>
+                <TH>Action</TH>
               </tr>
             </thead>
             <tbody>
@@ -161,7 +176,24 @@ function PurchaseOrders() {
                   <TD className="num text-right text-muted-foreground">{ksh(po.received)}</TD>
                   <TD className="num text-right font-semibold">{ksh(po.amount - po.received)}</TD>
                   <TD>
-                    <Status>{po.status}</Status>
+                    <Status>{po.displayStatus}</Status>
+                  </TD>
+                  <TD>
+                    {po.status === "PENDING_APPROVAL" ? (
+                      <button
+                        type="button"
+                        onClick={() => approve(po.id)}
+                        className="text-[12px] font-semibold text-primary hover:underline"
+                      >
+                        Approve
+                      </button>
+                    ) : po.status === "APPROVED" || po.status === "PARTIAL" ? (
+                      <span className="text-[12px] font-semibold text-success">
+                        Ready to receive
+                      </span>
+                    ) : (
+                      <span className="text-[12px] text-muted-foreground">Complete</span>
+                    )}
                   </TD>
                 </tr>
               ))}

@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -27,12 +27,12 @@ export const Route = createFileRoute("/orders")({
 });
 
 function Orders() {
-  const { branch, branchLabel } = useAppContext();
+  const { branchLabel, matchesBranch } = useAppContext();
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { state, apply } = useTransactionEngine();
+  const { state, mutate } = useTransactionEngine();
   const rows = state.orders
-    .filter((order) => branch === "All Branches" || order.branch === branch)
+    .filter((order) => matchesBranch(order.branchId ?? order.branch))
     .filter((order) => !periodDate || order.createdAt.slice(0, 10) === periodDate);
   const netSales = rows.reduce((sum, order) => sum + order.total, 0);
   const unpaid = rows
@@ -43,19 +43,20 @@ function Orders() {
 
   const resumeHeld = () => {
     if (!heldOrder) return;
-    apply((current) => TransactionEngine.releaseHeldOrder(current, heldOrder.id, "Amina W."));
+    void mutate("releaseHeldOrder", { orderId: heldOrder.id });
   };
 
   const cancelOpen = () => {
     const order = rows.find((item) => !["PAID", "CANCELLED"].includes(item.status));
     if (!order) return;
-    apply((current) =>
-      TransactionEngine.cancelOrder(current, order.id, {
-        user: "Emmanuel K.",
+    void mutate("cancelOrder", {
+      orderId: order.id,
+      input: {
+        user: "Manager",
         reason: "Manager cancellation with reason captured",
         affectedItems: order.lines.map((line) => line.name),
-      }),
-    );
+      },
+    });
   };
 
   const toggleOrder = (orderId: string) => {
@@ -80,10 +81,10 @@ function Orders() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Orders" value={rows.length} delta={4.1} />
-        <Metric label="Net sales" value={netSales} money delta={8.4} />
+        <Metric label="Orders" value={rows.length} />
+        <Metric label="Net sales" value={netSales} money />
         <Metric label="Unpaid bills" value={unpaid} money />
-        <Metric label="Cancelled" value={cancelled} delta={-20} invert />
+        <Metric label="Cancelled" value={cancelled} invert />
       </div>
       <Panel className="mt-4">
         <PanelHead

@@ -1,11 +1,18 @@
 import {
   TransactionEngine,
-  createInitialTransactionState,
+  createEmptyTransactionState,
+  normalizeTransactionState,
   type TransactionState,
 } from "@/lib/transaction-engine";
-import type { D1Database, ServerActor } from "@/lib/seramet-auth";
+import type { ServerActor } from "@/lib/seramet-auth";
+import { paymentOrchestrator } from "@/payments/payment-orchestrator";
+import { ReconciliationEngine } from "@/payments/reconciliation-engine";
+import { SettlementService } from "@/payments/settlement-service";
+import { permissions } from "@/platform/permissions";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 export type IdempotencyRecord = {
+  tenantId: string;
   key: string;
   actorId: string;
   action: string;
@@ -15,16 +22,36 @@ export type IdempotencyRecord = {
 };
 
 export type TransactionRepository = {
-  loadState: () => Promise<TransactionState>;
+  loadState: (tenantId: string) => Promise<TransactionState>;
   saveState: (state: TransactionState, actor: ServerActor, reason: string) => Promise<void>;
-  getIdempotency: (key: string) => Promise<IdempotencyRecord | null>;
+  commitMutation: (input: TransactionMutationCommit) => Promise<TransactionMutationResult>;
+  revision: (tenantId: string) => Promise<number>;
+  getIdempotency: (tenantId: string, key: string) => Promise<IdempotencyRecord | null>;
   saveIdempotency: (record: IdempotencyRecord) => Promise<void>;
   appendProviderEvent: (event: ProviderWebhookEvent) => Promise<void>;
   migrate: () => Promise<void>;
+  readonly authoritative: boolean;
+};
+
+export type TransactionMutationCommit = {
+  actor: ServerActor;
+  action: string;
+  payload: unknown;
+  idempotencyKey: string;
+  requestHash: string;
+  correlationId: string;
+  deviceId?: string;
+};
+
+export type TransactionMutationResult = {
+  state: TransactionState;
+  revision: number;
+  duplicate: boolean;
 };
 
 export type ProviderWebhookEvent = {
   id: string;
+  tenantId: string;
   provider: string;
   eventType: string;
   externalReference: string;
@@ -33,195 +60,87 @@ export type ProviderWebhookEvent = {
   processed: boolean;
 };
 
-type SnapshotRow = { id: string; payload_json: string };
-type IdempotencyRow = {
-  key: string;
-  actor_id: string;
-  action: string;
-  request_hash: string;
-  response_json: string;
-  created_at: string;
-};
+const memoryRevisions = new Map<string, number>();
+const reconciliationEngine = new ReconciliationEngine();
+const settlementService = new SettlementService();
 
-const snapshotId = "current";
 const memory = {
-  state: createInitialTransactionState(),
+  states: new Map<string, TransactionState>(),
   idempotency: new Map<string, IdempotencyRecord>(),
   events: [] as ProviderWebhookEvent[],
 };
 
-export function createTransactionRepository(db?: D1Database): TransactionRepository {
-  return db ? new D1TransactionRepository(db) : new MemoryTransactionRepository();
+export function resetMemoryTransactionRepositoryForTests() {
+  memory.states.clear();
+  memory.idempotency.clear();
+  memory.events.length = 0;
+  memoryRevisions.clear();
 }
 
-class MemoryTransactionRepository implements TransactionRepository {
+export class MemoryTransactionRepository implements TransactionRepository {
+  readonly authoritative = false;
+
   async migrate() {
     return undefined;
   }
 
-  async loadState() {
-    return structuredCloneSafe(memory.state);
+  async loadState(tenantId: string) {
+    const state = memory.states.get(tenantId) ?? createEmptyTransactionState(tenantId);
+    return normalizeTransactionState(structuredCloneSafe(state));
   }
 
-  async saveState(state: TransactionState) {
-    memory.state = structuredCloneSafe(state);
+  async saveState(state: TransactionState, actor: ServerActor, _reason?: string) {
+    if (state.tenantId !== actor.tenantId) throw new Error("Cross-tenant snapshot write denied");
+    memory.states.set(actor.tenantId, structuredCloneSafe(state));
   }
 
-  async getIdempotency(key: string) {
-    return memory.idempotency.get(key) ?? null;
+  async commitMutation(input: TransactionMutationCommit): Promise<TransactionMutationResult> {
+    const cached = await this.getIdempotency(input.actor.tenantId, input.idempotencyKey);
+    if (cached) {
+      if (cached.requestHash !== input.requestHash) {
+        throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST");
+      }
+      const result = JSON.parse(cached.responseJson) as {
+        state: TransactionState;
+        revision: number;
+      };
+      return {
+        state: normalizeTransactionState(result.state),
+        revision: result.revision,
+        duplicate: true,
+      };
+    }
+    const current = await this.loadState(input.actor.tenantId);
+    const next = applyServerMutation(current, input.action, input.payload, input.actor);
+    await this.saveState(next, input.actor, `Mutation ${input.action}`);
+    const revision = (memoryRevisions.get(input.actor.tenantId) ?? 0) + 1;
+    memoryRevisions.set(input.actor.tenantId, revision);
+    await this.saveIdempotency({
+      tenantId: input.actor.tenantId,
+      key: input.idempotencyKey,
+      actorId: input.actor.id,
+      action: input.action,
+      requestHash: input.requestHash,
+      responseJson: JSON.stringify({ state: next, revision }),
+      createdAt: new Date().toISOString(),
+    });
+    return { state: next, revision, duplicate: false };
+  }
+
+  async revision(tenantId: string) {
+    return memoryRevisions.get(tenantId) ?? 0;
+  }
+
+  async getIdempotency(tenantId: string, key: string) {
+    return memory.idempotency.get(`${tenantId}:${key}`) ?? null;
   }
 
   async saveIdempotency(record: IdempotencyRecord) {
-    memory.idempotency.set(record.key, record);
+    memory.idempotency.set(`${record.tenantId}:${record.key}`, record);
   }
 
   async appendProviderEvent(event: ProviderWebhookEvent) {
     memory.events.unshift(event);
-  }
-}
-
-class D1TransactionRepository implements TransactionRepository {
-  constructor(private db: D1Database) {}
-
-  async migrate() {
-    await this.db
-      .prepare(
-        `
-      CREATE TABLE IF NOT EXISTS seramet_transaction_snapshots (
-        id TEXT PRIMARY KEY,
-        payload_json TEXT NOT NULL,
-        updated_by TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        reason TEXT NOT NULL
-      )
-    `,
-      )
-      .run();
-    await this.db
-      .prepare(
-        `
-      CREATE TABLE IF NOT EXISTS seramet_idempotency (
-        key TEXT PRIMARY KEY,
-        actor_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        request_hash TEXT NOT NULL,
-        response_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      )
-    `,
-      )
-      .run();
-    await this.db
-      .prepare(
-        `
-      CREATE TABLE IF NOT EXISTS seramet_provider_events (
-        id TEXT PRIMARY KEY,
-        provider TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        external_reference TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        received_at TEXT NOT NULL,
-        processed INTEGER NOT NULL
-      )
-    `,
-      )
-      .run();
-  }
-
-  async loadState() {
-    await this.migrate();
-    const row = await this.db
-      .prepare("SELECT id, payload_json FROM seramet_transaction_snapshots WHERE id = ?")
-      .bind(snapshotId)
-      .first<SnapshotRow>();
-    if (!row) {
-      const initial = createInitialTransactionState();
-      await this.saveState(
-        initial,
-        { id: "system", name: "System", role: "General Manager", branch: "All Branches" },
-        "Initial database seed",
-      );
-      return initial;
-    }
-    return JSON.parse(row.payload_json) as TransactionState;
-  }
-
-  async saveState(state: TransactionState, actor: ServerActor, reason: string) {
-    await this.migrate();
-    await this.db
-      .prepare(
-        `
-      INSERT INTO seramet_transaction_snapshots (id, payload_json, updated_by, updated_at, reason)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        payload_json = excluded.payload_json,
-        updated_by = excluded.updated_by,
-        updated_at = excluded.updated_at,
-        reason = excluded.reason
-    `,
-      )
-      .bind(snapshotId, JSON.stringify(state), actor.id, new Date().toISOString(), reason)
-      .run();
-  }
-
-  async getIdempotency(key: string) {
-    await this.migrate();
-    const row = await this.db
-      .prepare(
-        "SELECT key, actor_id, action, request_hash, response_json, created_at FROM seramet_idempotency WHERE key = ?",
-      )
-      .bind(key)
-      .first<IdempotencyRow>();
-    if (!row) return null;
-    return {
-      key: row.key,
-      actorId: row.actor_id,
-      action: row.action,
-      requestHash: row.request_hash,
-      responseJson: row.response_json,
-      createdAt: row.created_at,
-    };
-  }
-
-  async saveIdempotency(record: IdempotencyRecord) {
-    await this.migrate();
-    await this.db
-      .prepare(
-        `
-      INSERT INTO seramet_idempotency (key, actor_id, action, request_hash, response_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .bind(
-        record.key,
-        record.actorId,
-        record.action,
-        record.requestHash,
-        record.responseJson,
-        record.createdAt,
-      )
-      .run();
-  }
-
-  async appendProviderEvent(event: ProviderWebhookEvent) {
-    await this.migrate();
-    await this.db
-      .prepare(
-        `
-      INSERT INTO seramet_provider_events (id, provider, event_type, external_reference, payload_json, received_at, processed)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .bind(
-        event.id,
-        event.provider,
-        event.eventType,
-        event.externalReference,
-        event.payloadJson,
-        event.receivedAt,
-        event.processed ? 1 : 0,
-      )
-      .run();
   }
 }
 
@@ -234,104 +153,633 @@ export function applyServerMutation(
   const input = payload as Record<string, unknown>;
   switch (action) {
     case "replaceState":
-      return input.state as TransactionState;
+      return input["state"] as TransactionState;
     case "holdOrder":
       return TransactionEngine.holdOrder(
         state,
-        input.draft as Parameters<typeof TransactionEngine.holdOrder>[1],
+        input["draft"] as Parameters<typeof TransactionEngine.holdOrder>[1],
       );
     case "createOrder":
       return TransactionEngine.createOrder(
         state,
-        input.draft as Parameters<typeof TransactionEngine.createOrder>[1],
-        input.status as Parameters<typeof TransactionEngine.createOrder>[2],
+        input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1],
+        input["status"] as Parameters<typeof TransactionEngine.createOrder>[2],
       );
+    case "updateOrderDraft":
+      return TransactionEngine.updateOrderDraft(
+        state,
+        String(input["orderId"]),
+        input["draft"] as Parameters<typeof TransactionEngine.updateOrderDraft>[2],
+        actor.name,
+      );
+    case "upsertOrderDraft": {
+      const orderId = typeof input["orderId"] === "string" ? input["orderId"] : undefined;
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+      if (orderId && state.orders.some((order) => order.id === orderId)) {
+        return TransactionEngine.updateOrderDraft(state, orderId, draft, actor.name);
+      }
+      return input["targetStatus"] === "HELD"
+        ? TransactionEngine.holdOrder(state, draft)
+        : TransactionEngine.createOrder(state, draft, "OPEN");
+    }
+    case "upsertAndSendKitchen": {
+      const orderId = typeof input["orderId"] === "string" ? input["orderId"] : undefined;
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+      let next = state;
+      if (orderId && next.orders.some((order) => order.id === orderId)) {
+        next = TransactionEngine.updateOrderDraft(next, orderId, draft, actor.name);
+      } else {
+        next = TransactionEngine.createOrder(next, draft, "OPEN");
+      }
+      const createdOrderId =
+        orderId && next.orders.some((order) => order.id === orderId) ? orderId : next.orders[0]!.id;
+      return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+    }
+    case "createGuestOrder": {
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+      const customerValueInput = input["customerValueInput"] as
+        | Omit<
+            Parameters<typeof paymentOrchestrator.recordAuthoritativeCustomerValue>[1],
+            "invoiceId"
+          >
+        | undefined;
+      const scheduledFor = draft.guestContext?.scheduledFor;
+      const scheduled = Boolean(scheduledFor && Date.parse(scheduledFor) > Date.now());
+      const requiresReview =
+        draft.guestContext?.acceptancePolicy === "WAITER_REVIEW" ||
+        draft.guestContext?.acceptancePolicy === "CASHIER_REVIEW";
+      let next = TransactionEngine.createOrder(
+        state,
+        draft,
+        scheduled || requiresReview ? "HELD" : "OPEN",
+      );
+      const orderId = next.orders[0]!.id;
+      if (!scheduled && !requiresReview) {
+        next = TransactionEngine.sendToKitchen(next, orderId, actor.name);
+      }
+      next = TransactionEngine.createOpenBill(next, orderId);
+      if (customerValueInput) {
+        const invoice = next.bills.find((candidate) => candidate.orderIds.includes(orderId));
+        if (!invoice) throw new Error("Guest order invoice was not created");
+        next = paymentOrchestrator.recordAuthoritativeCustomerValue(next, {
+          ...customerValueInput,
+          invoiceId: invoice.id,
+          metadata: {
+            ...customerValueInput.metadata,
+            orderId,
+          },
+        });
+      }
+      return next;
+    }
+    case "requestBillWithDraft": {
+      const orderId = String(input["orderId"]);
+      const next = TransactionEngine.updateOrderDraft(
+        state,
+        orderId,
+        input["draft"] as Parameters<typeof TransactionEngine.updateOrderDraft>[2],
+        actor.name,
+      );
+      return TransactionEngine.requestBill(next, orderId, actor.name);
+    }
+    case "prepareInvoiceForPayment": {
+      const requestedOrderId = typeof input["orderId"] === "string" ? input["orderId"] : undefined;
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+      let next = state;
+      if (requestedOrderId && next.orders.some((order) => order.id === requestedOrderId)) {
+        next = TransactionEngine.updateOrderDraft(next, requestedOrderId, draft, actor.name);
+      } else {
+        next = TransactionEngine.createOrder(next, draft, "OPEN");
+      }
+      const orderId =
+        requestedOrderId && next.orders.some((order) => order.id === requestedOrderId)
+          ? requestedOrderId
+          : next.orders[0]!.id;
+      next = TransactionEngine.sendToKitchen(next, orderId, actor.name);
+      return TransactionEngine.requestBill(next, orderId, actor.name);
+    }
     case "sendToKitchen":
-      return TransactionEngine.sendToKitchen(state, String(input.orderId), actor.name);
+      return TransactionEngine.sendToKitchen(state, String(input["orderId"]), actor.name);
+    case "setProductionStationStatus":
+      return TransactionEngine.setProductionStationStatus(
+        state,
+        String(input["orderId"]),
+        String(input["station"]),
+        String(input["status"]) as Parameters<
+          typeof TransactionEngine.setProductionStationStatus
+        >[3],
+        actor.name,
+      );
+    case "markOrderServed":
+      return TransactionEngine.markOrderServed(state, String(input["orderId"]), actor.name);
+    case "generatePurchaseOrders":
+      return TransactionEngine.generatePurchaseOrders(
+        state,
+        String(input["branch"] ?? actor.branch),
+        actor.name,
+      ).state;
+    case "approvePurchaseOrder":
+      return TransactionEngine.approvePurchaseOrder(
+        state,
+        String(input["purchaseOrderId"]),
+        actor.name,
+      );
+    case "receivePurchaseOrder":
+      return TransactionEngine.receivePurchaseOrder(
+        state,
+        String(input["purchaseOrderId"]),
+        (input["quantities"] ?? {}) as Record<string, number>,
+        actor.name,
+      );
+    case "recordWastage":
+      return TransactionEngine.recordWastage(
+        state,
+        input["input"] as Parameters<typeof TransactionEngine.recordWastage>[1],
+      );
+    case "approveWastage":
+      return TransactionEngine.approveWastage(state, String(input["wastageId"]), actor.name);
+    case "replaceCostControlSnapshot": {
+      const snapshot = input["snapshot"] as TransactionState["costControlSnapshots"][number];
+      if (
+        !snapshot ||
+        snapshot.tenantId !== actor.tenantId ||
+        !actor.assignedBranchIds.includes(snapshot.branchId)
+      ) {
+        throw new Error("Cost-control snapshot is outside the authenticated branch scope");
+      }
+      const nextSnapshot = {
+        ...snapshot,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor.name,
+      };
+      return {
+        ...state,
+        costControlSnapshots: [
+          nextSnapshot,
+          ...state.costControlSnapshots.filter((row) => row.id !== snapshot.id),
+        ],
+      };
+    }
+    case "recordBreakage":
+      return TransactionEngine.recordBreakage(
+        state,
+        input["input"] as Parameters<typeof TransactionEngine.recordBreakage>[1],
+      );
+    case "approveBreakage":
+      return TransactionEngine.approveBreakage(state, String(input["breakageId"]), actor.name);
+    case "clockInEmployee":
+      return TransactionEngine.clockInEmployee(
+        state,
+        String(input["employeeId"]),
+        actor.name,
+        (input["source"] ?? "POS") as Parameters<typeof TransactionEngine.clockInEmployee>[3],
+      );
+    case "clockOutEmployee":
+      return TransactionEngine.clockOutEmployee(
+        state,
+        String(input["employeeId"]),
+        actor.name,
+        (input["source"] ?? "POS") as Parameters<typeof TransactionEngine.clockOutEmployee>[3],
+      );
+    case "setEmployeeNetPay":
+      return TransactionEngine.setEmployeeNetPay(
+        state,
+        String(input["employeeId"]),
+        Number(input["netMonthlyPay"]),
+        actor.name,
+      );
+    case "addRider":
+      return TransactionEngine.addRider(
+        state,
+        {
+          name: String(input["name"] ?? ""),
+          branch: String(input["branch"] ?? actor.branch),
+          ...(input["shift"] ? { shift: String(input["shift"]) } : {}),
+          ...(input["netMonthlyPay"] === undefined
+            ? {}
+            : { netMonthlyPay: Number(input["netMonthlyPay"]) }),
+        },
+        actor.name,
+      );
+    case "assignDeliveryRider":
+      return TransactionEngine.assignDeliveryRider(
+        state,
+        String(input["orderId"]),
+        String(input["rider"]),
+        actor.name,
+      );
+    case "setDeliveryStatus":
+      return TransactionEngine.setDeliveryStatus(
+        state,
+        String(input["orderId"]),
+        String(input["status"]) as Parameters<typeof TransactionEngine.setDeliveryStatus>[2],
+        actor.name,
+      );
     case "releaseHeldOrder":
-      return TransactionEngine.releaseHeldOrder(state, String(input.orderId), actor.name);
+      return TransactionEngine.releaseHeldOrder(state, String(input["orderId"]), actor.name);
     case "createOpenBill":
-      return TransactionEngine.createOpenBill(state, String(input.orderId));
+      return TransactionEngine.createOpenBill(state, String(input["orderId"]));
     case "confirmPaymentIntent":
       return TransactionEngine.confirmPaymentIntent(
         state,
-        String(input.intentId),
-        String(input.externalReference),
+        String(input["intentId"]),
+        String(input["externalReference"]),
         actor.name,
       );
     case "recordManualTillPayment":
       return TransactionEngine.recordManualTillPayment(
         state,
-        String(input.invoiceId),
-        input.input as Parameters<typeof TransactionEngine.recordManualTillPayment>[2],
+        String(input["invoiceId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordManualTillPayment>[2],
       );
     case "recordCashPayment":
       return TransactionEngine.recordCashPayment(
         state,
-        String(input.invoiceId),
-        input.input as Parameters<typeof TransactionEngine.recordCashPayment>[2],
+        String(input["invoiceId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordCashPayment>[2],
       );
     case "recordCardPayment":
       return TransactionEngine.recordCardPayment(
         state,
-        String(input.invoiceId),
-        input.input as Parameters<typeof TransactionEngine.recordCardPayment>[2],
+        String(input["invoiceId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordCardPayment>[2],
       );
     case "recordBankPayment":
       return TransactionEngine.recordBankPayment(
         state,
-        String(input.invoiceId),
-        input.input as Parameters<typeof TransactionEngine.recordBankPayment>[2],
+        String(input["invoiceId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordBankPayment>[2],
       );
     case "mergeBills":
       return TransactionEngine.mergeBills(
         state,
-        input.billIds as string[],
+        input["billIds"] as string[],
         actor.name,
-        String(input.reason ?? "Authorized merge"),
+        String(input["reason"] ?? "Authorized merge"),
       );
     case "splitBill":
       return TransactionEngine.splitBill(
         state,
-        String(input.billId),
-        input.splits as Parameters<typeof TransactionEngine.splitBill>[2],
+        String(input["billId"]),
+        input["splits"] as Parameters<typeof TransactionEngine.splitBill>[2],
         actor.name,
       );
     case "cancelOrder":
       return TransactionEngine.cancelOrder(
         state,
-        String(input.orderId),
-        input.input as Parameters<typeof TransactionEngine.cancelOrder>[2],
+        String(input["orderId"]),
+        input["input"] as Parameters<typeof TransactionEngine.cancelOrder>[2],
       );
     case "requestRefund":
       return TransactionEngine.requestRefund(
         state,
-        input.input as Parameters<typeof TransactionEngine.requestRefund>[1],
+        input["input"] as Parameters<typeof TransactionEngine.requestRefund>[1],
       );
     case "approveRefund":
-      return TransactionEngine.approveRefund(state, String(input.refundId), actor.name);
+      return TransactionEngine.approveRefund(state, String(input["refundId"]), actor.name);
     case "importExternalTransaction":
       return TransactionEngine.importExternalTransaction(
         state,
-        input.input as Parameters<typeof TransactionEngine.importExternalTransaction>[1],
+        input["input"] as Parameters<typeof TransactionEngine.importExternalTransaction>[1],
       );
     case "suggestReconciliation":
-      return TransactionEngine.suggestReconciliation(state, String(input.externalTransactionId));
+      return TransactionEngine.suggestReconciliation(state, String(input["externalTransactionId"]));
     case "manuallyReconcile":
       return TransactionEngine.manuallyReconcile(
         state,
-        String(input.externalTransactionId),
-        String(input.paymentId),
+        String(input["externalTransactionId"]),
+        String(input["paymentId"]),
         actor.name,
-        String(input.notes ?? "Manual reconciliation"),
+        String(input["notes"] ?? "Manual reconciliation"),
       );
     case "closeCashDrawer":
       return TransactionEngine.closeCashDrawer(
         state,
-        String(input.drawerId),
-        Number(input.physicalCount),
+        String(input["drawerId"]),
+        Number(input["physicalCount"]),
         actor.name,
       );
+    case "markBillPending": {
+      const billId = String(input["invoiceId"]);
+      const timestamp = new Date().toISOString();
+      return {
+        ...state,
+        bills: state.bills.map((bill) =>
+          bill.id === billId ? { ...bill, status: "PENDING" as const } : bill,
+        ),
+        auditEvents: [
+          {
+            id: `AUD-PENDING-${crypto.randomUUID()}`,
+            tenantId: actor.tenantId,
+            branchId: actor.branchId,
+            time: timestamp,
+            actor: actor.name,
+            role: actor.role,
+            branch: actor.branch,
+            module: String(input["module"] ?? "Invoices"),
+            action: "Marked invoice pending",
+            record: billId,
+            before: String(state.bills.find((bill) => bill.id === billId)?.status ?? "UNKNOWN"),
+            after: "PENDING - settlement deferred",
+          },
+          ...state.auditEvents,
+        ],
+      };
+    }
+    case "settleInvoice":
+      return settlementService.settle(
+        state,
+        input["input"] as Parameters<SettlementService["settle"]>[1],
+      );
+    case "applyConfiguredPayment": {
+      const invoiceId = String(input["invoiceId"]);
+      const paymentMethodId = String(input["paymentMethodId"]);
+      const amountMinor = Number(input["amountMinor"]);
+      const cashTenderedMinor = Number(
+        input["tenderedAmountMinor"] ?? input["cashTenderedMinor"] ?? amountMinor,
+      );
+      const currencyEvidence =
+        input["currencyEvidence"] && typeof input["currencyEvidence"] === "object"
+          ? (input["currencyEvidence"] as NonNullable<
+              Parameters<typeof paymentOrchestrator.recordCash>[1]["currencyEvidence"]
+            >)
+          : undefined;
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error("Payment amount must be a positive integer in minor units");
+      }
+      const configuration = getConfigurationRepository();
+      const method = configuration
+        .listPaymentMethods(actor.tenantId, false)
+        .find((candidate) => candidate.id === paymentMethodId);
+      if (!method || !method.enabled) throw new Error("Configured payment method is unavailable");
+      const invoice = state.bills.find((candidate) => candidate.id === invoiceId);
+      if (!invoice) throw new Error("Invoice was not found");
+      if (
+        (invoice.branchId ?? actor.branchId) !== actor.branchId &&
+        actor.branchScope.type !== "ALL"
+      ) {
+        throw new Error("Invoice belongs to another branch");
+      }
+      const currency = configuration.getTenant(actor.tenantId).defaultCurrency;
+      const reference =
+        typeof input["reference"] === "string" && input["reference"].trim()
+          ? input["reference"].trim().toUpperCase()
+          : undefined;
+      const terminalId = String(input["terminalId"] ?? actor.deviceId ?? "SERVER-POS");
+      if (
+        method.metadata["providerOperation"] === "PAYMENT_PROMPT" ||
+        method.metadata["providerOperation"] === "QR_PAYMENT"
+      ) {
+        throw new Error("Provider-initiated payments must use the integration runtime");
+      }
+      if (method.category === "CASH") {
+        const drawer = state.paymentOperations?.drawerSessions.find(
+          (candidate) =>
+            candidate.tenantId === actor.tenantId &&
+            candidate.branchId === actor.branchId &&
+            candidate.status === "OPEN",
+        );
+        if (!drawer) throw new Error("Open a cash drawer before collecting cash");
+        return paymentOrchestrator.recordCash(state, {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          drawerSessionId: drawer.id,
+          paymentMethodId: method.id,
+          invoiceId,
+          amountMinor,
+          cashTenderedMinor,
+          currency,
+          actor: actor.name,
+          deviceId: terminalId,
+          ...(currencyEvidence ? { currencyEvidence } : {}),
+        });
+      }
+      if (method.category === "CARD") {
+        return paymentOrchestrator.recordManualTerminalPayment(state, {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          paymentMethodId: method.id,
+          ...(method.providerConnectionId
+            ? { providerConnectionId: method.providerConnectionId }
+            : {}),
+          customerReference: reference ?? `${method.code}-${invoiceId}-${crypto.randomUUID()}`,
+          merchantReference: invoiceId,
+          amountMinor,
+          currency,
+          allocations: [{ invoiceId, amountMinor }],
+          actor: actor.name,
+          deviceId: terminalId,
+          terminalReference: terminalId,
+          ...(currencyEvidence ? { currencyEvidence } : {}),
+          ...(reference ? { authorizationCode: reference } : {}),
+        });
+      }
+      if (method.category === "BANK_TRANSFER") {
+        return paymentOrchestrator.recordBankTransferPending(state, {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          paymentMethodId: method.id,
+          ...(method.providerConnectionId
+            ? { providerConnectionId: method.providerConnectionId }
+            : {}),
+          customerReference: reference ?? `${method.code}-${invoiceId}-${crypto.randomUUID()}`,
+          merchantReference: invoiceId,
+          amountMinor,
+          currency,
+          allocations: [{ invoiceId, amountMinor }],
+          actor: actor.name,
+          deviceId: terminalId,
+          ...(currencyEvidence ? { currencyEvidence } : {}),
+        });
+      }
+      if (method.category === "DIGITAL_WALLET") {
+        if (!reference) throw new Error(`${method.displayName} requires a transaction reference`);
+        return paymentOrchestrator.submitManualReference(state, {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          paymentMethodId: method.id,
+          ...(method.providerConnectionId
+            ? { providerConnectionId: method.providerConnectionId }
+            : {}),
+          customerReference: reference,
+          merchantReference: invoiceId,
+          amountMinor,
+          currency,
+          allocations: [{ invoiceId, amountMinor }],
+          actor: actor.name,
+          deviceId: terminalId,
+          ...(currencyEvidence ? { currencyEvidence } : {}),
+        });
+      }
+      if (method.category === "CREDIT") {
+        if (!method.receivableAccountId || !method.metadata["revenueAccountId"]) {
+          throw new Error("Credit payment method requires receivable and revenue account mappings");
+        }
+        if (!invoice.customerId) {
+          throw new Error("A verified customer account is required for credit payment");
+        }
+        return paymentOrchestrator.chargeHouseAccount(state, {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          customerId: invoice.customerId,
+          invoiceId,
+          amountMinor,
+          currency,
+          receivableAccountId: method.receivableAccountId,
+          revenueAccountId: String(method.metadata["revenueAccountId"]),
+          actor: actor.name,
+        });
+      }
+      throw new Error("Payment method has no configured collection workflow");
+    }
+    case "applyVoucherRedemption":
+    case "applyGiftCardRedemption":
+    case "applyLoyaltyReward":
+      return paymentOrchestrator.recordAuthoritativeCustomerValue(
+        state,
+        input["input"] as Parameters<
+          typeof paymentOrchestrator.recordAuthoritativeCustomerValue
+        >[1],
+      );
+    case "applyReservationDeposit":
+      return paymentOrchestrator.applyCustomerDeposit(
+        state,
+        input["input"] as Parameters<typeof paymentOrchestrator.applyCustomerDeposit>[1],
+      );
+    case "automaticPaymentMatching":
+      return reconciliationEngine.automaticallyMatchPayments(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["automaticallyMatchPayments"]>[1],
+      );
+    case "manualPaymentMatch":
+      return reconciliationEngine.manuallyMatch(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["manuallyMatch"]>[1],
+      );
+    case "resolveReconciliationException":
+      return reconciliationEngine.resolveException(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["resolveException"]>[1],
+      );
+    case "openPaymentDrawer":
+      return paymentOrchestrator.openDrawer(
+        state,
+        input["input"] as Parameters<typeof paymentOrchestrator.openDrawer>[1],
+      );
+    case "closePaymentDrawer":
+      return paymentOrchestrator.closeDrawer(
+        state,
+        input["input"] as Parameters<typeof paymentOrchestrator.closeDrawer>[1],
+      );
+    case "approveDrawerVariance":
+      return paymentOrchestrator.approveDrawerVariance(
+        state,
+        input["input"] as Parameters<typeof paymentOrchestrator.approveDrawerVariance>[1],
+      );
+    case "importBankTransactions":
+      return reconciliationEngine.importBankTransactions(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["importBankTransactions"]>[1],
+      );
+    case "importSettlementBatches":
+      return (
+        input["inputs"] as Array<Parameters<ReconciliationEngine["importSettlement"]>[1]>
+      ).reduce(
+        (next, settlement) => reconciliationEngine.importSettlement(next, settlement).state,
+        state,
+      );
+    case "matchSettlementToBank":
+      return reconciliationEngine.matchSettlementToBank(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["matchSettlementToBank"]>[1],
+      );
+    case "postSettlement":
+      return reconciliationEngine.postSettlement(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["postSettlement"]>[1],
+      );
+    case "prepareDayClose":
+      return reconciliationEngine.prepareDayClose(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["prepareDayClose"]>[1],
+      );
+    case "closeDay":
+      return reconciliationEngine.closeDay(state, {
+        ...(input["input"] as Parameters<ReconciliationEngine["closeDay"]>[1]),
+        hasOverridePermission: actor.permissions.includes(permissions.reconciliationApprove),
+      });
+    case "reopenDay":
+      return reconciliationEngine.reopenDay(state, {
+        tenantId: actor.tenantId,
+        dayCloseId: String(input["dayCloseId"]),
+        actor: actor.name,
+        reason: String(input["reason"] ?? ""),
+      });
+    case "recordPeriodClose": {
+      const businessDate = String(input["businessDate"]);
+      const prepared = reconciliationEngine.prepareDayClose(state, {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        businessDate,
+        actor: actor.name,
+      });
+      const dayClose = prepared.paymentOperations?.dayCloses.find(
+        (candidate) =>
+          candidate.tenantId === actor.tenantId &&
+          candidate.branchId === actor.branchId &&
+          candidate.businessDate === businessDate,
+      );
+      if (!dayClose) throw new Error("Day close could not be prepared");
+      const closed = reconciliationEngine.closeDay(prepared, {
+        tenantId: actor.tenantId,
+        dayCloseId: dayClose.id,
+        actor: actor.name,
+        hasOverridePermission: actor.permissions.includes(permissions.reconciliationApprove),
+      });
+      return {
+        ...closed,
+        auditEvents: [
+          {
+            id: `AUD-DAY-CLOSE-${crypto.randomUUID()}`,
+            tenantId: actor.tenantId,
+            branchId: actor.branchId,
+            time: new Date().toISOString(),
+            actor: actor.name,
+            role: actor.role,
+            branch: actor.branch,
+            module: "Period Close",
+            action: "Closed trading day",
+            record: businessDate,
+            before: "Trading day open",
+            after: "Day-end checks complete and manager sign-off recorded",
+          },
+          ...closed.auditEvents,
+        ],
+      };
+    }
+    case "recordReceiptReprint": {
+      const receiptId = String(input["receiptId"]);
+      const timestamp = new Date().toISOString();
+      return {
+        ...state,
+        receipts: state.receipts.map((receipt) =>
+          receipt.id === receiptId
+            ? {
+                ...receipt,
+                reprints: [
+                  {
+                    requestedBy: actor.name,
+                    approvedBy: actor.name,
+                    reason: String(input["reason"] ?? "Authorized reprint"),
+                    timestamp,
+                  },
+                  ...receipt.reprints,
+                ],
+              }
+            : receipt,
+        ),
+      };
+    }
     default:
       throw new Error(`Unsupported mutation ${action}`);
   }

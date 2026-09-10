@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
+import { emptyRecords } from "@/lib/empty-records";
 import { useAppContext, useBranchRows } from "@/lib/app-context";
 
 type Segment = {
@@ -37,12 +38,7 @@ export const Route = createFileRoute("/segments")({
   component: Segments,
 });
 
-const rows: Segment[] = [
-  { id: "SEG-01", name: "Frequent diners", rule: "4+ visits in 30 days", branch: "Westlands", customers: 412, avgSpend: 2180, lifetimeValue: 41200, status: "Healthy" },
-  { id: "SEG-02", name: "Corporate accounts", rule: "Invoiced customers with credit terms", branch: "Westlands", customers: 38, avgSpend: 18400, lifetimeValue: 312000, status: "Healthy" },
-  { id: "SEG-03", name: "Lapsed 60 days", rule: "No order in 60 days", branch: "Ngong Road", customers: 286, avgSpend: 1640, lifetimeValue: 12800, status: "Attention" },
-  { id: "SEG-04", name: "High value at risk", rule: "Top 10% spend, no visit in 30 days", branch: "Ngong Road", customers: 44, avgSpend: 6120, lifetimeValue: 98400, status: "Critical" },
-];
+const rows = emptyRecords<Segment>();
 
 const columns: EnterpriseColumn<Segment>[] = [
   { key: "name", label: "Segment", sortable: true },
@@ -100,7 +96,10 @@ function Segments() {
         />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Segment register" sub="Segments are recalculated from order and payment history" />
+        <PanelHead
+          title="Segment register"
+          sub="Segments are recalculated from order and payment history"
+        />
         <EnterpriseTable
           rows={scopedRows}
           columns={columns}

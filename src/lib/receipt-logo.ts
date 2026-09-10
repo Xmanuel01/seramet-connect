@@ -44,7 +44,8 @@ export function convertRgbaToMonochrome(
     if (black) {
       const x = index % width;
       const y = Math.floor(index / width);
-      packed[y * rowBytes + Math.floor(x / 8)] |= 0x80 >> (x % 8);
+      const packedIndex = y * rowBytes + Math.floor(x / 8);
+      packed[packedIndex] = (packed[packedIndex] ?? 0) | (0x80 >> (x % 8));
     }
   }
   return {
@@ -62,6 +63,7 @@ export async function processReceiptLogoFile(
   scope: LogoScope,
   branch?: string,
   threshold = 150,
+  businessName = "Business logo",
 ): Promise<ReceiptLogoAsset> {
   const originalDataUrl = await fileToDataUrl(file);
   const image = await createImageBitmap(file);
@@ -98,7 +100,7 @@ export async function processReceiptLogoFile(
     width,
     height,
     threshold,
-    fallbackText: scope === "Branch" && branch ? `${branch} Branch` : "Mona Swahili",
+    fallbackText: scope === "Branch" && branch ? `${branch} Branch` : businessName,
   };
   if (branch) asset.branch = branch;
   return asset;

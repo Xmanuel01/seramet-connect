@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/tax-centre")({
@@ -10,10 +11,14 @@ export const Route = createFileRoute("/tax-centre")({
       { title: "Tax Centre - Seramet" },
       {
         name: "description",
-        content: "VAT, catering levy, withholding tax and payroll statutory obligations with filing deadlines.",
+        content:
+          "VAT, catering levy, withholding tax and payroll statutory obligations with filing deadlines.",
       },
       { property: "og:title", content: "Tax Centre - Seramet" },
-      { property: "og:description", content: "Every tax the restaurant collects or owes, with its return period and due date." },
+      {
+        property: "og:description",
+        content: "Every tax the restaurant collects or owes, with its return period and due date.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -21,20 +26,9 @@ export const Route = createFileRoute("/tax-centre")({
   component: TaxCentre,
 });
 
-const obligations = [
-  { tax: "VAT (16%)", period: "Jul 2026", due: "20 Aug", output: 660400, input: 218900, payable: 441500, status: "Pending" },
-  { tax: "Catering levy (2%)", period: "Jul 2026", due: "20 Aug", output: 82550, input: 0, payable: 82550, status: "Pending" },
-  { tax: "PAYE", period: "Jul 2026", due: "09 Aug", output: 186400, input: 0, payable: 186400, status: "Paid" },
-  { tax: "Withholding VAT on suppliers", period: "Jul 2026", due: "20 Aug", output: 24600, input: 0, payable: 24600, status: "Pending" },
-  { tax: "NSSF / NHIF", period: "Jul 2026", due: "09 Aug", output: 92800, input: 0, payable: 92800, status: "Paid" },
-];
+const obligations = emptyRecords();
 
-const vatBreakdown = [
-  ["Standard rated food and beverage sales", 4128600, 660576],
-  ["Zero rated exports and exempt items", 42800, 0],
-  ["Purchases with input VAT", 1368100, 218896],
-  ["Non-claimable purchases", 116400, 0],
-];
+const vatBreakdown = emptyRecords();
 
 function TaxCentre() {
   const { branchLabel } = useAppContext();
@@ -52,12 +46,16 @@ function TaxCentre() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Outstanding tax" value={payable} money invert />
-        <Metric label="Output VAT (MTD)" value={660576} money />
-        <Metric label="Input VAT (MTD)" value={218896} money />
-        <Metric label="Next filing" value="20 Aug" />
+        <Metric label="Output VAT (MTD)" value={0} money />
+        <Metric label="Input VAT (MTD)" value={0} money />
+        <Metric label="Next filing" value="Not scheduled" />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Obligations" sub="Each return period with its computed liability" right={<Status>Live</Status>} />
+        <PanelHead
+          title="Obligations"
+          sub="Each return period with its computed liability"
+          right={<Status>{obligations.length ? "Live" : "Not configured"}</Status>}
+        />
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -78,7 +76,9 @@ function TaxCentre() {
                   <TD className="text-muted-foreground">{row.period}</TD>
                   <TD>{row.due}</TD>
                   <TD className="num text-right">{ksh(row.output)}</TD>
-                  <TD className="num text-right text-muted-foreground">{row.input ? ksh(row.input) : "-"}</TD>
+                  <TD className="num text-right text-muted-foreground">
+                    {row.input ? ksh(row.input) : "-"}
+                  </TD>
                   <TD className="num text-right font-semibold">{ksh(row.payable)}</TD>
                   <TD>
                     <Status>{row.status}</Status>

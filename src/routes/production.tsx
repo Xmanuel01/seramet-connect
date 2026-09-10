@@ -1,7 +1,9 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { emptyRecords } from "@/lib/empty-records";
+import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
+import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/production")({
   head: () => ({
@@ -20,54 +22,14 @@ export const Route = createFileRoute("/production")({
   component: Production,
 });
 
-const runs = [
-  {
-    id: "PR-0412",
-    item: "Beef Pilau (bulk)",
-    planned: 40,
-    produced: 38,
-    unit: "portions",
-    variance: -5,
-    chef: "Musa K.",
-    status: "Completed",
-  },
-  {
-    id: "PR-0413",
-    item: "Chapati dough",
-    planned: 200,
-    produced: 200,
-    unit: "pcs",
-    variance: 0,
-    chef: "Peter K.",
-    status: "Completed",
-  },
-  {
-    id: "PR-0414",
-    item: "Passion juice concentrate",
-    planned: 30,
-    produced: 27,
-    unit: "L",
-    variance: -10,
-    chef: "Faith N.",
-    status: "Attention",
-  },
-  {
-    id: "PR-0415",
-    item: "Bhajia batter",
-    planned: 15,
-    produced: 0,
-    unit: "kg",
-    variance: 0,
-    chef: "Musa K.",
-    status: "Preparing",
-  },
-];
+const runs = emptyRecords();
 
 function Production() {
+  const { branchLabel } = useAppContext();
   return (
     <AppShell
       title="Production"
-      subtitle="Kitchen batch runs  -  Westlands"
+      subtitle={`Kitchen batch runs - ${branchLabel}`}
       actions={
         <>
           <Btn>Print sheet</Btn>
@@ -76,13 +38,13 @@ function Production() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Runs today" value={9} delta={12} />
-        <Metric label="Output value" value={186400} money delta={6.1} />
-        <Metric label="Yield variance" value="-4.1" suffix="%" invert delta={-1.4} />
-        <Metric label="Runs in progress" value={1} />
+        <Metric label="Runs today" value={0} />
+        <Metric label="Output value" value={0} money />
+        <Metric label="Yield variance" value="0" suffix="%" />
+        <Metric label="Runs in progress" value={0} />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Production runs" sub="Yield variance beyond 5% is flagged for review" />
+        <PanelHead title="Production runs" sub="Yield exceptions follow configured review rules" />
         <DataTable
           cols={[
             "Run",

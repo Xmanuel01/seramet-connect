@@ -1,7 +1,8 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/depreciation")({
@@ -10,10 +11,14 @@ export const Route = createFileRoute("/depreciation")({
       { title: "Depreciation - Seramet" },
       {
         name: "description",
-        content: "Fixed asset register with useful life, monthly depreciation charge and net book value.",
+        content:
+          "Fixed asset register with useful life, monthly depreciation charge and net book value.",
       },
       { property: "og:title", content: "Depreciation - Seramet" },
-      { property: "og:description", content: "Kitchen equipment, furniture and vehicles depreciated straight line each month." },
+      {
+        property: "og:description",
+        content: "Kitchen equipment, furniture and vehicles depreciated straight line each month.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -31,14 +36,7 @@ type Asset = {
   accumulated: number;
 };
 
-const assets: Asset[] = [
-  { code: "FA-001", asset: "Combi oven", category: "Kitchen equipment", acquired: "Mar 2024", cost: 486000, life: 8, accumulated: 145800 },
-  { code: "FA-002", asset: "Walk-in cold room", category: "Kitchen equipment", acquired: "Jan 2023", cost: 640000, life: 10, accumulated: 224000 },
-  { code: "FA-003", asset: "Delivery motorcycle", category: "Vehicles", acquired: "Jun 2025", cost: 268000, life: 5, accumulated: 62200 },
-  { code: "FA-004", asset: "Dining furniture set", category: "Furniture", acquired: "Sep 2024", cost: 184000, life: 6, accumulated: 58900 },
-  { code: "FA-005", asset: "POS terminals (x6)", category: "IT equipment", acquired: "Feb 2026", cost: 216000, life: 4, accumulated: 27000 },
-  { code: "FA-006", asset: "Generator 30kVA", category: "Plant", acquired: "Nov 2022", cost: 720000, life: 12, accumulated: 225000 },
-];
+const assets: Asset[] = emptyRecords();
 
 function Depreciation() {
   const { branchLabel } = useAppContext();
@@ -92,9 +90,13 @@ function Depreciation() {
                   <TD className="text-muted-foreground">{asset.acquired}</TD>
                   <TD className="num text-right">{ksh(asset.cost)}</TD>
                   <TD className="num text-right">{asset.life} yr</TD>
-                  <TD className="num text-right">{ksh(Math.round(asset.cost / (asset.life * 12)))}</TD>
+                  <TD className="num text-right">
+                    {ksh(Math.round(asset.cost / (asset.life * 12)))}
+                  </TD>
                   <TD className="num text-right text-muted-foreground">{ksh(asset.accumulated)}</TD>
-                  <TD className="num text-right font-semibold">{ksh(asset.cost - asset.accumulated)}</TD>
+                  <TD className="num text-right font-semibold">
+                    {ksh(asset.cost - asset.accumulated)}
+                  </TD>
                 </tr>
               ))}
             </tbody>

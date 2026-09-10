@@ -1,3 +1,4 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { Eye, FileClock, ShieldCheck } from "lucide-react";
@@ -47,92 +48,7 @@ type AuditEvent = {
 };
 type AuditRow = AuditEvent & { open: string };
 
-const events: AuditEvent[] = [
-  {
-    id: "AUD-9041",
-    time: "13 Aug 2026, 12:42",
-    actor: "Kelvin Mwangi",
-    role: "Storekeeper",
-    branch: "Westlands",
-    module: "Procurement",
-    action: "Submitted PO approval",
-    record: "PO-2026-0182",
-    risk: "Attention",
-    ip: "10.20.1.44",
-    before: "Draft requisition KSh 56,200",
-    after: "Approval requested KSh 58,400",
-  },
-  {
-    id: "AUD-9040",
-    time: "13 Aug 2026, 12:31",
-    actor: "Amina Warsame",
-    role: "Cashier",
-    branch: "Ngong Road",
-    module: "POS",
-    action: "Closed cash drawer",
-    record: "Till 2",
-    risk: "Critical",
-    ip: "10.20.2.12",
-    before: "Expected KSh 84,900",
-    after: "Counted KSh 84,050, variance flagged",
-  },
-  {
-    id: "AUD-9039",
-    time: "13 Aug 2026, 11:58",
-    actor: "Joan Achieng",
-    role: "Supervisor",
-    branch: "Westlands",
-    module: "Customers",
-    action: "Resolved complaint",
-    record: "CASE-1048",
-    risk: "Approved",
-    ip: "10.20.1.31",
-    before: "Pending compensation review",
-    after: "KSh 1,200 voucher issued",
-  },
-  {
-    id: "AUD-9038",
-    time: "13 Aug 2026, 10:44",
-    actor: "Musa Kilonzo",
-    role: "Head Chef",
-    branch: "Westlands",
-    module: "Inventory",
-    action: "Recorded breakage",
-    record: "BRK-072",
-    risk: "Low",
-    ip: "10.20.1.62",
-    before: "Glassware stock 122 pcs",
-    after: "Glassware stock 116 pcs",
-  },
-  {
-    id: "AUD-9037",
-    time: "13 Aug 2026, 09:15",
-    actor: "Brian Otieno",
-    role: "Waiter",
-    branch: "Ngong Road",
-    module: "Orders",
-    action: "Voided item",
-    record: "Order #1834",
-    risk: "Attention",
-    ip: "10.20.2.29",
-    before: "Fish Curry x1 billed",
-    after: "Item voided with supervisor reason",
-  },
-  {
-    id: "AUD-9036",
-    time: "12 Aug 2026, 18:20",
-    actor: "Emmanuel K.",
-    role: "General Manager",
-    branch: "All",
-    module: "Finance",
-    action: "Approved expense",
-    record: "EXP-4409",
-    risk: "Approved",
-    ip: "10.20.0.8",
-    before: "Expense awaiting review",
-    after: "Expense approved and posted",
-  },
-];
+const events: AuditEvent[] = emptyRecords();
 
 const columns: EnterpriseColumn<AuditRow>[] = [
   { key: "id", label: "Event ID", sortable: true },
@@ -175,9 +91,9 @@ function AuditTrail() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Events in scope" value={rows.length} />
-        <Metric label="Critical events" value={critical} invert delta={critical} />
+        <Metric label="Critical events" value={critical} invert />
         <Metric label="Approvals logged" value={approvals} />
-        <Metric label="Retention" value="7 years" />
+        <Metric label="Retention" value="Not configured" />
       </div>
 
       <Panel className="mt-4">

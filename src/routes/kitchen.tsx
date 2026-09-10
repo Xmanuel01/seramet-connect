@@ -2,9 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Status } from "@/components/app/ui";
-import { tickets } from "@/data/mock";
+import { formatTime } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { SerametPrintService } from "@/lib/seramet-print-service";
+import {
+  TransactionEngine,
+  type ProductionStatus,
+  type TransactionOrder,
+} from "@/lib/transaction-engine";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/kitchen")({
@@ -27,8 +33,20 @@ export const Route = createFileRoute("/kitchen")({
 
 type KitchenState = "NEW" | "PREPARING" | "READY" | "SERVED";
 type PrintState = "KOT PRINTED" | "REPRINTED" | "PRINT FAILED" | "CANCELLED";
-type TicketRow = (typeof tickets)[number] & { state: KitchenState; printState: PrintState };
+type KitchenTicket = {
+  id: string;
+  orderId: string;
+  station: string;
+  table: string;
+  time: string;
+  mins: number;
+  state: KitchenState;
+  printState: PrintState;
+  items: string[];
+  note?: string;
+};
 
+const kitchenStations = new Set(["MAIN KITCHEN", "GRILL", "DESSERT"]);
 const kdsCols: KitchenState[] = ["NEW", "PREPARING", "READY"];
 const printerCols: PrintState[] = ["KOT PRINTED", "REPRINTED", "PRINT FAILED", "CANCELLED"];
 
@@ -39,37 +57,43 @@ function urgency(m: number) {
 }
 
 function KDS() {
-  const { branch, branchLabel } = useAppContext();
+  const { branch, branchLabel, currentUser, matchesBranch } = useAppContext();
   const profile = SerametPrintService.getBranchHardwareProfile(branch);
   const hasKdsWorkflow =
     profile.kitchenMode === "KDS_ONLY" || profile.kitchenMode === "KDS_AND_PRINTER";
-  const [rows, setRows] = useState<TicketRow[]>(() =>
-    tickets.map((ticket, index) => ({
-      ...ticket,
-      state: ticket.state as KitchenState,
-      printState: index === 1 ? "REPRINTED" : index === 4 ? "PRINT FAILED" : "KOT PRINTED",
-    })),
+  const { state, mutate, backendStatus } = useTransactionEngine();
+  const [printOverrides, setPrintOverrides] = useState<Record<string, PrintState>>({});
+
+  const rows = useMemo(
+    () =>
+      state.orders
+        .filter((order) => matchesBranch(order.branchId ?? order.branch))
+        .filter((order) => !["CANCELLED", "PAID", "REFUNDED"].includes(order.status))
+        .flatMap(toKitchenTickets)
+        .sort((a, b) => b.mins - a.mins),
+    [matchesBranch, state.orders],
   );
+
   const visibleRows = hasKdsWorkflow ? rows.filter((ticket) => ticket.state !== "SERVED") : rows;
   const cols = hasKdsWorkflow ? kdsCols : printerCols;
   const modeSummary = hasKdsWorkflow
     ? "KDS controls accept, preparing, ready and served status."
     : profile.kitchenMode === "PRINTER_ONLY"
-      ? "Printer-only branch: operational kitchen status is not electronically tracked."
+      ? "Printer-only branch: operational kitchen status is captured from print and POS events."
       : "No dedicated kitchen system: production copies print at the POS/front printer when configured.";
 
-  const moveTicket = (id: string, next: KitchenState) => {
+  const moveTicket = (ticket: KitchenTicket, next: KitchenState) => {
     if (!hasKdsWorkflow) return;
-    setRows((current) =>
-      current.map((ticket) => (ticket.id === id ? { ...ticket, state: next } : ticket)),
-    );
+    void mutate("setProductionStationStatus", {
+      orderId: ticket.orderId,
+      station: ticket.station,
+      status: next as ProductionStatus,
+    });
   };
 
   const markPrintState = (id: string, next: PrintState) => {
     if (hasKdsWorkflow) return;
-    setRows((current) =>
-      current.map((ticket) => (ticket.id === id ? { ...ticket, printState: next } : ticket)),
-    );
+    setPrintOverrides((current) => ({ ...current, [id]: next }));
   };
 
   const counts = useMemo(
@@ -88,9 +112,10 @@ function KDS() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-[16px] font-extrabold tracking-tight">Seramet Kitchen</h1>
             <Status>{profile.kitchenMode.replaceAll("_", " ")}</Status>
+            <Status>{backendStatus === "synced" ? "Healthy" : backendStatus}</Status>
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            {branchLabel} - {visibleRows.length} active tickets - {modeSummary}
+            {branchLabel} - {visibleRows.length} active station tickets - {modeSummary}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-[12px] font-semibold">
@@ -103,7 +128,9 @@ function KDS() {
         {cols.map((column) => {
           const columnRows = hasKdsWorkflow
             ? visibleRows.filter((ticket) => ticket.state === column)
-            : visibleRows.filter((ticket) => ticket.printState === column);
+            : visibleRows.filter(
+                (ticket) => (printOverrides[ticket.id] ?? ticket.printState) === column,
+              );
           return (
             <div key={column} className="rounded-xl bg-secondary/50 p-2">
               <div className="flex items-center justify-between px-2 py-2">
@@ -119,8 +146,13 @@ function KDS() {
                     className={cn("rounded-lg border p-3", urgency(ticket.mins))}
                   >
                     <div className="flex items-baseline justify-between">
-                      <span className="text-[15px] font-extrabold">TABLE {ticket.table}</span>
-                      <span className="num text-[13px] font-bold">#{ticket.id}</span>
+                      <span className="text-[15px] font-extrabold">
+                        {ticket.table.startsWith("ORDER") ? ticket.table : `TABLE ${ticket.table}`}
+                      </span>
+                      <span className="num text-[13px] font-bold">{ticket.orderId}</span>
+                    </div>
+                    <div className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary">
+                      {ticket.station}
                     </div>
                     <div className="flex items-baseline justify-between text-[11px] text-muted-foreground">
                       <span>{ticket.time}</span>
@@ -140,7 +172,7 @@ function KDS() {
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <button
                           onClick={() =>
-                            moveTicket(ticket.id, ticket.state === "NEW" ? "PREPARING" : "NEW")
+                            moveTicket(ticket, ticket.state === "NEW" ? "PREPARING" : "NEW")
                           }
                           className="h-10 rounded-md border border-border bg-card text-[13px] font-semibold"
                         >
@@ -149,7 +181,7 @@ function KDS() {
                         <button
                           onClick={() =>
                             moveTicket(
-                              ticket.id,
+                              ticket,
                               ticket.state === "NEW"
                                 ? "PREPARING"
                                 : ticket.state === "PREPARING"
@@ -178,17 +210,26 @@ function KDS() {
                           onClick={() =>
                             markPrintState(
                               ticket.id,
-                              ticket.printState === "PRINT FAILED" ? "KOT PRINTED" : "CANCELLED",
+                              (printOverrides[ticket.id] ?? ticket.printState) === "PRINT FAILED"
+                                ? "KOT PRINTED"
+                                : "CANCELLED",
                             )
                           }
                           className="h-10 rounded-md bg-primary text-[13px] font-semibold text-primary-foreground"
                         >
-                          {ticket.printState === "PRINT FAILED" ? "Mark printed" : "Cancel ticket"}
+                          {(printOverrides[ticket.id] ?? ticket.printState) === "PRINT FAILED"
+                            ? "Mark printed"
+                            : "Cancel ticket"}
                         </button>
                       </div>
                     )}
                   </article>
                 ))}
+                {columnRows.length === 0 && (
+                  <div className="rounded-lg border border-dashed border-border p-4 text-center text-[12px] text-muted-foreground">
+                    No tickets in this queue.
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -196,4 +237,44 @@ function KDS() {
       </div>
     </AppShell>
   );
+}
+
+function toKitchenTickets(order: TransactionOrder): KitchenTicket[] {
+  const stations = new Map<string, TransactionOrder["lines"]>();
+  order.lines.forEach((line) => {
+    const station = line.productionStation ?? "NONE";
+    if (!kitchenStations.has(station)) return;
+    stations.set(station, [...(stations.get(station) ?? []), line]);
+  });
+
+  return [...stations.entries()].map(([station, lines]) => {
+    const statuses = lines.map((line) => line.productionStatus ?? "NEW");
+    const state: KitchenState = statuses.every((status) => status === "SERVED")
+      ? "SERVED"
+      : statuses.every((status) => status === "READY" || status === "SERVED")
+        ? "READY"
+        : statuses.some((status) => status === "PREPARING")
+          ? "PREPARING"
+          : "NEW";
+    const created = new Date(order.createdAt);
+    const now = Date.now();
+    const mins = Number.isFinite(created.getTime())
+      ? Math.max(0, Math.floor((now - created.getTime()) / 60000))
+      : 0;
+    return {
+      id: `${order.id}:${station}`,
+      orderId: order.id,
+      station,
+      table: order.table ?? `ORDER ${order.id.replace("ORD-", "")}`,
+      time: formatTime(created),
+      mins,
+      state,
+      printState: "KOT PRINTED",
+      items: lines.flatMap((line) => [
+        `${line.name} x${line.quantity}`,
+        ...(line.itemNote ? [`  - ${line.itemNote}`] : []),
+      ]),
+      ...(order.kitchenNote ? { note: order.kitchenNote } : {}),
+    };
+  });
 }

@@ -1,8 +1,12 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useAppContext } from "@/lib/app-context";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 type Receivable = {
   id: string;
@@ -14,6 +18,7 @@ type Receivable = {
   outstanding: number;
   age: string;
   status: string;
+  source: string;
 };
 
 export const Route = createFileRoute("/receivables")({
@@ -21,54 +26,10 @@ export const Route = createFileRoute("/receivables")({
   component: Receivables,
 });
 
-const rows: Receivable[] = [
-  {
-    id: "AR-001",
-    customer: "Kilimani Catering",
-    invoice: "INV-2026-1820",
-    due: "14 Aug",
-    amount: 124000,
-    paid: 60000,
-    outstanding: 64000,
-    age: "4d",
-    status: "Partial",
-  },
-  {
-    id: "AR-002",
-    customer: "Westlands Gym",
-    invoice: "INV-2026-1812",
-    due: "18 Aug",
-    amount: 86000,
-    paid: 0,
-    outstanding: 86000,
-    age: "-",
-    status: "Pending",
-  },
-  {
-    id: "AR-003",
-    customer: "Sarit Retail Team",
-    invoice: "INV-2026-1740",
-    due: "02 Aug",
-    amount: 142800,
-    paid: 0,
-    outstanding: 142800,
-    age: "11d overdue",
-    status: "Critical",
-  },
-  {
-    id: "AR-004",
-    customer: "Nairobi Studio",
-    invoice: "INV-2026-1701",
-    due: "09 Aug",
-    amount: 62000,
-    paid: 62000,
-    outstanding: 0,
-    age: "-",
-    status: "Paid",
-  },
-];
+const customerRows: Receivable[] = emptyRecords();
 
 const columns: EnterpriseColumn<Receivable>[] = [
+  { key: "source", label: "Source", sortable: true },
   { key: "customer", label: "Customer", sortable: true },
   { key: "invoice", label: "Invoice", sortable: true },
   { key: "due", label: "Due", sortable: true },
@@ -98,6 +59,32 @@ const columns: EnterpriseColumn<Receivable>[] = [
 ];
 
 function Receivables() {
+  const { activeTenantId, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const configuration = getConfigurationRepository();
+  const providerById = new Map(
+    configuration.listProviders().map((provider) => [provider.id, provider.displayName]),
+  );
+  const marketplaceRows: Receivable[] = state.marketplaceReceivables
+    .filter((receivable) => matchesBranch(receivable.branchId))
+    .map((receivable) => ({
+      id: receivable.id,
+      customer: providerById.get(receivable.providerId) ?? "Marketplace provider",
+      invoice: receivable.invoiceId,
+      due: "Provider settlement",
+      amount: receivable.grossAmount,
+      paid: receivable.settledAmount,
+      outstanding: receivable.outstandingAmount,
+      age: ageLabel(receivable.createdAt),
+      status: receivable.status.replaceAll("_", " "),
+      source: "Marketplace receivable",
+    }));
+  const rows = [...marketplaceRows, ...customerRows];
+  const openRows = rows.filter((row) => row.outstanding > 0);
+  const receivables = openRows.reduce((sum, row) => sum + row.outstanding, 0);
+  const providerReceivables = marketplaceRows
+    .filter((row) => row.outstanding > 0)
+    .reduce((sum, row) => sum + row.outstanding, 0);
   return (
     <AppShell
       title="Accounts receivable"
@@ -110,19 +97,24 @@ function Receivables() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Receivables" value={292800} money />
-        <Metric label="Overdue" value={142800} money invert delta={18} />
-        <Metric label="Collection rate" value={64} suffix="%" />
-        <Metric label="Customers owing" value={3} />
+        <Metric label="Receivables" value={receivables} money />
+        <Metric label="Marketplace due" value={providerReceivables} money />
+        <Metric label="Overdue" value={0} money invert />
+        <Metric label="Open accounts" value={openRows.length} />
       </div>
       <Panel className="mt-4">
         <PanelHead title="Customer ageing" sub="Search, sort, saved views and bulk reminders" />
         <EnterpriseTable
           rows={rows}
           columns={columns}
-          filters={["Age: All", "Branch: All", "Status: Open"]}
+          filters={["Source: All", "Age: All", `Tenant: ${activeTenantId}`, "Status: Open"]}
         />
       </Panel>
     </AppShell>
   );
+}
+
+function ageLabel(value: string) {
+  const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86_400_000));
+  return days === 0 ? "Today" : `${days}d`;
 }

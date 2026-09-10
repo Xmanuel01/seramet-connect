@@ -16,8 +16,19 @@ import { DataTable } from "@/components/app/Tabs";
 import { Btn, Chips, Metric, Panel, PanelHead, Segmented, Status, TD } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { inventoryItems, ksh, products } from "@/data/mock";
+import { formatDate, formatNumber, ksh } from "@/lib/currency";
 import { branchMetric, useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useOperationalMenu } from "@/hooks/use-operational-menu";
+import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
+import { TransactionEngine } from "@/lib/transaction-engine";
+import type {
+  CostBomLine as BomLine,
+  CostControlSnapshot,
+  CostMaterial as Material,
+  CostRecipe as RecipeCost,
+  CostStockEntry as StockEntry,
+} from "@/cost-control/types";
 
 export const Route = createFileRoute("/cost-control")({
   head: () => ({
@@ -37,166 +48,91 @@ export const Route = createFileRoute("/cost-control")({
   component: CostControl,
 });
 
-type Material = {
-  id: string;
-  name: string;
-  category: string;
-  unit: string;
-  costPerUnit: number;
-  yieldPct: number;
-  par: number;
-  mainStore: number;
-  kitchen: number;
-  counter: number;
-  supplier: string;
-  status: string;
-};
-
-type BomLine = {
-  id: string;
-  materialId: string;
-  qty: number;
-  station: string;
-};
-
-type RecipeCost = {
-  productId: string;
-  targetFoodCostPct: number;
-  expectedSales: number;
-  actualIssueMultiplier: number;
-  lines: BomLine[];
-};
-
-type StockEntry = {
-  id: string;
-  date: string;
-  type: "Receive" | "Issue to kitchen" | "Waste" | "Return to store";
-  materialId: string;
-  qty: number;
-  note: string;
-  by: string;
-};
-
-const materialStorageKey = "seramet.cost-control.materials.v1";
-const recipeStorageKey = "seramet.cost-control.recipes.v1";
-const stockEntryStorageKey = "seramet.cost-control.stock-entries.v1";
-
-const categoryWaste: Record<string, number> = {
-  Meat: 88,
-  Produce: 82,
-  Groceries: 96,
-  Packaging: 100,
-};
-
-const materialSeeds: Material[] = inventoryItems.map((item, index) => {
-  const yieldPct = categoryWaste[item.cat] ?? 94;
-  return {
-    id: item.sku,
-    name: item.name,
-    category: item.cat,
-    unit: item.unit,
-    costPerUnit: item.cost,
-    yieldPct,
-    par: item.par,
-    mainStore: roundQty(item.stock * 0.58),
-    kitchen: roundQty(item.stock * 0.34),
-    counter: roundQty(item.stock * 0.08),
-    supplier: item.supplier,
-    status: index % 4 === 0 ? "Attention" : item.status,
-  };
-});
-
-const baseRecipes: RecipeCost[] = [
-  {
-    productId: "p1",
-    targetFoodCostPct: 32,
-    expectedSales: 36,
-    actualIssueMultiplier: 1.08,
-    lines: [
-      { id: "p1-1", materialId: "GROC-008", qty: 0.18, station: "Main kitchen" },
-      { id: "p1-2", materialId: "MEAT-004", qty: 0.35, station: "Main kitchen" },
-      { id: "p1-3", materialId: "GROC-014", qty: 0.05, station: "Main kitchen" },
-      { id: "p1-4", materialId: "PROD-001", qty: 0.08, station: "Prep" },
-      { id: "p1-5", materialId: "PROD-003", qty: 0.1, station: "Prep" },
-    ],
-  },
-  {
-    productId: "p3",
-    targetFoodCostPct: 34,
-    expectedSales: 22,
-    actualIssueMultiplier: 1.14,
-    lines: [
-      { id: "p3-1", materialId: "MEAT-001", qty: 0.32, station: "Grill" },
-      { id: "p3-2", materialId: "GROC-014", qty: 0.04, station: "Grill" },
-      { id: "p3-3", materialId: "PROD-001", qty: 0.06, station: "Prep" },
-    ],
-  },
-  {
-    productId: "p6",
-    targetFoodCostPct: 30,
-    expectedSales: 64,
-    actualIssueMultiplier: 0.97,
-    lines: [
-      { id: "p6-1", materialId: "GROC-002", qty: 0.08, station: "Main kitchen" },
-      { id: "p6-2", materialId: "GROC-014", qty: 0.03, station: "Main kitchen" },
-      { id: "p6-3", materialId: "PROD-003", qty: 0.05, station: "Prep" },
-    ],
-  },
-  {
-    productId: "p8",
-    targetFoodCostPct: 28,
-    expectedSales: 58,
-    actualIssueMultiplier: 1.04,
-    lines: [
-      { id: "p8-1", materialId: "PROD-011", qty: 0.18, station: "Bar" },
-      { id: "p8-2", materialId: "PACK-002", qty: 1, station: "Dispatch" },
-    ],
-  },
-];
-
-const initialEntries: StockEntry[] = [
-  {
-    id: "STK-0001",
-    date: "2026-08-15",
-    type: "Receive",
-    materialId: "MEAT-004",
-    qty: 18,
-    note: "Morning supplier delivery",
-    by: "Kelvin M.",
-  },
-  {
-    id: "STK-0002",
-    date: "2026-08-15",
-    type: "Issue to kitchen",
-    materialId: "GROC-008",
-    qty: 12,
-    note: "Lunch prep transfer",
-    by: "Musa K.",
-  },
-  {
-    id: "STK-0003",
-    date: "2026-08-15",
-    type: "Waste",
-    materialId: "PROD-003",
-    qty: 1.8,
-    note: "Trim and soft tomatoes",
-    by: "Chef Musa",
-  },
-];
-
 const numberInputClass =
   "h-9 w-full rounded-md border border-border bg-card px-3 text-[13px] outline-none focus:ring-2 focus:ring-ring/40";
 
 function CostControl() {
-  const { branch, branchLabel, currentUser } = useAppContext();
+  const { activeTenantId, branch, branchId, branchLabel, currentUser, platformState } =
+    useAppContext();
+  const { state, mutate, persistenceMode } = useTransactionEngine();
+  const { items: menuItems } = useOperationalMenu({
+    tenantId: activeTenantId,
+    branchId,
+    userId: currentUser.id,
+    userName: currentUser.name,
+    role: currentUser.role,
+  });
+  const authoritative = persistenceMode === "authoritative";
+  const control = useInventoryControlCentre(authoritative);
   const [view, setView] = useState("Raw materials");
   const [query, setQuery] = useState("");
-  const [materials, setMaterials] = useStoredState<Material[]>(materialStorageKey, materialSeeds);
-  const [recipes, setRecipes] = useStoredState<RecipeCost[]>(recipeStorageKey, baseRecipes);
-  const [entries, setEntries] = useStoredState<StockEntry[]>(stockEntryStorageKey, initialEntries);
-  const [selectedRecipeId, setSelectedRecipeId] = useState(
-    recipes[0]?.productId ?? products[0]?.id ?? "",
+  const [notice, setNotice] = useState("");
+  const snapshot = state.costControlSnapshots.find(
+    (row) => row.tenantId === activeTenantId && row.branchId === branchId,
   );
+  const serverData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const developmentMaterials = useMemo<Material[]>(
+    () =>
+      TransactionEngine.getInventoryRows(state, branch).map((item) => ({
+        id: item.sku,
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        costPerUnit: item.averageCost,
+        yieldPct: 100,
+        par: item.par,
+        mainStore: item.stock,
+        kitchen: 0,
+        counter: 0,
+        supplier: item.supplier || "Not assigned",
+        status: item.status,
+      })),
+    [branch, state],
+  );
+  const authoritativeMaterials = useMemo<Material[]>(() => {
+    const grouped = new Map<string, Material>();
+    for (const branchData of control.data) {
+      for (const item of branchData.items) {
+        const unit = branchData.units.find((row) => row.id === item.base_unit_id)?.symbol ?? "unit";
+        const existing = grouped.get(item.id);
+        const quantity = item.quantity_minor / 1_000_000;
+        const value = item.total_value_minor / 100;
+        if (existing) {
+          const priorValue = existing.costPerUnit * existing.mainStore;
+          existing.mainStore += quantity;
+          existing.costPerUnit = existing.mainStore ? (priorValue + value) / existing.mainStore : 0;
+          existing.par += (item.target_quantity_minor ?? item.reorder_point_minor ?? 0) / 1_000_000;
+          continue;
+        }
+        const reorder = (item.reorder_point_minor ?? 0) / 1_000_000;
+        grouped.set(item.id, {
+          id: item.id,
+          name: item.name,
+          category: item.category_id ?? "Uncategorised",
+          unit,
+          costPerUnit: item.average_unit_cost_minor / 100,
+          yieldPct: 100,
+          par: (item.target_quantity_minor ?? item.reorder_point_minor ?? 0) / 1_000_000,
+          mainStore: quantity,
+          kitchen: 0,
+          counter: 0,
+          supplier: "Not assigned",
+          status: quantity <= 0 ? "Out of stock" : quantity <= reorder ? "Attention" : "Healthy",
+        });
+      }
+    }
+    return [...grouped.values()];
+  }, [control.data]);
+  const materials = authoritative
+    ? authoritativeMaterials
+    : (snapshot?.materials ?? developmentMaterials);
+  const recipes = (authoritative ? [] : (snapshot?.recipes ?? [])).filter((recipe) =>
+    menuItems.some((item) => item.id === recipe.productId),
+  );
+  const entries = authoritative
+    ? (serverData?.controlCentre.movements ?? []).map(serverMovementEntry)
+    : (snapshot?.stockEntries ?? []);
+  const [selectedRecipeId, setSelectedRecipeId] = useState(recipes[0]?.productId ?? "");
   const [materialDialogOpen, setMaterialDialogOpen] = useState(false);
   const [entryDialogOpen, setEntryDialogOpen] = useState(false);
 
@@ -204,11 +140,17 @@ function CostControl() {
     () =>
       materials.map((item) => ({
         ...item,
-        mainStore: branchMetric(Math.round(item.mainStore * 10), branch) / 10,
-        kitchen: branchMetric(Math.round(item.kitchen * 10), branch) / 10,
-        counter: branchMetric(Math.round(item.counter * 10), branch) / 10,
+        mainStore: authoritative
+          ? item.mainStore
+          : branchMetric(Math.round(item.mainStore * 10), branch) / 10,
+        kitchen: authoritative
+          ? item.kitchen
+          : branchMetric(Math.round(item.kitchen * 10), branch) / 10,
+        counter: authoritative
+          ? item.counter
+          : branchMetric(Math.round(item.counter * 10), branch) / 10,
       })),
-    [branch, materials],
+    [authoritative, branch, materials],
   );
 
   const visibleMaterials = scopedMaterials.filter((item) => {
@@ -216,12 +158,14 @@ function CostControl() {
     return haystack.includes(query.trim().toLowerCase());
   });
 
-  const recipeRows = recipes.map((recipe) => recipeSummary(recipe, scopedMaterials));
+  const recipeRows = recipes.map((recipe) => recipeSummary(recipe, scopedMaterials, menuItems));
   const selectedRecipe =
     recipes.find((recipe) => recipe.productId === selectedRecipeId) ?? recipes[0];
-  const selectedProduct = selectedRecipe ? productFor(selectedRecipe.productId) : undefined;
+  const selectedProduct = selectedRecipe
+    ? productFor(selectedRecipe.productId, menuItems)
+    : undefined;
   const selectedRecipeSummary = selectedRecipe
-    ? recipeSummary(selectedRecipe, scopedMaterials)
+    ? recipeSummary(selectedRecipe, scopedMaterials, menuItems)
     : undefined;
   const totalInventoryValue = visibleMaterials.reduce(
     (sum, item) => sum + stockQty(item) * edibleUnitCost(item),
@@ -230,28 +174,138 @@ function CostControl() {
   const theoreticalCost = recipeRows.reduce((sum, row) => sum + row.cost * row.expectedSales, 0);
   const actualCost = recipeRows.reduce((sum, row) => sum + row.actualCost, 0);
   const revenue = recipeRows.reduce((sum, row) => sum + row.price * row.expectedSales, 0);
-  const foodCostPct = revenue === 0 ? 0 : (actualCost / revenue) * 100;
-  const idealFoodCostPct = revenue === 0 ? 0 : (theoreticalCost / revenue) * 100;
+  const summary = control.data.reduce(
+    (total, row) => ({
+      inventoryValueMinor: total.inventoryValueMinor + row.summary.inventoryValueMinor,
+      varianceMinor: total.varianceMinor + row.summary.varianceMinor,
+      actualFoodCostBps: total.actualFoodCostBps + row.summary.actualFoodCostBps,
+      theoreticalFoodCostBps: total.theoreticalFoodCostBps + row.summary.theoreticalFoodCostBps,
+    }),
+    { inventoryValueMinor: 0, varianceMinor: 0, actualFoodCostBps: 0, theoreticalFoodCostBps: 0 },
+  );
+  const summaryCount = Math.max(1, control.data.length);
+  const foodCostPct = authoritative
+    ? summary.actualFoodCostBps / summaryCount / 100
+    : revenue === 0
+      ? 0
+      : (actualCost / revenue) * 100;
+  const idealFoodCostPct = authoritative
+    ? summary.theoreticalFoodCostBps / summaryCount / 100
+    : revenue === 0
+      ? 0
+      : (theoreticalCost / revenue) * 100;
   const variancePct = revenue === 0 ? 0 : ((actualCost - theoreticalCost) / revenue) * 100;
 
-  const addMaterial = (material: Material) => setMaterials((current) => [...current, material]);
+  const persistSnapshot = (
+    next: Pick<CostControlSnapshot, "materials" | "recipes" | "stockEntries">,
+  ) =>
+    void mutate("replaceCostControlSnapshot", {
+      snapshot: {
+        id: `cost-control:${branchId}`,
+        tenantId: activeTenantId,
+        branchId,
+        ...next,
+        updatedAt: new Date().toISOString(),
+        updatedBy: currentUser.name,
+      },
+    });
+  const addMaterial = (material: Material) => {
+    if (!authoritative) {
+      persistSnapshot({ materials: [...materials, material], recipes, stockEntries: entries });
+      return;
+    }
+    void (async () => {
+      try {
+        setNotice("Saving material...");
+        let unit = serverData?.units.find(
+          (row) => row.symbol.toLowerCase() === material.unit.toLowerCase(),
+        );
+        if (!unit) {
+          const unitResult = await control.command<{ unit: { id: string } }>(
+            "/api/seramet/inventory/units",
+            {
+              code: material.unit.replace(/[^a-z0-9]/gi, "").toUpperCase() || "UNIT",
+              name: material.unit,
+              symbol: material.unit,
+              dimension: "OTHER",
+            },
+          );
+          unit = {
+            id: unitResult.unit.id,
+            code: material.unit,
+            name: material.unit,
+            symbol: material.unit,
+            dimension: "OTHER",
+            base_scale_numerator: 1,
+            base_scale_denominator: 1,
+          };
+        }
+        const itemResult = await control.command<{ item: { id: string } }>(
+          "/api/seramet/inventory/items",
+          {
+            code: material.id,
+            sku: material.id,
+            name: material.name,
+            categoryId: material.category,
+            baseUnitId: unit.id,
+            purchaseUnitId: unit.id,
+            storageUnitId: unit.id,
+            issueUnitId: unit.id,
+            trackInventory: true,
+            metadata: { edibleYieldBps: Math.round(material.yieldPct * 100) },
+          },
+        );
+        const warehouse = platformState.warehouses.find(
+          (row) => row.branchId === branchId && row.active,
+        );
+        if (warehouse && material.mainStore > 0) {
+          await control.command("/api/seramet/inventory/movements", {
+            branchId,
+            warehouseId: warehouse.id,
+            inventoryItemId: itemResult.item.id,
+            movementType: "OPENING",
+            quantityBaseMicro: Math.round(material.mainStore * 1_000_000),
+            unitCostMinor: Math.round(material.costPerUnit * 100),
+            sourceType: "ITEM_SETUP",
+            sourceId: itemResult.item.id,
+            idempotencyKey: `item-opening:${itemResult.item.id}`,
+            reason: "Opening quantity entered during item setup",
+          });
+        }
+        setNotice(`${material.name} saved to authoritative inventory.`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : "Material could not be saved");
+      }
+    })();
+  };
   const addEntry = (entry: StockEntry) => {
-    setEntries((current) => [entry, ...current]);
-    setMaterials((current) =>
-      current.map((material) =>
+    if (authoritative) {
+      void postAuthoritativeEntry(entry, serverData, branchId, control.command)
+        .then(() => setNotice("Stock movement posted and cost analytics queued."))
+        .catch((error: unknown) =>
+          setNotice(error instanceof Error ? error.message : "Stock movement failed"),
+        );
+      return;
+    }
+    persistSnapshot({
+      stockEntries: [entry, ...entries],
+      recipes,
+      materials: materials.map((material) =>
         material.id === entry.materialId ? applyStockEntry(material, entry) : material,
       ),
-    );
+    });
   };
   const addBomLine = (line: BomLine) => {
     if (!selectedRecipe) return;
-    setRecipes((current) =>
-      current.map((recipe) =>
+    persistSnapshot({
+      materials,
+      stockEntries: entries,
+      recipes: recipes.map((recipe) =>
         recipe.productId === selectedRecipe.productId
           ? { ...recipe, lines: [...recipe.lines, line] }
           : recipe,
       ),
-    );
+    });
   };
 
   return (
@@ -260,7 +314,7 @@ function CostControl() {
       subtitle={`${branchLabel} recipe costing, raw materials and variance control`}
       actions={
         <>
-          <Btn>
+          <Btn onClick={() => exportCostControl(materials, entries)}>
             <Download className="h-4 w-4" /> Export costing
           </Btn>
           <Btn onClick={() => setEntryDialogOpen(true)}>
@@ -272,6 +326,11 @@ function CostControl() {
         </>
       }
     >
+      {(notice || control.error) && (
+        <div className="mb-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
+          {notice || control.error}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric
           label="Actual food cost"
@@ -282,8 +341,17 @@ function CostControl() {
           note="vs ideal recipe cost"
         />
         <Metric label="Ideal food cost" value={idealFoodCostPct.toFixed(1)} suffix="%" />
-        <Metric label="Variance exposure" value={actualCost - theoreticalCost} money invert />
-        <Metric label="Raw material value" value={totalInventoryValue} money />
+        <Metric
+          label="Variance exposure"
+          value={authoritative ? summary.varianceMinor / 100 : actualCost - theoreticalCost}
+          money
+          invert
+        />
+        <Metric
+          label="Raw material value"
+          value={authoritative ? summary.inventoryValueMinor / 100 : totalInventoryValue}
+          money
+        />
       </div>
 
       <Panel className="mt-4">
@@ -294,7 +362,7 @@ function CostControl() {
         />
         <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
           <Segmented
-            options={["Raw materials", "Recipe BOM", "Stock entries", "Variance"]}
+            options={["Raw materials", "Recipe BOM", "Prep plan", "Stock entries", "Variance"]}
             value={view}
             onChange={setView}
           />
@@ -314,7 +382,7 @@ function CostControl() {
               `Scope: ${branchLabel}`,
               "Method: Weighted average",
               "Yield adjusted",
-              `Today: ${new Date().toLocaleDateString("en-KE")}`,
+              `Today: ${formatDate(new Date())}`,
             ]}
           />
         </div>
@@ -325,15 +393,28 @@ function CostControl() {
               onAdd={() => setMaterialDialogOpen(true)}
             />
           )}
-          {view === "Recipe BOM" && selectedRecipe && selectedProduct && selectedRecipeSummary && (
-            <RecipeBomView
-              rows={recipeRows}
-              selectedRecipe={selectedRecipe}
-              selectedProduct={selectedProduct}
-              selectedSummary={selectedRecipeSummary}
-              materials={scopedMaterials}
-              onSelectRecipe={setSelectedRecipeId}
-              onAddLine={addBomLine}
+          {view === "Recipe BOM" && authoritative && (
+            <AuthoritativeRecipeView rows={serverData?.controlCentre.recipes ?? []} />
+          )}
+          {view === "Recipe BOM" &&
+            !authoritative &&
+            selectedRecipe &&
+            selectedProduct &&
+            selectedRecipeSummary && (
+              <RecipeBomView
+                rows={recipeRows}
+                selectedRecipe={selectedRecipe}
+                selectedProduct={selectedProduct}
+                selectedSummary={selectedRecipeSummary}
+                materials={scopedMaterials}
+                onSelectRecipe={setSelectedRecipeId}
+                onAddLine={addBomLine}
+              />
+            )}
+          {view === "Prep plan" && (
+            <PrepPlanView
+              rows={serverData?.controlCentre.prepRecommendations ?? []}
+              authoritative={authoritative}
             />
           )}
           {view === "Stock entries" && (
@@ -343,12 +424,16 @@ function CostControl() {
               onAdd={() => setEntryDialogOpen(true)}
             />
           )}
-          {view === "Variance" && (
-            <VarianceView
-              rows={recipeRows.filter((row) =>
-                row.dish.toLowerCase().includes(query.toLowerCase()),
-              )}
-            />
+          {view === "Variance" && authoritative ? (
+            <AuthoritativeVarianceView rows={serverData?.controlCentre.consumption ?? []} />
+          ) : (
+            view === "Variance" && (
+              <VarianceView
+                rows={recipeRows.filter((row) =>
+                  row.dish.toLowerCase().includes(query.toLowerCase()),
+                )}
+              />
+            )
           )}
         </div>
       </Panel>
@@ -367,6 +452,247 @@ function CostControl() {
       />
     </AppShell>
   );
+}
+
+type ServerControlData = ReturnType<typeof useInventoryControlCentre>["data"][number];
+
+function serverMovementEntry(row: Record<string, unknown>): StockEntry {
+  const movementType = String(row["movement_type"] ?? "OTHER");
+  const type: StockEntry["type"] =
+    movementType === "PURCHASE_RECEIPT" || movementType === "OPENING"
+      ? "Receive"
+      : ["WASTAGE", "BREAKAGE", "EXPIRY"].includes(movementType)
+        ? "Waste"
+        : movementType === "RETURN_TO_SUPPLIER" || movementType === "CUSTOMER_RETURN"
+          ? "Return to store"
+          : "Issue to kitchen";
+  return {
+    id: String(row["id"] ?? ""),
+    date: String(row["business_date"] ?? ""),
+    type,
+    materialId: String(row["inventory_item_id"] ?? ""),
+    qty: Math.abs(Number(row["quantity_minor"] ?? 0)) / 1_000_000,
+    note: String(row["reason"] ?? row["source_type"] ?? "Inventory movement"),
+    by: String(row["source_type"] ?? "Server operation"),
+  };
+}
+
+async function postAuthoritativeEntry(
+  entry: StockEntry,
+  serverData: ServerControlData | undefined,
+  branchId: string,
+  command: (path: string, body: unknown) => Promise<unknown>,
+) {
+  const item = serverData?.items.find((row) => row.id === entry.materialId);
+  if (!item) throw new Error("The selected material is not available in this branch");
+  const quantityMicro = Math.round(entry.qty * 1_000_000);
+  if (entry.type === "Waste") {
+    await command("/api/seramet/inventory/wastage", {
+      branchId,
+      warehouseId: item.warehouse_id,
+      inventoryItemId: item.id,
+      quantityMicro,
+      reasonCode: entry.note,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    return;
+  }
+  const positive = entry.type === "Receive" || entry.type === "Return to store";
+  await command("/api/seramet/inventory/movements", {
+    branchId,
+    warehouseId: item.warehouse_id,
+    inventoryItemId: item.id,
+    movementType:
+      entry.type === "Receive"
+        ? "MANUAL_ADJUSTMENT"
+        : entry.type === "Return to store"
+          ? "CUSTOMER_RETURN"
+          : "MANUAL_ADJUSTMENT",
+    quantityBaseMicro: positive ? quantityMicro : -quantityMicro,
+    unitCostMinor: item.average_unit_cost_minor,
+    sourceType: "COST_CONTROL_ENTRY",
+    sourceId: entry.id,
+    idempotencyKey: crypto.randomUUID(),
+    reason: entry.note,
+  });
+}
+
+function AuthoritativeRecipeView({ rows }: { rows: Array<Record<string, unknown>> }) {
+  return (
+    <Panel className="overflow-hidden shadow-none">
+      <PanelHead title="Recipe versions" sub="Effective, server-controlled recipe definitions" />
+      <DataTable cols={["Recipe", "Version", "Effective from", { l: "Yield", r: true }, "Status"]}>
+        {rows.map((row) => (
+          <tr key={String(row["id"])}>
+            <TD>
+              <div className="font-semibold">{String(row["name"] ?? row["id"])}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {String(row["menu_item_id"] ?? row["production_item_id"] ?? "Unlinked")}
+              </div>
+            </TD>
+            <TD className="num">{row["version"] == null ? "-" : String(row["version"])}</TD>
+            <TD className="text-muted-foreground">
+              {row["effective_from"] ? formatDate(String(row["effective_from"])) : "Not versioned"}
+            </TD>
+            <TD className="num text-right">
+              {row["yield_quantity_minor"] == null
+                ? "-"
+                : `${Number(row["yield_quantity_minor"]) / 1_000_000} ${String(row["yield_unit_id"] ?? "")}`}
+            </TD>
+            <TD>
+              <Status>{row["active_version_id"] ? "Active" : "Needs version"}</Status>
+            </TD>
+          </tr>
+        ))}
+      </DataTable>
+      {!rows.length && (
+        <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+          No authoritative recipes are configured for this branch.
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function AuthoritativeVarianceView({ rows }: { rows: Array<Record<string, unknown>> }) {
+  return (
+    <Panel className="overflow-hidden shadow-none">
+      <PanelHead
+        title="Actual vs theoretical"
+        sub="Posted inventory consumption with explained and unexplained variance"
+      />
+      <DataTable
+        cols={[
+          "Material",
+          { l: "Actual", r: true },
+          { l: "Theoretical", r: true },
+          { l: "Variance", r: true },
+          { l: "Value", r: true },
+          "Quality",
+        ]}
+      >
+        {rows.map((row, index) => (
+          <tr key={`${String(row["inventory_item_id"])}:${String(row["period_end"])}:${index}`}>
+            <TD>
+              <div className="font-semibold">
+                {String(row["item_name"] ?? row["inventory_item_id"])}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {String(row["period_start"])} to {String(row["period_end"])}
+              </div>
+            </TD>
+            <TD className="num text-right">{formatMicro(row["actual_quantity_minor"])}</TD>
+            <TD className="num text-right">{formatMicro(row["theoretical_quantity_minor"])}</TD>
+            <TD className="num text-right">{formatMicro(row["unexplained_quantity_minor"])}</TD>
+            <TD className="num text-right font-semibold">
+              {ksh(Number(row["variance_value_minor"] ?? 0) / 100)}
+            </TD>
+            <TD>
+              <Status>{String(row["quality"] ?? "INSUFFICIENT_DATA")}</Status>
+            </TD>
+          </tr>
+        ))}
+      </DataTable>
+      {!rows.length && (
+        <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+          No completed consumption period is available yet.
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function PrepPlanView({
+  rows,
+  authoritative,
+}: {
+  rows: Array<Record<string, unknown>>;
+  authoritative: boolean;
+}) {
+  return (
+    <Panel className="overflow-hidden shadow-none">
+      <PanelHead
+        title="Daily prep plan"
+        sub="Demand, prepared inventory and configured safety buffer"
+      />
+      <DataTable
+        cols={[
+          "Prep item",
+          { l: "Required", r: true },
+          { l: "Prepared", r: true },
+          { l: "Safety", r: true },
+          { l: "Recommended", r: true },
+          "Station",
+          "Status",
+        ]}
+      >
+        {rows.map((row) => (
+          <tr key={String(row["id"])}>
+            <TD>
+              <div className="font-semibold">
+                {String(row["recipe_name"] ?? row["output_item_name"] ?? row["recipe_id"])}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {String(row["business_date"] ?? "")}
+              </div>
+            </TD>
+            <TD className="num text-right">{formatMicro(row["forecast_required_minor"])}</TD>
+            <TD className="num text-right">{formatMicro(row["prepared_available_minor"])}</TD>
+            <TD className="num text-right">{formatMicro(row["safety_buffer_minor"])}</TD>
+            <TD className="num text-right font-semibold">
+              {formatMicro(row["recommended_batch_minor"])}
+            </TD>
+            <TD className="text-muted-foreground">{String(row["station_id"] ?? "Not assigned")}</TD>
+            <TD>
+              <Status>{String(row["quality"] ?? row["status"] ?? "INSUFFICIENT_DATA")}</Status>
+            </TD>
+          </tr>
+        ))}
+      </DataTable>
+      {!rows.length && (
+        <div className="px-4 py-8 text-center text-[12px] text-muted-foreground">
+          {authoritative
+            ? "No prep recommendation is available. Configure production recipes and complete a sales period first."
+            : "Prep recommendations are generated by the authoritative inventory worker."}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function exportCostControl(materials: Material[], entries: StockEntry[]) {
+  const rows = [
+    ["record_type", "id", "name_or_type", "quantity", "unit_or_date", "value_or_note"],
+    ...materials.map((item) => [
+      "material",
+      item.id,
+      item.name,
+      stockQty(item),
+      item.unit,
+      edibleUnitCost(item),
+    ]),
+    ...entries.map((entry) => [
+      "movement",
+      entry.id,
+      entry.type,
+      entry.qty,
+      entry.date,
+      entry.note,
+    ]),
+  ];
+  const csv = rows
+    .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = `seramet-cost-control-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(href);
+}
+
+function formatMicro(value: unknown) {
+  return formatNumber(Number(value ?? 0) / 1_000_000, { maximumFractionDigits: 3 });
 }
 
 function RawMaterialsView({ materials, onAdd }: { materials: Material[]; onAdd: () => void }) {
@@ -708,7 +1034,7 @@ function VarianceView({ rows }: { rows: ReturnType<typeof recipeSummary>[] }) {
           {[
             [
               "Portion control",
-              "Check ladles, scoops and protein trim standards where actual issue exceeds recipe by more than 2%.",
+              "Check portion tools and trim standards when actual issue exceeds the configured recipe tolerance.",
             ],
             [
               "Yield loss",
@@ -871,14 +1197,14 @@ function StockEntryDialog({
 
   const save = () => {
     const amount = numeric(qty);
-    if (!materialIdValue || amount <= 0) return;
+    if (!materialIdValue || amount <= 0 || !note.trim()) return;
     onSave({
       id: `STK-${String(Date.now()).slice(-6)}`,
       date: new Date().toISOString().slice(0, 10),
       type,
       materialId: materialIdValue,
       qty: amount,
-      note: note.trim() || `${type} posted from Cost Control`,
+      note: note.trim(),
       by: user,
     });
     setQty("1");
@@ -922,18 +1248,23 @@ function StockEntryDialog({
           </label>
           <Field label="Quantity" value={qty} onChange={setQty} />
           <label className="grid gap-1.5 text-[12px] font-semibold">
-            Note
+            Reason
             <textarea
               value={note}
               onChange={(event) => setNote(event.target.value)}
               className="min-h-24 rounded-md border border-border bg-card px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-ring/40"
               placeholder="Reason, supplier reference or prep note"
+              required
             />
           </label>
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <Btn onClick={() => onOpenChange(false)}>Close</Btn>
-          <Btn variant="primary" onClick={save}>
+          <Btn
+            variant="primary"
+            disabled={!materialIdValue || numeric(qty) <= 0 || !note.trim()}
+            onClick={save}
+          >
             <ReceiptText className="h-4 w-4" /> Post entry
           </Btn>
         </div>
@@ -974,30 +1305,12 @@ function InfoTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function useStoredState<T>(key: string, fallback: T) {
-  const [value, setValue] = useState<T>(() => {
-    if (typeof window === "undefined") return fallback;
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored ? (JSON.parse(stored) as T) : fallback;
-    } catch {
-      return fallback;
-    }
-  });
-
-  const setStoredValue = (next: T | ((current: T) => T)) => {
-    setValue((current) => {
-      const resolved = typeof next === "function" ? (next as (current: T) => T)(current) : next;
-      if (typeof window !== "undefined") window.localStorage.setItem(key, JSON.stringify(resolved));
-      return resolved;
-    });
-  };
-
-  return [value, setStoredValue] as const;
-}
-
-function recipeSummary(recipe: RecipeCost, materials: Material[]) {
-  const product = productFor(recipe.productId);
+function recipeSummary(
+  recipe: RecipeCost,
+  materials: Material[],
+  menuItems: import("@/lib/menu-product").Product[],
+) {
+  const product = productFor(recipe.productId, menuItems);
   const cost = recipe.lines.reduce((sum, line) => {
     const material = materials.find((item) => item.id === line.materialId);
     return material ? sum + lineCost(line, material) : sum;
@@ -1035,8 +1348,10 @@ function recipeSummary(recipe: RecipeCost, materials: Material[]) {
   };
 }
 
-function productFor(productId: string) {
-  return products.find((product) => product.id === productId) ?? products[0]!;
+function productFor(productId: string, menuItems: import("@/lib/menu-product").Product[]) {
+  const product = menuItems.find((item) => item.id === productId);
+  if (!product) throw new Error(`Menu item ${productId} is not available in the active catalog`);
+  return product;
 }
 
 function lineCost(line: BomLine, material: Material) {

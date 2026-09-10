@@ -1,4 +1,5 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { emptyRecords } from "@/lib/empty-records";
+import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
 
@@ -22,54 +23,24 @@ export const Route = createFileRoute("/prep")({
   component: Prep,
 });
 
-const sections = [
-  {
-    station: "Hot line",
-    tasks: [
-      {
-        t: "Marinate chicken",
-        target: "18 kg",
-        done: "18 kg",
-        who: "Musa K.",
-        status: "Completed",
-      },
-      {
-        t: "Par-cook biryani rice",
-        target: "40 portions",
-        done: "26 portions",
-        who: "Peter K.",
-        status: "Preparing",
-      },
-      { t: "Beef stew base", target: "20 L", done: "0 L", who: "Unassigned", status: "Pending" },
-    ],
-  },
-  {
-    station: "Cold & sides",
-    tasks: [
-      { t: "Kachumbari", target: "8 kg", done: "8 kg", who: "Faith N.", status: "Completed" },
-      { t: "Bhajia batter", target: "15 kg", done: "6 kg", who: "Faith N.", status: "Preparing" },
-    ],
-  },
-  {
-    station: "Beverages",
-    tasks: [
-      {
-        t: "Passion concentrate",
-        target: "30 L",
-        done: "27 L",
-        who: "Amina W.",
-        status: "Attention",
-      },
-      { t: "Lime syrup", target: "10 L", done: "10 L", who: "Amina W.", status: "Completed" },
-    ],
-  },
-];
+type PrepSection = {
+  station: string;
+  tasks: Array<{
+    t: string;
+    done: number;
+    target: number;
+    who: string;
+    status: string;
+  }>;
+};
+
+const sections = emptyRecords<PrepSection>();
 
 function Prep() {
   return (
     <AppShell
       title="Prep list"
-      subtitle="Thursday, 13 August  -  generated from forecast demand"
+      subtitle="Production prep tasks generated from approved demand forecasts"
       actions={
         <>
           <Btn>Print</Btn>
@@ -78,10 +49,10 @@ function Prep() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Tasks today" value={18} />
-        <Metric label="Completed" value={11} />
-        <Metric label="In progress" value={4} />
-        <Metric label="Prep completion" value="61" suffix="%" delta={5} />
+        <Metric label="Tasks today" value={0} />
+        <Metric label="Completed" value={0} />
+        <Metric label="In progress" value={0} />
+        <Metric label="Prep completion" value="0" suffix="%" />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         {sections.map((s) => (

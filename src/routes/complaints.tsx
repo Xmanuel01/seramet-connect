@@ -1,3 +1,4 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -19,71 +20,11 @@ export const Route = createFileRoute("/complaints")({
 });
 
 const columns = ["Open", "Investigating", "Awaiting Customer", "Resolved", "Closed"];
-const cases = [
-  {
-    id: "CMP-0114",
-    status: "Open",
-    customer: "Kelvin Otieno",
-    order: "#1798",
-    branch: "Westlands",
-    issue: "Cold food",
-    severity: "High",
-    assignee: "Joan A.",
-    createdAt: "2026-08-14T10:18:00+03:00",
-    age: "1h",
-  },
-  {
-    id: "CMP-0111",
-    status: "Investigating",
-    customer: "Sarah Njeri",
-    order: "#1810",
-    branch: "Ngong Road",
-    issue: "Missing item",
-    severity: "Medium",
-    assignee: "Brian O.",
-    createdAt: "2026-08-14T09:42:00+03:00",
-    age: "2h",
-  },
-  {
-    id: "CMP-0108",
-    status: "Awaiting Customer",
-    customer: "Peter Kamau",
-    order: "#1772",
-    branch: "Westlands",
-    issue: "Late delivery",
-    severity: "Low",
-    assignee: "Faith N.",
-    createdAt: "2026-08-13T16:22:00+03:00",
-    age: "1d",
-  },
-  {
-    id: "CMP-0102",
-    status: "Resolved",
-    customer: "Asha Mohamed",
-    order: "#1680",
-    branch: "Ngong Road",
-    issue: "Wrong bill",
-    severity: "Medium",
-    assignee: "Amina W.",
-    createdAt: "2026-08-12T13:05:00+03:00",
-    age: "2d",
-  },
-  {
-    id: "CMP-0098",
-    status: "Closed",
-    customer: "Brian Oloo",
-    order: "#1629",
-    branch: "Westlands",
-    issue: "Overcharge",
-    severity: "Low",
-    assignee: "Joan A.",
-    createdAt: "2026-08-10T18:36:00+03:00",
-    age: "4d",
-  },
-];
+const cases = emptyRecords();
 
 function Complaints() {
-  const { branch, branches, branchLabel, canSwitchBranch, setBranch } = useAppContext();
+  const { branch, switchableBranchRecords, branchLabel, canSwitchBranch, setBranch } =
+    useAppContext();
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const scopedCases = useBranchRows(cases).filter(
     (item) => !periodDate || item.createdAt.slice(0, 10) === periodDate,
@@ -97,9 +38,9 @@ function Complaints() {
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Complaint branch scope</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {branches.map((item) => (
-          <DropdownMenuItem key={item} onClick={() => setBranch(item)}>
-            {item === branch ? `${item} - active` : item}
+        {switchableBranchRecords.map((item) => (
+          <DropdownMenuItem key={item.id} onClick={() => setBranch(item.id)}>
+            {item.name === branch ? `${item.name} - active` : item.name}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -126,15 +67,14 @@ function Complaints() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Open cases" value={openCases.length} />
-        <Metric label="Avg resolution" value="2.4d" delta={-18} />
+        <Metric label="Avg resolution" value="Not available" />
         <Metric
           label="High severity"
           value={scopedCases.filter((item) => item.severity === "High").length}
         />
         <Metric
           label="Recovered customers"
-          value={scopedCases.filter((item) => item.status === "Resolved").length * 6}
-          delta={9}
+          value={scopedCases.filter((item) => item.status === "Resolved").length}
         />
       </div>
       <Panel className="mt-4">

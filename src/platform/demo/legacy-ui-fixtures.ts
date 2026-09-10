@@ -124,9 +124,9 @@ export type Product = {
   imageUrl?: string;
   popular?: boolean;
   out?: boolean;
-  productionStation?: "MAIN KITCHEN" | "GRILL" | "BAR" | "DESSERT" | "DISPATCH" | "NONE";
-  branchAvailability?: Partial<Record<(typeof company.branches)[number], boolean>>;
-  branchPrices?: Partial<Record<(typeof company.branches)[number], number>>;
+  productionStation?: string;
+  branchAvailability?: Partial<Record<string, boolean>>;
+  branchPrices?: Partial<Record<string, number>>;
   importSource?: "manager" | "menu-import";
 };
 

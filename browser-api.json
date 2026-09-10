@@ -1,0 +1,12 @@
+{
+  "browserKeys": [
+    "browserId",
+    "capabilities",
+    "tabs",
+    "user"
+  ],
+  "tabsType": "object",
+  "tabsKeys": [],
+  "userKeys": [],
+  "browserString": "[object Object]"
+}

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { getVisibleNavGroups, roleCanAccessPath } from "@/components/app/nav";
-import { products } from "@/data/mock";
+import { products } from "@/platform/demo/legacy-ui-fixtures";
 import {
   createInvoicePdfBytes,
   invoiceEmailLink,
@@ -35,6 +35,16 @@ import {
   type SerametEnv,
 } from "@/lib/seramet-auth";
 import {
+  createDefaultDemoPlatformState,
+  DEMO_NGONG_BRANCH_ID,
+  DEMO_TENANT_ID,
+  DEMO_WESTLANDS_BRANCH_ID,
+} from "@/platform/demo/default-demo-data";
+import {
+  ConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
+import {
   SerametPrintService,
   branchHardwareProfiles,
   type BranchHardwareProfile,
@@ -43,10 +53,16 @@ import {
 } from "@/lib/seramet-print-service";
 import {
   TransactionEngine,
-  createInitialTransactionState,
   type OrderDraft,
   type TransactionState,
 } from "@/lib/transaction-engine";
+import { createInitialTransactionState } from "@/testing/transaction-state-fixture";
+import { resetMemoryTransactionRepositoryForTests } from "@/lib/seramet-repository";
+
+beforeEach(() => {
+  setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+  resetMemoryTransactionRepositoryForTests();
+});
 
 const csv = `name,category,price,prep,productionStation,popular,out,westlandsPrice,ngongRoadPrice,westlandsAvailable,ngongRoadAvailable
 Chicken Shawarma,Main Meals,850,14,MAIN KITCHEN,yes,no,900,850,yes,yes
@@ -126,7 +142,8 @@ describe("menu import and export", () => {
 
     expect(template).toContain("itemCode,name,category");
     expect(template).toContain("imageFilename");
-    expect(template).toContain("MS-001.jpg");
+    expect(template).toContain("ITEM-001,Example item");
+    expect(template).not.toContain("MS-001.jpg");
     expect(report).toContain("sourceName,row,field,severity,message");
     expect(report).toContain("bad-menu.csv");
     expect(report).toContain("productionStation");
@@ -304,43 +321,70 @@ describe("branch capabilities and module visibility", () => {
     });
   });
 
-  it("derives online orders and bar module visibility from branch capabilities", () => {
-    const westlands = getVisibleNavGroups("General Manager", "Westlands").flatMap((group) =>
-      group.items.map((item) => item.to),
-    );
-    const ngongRoad = getVisibleNavGroups("General Manager", "Ngong Road").flatMap((group) =>
-      group.items.map((item) => item.to),
-    );
+  it("does not let hardware profiles override granted module navigation", () => {
+    const westlands = getVisibleNavGroups(
+      "General Manager",
+      "Westlands",
+      undefined,
+      DEMO_TENANT_ID,
+    ).flatMap((group) => group.items.map((item) => item.to));
+    const ngongRoad = getVisibleNavGroups(
+      "General Manager",
+      "Ngong Road",
+      undefined,
+      DEMO_TENANT_ID,
+    ).flatMap((group) => group.items.map((item) => item.to));
 
     expect(westlands).toContain("/online-orders");
     expect(westlands).toContain("/bar");
-    expect(ngongRoad).not.toContain("/online-orders");
-    expect(ngongRoad).not.toContain("/bar");
-    expect(roleCanAccessPath("General Manager", "/online-orders", "Ngong Road")).toBe(false);
-    expect(roleCanAccessPath("General Manager", "/bar", "Ngong Road")).toBe(false);
+    expect(ngongRoad).toContain("/online-orders");
+    expect(ngongRoad).toContain("/bar");
+    expect(
+      roleCanAccessPath(
+        "General Manager",
+        "/online-orders",
+        "Ngong Road",
+        undefined,
+        DEMO_TENANT_ID,
+      ),
+    ).toBe(true);
+    expect(
+      roleCanAccessPath("General Manager", "/bar", "Ngong Road", undefined, DEMO_TENANT_ID),
+    ).toBe(true);
   });
 
   it("exposes every first-class brief route through role-aware navigation", () => {
-    const westlands = getVisibleNavGroups("General Manager", "Westlands").flatMap((group) =>
-      group.items.map((item) => item.to),
-    );
+    const westlands = getVisibleNavGroups(
+      "General Manager",
+      "Westlands",
+      undefined,
+      DEMO_TENANT_ID,
+    ).flatMap((group) => group.items.map((item) => item.to));
 
     ["/purchase-orders", "/payables", "/crm", "/decisions", "/online-orders", "/bar"].forEach(
       (path) => {
         expect(westlands).toContain(path);
-        expect(roleCanAccessPath("General Manager", path, "Westlands")).toBe(true);
+        expect(
+          roleCanAccessPath("General Manager", path, "Westlands", undefined, DEMO_TENANT_ID),
+        ).toBe(true);
       },
     );
   });
 
   it("keeps the sensitive dashboard hidden from frontline operational roles by default", () => {
     (["Cashier", "Storekeeper", "Chef"] as const).forEach((role) => {
-      const items = getVisibleNavGroups(role, "Westlands").flatMap((group) => group.items);
+      const items = getVisibleNavGroups(role, "Westlands", undefined, DEMO_TENANT_ID).flatMap(
+        (group) => group.items,
+      );
       expect(items.find((item) => item.to === "/")).toBeUndefined();
-      expect(roleCanAccessPath(role, "/", "Westlands")).toBe(false);
+      expect(roleCanAccessPath(role, "/", "Westlands", undefined, DEMO_TENANT_ID)).toBe(false);
     });
-    expect(roleCanAccessPath("General Manager", "/", "Westlands")).toBe(true);
-    expect(roleCanAccessPath("Branch Manager", "/", "Westlands")).toBe(true);
+    expect(roleCanAccessPath("General Manager", "/", "Westlands", undefined, DEMO_TENANT_ID)).toBe(
+      true,
+    );
+    expect(roleCanAccessPath("Branch Manager", "/", "Westlands", undefined, DEMO_TENANT_ID)).toBe(
+      true,
+    );
   });
 });
 
@@ -746,6 +790,8 @@ FOOD-001,Chicken Biryani,Main Meals,1200,650,MAIN KITCHEN,chicken.jpg`;
 
 describe("transaction engine order to reconciliation lifecycle", () => {
   const draft: OrderDraft = {
+    tenantId: DEMO_TENANT_ID,
+    branchId: DEMO_WESTLANDS_BRANCH_ID,
     branch: "Westlands",
     table: "04",
     customer: "Table 04",
@@ -775,8 +821,12 @@ describe("transaction engine order to reconciliation lifecycle", () => {
   };
 
   const blank = (): TransactionState => ({
+    tenantId: DEMO_TENANT_ID,
     orders: [],
     bills: [],
+    marketplaceReceivables: [],
+    marketplaceCharges: [],
+    productionAmendments: [],
     paymentIntents: [],
     payments: [],
     receipts: [],
@@ -786,6 +836,15 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     cashDrawers: [],
     refunds: [],
     auditEvents: [],
+    inventory: [],
+    recipes: [],
+    stockMovements: [],
+    purchaseOrders: [],
+    wastageRecords: [],
+    breakageRecords: [],
+    employees: [],
+    attendanceRecords: [],
+    costControlSnapshots: [],
   });
 
   it("stores held orders permanently without creating bills, payments or receipts", () => {
@@ -1036,20 +1095,19 @@ describe("transaction engine order to reconciliation lifecycle", () => {
 });
 
 describe("server persistence, provider boundaries and enforcement", () => {
-  it("authenticates bearer tokens and enforces branch-scoped mutations server-side", () => {
+  it("isolates explicit local development auth and enforces branch-scoped mutations", async () => {
     const env: SerametEnv = {
-      SERAMET_API_TOKENS: JSON.stringify({
-        token123: {
-          id: "cashier-west",
-          name: "Cashier West",
-          role: "Cashier",
-          branch: "Westlands",
-        },
-      }),
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_ENABLE_DEV_AUTH: "true",
     };
-    const actor = authenticateSerametRequest(
-      new Request("https://seramet.test/api/seramet/transactions", {
-        headers: { Authorization: "Bearer token123" },
+    const actor = await authenticateSerametRequest(
+      new Request("http://127.0.0.1/api/seramet/transactions", {
+        headers: {
+          "x-seramet-dev-auth": "enabled",
+          "x-seramet-user-id": "user-demo-amina",
+          "x-seramet-tenant-id": DEMO_TENANT_ID,
+          "x-seramet-branch-id": DEMO_WESTLANDS_BRANCH_ID,
+        },
       }),
       env,
     );
@@ -1087,11 +1145,11 @@ describe("server persistence, provider boundaries and enforcement", () => {
 
     const first = await handleSerametApiRequest(
       apiRequest("/api/seramet/transactions/mutate", requestBody),
-      {},
+      { SERAMET_ENVIRONMENT: "development", SERAMET_ENABLE_DEV_AUTH: "true" },
     );
     const replay = await handleSerametApiRequest(
       apiRequest("/api/seramet/transactions/mutate", requestBody),
-      {},
+      { SERAMET_ENVIRONMENT: "development", SERAMET_ENABLE_DEV_AUTH: "true" },
     );
 
     expect(first.status).toBe(200);
@@ -1100,15 +1158,33 @@ describe("server persistence, provider boundaries and enforcement", () => {
   });
 
   it("blocks cross-branch transaction mutations through the API", async () => {
-    const state = createInitialTransactionState();
-    const ngongOrder = state.orders.find((item) => item.branch === "Ngong Road");
     const response = await handleSerametApiRequest(
       apiRequest("/api/seramet/transactions/mutate", {
-        action: "sendToKitchen",
+        action: "createOrder",
         idempotencyKey: "test-cross-branch-001",
-        payload: { orderId: ngongOrder?.id },
+        payload: {
+          draft: {
+            tenantId: DEMO_TENANT_ID,
+            branchId: DEMO_NGONG_BRANCH_ID,
+            branch: "Ngong Road",
+            table: "T-01",
+            customer: "Cross-branch test",
+            channel: "Dine-In",
+            cashier: "Emmanuel Odhiambo",
+            lines: [
+              {
+                id: "line-cross-branch",
+                name: "Configured item",
+                category: "MAIN",
+                quantity: 1,
+                unitPrice: 100,
+                productionStation: "MAIN KITCHEN",
+              },
+            ],
+          },
+        },
       }),
-      {},
+      { SERAMET_ENVIRONMENT: "development", SERAMET_ENABLE_DEV_AUTH: "true" },
     );
 
     expect(response.status).toBe(403);
@@ -1153,7 +1229,7 @@ describe("server persistence, provider boundaries and enforcement", () => {
 
 function profileForMode(mode: KitchenOperatingMode): BranchHardwareProfile {
   return {
-    ...branchHardwareProfiles.Westlands,
+    ...branchHardwareProfiles["Westlands"]!,
     kitchenMode: mode,
   };
 }
@@ -1164,7 +1240,7 @@ function profileWithPrinters(
   printers: BranchHardwareProfile["printers"],
 ): BranchHardwareProfile {
   return {
-    ...branchHardwareProfiles.Westlands,
+    ...branchHardwareProfiles["Westlands"]!,
     branch,
     kitchenMode: mode,
     printers,
@@ -1272,14 +1348,14 @@ function xml(value: string) {
 }
 
 function apiRequest(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
-  return new Request(`https://seramet.test${path}`, {
+  return new Request(`http://127.0.0.1${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-seramet-dev-auth": "enabled",
-      "x-seramet-user": "Amina W.",
-      "x-seramet-role": "Cashier",
-      "x-seramet-branch": "Westlands",
+      "x-seramet-user-id": "user-demo-amina",
+      "x-seramet-tenant-id": DEMO_TENANT_ID,
+      "x-seramet-branch-id": DEMO_WESTLANDS_BRANCH_ID,
       ...extraHeaders,
     },
     body: JSON.stringify(body),

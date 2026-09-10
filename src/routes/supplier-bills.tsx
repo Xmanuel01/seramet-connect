@@ -1,8 +1,9 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 
 type Bill = {
   id: string;
@@ -21,41 +22,7 @@ export const Route = createFileRoute("/supplier-bills")({
   component: SupplierBills,
 });
 
-const rows: Bill[] = [
-  {
-    id: "BILL-001",
-    supplier: "Main Meat Supplier",
-    bill: "MMS-2291",
-    po: "PO-2026-0182",
-    due: "14 Aug",
-    amount: 128400,
-    paid: 60000,
-    outstanding: 68400,
-    status: "Partial",
-  },
-  {
-    id: "BILL-002",
-    supplier: "Samwest",
-    bill: "SW-8842",
-    po: "PO-2026-0179",
-    due: "18 Aug",
-    amount: 96200,
-    paid: 96200,
-    outstanding: 0,
-    status: "Paid",
-  },
-  {
-    id: "BILL-003",
-    supplier: "Muthurwa Groceries",
-    bill: "MG-0471",
-    po: "PO-2026-0168",
-    due: "09 Aug",
-    amount: 42800,
-    paid: 0,
-    outstanding: 42800,
-    status: "Critical",
-  },
-];
+const rows: Bill[] = emptyRecords();
 
 const columns: EnterpriseColumn<Bill>[] = [
   { key: "supplier", label: "Supplier", sortable: true },
@@ -87,6 +54,13 @@ const columns: EnterpriseColumn<Bill>[] = [
 ];
 
 function SupplierBills() {
+  const total = rows.reduce((sum, row) => sum + row.outstanding, 0);
+  const overdue = rows
+    .filter((row) => row.status === "Overdue")
+    .reduce((sum, row) => sum + row.outstanding, 0);
+  const matched = rows.length
+    ? Math.round((rows.filter((row) => row.po).length / rows.length) * 100)
+    : 0;
   return (
     <AppShell
       title="Supplier bills"
@@ -99,10 +73,10 @@ function SupplierBills() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Supplier payables" value={299000} money />
-        <Metric label="Overdue" value={42800} money invert />
-        <Metric label="Due this week" value={3} />
-        <Metric label="Matched bills" value={92} suffix="%" />
+        <Metric label="Supplier payables" value={total} money />
+        <Metric label="Overdue" value={overdue} money invert />
+        <Metric label="Due this week" value={0} />
+        <Metric label="Matched bills" value={matched} suffix="%" />
       </div>
       <Panel className="mt-4">
         <PanelHead title="Bill register" sub="Match bills, schedule payments and review ageing" />

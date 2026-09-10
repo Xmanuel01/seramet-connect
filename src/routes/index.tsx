@@ -1,5 +1,5 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -15,19 +15,12 @@ import {
   YAxis,
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
-import { getRoutePermissionRoles } from "@/components/app/nav";
 import { Btn, Metric, Panel, PanelHead, Segmented, Status, TD, TH } from "@/components/app/ui";
-import {
-  alerts,
-  branchPerf,
-  health,
-  kpis,
-  ksh,
-  revenueTrend,
-  salesByChannel,
-  salesByHour,
-} from "@/data/mock";
-import { branchMetric, useAppContext } from "@/lib/app-context";
+import { ksh } from "@/lib/currency";
+import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { deriveBranchOperations } from "@/lib/restaurant-operations";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -35,7 +28,8 @@ export const Route = createFileRoute("/")({
       { title: "Seramet - Home Dashboard" },
       {
         name: "description",
-        content: "Live sales, business health, alerts and branch performance for Mona Swahili.",
+        content:
+          "Live sales, business health, alerts and branch performance for the active tenant.",
       },
       { property: "og:title", content: "Seramet - Home Dashboard" },
       {
@@ -53,26 +47,161 @@ const sevTone: Record<string, string> = {
   info: "bg-info-soft text-info",
 };
 
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function periodStart(period: string, now: Date) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (period === "Yesterday") start.setDate(start.getDate() - 1);
+  if (period === "Week") start.setDate(start.getDate() - 6);
+  if (period === "Month") start.setDate(1);
+  return start;
+}
+
+function dateKey(value: string | Date) {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function lastSevenDays(now: Date) {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() - (6 - index));
+    return {
+      key: dateKey(date),
+      label: date.toLocaleDateString(undefined, { weekday: "short" }),
+    };
+  });
+}
+
 function Home() {
   const [period, setPeriod] = useState("Today");
-  const { branch, branchLabel, matchesBranch, role } = useAppContext();
-  const canViewDashboard = getRoutePermissionRoles("/").includes(role);
-  const scopedKpis = kpis.map((k) => ({
-    ...k,
-    value: typeof k.value === "number" && k.money ? branchMetric(k.value, branch) : k.value,
-  }));
-  const scopedTrend = revenueTrend.map((row) => ({
-    ...row,
-    sales: branchMetric(row.sales, branch),
-    cost: branchMetric(row.cost, branch),
-  }));
-  const scopedSalesByHour = salesByHour.map((row) => ({ ...row, v: branchMetric(row.v, branch) }));
-  const scopedSalesByChannel = salesByChannel.map((row) => ({
-    ...row,
-    value: branchMetric(row.value, branch),
-  }));
-  const scopedBranches = branchPerf.filter((row) => matchesBranch(row.branch));
-  const scopedAlerts = alerts.filter((row) => matchesBranch(row.branch));
+  const {
+    branch,
+    branchLabel,
+    branchRecords,
+    matchesBranch,
+    role,
+    currentUser,
+    hasPermission,
+    locale,
+    timeZone,
+  } = useAppContext();
+  const { state } = useTransactionEngine();
+  const operations = deriveBranchOperations(state, branch);
+  const canViewDashboard = hasPermission(permissions.dashboardView);
+  const report = useMemo(() => {
+    const now = new Date();
+    const start = periodStart(period, now);
+    const scopedOrders = state.orders.filter((order) => {
+      const created = new Date(order.createdAt);
+      return (
+        matchesBranch(order.branchId ?? order.branch) &&
+        created >= start &&
+        created <= now &&
+        !["DRAFT", "HELD", "CANCELLED"].includes(order.status)
+      );
+    });
+    const netSales = scopedOrders.reduce((total, order) => total + order.total, 0);
+    const scopedMovements = state.stockMovements.filter((movement) => {
+      const created = new Date(movement.createdAt);
+      return (
+        matchesBranch(movement.branchId ?? movement.branch) &&
+        movement.type === "SALE_CONSUMPTION" &&
+        created >= start &&
+        created <= now
+      );
+    });
+    const cost = scopedMovements.reduce(
+      (total, movement) => total + Math.abs(movement.quantity) * movement.unitCost,
+      0,
+    );
+    const collected = state.payments
+      .filter((payment) => {
+        const created = new Date(payment.timestamp);
+        return (
+          matchesBranch(payment.branchId ?? payment.branch) && created >= start && created <= now
+        );
+      })
+      .reduce((total, payment) => total + payment.amount, 0);
+    const trend = lastSevenDays(now).map(({ key, label }) => ({
+      d: label,
+      sales: scopedOrders
+        .filter((order) => dateKey(order.createdAt) === key)
+        .reduce((total, order) => total + order.total, 0),
+      cost: scopedMovements
+        .filter((movement) => dateKey(movement.createdAt) === key)
+        .reduce((total, movement) => total + Math.abs(movement.quantity) * movement.unitCost, 0),
+    }));
+    const hourly = Array.from({ length: 24 }, (_, hour) => ({
+      h: `${String(hour).padStart(2, "0")}:00`,
+      v: scopedOrders
+        .filter((order) => new Date(order.createdAt).getHours() === hour)
+        .reduce((total, order) => total + order.total, 0),
+    })).filter((row) => row.v > 0);
+    const channels = [...new Set(scopedOrders.map((order) => order.channel))].map((channel) => ({
+      name: channel,
+      value: scopedOrders
+        .filter((order) => order.channel === channel)
+        .reduce((total, order) => total + order.total, 0),
+    }));
+    const branches = branchRecords
+      .filter((record) => matchesBranch(record.id))
+      .map((record) => {
+        const orders = scopedOrders.filter(
+          (order) => order.branchId === record.id || order.branch === record.name,
+        );
+        const sales = orders.reduce((total, order) => total + order.total, 0);
+        const branchCost = scopedMovements
+          .filter((movement) => movement.branchId === record.id || movement.branch === record.name)
+          .reduce((total, movement) => total + Math.abs(movement.quantity) * movement.unitCost, 0);
+        const margin = sales > 0 ? ((sales - branchCost) / sales) * 100 : 0;
+        const foodCost = sales > 0 ? (branchCost / sales) * 100 : 0;
+        return {
+          branch: record.name,
+          sales,
+          orders: orders.length,
+          margin: Math.round(margin),
+          foodCost: Math.round(foodCost),
+          status: sales === 0 ? "No activity" : margin >= 60 ? "Healthy" : "Attention",
+        };
+      });
+    return { netSales, cost, collected, orders: scopedOrders, trend, hourly, channels, branches };
+  }, [branchRecords, matchesBranch, period, state.orders, state.payments, state.stockMovements]);
+  const grossProfit = report.netSales - report.cost;
+  const scopedKpis = [
+    { label: "Net Sales", value: report.netSales, money: true },
+    { label: "Orders", value: report.orders.length },
+    {
+      label: "Avg Order Value",
+      value: report.orders.length ? Math.round(report.netSales / report.orders.length) : 0,
+      money: true,
+    },
+    { label: "Gross Profit", value: grossProfit, money: true },
+    {
+      label: "Gross Margin",
+      value: report.netSales ? Math.round((grossProfit / report.netSales) * 1000) / 10 : 0,
+      suffix: "%",
+    },
+    {
+      label: "Food Cost",
+      value: report.netSales ? Math.round((report.cost / report.netSales) * 1000) / 10 : 0,
+      suffix: "%",
+      invert: true,
+    },
+    { label: "Unmatched", value: operations.unreadablePayments, invert: true },
+    { label: "Collected", value: report.collected, money: true },
+  ];
+  const scopedTrend = report.trend;
+  const scopedSalesByHour = report.hourly;
+  const scopedSalesByChannel = report.channels;
+  const scopedBranches = report.branches;
+  const scopedAlerts = operations.actions;
   if (!canViewDashboard) {
     return (
       <AppShell title="Dashboard restricted" subtitle={`${role} - ${branchLabel}`}>
@@ -94,8 +223,14 @@ function Home() {
 
   return (
     <AppShell
-      title="Good afternoon, Emmanuel"
-      subtitle={`${branchLabel}  -  Wednesday, 12 August 2026`}
+      title={`${greeting()}, ${currentUser.name.split(" ")[0]}`}
+      subtitle={`${branchLabel}  -  ${new Date().toLocaleDateString(locale, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        timeZone,
+        year: "numeric",
+      })}`}
       actions={
         <>
           <Segmented
@@ -112,7 +247,7 @@ function Home() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         {scopedKpis.map((k) => (
-          <Metric key={k.label} {...k} note="vs previous Wednesday" />
+          <Metric key={k.label} {...k} />
         ))}
       </div>
 
@@ -178,7 +313,12 @@ function Home() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel>
-              <PanelHead title="Sales by hour" sub="Peak 8pm  -  KSh 41,200" />
+              <PanelHead
+                title="Sales by hour"
+                sub={
+                  scopedSalesByHour.length ? "Recorded order activity" : "No sales in this period"
+                }
+              />
               <div className="h-[190px] p-3">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={scopedSalesByHour} margin={{ left: -22, right: 8, top: 6 }}>
@@ -218,7 +358,7 @@ function Home() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={salesByChannel}
+                        data={scopedSalesByChannel}
                         dataKey="value"
                         innerRadius={44}
                         outerRadius={70}
@@ -257,7 +397,7 @@ function Home() {
           <Panel>
             <PanelHead
               title="Branch performance"
-              sub="Today  -  compared with last Wednesday"
+              sub={`${period} - authoritative branch totals`}
               right={<Btn>Compare</Btn>}
             />
             <div className="grid gap-3 p-3 md:hidden">
@@ -326,18 +466,18 @@ function Home() {
             <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
               <div className="relative grid h-16 w-16 place-items-center rounded-full bg-accent">
                 <span className="num text-[19px] font-extrabold text-accent-foreground">
-                  {health.score}
+                  {operations.score}
                 </span>
               </div>
               <div className="min-w-0">
                 <div className="text-[13px] font-semibold">Business Health</div>
                 <div className="text-[12px] text-muted-foreground">
-                  {health.label} - 2 signals need attention
+                  {operations.label} - {operations.readiness.score}% branch readiness
                 </div>
               </div>
             </div>
             <ul className="mt-3 grid grid-cols-2 gap-1.5">
-              {health.signals.map((s) => (
+              {operations.signals.map((s) => (
                 <li
                   key={s.name}
                   className="flex items-center justify-between rounded-md bg-secondary/50 px-2 py-1.5"
@@ -375,18 +515,12 @@ function Home() {
                         <span>{a.branch}</span>
                         <span> - </span>
                         <span>{a.time}</span>
-                        <button
-                          onClick={() =>
-                            window.dispatchEvent(
-                              new CustomEvent("seramet:workflow-action", {
-                                detail: { label: a.action },
-                              }),
-                            )
-                          }
+                        <Link
+                          to={a.to as never}
                           className="ml-auto font-semibold text-primary hover:underline"
                         >
                           {a.action}
-                        </button>
+                        </Link>
                       </div>
                     </div>
                   </div>
