@@ -26,6 +26,7 @@ export async function handleSupabaseAuthApi(
   if (!url.pathname.startsWith("/api/seramet/public/auth")) return null;
   const correlationId = request.headers.get("x-correlation-id") ?? crypto.randomUUID();
   const availability = publicAuthAvailability(env);
+  const databaseAvailable = Boolean(env.SERAMET_DB);
   if (url.pathname === "/api/seramet/public/auth/config" && request.method === "GET") {
     return Response.json({
       ok: true,
@@ -33,14 +34,13 @@ export async function handleSupabaseAuthApi(
       enabled: env.SERAMET_IDENTITY_PROVIDER === "supabase" && Boolean(env.SERAMET_SUPABASE_URL),
     });
   }
-  if (!env.SERAMET_DB) {
-    throw new ServerOperationError("DATABASE_UNAVAILABLE", 503, "Identity database unavailable");
-  }
   assertSameOrigin(request, env);
 
   if (url.pathname === "/api/seramet/public/auth/signup" && request.method === "POST") {
     const body = parse(signupSchema, await request.json().catch(() => null));
-    await throttle(env, request, `signup:${body.email.toLowerCase()}`, 5, 60 * 60);
+    if (databaseAvailable) {
+      await throttle(env, request, `signup:${body.email.toLowerCase()}`, 5, 60 * 60);
+    }
     const redirect = `${trustedOrigin(request, env)}/login?verified=1`;
     const response = await supabaseRequest<SupabaseSessionPayload>(
       env,
@@ -75,7 +75,9 @@ export async function handleSupabaseAuthApi(
     try {
       const body = parse(credentialsSchema, await request.json().catch(() => null));
       stage = "rate-limit";
-      await throttle(env, request, `login:${body.email.toLowerCase()}`, 10, 15 * 60);
+      if (databaseAvailable) {
+        await throttle(env, request, `login:${body.email.toLowerCase()}`, 10, 15 * 60);
+      }
       stage = "supabase-auth";
       const response = await supabaseRequest<SupabaseSessionPayload>(
         env,
@@ -128,7 +130,9 @@ export async function handleSupabaseAuthApi(
     const refreshToken = readCookie(request, "seramet_refresh");
     if (!refreshToken)
       throw new ServerOperationError("AUTHENTICATION_REQUIRED", 401, "Session expired");
-    await throttle(env, request, "refresh", 30, 60);
+    if (databaseAvailable) {
+      await throttle(env, request, "refresh", 30, 60);
+    }
     const response = await supabaseRequest<SupabaseSessionPayload>(
       env,
       "/auth/v1/token?grant_type=refresh_token",

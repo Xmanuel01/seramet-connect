@@ -205,6 +205,41 @@ describe.sequential("commercial launch foundation", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
+  it("allows public auth login without a database binding", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expires_in: 3600,
+          user: { id: "supabase-user-1", email: "owner@example.test" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "production",
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+      } as SerametEnv,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
+  });
+
   it("logs internal login failures with safe context and preserves the generic browser error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
