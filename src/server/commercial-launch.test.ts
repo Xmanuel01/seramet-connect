@@ -21,6 +21,7 @@ import {
 } from "@/server/registration-service";
 import type { VerifiedExternalIdentity } from "@/server/identity/supabase-identity";
 import { listRealtimeEvents, publishRealtimeEvent } from "@/server/realtime";
+import { handleSerametApiRequest } from "@/lib/seramet-api";
 import { handleSupabaseAuthApi } from "@/server/supabase-auth-api";
 
 let database: SqliteD1TestDatabase;
@@ -166,6 +167,76 @@ describe.sequential("commercial launch foundation", () => {
       .bind(provisioned.tenantId, identity().sessionId)
       .first<{ revoked_at: string | null }>();
     expect(session?.revoked_at).not.toBeNull();
+  });
+
+  it("allows public auth login before unrelated production bindings are present", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expires_in: 3600,
+          user: { id: "supabase-user-1", email: "owner@example.test" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "production",
+        SERAMET_DB: database,
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+      } as SerametEnv,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
+  });
+
+  it("logs internal login failures with safe context and preserves the generic browser error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "production",
+        SERAMET_DB: database,
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+      } as SerametEnv,
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      message: "Seramet API failure",
+    });
+    expect(errorSpy).toHaveBeenCalled();
+    const logLine = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLine).toContain('"operation":"public-auth-login"');
+    expect(logLine).toContain('"route":"/api/seramet/public/auth/login"');
+    expect(logLine).toContain('"stage":"supabase-auth"');
+    errorSpy.mockRestore();
   });
 
   it("stores clean files in tenant-scoped random R2 paths and removes orphan uploads", async () => {

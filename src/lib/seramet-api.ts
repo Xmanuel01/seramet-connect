@@ -100,14 +100,14 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
       );
     }
 
+    const identityResponse = await handleSupabaseAuthApi(request, env);
+    if (identityResponse) return identityResponse;
+
     if (runtime.productionLike) assertProductionReady(env);
     const repo = createTransactionRepository(env.SERAMET_DB);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
-
-    const identityResponse = await handleSupabaseAuthApi(request, env);
-    if (identityResponse) return identityResponse;
 
     const registrationResponse = await handleRegistrationApi(request, env);
     if (registrationResponse) return registrationResponse;

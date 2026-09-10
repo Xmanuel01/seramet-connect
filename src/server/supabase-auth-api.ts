@@ -4,6 +4,7 @@ import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { ServerOperationError } from "@/server/errors";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
+import { structuredServerLog } from "@/server/logging";
 
 const credentialsSchema = z
   .object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(200) })
@@ -23,6 +24,8 @@ export async function handleSupabaseAuthApi(
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/seramet/public/auth")) return null;
+  const correlationId = request.headers.get("x-correlation-id") ?? crypto.randomUUID();
+  const availability = publicAuthAvailability(env);
   if (url.pathname === "/api/seramet/public/auth/config" && request.method === "GET") {
     return Response.json({
       ok: true,
@@ -56,26 +59,69 @@ export async function handleSupabaseAuthApi(
   }
 
   if (url.pathname === "/api/seramet/public/auth/login" && request.method === "POST") {
-    const body = parse(credentialsSchema, await request.json().catch(() => null));
-    await throttle(env, request, `login:${body.email.toLowerCase()}`, 10, 15 * 60);
-    const response = await supabaseRequest<SupabaseSessionPayload>(
-      env,
-      "/auth/v1/token?grant_type=password",
-      body,
-      undefined,
-      "Email or password is incorrect",
-    );
-    if (!response.access_token || !response.refresh_token) {
-      throw new ServerOperationError(
-        "AUTHENTICATION_REQUIRED",
-        401,
+    let stage: PublicAuthLoginStage = "request-validation";
+    structuredServerLog({
+      environment: resolveRuntimeConfiguration(env).environment,
+      operation: "public-auth-login",
+      result: "started",
+      correlationId,
+      metadata: {
+        route: url.pathname,
+        stage,
+        databaseAvailability: availability.databaseAvailability,
+        requiredConfigAvailability: availability.requiredConfigAvailability,
+      },
+    });
+    try {
+      const body = parse(credentialsSchema, await request.json().catch(() => null));
+      stage = "rate-limit";
+      await throttle(env, request, `login:${body.email.toLowerCase()}`, 10, 15 * 60);
+      stage = "supabase-auth";
+      const response = await supabaseRequest<SupabaseSessionPayload>(
+        env,
+        "/auth/v1/token?grant_type=password",
+        body,
+        undefined,
         "Email or password is incorrect",
       );
+      stage = "session-cookie";
+      if (!response.access_token || !response.refresh_token) {
+        throw new ServerOperationError(
+          "AUTHENTICATION_REQUIRED",
+          401,
+          "Email or password is incorrect",
+        );
+      }
+      structuredServerLog({
+        environment: resolveRuntimeConfiguration(env).environment,
+        operation: "public-auth-login",
+        result: "succeeded",
+        correlationId,
+        metadata: {
+          route: url.pathname,
+          stage,
+          databaseAvailability: availability.databaseAvailability,
+          requiredConfigAvailability: availability.requiredConfigAvailability,
+        },
+      });
+      return Response.json(
+        { ok: true, authenticated: true },
+        { headers: sessionCookies(response, env) },
+      );
+    } catch (error) {
+      logPublicAuthFailure({
+        env,
+        route: url.pathname,
+        stage,
+        correlationId,
+        availability,
+        error,
+      });
+      if (error instanceof ServerOperationError && error.status < 500) {
+        return Response.json(publicError(error, correlationId).body, { status: error.status });
+      }
+      return Response.json({ ok: false, message: "Seramet API failure" }, { status: 500 });
     }
-    return Response.json(
-      { ok: true, authenticated: true },
-      { headers: sessionCookies(response, env) },
-    );
   }
 
   if (url.pathname === "/api/seramet/public/auth/refresh" && request.method === "POST") {
@@ -281,4 +327,59 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 async function sha256(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+type PublicAuthLoginStage = "request-validation" | "rate-limit" | "supabase-auth" | "session-cookie";
+
+type PublicAuthAvailability = {
+  databaseAvailability: "available" | "missing";
+  requiredConfigAvailability: {
+    identityProvider: "supabase" | "other" | "unconfigured";
+    supabaseUrl: "configured" | "missing";
+    publishableKey: "configured" | "missing";
+    publicOrigin: "configured" | "missing";
+  };
+};
+
+function publicAuthAvailability(env: SerametEnv): PublicAuthAvailability {
+  return {
+    databaseAvailability: env.SERAMET_DB ? "available" : "missing",
+    requiredConfigAvailability: {
+      identityProvider:
+        env.SERAMET_IDENTITY_PROVIDER === "supabase"
+          ? "supabase"
+          : env.SERAMET_IDENTITY_PROVIDER
+            ? "other"
+            : "unconfigured",
+      supabaseUrl: env.SERAMET_SUPABASE_URL?.trim() ? "configured" : "missing",
+      publishableKey: env.SERAMET_SUPABASE_PUBLISHABLE_KEY?.trim() ? "configured" : "missing",
+      publicOrigin: env.SERAMET_PUBLIC_ORIGIN?.trim() ? "configured" : "missing",
+    },
+  };
+}
+
+function logPublicAuthFailure(input: {
+  env: SerametEnv;
+  route: string;
+  stage: PublicAuthLoginStage;
+  correlationId: string;
+  availability: PublicAuthAvailability;
+  error: unknown;
+}) {
+  structuredServerLog({
+    environment: resolveRuntimeConfiguration(input.env).environment,
+    operation: "public-auth-login",
+    result: "failed",
+    correlationId: input.correlationId,
+    metadata: {
+      route: input.route,
+      stage: input.stage,
+      errorName: input.error instanceof Error ? input.error.name : typeof input.error,
+      safeErrorCode:
+        input.error instanceof ServerOperationError ? input.error.code : "INTERNAL_ERROR",
+      databaseAvailability: input.availability.databaseAvailability,
+      requiredConfigAvailability: input.availability.requiredConfigAvailability,
+      stack: input.error instanceof Error ? input.error.stack : undefined,
+    },
+  });
 }
