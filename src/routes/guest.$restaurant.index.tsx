@@ -72,7 +72,7 @@ function GuestRestaurant() {
                   <Link
                     to="/guest/$restaurant/menu"
                     params={{ restaurant }}
-                    search={{ branch: item.branchSlug }}
+                    search={{ branch: item.branchSlug, service: "", qr: "" }}
                     className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[var(--guest-primary)] px-3 text-sm font-bold text-white"
                   >
                     <ShoppingBag className="h-4 w-4" /> View menu
@@ -89,7 +89,7 @@ function GuestRestaurant() {
                 <Link
                   to="/guest/$restaurant/menu"
                   params={{ restaurant }}
-                  search={{ branch: item.branchSlug }}
+                  search={{ branch: item.branchSlug, service: "", qr: "" }}
                   className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-[var(--guest-primary)]"
                 >
                   Branch details <ArrowRight className="h-3.5 w-3.5" />

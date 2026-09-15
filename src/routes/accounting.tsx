@@ -61,7 +61,11 @@ const modules: { to: string; label: string; sub: string }[] = [
 ];
 
 const postings = [
-  ["POS settlement", "Cash / M-Pesa / card -> Sales revenue, VAT payable", "Automatic, per trading day"],
+  [
+    "POS settlement",
+    "Cash / M-Pesa / card -> Sales revenue, VAT payable",
+    "Automatic, per trading day",
+  ],
   ["Goods received", "Inventory -> Accounts payable", "On GRN post"],
   ["Recipe consumption", "Cost of sales -> Inventory", "On production and sale"],
   ["Wastage & breakage", "Wastage expense -> Inventory", "On approved log"],
@@ -91,7 +95,10 @@ function AccountingHub() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead title="Accounting modules" sub="Every restaurant transaction has a ledger home" />
+        <PanelHead
+          title="Accounting modules"
+          sub="Every restaurant transaction has a ledger home"
+        />
         <div className="grid gap-2 px-4 py-4 sm:grid-cols-2 lg:grid-cols-3">
           {modules.map((module) => (
             <Link

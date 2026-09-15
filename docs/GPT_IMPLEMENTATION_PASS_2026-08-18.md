@@ -104,7 +104,7 @@ The source still contains modules that are visually complete but backed by array
 - `node --check local-print-bridge/server.mjs` passed.
 - Modified TypeScript/TSX files were parsed with the global TypeScript compiler using `--noResolve`; no syntax errors were found.
 - Pure transaction-engine runtime smoke tests covered PAR -> PO -> approval -> receiving, recipe consumption, 86 availability, wastage approval, attendance/payroll derivation, rider roster creation, own-rider assignment, delivery status progression and state persistence logic.
-- Full `npm ci`, build, lint and Vitest could not be completed in this sandbox because the Lovable/Vite dependency set could not finish downloading within the environment timeout. Run the normal project checks on a machine with dependency access before production deployment:
+- Full `npm ci`, build, lint and Vitest could not be completed in that development environment because the Vite dependency set could not finish downloading within the available timeout. Run the normal project checks on a machine with dependency access before production deployment:
 
 ```bash
 npm ci

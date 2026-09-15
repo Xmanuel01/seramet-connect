@@ -23,6 +23,17 @@ dist-ssr
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+wrangler.jsonc
+
+# Local diagnostics and temporary recovery copies
+login-live.html
+*.backup-before-*
+*.before-typefix
+scripts/trace-*.ts
+scripts/diagnose-*.mjs
+scripts/check-schema-migrations.mjs
+scripts/fix-schema-migrations-rls.mjs
+scripts/test-postgres-connection.mjs
 
 # Editor directories and files
 .vscode/*

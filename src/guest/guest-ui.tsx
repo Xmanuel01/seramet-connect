@@ -145,7 +145,7 @@ export function GuestBack({
     <Link
       to="/guest/$restaurant/menu"
       params={{ restaurant }}
-      search={branch ? { branch } : {}}
+      search={{ branch: branch ?? "", service: "", qr: "" }}
       className="inline-flex min-h-10 items-center gap-2 text-sm font-bold text-[var(--guest-primary)]"
     >
       <ChevronLeft className="h-4 w-4" /> {label}

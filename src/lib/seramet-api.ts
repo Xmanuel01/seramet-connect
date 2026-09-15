@@ -30,7 +30,7 @@ import { IntegrationError } from "@/integrations/runtime/integration-errors";
 import { assertDatabaseAvailable } from "@/server/database/d1";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import {
-  assertProductionReady,
+  assertProductionOperationalReady,
   resolveRuntimeConfiguration,
   validateRuntimeConfiguration,
 } from "@/server/environment";
@@ -103,7 +103,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     const identityResponse = await handleSupabaseAuthApi(request, env);
     if (identityResponse) return identityResponse;
 
-    if (runtime.productionLike) assertProductionReady(env);
+    if (runtime.productionLike) assertProductionOperationalReady(env);
     const repo = createTransactionRepository(env.SERAMET_DB);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();

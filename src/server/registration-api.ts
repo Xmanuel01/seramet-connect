@@ -38,7 +38,7 @@ export async function handleRegistrationApi(request: Request, env: SerametEnv) {
   }
   await new DatabaseRateLimiter(env.SERAMET_DB).consume(
     `registration:${identity.provider}:${identity.subject}`,
-    { bucket: "restaurant-registration", limit: 5, windowSeconds: 60 * 60 },
+    { bucket: "restaurant-registration", limit: 50, windowSeconds: 60 * 60 },
   );
   const raw = await request.json().catch(() => null);
   const parsed = registrationSchema.safeParse(raw);

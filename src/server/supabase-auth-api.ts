@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SerametEnv } from "@/lib/seramet-auth";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
-import { ServerOperationError } from "@/server/errors";
+import { ServerOperationError, publicError } from "@/server/errors";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
@@ -26,7 +26,8 @@ export async function handleSupabaseAuthApi(
   if (!url.pathname.startsWith("/api/seramet/public/auth")) return null;
   const correlationId = request.headers.get("x-correlation-id") ?? crypto.randomUUID();
   const availability = publicAuthAvailability(env);
-  const databaseAvailable = Boolean(env.SERAMET_DB);
+  const database = env.SERAMET_DB;
+  const databaseAvailable = Boolean(database);
   if (url.pathname === "/api/seramet/public/auth/config" && request.method === "GET") {
     return Response.json({
       ok: true,
@@ -153,13 +154,14 @@ export async function handleSupabaseAuthApi(
     const accessToken = readCookie(request, "seramet_access");
     if (accessToken) {
       const identity = await verifyExternalIdentity(accessToken, env).catch(() => undefined);
-      if (identity) {
-        await env.SERAMET_DB.prepare(
-          `UPDATE auth_sessions SET revoked_at=?
+      if (identity && database) {
+        await database
+          .prepare(
+            `UPDATE auth_sessions SET revoked_at=?
            WHERE id=? AND revoked_at IS NULL AND tenant_id IN (
              SELECT tenant_id FROM identity_accounts WHERE provider=? AND subject=?
            )`,
-        )
+          )
           .bind(new Date().toISOString(), identity.sessionId, identity.provider, identity.subject)
           .run();
       }
@@ -184,11 +186,21 @@ export async function handleSupabaseAuthApi(
         { headers: clearSessionCookies(env) },
       );
     }
-    const result = await env.SERAMET_DB.prepare(
-      `SELECT i.tenant_id,t.slug,t.trading_name
+    if (!database) {
+      return Response.json({
+        ok: true,
+        authenticated: true,
+        identity: { email: identity.email ?? null, phone: identity.phone ?? null },
+        restaurants: [],
+      });
+    }
+
+    const result = await database
+      .prepare(
+        `SELECT i.tenant_id,t.slug,t.trading_name
        FROM identity_accounts i JOIN tenants t ON t.id=i.tenant_id AND t.active=1
        WHERE i.provider=? AND i.subject=? ORDER BY t.trading_name,t.id LIMIT 50`,
-    )
+      )
       .bind(identity.provider, identity.subject)
       .all<{ tenant_id: string; slug: string; trading_name: string }>();
     return Response.json({
@@ -333,7 +345,8 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-type PublicAuthLoginStage = "request-validation" | "rate-limit" | "supabase-auth" | "session-cookie";
+type PublicAuthLoginStage =
+  "request-validation" | "rate-limit" | "supabase-auth" | "session-cookie";
 
 type PublicAuthAvailability = {
   databaseAvailability: "available" | "missing";

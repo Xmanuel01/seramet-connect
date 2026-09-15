@@ -165,7 +165,7 @@ async function authenticateBearer(
          FROM identity_accounts i
          JOIN users u ON u.tenant_id=i.tenant_id AND u.id=i.user_id AND u.active=1
          WHERE i.provider=? AND i.subject=?
-           AND (? IS NULL OR i.tenant_id=?)
+           AND (CAST(? AS text) IS NULL OR i.tenant_id=CAST(? AS text))
          ORDER BY i.tenant_id LIMIT 2`,
       )
       .bind(

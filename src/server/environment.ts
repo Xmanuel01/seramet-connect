@@ -257,6 +257,17 @@ export function assertProductionReady(env: ProductionRuntimeEnv) {
   }
 }
 
+export function assertProductionOperationalReady(env: ProductionRuntimeEnv) {
+  const issues = validateRuntimeConfiguration(env).filter(
+    (issue) => issue.code !== "MALWARE_SCANNER_REQUIRED",
+  );
+
+  if (issues.length > 0) {
+    const error = new Error(issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "));
+    error.name = "ProductionConfigurationError";
+    throw error;
+  }
+}
 export function isLocalDevelopmentRequest(request: Request, env: ProductionRuntimeEnv) {
   const config = resolveRuntimeConfiguration(env);
   if (config.environment !== "development") return false;

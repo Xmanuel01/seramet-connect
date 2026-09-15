@@ -61,14 +61,19 @@ export class TenantObjectStorage {
         "File must be between 1 byte and 10 MB",
       );
     }
-    const scan = this.scanner
-      ? await this.scanner.scan({
-          bytes: input.bytes,
-          contentType: input.contentType,
-          fileName: input.fileName,
-        })
-      : { status: "ERROR" as const };
-    const productionLike = Boolean(this.scanner);
+    if (!this.scanner) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "File uploads are temporarily unavailable",
+      );
+    }
+
+    const scan = await this.scanner.scan({
+      bytes: input.bytes,
+      contentType: input.contentType,
+      fileName: input.fileName,
+    });
     if (scan.status === "INFECTED") {
       throw new ServerOperationError(
         "VALIDATION_FAILED",
@@ -76,7 +81,7 @@ export class TenantObjectStorage {
         "File did not pass security scanning",
       );
     }
-    if (productionLike && scan.status !== "CLEAN") {
+    if (scan.status !== "CLEAN") {
       throw new ServerOperationError(
         "EXTERNAL_SERVICE_UNAVAILABLE",
         503,
