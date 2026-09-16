@@ -9,7 +9,11 @@ import {
   type SerametEnv,
   type ServerActor,
 } from "@/lib/seramet-auth";
-import { type TransactionRepository } from "@/lib/seramet-repository";
+import {
+  TransactionConflictError,
+  type TransactionMutationResult,
+  type TransactionRepository,
+} from "@/lib/seramet-repository";
 import { createTransactionRepository } from "@/server/database/create-transaction-repository";
 import { TransactionEngine, type TransactionState } from "@/lib/transaction-engine";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
@@ -49,6 +53,7 @@ import { handleGuestApi } from "@/server/guest-api";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { handleRegistrationApi } from "@/server/registration-api";
 import { handleSupabaseAuthApi } from "@/server/supabase-auth-api";
+import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { publishRealtimeEvent } from "@/server/realtime";
@@ -57,6 +62,7 @@ type MutationRequest = {
   action?: string;
   payload?: unknown;
   idempotencyKey?: string;
+  expectedRevision?: number;
 };
 
 type SnapshotReplaceRequest = {
@@ -111,6 +117,9 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     const registrationResponse = await handleRegistrationApi(request, env);
     if (registrationResponse) return registrationResponse;
+
+    const identityDeviceResponse = await handleIdentityDeviceApi(request, env);
+    if (identityDeviceResponse) return identityDeviceResponse;
 
     const objectStorageResponse = await handleObjectStorageApi(request, env);
     if (objectStorageResponse) return objectStorageResponse;
@@ -556,18 +565,19 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   authorizeBranchRead(actor, actor.tenantId, branchId);
   const rows = await env.SERAMET_DB.prepare(
     `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
-            m.currency,m.tax_rule_id,m.service_charge_applicable,m.station_id,
+            m.currency,m.tax_rule_id,m.service_charge_applicable,bs.station_id,
             s.code AS station_code,m.sellable,
             COALESCE(bs.selling_price_minor,m.selling_price_minor) AS effective_price_minor,
-            COALESCE(bs.available,m.sellable) AS available
+            bs.available AS available
      FROM menu_catalog_items m
-     LEFT JOIN stations s ON s.tenant_id=m.tenant_id AND s.id=m.station_id
-     LEFT JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id
+     JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id
        AND bs.menu_item_id=m.id AND bs.branch_id=?
-     WHERE m.tenant_id=? AND m.active=1 AND m.sellable=1
+     LEFT JOIN stations s ON s.tenant_id=m.tenant_id AND s.id=COALESCE(bs.station_id,m.station_id)
+       AND s.branch_id=?
+     WHERE m.tenant_id=? AND m.active=1 AND m.sellable=1 AND bs.available=1
      ORDER BY m.category_code,m.name LIMIT 5000`,
   )
-    .bind(branchId, actor.tenantId)
+    .bind(branchId, branchId, actor.tenantId)
     .all();
   const rules = await env.SERAMET_DB.prepare(
     `SELECT id,code,rule_type,rate_bps,calculation_mode
@@ -624,10 +634,13 @@ async function replaceTransactions(request: Request, env: SerametEnv, repo: Tran
 async function mutateTransactions(request: Request, env: SerametEnv, repo: TransactionRepository) {
   const actor = await authenticateSerametRequest(request, env);
   const body = await readJson<MutationRequest>(request);
-  assertKnownFields(body, ["action", "payload", "idempotencyKey"]);
+  assertKnownFields(body, ["action", "payload", "idempotencyKey", "expectedRevision"]);
   if (!body.action) throw new SerametHttpError(400, "Missing transaction action");
   if (!body.idempotencyKey)
     throw new SerametHttpError(400, "Production mutations require an idempotencyKey");
+  if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
+    throw new SerametHttpError(400, "Production mutations require a non-negative expectedRevision");
+  }
   if (["requestRefund", "approveRefund"].includes(body.action)) {
     await consumeRateLimit(env, `${actor.tenantId}:${actor.id}`, sensitiveRateLimits.refund);
   }
@@ -640,15 +653,40 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
 
   const requestHash = await hashJson({ action: body.action, payload: body.payload });
   const correlationId = request.headers.get("x-correlation-id") ?? crypto.randomUUID();
-  const result = await repo.commitMutation({
-    actor,
-    action: body.action,
-    payload: body.payload,
-    idempotencyKey: body.idempotencyKey,
-    requestHash,
-    correlationId,
-    ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
-  });
+  let result: TransactionMutationResult;
+  try {
+    result = await repo.commitMutation({
+      actor,
+      action: body.action,
+      payload: body.payload,
+      idempotencyKey: body.idempotencyKey,
+      requestHash,
+      correlationId,
+      expectedRevision: body.expectedRevision!,
+      ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
+    });
+  } catch (error) {
+    if (
+      (error instanceof ServerOperationError || error instanceof TransactionConflictError) &&
+      error.code === "CONFLICT"
+    ) {
+      const [latest, currentRevision] = await Promise.all([
+        repo.loadState(actor.tenantId),
+        repo.revision(actor.tenantId),
+      ]);
+      return json(
+        {
+          ok: false,
+          code: error.code,
+          message: "This order changed on another terminal. Refresh to continue.",
+          correlationId,
+          current: { revision: currentRevision, state: filterStateForActor(latest, actor) },
+        },
+        409,
+      );
+    }
+    throw error;
+  }
   assertBranchSafeSnapshotReplace(current, result.state, actor);
   if (!result.duplicate) {
     await createIntegrationRuntime(env).captureTransactionDomainEvents(current, result.state);

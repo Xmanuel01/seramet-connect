@@ -19,9 +19,10 @@ set. A browser branch header is only a request. The server rejects it when the b
 assigned or the user lacks `branches.switch`. Users without switching authority are reset to their
 primary branch even if browser storage contains an older branch preference.
 
-Cross-branch mutations require the target to be the active branch, or require `branches.switch`
-and an explicit assignment to the target branch. Reporting access does not substitute for this
-operational authority.
+Cross-branch visibility never substitutes for operational authority. An operator first switches
+to an explicitly assigned branch using `branches.switch`; POS payment, drawer and order mutations
+then require the target entity to match that active branch. The server does not let an all-branch
+reporting scope pay an invoice or use a drawer in another branch directly.
 
 ## Administration
 

@@ -7,6 +7,39 @@ export type AuthStatus = {
   restaurants: AuthRestaurant[];
 };
 
+export type DeviceStartup = {
+  ok: true;
+  state: "UNREGISTERED" | "ACTIVATION_PENDING" | "ACTIVE" | "LOCKED" | "REVOKED" | "RETIRED";
+  device?: { id: string; name: string; tenantName: string; branchId: string; branchName: string };
+  policy?: { pinLength: 4 | 6; allowEmployeeTiles: boolean; inactivityLockMinutes: number };
+  employees?: Array<{ employeeCode: string; displayName: string }>;
+};
+
+export async function deviceStartup(): Promise<DeviceStartup> {
+  const response = await fetch("/api/seramet/public/device/startup", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error("Device status is temporarily unavailable");
+  return response.json() as Promise<DeviceStartup>;
+}
+
+export async function employeePinLogin(identifier: string, pin: string) {
+  const response = await fetch("/api/seramet/public/employee/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ identifier, pin }),
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    message?: string;
+    nextPath?: string;
+    mustChangePin?: boolean;
+  };
+  if (!response.ok) throw new Error(payload.message ?? "Employee identifier or PIN is incorrect");
+  return payload;
+}
+
 export async function authStatus(): Promise<AuthStatus> {
   const response = await fetch("/api/seramet/public/auth/status", {
     credentials: "same-origin",

@@ -36,6 +36,7 @@ export type OfflineCommand = {
   createdAt: string;
   clientSequence: number;
   idempotencyKey: string;
+  expectedRevision?: number;
   syncStatus: OfflineCommandStatus;
   correlationId: string;
   localEffects?: {

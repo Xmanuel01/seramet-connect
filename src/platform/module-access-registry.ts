@@ -145,7 +145,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.POS",
-    routes: ["/pos"],
+    routes: ["/pos", "/pos-login"],
   },
   {
     key: "orders",

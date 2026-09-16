@@ -174,6 +174,10 @@ function RegisterPage() {
           </>
         ) : (
           <>
+            <div className="rounded-md border border-primary/25 bg-accent px-4 py-3 text-sm leading-6 text-foreground">
+              You will be created as the Account Owner with access to all branches. You can invite
+              managers and employees after the restaurant has been created.
+            </div>
             <label className="block text-sm font-medium">
               Restaurant name
               <input

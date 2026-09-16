@@ -159,6 +159,7 @@ export const permissions = {
   setupView: "setup.view",
   setupManage: "setup.manage",
   setupImport: "setup.import",
+  setupHistoricalSalesImport: "setup.historical_sales.import",
   setupOpeningStock: "setup.opening_stock",
   setupOpeningStockApprove: "setup.opening_stock.approve",
   setupAccountingManage: "setup.accounting.manage",
@@ -188,6 +189,10 @@ export const permissions = {
   settingsChannelManage: "settings.channel.manage",
   branchSwitch: "branches.switch",
   tenantScopeAllBranches: "scope.branches.all",
+  ownershipTransfer: "ownership.transfer",
+  deviceActivate: "device.activate",
+  employeeCredentialsManage: "employee.credentials.manage",
+  branchesReconcile: "branches.reconcile",
 } as const satisfies Record<string, PermissionCode>;
 
 export const allPermissionCodes = Object.values(permissions);

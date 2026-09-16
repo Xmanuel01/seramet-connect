@@ -25,6 +25,7 @@ export function useTransactionEngine() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("loading");
   const [persistenceMode, setPersistenceMode] = useState<PersistenceMode>("unknown");
   const [revision, setRevision] = useState(0);
+  const revisionRef = useRef(0);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const deviceIdRef = useRef("development-pos");
 
@@ -61,11 +62,13 @@ export function useTransactionEngine() {
         healthBody.database === "authoritative" ? "authoritative" : "development";
       setPersistenceMode(mode);
       if (mode === "development") {
-        setState(TransactionEngine.load());
+        const localState = TransactionEngine.load();
+        setState(localState);
         setRevision(0);
+        revisionRef.current = 0;
         setBackendStatus("synced");
         await refreshPendingCount();
-        return;
+        return { state: localState, revision: 0 };
       }
       const session = await fetch("/api/seramet/auth/session", { headers });
       if (!session.ok) throw new Error(`Session validation failed: ${session.status}`);
@@ -75,6 +78,7 @@ export function useTransactionEngine() {
       if (cached) {
         setState(cached.state);
         setRevision(cached.revision);
+        revisionRef.current = cached.revision;
       }
       const response = await fetch(
         `/api/seramet/transactions?branchId=${encodeURIComponent(branchId)}`,
@@ -85,9 +89,12 @@ export function useTransactionEngine() {
       if (!body.state) throw new Error("Transaction sync did not return state");
       await offlineStore.cacheState(activeTenantId, body.state, body.revision ?? 0);
       setState(body.state);
-      setRevision(body.revision ?? 0);
+      const nextRevision = body.revision ?? 0;
+      setRevision(nextRevision);
+      revisionRef.current = nextRevision;
       setBackendStatus("synced");
       await refreshPendingCount();
+      return { state: body.state, revision: nextRevision };
     } catch (error) {
       console.error(error);
       try {
@@ -95,11 +102,13 @@ export function useTransactionEngine() {
         if (cached) {
           setState(cached.state);
           setRevision(cached.revision);
+          revisionRef.current = cached.revision;
         }
       } catch {
         // A missing cache is expected on a device's first offline launch.
       }
       setBackendStatus("offline");
+      return undefined;
     }
   }, [activeTenantId, branchId, headers, refreshPendingCount]);
 
@@ -203,6 +212,7 @@ export function useTransactionEngine() {
         idempotencyKey,
         syncStatus: "PENDING",
         correlationId: crypto.randomUUID(),
+        expectedRevision: revisionRef.current,
         ...(localEffects ? { localEffects } : {}),
       };
     },
@@ -248,24 +258,51 @@ export function useTransactionEngine() {
         return { state: nextState, revision, offline: true as const };
       }
       setBackendStatus("syncing");
+      let receivedServerResponse = false;
+      let serverConflict = false;
       try {
         const response = await fetch("/api/seramet/transactions/mutate", {
           method: "POST",
           headers: { ...headers, "Idempotency-Key": idempotencyKey },
-          body: JSON.stringify({ action, payload, idempotencyKey }),
+          body: JSON.stringify({
+            action,
+            payload,
+            idempotencyKey,
+            expectedRevision: revisionRef.current,
+          }),
         });
+        receivedServerResponse = true;
         if (!response.ok) {
-          const message = await response.text();
-          throw new Error(`Transaction command failed: ${response.status} ${message}`);
+          const failure = (await response.json().catch(() => ({}))) as {
+            code?: string;
+            message?: string;
+            current?: { revision?: number; state?: TransactionState };
+          };
+          if (response.status === 409 && failure.current?.state) {
+            serverConflict = true;
+            const currentRevision = failure.current.revision ?? revisionRef.current;
+            setState(failure.current.state);
+            setRevision(currentRevision);
+            revisionRef.current = currentRevision;
+            setBackendStatus("conflict");
+          }
+          throw new Error(
+            failure.message ?? `Transaction command failed with status ${response.status}`,
+          );
         }
         const body = (await response.json()) as { state: TransactionState; revision?: number };
         setState(body.state);
-        setRevision(body.revision ?? revision + 1);
-        await offlineStore.cacheState(activeTenantId, body.state, body.revision ?? revision + 1);
+        const nextRevision = body.revision ?? revisionRef.current + 1;
+        setRevision(nextRevision);
+        revisionRef.current = nextRevision;
+        await offlineStore.cacheState(activeTenantId, body.state, nextRevision);
         setBackendStatus("synced");
         return body;
       } catch (error) {
-        if (offlineAllowedCommands.has(action as OfflineAllowedCommand)) {
+        if (
+          !receivedServerResponse &&
+          offlineAllowedCommands.has(action as OfflineAllowedCommand)
+        ) {
           const command = await createOfflineCommand(
             action as OfflineAllowedCommand,
             payload,
@@ -278,7 +315,7 @@ export function useTransactionEngine() {
           await refreshPendingCount();
           return { state: nextState, revision, offline: true as const };
         }
-        setBackendStatus("error");
+        if (!serverConflict) setBackendStatus("error");
         throw error;
       }
     },

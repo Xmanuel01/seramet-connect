@@ -12,13 +12,14 @@ export function createMenuCatalogReader(database?: D1Database): MenuCatalogReade
         `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.selling_price_minor,m.currency,
                 s.code station_code,bs.selling_price_minor branch_price_minor,bs.available
          FROM menu_catalog_items m
-         LEFT JOIN production_stations s ON s.tenant_id=m.tenant_id AND s.id=m.station_id
-         LEFT JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id
+         JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id
            AND bs.menu_item_id=m.id AND bs.branch_id=?
-         WHERE m.tenant_id=? AND m.active=1 AND m.sellable=1
+         LEFT JOIN stations s ON s.tenant_id=m.tenant_id
+           AND s.id=COALESCE(bs.station_id,m.station_id) AND s.branch_id=?
+         WHERE m.tenant_id=? AND m.active=1 AND m.sellable=1 AND bs.available=1
          ORDER BY m.category_code,m.name LIMIT 5000`,
       )
-      .bind(branchId, tenantId)
+      .bind(branchId, branchId, tenantId)
       .all<{
         id: string;
         code: string;

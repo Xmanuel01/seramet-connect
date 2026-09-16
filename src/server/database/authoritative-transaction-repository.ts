@@ -167,7 +167,16 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       return { state: cached.state, revision: cached.revision, duplicate: true };
     }
 
-    const current = await this.loadState(input.actor.tenantId);
+    const { state: current, revision: baseRevision } = await this.loadStateAtStableRevision(
+      input.actor.tenantId,
+    );
+    if (input.expectedRevision !== undefined && input.expectedRevision !== baseRevision) {
+      throw new ServerOperationError(
+        "CONFLICT",
+        409,
+        "Authoritative state changed concurrently; reload and retry the command",
+      );
+    }
     const authoritative = await this.authoritativeMutationInput(current, input);
     const next = applyServerMutation(current, input.action, authoritative, input.actor);
     try {
@@ -179,6 +188,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         requestHash: input.requestHash,
         correlationId: input.correlationId,
         reason: `Mutation ${input.action}`,
+        requiredBaseRevision: baseRevision,
         ...(input.deviceId ? { deviceId: input.deviceId } : {}),
       });
       return { state: next, revision, duplicate: false };
@@ -267,15 +277,24 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     idempotencyKey: string;
     requestHash: string;
     correlationId: string;
+    requiredBaseRevision?: number;
     deviceId?: string;
     reason: string;
   }) {
     await this.assertTenant(input.actor.tenantId);
     const tenantId = input.actor.tenantId;
-    const [currentRows, baseRevision] = await Promise.all([
+    const [currentRows, observedRevision] = await Promise.all([
       this.loadRows(tenantId),
       this.revision(tenantId),
     ]);
+    const baseRevision = input.requiredBaseRevision ?? observedRevision;
+    if (observedRevision !== baseRevision) {
+      throw new ServerOperationError(
+        "CONFLICT",
+        409,
+        "Authoritative state changed concurrently; reload and retry the command",
+      );
+    }
     const currentDomainRows = currentRows.filter((row) => isStateEntity(row.entity_type));
     const currentByKey = new Map(
       currentDomainRows.map((row) => [`${row.entity_type}:${row.entity_id}`, row]),
@@ -407,6 +426,20 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
 
     await this.db.batch(statements);
     return newRevision;
+  }
+
+  private async loadStateAtStableRevision(tenantId: string) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const before = await this.revision(tenantId);
+      const state = await this.loadState(tenantId);
+      const after = await this.revision(tenantId);
+      if (before === after) return { state, revision: after };
+    }
+    throw new ServerOperationError(
+      "CONFLICT",
+      409,
+      "Authoritative state changed while the command was being prepared",
+    );
   }
 
   private async legacyInventoryBridgeStatements(

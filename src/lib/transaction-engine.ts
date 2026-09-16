@@ -70,6 +70,8 @@ export type TransactionLine = {
   productionStartedAt?: string;
   productionReadyAt?: string;
   productionServedAt?: string;
+  sentAt?: string;
+  sentQuantity?: number;
 };
 
 export type TransactionOrder = {
@@ -1734,13 +1736,43 @@ export const TransactionEngine = {
   sendToKitchen(state: TransactionState, orderId: string, user: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || order.status === "CANCELLED" || order.status === "PAID") return next;
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
+      throw new Error(`Order ${orderId} cannot be sent from ${order.status}`);
+    }
     const before = order.status;
+    const stamp = now();
+    const unsentLines = order.lines.filter((line) => !line.sentAt);
+    if (unsentLines.length === 0 && before !== "OPEN" && before !== "HELD") return next;
+    unsentLines.forEach((line) => {
+      line.sentAt = stamp;
+      line.sentQuantity = line.quantity;
+    });
+    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
+      next.productionAmendments.unshift({
+        id: id("AMD", next, "productionAmendments"),
+        tenantId: order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
+        branchId:
+          order.branchId ??
+          configurationRepository.resolveBranch(
+            order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
+            order.branch,
+          ).id,
+        branch: order.branch,
+        orderId,
+        type: "ADDITION",
+        lines: unsentLines.map((line) => ({ ...line })),
+        reason: "Items added after the original production ticket",
+        requestedBy: user,
+        printStatus: "PENDING",
+        createdAt: stamp,
+      });
+    }
     order.status = "SENT_TO_KITCHEN";
     if (order.externalSource && !order.externalSource.preparationStartedAt) {
       order.externalSource.preparationStartedAt = now();
     }
-    order.updatedAt = now();
+    order.updatedAt = stamp;
     audit(next, {
       actor: user,
       role: "Cashier",
@@ -1856,9 +1888,14 @@ export const TransactionEngine = {
   createOpenBill(state: TransactionState, orderId: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order) return next;
-    if (next.bills.some((bill) => bill.orderIds.includes(orderId) && bill.status !== "VOID"))
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    const existing = next.bills.filter((bill) => bill.orderIds.includes(orderId));
+    if (existing.some((bill) => ["OPEN", "PARTIAL", "PENDING", "PAID"].includes(bill.status))) {
       return next;
+    }
+    if (existing.some((bill) => bill.status === "SPLIT" || bill.status === "MERGED")) {
+      throw new Error("The source invoice is no longer payable after split or merge");
+    }
     const scope = resolveScope(
       order.branchId ?? order.branch,
       order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
@@ -1892,6 +1929,44 @@ export const TransactionEngine = {
       before: "No bill",
       after: `OPEN ${bill.total}`,
     });
+    return next;
+  },
+
+  prepareInvoiceForPayment(state: TransactionState, orderId: string, user: string) {
+    let next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((candidate) => candidate.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    const orderInvoices = next.bills.filter((invoice) => invoice.orderIds.includes(orderId));
+    const payable = orderInvoices.find((invoice) =>
+      ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
+    );
+    if (payable) return next;
+    if (orderInvoices.some((invoice) => invoice.status === "PAID")) {
+      throw new Error("The invoice has already been paid");
+    }
+    if (
+      orderInvoices.some((invoice) => invoice.status === "SPLIT" || invoice.status === "MERGED")
+    ) {
+      throw new Error("The source invoice is no longer payable after split or merge");
+    }
+    if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
+      throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
+    }
+    if (order.status === "HELD") next = this.releaseHeldOrder(next, orderId, user);
+    const current = next.orders.find((candidate) => candidate.id === orderId)!;
+    if (current.status === "OPEN") next = this.sendToKitchen(next, orderId, user);
+    const sent = next.orders.find((candidate) => candidate.id === orderId)!;
+    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(sent.status)) {
+      next = this.requestBill(next, orderId, user);
+    } else if (sent.status === "BILL_REQUESTED") {
+      next = this.createOpenBill(next, orderId);
+    }
+    const invoice = next.bills.find(
+      (candidate) =>
+        candidate.orderIds.includes(orderId) &&
+        ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
+    );
+    if (!invoice) throw new Error(`A payable invoice could not be prepared for order ${orderId}`);
     return next;
   },
 
@@ -2154,13 +2229,52 @@ export const TransactionEngine = {
   updateOrderDraft(state: TransactionState, orderId: string, draft: OrderDraft, user: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || order.status === "PAID" || order.status === "CANCELLED") return next;
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (
+      [
+        "BILL_REQUESTED",
+        "AWAITING_PAYMENT",
+        "PARTIALLY_PAID",
+        "PAID",
+        "CANCELLED",
+        "REFUNDED",
+      ].includes(order.status)
+    ) {
+      throw new Error(`Order ${orderId} cannot be edited from ${order.status}`);
+    }
     const before = `${order.lines.length} lines, ${order.total}`;
     const scope = resolveScope(
       draft.branchId ?? draft.branch,
       draft.tenantId ?? order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID,
     );
+    const currentTenantId = order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID;
+    const currentBranchId =
+      order.branchId ?? configurationRepository.resolveBranch(currentTenantId, order.branch).id;
+    if (scope.tenantId !== currentTenantId || scope.branchId !== currentBranchId) {
+      throw new Error("An existing order cannot be moved to another tenant or branch");
+    }
+    const incomingById = new Map(draft.lines.map((line) => [line.id, line]));
+    for (const sentLine of order.lines.filter((line) => line.sentAt)) {
+      const incoming = incomingById.get(sentLine.id);
+      if (!incoming) {
+        throw new Error(
+          "Sent kitchen lines cannot be removed; use the authorized cancellation workflow",
+        );
+      }
+      if (
+        incoming.quantity !== sentLine.quantity ||
+        incoming.productId !== sentLine.productId ||
+        incoming.name !== sentLine.name ||
+        incoming.unitPrice !== sentLine.unitPrice ||
+        incoming.productionStation !== sentLine.productionStation ||
+        incoming.itemNote !== sentLine.itemNote
+      ) {
+        throw new Error("Sent kitchen lines are immutable; add a new line or request cancellation");
+      }
+    }
     const normalizedLines = draft.lines.map((line) => {
+      const existing = order.lines.find((candidate) => candidate.id === line.id);
+      if (existing?.sentAt) return { ...existing };
       const productionStatus =
         line.productionStation && line.productionStation !== "NONE"
           ? (line.productionStatus ?? "NEW")
@@ -2206,8 +2320,11 @@ export const TransactionEngine = {
   requestBill(state: TransactionState, orderId: string, user: string) {
     let next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || !["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status))
-      return next;
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (order.status === "BILL_REQUESTED") return this.createOpenBill(next, orderId);
+    if (!["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status)) {
+      throw new Error(`Order ${orderId} cannot request a bill from ${order.status}`);
+    }
     const before = order.status;
     order.status = "BILL_REQUESTED";
     order.updatedAt = now();
@@ -2238,7 +2355,14 @@ export const TransactionEngine = {
   ) {
     const next = clone(state);
     const invoice = next.bills.find((bill) => bill.id === invoiceId);
-    if (!invoice) return { state: next, intent: undefined };
+    if (!invoice) throw new Error(`Invoice ${invoiceId} was not found`);
+    if (!["OPEN", "PARTIAL", "PENDING"].includes(invoice.status)) {
+      throw new Error(`Invoice ${invoiceId} cannot accept a payment intent from ${invoice.status}`);
+    }
+    const outstanding = money(invoice.total - invoice.paid);
+    if (!Number.isFinite(input.amount) || input.amount <= 0 || input.amount > outstanding) {
+      throw new Error("Payment intent amount must be within the outstanding invoice balance");
+    }
     const tenantId = invoice.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID;
     const branchId =
       invoice.branchId ?? configurationRepository.resolveBranch(tenantId, invoice.branch).id;
@@ -2469,7 +2593,13 @@ export const TransactionEngine = {
   ) {
     const next = clone(normalizeTransactionState(state));
     const bill = next.bills.find((item) => item.id === invoiceId);
-    if (!bill || bill.status === "VOID" || bill.status === "MERGED") return next;
+    if (!bill) throw new Error(`Invoice ${invoiceId} was not found`);
+    if (!["OPEN", "PARTIAL", "PENDING"].includes(bill.status)) {
+      throw new Error(`Invoice ${invoiceId} cannot accept payment from ${bill.status}`);
+    }
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error("Payment amount must be positive");
+    }
     if (
       next.payments.some(
         (payment) => payment.reference === input.reference && payment.invoiceId === invoiceId,
@@ -2529,12 +2659,20 @@ export const TransactionEngine = {
 
   mergeBills(state: TransactionState, billIds: string[], user: string, reason: string) {
     const next = clone(state);
+    if (new Set(billIds).size !== billIds.length)
+      throw new Error("Invoice merge contains duplicates");
     const bills = next.bills.filter((bill) => billIds.includes(bill.id));
-    if (
-      bills.length < 2 ||
-      bills.some((bill) => bill.paymentStatus !== "UNPAID" || bill.status !== "OPEN")
-    )
-      return next;
+    if (bills.length !== billIds.length || bills.length < 2) {
+      throw new Error("Every invoice selected for merge must exist");
+    }
+    if (bills.some((bill) => bill.paymentStatus !== "UNPAID" || bill.status !== "OPEN")) {
+      throw new Error("Only open unpaid invoices can be merged");
+    }
+    const tenantIds = new Set(bills.map((bill) => bill.tenantId ?? next.tenantId));
+    const branchIds = new Set(bills.map((bill) => bill.branchId ?? bill.branch));
+    if (tenantIds.size !== 1 || branchIds.size !== 1) {
+      throw new Error("Invoices from different tenants or branches cannot be merged");
+    }
     const allLines = bills.flatMap((bill) => bill.lines);
     const total = totals(allLines);
     const firstBill = bills[0]!;
@@ -2586,12 +2724,28 @@ export const TransactionEngine = {
   ) {
     const next = clone(state);
     const bill = next.bills.find((item) => item.id === billId);
-    if (!bill || bill.paymentStatus !== "UNPAID" || bill.status !== "OPEN") return next;
+    if (!bill) throw new Error(`Invoice ${billId} was not found`);
+    if (bill.paymentStatus !== "UNPAID" || bill.status !== "OPEN") {
+      throw new Error("Only an open unpaid invoice can be split");
+    }
+    if (splits.length < 2 || splits.some((split) => !split.label.trim() || split.amount <= 0)) {
+      throw new Error("A split requires at least two positive, labelled allocations");
+    }
     const splitTotal = money(splits.reduce((sum, split) => sum + split.amount, 0));
-    if (splitTotal !== bill.total) return next;
+    if (splitTotal !== bill.total)
+      throw new Error("Split allocations must equal the invoice total");
     bill.status = "SPLIT";
-    splits.forEach((split) => {
+    let allocatedSubtotal = 0;
+    let allocatedTax = 0;
+    splits.forEach((split, index) => {
+      const last = index === splits.length - 1;
       const ratio = split.amount / bill.total;
+      const subtotal = last
+        ? money(bill.subtotal - allocatedSubtotal)
+        : money(bill.subtotal * ratio);
+      const tax = last ? money(bill.tax - allocatedTax) : money(bill.tax * ratio);
+      allocatedSubtotal = money(allocatedSubtotal + subtotal);
+      allocatedTax = money(allocatedTax + tax);
       next.bills.unshift({
         ...bill,
         id: id("BILL", next, "bills"),
@@ -2599,8 +2753,8 @@ export const TransactionEngine = {
         splitMethod: "CUSTOM",
         customer: split.label,
         status: "OPEN",
-        subtotal: money(bill.subtotal * ratio),
-        tax: money(bill.tax * ratio),
+        subtotal,
+        tax,
         total: split.amount,
         paid: 0,
         paymentStatus: "UNPAID",
@@ -2626,7 +2780,14 @@ export const TransactionEngine = {
   ) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || order.status === "PAID") return next;
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (!input.reason.trim()) throw new Error("Order cancellation requires a reason");
+    if (["PAID", "REFUNDED"].includes(order.status)) {
+      throw new Error(`Order ${orderId} cannot be cancelled from ${order.status}; use refunds`);
+    }
+    if (order.status === "CANCELLED") {
+      throw new Error(`Order ${orderId} is already cancelled`);
+    }
     const before = order.status;
     const stamp = now();
     const kitchenStarted = ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(

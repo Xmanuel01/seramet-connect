@@ -11,6 +11,7 @@ import {
   type ProductionRuntimeEnv,
 } from "@/server/environment";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
+import { PosIdentityService, readCookie as readPosCookie } from "@/server/pos-auth-service";
 
 export type ServerActor = {
   id: string;
@@ -28,6 +29,7 @@ export type ServerActor = {
   role: AppRole;
   branch: string;
   tokenId?: string;
+  authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
 };
 
 export type SerametEnv = ProviderRuntimeEnv &
@@ -80,6 +82,13 @@ export async function authenticateSerametRequest(
     if (!env.SERAMET_DB)
       throw new SerametHttpError(503, "Authoritative identity store unavailable");
     return authenticateBearer(token, request, env.SERAMET_DB, runtime, env);
+  }
+
+  const posSession = readPosCookie(request, "seramet_pos_session");
+  if (posSession) {
+    if (!env.SERAMET_DB)
+      throw new SerametHttpError(503, "Authoritative identity store unavailable");
+    return new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
   }
 
   if (
@@ -148,7 +157,7 @@ async function authenticateBearer(
   db: D1Database,
   runtime: ReturnType<typeof resolveRuntimeConfiguration>,
   env: SerametEnv,
-) {
+): Promise<ServerActor> {
   if (env.SERAMET_IDENTITY_PROVIDER === "supabase") {
     let identity;
     try {
@@ -246,7 +255,7 @@ async function authenticateStoredSession(
     deviceId?: string;
     tokenId?: string;
   },
-) {
+): Promise<ServerActor> {
   const session = await db
     .prepare(
       `SELECT s.tenant_id, s.id AS session_id, s.user_id, u.name AS user_name,
@@ -365,6 +374,7 @@ async function authenticateStoredSession(
     role: rolesResult.results?.[0]?.name ?? "Configured user",
     branch: branch.name,
     ...(identity.tokenId ? { tokenId: identity.tokenId } : {}),
+    authLevel: "FULL",
   };
 }
 
@@ -418,6 +428,7 @@ function authenticateDevelopmentRequest(request: Request): ServerActor {
     branchId: branch.id,
     role: session.roleNames[0] ?? "Configured user",
     branch: branch.name,
+    authLevel: "DEVELOPMENT",
   };
 }
 

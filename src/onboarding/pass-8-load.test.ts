@@ -61,9 +61,22 @@ describe.sequential("Pass 8 realistic onboarding load foundation", () => {
     const commit = await measure(metrics, "menuImportQueueMs", () =>
       service.commitImport(menuPreview.id, menuPreview.commitKey),
     );
+    expect(commit).toMatchObject({ status: "QUEUED", queued: true });
+    expect(
+      await db
+        .prepare("SELECT status FROM setup_imports WHERE tenant_id=? AND id=?")
+        .bind(tenantId, menuPreview.id)
+        .first("status"),
+    ).toBe("COMMITTING");
     await measure(metrics, "menuImportCommitWorkerMs", () =>
       processJob(db, env, String(commit.jobId)),
     );
+    expect(
+      await db
+        .prepare("SELECT status FROM setup_imports WHERE tenant_id=? AND id=?")
+        .bind(tenantId, menuPreview.id)
+        .first("status"),
+    ).toBe("COMMITTED");
 
     const inventoryCsv = csv(
       "code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator",
@@ -252,8 +265,15 @@ function seedScaleFixture(db: SqliteD1TestDatabase) {
         (tenant_id,id,code,name,category_code,selling_price_minor,currency,sellable,active,payload_json,created_at,updated_at)
        VALUES (?,?,?,?, 'LOAD',10000,'KES',1,1,'{}',?,?)`,
     );
+    const activateMenu = sqlite.prepare(
+      `INSERT INTO menu_item_branch_settings
+        (tenant_id,branch_id,menu_item_id,selling_price_minor,available,
+         channel_availability_json,updated_at)
+       VALUES (?,'branch-0',?,NULL,1,'{}',?)`,
+    );
     for (let index = 0; index < 5_000; index += 1) {
       insertMenu.run(tenantId, `menu-${index}`, `MENU-${index}`, `Menu ${index}`, stamp, stamp);
+      activateMenu.run(tenantId, `menu-${index}`, stamp);
     }
     const insertSupplier = sqlite.prepare(
       `INSERT INTO suppliers

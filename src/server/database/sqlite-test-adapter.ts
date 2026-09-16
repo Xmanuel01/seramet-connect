@@ -98,6 +98,9 @@ export const migrationFiles = [
   "0015_branch_context_authority.sql",
   "0016_commercial_launch_foundation.sql",
   "0017_guided_onboarding_multi_currency.sql",
+  "0018_authoritative_menu_import.sql",
+  "0019_historical_sales_migration.sql",
+  "0020_identity_device_branch_hardening.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

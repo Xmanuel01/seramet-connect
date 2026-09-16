@@ -1096,6 +1096,11 @@ const exportSpecifications: Record<
   },
   journals: { table: "journal_entries", orderColumn: "created_at", dateColumn: "created_at" },
   audit: { table: "audit_events", orderColumn: "created_at", dateColumn: "created_at" },
+  historicalSales: {
+    table: "historical_sales_records",
+    orderColumn: "imported_at",
+    dateColumn: "business_date",
+  },
 };
 
 async function generateTenantDataExport(env: SerametEnv, job: WorkerJobRow) {

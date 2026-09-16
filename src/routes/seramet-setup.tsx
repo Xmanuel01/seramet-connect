@@ -88,6 +88,7 @@ function SetupCentre() {
     defaultDocumentFooter: "",
   });
   const [brand, setBrand] = useState({ code: "", name: "" });
+  const [branchCreateKey, setBranchCreateKey] = useState(() => crypto.randomUUID());
   const [branch, setBranch] = useState({
     brandId: "",
     code: "",
@@ -217,26 +218,26 @@ function SetupCentre() {
   };
   const createBranch = (event: FormEvent) => {
     event.preventDefault();
-    void run(
-      () =>
-        centre.command("/api/seramet/setup/branches", {
-          brandId: branch.brandId,
-          code: branch.code,
-          name: branch.name,
-          timezone: branch.timezone,
-          businessDayCutoffMinutes: Number(branch.cutoff),
-          negativeStockPolicy: branch.negativeStockPolicy,
-          paymentsRequired: true,
-          inventoryEnabled: true,
-          recipesRequired: true,
-          printingRequired: true,
-          kdsRequired: false,
-          ...(branch.warehouseCode && branch.warehouseName
-            ? { createWarehouse: { code: branch.warehouseCode, name: branch.warehouseName } }
-            : {}),
-        }),
-      "Branch and operating policy created.",
-    );
+    void run(async () => {
+      await centre.command("/api/seramet/setup/branches", {
+        idempotencyKey: branchCreateKey,
+        brandId: branch.brandId,
+        code: branch.code,
+        name: branch.name,
+        timezone: branch.timezone,
+        businessDayCutoffMinutes: Number(branch.cutoff),
+        negativeStockPolicy: branch.negativeStockPolicy,
+        paymentsRequired: true,
+        inventoryEnabled: true,
+        recipesRequired: true,
+        printingRequired: true,
+        kdsRequired: false,
+        ...(branch.warehouseCode && branch.warehouseName
+          ? { createWarehouse: { code: branch.warehouseCode, name: branch.warehouseName } }
+          : {}),
+      });
+      setBranchCreateKey(crypto.randomUUID());
+    }, "Branch and operating policy created.");
   };
   const uploadImport = async (file: File) => {
     if (!importKind) return;
@@ -628,81 +629,106 @@ function SetupCentre() {
                 </form>
               </Panel>
               <Panel>
-                <PanelHead title="New branch" sub="Operating policy and warehouse" />
-                <form onSubmit={createBranch} className="grid gap-3 p-4 md:grid-cols-2">
-                  <label className={cn(labelClass, "md:col-span-2")}>
-                    Brand
-                    <select
-                      required
-                      value={branch.brandId}
-                      onChange={(event) => setBranch({ ...branch, brandId: event.target.value })}
-                      className={inputClass}
-                    >
-                      <option value="">Select brand</option>
-                      {centre.structure.brands
-                        .filter((item) => item.active)
-                        .map((item) => (
-                          <option value={item.id} key={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  <Field
-                    label="Branch code"
-                    value={branch.code}
-                    onChange={(value) => setBranch({ ...branch, code: value })}
-                  />
-                  <Field
-                    label="Branch name"
-                    value={branch.name}
-                    onChange={(value) => setBranch({ ...branch, name: value })}
-                  />
-                  <Field
-                    label="Timezone"
-                    value={branch.timezone}
-                    onChange={(value) => setBranch({ ...branch, timezone: value })}
-                  />
-                  <Field
-                    label="Business-day cutoff (minutes)"
-                    type="number"
-                    value={branch.cutoff}
-                    onChange={(value) => setBranch({ ...branch, cutoff: value })}
-                    min="0"
-                    max="1439"
-                  />
-                  <label className={cn(labelClass, "md:col-span-2")}>
-                    Negative stock policy
-                    <select
-                      required
-                      value={branch.negativeStockPolicy}
-                      onChange={(event) =>
-                        setBranch({ ...branch, negativeStockPolicy: event.target.value })
-                      }
-                      className={inputClass}
-                    >
-                      <option value="">Select policy</option>
-                      <option value="BLOCK">Block</option>
-                      <option value="MANAGER_OVERRIDE">Manager override</option>
-                      <option value="ALLOW_WITH_ALERT">Allow with alert</option>
-                    </select>
-                  </label>
-                  <Field
-                    label="Warehouse code"
-                    value={branch.warehouseCode}
-                    onChange={(value) => setBranch({ ...branch, warehouseCode: value })}
-                  />
-                  <Field
-                    label="Warehouse name"
-                    value={branch.warehouseName}
-                    onChange={(value) => setBranch({ ...branch, warehouseName: value })}
-                  />
-                  <div className="md:col-span-2">
-                    <Btn type="submit" variant="primary" disabled={busy}>
-                      Create branch
-                    </Btn>
+                <PanelHead
+                  title={
+                    centre.structure.branches.some(
+                      (item) => item.isBootstrap && item.lifecycleState !== "ACTIVE",
+                    )
+                      ? "First branch setup"
+                      : "New branch"
+                  }
+                  sub={
+                    centre.structure.branches.some(
+                      (item) => item.isBootstrap && item.lifecycleState !== "ACTIVE",
+                    )
+                      ? "Finish and activate the existing first branch before adding another location"
+                      : "Operating policy and warehouse"
+                  }
+                />
+                {centre.structure.branches.some(
+                  (item) => item.isBootstrap && item.lifecycleState !== "ACTIVE",
+                ) ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Your first branch already exists and is being configured through the guided
+                    onboarding steps. This screen will allow additional branches after that branch
+                    reaches Active status.
                   </div>
-                </form>
+                ) : (
+                  <form onSubmit={createBranch} className="grid gap-3 p-4 md:grid-cols-2">
+                    <label className={cn(labelClass, "md:col-span-2")}>
+                      Brand
+                      <select
+                        required
+                        value={branch.brandId}
+                        onChange={(event) => setBranch({ ...branch, brandId: event.target.value })}
+                        className={inputClass}
+                      >
+                        <option value="">Select brand</option>
+                        {centre.structure.brands
+                          .filter((item) => item.active)
+                          .map((item) => (
+                            <option value={item.id} key={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <Field
+                      label="Branch code"
+                      value={branch.code}
+                      onChange={(value) => setBranch({ ...branch, code: value })}
+                    />
+                    <Field
+                      label="Branch name"
+                      value={branch.name}
+                      onChange={(value) => setBranch({ ...branch, name: value })}
+                    />
+                    <Field
+                      label="Timezone"
+                      value={branch.timezone}
+                      onChange={(value) => setBranch({ ...branch, timezone: value })}
+                    />
+                    <Field
+                      label="Business-day cutoff (minutes)"
+                      type="number"
+                      value={branch.cutoff}
+                      onChange={(value) => setBranch({ ...branch, cutoff: value })}
+                      min="0"
+                      max="1439"
+                    />
+                    <label className={cn(labelClass, "md:col-span-2")}>
+                      Negative stock policy
+                      <select
+                        required
+                        value={branch.negativeStockPolicy}
+                        onChange={(event) =>
+                          setBranch({ ...branch, negativeStockPolicy: event.target.value })
+                        }
+                        className={inputClass}
+                      >
+                        <option value="">Select policy</option>
+                        <option value="BLOCK">Block</option>
+                        <option value="MANAGER_OVERRIDE">Manager override</option>
+                        <option value="ALLOW_WITH_ALERT">Allow with alert</option>
+                      </select>
+                    </label>
+                    <Field
+                      label="Warehouse code"
+                      value={branch.warehouseCode}
+                      onChange={(value) => setBranch({ ...branch, warehouseCode: value })}
+                    />
+                    <Field
+                      label="Warehouse name"
+                      value={branch.warehouseName}
+                      onChange={(value) => setBranch({ ...branch, warehouseName: value })}
+                    />
+                    <div className="md:col-span-2">
+                      <Btn type="submit" variant="primary" disabled={busy}>
+                        Create branch
+                      </Btn>
+                    </div>
+                  </form>
+                )}
               </Panel>
             </div>
           )}
@@ -957,6 +983,16 @@ function SetupCentre() {
                 void run(
                   () => centre.runTest({ testType: "PRINT", targetType: "DEVICE", targetId }),
                   "Test print result recorded without a financial transaction.",
+                )
+              }
+              onActivate={(targetId) =>
+                void run(
+                  () =>
+                    centre.command(
+                      `/api/seramet/devices/${encodeURIComponent(targetId)}/activate`,
+                      {},
+                    ),
+                  "This browser is now securely activated for employee POS sign-in.",
                 )
               }
             />
@@ -1698,6 +1734,7 @@ function DevicePanel({
   onSubmit,
   busy,
   onTest,
+  onActivate,
 }: {
   centre: ReturnType<typeof useSetupCentre>;
   device: {
@@ -1719,6 +1756,7 @@ function DevicePanel({
   onSubmit: (event: FormEvent) => void;
   busy: boolean;
   onTest: (id: string) => void;
+  onActivate: (id: string) => void;
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -1756,9 +1794,14 @@ function DevicePanel({
                     <Status>{item.health}</Status>
                   </TD>
                   <TD className="text-right">
-                    <Btn onClick={() => onTest(item.deviceId)} title="Test print">
-                      <Printer className="h-4 w-4" />
-                    </Btn>
+                    <div className="flex justify-end gap-2">
+                      {item.trustStatus !== "ACTIVE" && (
+                        <Btn onClick={() => onActivate(item.deviceId)}>Activate</Btn>
+                      )}
+                      <Btn onClick={() => onTest(item.deviceId)} title="Test print">
+                        <Printer className="h-4 w-4" />
+                      </Btn>
+                    </div>
                   </TD>
                 </tr>
               ))}

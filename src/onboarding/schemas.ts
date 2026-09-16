@@ -119,6 +119,8 @@ export const brandSetupSchema = z
 
 export const branchSetupSchema = z
   .object({
+    idempotencyKey: z.string().trim().min(16).max(160),
+    confirmPossibleDuplicate: z.boolean().optional(),
     id: z.string().trim().min(2).max(100).optional(),
     brandId: z.string().trim().min(1).max(100),
     code: z.string().trim().min(1).max(40),
@@ -148,6 +150,8 @@ export const branchSetupSchema = z
 export const importPreviewRequestSchema = z
   .object({
     branchId: z.string().trim().min(1).optional(),
+    targetMode: z.enum(["TENANT_MASTER", "SELECTED_BRANCHES", "ROW_BRANCHES"]).optional(),
+    targetBranchIds: z.array(z.string().trim().min(1)).max(100).optional(),
     kind: z.enum(["MENU", "INVENTORY", "SUPPLIER", "STAFF", "OPENING_STOCK", "CONFIGURATION"]),
     originalName: z.string().trim().min(1).max(240),
     mimeType: z.string().trim().min(1).max(160),
@@ -155,11 +159,31 @@ export const importPreviewRequestSchema = z
     duplicateStrategy: z.enum(["CREATE", "UPDATE", "SKIP", "ERROR"]),
     idempotencyKey: z.string().trim().min(8).max(200),
     columnMap: z.record(z.string()).optional(),
+    referenceMap: z
+      .object({ stations: z.record(z.string().trim().min(1)).optional() })
+      .strict()
+      .optional(),
   })
   .strict();
 
 export const importCommitRequestSchema = z
   .object({ idempotencyKey: z.string().trim().min(8).max(200) })
+  .strict();
+
+export const historicalSalesPreviewRequestSchema = z
+  .object({
+    sourceSystem: z.string().trim().min(1).max(120),
+    originalName: z.string().trim().min(1).max(255),
+    mimeType: z.string().trim().min(1).max(160),
+    base64: z
+      .string()
+      .min(1)
+      .max(30 * 1024 * 1024),
+  })
+  .strict();
+
+export const historicalSalesSkipRequestSchema = z
+  .object({ reason: z.string().trim().min(3).max(300) })
   .strict();
 
 export const reasonRequestSchema = z.object({ reason: z.string().trim().min(8).max(500) }).strict();

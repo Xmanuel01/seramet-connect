@@ -20,6 +20,8 @@ import {
   goLiveRequestSchema,
   importCommitRequestSchema,
   importPreviewRequestSchema,
+  historicalSalesPreviewRequestSchema,
+  historicalSalesSkipRequestSchema,
   openingStockSchema,
   organisationProvisionSchema,
   providerSetupSchema,
@@ -45,7 +47,10 @@ import type {
   TaxServiceRuleInput,
 } from "@/onboarding/types";
 import { ServerOperationError } from "@/server/errors";
+import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
+import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
 import type { ZodTypeAny } from "zod";
+import { requireFullAuthentication } from "@/server/pos-auth-service";
 
 export async function handleOnboardingApi(
   request: Request,
@@ -54,6 +59,7 @@ export async function handleOnboardingApi(
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/seramet/setup")) return null;
   const actor = await authenticateSerametRequest(request, env);
+  if (request.method !== "GET") requireFullAuthentication(actor);
   if (!env.SERAMET_DB) {
     throw new ServerOperationError(
       "DATABASE_UNAVAILABLE",
@@ -62,6 +68,7 @@ export async function handleOnboardingApi(
     );
   }
   const service = new OnboardingService(env.SERAMET_DB, actor, env);
+  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor);
   const locationCurrency = new LocationCurrencyService(env.SERAMET_DB, actor);
 
   if (
@@ -168,9 +175,30 @@ export async function handleOnboardingApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/setup/branches/duplicate-review" && request.method === "GET") {
+    return json({ ok: true, review: await service.previewDuplicateBranches() });
+  }
+  const duplicateDeactivate =
+    /^\/api\/seramet\/setup\/branches\/([^/]+)\/deactivate-empty-duplicate$/.exec(url.pathname);
+  if (duplicateDeactivate && request.method === "POST") {
+    const body = await parse<{ reason: string }>(request, reasonRequestSchema);
+    return json({
+      ok: true,
+      result: await service.deactivateEmptyDuplicateBranch(
+        decodeURIComponent(duplicateDeactivate[1]!),
+        body.reason,
+      ),
+    });
+  }
   if (url.pathname === "/api/seramet/setup/imports/preview" && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `setup-import-preview:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.fileImport,
+    );
     const body = await parse<{
       branchId?: string;
+      targetMode?: "TENANT_MASTER" | "SELECTED_BRANCHES" | "ROW_BRANCHES";
+      targetBranchIds?: string[];
       kind: "MENU" | "INVENTORY" | "SUPPLIER" | "STAFF" | "OPENING_STOCK" | "CONFIGURATION";
       originalName: string;
       mimeType: string;
@@ -178,6 +206,7 @@ export async function handleOnboardingApi(
       duplicateStrategy: "CREATE" | "UPDATE" | "SKIP" | "ERROR";
       idempotencyKey: string;
       columnMap?: Record<string, string>;
+      referenceMap?: { stations?: Record<string, string> };
     }>(request, importPreviewRequestSchema, 30 * 1024 * 1024);
     const bytes = decodeBase64(body.base64);
     return json(
@@ -185,6 +214,8 @@ export async function handleOnboardingApi(
         ok: true,
         preview: await service.previewImport({
           ...(body.branchId ? { branchId: body.branchId } : {}),
+          ...(body.targetMode ? { targetMode: body.targetMode } : {}),
+          ...(body.targetBranchIds ? { targetBranchIds: body.targetBranchIds } : {}),
           kind: body.kind,
           originalName: body.originalName,
           mimeType: body.mimeType,
@@ -192,13 +223,66 @@ export async function handleOnboardingApi(
           duplicateStrategy: body.duplicateStrategy,
           idempotencyKey: body.idempotencyKey,
           ...(body.columnMap ? { columnMap: body.columnMap } : {}),
+          ...(body.referenceMap ? { referenceMap: body.referenceMap } : {}),
         }),
       },
       201,
     );
   }
+  if (url.pathname === "/api/seramet/setup/historical-sales" && request.method === "GET") {
+    return json({ ok: true, state: await historicalSales.getState() });
+  }
+  if (url.pathname === "/api/seramet/setup/historical-sales/preview" && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `historical-sales-preview:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.fileImport,
+    );
+    const body = await parse<{
+      sourceSystem: string;
+      originalName: string;
+      mimeType: string;
+      base64: string;
+    }>(request, historicalSalesPreviewRequestSchema, 30 * 1024 * 1024);
+    return json(
+      {
+        ok: true,
+        preview: await historicalSales.preview({
+          sourceSystem: body.sourceSystem,
+          originalName: body.originalName,
+          mimeType: body.mimeType,
+          bytes: decodeBase64(body.base64),
+        }),
+      },
+      201,
+    );
+  }
+  const historicalSalesCommit = /^\/api\/seramet\/setup\/historical-sales\/([^/]+)\/commit$/.exec(
+    url.pathname,
+  );
+  if (historicalSalesCommit && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `historical-sales-commit:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.configuration,
+    );
+    const body = await parse<{ idempotencyKey: string }>(request, importCommitRequestSchema);
+    return json({
+      ok: true,
+      result: await historicalSales.commit(
+        decodeURIComponent(historicalSalesCommit[1]!),
+        body.idempotencyKey,
+      ),
+    });
+  }
+  if (url.pathname === "/api/seramet/setup/historical-sales/skip" && request.method === "POST") {
+    const body = await parse<{ reason: string }>(request, historicalSalesSkipRequestSchema);
+    return json({ ok: true, result: await historicalSales.skip(body.reason) }, 201);
+  }
   const commitImport = /^\/api\/seramet\/setup\/imports\/([^/]+)\/commit$/.exec(url.pathname);
   if (commitImport && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `setup-import-commit:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.configuration,
+    );
     const body = await parse<{ idempotencyKey: string }>(request, importCommitRequestSchema);
     return json({
       ok: true,

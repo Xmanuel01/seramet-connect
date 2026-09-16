@@ -702,50 +702,73 @@ export class ManagementIntelligenceService {
   }
 
   private async calculateBranchFacts(branch: BranchRow, businessDate: string) {
-    const [invoiceResult, refundResult, mapping, movements, drawers, reconciliation] =
-      await Promise.all([
-        this.db
-          .prepare(
-            `SELECT id,total_minor,status,payload_json FROM invoices
+    const [
+      invoiceResult,
+      refundResult,
+      historicalResult,
+      mapping,
+      movements,
+      drawers,
+      reconciliation,
+    ] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT id,total_minor,status,payload_json FROM invoices
            WHERE tenant_id=? AND branch_id=? AND business_date=?`,
-          )
-          .bind(this.actor.tenantId, branch.id, businessDate)
-          .all<JsonRow>(),
-        this.db
-          .prepare(
-            `SELECT amount_minor,status,payload_json FROM payment_refunds
+        )
+        .bind(this.actor.tenantId, branch.id, businessDate)
+        .all<JsonRow>(),
+      this.db
+        .prepare(
+          `SELECT amount_minor,status,payload_json FROM payment_refunds
            WHERE tenant_id=? AND branch_id=? AND substr(updated_at,1,10)=?`,
-          )
-          .bind(this.actor.tenantId, branch.id, businessDate)
-          .all<JsonRow>(),
-        this.accountMapping(branch.id),
-        this.db
-          .prepare(
-            `SELECT movement_type,quantity_minor,total_cost_minor,payload_json FROM inventory_movements
+        )
+        .bind(this.actor.tenantId, branch.id, businessDate)
+        .all<JsonRow>(),
+      this.db
+        .prepare(
+          `SELECT COALESCE(SUM(gross_sales_minor),0) gross_sales_minor,
+                    COALESCE(SUM(discounts_minor),0) discounts_minor,
+                    COALESCE(SUM(refunds_minor),0) refunds_minor,
+                    COALESCE(SUM(tax_minor),0) tax_minor,
+                    COALESCE(SUM(service_charge_minor),0) service_charge_minor,
+                    COALESCE(SUM(net_sales_minor),0) net_sales_minor,
+                    COALESCE(SUM(order_count),0) order_count
+             FROM historical_sales_records
+             WHERE tenant_id=? AND branch_id=? AND business_date=?`,
+        )
+        .bind(this.actor.tenantId, branch.id, businessDate)
+        .first<JsonRow>(),
+      this.accountMapping(branch.id),
+      this.db
+        .prepare(
+          `SELECT movement_type,quantity_minor,total_cost_minor,payload_json FROM inventory_movements
            WHERE tenant_id=? AND branch_id=? AND business_date=?`,
-          )
-          .bind(this.actor.tenantId, branch.id, businessDate)
-          .all<JsonRow>(),
-        this.db
-          .prepare(
-            `SELECT variance_minor FROM cash_drawer_sessions WHERE tenant_id=? AND branch_id=?
+        )
+        .bind(this.actor.tenantId, branch.id, businessDate)
+        .all<JsonRow>(),
+      this.db
+        .prepare(
+          `SELECT variance_minor FROM cash_drawer_sessions WHERE tenant_id=? AND branch_id=?
            AND substr(COALESCE(closed_at,opened_at),1,10)=? AND variance_minor IS NOT NULL`,
-          )
-          .bind(this.actor.tenantId, branch.id, businessDate)
-          .all<{ variance_minor: number }>(),
-        this.db
-          .prepare(
-            `SELECT amount_minor FROM reconciliation_exceptions WHERE tenant_id=? AND branch_id=?
+        )
+        .bind(this.actor.tenantId, branch.id, businessDate)
+        .all<{ variance_minor: number }>(),
+      this.db
+        .prepare(
+          `SELECT amount_minor FROM reconciliation_exceptions WHERE tenant_id=? AND branch_id=?
            AND status NOT IN ('RESOLVED','DISMISSED')`,
-          )
-          .bind(this.actor.tenantId, branch.id)
-          .all<{ amount_minor: number }>(),
-      ]);
+        )
+        .bind(this.actor.tenantId, branch.id)
+        .all<{ amount_minor: number }>(),
+    ]);
     const invoices = invoiceResult.results ?? [];
-    let grossSalesMinor = 0;
-    let discountsMinor = 0;
-    let taxMinor = 0;
-    let serviceChargeMinor = 0;
+    const historical = historicalResult ?? {};
+    const historicalOrderCount = integer(historical.order_count);
+    let grossSalesMinor = integer(historical.gross_sales_minor);
+    let discountsMinor = integer(historical.discounts_minor);
+    let taxMinor = integer(historical.tax_minor);
+    let serviceChargeMinor = integer(historical.service_charge_minor);
     for (const invoice of invoices) {
       const payload = parseJson(invoice.payload_json);
       const total = integer(invoice.total_minor);
@@ -762,17 +785,20 @@ export class ManagementIntelligenceService {
       taxMinor += tax;
       serviceChargeMinor += service;
     }
-    const refundsMinor = (refundResult.results ?? [])
-      .filter((refund) => ["CONFIRMED", "REFUNDED", "COMPLETED"].includes(String(refund.status)))
-      .reduce((total, refund) => total + integer(refund.amount_minor), 0);
+    const refundsMinor =
+      integer(historical.refunds_minor) +
+      (refundResult.results ?? [])
+        .filter((refund) => ["CONFIRMED", "REFUNDED", "COMPLETED"].includes(String(refund.status)))
+        .reduce((total, refund) => total + integer(refund.amount_minor), 0);
     const netSalesMinor = grossSalesMinor - discountsMinor - refundsMinor;
     const netRevenueMinor = netSalesMinor;
     const accounting = await this.accountMetrics(branch.id, businessDate, mapping);
     const cogsMinor = accounting.cogsMinor;
     const grossProfitMinor = netRevenueMinor - cogsMinor;
-    const orderCount =
-      invoices.filter((invoice) => CLOSED_INVOICE_STATUSES.includes(String(invoice.status)))
-        .length || invoices.length;
+    const closedInvoiceCount = invoices.filter((invoice) =>
+      CLOSED_INVOICE_STATUSES.includes(String(invoice.status)),
+    ).length;
+    const orderCount = historicalOrderCount + (closedInvoiceCount || invoices.length);
     const movementRows = movements.results ?? [];
     const wastageMinor = movementRows
       .filter((movement) =>
@@ -791,8 +817,13 @@ export class ManagementIntelligenceService {
     if (!mapping) qualityReasons.push("MISSING_ACCOUNT_MAPPING");
     if (!labor.hasData) qualityReasons.push("MISSING_LABOUR_DATA");
     if (stationPrep.value === null) qualityReasons.push("MISSING_STATION_TIMESTAMPS");
-    if (invoices.length === 0) qualityReasons.push("MISSING_SALES_FACTS");
-    const quality = qualityFromReasons(qualityReasons, { hasPrimaryFacts: invoices.length > 0 });
+    if (historicalOrderCount > 0)
+      qualityReasons.push("HISTORICAL_SALES_WITHOUT_OPERATIONAL_DETAIL");
+    if (invoices.length === 0 && historicalOrderCount === 0)
+      qualityReasons.push("MISSING_SALES_FACTS");
+    const quality = qualityFromReasons(qualityReasons, {
+      hasPrimaryFacts: invoices.length > 0 || historicalOrderCount > 0,
+    });
     return {
       branchId: branch.id,
       branchName: branch.name,

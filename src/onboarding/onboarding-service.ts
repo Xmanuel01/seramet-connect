@@ -10,6 +10,16 @@ import { ServerOperationError } from "@/server/errors";
 import { createSecretStore } from "@/server/secrets";
 import { resolveRuntimeConfiguration, validateRuntimeConfiguration } from "@/server/environment";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
+import { parseMajorAmount } from "@/payments/money";
+import {
+  MENU_IMPORTER_VERSION,
+  MENU_IMPORT_TEMPLATE_VERSION,
+  menuTemplateVersion,
+  normalizeMenuImportHeader,
+  resolveMenuImportHeader,
+  unsupportedPopulatedMenuColumns,
+  type MenuImportTargetMode,
+} from "@/onboarding/menu-import-schema";
 import {
   setupSections,
   type AccountingMappingInput,
@@ -26,6 +36,7 @@ import {
   type ImportPreview,
   type ImportPreviewInput,
   type ImportPreviewRow,
+  type ImportTargetMode,
   type IntegrationHealthRow,
   type OpeningStockInput,
   type OrganisationProvisionInput,
@@ -136,6 +147,25 @@ type ImportValue = {
   shiftGroup?: unknown;
   parMicro?: unknown;
   safetyStockMicro?: unknown;
+  templateVersion?: unknown;
+  menuSection?: unknown;
+  costPriceMinor?: unknown;
+  taxCode?: unknown;
+  unitOfMeasure?: unknown;
+  kitchenPrinterGroup?: unknown;
+  prepMinutes?: unknown;
+  parLevel?: unknown;
+  imageFilename?: unknown;
+  branchPriceMinor?: unknown;
+  channelCodes?: unknown;
+  targetBranchIds?: unknown;
+  stationIdsByBranch?: unknown;
+  recipePending?: unknown;
+  existingId?: unknown;
+  before?: unknown;
+  rawBasePrice?: unknown;
+  rawCostPrice?: unknown;
+  rawBranchPrice?: unknown;
 };
 
 const sectionLabels: Record<SetupSection, string> = {
@@ -330,7 +360,21 @@ export class OnboardingService {
   async createBrand(input: BrandSetupInput) {
     this.require(permissions.settingsOrganisationManage);
     const id = input.id ?? stableId("brand", input.code);
-    await this.db.batch([
+    const nodeId = stableId("enterprise-brand", input.code);
+    const stamp = now();
+    const tenant = await this.db
+      .prepare("SELECT default_currency,timezone FROM tenants WHERE id=?")
+      .bind(this.actor.tenantId)
+      .first<{ default_currency: string; timezone: string }>();
+    if (!tenant) throw notFound("Tenant not found");
+    const parent = await this.db
+      .prepare(
+        `SELECT id,legal_entity_id FROM enterprise_nodes
+         WHERE tenant_id=? AND node_type='LEGAL_ENTITY' AND status='ACTIVE' LIMIT 1`,
+      )
+      .bind(this.actor.tenantId)
+      .first<{ id: string; legal_entity_id: string | null }>();
+    const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
           `INSERT INTO brands (tenant_id,id,code,name,active,payload_json)
@@ -344,8 +388,53 @@ export class OnboardingService {
           clean(input.name),
           bool(input.active ?? true),
         ),
+      this.db
+        .prepare(
+          `INSERT INTO enterprise_nodes
+            (tenant_id,id,node_type,code,name,parent_id,legal_entity_id,brand_id,branch_id,warehouse_id,
+             status,effective_from,effective_to,timezone,currency,metadata_json,created_by,created_at,
+             updated_by,updated_at,version)
+           VALUES (?,?,'BRAND',?,?,?,?,?,NULL,NULL,?,?,NULL,?,?,'{}',?,?,?,?,1)
+           ON CONFLICT(tenant_id,id) DO UPDATE SET name=excluded.name,status=excluded.status,
+             updated_by=excluded.updated_by,updated_at=excluded.updated_at,version=enterprise_nodes.version+1`,
+        )
+        .bind(
+          this.actor.tenantId,
+          nodeId,
+          `BRAND-${input.code.toUpperCase()}`,
+          clean(input.name),
+          parent?.id ?? null,
+          parent?.legal_entity_id ?? null,
+          id,
+          input.active === false ? "CLOSED" : "ACTIVE",
+          stamp,
+          tenant.timezone,
+          tenant.default_currency,
+          this.actor.id,
+          stamp,
+          this.actor.id,
+          stamp,
+        ),
+      ...(parent
+        ? [
+            this.db
+              .prepare(
+                `INSERT INTO enterprise_node_closure (tenant_id,ancestor_id,descendant_id,depth)
+                 SELECT tenant_id,ancestor_id,?,depth+1 FROM enterprise_node_closure
+                 WHERE tenant_id=? AND descendant_id=? ON CONFLICT DO NOTHING`,
+              )
+              .bind(nodeId, this.actor.tenantId, parent.id),
+          ]
+        : []),
+      this.db
+        .prepare(
+          `INSERT INTO enterprise_node_closure (tenant_id,ancestor_id,descendant_id,depth)
+           VALUES (?,?,?,0) ON CONFLICT DO NOTHING`,
+        )
+        .bind(this.actor.tenantId, nodeId, nodeId),
       this.audit("BRAND_CONFIGURED", "BRAND", id, { code: input.code.toUpperCase() }),
-    ]);
+    ];
+    await this.db.batch(statements);
     return { id };
   }
 
@@ -363,6 +452,7 @@ export class OnboardingService {
     const branches = await this.db
       .prepare(
         `SELECT b.id,b.brand_id,b.code,b.name,b.timezone,b.business_day_cutoff_minutes,b.active,
+                b.lifecycle_state,b.is_bootstrap,b.version,
                 p.negative_stock_policy,p.inventory_enabled,p.recipes_required,p.payments_required,
                 p.printing_required,p.kds_required
          FROM branches b LEFT JOIN branch_operating_profiles p
@@ -378,6 +468,9 @@ export class OnboardingService {
         timezone: string;
         business_day_cutoff_minutes: number;
         active: number;
+        lifecycle_state: string;
+        is_bootstrap: number;
+        version: number;
         negative_stock_policy: string | null;
         inventory_enabled: number | null;
         recipes_required: number | null;
@@ -397,6 +490,9 @@ export class OnboardingService {
           timezone: branch.timezone,
           businessDayCutoffMinutes: branch.business_day_cutoff_minutes,
           active: Boolean(branch.active),
+          lifecycleState: branch.lifecycle_state,
+          isBootstrap: Boolean(branch.is_bootstrap),
+          version: branch.version,
           negativeStockPolicy: branch.negative_stock_policy ?? "UNCONFIGURED",
           inventoryEnabled:
             branch.inventory_enabled === null ? null : Boolean(branch.inventory_enabled),
@@ -515,14 +611,17 @@ export class OnboardingService {
     const rows = await this.db
       .prepare(
         `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
-                m.currency,m.station_id,m.recipe_reference,m.sellable,m.active,
-                bs.selling_price_minor branch_price_minor,bs.available
+                m.currency,COALESCE(bs.station_id,m.station_id) station_id,
+                m.recipe_reference,m.sellable,m.active,
+                bs.selling_price_minor branch_price_minor,bs.available,
+                CASE WHEN bs.menu_item_id IS NULL THEN 0 ELSE 1 END branch_activated
          FROM menu_catalog_items m
          LEFT JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id AND bs.menu_item_id=m.id
            AND bs.branch_id=?
-         WHERE m.tenant_id=? AND m.active=1 ORDER BY m.category_code,m.name LIMIT 5000`,
+         WHERE m.tenant_id=? AND m.active=1 AND (? IS NULL OR bs.menu_item_id IS NOT NULL)
+         ORDER BY m.category_code,m.name LIMIT 5000`,
       )
-      .bind(branchId ?? null, this.actor.tenantId)
+      .bind(branchId ?? null, this.actor.tenantId, branchId ?? null)
       .all<{
         id: string;
         code: string;
@@ -538,6 +637,7 @@ export class OnboardingService {
         active: number;
         branch_price_minor: number | null;
         available: number | null;
+        branch_activated: number;
       }>();
     return rows.results ?? [];
   }
@@ -643,16 +743,71 @@ export class OnboardingService {
     if (this.actor.branchScope.type !== "ALL") {
       throw denied("Creating a branch requires all-branch tenant scope");
     }
+    const requestHash = await sha256Text(stableJson(input));
+    const existingAttempt = await this.db
+      .prepare(
+        `SELECT request_hash,response_json FROM branch_creation_attempts
+         WHERE tenant_id=? AND idempotency_key=?`,
+      )
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ request_hash: string; response_json: string }>();
+    if (existingAttempt) {
+      if (existingAttempt.request_hash !== requestHash) {
+        throw new ServerOperationError(
+          "CONFLICT",
+          409,
+          "Branch idempotency key was reused with different details",
+        );
+      }
+      return JSON.parse(existingAttempt.response_json) as {
+        id: string;
+        warehouseId: string | null;
+        duplicate: boolean;
+      };
+    }
+    const unresolvedBootstrap = await this.db
+      .prepare(
+        `SELECT id FROM branches WHERE tenant_id=? AND is_bootstrap=1
+         AND lifecycle_state IN ('DRAFT','CONFIGURING') LIMIT 1`,
+      )
+      .bind(this.actor.tenantId)
+      .first<{ id: string }>();
+    if (unresolvedBootstrap) {
+      throw invalidTransition("Finish and activate the first branch before adding another branch");
+    }
     const brand = await this.db
       .prepare("SELECT id FROM brands WHERE tenant_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, input.brandId)
       .first();
     if (!brand) throw validation("Brand does not exist in this tenant");
+    const likelyDuplicate = await this.db
+      .prepare(
+        `SELECT id,name FROM branches WHERE tenant_id=? AND lifecycle_state<>'CLOSED'
+         AND (UPPER(TRIM(code))=UPPER(TRIM(?)) OR LOWER(TRIM(name))=LOWER(TRIM(?))) LIMIT 1`,
+      )
+      .bind(this.actor.tenantId, input.code, input.name)
+      .first<{ id: string; name: string }>();
+    if (likelyDuplicate && !input.confirmPossibleDuplicate) {
+      throw new ServerOperationError(
+        "DUPLICATE",
+        409,
+        `A branch with a similar code or name already exists (${likelyDuplicate.name}). Confirm the duplicate review before creating another location.`,
+      );
+    }
     const branchId = input.id ?? stableId("branch", input.code);
     const warehouseId = input.createWarehouse
       ? stableId("warehouse", input.createWarehouse.code)
       : null;
     const stamp = now();
+    const hierarchyParent = await this.db
+      .prepare(
+        `SELECT id,legal_entity_id FROM enterprise_nodes
+         WHERE tenant_id=? AND node_type='BRAND' AND brand_id=? AND status='ACTIVE' LIMIT 1`,
+      )
+      .bind(this.actor.tenantId, input.brandId)
+      .first<{ id: string; legal_entity_id: string | null }>();
+    if (!hierarchyParent) throw validation("Brand hierarchy node is missing");
+    const nodeId = crypto.randomUUID();
     const branchPayload = {
       address: input.address,
       phone: input.phone,
@@ -663,8 +818,9 @@ export class OnboardingService {
       this.db
         .prepare(
           `INSERT INTO branches
-            (tenant_id,id,brand_id,code,name,timezone,business_day_cutoff_minutes,active,payload_json)
-           VALUES (?,?,?,?,?,?,?,1,?)`,
+            (tenant_id,id,brand_id,code,name,timezone,business_day_cutoff_minutes,active,payload_json,
+             lifecycle_state,is_bootstrap,version)
+           VALUES (?,?,?,?,?,?,?,1,?,'CONFIGURING',0,1)`,
         )
         .bind(
           this.actor.tenantId,
@@ -703,6 +859,55 @@ export class OnboardingService {
           stamp,
         ),
       this.audit("BRANCH_CREATED", "BRANCH", branchId, { code: input.code }),
+      this.db
+        .prepare(
+          `INSERT INTO enterprise_nodes
+            (tenant_id,id,node_type,code,name,parent_id,legal_entity_id,brand_id,branch_id,warehouse_id,
+             status,effective_from,effective_to,timezone,currency,metadata_json,created_by,created_at,
+             updated_by,updated_at,version)
+           SELECT ?,?,'BRANCH',?,?,?,legal_entity_id,?, ?,NULL,'ACTIVE',?,NULL,?,t.default_currency,
+                  '{}',?,?,?,?,1
+           FROM enterprise_nodes parent JOIN tenants t ON t.id=parent.tenant_id
+           WHERE parent.tenant_id=? AND parent.id=?`,
+        )
+        .bind(
+          this.actor.tenantId,
+          nodeId,
+          `BRANCH-${input.code.toUpperCase()}`,
+          clean(input.name),
+          hierarchyParent.id,
+          input.brandId,
+          branchId,
+          stamp,
+          input.timezone,
+          this.actor.id,
+          stamp,
+          this.actor.id,
+          stamp,
+          this.actor.tenantId,
+          hierarchyParent.id,
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO enterprise_node_closure (tenant_id,ancestor_id,descendant_id,depth)
+           SELECT tenant_id,ancestor_id,?,depth+1 FROM enterprise_node_closure
+           WHERE tenant_id=? AND descendant_id=?`,
+        )
+        .bind(nodeId, this.actor.tenantId, hierarchyParent.id),
+      this.db
+        .prepare(
+          `INSERT INTO enterprise_node_closure (tenant_id,ancestor_id,descendant_id,depth)
+           VALUES (?,?,?,0)`,
+        )
+        .bind(this.actor.tenantId, nodeId, nodeId),
+      this.db
+        .prepare(
+          `INSERT INTO user_branches (tenant_id,user_id,branch_id)
+           SELECT tenant_id,user_id,? FROM account_owners
+           WHERE tenant_id=? AND status='ACTIVE'
+           ON CONFLICT DO NOTHING`,
+        )
+        .bind(branchId, this.actor.tenantId),
     ];
     if (warehouseId && input.createWarehouse) {
       statements.push(
@@ -720,27 +925,280 @@ export class OnboardingService {
           ),
       );
     }
-    await this.db.batch(statements);
-    return { id: branchId, warehouseId };
+    const result = { id: branchId, warehouseId, duplicate: Boolean(likelyDuplicate) };
+    if (likelyDuplicate) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO branch_duplicate_reviews
+              (tenant_id,id,candidate_branch_id,existing_branch_id,status,evidence_json,reviewed_by,
+               reviewed_at,reason,created_at)
+             VALUES (?,?,?,?,'CONFIRMED_DISTINCT',?,?,?,?,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            crypto.randomUUID(),
+            branchId,
+            likelyDuplicate.id,
+            JSON.stringify({ matchedName: likelyDuplicate.name, requestedCode: input.code }),
+            this.actor.id,
+            stamp,
+            "Explicit duplicate confirmation during branch creation",
+            stamp,
+          ),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO branch_creation_attempts
+            (tenant_id,idempotency_key,request_hash,status,branch_id,response_json,created_by,created_at,updated_at)
+           VALUES (?,?,?,'COMPLETED',?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          input.idempotencyKey,
+          requestHash,
+          branchId,
+          JSON.stringify(result),
+          this.actor.id,
+          stamp,
+          stamp,
+        ),
+    );
+    try {
+      await this.db.batch(statements);
+      return result;
+    } catch (error) {
+      const raced = await this.db
+        .prepare(
+          `SELECT request_hash,response_json FROM branch_creation_attempts
+           WHERE tenant_id=? AND idempotency_key=?`,
+        )
+        .bind(this.actor.tenantId, input.idempotencyKey)
+        .first<{ request_hash: string; response_json: string }>();
+      if (raced?.request_hash === requestHash)
+        return JSON.parse(raced.response_json) as typeof result;
+      throw error;
+    }
+  }
+
+  async previewDuplicateBranches() {
+    this.require(permissions.branchesReconcile);
+    const rows = await this.db
+      .prepare(
+        `SELECT id,code,name,payload_json,lifecycle_state,is_bootstrap
+         FROM branches WHERE tenant_id=? AND lifecycle_state<>'CLOSED'
+         ORDER BY is_bootstrap DESC,name LIMIT 250`,
+      )
+      .bind(this.actor.tenantId)
+      .all<Record<string, unknown>>();
+    const branches = rows.results ?? [];
+    const pairs: Array<Record<string, unknown>> = [];
+    for (let leftIndex = 0; leftIndex < branches.length; leftIndex += 1) {
+      const left = branches[leftIndex]!;
+      for (let rightIndex = leftIndex + 1; rightIndex < branches.length; rightIndex += 1) {
+        const right = branches[rightIndex]!;
+        const leftAddress = normalizedAddress(left["payload_json"]);
+        const rightAddress = normalizedAddress(right["payload_json"]);
+        const matchedSignals = [
+          normalizeComparable(left["code"]) === normalizeComparable(right["code"]) ? "CODE" : null,
+          normalizeComparable(left["name"]) === normalizeComparable(right["name"]) ? "NAME" : null,
+          leftAddress && leftAddress === rightAddress ? "ADDRESS" : null,
+        ].filter(Boolean);
+        if (!matchedSignals.length) continue;
+        const candidate =
+          Number(left["is_bootstrap"]) > Number(right["is_bootstrap"]) ? left : right;
+        const existing = candidate === left ? right : left;
+        const [candidateCounts, existingCounts] = await Promise.all([
+          this.branchDependencyCounts(String(candidate["id"])),
+          this.branchDependencyCounts(String(existing["id"])),
+        ]);
+        pairs.push({
+          candidate: branchSummary(candidate),
+          existing: branchSummary(existing),
+          matchedSignals,
+          candidateCounts,
+          existingCounts,
+          canDeactivateCandidate: Object.values(candidateCounts).every((count) => count === 0),
+        });
+      }
+    }
+    return { pairs };
+  }
+
+  async deactivateEmptyDuplicateBranch(branchId: string, reason: string) {
+    this.require(permissions.branchesReconcile);
+    if (this.actor.branchScope.type !== "ALL")
+      throw denied("Duplicate branch review requires all-branch scope");
+    if (reason.trim().length < 8) throw validation("A reconciliation reason is required");
+    const branch = await this.db
+      .prepare(
+        `SELECT id,code,name,lifecycle_state FROM branches
+         WHERE tenant_id=? AND id=? AND lifecycle_state<>'CLOSED'`,
+      )
+      .bind(this.actor.tenantId, branchId)
+      .first<{ id: string; code: string; name: string; lifecycle_state: string }>();
+    if (!branch) throw notFound("Branch was not found");
+    const counts = await this.branchDependencyCounts(branchId);
+    if (Object.values(counts).some((count) => count > 0)) {
+      const stamp = now();
+      await this.db
+        .prepare(
+          `INSERT INTO branch_duplicate_reviews
+            (tenant_id,id,candidate_branch_id,existing_branch_id,status,evidence_json,reviewed_by,
+             reviewed_at,reason,created_at)
+           VALUES (?,?,?,?,'BLOCKED_HAS_DATA',?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          branchId,
+          branchId,
+          json({ dependencyCounts: counts }),
+          this.actor.id,
+          stamp,
+          reason.trim(),
+          stamp,
+        )
+        .run();
+      throw invalidTransition(
+        "Branch contains operational data and cannot be deactivated automatically",
+      );
+    }
+    const stamp = now();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE branches SET lifecycle_state='CLOSED',active=0,version=version+1
+           WHERE tenant_id=? AND id=? AND lifecycle_state<>'CLOSED'`,
+        )
+        .bind(this.actor.tenantId, branchId),
+      this.db
+        .prepare(
+          `UPDATE enterprise_nodes SET status='CLOSED',updated_by=?,updated_at=?,version=version+1
+           WHERE tenant_id=? AND branch_id=? AND node_type='BRANCH' AND status<>'CLOSED'`,
+        )
+        .bind(this.actor.id, stamp, this.actor.tenantId, branchId),
+      this.db
+        .prepare(
+          `INSERT INTO branch_duplicate_reviews
+            (tenant_id,id,candidate_branch_id,existing_branch_id,status,evidence_json,reviewed_by,
+             reviewed_at,reason,created_at)
+           VALUES (?,?,?,?,'DEACTIVATED_EMPTY',?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          branchId,
+          branchId,
+          json({ dependencyCounts: counts }),
+          this.actor.id,
+          stamp,
+          reason.trim(),
+          stamp,
+        ),
+      this.audit("EMPTY_DUPLICATE_BRANCH_DEACTIVATED", "BRANCH", branchId, {
+        reason: reason.trim(),
+        dependencyCounts: counts,
+      }),
+    ]);
+    return { branchId, status: "CLOSED" as const, dependencyCounts: counts };
+  }
+
+  private async branchDependencyCounts(branchId: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT
+          (SELECT COUNT(*) FROM orders WHERE tenant_id=? AND branch_id=?) AS orders_count,
+          (SELECT COUNT(*) FROM invoices WHERE tenant_id=? AND branch_id=?) AS invoices_count,
+          (SELECT COUNT(*) FROM payment_transactions WHERE tenant_id=? AND branch_id=?) AS payments_count,
+          (SELECT COUNT(*) FROM inventory_movements WHERE tenant_id=? AND branch_id=?) AS inventory_count,
+          (SELECT COUNT(*) FROM hardware_devices WHERE tenant_id=? AND branch_id=?) AS devices_count`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+      )
+      .first<Record<string, unknown>>();
+    return {
+      orders: Number(row?.["orders_count"] ?? 0),
+      invoices: Number(row?.["invoices_count"] ?? 0),
+      payments: Number(row?.["payments_count"] ?? 0),
+      inventoryMovements: Number(row?.["inventory_count"] ?? 0),
+      devices: Number(row?.["devices_count"] ?? 0),
+    };
   }
 
   async previewImport(input: ImportPreviewInput): Promise<ImportPreview> {
     this.require(permissions.setupImport);
-    if (input.branchId) await this.assertBranch(input.branchId);
     const file = await validateImportFile({
       kind: input.kind,
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
     });
+    let rawRows: Array<Record<string, string>>;
+    try {
+      rawRows = await parseRows(input.bytes, file.extension);
+    } catch {
+      throw validation("Import file could not be parsed within the safe workbook limits");
+    }
+    if (rawRows.length > file.maxRows) throw validation("Import row limit exceeded");
+    assertSafeParsedRows(rawRows);
+    const target =
+      input.kind === "MENU"
+        ? await this.resolveMenuImportTarget(input)
+        : {
+            mode: (input.branchId ? "SELECTED_BRANCHES" : "TENANT_MASTER") as ImportTargetMode,
+            branchIds: input.branchId ? [input.branchId] : [],
+          };
+    if (input.kind !== "MENU" && input.branchId) await this.assertBranch(input.branchId);
+    const template =
+      input.kind === "MENU" ? menuTemplateVersion(rawRows) : { version: 1, legacy: false };
+    const catalogueRevision =
+      input.kind === "MENU" ? await this.menuCatalogueRevision() : "not-applicable";
+    const fingerprint = await sha256Text(
+      stableJson({
+        tenantId: this.actor.tenantId,
+        kind: input.kind,
+        fileDigest: file.digest,
+        templateVersion: template.version,
+        importerVersion: input.kind === "MENU" ? MENU_IMPORTER_VERSION : "setup-import-v1",
+        columnMap: normalizeStringRecord(input.columnMap),
+        duplicateStrategy: input.duplicateStrategy,
+        targetMode: target.mode,
+        targetBranchIds: [...target.branchIds].sort(),
+        referenceMap: normalizeReferenceMap(input.referenceMap),
+      }),
+    );
+    const effectiveKey =
+      input.kind === "MENU" ? `menu-preview:${fingerprint}` : input.idempotencyKey;
     const existing = await this.db
-      .prepare("SELECT id FROM setup_imports WHERE tenant_id=? AND idempotency_key=?")
-      .bind(this.actor.tenantId, input.idempotencyKey)
+      .prepare(
+        input.kind === "MENU"
+          ? "SELECT id FROM setup_imports WHERE tenant_id=? AND preview_fingerprint=?"
+          : "SELECT id FROM setup_imports WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(this.actor.tenantId, input.kind === "MENU" ? fingerprint : effectiveKey)
       .first<{ id: string }>();
     if (existing) return this.getImport(existing.id);
-    const rawRows = await parseRows(input.bytes, file.extension);
-    if (rawRows.length > file.maxRows) throw validation("Import row limit exceeded");
-    const rows = await this.validateRows(input.kind, rawRows, input.branchId, input.columnMap);
+    const rows = await this.validateRows(input.kind, rawRows, input.branchId, input.columnMap, {
+      targetMode: target.mode,
+      targetBranchIds: target.branchIds,
+      referenceMap: input.referenceMap,
+      templateVersion: template.version,
+      unsupportedColumns: input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
+      duplicateStrategy: input.duplicateStrategy,
+    });
     const id = crypto.randomUUID();
     const stamp = now();
     const errorCount = rows.filter((row) => row.status === "ERROR").length;
@@ -750,14 +1208,16 @@ export class OnboardingService {
         .prepare(
           `INSERT INTO setup_imports
             (tenant_id,id,branch_id,import_kind,original_name,mime_type,file_checksum,duplicate_strategy,
-             status,row_count,valid_count,warning_count,error_count,report_json,idempotency_key,
-             created_by,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)`,
+              status,row_count,valid_count,warning_count,error_count,report_json,idempotency_key,
+              created_by,created_at,updated_at,template_version,preview_fingerprint,importer_version,
+              target_mode,target_branch_ids_json,column_map_json,reference_map_json,catalogue_revision,
+              expires_at,verification_status,verification_json)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .bind(
           this.actor.tenantId,
           id,
-          input.branchId ?? null,
+          target.branchIds.length === 1 ? target.branchIds[0] : null,
           input.kind,
           file.filename,
           input.mimeType,
@@ -768,18 +1228,36 @@ export class OnboardingService {
           rows.length - errorCount,
           warningCount,
           errorCount,
-          json({ requiresPreview: true, extension: file.extension }),
-          input.idempotencyKey,
+          json({
+            requiresPreview: true,
+            extension: file.extension,
+            legacyTemplate: template.legacy,
+            unsupportedColumns:
+              input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
+          }),
+          effectiveKey,
           this.actor.id,
           stamp,
           stamp,
+          template.version,
+          fingerprint,
+          input.kind === "MENU" ? MENU_IMPORTER_VERSION : "setup-import-v1",
+          target.mode,
+          json(target.branchIds),
+          json(normalizeStringRecord(input.columnMap)),
+          json(normalizeReferenceMap(input.referenceMap)),
+          catalogueRevision,
+          new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          "PENDING",
+          "{}",
         ),
       ...rows.map((row) =>
         this.db
           .prepare(
             `INSERT INTO setup_import_rows
-              (tenant_id,import_id,row_number,row_key,status,normalized_json,errors_json,warnings_json)
-             VALUES (?,?,?,?,?,?,?,?)`,
+              (tenant_id,import_id,row_number,row_key,status,normalized_json,errors_json,warnings_json,
+               action,before_json,after_json)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .bind(
             this.actor.tenantId,
@@ -790,6 +1268,9 @@ export class OnboardingService {
             json(row.normalized),
             json(row.errors),
             json(row.warnings),
+            row.action ?? (row.status === "ERROR" ? "ERROR" : "CREATE"),
+            json((row.normalized["before"] as Record<string, unknown> | undefined) ?? {}),
+            json(row.normalized),
           ),
       ),
       this.audit("SETUP_IMPORT_PREVIEWED", "SETUP_IMPORT", id, {
@@ -806,7 +1287,9 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const record = await this.db
       .prepare(
-        `SELECT branch_id,import_kind,duplicate_strategy,status,idempotency_key,row_count
+        `SELECT branch_id,import_kind,duplicate_strategy,status,idempotency_key,row_count,
+                target_mode,target_branch_ids_json,catalogue_revision,expires_at,verification_json,
+                created_by
          FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, importId)
@@ -817,15 +1300,46 @@ export class OnboardingService {
         status: string;
         idempotency_key: string;
         row_count: number;
+        target_mode: ImportTargetMode;
+        target_branch_ids_json: string;
+        catalogue_revision: string | null;
+        expires_at: string | null;
+        verification_json: string;
+        created_by: string;
       }>();
     if (!record) throw notFound("Import preview not found");
-    if (record.branch_id) await this.assertBranch(record.branch_id);
-    if (record.status === "COMMITTED") return { id: importId, duplicate: true };
+    const targetBranchIds = parseJson<string[]>(record.target_branch_ids_json, []);
+    if (options.worker) {
+      await this.assertQueuedImportAuthority(record.created_by, targetBranchIds);
+    }
+    for (const targetBranchId of targetBranchIds) await this.assertImportBranch(targetBranchId);
+    if (record.branch_id && record.import_kind !== "MENU")
+      await this.assertBranch(record.branch_id);
+    if (record.status === "COMMITTED") {
+      return {
+        id: importId,
+        duplicate: true,
+        queued: false,
+        status: "COMMITTED" as const,
+        verification: parseJson(record.verification_json, {}),
+      };
+    }
     if (record.status !== "VALIDATED" && !(options.worker && record.status === "COMMITTING")) {
       throw validation("Import has validation errors or is already being committed");
     }
     if (idempotencyKey !== `commit:${record.idempotency_key}`) {
       throw validation("Commit idempotency key does not match the preview");
+    }
+    if (record.expires_at && Date.parse(record.expires_at) <= Date.now()) {
+      throw invalidTransition("Import preview expired; create a new preview before committing");
+    }
+    if (record.import_kind === "MENU") {
+      const currentRevision = await this.menuCatalogueRevision();
+      if (record.catalogue_revision && record.catalogue_revision !== currentRevision) {
+        throw invalidTransition(
+          "Menu catalogue changed after preview; review a fresh preview before commit",
+        );
+      }
     }
     if (record.row_count > 500 && !options.worker) {
       const jobId = stableId("worker", `setup-import-commit:${importId}`);
@@ -851,24 +1365,67 @@ export class OnboardingService {
           correlationId,
         }),
       ]);
-      return { id: importId, duplicate: false, queued: true, jobId, rows: record.row_count };
+      return {
+        id: importId,
+        duplicate: false,
+        queued: true,
+        status: "QUEUED" as const,
+        jobId,
+        rows: record.row_count,
+      };
     }
     const rows = await this.db
       .prepare(
-        `SELECT row_number,row_key,normalized_json FROM setup_import_rows
+        `SELECT row_number,row_key,normalized_json,action FROM setup_import_rows
          WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING') ORDER BY row_number`,
       )
       .bind(this.actor.tenantId, importId)
-      .all<{ row_number: number; row_key: string; normalized_json: string }>();
+      .all<{ row_number: number; row_key: string; normalized_json: string; action: string }>();
     const statements: D1PreparedStatement[] = [];
+    const expectedEntityIds = new Set<string>();
+    const expectedBranchSettings = new Set<string>();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
     for (const row of rows.results ?? []) {
       const value = parseJson<Record<string, unknown>>(row.normalized_json, {});
+      if (row.action === "SKIP" || row.action === "NO_CHANGE") {
+        skipped += 1;
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE setup_import_rows SET status='SKIPPED',committed_entity_type=?,committed_entity_id=?
+               WHERE tenant_id=? AND import_id=? AND row_number=?`,
+            )
+            .bind(
+              record.import_kind,
+              optionalString(value["existingId"]),
+              this.actor.tenantId,
+              importId,
+              row.row_number,
+            ),
+        );
+        continue;
+      }
+      const plannedMenuEntityId =
+        record.import_kind === "MENU"
+          ? stableId("menu", string(value["code"]).toUpperCase())
+          : undefined;
       const committed = await this.buildImportStatements(
         record.import_kind,
         record.duplicate_strategy,
         record.branch_id,
         value,
+        {
+          masterAlreadyPlanned: Boolean(
+            plannedMenuEntityId && expectedEntityIds.has(plannedMenuEntityId),
+          ),
+        },
       );
+      expectedEntityIds.add(committed.entityId);
+      for (const key of committed.branchSettingKeys ?? []) expectedBranchSettings.add(key);
+      if (committed.created) created += 1;
+      else if (committed.masterChanged) updated += 1;
       statements.push(...committed.statements);
       statements.push(
         this.db
@@ -890,17 +1447,96 @@ export class OnboardingService {
     statements.push(
       this.db
         .prepare(
-          `UPDATE setup_imports SET status='COMMITTED',committed_at=?,updated_at=?
+          `UPDATE setup_imports SET status='COMMITTING',updated_at=?
            WHERE tenant_id=? AND id=? AND status IN ('VALIDATED','COMMITTING')`,
         )
-        .bind(stamp, stamp, this.actor.tenantId, importId),
-      this.audit("SETUP_IMPORT_COMMITTED", "SETUP_IMPORT", importId, {
+        .bind(stamp, this.actor.tenantId, importId),
+      this.audit("SETUP_IMPORT_APPLIED", "SETUP_IMPORT", importId, {
         kind: record.import_kind,
         rows: rows.results?.length ?? 0,
       }),
     );
-    await this.db.batch(statements);
-    return { id: importId, duplicate: false, rows: rows.results?.length ?? 0 };
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      const failedAt = now();
+      const failedVerification: NonNullable<ImportPreview["verification"]> = {
+        status: "FAILED",
+        created: 0,
+        updated: 0,
+        skipped,
+        failed: rows.results?.length ?? 0,
+        branchSettings: 0,
+        catalogueVerified: false,
+        warnings: ["Atomic import commit failed and was rolled back"],
+      };
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE setup_imports SET status='FAILED',verification_status='FAILED',
+               verification_json=?,updated_at=? WHERE tenant_id=? AND id=?`,
+          )
+          .bind(json(failedVerification), failedAt, this.actor.tenantId, importId),
+        this.audit("SETUP_IMPORT_COMMIT_FAILED", "SETUP_IMPORT", importId, {
+          kind: record.import_kind,
+          errorCode: error instanceof Error ? error.name : "DATABASE_ERROR",
+        }),
+      ]);
+      throw invalidTransition("Import commit failed; no synchronous changes were committed");
+    }
+    const verification =
+      record.import_kind === "MENU"
+        ? await this.verifyMenuImport(expectedEntityIds, expectedBranchSettings, {
+            created,
+            updated,
+            skipped,
+          })
+        : {
+            status: "VERIFIED" as const,
+            created,
+            updated,
+            skipped,
+            failed: 0,
+            branchSettings: 0,
+            catalogueVerified: true,
+            warnings: [] as string[],
+          };
+    const committedAt = now();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE setup_imports SET status=?,verification_status=?,verification_json=?,
+             committed_at=?,updated_at=? WHERE tenant_id=? AND id=? AND status='COMMITTING'`,
+        )
+        .bind(
+          verification.status === "VERIFIED" ? "COMMITTED" : "FAILED",
+          verification.status,
+          json(verification),
+          verification.status === "VERIFIED" ? committedAt : null,
+          committedAt,
+          this.actor.tenantId,
+          importId,
+        ),
+      this.audit(
+        verification.status === "VERIFIED"
+          ? "SETUP_IMPORT_COMMITTED"
+          : "SETUP_IMPORT_VERIFICATION_FAILED",
+        "SETUP_IMPORT",
+        importId,
+        { kind: record.import_kind, ...verification },
+      ),
+    ]);
+    if (verification.status !== "VERIFIED") {
+      throw invalidTransition("Import data could not be verified in the authoritative catalogue");
+    }
+    return {
+      id: importId,
+      duplicate: false,
+      queued: false,
+      status: "COMMITTED" as const,
+      rows: rows.results?.length ?? 0,
+      verification,
+    };
   }
 
   async createOpeningStock(input: OpeningStockInput) {
@@ -2040,6 +2676,7 @@ export class OnboardingService {
       "payments",
       "journals",
       "audit",
+      "historicalSales",
     ]);
     const invalid = input.entityTypes.filter((value) => !allowed.has(value));
     if (invalid.length) throw validation(`Unsupported export entities: ${invalid.join(", ")}`);
@@ -2231,6 +2868,21 @@ export class OnboardingService {
           "UPDATE tenant_onboarding_profiles SET go_live_state=?,updated_by=?,updated_at=? WHERE tenant_id=?",
         )
         .bind(input.toState, this.actor.id, stamp, this.actor.tenantId),
+      this.db
+        .prepare(
+          `UPDATE branches SET lifecycle_state=?,is_bootstrap=CASE WHEN ?='LIVE' THEN 0 ELSE is_bootstrap END,
+             version=version+1
+           WHERE tenant_id=? AND lifecycle_state<>'CLOSED'`,
+        )
+        .bind(
+          input.toState === "LIVE"
+            ? "ACTIVE"
+            : input.toState === "SUSPENDED"
+              ? "SUSPENDED"
+              : "CONFIGURING",
+          input.toState,
+          this.actor.tenantId,
+        ),
       this.db
         .prepare(
           `INSERT INTO go_live_events
@@ -2845,7 +3497,18 @@ export class OnboardingService {
     rawRows: Array<Record<string, string>>,
     branchId?: string,
     columnMap?: Record<string, string>,
+    menuOptions?: {
+      targetMode: ImportTargetMode;
+      targetBranchIds: string[];
+      referenceMap?: { stations?: Record<string, string> };
+      templateVersion: number;
+      unsupportedColumns: string[];
+      duplicateStrategy: ImportPreview["duplicateStrategy"];
+    },
   ): Promise<ImportPreviewRow[]> {
+    if (kind === "MENU" && menuOptions) {
+      return this.validateMenuImportRows(rawRows, columnMap, menuOptions);
+    }
     const rows: ImportPreviewRow[] = [];
     const seen = new Set<string>();
     const tenant = await this.db
@@ -2963,11 +3626,429 @@ export class OnboardingService {
     return rows;
   }
 
+  private async validateMenuImportRows(
+    rawRows: Array<Record<string, string>>,
+    columnMap: Record<string, string> | undefined,
+    options: {
+      targetMode: ImportTargetMode;
+      targetBranchIds: string[];
+      referenceMap?: { stations?: Record<string, string> };
+      templateVersion: number;
+      unsupportedColumns: string[];
+      duplicateStrategy: ImportPreview["duplicateStrategy"];
+    },
+  ): Promise<ImportPreviewRow[]> {
+    const [
+      tenant,
+      branchesResult,
+      stationsResult,
+      catalogResult,
+      taxesResult,
+      unitsResult,
+      channelsResult,
+      recipesResult,
+      currenciesResult,
+      acceptedCurrenciesResult,
+      stationAliasesResult,
+    ] = await Promise.all([
+      this.db
+        .prepare("SELECT default_currency FROM tenants WHERE id=?")
+        .bind(this.actor.tenantId)
+        .first<{ default_currency: string }>(),
+      this.db
+        .prepare("SELECT id,code,name FROM branches WHERE tenant_id=? AND active=1")
+        .bind(this.actor.tenantId)
+        .all<{ id: string; code: string; name: string }>(),
+      this.db
+        .prepare("SELECT id,branch_id,code,name FROM stations WHERE tenant_id=? AND active=1")
+        .bind(this.actor.tenantId)
+        .all<{ id: string; branch_id: string; code: string; name: string }>(),
+      this.db
+        .prepare(
+          `SELECT id,code,sku,barcode,name,category_code,selling_price_minor,currency,station_id,
+                    tax_rule_id,sellable,payload_json FROM menu_catalog_items WHERE tenant_id=?`,
+        )
+        .bind(this.actor.tenantId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          "SELECT id,branch_id,code FROM tax_service_rules WHERE tenant_id=? AND rule_type='TAX' AND active=1",
+        )
+        .bind(this.actor.tenantId)
+        .all<{ id: string; branch_id: string | null; code: string }>(),
+      this.db
+        .prepare("SELECT id,code FROM unit_definitions WHERE tenant_id=? AND active=1")
+        .bind(this.actor.tenantId)
+        .all<{ id: string; code: string }>(),
+      this.db
+        .prepare("SELECT id,code FROM order_channels WHERE tenant_id=? AND active=1")
+        .bind(this.actor.tenantId)
+        .all<{ id: string; code: string }>(),
+      this.db
+        .prepare("SELECT id FROM recipes WHERE tenant_id=? AND active=1")
+        .bind(this.actor.tenantId)
+        .all<{ id: string }>(),
+      this.db.prepare("SELECT code FROM currency_reference WHERE active=1").all<{ code: string }>(),
+      this.db
+        .prepare(
+          "SELECT currency_code FROM tenant_accepted_currencies WHERE tenant_id=? AND status='ACTIVE'",
+        )
+        .bind(this.actor.tenantId)
+        .all<{ currency_code: string }>(),
+      this.db
+        .prepare(
+          `SELECT branch_id,source_value_normalized,target_id
+           FROM setup_import_reference_aliases
+           WHERE tenant_id=? AND reference_type='STATION' AND active=1`,
+        )
+        .bind(this.actor.tenantId)
+        .all<{ branch_id: string | null; source_value_normalized: string; target_id: string }>(),
+    ]);
+    const branches = branchesResult.results ?? [];
+    const branchByReference = new Map<string, { id: string; code: string; name: string }>();
+    for (const branch of branches) {
+      branchByReference.set(branch.id.toUpperCase(), branch);
+      branchByReference.set(branch.code.toUpperCase(), branch);
+    }
+    const stations = stationsResult.results ?? [];
+    const catalog = catalogResult.results ?? [];
+    const existingByCode = new Map(catalog.map((row) => [string(row["code"]).toUpperCase(), row]));
+    const existingBySku = new Map(
+      catalog.flatMap((row) =>
+        string(row["sku"]) ? [[string(row["sku"]).toUpperCase(), row] as const] : [],
+      ),
+    );
+    const existingByBarcode = new Map(
+      catalog.flatMap((row) =>
+        string(row["barcode"]) ? [[string(row["barcode"]), row] as const] : [],
+      ),
+    );
+    const taxRows = taxesResult.results ?? [];
+    const unitCodes = new Set((unitsResult.results ?? []).map((row) => row.code.toUpperCase()));
+    const channelCodes = new Set(
+      (channelsResult.results ?? []).map((row) => row.code.toUpperCase()),
+    );
+    const recipeIds = new Set((recipesResult.results ?? []).map((row) => row.id));
+    const knownCurrencies = new Set(
+      (currenciesResult.results ?? []).map((row) => row.code.toUpperCase()),
+    );
+    const acceptedCurrencies = new Set(
+      (acceptedCurrenciesResult.results ?? []).map((row) => row.currency_code.toUpperCase()),
+    );
+    const stationAliases = new Map(
+      (stationAliasesResult.results ?? []).map((row) => [
+        `${row.branch_id ?? "TENANT"}:${row.source_value_normalized}`,
+        row.target_id,
+      ]),
+    );
+    const seenAssignments = new Set<string>();
+    const stationMap = normalizeReferenceMap(options.referenceMap).stations ?? {};
+    const defaultCurrency = tenant?.default_currency?.toUpperCase();
+    if (defaultCurrency) acceptedCurrencies.add(defaultCurrency);
+    const results: ImportPreviewRow[] = [];
+
+    for (let index = 0; index < rawRows.length; index += 1) {
+      const source = applyMenuColumnMap(rawRows[index]!, columnMap);
+      const normalized = normalizeImportRow("MENU", source, undefined, defaultCurrency);
+      normalized.templateVersion = options.templateVersion;
+      const errors: ImportIssue[] = [];
+      const warnings: ImportIssue[] = [];
+      const code = string(normalized.code).trim().toUpperCase();
+      normalized.code = code;
+      const targetBranches = [...options.targetBranchIds];
+      if (options.targetMode === "ROW_BRANCHES") {
+        const branchReference = string(normalized.branchCode).trim().toUpperCase();
+        const branch = branchByReference.get(branchReference);
+        if (!branch) {
+          errors.push(importIssue("branchCode", "UNKNOWN_BRANCH", "Branch code is not configured"));
+        } else {
+          try {
+            await this.assertImportBranch(branch.id);
+            targetBranches.push(branch.id);
+          } catch {
+            errors.push(
+              importIssue(
+                "branchCode",
+                "UNAUTHORIZED_BRANCH",
+                "Branch is outside your import authority",
+              ),
+            );
+          }
+        }
+      }
+      normalized.targetBranchIds = [...new Set(targetBranches)];
+      const assignmentKey = `${code}:${
+        options.targetMode === "TENANT_MASTER"
+          ? "TENANT_MASTER"
+          : [...new Set(targetBranches)].sort().join("|")
+      }`;
+      if (seenAssignments.has(assignmentKey)) {
+        errors.push(
+          importIssue(
+            "itemCode",
+            "DUPLICATE_BRANCH_ROW",
+            "Duplicate item and branch assignment in file",
+          ),
+        );
+      }
+      seenAssignments.add(assignmentKey);
+      if (!code) errors.push(importIssue("itemCode", "REQUIRED", "A stable item code is required"));
+      if (!normalized.name) errors.push(importIssue("name", "REQUIRED", "Name is required"));
+      if (!normalized.categoryCode)
+        errors.push(importIssue("categoryCode", "REQUIRED", "Category code is required"));
+      const currency = string(normalized.currency).toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) {
+        errors.push(
+          importIssue("currency", "INVALID_CURRENCY", "A valid ISO currency is required"),
+        );
+      } else if (!knownCurrencies.has(currency) || !acceptedCurrencies.has(currency)) {
+        errors.push(
+          importIssue("currency", "UNSUPPORTED_CURRENCY", "Currency is not active for this tenant"),
+        );
+      } else {
+        normalized.sellingPriceMinor = parseMenuMoney(string(normalized.rawBasePrice), currency);
+        normalized.costPriceMinor = string(normalized.rawCostPrice)
+          ? parseMenuMoney(string(normalized.rawCostPrice), currency)
+          : undefined;
+        normalized.branchPriceMinor = string(normalized.rawBranchPrice)
+          ? parseMenuMoney(string(normalized.rawBranchPrice), currency)
+          : undefined;
+      }
+      if (
+        !Number.isSafeInteger(normalized.sellingPriceMinor) ||
+        number(normalized.sellingPriceMinor) < 0
+      ) {
+        errors.push(importIssue("basePrice", "INVALID_MONEY", "Selling price is not valid money"));
+      }
+      if (
+        normalized.costPriceMinor !== undefined &&
+        (!Number.isSafeInteger(normalized.costPriceMinor) || number(normalized.costPriceMinor) < 0)
+      ) {
+        errors.push(importIssue("costPrice", "INVALID_MONEY", "Cost price is not valid money"));
+      }
+      if (
+        normalized.branchPriceMinor !== undefined &&
+        (!Number.isSafeInteger(normalized.branchPriceMinor) ||
+          number(normalized.branchPriceMinor) < 0)
+      ) {
+        errors.push(importIssue("branchPrice", "INVALID_MONEY", "Branch price is not valid money"));
+      }
+      if (!Number.isSafeInteger(normalized.prepMinutes) || number(normalized.prepMinutes) < 0) {
+        errors.push(
+          importIssue("prepMinutes", "INVALID", "Preparation minutes must be zero or greater"),
+        );
+      }
+      if (!Number.isSafeInteger(normalized.parLevel) || number(normalized.parLevel) < 0) {
+        errors.push(importIssue("parLevel", "INVALID", "PAR level must be zero or greater"));
+      }
+      for (const unsupported of options.unsupportedColumns) {
+        if (source[normalizeKey(unsupported)]?.trim()) {
+          warnings.push(
+            importIssue(
+              unsupported,
+              "UNSUPPORTED_COLUMN",
+              `Populated column ${unsupported} is not part of menu template v${MENU_IMPORT_TEMPLATE_VERSION}`,
+            ),
+          );
+        }
+      }
+
+      const sku = string(normalized.sku).trim().toUpperCase();
+      const skuOwner = sku ? existingBySku.get(sku) : undefined;
+      if (skuOwner && string(skuOwner["code"]).toUpperCase() !== code) {
+        errors.push(importIssue("sku", "SKU_CONFLICT", "SKU belongs to another menu item"));
+      }
+      const barcode = string(normalized.barcode).trim();
+      const barcodeOwner = barcode ? existingByBarcode.get(barcode) : undefined;
+      if (barcodeOwner && string(barcodeOwner["code"]).toUpperCase() !== code) {
+        errors.push(
+          importIssue("barcode", "BARCODE_CONFLICT", "Barcode belongs to another menu item"),
+        );
+      }
+
+      const stationSource = string(normalized.stationCode).trim();
+      if (stationSource && options.targetMode === "TENANT_MASTER") {
+        warnings.push(
+          importIssue(
+            "stationCode",
+            "BRANCH_ACTIVATION_REQUIRED",
+            "Station is branch-specific and will be applied when the item is activated for a branch",
+          ),
+        );
+      } else if (targetBranches.length) {
+        const stationIdsByBranch: Record<string, string> = {};
+        for (const targetBranchId of targetBranches) {
+          if (!stationSource) {
+            warnings.push(
+              importIssue(
+                "stationCode",
+                "UNASSIGNED_STATION",
+                "No production station is assigned for this branch",
+              ),
+            );
+            continue;
+          }
+          const normalizedSource = normalizeReferenceValue(stationSource);
+          const mappedReference =
+            stationMap[normalizedSource] ??
+            stationAliases.get(`${targetBranchId}:${normalizedSource}`) ??
+            stationAliases.get(`TENANT:${normalizedSource}`) ??
+            stationSource;
+          const station = stations.find(
+            (candidate) =>
+              candidate.branch_id === targetBranchId &&
+              (candidate.id === mappedReference ||
+                candidate.code.toUpperCase() === mappedReference.toUpperCase()),
+          );
+          if (!station) {
+            errors.push(
+              importIssue(
+                "stationCode",
+                "UNKNOWN_STATION",
+                `Station ${stationSource} is not configured for the target branch`,
+              ),
+            );
+          } else {
+            stationIdsByBranch[targetBranchId] = station.id;
+          }
+        }
+        normalized.stationIdsByBranch = stationIdsByBranch;
+        normalized.stationId = Object.values(stationIdsByBranch)[0];
+      }
+
+      const taxCode = string(normalized.taxCode).trim();
+      if (taxCode) {
+        const applicable = taxRows.filter(
+          (tax) =>
+            (tax.id === taxCode || tax.code.toUpperCase() === taxCode.toUpperCase()) &&
+            (!tax.branch_id || targetBranches.includes(tax.branch_id)),
+        );
+        if (!applicable.length) {
+          errors.push(
+            importIssue("taxCode", "UNKNOWN_TAX", "Tax code is not active for the target"),
+          );
+        } else {
+          normalized.taxRuleId = applicable[0]!.id;
+        }
+      }
+      const unit = string(normalized.unitOfMeasure).trim().toUpperCase();
+      if (unit && !unitCodes.has(unit)) {
+        errors.push(
+          importIssue("unitOfMeasure", "UNKNOWN_UNIT", "Unit of measure is not configured"),
+        );
+      }
+      if (string(normalized.kitchenPrinterGroup).trim()) {
+        warnings.push(
+          importIssue(
+            "kitchenPrinterGroup",
+            "ROUTING_REFERENCE_PENDING",
+            "Printer group is retained for routing review because no printer-group master exists",
+          ),
+        );
+      }
+      const recipeReference = string(normalized.recipeReference).trim();
+      if (recipeReference && !recipeIds.has(recipeReference)) {
+        normalized.recipePending = true;
+        warnings.push(
+          importIssue(
+            "recipeCode",
+            "RECIPE_PENDING",
+            "Recipe reference is not linked to an active recipe and remains pending",
+          ),
+        );
+      }
+      if (string(normalized.modifierGroupReference).trim()) {
+        warnings.push(
+          importIssue(
+            "modifierGroupCode",
+            "MODIFIER_REFERENCE_PENDING",
+            "Modifier group is retained but cannot be verified because no modifier-group master exists",
+          ),
+        );
+      }
+      if (string(normalized.imageFilename).trim()) {
+        warnings.push(
+          importIssue(
+            "imageFilename",
+            "IMAGE_REFERENCE_PENDING",
+            "Image filename is retained; upload and asset verification remain separate",
+          ),
+        );
+      }
+      if (string(normalized.branchCode).trim() && options.targetMode !== "ROW_BRANCHES") {
+        warnings.push(
+          importIssue(
+            "branchCode",
+            "BRANCH_COLUMN_NOT_TARGETING",
+            `branchCode is not used because targeting is controlled by ${options.targetMode}`,
+          ),
+        );
+      }
+      const suppliedChannels = Array.isArray(normalized.channelCodes)
+        ? (normalized.channelCodes as string[])
+        : [];
+      const unknownChannels = suppliedChannels.filter((channel) => !channelCodes.has(channel));
+      if (unknownChannels.length) {
+        errors.push(
+          importIssue(
+            "channels",
+            "UNKNOWN_CHANNEL",
+            `Ordering channel is not configured: ${unknownChannels.join(", ")}`,
+          ),
+        );
+      }
+
+      const existing = existingByCode.get(code);
+      normalized.existingId = existing?.["id"];
+      let action: NonNullable<ImportPreviewRow["action"]> = "CREATE";
+      if (existing) {
+        normalized.before = existing;
+        if (options.duplicateStrategy === "ERROR" || options.duplicateStrategy === "CREATE") {
+          errors.push(
+            importIssue(
+              "itemCode",
+              "DUPLICATE_ITEM",
+              `Menu item ${code} already exists; choose Update existing or Skip existing`,
+            ),
+          );
+          action = "ERROR";
+        } else if (options.duplicateStrategy === "SKIP") {
+          action = "SKIP";
+        } else {
+          action =
+            targetBranches.length || !menuRowMatchesExisting(normalized, existing)
+              ? "UPDATE"
+              : "NO_CHANGE";
+        }
+      } else if (options.duplicateStrategy === "UPDATE") {
+        errors.push(
+          importIssue(
+            "itemCode",
+            "MISSING_FOR_UPDATE",
+            `Menu item ${code} does not exist for Update existing`,
+          ),
+        );
+        action = "ERROR";
+      }
+      results.push({
+        rowNumber: index + 1,
+        rowKey: assignmentKey || `MENU-ROW-${index + 1}`,
+        status: errors.length ? "ERROR" : warnings.length ? "WARNING" : "VALID",
+        action: errors.length ? "ERROR" : action,
+        normalized,
+        errors,
+        warnings,
+      });
+    }
+    return results;
+  }
+
   private async buildImportStatements(
     kind: string,
     strategy: string,
     branchId: string | null,
     value: ImportValue,
+    options: { masterAlreadyPlanned?: boolean } = {},
   ) {
     const code = string(value.code || value.employeeCode).toUpperCase();
     const stamp = now();
@@ -3002,65 +4083,150 @@ export class OnboardingService {
         entityId: exists.id,
         skipped: true,
       };
-    if (!exists && strategy === "UPDATE")
+    if (!exists && !options.masterAlreadyPlanned && strategy === "UPDATE")
       throw validation(`${kind} ${code} does not exist for UPDATE strategy`);
     const id = exists?.id ?? stableId(kind.toLowerCase(), code);
     const statements: D1PreparedStatement[] = [];
+    const branchSettingKeys: string[] = [];
     if (kind === "MENU") {
-      statements.push(
-        this.db
-          .prepare(
-            `INSERT INTO menu_catalog_items
+      const menuPayload = {
+        imported: true,
+        templateVersion: value.templateVersion,
+        menuSection: value.menuSection,
+        costPriceMinor: value.costPriceMinor,
+        unitOfMeasure: value.unitOfMeasure,
+        prepMinutes: value.prepMinutes,
+        parLevel: value.parLevel,
+        imageFilename: value.imageFilename,
+        recipePending: Boolean(value.recipePending),
+      };
+      const insertSql = `INSERT INTO menu_catalog_items
             (tenant_id,id,code,sku,name,category_code,description,selling_price_minor,currency,
              tax_rule_id,service_charge_applicable,station_id,recipe_reference,modifier_group_reference,
              barcode,sellable,active,payload_json,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
-           ON CONFLICT(tenant_id,id) DO UPDATE SET code=excluded.code,sku=excluded.sku,name=excluded.name,
-             category_code=excluded.category_code,description=excluded.description,
-             selling_price_minor=excluded.selling_price_minor,currency=excluded.currency,
-             tax_rule_id=excluded.tax_rule_id,service_charge_applicable=excluded.service_charge_applicable,
-             station_id=excluded.station_id,recipe_reference=excluded.recipe_reference,
-             modifier_group_reference=excluded.modifier_group_reference,barcode=excluded.barcode,
-             sellable=excluded.sellable,payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
-          )
-          .bind(
-            this.actor.tenantId,
-            id,
-            code,
-            optionalString(value.sku),
-            string(value.name),
-            string(value.categoryCode),
-            optionalString(value.description),
-            number(value.sellingPriceMinor),
-            string(value.currency),
-            optionalString(value.taxRuleId),
-            bool(Boolean(value.serviceChargeApplicable)),
-            optionalString(value.stationId),
-            optionalString(value.recipeReference),
-            optionalString(value.modifierGroupReference),
-            optionalString(value.barcode),
-            bool(value.sellable !== false),
-            json({ imported: true }),
-            stamp,
-            stamp,
-          ),
-      );
-      if (branchId)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)`;
+      const updateSql = `UPDATE menu_catalog_items SET
+             code=?,sku=?,name=?,category_code=?,description=?,selling_price_minor=?,currency=?,
+             tax_rule_id=?,service_charge_applicable=?,station_id=NULL,recipe_reference=?,
+             modifier_group_reference=?,barcode=?,sellable=?,payload_json=?,updated_at=?
+           WHERE tenant_id=? AND id=?`;
+      if (options.masterAlreadyPlanned) {
+        // The same new tenant item may have multiple row-branch assignments in one atomic import.
+      } else if (exists) {
         statements.push(
           this.db
-            .prepare(
-              `INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(tenant_id,branch_id,menu_item_id) DO UPDATE SET selling_price_minor=excluded.selling_price_minor,available=excluded.available,channel_availability_json=excluded.channel_availability_json,updated_at=excluded.updated_at`,
-            )
+            .prepare(updateSql)
+            .bind(
+              code,
+              optionalString(value.sku),
+              string(value.name),
+              string(value.categoryCode),
+              optionalString(value.description),
+              number(value.sellingPriceMinor),
+              string(value.currency),
+              optionalString(value.taxRuleId),
+              bool(Boolean(value.serviceChargeApplicable)),
+              optionalString(value.recipeReference),
+              optionalString(value.modifierGroupReference),
+              optionalString(value.barcode),
+              bool(value.sellable !== false),
+              json(menuPayload),
+              stamp,
+              this.actor.tenantId,
+              id,
+            ),
+        );
+      } else {
+        statements.push(
+          this.db
+            .prepare(insertSql)
             .bind(
               this.actor.tenantId,
-              branchId,
               id,
+              code,
+              optionalString(value.sku),
+              string(value.name),
+              string(value.categoryCode),
+              optionalString(value.description),
+              number(value.sellingPriceMinor),
+              string(value.currency),
+              optionalString(value.taxRuleId),
+              bool(Boolean(value.serviceChargeApplicable)),
               null,
-              bool(value.available !== false),
-              json(value.channelAvailability ?? {}),
+              optionalString(value.recipeReference),
+              optionalString(value.modifierGroupReference),
+              optionalString(value.barcode),
+              bool(value.sellable !== false),
+              json(menuPayload),
+              stamp,
               stamp,
             ),
         );
+      }
+      const targetBranchIds = Array.isArray(value.targetBranchIds)
+        ? [...new Set(value.targetBranchIds.map(string).filter(Boolean))]
+        : branchId
+          ? [branchId]
+          : [];
+      const stationIdsByBranch =
+        value.stationIdsByBranch && typeof value.stationIdsByBranch === "object"
+          ? (value.stationIdsByBranch as Record<string, unknown>)
+          : {};
+      for (const targetBranchId of targetBranchIds) {
+        branchSettingKeys.push(`${targetBranchId}:${id}`);
+        const stationId = optionalString(stationIdsByBranch[targetBranchId]);
+        statements.push(
+          this.db
+            .prepare(
+              `INSERT INTO menu_item_branch_settings
+                (tenant_id,branch_id,menu_item_id,selling_price_minor,available,
+                 channel_availability_json,updated_at,station_id,kitchen_printer_group,payload_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(tenant_id,branch_id,menu_item_id) DO UPDATE SET
+                 selling_price_minor=excluded.selling_price_minor,available=excluded.available,
+                 channel_availability_json=excluded.channel_availability_json,
+                 station_id=excluded.station_id,kitchen_printer_group=excluded.kitchen_printer_group,
+                 payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+            )
+            .bind(
+              this.actor.tenantId,
+              targetBranchId,
+              id,
+              value.branchPriceMinor === undefined ? null : number(value.branchPriceMinor),
+              bool(value.available !== false),
+              json(value.channelAvailability ?? {}),
+              stamp,
+              stationId,
+              optionalString(value.kitchenPrinterGroup),
+              json({ imported: true, templateVersion: value.templateVersion }),
+            ),
+        );
+        const stationSource = string(value.stationCode).trim();
+        if (stationId && stationSource) {
+          const normalizedSource = normalizeReferenceValue(stationSource);
+          statements.push(
+            this.db
+              .prepare(
+                `INSERT INTO setup_import_reference_aliases
+                  (tenant_id,id,reference_type,source_value_normalized,branch_id,target_id,active,
+                   created_by,created_at,updated_at)
+                 VALUES (?,?,'STATION',?,?,?,1,?,?,?)
+                 ON CONFLICT(tenant_id,reference_type,source_value_normalized,branch_id)
+                 DO UPDATE SET target_id=excluded.target_id,active=1,updated_at=excluded.updated_at`,
+              )
+              .bind(
+                this.actor.tenantId,
+                stableId("station-alias", `${targetBranchId}:${normalizedSource}`),
+                normalizedSource,
+                targetBranchId,
+                stationId,
+                this.actor.id,
+                stamp,
+                stamp,
+              ),
+          );
+        }
+      }
     } else if (kind === "INVENTORY") {
       const baseUnitId = stableId("unit", string(value.baseUnitCode).toUpperCase());
       const purchaseUnitId = value.purchaseUnitCode
@@ -3223,44 +4389,124 @@ export class OnboardingService {
           .bind(this.actor.tenantId, userId, targetBranchId, this.actor.id, stamp),
       );
     }
-    return { statements, entityType: kind, entityId: id, skipped: false };
+    return {
+      statements,
+      entityType: kind,
+      entityId: id,
+      skipped: false,
+      created: !exists && !options.masterAlreadyPlanned,
+      masterChanged: !options.masterAlreadyPlanned,
+      branchSettingKeys,
+    };
+  }
+
+  private async verifyMenuImport(
+    entityIds: Set<string>,
+    branchSettingKeys: Set<string>,
+    counts: { created: number; updated: number; skipped: number },
+  ): Promise<NonNullable<ImportPreview["verification"]>> {
+    let catalogueRows = 0;
+    const ids = [...entityIds];
+    for (let offset = 0; offset < ids.length; offset += 80) {
+      const chunk = ids.slice(offset, offset + 80);
+      const result = await this.db
+        .prepare(
+          `SELECT COUNT(*) count FROM menu_catalog_items
+           WHERE tenant_id=? AND active=1 AND id IN (${chunk.map(() => "?").join(",")})`,
+        )
+        .bind(this.actor.tenantId, ...chunk)
+        .first<{ count: number }>();
+      catalogueRows += number(result?.count);
+    }
+    let branchSettings = 0;
+    const pairs = [...branchSettingKeys].map((key) => {
+      const split = key.indexOf(":");
+      return { branchId: key.slice(0, split), itemId: key.slice(split + 1) };
+    });
+    for (let offset = 0; offset < pairs.length; offset += 40) {
+      const chunk = pairs.slice(offset, offset + 40);
+      const predicates = chunk.map(() => "(branch_id=? AND menu_item_id=?)").join(" OR ");
+      const bindings = chunk.flatMap((pair) => [pair.branchId, pair.itemId]);
+      const result = await this.db
+        .prepare(
+          `SELECT COUNT(*) count FROM menu_item_branch_settings
+           WHERE tenant_id=? AND (${predicates})`,
+        )
+        .bind(this.actor.tenantId, ...bindings)
+        .first<{ count: number }>();
+      branchSettings += number(result?.count);
+    }
+    const catalogueVerified = catalogueRows === ids.length;
+    const branchSettingsVerified = branchSettings === pairs.length;
+    const warnings = [
+      ...(catalogueVerified ? [] : ["Not every committed item was found in the catalogue"]),
+      ...(branchSettingsVerified
+        ? []
+        : ["Not every selected branch received an explicit menu activation"]),
+    ];
+    return {
+      status: warnings.length ? "FAILED" : "VERIFIED",
+      ...counts,
+      failed: warnings.length ? Math.max(1, ids.length - catalogueRows) : 0,
+      branchSettings,
+      catalogueVerified: catalogueVerified && branchSettingsVerified,
+      warnings,
+    };
   }
 
   private async getImport(id: string): Promise<ImportPreview> {
     const record = await this.db
       .prepare(
-        `SELECT id,import_kind,status,original_name,duplicate_strategy,row_count,valid_count,warning_count,error_count,idempotency_key,created_at FROM setup_imports WHERE tenant_id=? AND id=?`,
+        `SELECT id,import_kind,status,original_name,duplicate_strategy,row_count,valid_count,
+                warning_count,error_count,idempotency_key,created_at,template_version,
+                preview_fingerprint,importer_version,target_mode,target_branch_ids_json,expires_at,
+                verification_status,verification_json
+         FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, id)
-      .first<Row & { idempotency_key?: unknown }>();
+      .first<Record<string, unknown>>();
     if (!record) throw notFound("Import not found");
     const rows = await this.db
       .prepare(
-        `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number LIMIT 1000`,
+        `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json,action
+         FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number LIMIT 1000`,
       )
       .bind(this.actor.tenantId, id)
-      .all<Row>();
+      .all<Record<string, unknown>>();
+    const parsedVerification = parseJson<ImportPreview["verification"]>(
+      string(record["verification_json"]),
+      undefined,
+    );
+    const verification = parsedVerification?.status ? parsedVerification : undefined;
     return {
-      id: string(record.id),
-      commitKey: `commit:${string(record.idempotency_key)}`,
-      kind: string(record.import_kind) as ImportPreview["kind"],
-      status: string(record.status) as ImportPreview["status"],
-      originalName: string(record.original_name),
-      duplicateStrategy: string(record.duplicate_strategy) as ImportPreview["duplicateStrategy"],
-      rowCount: number(record.row_count),
-      validCount: number(record.valid_count),
-      warningCount: number(record.warning_count),
-      errorCount: number(record.error_count),
-      canCommit: string(record.status) === "VALIDATED",
+      id: string(record["id"]),
+      commitKey: `commit:${string(record["idempotency_key"])}`,
+      kind: string(record["import_kind"]) as ImportPreview["kind"],
+      status: string(record["status"]) as ImportPreview["status"],
+      templateVersion: number(record["template_version"]),
+      importerVersion: string(record["importer_version"]),
+      fingerprint: string(record["preview_fingerprint"]),
+      targetMode: string(record["target_mode"]) as ImportTargetMode,
+      targetBranchIds: parseJson<string[]>(string(record["target_branch_ids_json"]), []),
+      expiresAt: string(record["expires_at"]),
+      ...(verification ? { verification } : {}),
+      originalName: string(record["original_name"]),
+      duplicateStrategy: string(record["duplicate_strategy"]) as ImportPreview["duplicateStrategy"],
+      rowCount: number(record["row_count"]),
+      validCount: number(record["valid_count"]),
+      warningCount: number(record["warning_count"]),
+      errorCount: number(record["error_count"]),
+      canCommit: string(record["status"]) === "VALIDATED",
       rows: (rows.results ?? []).map((row) => ({
-        rowNumber: number(row.row_number),
-        rowKey: string(row.row_key),
-        status: string(row.status) as ImportPreviewRow["status"],
-        normalized: parseJson(string(row.normalized_json), {}),
-        errors: parseJson(string(row.errors_json), []),
-        warnings: parseJson(string(row.warnings_json), []),
+        rowNumber: number(row["row_number"]),
+        rowKey: string(row["row_key"]),
+        status: string(row["status"]) as ImportPreviewRow["status"],
+        action: string(row["action"]) as NonNullable<ImportPreviewRow["action"]>,
+        normalized: parseJson(string(row["normalized_json"]), {}),
+        errors: parseJson(string(row["errors_json"]), []),
+        warnings: parseJson(string(row["warnings_json"]), []),
       })),
-      createdAt: string(record.created_at),
+      createdAt: string(record["created_at"]),
     };
   }
 
@@ -3448,6 +4694,86 @@ export class OnboardingService {
   private canReadBranch(branchId: string) {
     return this.actor.branchScope.type === "ALL" || this.actor.assignedBranchIds.includes(branchId);
   }
+
+  private async resolveMenuImportTarget(input: ImportPreviewInput): Promise<{
+    mode: MenuImportTargetMode;
+    branchIds: string[];
+  }> {
+    const mode = input.targetMode ?? (input.branchId ? "SELECTED_BRANCHES" : "TENANT_MASTER");
+    const branchIds = [
+      ...new Set(input.targetBranchIds ?? (input.branchId ? [input.branchId] : [])),
+    ];
+    if (mode === "TENANT_MASTER") return { mode, branchIds: [] };
+    if (mode === "ROW_BRANCHES") {
+      if (branchIds.length) throw validation("ROW_BRANCHES uses branchCode from each row");
+      return { mode, branchIds: [] };
+    }
+    if (!branchIds.length) throw validation("Select at least one branch for the menu import");
+    for (const branchId of branchIds) await this.assertImportBranch(branchId);
+    return { mode, branchIds };
+  }
+
+  private async assertImportBranch(branchId: string) {
+    const isActiveBranch = branchId === this.actor.branchId;
+    const canSwitch = this.actor.permissions.includes(permissions.branchSwitch);
+    const trustedSetupWorker = this.actor.id === "system:setup-worker";
+    if (
+      !trustedSetupWorker &&
+      (!this.actor.assignedBranchIds.includes(branchId) || (!isActiveBranch && !canSwitch))
+    ) {
+      throw denied("Branch is outside the authenticated import assignment");
+    }
+    const branch = await this.db
+      .prepare("SELECT id FROM branches WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, branchId)
+      .first();
+    if (!branch) throw notFound("Branch not found");
+  }
+
+  private async assertQueuedImportAuthority(userId: string, targetBranchIds: string[]) {
+    const authorized = await this.db
+      .prepare(
+        `SELECT u.id FROM users u
+         WHERE u.tenant_id=? AND u.id=? AND u.active=1 AND EXISTS (
+           SELECT 1 FROM user_roles ur
+           JOIN role_permissions rp ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id
+           WHERE ur.tenant_id=u.tenant_id AND ur.user_id=u.id AND rp.permission_code=?
+         )`,
+      )
+      .bind(this.actor.tenantId, userId, permissions.setupImport)
+      .first<{ id: string }>();
+    if (!authorized) throw denied("Import creator no longer has setup import permission");
+    for (const branchId of targetBranchIds) {
+      const assignment = await this.db
+        .prepare(
+          "SELECT 1 allowed FROM user_branches WHERE tenant_id=? AND user_id=? AND branch_id=?",
+        )
+        .bind(this.actor.tenantId, userId, branchId)
+        .first<{ allowed: number }>();
+      if (!assignment) throw denied("Import creator is no longer assigned to a target branch");
+    }
+  }
+
+  private async menuCatalogueRevision() {
+    const [items, settings] = await Promise.all([
+      this.db
+        .prepare(
+          "SELECT COUNT(*) count,COALESCE(MAX(updated_at),'') latest FROM menu_catalog_items WHERE tenant_id=?",
+        )
+        .bind(this.actor.tenantId)
+        .first<{ count: number; latest: string }>(),
+      this.db
+        .prepare(
+          "SELECT COUNT(*) count,COALESCE(MAX(updated_at),'') latest FROM menu_item_branch_settings WHERE tenant_id=?",
+        )
+        .bind(this.actor.tenantId)
+        .first<{ count: number; latest: string }>(),
+    ]);
+    return sha256Text(
+      `${number(items?.count)}:${string(items?.latest)}:${number(settings?.count)}:${string(settings?.latest)}`,
+    );
+  }
+
   private async assertBranch(branchId: string) {
     if (!this.canReadBranch(branchId))
       throw denied("Branch is outside the authenticated assignment");
@@ -3470,6 +4796,15 @@ async function parseRows(bytes: Uint8Array, extension: string) {
   return parseCsvRows(new TextDecoder().decode(bytes));
 }
 
+function assertSafeParsedRows(rows: Array<Record<string, string>>) {
+  for (const row of rows) {
+    if (Object.keys(row).length > 100) throw validation("Import column limit exceeded");
+    if (Object.values(row).some((value) => value.length > 10_000)) {
+      throw validation("Import cell length limit exceeded");
+    }
+  }
+}
+
 function normalizeImportRow(
   kind: string,
   row: Record<string, string>,
@@ -3488,19 +4823,40 @@ function normalizeImportRow(
       code: value("itemCode", "code", "sku"),
       sku: value("sku") || undefined,
       name: value("name", "itemName"),
-      categoryCode: value("category", "categoryCode"),
+      categoryCode: value("categoryCode", "category"),
+      menuSection: value("menuSection") || undefined,
       description: value("description") || undefined,
-      sellingPriceMinor: parseMoneyMinor(value("price", "sellingPrice")),
+      rawBasePrice: value("basePrice", "price", "sellingPrice"),
+      sellingPriceMinor: parseMoneyMinor(value("basePrice", "price", "sellingPrice")),
+      rawCostPrice: value("costPrice") || undefined,
+      costPriceMinor: value("costPrice") ? parseMoneyMinor(value("costPrice")) : undefined,
       currency: (value("currency") || defaultCurrency || "").toUpperCase(),
-      taxRuleId: value("tax", "taxRule") || undefined,
+      taxCode: value("taxCode", "taxCategory", "tax", "taxRule") || undefined,
       serviceChargeApplicable: parseBoolean(value("serviceCharge", "serviceChargeApplicable")),
-      stationCode: value("station", "productionStation") || undefined,
-      recipeReference: value("recipe", "recipeReference") || undefined,
-      modifierGroupReference: value("modifierGroup", "modifierGroupReference") || undefined,
+      unitOfMeasure: value("unitOfMeasure", "unit") || undefined,
+      stationCode: value("stationCode", "station", "productionStation") || undefined,
+      kitchenPrinterGroup: value("kitchenPrinterGroup") || undefined,
+      recipeReference: value("recipeCode", "recipe", "recipeReference") || undefined,
+      modifierGroupReference:
+        value("modifierGroupCode", "modifierGroup", "modifierGroupReference") || undefined,
       barcode: value("barcode") || undefined,
       sellable: !isFalse(value("sellable", "active")),
       available: !isFalse(value("available")),
-      channelAvailability: parseList(value("channelAvailability")),
+      branchCode: value("branchCode") || undefined,
+      rawBranchPrice: value("branchPrice") || undefined,
+      branchPriceMinor: value("branchPrice") ? parseMoneyMinor(value("branchPrice")) : undefined,
+      channelCodes: parseList(value("channels", "channelAvailability")).map((item) =>
+        item.toUpperCase(),
+      ),
+      channelAvailability: Object.fromEntries(
+        parseList(value("channels", "channelAvailability")).map((item) => [
+          item.toUpperCase(),
+          true,
+        ]),
+      ),
+      prepMinutes: parseInteger(value("prepMinutes", "prep") || "0"),
+      parLevel: parseInteger(value("parLevel", "par") || "0"),
+      imageFilename: value("imageFilename") || undefined,
       branchId,
     };
   if (kind === "INVENTORY")
@@ -3562,6 +4918,78 @@ function applyColumnMap(row: Record<string, string>, columnMap?: Record<string, 
     normalized[normalizeKey(target)] = normalized[normalizeKey(source)] ?? "";
   return normalized;
 }
+function applyMenuColumnMap(row: Record<string, string>, columnMap?: Record<string, string>) {
+  const normalized: Record<string, string> = {};
+  for (const [source, value] of Object.entries(row)) {
+    const canonical = resolveMenuImportHeader(source);
+    normalized[canonical ? normalizeKey(canonical) : normalizeKey(source)] = value;
+  }
+  for (const [target, source] of Object.entries(columnMap ?? {})) {
+    const canonicalTarget = resolveMenuImportHeader(target) ?? resolveMenuImportHeader(source);
+    if (!canonicalTarget) continue;
+    const sourceKey = normalizeMenuImportHeader(source);
+    const sourceEntry = Object.entries(row).find(
+      ([header]) => normalizeMenuImportHeader(header) === sourceKey,
+    );
+    normalized[normalizeKey(canonicalTarget)] = sourceEntry?.[1] ?? "";
+  }
+  return normalized;
+}
+function normalizeReferenceValue(value: string) {
+  return value.trim().toUpperCase().replace(/\s+/g, " ");
+}
+function normalizeReferenceMap(value?: { stations?: Record<string, string> }) {
+  return {
+    stations: Object.fromEntries(
+      Object.entries(value?.stations ?? {})
+        .map(([source, target]) => [normalizeReferenceValue(source), target.trim()] as const)
+        .filter(([source, target]) => Boolean(source && target))
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
+}
+function normalizeStringRecord(value?: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(value ?? {})
+      .map(([key, item]) => [normalizeKey(key), item.trim()] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+function stableJson(value: unknown) {
+  const normalize = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(normalize);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, child]) => [key, normalize(child)]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(normalize(value));
+}
+async function sha256Text(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+function menuRowMatchesExisting(normalized: ImportValue, existing: Record<string, unknown>) {
+  return (
+    string(existing["code"]).toUpperCase() === string(normalized.code).toUpperCase() &&
+    optionalString(existing["sku"]) === optionalString(normalized.sku) &&
+    string(existing["name"]) === string(normalized.name) &&
+    string(existing["category_code"]) === string(normalized.categoryCode) &&
+    optionalString(existing["description"]) === optionalString(normalized.description) &&
+    number(existing["selling_price_minor"]) === number(normalized.sellingPriceMinor) &&
+    string(existing["currency"]).toUpperCase() === string(normalized.currency).toUpperCase() &&
+    optionalString(existing["tax_rule_id"]) === optionalString(normalized.taxRuleId) &&
+    number(existing["service_charge_applicable"]) ===
+      bool(Boolean(normalized.serviceChargeApplicable)) &&
+    optionalString(existing["recipe_reference"]) === optionalString(normalized.recipeReference) &&
+    optionalString(existing["barcode"]) === optionalString(normalized.barcode) &&
+    number(existing["sellable"]) === bool(normalized.sellable !== false)
+  );
+}
 function normalizeKey(value: string) {
   return value
     .trim()
@@ -3578,6 +5006,13 @@ function parseMoneyMinor(value: string) {
   return signed <= BigInt(Number.MAX_SAFE_INTEGER) && signed >= BigInt(Number.MIN_SAFE_INTEGER)
     ? Number(signed)
     : Number.NaN;
+}
+function parseMenuMoney(value: string, currency: string) {
+  try {
+    return parseMajorAmount(value.replace(/[,\s]/g, ""), currency);
+  } catch {
+    return Number.NaN;
+  }
 }
 function parseInteger(value: string) {
   return /^-?\d+$/.test(value.trim()) ? Number(value) : Number.NaN;
@@ -3678,6 +5113,25 @@ function stableId(prefix: string, value: string) {
 }
 function clean(value: string) {
   return value.trim().replace(/\s+/g, " ");
+}
+function normalizeComparable(value: unknown) {
+  return string(value)
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+function normalizedAddress(payload: unknown) {
+  const parsed = parseJson<Record<string, unknown>>(string(payload), {});
+  return normalizeComparable(parsed["address"]);
+}
+function branchSummary(row: Record<string, unknown>) {
+  return {
+    id: string(row["id"]),
+    code: string(row["code"]),
+    name: string(row["name"]),
+    lifecycleState: string(row["lifecycle_state"]),
+    isBootstrap: Boolean(row["is_bootstrap"]),
+  };
 }
 function string(value: unknown) {
   return value === null || value === undefined ? "" : String(value);

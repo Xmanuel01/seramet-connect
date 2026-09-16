@@ -32,7 +32,7 @@ export type RestaurantRegistrationResult = {
   nextPath: "/seramet-setup";
 };
 
-const tenantAdministratorPermissions = allPermissionCodes.filter(
+const accountOwnerPermissions = allPermissionCodes.filter(
   (code) => code !== permissions.platformTenantsProvision && code !== permissions.setupDemoReset,
 );
 
@@ -89,6 +89,7 @@ export class RestaurantRegistrationService {
       goLiveState: "SETUP",
       nextPath: "/seramet-setup",
     };
+    const ownerPermissionPlaceholders = accountOwnerPermissions.map(() => "?").join(",");
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
@@ -116,8 +117,9 @@ export class RestaurantRegistrationService {
       this.db
         .prepare(
           `INSERT INTO branches
-            (tenant_id,id,brand_id,code,name,timezone,business_day_cutoff_minutes,active,payload_json)
-           VALUES (?,?,?,?,?,?,?,1,?)`,
+            (tenant_id,id,brand_id,code,name,timezone,business_day_cutoff_minutes,active,payload_json,
+             lifecycle_state,is_bootstrap,version)
+           VALUES (?,?,?,?,?,?,?,1,?,'DRAFT',1,1)`,
         )
         .bind(
           tenantId,
@@ -287,14 +289,20 @@ export class RestaurantRegistrationService {
         ),
       this.db
         .prepare(
-          "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,'Tenant Administrator',1,'{}')",
+          "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,'Account Owner',1,?)",
         )
-        .bind(tenantId, roleId, "TENANT_ADMINISTRATOR"),
+        .bind(
+          tenantId,
+          roleId,
+          "ACCOUNT_OWNER",
+          json({ template: "ACCOUNT_OWNER", ownershipRole: true, operationalRole: false }),
+        ),
       this.db
         .prepare(
           `INSERT INTO users
-            (tenant_id,id,email,name,password_version,active,payload_json,created_at,updated_at)
-           VALUES (?,?,?,?,1,1,?,?,?)`,
+            (tenant_id,id,email,name,password_version,active,payload_json,created_at,updated_at,
+             normalized_email,employment_status,effective_from)
+           VALUES (?,?,?,?,1,1,?,?,?,?,'ACTIVE',?)`,
         )
         .bind(
           tenantId,
@@ -303,6 +311,8 @@ export class RestaurantRegistrationService {
           clean(input.administratorName),
           json({ externalIdentityProvider: identity.provider }),
           stamp,
+          stamp,
+          identity.email?.trim().toLowerCase() ?? null,
           stamp,
         ),
       this.db
@@ -326,6 +336,13 @@ export class RestaurantRegistrationService {
         .prepare("INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)")
         .bind(tenantId, userId, roleId),
       this.db
+        .prepare(
+          `INSERT INTO account_owners
+            (tenant_id,user_id,status,granted_by,granted_at,ended_at,reason,metadata_json)
+           VALUES (?,?,'ACTIVE',?,?,NULL,'Verified restaurant registration','{}')`,
+        )
+        .bind(tenantId, userId, userId, stamp),
+      this.db
         .prepare("INSERT INTO user_branches (tenant_id,user_id,branch_id) VALUES (?,?,?)")
         .bind(tenantId, userId, branchId),
       this.db
@@ -338,9 +355,17 @@ export class RestaurantRegistrationService {
       this.db
         .prepare(
           `INSERT INTO role_permissions (tenant_id,role_id,permission_code)
-           SELECT ?,?,code FROM permissions WHERE code NOT IN (?,?)`,
+           SELECT ?,?,code FROM permissions WHERE code IN (${ownerPermissionPlaceholders})`,
         )
-        .bind(tenantId, roleId, permissions.platformTenantsProvision, permissions.setupDemoReset),
+        .bind(tenantId, roleId, ...accountOwnerPermissions),
+      this.db
+        .prepare(
+          `INSERT INTO pos_security_policies
+            (tenant_id,pin_length,allow_employee_tiles,inactivity_lock_minutes,maximum_failures,
+             lockout_minutes,credential_history_count,updated_by,updated_at)
+           VALUES (?,6,0,15,5,15,3,?,?)`,
+        )
+        .bind(tenantId, userId, stamp),
       this.db
         .prepare(
           `INSERT INTO audit_events
@@ -359,7 +384,14 @@ export class RestaurantRegistrationService {
           "Verified self-service registration",
           crypto.randomUUID(),
           identity.sessionId,
-          json({ provider: identity.provider, branchId, brandId, legalEntityId }),
+          json({
+            provider: identity.provider,
+            branchId,
+            brandId,
+            legalEntityId,
+            ownerCreated: true,
+            branchLifecycle: "DRAFT",
+          }),
           stamp,
         ),
       this.db
@@ -530,4 +562,4 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export { tenantAdministratorPermissions };
+export { accountOwnerPermissions };

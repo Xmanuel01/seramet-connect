@@ -41,13 +41,48 @@ export async function handleOfflineSyncApi(
   if (!Array.isArray(commands) || commands.length === 0 || commands.length > 50) {
     throw new SerametHttpError(400, "commands must contain between 1 and 50 records");
   }
+  const parsedCommands = commands.map(parseCommand).sort((left, right) => {
+    return left.clientSequence - right.clientSequence;
+  });
+  const sequenceOwners = new Map<number, string>();
+  if (
+    parsedCommands.some((command) => {
+      const owner = sequenceOwners.get(command.clientSequence);
+      sequenceOwners.set(command.clientSequence, command.id);
+      return owner !== undefined && owner !== command.id;
+    })
+  ) {
+    throw new SerametHttpError(400, "Offline command clientSequence values must be unique");
+  }
   const results = [];
-  for (const raw of commands) {
-    const command = parseCommand(raw);
+  let chainedRevision: number | undefined;
+  let previousConflict = false;
+  for (const command of parsedCommands) {
     assertCommandScope(command, actor);
     await assertOfflinePaymentPolicy(command, env);
     authorizeSerametMutation(actor, command.commandType, actor.tenantId, command.branchId);
-    results.push(await processCommand(command, actor, env, repository));
+    if (previousConflict) {
+      results.push({
+        id: command.id,
+        status: "conflict",
+        code: "PREVIOUS_COMMAND_CONFLICT",
+        resolution: "MANAGER_REVIEW",
+      });
+      continue;
+    }
+    const result = await processCommand(
+      command,
+      actor,
+      env,
+      repository,
+      chainedRevision ?? command.expectedRevision,
+    );
+    results.push(result);
+    if (result.status === "conflict") {
+      previousConflict = true;
+    } else if ("revision" in result && typeof result.revision === "number") {
+      chainedRevision = result.revision;
+    }
   }
   return json({ ok: true, commands: results });
 }
@@ -77,6 +112,7 @@ async function processCommand(
   actor: Awaited<ReturnType<typeof authenticateSerametRequest>>,
   env: SerametEnv,
   repository: TransactionRepository,
+  expectedRevision?: number,
 ) {
   const db = env.SERAMET_DB!;
   const receivedAt = new Date().toISOString();
@@ -112,10 +148,12 @@ async function processCommand(
     .bind(actor.tenantId, command.idempotencyKey)
     .first<StoredCommandRow>();
   if (stored?.sync_status === "SYNCED") {
+    const result = stored.server_result_json ? JSON.parse(stored.server_result_json) : null;
     return {
       id: command.id,
       status: "duplicate",
-      result: stored.server_result_json ? JSON.parse(stored.server_result_json) : null,
+      ...(typeof result?.revision === "number" ? { revision: result.revision } : {}),
+      result,
     };
   }
   if (stored?.sync_status === "CONFLICT") {
@@ -133,6 +171,7 @@ async function processCommand(
       idempotencyKey: command.idempotencyKey,
       requestHash,
       correlationId: command.correlationId,
+      expectedRevision,
       deviceId: command.deviceId,
     });
     const result = {
@@ -234,6 +273,12 @@ function parseCommand(value: unknown): OfflineCommand {
   }
   if (!Number.isSafeInteger(command.clientSequence) || Number(command.clientSequence) <= 0) {
     throw new SerametHttpError(400, "clientSequence must be a positive safe integer");
+  }
+  if (
+    command.expectedRevision !== undefined &&
+    (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 0)
+  ) {
+    throw new SerametHttpError(400, "expectedRevision must be a non-negative safe integer");
   }
   return command as OfflineCommand;
 }

@@ -8,8 +8,14 @@ import { permissions } from "@/platform/permissions";
 import type { DeviceType } from "@/platform/types";
 import { moduleDecision, type ModuleKey } from "@/platform/module-access-registry";
 import { ServerOperationError } from "@/server/errors";
+import { resolveRuntimeConfiguration } from "@/server/environment";
 import { handleConfigurationApi } from "@/server/configuration-api";
 import { resolveServerModuleAccess } from "@/server/module-access-service";
+import {
+  deviceCredentialCookie,
+  PosIdentityService,
+  requireFullAuthentication,
+} from "@/server/pos-auth-service";
 
 const deviceTypes = new Set<DeviceType>([
   "POS_TERMINAL",
@@ -210,6 +216,7 @@ export async function handleOperationsApi(
 
   if (url.pathname === "/api/seramet/devices/register" && request.method === "POST") {
     const actor = await requirePermission(request, env, permissions.settingsHardwareManage);
+    requireFullAuthentication(actor);
     const db = requireDatabase(env);
     const body = await readObject(request, ["branchId", "deviceType", "name"]);
     const branchId = requiredString(body, "branchId");
@@ -229,34 +236,41 @@ export async function handleOperationsApi(
       .bind(actor.tenantId, id, branchId, deviceType, name, actor.id, stamp)
       .run();
     await appendAudit(db, actor, "DEVICE_REGISTERED", "HARDWARE_DEVICE", id, stamp);
-    return json({ ok: true, device: { id, branchId, deviceType, name, status: "PENDING" } }, 201);
+    return json(
+      { ok: true, device: { id, branchId, deviceType, name, status: "ACTIVATION_PENDING" } },
+      201,
+    );
   }
 
   const deviceAction = /^\/api\/seramet\/devices\/([^/]+)\/(activate|revoke)$/.exec(url.pathname);
   if (deviceAction && request.method === "POST") {
-    const actor = await requirePermission(request, env, permissions.settingsHardwareManage);
+    const actor = await requirePermission(request, env, permissions.deviceActivate);
+    requireFullAuthentication(actor);
     const db = requireDatabase(env);
     const id = decodeURIComponent(deviceAction[1]!);
-    const status = deviceAction[2] === "activate" ? "ACTIVE" : "REVOKED";
-    const stamp = new Date().toISOString();
-    await db
-      .prepare(
-        `UPDATE hardware_devices
-         SET trust_status = ?, revoked_at = CASE WHEN ? = 'REVOKED' THEN ? ELSE NULL END
-         WHERE tenant_id = ? AND id = ?`,
-      )
-      .bind(status, status, stamp, actor.tenantId, id)
-      .run();
-    if (status === "REVOKED") {
-      await db
-        .prepare(
-          "UPDATE auth_sessions SET revoked_at = ? WHERE tenant_id = ? AND device_id = ? AND revoked_at IS NULL",
-        )
-        .bind(stamp, actor.tenantId, id)
-        .run();
+    const service = new PosIdentityService(db);
+    if (deviceAction[2] === "activate") {
+      const issued = await service.issueDeviceCredential(
+        actor,
+        id,
+        request.headers.get("x-seramet-app-version") ?? undefined,
+      );
+      const headers = new Headers({
+        "content-type": "application/json",
+        "cache-control": "no-store",
+      });
+      headers.append(
+        "set-cookie",
+        deviceCredentialCookie(issued.credential, resolveRuntimeConfiguration(env).productionLike),
+      );
+      return new Response(
+        JSON.stringify({ ok: true, id, status: "ACTIVE", expiresAt: issued.expiresAt }),
+        { status: 200, headers },
+      );
     }
-    await appendAudit(db, actor, `DEVICE_${status}`, "HARDWARE_DEVICE", id, stamp);
-    return json({ ok: true, id, status });
+    const body = await readObject(request, ["reason"]);
+    await service.revokeDevice(actor, id, requiredString(body, "reason"));
+    return json({ ok: true, id, status: "REVOKED" });
   }
 
   if (url.pathname === "/api/seramet/system/health" && request.method === "GET") {

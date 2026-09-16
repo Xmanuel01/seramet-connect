@@ -714,7 +714,10 @@ export class LocationCurrencyService {
     const stamp = new Date().toISOString();
     return [
       this.db
-        .prepare("UPDATE branches SET code=?,name=? WHERE tenant_id=? AND id=?")
+        .prepare(
+          `UPDATE branches SET code=?,name=?,lifecycle_state='CONFIGURING',version=version+1
+           WHERE tenant_id=? AND id=? AND lifecycle_state IN ('DRAFT','CONFIGURING')`,
+        )
         .bind(code, name, this.actor.tenantId, branchId),
       this.db
         .prepare(
@@ -733,6 +736,7 @@ export class LocationCurrencyService {
       .first<DbRow>();
     if (!branch) throw notFound("Branch was not found");
     const payload = parseObject(text(branch["payload_json"]));
+    delete payload["onboardingProvisional"];
     if (response["useBusinessLocation"] === true) {
       const location = await this.db
         .prepare("SELECT * FROM tenant_business_locations WHERE tenant_id=? AND status='CONFIRMED'")
@@ -748,7 +752,10 @@ export class LocationCurrencyService {
     }
     return [
       this.db
-        .prepare("UPDATE branches SET payload_json=? WHERE tenant_id=? AND id=?")
+        .prepare(
+          `UPDATE branches SET payload_json=?,lifecycle_state='CONFIGURING',version=version+1
+           WHERE tenant_id=? AND id=? AND lifecycle_state IN ('DRAFT','CONFIGURING')`,
+        )
         .bind(JSON.stringify(payload), this.actor.tenantId, branchId),
     ];
   }

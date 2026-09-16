@@ -914,9 +914,14 @@ export class PaymentOrchestrator {
         `${method.displayName} has no configured receivable account`,
       );
     }
-    this.validateAllocations(next, input.tenantId, input.currency, input.amountMinor, [
-      { invoiceId: input.invoiceId, amountMinor: input.amountMinor },
-    ]);
+    this.validateAllocations(
+      next,
+      input.tenantId,
+      input.branchId,
+      input.currency,
+      input.amountMinor,
+      [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }],
+    );
     const stamp = new Date().toISOString();
     const transactionId = nextId("PTX", operations.transactions);
     const legacyPaymentIds = new Set(next.payments.map((payment) => payment.id));
@@ -1043,9 +1048,14 @@ export class PaymentOrchestrator {
         `${method.displayName} has no configured receivable account`,
       );
     }
-    this.validateAllocations(next, input.tenantId, input.currency, input.amountMinor, [
-      { invoiceId: input.invoiceId, amountMinor: input.amountMinor },
-    ]);
+    this.validateAllocations(
+      next,
+      input.tenantId,
+      input.branchId,
+      input.currency,
+      input.amountMinor,
+      [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }],
+    );
     const stamp = new Date().toISOString();
     const transactionId = nextId("PTX", operations.transactions);
     const legacyPaymentIds = new Set(next.payments.map((payment) => payment.id));
@@ -1194,9 +1204,14 @@ export class PaymentOrchestrator {
     if (sumMinor([previouslyApplied, input.amountMinor]) > original.amountMinor) {
       throw new Error("Deposit application exceeds the confirmed collection");
     }
-    this.validateAllocations(next, input.tenantId, input.currency, input.amountMinor, [
-      { invoiceId: input.invoiceId, amountMinor: input.amountMinor },
-    ]);
+    this.validateAllocations(
+      next,
+      input.tenantId,
+      input.branchId,
+      input.currency,
+      input.amountMinor,
+      [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }],
+    );
     const stamp = new Date().toISOString();
     const transactionId = nextId("PTX", operations.transactions);
     const beforePaymentIds = new Set(next.payments.map((payment) => payment.id));
@@ -1462,6 +1477,7 @@ export class PaymentOrchestrator {
     this.validateAllocations(
       next,
       input.tenantId,
+      input.branchId,
       input.currency,
       input.amountMinor,
       input.allocations,
@@ -1525,6 +1541,7 @@ export class PaymentOrchestrator {
     this.validateAllocations(
       next,
       input.tenantId,
+      input.branchId,
       input.currency,
       input.amountMinor,
       input.allocations,
@@ -1709,6 +1726,7 @@ export class PaymentOrchestrator {
   private validateAllocations(
     state: TransactionState,
     tenantId: string,
+    branchId: string,
     currency: string,
     paymentAmountMinor: number,
     allocations: AllocationRequest[],
@@ -1725,6 +1743,16 @@ export class PaymentOrchestrator {
         (candidate) => candidate.id === allocation.invoiceId && candidate.tenantId === tenantId,
       );
       if (!invoice) throw new Error(`Invoice ${allocation.invoiceId} not found for tenant`);
+      const invoiceBranchId =
+        invoice.branchId ?? this.configuration.resolveBranch(tenantId, invoice.branch).id;
+      if (invoiceBranchId !== branchId) {
+        throw new Error(`Invoice ${allocation.invoiceId} belongs to another branch`);
+      }
+      if (!["OPEN", "PARTIAL", "PENDING"].includes(invoice.status)) {
+        throw new Error(
+          `Invoice ${allocation.invoiceId} cannot accept payment from ${invoice.status}`,
+        );
+      }
       const dueMinor = parseMajorAmount(invoice.total - invoice.paid, tenantCurrency);
       if (allocation.amountMinor > dueMinor)
         throw new Error(`Allocation exceeds balance for ${invoice.id}`);

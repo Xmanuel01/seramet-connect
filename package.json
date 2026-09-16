@@ -27,6 +27,7 @@
     "test:pass12": "vitest run src/enterprise/pass-12-enterprise.test.ts",
     "test:pass12-load": "vitest run --reporter=verbose src/enterprise/pass-12-load.test.ts",
     "test:commercial": "vitest run src/server/commercial-launch.test.ts src/server/postgres-migration.test.ts",
+    "test:identity": "vitest run src/server/identity-device-branch-hardening.test.ts",
     "migrate:postgres": "vite-node scripts/migrate-postgres.ts",
     "audit:bundle": "node scripts/audit-production-bundle.mjs",
     "deploy:staging": "npm run build && node scripts/render-cloudflare-config.mjs staging && npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json",

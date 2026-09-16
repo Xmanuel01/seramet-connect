@@ -8,7 +8,8 @@ export type ImportKind =
   | "SUPPLIER"
   | "STAFF"
   | "OPENING_STOCK"
-  | "CONFIGURATION";
+  | "CONFIGURATION"
+  | "HISTORICAL_SALES";
 
 export type MalwareScanAdapter = {
   scan(input: { bytes: Uint8Array; filename: string; contentType: string }): Promise<{
@@ -26,6 +27,7 @@ const limits: Record<ImportKind, { maxBytes: number; maxRows: number; extensions
   STAFF: { maxBytes: 10 * 1024 * 1024, maxRows: 25_000, extensions: ["csv", "xlsx"] },
   OPENING_STOCK: { maxBytes: 15 * 1024 * 1024, maxRows: 50_000, extensions: ["csv", "xlsx"] },
   CONFIGURATION: { maxBytes: 2 * 1024 * 1024, maxRows: 10_000, extensions: ["json"] },
+  HISTORICAL_SALES: { maxBytes: 20 * 1024 * 1024, maxRows: 100_000, extensions: ["csv", "xlsx"] },
 };
 
 export async function validateImportFile(input: {

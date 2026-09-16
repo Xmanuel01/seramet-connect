@@ -11,6 +11,16 @@ import { SettlementService } from "@/payments/settlement-service";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
+export class TransactionConflictError extends Error {
+  readonly code = "CONFLICT";
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "TransactionConflictError";
+  }
+}
+
 export type IdempotencyRecord = {
   tenantId: string;
   key: string;
@@ -40,6 +50,7 @@ export type TransactionMutationCommit = {
   idempotencyKey: string;
   requestHash: string;
   correlationId: string;
+  expectedRevision?: number;
   deviceId?: string;
 };
 
@@ -110,10 +121,16 @@ export class MemoryTransactionRepository implements TransactionRepository {
         duplicate: true,
       };
     }
+    const currentRevision = memoryRevisions.get(input.actor.tenantId) ?? 0;
+    if (input.expectedRevision !== undefined && input.expectedRevision !== currentRevision) {
+      throw new TransactionConflictError(
+        "Authoritative state changed concurrently; reload and retry the command",
+      );
+    }
     const current = await this.loadState(input.actor.tenantId);
     const next = applyServerMutation(current, input.action, input.payload, input.actor);
     await this.saveState(next, input.actor, `Mutation ${input.action}`);
-    const revision = (memoryRevisions.get(input.actor.tenantId) ?? 0) + 1;
+    const revision = currentRevision + 1;
     memoryRevisions.set(input.actor.tenantId, revision);
     await this.saveIdempotency({
       tenantId: input.actor.tenantId,
@@ -192,7 +209,10 @@ export function applyServerMutation(
         next = TransactionEngine.createOrder(next, draft, "OPEN");
       }
       const createdOrderId =
-        orderId && next.orders.some((order) => order.id === orderId) ? orderId : next.orders[0]!.id;
+        orderId ??
+        next.orders.find((order) => !state.orders.some((current) => current.id === order.id))?.id;
+      if (!createdOrderId)
+        throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
     case "createGuestOrder": {
@@ -213,7 +233,10 @@ export function applyServerMutation(
         draft,
         scheduled || requiresReview ? "HELD" : "OPEN",
       );
-      const orderId = next.orders[0]!.id;
+      const orderId = next.orders.find(
+        (order) => !state.orders.some((current) => current.id === order.id),
+      )?.id;
+      if (!orderId) throw new Error("Guest order did not receive an authoritative identity");
       if (!scheduled && !requiresReview) {
         next = TransactionEngine.sendToKitchen(next, orderId, actor.name);
       }
@@ -243,20 +266,9 @@ export function applyServerMutation(
       return TransactionEngine.requestBill(next, orderId, actor.name);
     }
     case "prepareInvoiceForPayment": {
-      const requestedOrderId = typeof input["orderId"] === "string" ? input["orderId"] : undefined;
-      const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
-      let next = state;
-      if (requestedOrderId && next.orders.some((order) => order.id === requestedOrderId)) {
-        next = TransactionEngine.updateOrderDraft(next, requestedOrderId, draft, actor.name);
-      } else {
-        next = TransactionEngine.createOrder(next, draft, "OPEN");
-      }
-      const orderId =
-        requestedOrderId && next.orders.some((order) => order.id === requestedOrderId)
-          ? requestedOrderId
-          : next.orders[0]!.id;
-      next = TransactionEngine.sendToKitchen(next, orderId, actor.name);
-      return TransactionEngine.requestBill(next, orderId, actor.name);
+      const orderId = typeof input["orderId"] === "string" ? input["orderId"].trim() : "";
+      if (!orderId) throw new Error("An explicit order ID is required to prepare payment");
+      return TransactionEngine.prepareInvoiceForPayment(state, orderId, actor.name);
     }
     case "sendToKitchen":
       return TransactionEngine.sendToKitchen(state, String(input["orderId"]), actor.name);
@@ -424,12 +436,21 @@ export function applyServerMutation(
         input["splits"] as Parameters<typeof TransactionEngine.splitBill>[2],
         actor.name,
       );
-    case "cancelOrder":
-      return TransactionEngine.cancelOrder(
-        state,
-        String(input["orderId"]),
-        input["input"] as Parameters<typeof TransactionEngine.cancelOrder>[2],
-      );
+    case "cancelOrder": {
+      const orderId = String(input["orderId"]);
+      const order = state.orders.find((candidate) => candidate.id === orderId);
+      if (!order) throw new Error(`Order ${orderId} was not found`);
+      const cancellation = input["input"] as { reason?: unknown } | undefined;
+      const reason = typeof cancellation?.reason === "string" ? cancellation.reason.trim() : "";
+      if (!reason) throw new Error("Order cancellation requires a reason");
+      return TransactionEngine.cancelOrder(state, orderId, {
+        user: actor.name,
+        reason,
+        affectedItems: order.lines
+          .filter((line) => line.productionStatus !== "CANCELLED")
+          .map((line) => line.name),
+      });
+    }
     case "requestRefund":
       return TransactionEngine.requestRefund(
         state,
@@ -514,10 +535,9 @@ export function applyServerMutation(
       if (!method || !method.enabled) throw new Error("Configured payment method is unavailable");
       const invoice = state.bills.find((candidate) => candidate.id === invoiceId);
       if (!invoice) throw new Error("Invoice was not found");
-      if (
-        (invoice.branchId ?? actor.branchId) !== actor.branchId &&
-        actor.branchScope.type !== "ALL"
-      ) {
+      const invoiceBranchId =
+        invoice.branchId ?? configuration.resolveBranch(actor.tenantId, invoice.branch).id;
+      if (invoiceBranchId !== actor.branchId) {
         throw new Error("Invoice belongs to another branch");
       }
       const currency = configuration.getTenant(actor.tenantId).defaultCurrency;

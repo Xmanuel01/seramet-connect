@@ -1,8 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
-import { authMutation, authStatus, enterRestaurant, type AuthRestaurant } from "@/lib/auth-client";
+import {
+  authMutation,
+  authStatus,
+  deviceStartup,
+  enterRestaurant,
+  type AuthRestaurant,
+} from "@/lib/auth-client";
 
 export const Route = createFileRoute("/login")({ component: LoginPage });
 
@@ -12,6 +18,15 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("account") === "1") return;
+    void deviceStartup()
+      .then((device) => {
+        if (device.state === "ACTIVE") window.location.assign("/pos-login");
+      })
+      .catch(() => undefined);
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

@@ -15,6 +15,7 @@ import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { replaceRolePermissions } from "@/server/module-access-service";
 import { replaceUserBranchAssignments } from "@/server/branch-access-service";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
+import { requireFullAuthentication } from "@/server/pos-auth-service";
 
 export async function handleConfigurationApi(
   request: Request,
@@ -26,6 +27,7 @@ export async function handleConfigurationApi(
   );
   if (rolePermissionsRoute && request.method === "PUT") {
     const actor = await authenticateSerametRequest(request, env);
+    requireFullAuthentication(actor);
     const db = requireDatabase(env);
     await new DatabaseRateLimiter(db).consume(
       `${actor.tenantId}:${actor.id}:role-permissions`,
@@ -46,6 +48,7 @@ export async function handleConfigurationApi(
   const userBranchesRoute = /^\/api\/seramet\/access\/users\/([^/]+)\/branches$/.exec(url.pathname);
   if (userBranchesRoute && request.method === "PUT") {
     const actor = await authenticateSerametRequest(request, env);
+    requireFullAuthentication(actor);
     const db = requireDatabase(env);
     await new DatabaseRateLimiter(db).consume(
       `${actor.tenantId}:${actor.id}:user-branches`,
@@ -87,6 +90,7 @@ export async function handleConfigurationApi(
 
   if (url.pathname === "/api/seramet/configuration/import" && request.method === "POST") {
     const actor = await authenticateSerametRequest(request, env);
+    requireFullAuthentication(actor);
     requireAny(actor, [permissions.settingsOrganisationManage]);
     const db = requireDatabase(env);
     await new DatabaseRateLimiter(db).consume(

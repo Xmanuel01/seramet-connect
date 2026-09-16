@@ -28,6 +28,7 @@ export type GoLiveState = "SETUP" | "READY_FOR_REVIEW" | "READY_FOR_GO_LIVE" | "
 export type ImportKind =
   "MENU" | "INVENTORY" | "SUPPLIER" | "STAFF" | "OPENING_STOCK" | "CONFIGURATION";
 export type DuplicateStrategy = "CREATE" | "UPDATE" | "SKIP" | "ERROR";
+export type ImportTargetMode = "TENANT_MASTER" | "SELECTED_BRANCHES" | "ROW_BRANCHES";
 
 export type SetupStage = {
   section: SetupSection;
@@ -114,6 +115,8 @@ export type BrandSetupInput = {
 };
 
 export type BranchSetupInput = {
+  idempotencyKey: string;
+  confirmPossibleDuplicate?: boolean;
   id?: string;
   brandId: string;
   code: string;
@@ -138,6 +141,8 @@ export type BranchSetupInput = {
 
 export type ImportPreviewInput = {
   branchId?: string;
+  targetMode?: ImportTargetMode;
+  targetBranchIds?: string[];
   kind: ImportKind;
   originalName: string;
   mimeType: string;
@@ -145,6 +150,7 @@ export type ImportPreviewInput = {
   duplicateStrategy: DuplicateStrategy;
   idempotencyKey: string;
   columnMap?: Record<string, string>;
+  referenceMap?: { stations?: Record<string, string> };
 };
 
 export type ImportIssue = { field: string; code: string; message: string };
@@ -152,6 +158,7 @@ export type ImportPreviewRow = {
   rowNumber: number;
   rowKey: string;
   status: "VALID" | "WARNING" | "ERROR" | "COMMITTED" | "SKIPPED";
+  action?: "CREATE" | "UPDATE" | "SKIP" | "ERROR" | "NO_CHANGE";
   normalized: Record<string, unknown>;
   errors: ImportIssue[];
   warnings: ImportIssue[];
@@ -162,6 +169,22 @@ export type ImportPreview = {
   commitKey: string;
   kind: ImportKind;
   status: "PREVIEW" | "VALIDATED" | "COMMITTING" | "COMMITTED" | "REJECTED" | "FAILED";
+  templateVersion?: number;
+  importerVersion?: string;
+  fingerprint?: string;
+  targetMode?: ImportTargetMode;
+  targetBranchIds?: string[];
+  expiresAt?: string;
+  verification?: {
+    status: "PENDING" | "VERIFIED" | "FAILED";
+    created: number;
+    updated: number;
+    skipped: number;
+    failed: number;
+    branchSettings: number;
+    catalogueVerified: boolean;
+    warnings: string[];
+  };
   originalName: string;
   duplicateStrategy: DuplicateStrategy;
   rowCount: number;

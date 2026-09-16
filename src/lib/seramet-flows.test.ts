@@ -125,10 +125,10 @@ describe("menu import and export", () => {
     expect(exported).toContain("westlandsAvailable");
   });
 
-  it("blocks confirmation when required fields and station values are invalid", () => {
+  it("blocks confirmation when required fields are invalid without hardcoded station names", () => {
     const preview = parseMenuText(invalidCsv, "bad-menu.csv");
     expect(preview.canConfirm).toBe(false);
-    expect(preview.issues.filter((issue) => issue.severity === "error")).toHaveLength(3);
+    expect(preview.issues.filter((issue) => issue.severity === "error")).toHaveLength(2);
 
     const confirmed = confirmMenuImport(products, preview);
     expect(confirmed.imported).toBe(0);
@@ -146,7 +146,7 @@ describe("menu import and export", () => {
     expect(template).not.toContain("MS-001.jpg");
     expect(report).toContain("sourceName,row,field,severity,message");
     expect(report).toContain("bad-menu.csv");
-    expect(report).toContain("productionStation");
+    expect(report).toContain("Menu item name is required");
   });
 
   it("maps bulk menu images by item code, SKU, image filename and item name", () => {
@@ -877,6 +877,73 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     expect(state.receipts).toHaveLength(0);
   });
 
+  it("prepares the explicitly selected order for payment once without falling back to another order", () => {
+    let state = TransactionEngine.createOrder(blank(), { ...draft, table: "01" }, "OPEN");
+    const selectedOrderId = state.orders[0]!.id;
+    state = TransactionEngine.createOrder(
+      state,
+      { ...draft, table: "02", customer: "Another table" },
+      "OPEN",
+    );
+    const otherOrderId = state.orders[0]!.id;
+
+    state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
+    state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
+
+    expect(state.orders).toHaveLength(2);
+    expect(state.bills).toHaveLength(1);
+    expect(state.bills[0]?.orderIds).toEqual([selectedOrderId]);
+    expect(state.bills[0]?.orderIds).not.toContain(otherOrderId);
+    expect(state.orders.find((order) => order.id === selectedOrderId)?.status).toBe(
+      "BILL_REQUESTED",
+    );
+    expect(state.orders.find((order) => order.id === otherOrderId)?.status).toBe("OPEN");
+    expect(() =>
+      TransactionEngine.prepareInvoiceForPayment(state, "missing-order", "Amina W."),
+    ).toThrow(/was not found/);
+  });
+
+  it("keeps sent kitchen lines immutable and emits additions only for new lines", () => {
+    let state = TransactionEngine.createOrder(blank(), draft, "OPEN");
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Amina W.");
+    const sentLines = state.orders[0]!.lines.map((line) => ({ ...line }));
+
+    expect(() =>
+      TransactionEngine.updateOrderDraft(
+        state,
+        orderId,
+        {
+          ...draft,
+          lines: [{ ...sentLines[0]!, quantity: sentLines[0]!.quantity + 1 }, sentLines[1]!],
+        },
+        "Amina W.",
+      ),
+    ).toThrow(/Sent kitchen lines are immutable/);
+
+    const addition = {
+      id: "ln-addition",
+      productId: "p7",
+      name: "Chips",
+      category: "Sides",
+      quantity: 1,
+      unitPrice: 250,
+      productionStation: "MAIN KITCHEN",
+    };
+    state = TransactionEngine.updateOrderDraft(
+      state,
+      orderId,
+      { ...draft, lines: [...sentLines, addition] },
+      "Amina W.",
+    );
+    state = TransactionEngine.sendToKitchen(state, orderId, "Amina W.");
+
+    expect(state.productionAmendments).toHaveLength(1);
+    expect(state.productionAmendments[0]?.type).toBe("ADDITION");
+    expect(state.productionAmendments[0]?.lines.map((line) => line.id)).toEqual([addition.id]);
+    expect(state.orders[0]?.lines.filter((line) => line.sentAt)).toHaveLength(3);
+  });
+
   it("keeps POS active orders out of invoices until the cashier requests the bill", () => {
     let state = TransactionEngine.holdOrder(blank(), draft);
     const orderId = state.orders[0]!.id;
@@ -1033,6 +1100,13 @@ describe("transaction engine order to reconciliation lifecycle", () => {
 
     expect(state.bills.filter((bill) => bill.splitFromBillId === merged.id)).toHaveLength(2);
     expect(state.payments).toHaveLength(0);
+    expect(() =>
+      TransactionEngine.createPaymentIntent(state, merged.id, {
+        amount: merged.total,
+        method: "CONFIGURED_METHOD",
+        createdBy: "Amina W.",
+      }),
+    ).toThrow(/cannot accept a payment intent from SPLIT/);
   });
 
   it("matches external provider transactions by reference, amount and branch", () => {
@@ -1140,6 +1214,7 @@ describe("server persistence, provider boundaries and enforcement", () => {
     const requestBody = {
       action: "holdOrder",
       idempotencyKey: "test-hold-order-001",
+      expectedRevision: 0,
       payload: { draft },
     };
 
@@ -1157,11 +1232,61 @@ describe("server persistence, provider boundaries and enforcement", () => {
     expect(replay.headers.get("x-seramet-idempotent-replay")).toBe("true");
   });
 
+  it("returns the current authoritative snapshot when a client revision is stale", async () => {
+    const draft: OrderDraft = {
+      branch: "Westlands",
+      table: "REV-1",
+      customer: "Revision Test",
+      channel: "Dine-In",
+      cashier: "Amina W.",
+      lines: [
+        {
+          id: "ln-revision",
+          name: "Tea",
+          category: "Drinks",
+          quantity: 1,
+          unitPrice: 150,
+          productionStation: "BAR",
+        },
+      ],
+    };
+    const env = { SERAMET_ENVIRONMENT: "development", SERAMET_ENABLE_DEV_AUTH: "true" };
+    const first = await handleSerametApiRequest(
+      apiRequest("/api/seramet/transactions/mutate", {
+        action: "holdOrder",
+        idempotencyKey: "revision-first",
+        expectedRevision: 0,
+        payload: { draft },
+      }),
+      env,
+    );
+    const stale = await handleSerametApiRequest(
+      apiRequest("/api/seramet/transactions/mutate", {
+        action: "holdOrder",
+        idempotencyKey: "revision-stale",
+        expectedRevision: 0,
+        payload: { draft: { ...draft, table: "REV-2" } },
+      }),
+      env,
+    );
+    const body = (await stale.json()) as {
+      code?: string;
+      current?: { revision?: number; state?: TransactionState };
+    };
+
+    expect(first.status).toBe(200);
+    expect(stale.status).toBe(409);
+    expect(body.code).toBe("CONFLICT");
+    expect(body.current?.revision).toBe(1);
+    expect(body.current?.state?.orders).toHaveLength(1);
+  });
+
   it("blocks cross-branch transaction mutations through the API", async () => {
     const response = await handleSerametApiRequest(
       apiRequest("/api/seramet/transactions/mutate", {
         action: "createOrder",
         idempotencyKey: "test-cross-branch-001",
+        expectedRevision: 0,
         payload: {
           draft: {
             tenantId: DEMO_TENANT_ID,

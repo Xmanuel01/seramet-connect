@@ -44,7 +44,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(17);
+    expect(version?.version).toBe(20);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();
@@ -59,6 +59,40 @@ describe.sequential("Pass 5 production foundation", () => {
         .bind(tenantA, userA, "branch-b")
         .run(),
     ).rejects.toThrow();
+  });
+
+  it("allows exactly one concurrent mutation from the same authoritative revision", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const commits = await Promise.allSettled([
+      repository.commitMutation({
+        actor: actor(),
+        action: "upsertOrderDraft",
+        payload: { draft: orderDraft("Terminal A"), targetStatus: "OPEN" },
+        idempotencyKey: "concurrent-order-a",
+        requestHash: "concurrent-hash-a",
+        correlationId: "concurrent-correlation-a",
+        deviceId: "terminal-a",
+        expectedRevision: 0,
+      }),
+      repository.commitMutation({
+        actor: actor(),
+        action: "upsertOrderDraft",
+        payload: { draft: orderDraft("Terminal B"), targetStatus: "OPEN" },
+        idempotencyKey: "concurrent-order-b",
+        requestHash: "concurrent-hash-b",
+        correlationId: "concurrent-correlation-b",
+        deviceId: "terminal-b",
+        expectedRevision: 0,
+      }),
+    ]);
+
+    expect(commits.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(commits.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(commits.find((result) => result.status === "rejected")?.reason).toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+    expect((await repository.loadState(tenantA)).orders).toHaveLength(1);
   });
 
   it("paginates authoritative history with server tenant and branch scope", async () => {
@@ -327,6 +361,42 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(body.commands.map((item) => item.status)).toEqual(["accepted", "duplicate"]);
     expect(body.commands[0]?.printPolicy).toBe("ALREADY_PRINTED_LOCAL");
     expect((await repository.loadState(tenantA)).orders).toHaveLength(1);
+  });
+
+  it("syncs sequential offline commands from one cached revision without losing either command", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const command = (sequence: number) => ({
+      id: `offline-sequence-${sequence}`,
+      tenantId: tenantA,
+      branchId: branchA,
+      deviceId: deviceA,
+      actorId: userA,
+      commandType: "upsertOrderDraft" as const,
+      payload: { draft: orderDraft(`Offline ${sequence}`), targetStatus: "OPEN" },
+      createdAt: new Date(Date.now() + sequence).toISOString(),
+      clientSequence: sequence,
+      idempotencyKey: `offline-sequence-key-${sequence}`,
+      expectedRevision: 0,
+      syncStatus: "PENDING" as const,
+      correlationId: `offline-sequence-correlation-${sequence}`,
+    });
+    const response = await handleOfflineSyncApi(
+      new Request("https://seramet.test/api/seramet/offline/sync", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ commands: [command(2), command(1)] }),
+      }),
+      testEnv(),
+      repository,
+    );
+    const body = (await response!.json()) as {
+      commands: Array<{ status: string; revision?: number }>;
+    };
+
+    expect(body.commands.map((item) => item.status)).toEqual(["accepted", "accepted"]);
+    expect(body.commands.map((item) => item.revision)).toEqual([1, 2]);
+    expect((await repository.loadState(tenantA)).orders).toHaveLength(2);
   });
 
   it("blocks digital payment commands from the offline synchronization path", async () => {

@@ -70,6 +70,7 @@ import { Route as PeopleRouteImport } from './routes/people'
 import { Route as PerformanceRouteImport } from './routes/performance'
 import { Route as PeriodCloseRouteImport } from './routes/period-close'
 import { Route as PosRouteImport } from './routes/pos'
+import { Route as PosLoginRouteImport } from './routes/pos-login'
 import { Route as PrepRouteImport } from './routes/prep'
 import { Route as PrimeCostRouteImport } from './routes/prime-cost'
 import { Route as PrivacyRequestsRouteImport } from './routes/privacy-requests'
@@ -425,6 +426,11 @@ const PosRoute = PosRouteImport.update({
   path: '/pos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PosLoginRoute = PosLoginRouteImport.update({
+  id: '/pos-login',
+  path: '/pos-login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PrepRoute = PrepRouteImport.update({
   id: '/prep',
   path: '/prep',
@@ -735,6 +741,7 @@ export interface FileRoutesByFullPath {
   '/performance': typeof PerformanceRoute
   '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
+  '/pos-login': typeof PosLoginRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
   '/privacy-requests': typeof PrivacyRequestsRoute
@@ -847,6 +854,7 @@ export interface FileRoutesByTo {
   '/performance': typeof PerformanceRoute
   '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
+  '/pos-login': typeof PosLoginRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
   '/privacy-requests': typeof PrivacyRequestsRoute
@@ -959,6 +967,7 @@ export interface FileRoutesById {
   '/performance': typeof PerformanceRoute
   '/period-close': typeof PeriodCloseRoute
   '/pos': typeof PosRoute
+  '/pos-login': typeof PosLoginRoute
   '/prep': typeof PrepRoute
   '/prime-cost': typeof PrimeCostRoute
   '/privacy-requests': typeof PrivacyRequestsRoute
@@ -1073,6 +1082,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/period-close'
     | '/pos'
+    | '/pos-login'
     | '/prep'
     | '/prime-cost'
     | '/privacy-requests'
@@ -1185,6 +1195,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/period-close'
     | '/pos'
+    | '/pos-login'
     | '/prep'
     | '/prime-cost'
     | '/privacy-requests'
@@ -1296,6 +1307,7 @@ export interface FileRouteTypes {
     | '/performance'
     | '/period-close'
     | '/pos'
+    | '/pos-login'
     | '/prep'
     | '/prime-cost'
     | '/privacy-requests'
@@ -1409,6 +1421,7 @@ export interface RootRouteChildren {
   PerformanceRoute: typeof PerformanceRoute
   PeriodCloseRoute: typeof PeriodCloseRoute
   PosRoute: typeof PosRoute
+  PosLoginRoute: typeof PosLoginRoute
   PrepRoute: typeof PrepRoute
   PrimeCostRoute: typeof PrimeCostRoute
   PrivacyRequestsRoute: typeof PrivacyRequestsRoute
@@ -1883,6 +1896,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pos-login': {
+      id: '/pos-login'
+      path: '/pos-login'
+      fullPath: '/pos-login'
+      preLoaderRoute: typeof PosLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/prep': {
       id: '/prep'
       path: '/prep'
@@ -2313,6 +2333,7 @@ const rootRouteChildren: RootRouteChildren = {
   PerformanceRoute: PerformanceRoute,
   PeriodCloseRoute: PeriodCloseRoute,
   PosRoute: PosRoute,
+  PosLoginRoute: PosLoginRoute,
   PrepRoute: PrepRoute,
   PrimeCostRoute: PrimeCostRoute,
   PrivacyRequestsRoute: PrivacyRequestsRoute,

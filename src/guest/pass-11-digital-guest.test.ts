@@ -54,7 +54,7 @@ describe("Pass 11 digital guest experience", () => {
   it("applies the current schema with tenant-scoped guest and reservation constraints", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get(),
-    ).toMatchObject({ version: 17 });
+    ).toMatchObject({ version: 20 });
     const tables = db.sqlite
       .prepare(
         `SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name IN

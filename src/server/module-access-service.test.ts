@@ -26,7 +26,7 @@ describe.sequential("server-authoritative module access", () => {
 
   it("persists the current schema and revisions every access-bearing assignment mutation", () => {
     expect(db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get()).toEqual({
-      version: 17,
+      version: 20,
     });
     const before = revision();
     insertScopedUser("revision-user", [permissions.dashboardView]);

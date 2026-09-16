@@ -13,6 +13,9 @@ import {
   type SerametWorkerMessage,
 } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
+import { createMenuCatalogReader } from "@/integrations/marketplace/menu-catalog-reader";
+import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
+import { ManagementIntelligenceService } from "@/management/management-intelligence-service";
 
 const tenantId = "tenant-setup-a";
 const secondTenantId = "tenant-setup-b";
@@ -40,7 +43,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("applies schema version 9 and the commercial onboarding tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(17);
+    ).toBe(20);
     for (const table of [
       "tenant_onboarding_profiles",
       "branch_operating_profiles",
@@ -48,6 +51,10 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "setup_readiness_results",
       "setup_imports",
       "setup_import_rows",
+      "setup_import_reference_aliases",
+      "historical_sales_migrations",
+      "historical_sales_migration_rows",
+      "historical_sales_records",
       "menu_catalog_items",
       "opening_stock_batches",
       "opening_stock_lines",
@@ -93,6 +100,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("creates brands, branches, warehouse policy and audit without display-name logic", async () => {
     const brand = await service.createBrand({ code: "SECOND", name: "Second configured brand" });
     const result = await service.createBranch({
+      idempotencyKey: "create-branch-pass8-test-0001",
       brandId: brand.id,
       code: "NEW",
       name: "New configured branch",
@@ -144,6 +152,411 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
   });
 
+  it("imports an actual Excel workbook into the authoritative branch catalogue", async () => {
+    const workbook = createXlsx([
+      [
+        "templateVersion",
+        "itemCode",
+        "name",
+        "categoryCode",
+        "basePrice",
+        "currency",
+        "stationCode",
+        "sellable",
+        "branchCode",
+        "available",
+      ],
+      ["2", "XLSX-01", "Workbook meal", "MAIN", "875", "KES", "MAIN", "true", "A", "true"],
+    ]);
+    const preview = await service.previewImport({
+      kind: "MENU",
+      originalName: "menu.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      bytes: workbook,
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "xlsx-menu-preview",
+      targetMode: "ROW_BRANCHES",
+    });
+    expect(preview).toMatchObject({ rowCount: 1, errorCount: 0, canCommit: true });
+    await service.commitImport(preview.id, preview.commitKey);
+    expect(await service.listMenuCatalog(branchId)).toContainEqual(
+      expect.objectContaining({ code: "XLSX-01", selling_price_minor: 87_500 }),
+    );
+  });
+
+  it("previews and commits a one-time previous POS sales migration without replaying live flows", async () => {
+    const migration = new HistoricalSalesMigrationService(db, actor());
+    const preview = await migration.preview({
+      sourceSystem: "Previous POS",
+      originalName: "historical-sales.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "templateVersion,externalSaleReference,branchCode,businessDate,currency,grossAmount,discountAmount,refundAmount,taxAmount,serviceChargeAmount,netAmount,orderCount,channelCode\n" +
+          "1,OLD-001,A,2026-08-01,KES,12500,500,0,1724.14,0,12000,12,DINE_IN",
+      ),
+    });
+    expect(preview).toMatchObject({
+      status: "VALIDATED",
+      rowCount: 1,
+      grossSalesMinor: 1_250_000,
+      netSalesMinor: 1_200_000,
+      orderCount: 12,
+      canCommit: true,
+    });
+    expect(await rowCount(db, "historical_sales_records")).toBe(0);
+    await migration.commit(preview.id, preview.commitKey);
+    expect(await rowCount(db, "historical_sales_records")).toBe(1);
+    expect(await rowCount(db, "orders")).toBe(0);
+    expect(await rowCount(db, "invoices")).toBe(0);
+    expect(await auditCount(db, "HISTORICAL_SALES_COMMITTED")).toBe(1);
+    await new ManagementIntelligenceService(db, actor()).recalculateTenant(branchId, "2026-08-01");
+    expect(
+      await db
+        .prepare(
+          `SELECT gross_sales_minor,discounts_minor,net_sales_minor,order_count,quality_reasons_json
+           FROM daily_branch_metrics WHERE tenant_id=? AND branch_id=? AND business_date=?`,
+        )
+        .bind(tenantId, branchId, "2026-08-01")
+        .first(),
+    ).toMatchObject({
+      gross_sales_minor: 1_250_000,
+      discounts_minor: 50_000,
+      net_sales_minor: 1_200_000,
+      order_count: 12,
+      quality_reasons_json: expect.stringContaining("HISTORICAL_SALES_WITHOUT_OPERATIONAL_DETAIL"),
+    });
+    await expect(
+      migration.preview({
+        sourceSystem: "Another POS",
+        originalName: "again.csv",
+        mimeType: "text/csv",
+        bytes: new TextEncoder().encode(
+          "externalSaleReference,branchCode,businessDate,currency,grossAmount\nOLD-002,A,2026-08-02,KES,100",
+        ),
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      db
+        .prepare("UPDATE historical_sales_records SET net_sales_minor=0 WHERE tenant_id=?")
+        .bind(tenantId)
+        .run(),
+    ).rejects.toThrow("append-only");
+  });
+
+  it("allows the optional previous POS migration to be skipped without permanently disabling it", async () => {
+    const migration = new HistoricalSalesMigrationService(db, actor());
+    await expect(migration.skip("No export is available yet")).resolves.toMatchObject({
+      status: "SKIPPED",
+      canImportLater: true,
+    });
+    const preview = await migration.preview({
+      sourceSystem: "Previous POS",
+      originalName: "later.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "externalSaleReference,branchCode,businessDate,currency,grossAmount\nOLD-003,A,2026-08-03,KES,100",
+      ),
+    });
+    expect(preview.canCommit).toBe(true);
+  });
+
+  it("allows only one simultaneous previous POS migration commit", async () => {
+    const migration = new HistoricalSalesMigrationService(db, actor());
+    const first = await migration.preview({
+      sourceSystem: "Previous POS A",
+      originalName: "history-a.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "externalSaleReference,branchCode,businessDate,currency,grossAmount\nA-001,A,2026-07-01,KES,100",
+      ),
+    });
+    const second = await migration.preview({
+      sourceSystem: "Previous POS B",
+      originalName: "history-b.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "externalSaleReference,branchCode,businessDate,currency,grossAmount\nB-001,A,2026-07-02,KES,200",
+      ),
+    });
+    const outcomes = await Promise.allSettled([
+      migration.commit(first.id, first.commitKey),
+      migration.commit(second.id, second.commitKey),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) count FROM historical_sales_migrations WHERE tenant_id=? AND status='COMMITTED'",
+        )
+        .bind(tenantId)
+        .first("count"),
+    ).toBe(1);
+    expect(await rowCount(db, "historical_sales_records")).toBe(1);
+  });
+
+  it("derives preview identity from file content and import configuration", async () => {
+    const bytes = new TextEncoder().encode(
+      "templateVersion,itemCode,name,categoryCode,basePrice,currency\n2,FINGERPRINT-1,Fingerprint item,MAIN,100,KES",
+    );
+    const base = {
+      branchId,
+      kind: "MENU" as const,
+      originalName: "same-name.csv",
+      mimeType: "text/csv",
+      bytes,
+      duplicateStrategy: "CREATE" as const,
+      idempotencyKey: "client-key-is-not-authoritative",
+    };
+    const first = await service.previewImport(base);
+    const retry = await service.previewImport({ ...base, idempotencyKey: "different-client-key" });
+    const differentPolicy = await service.previewImport({
+      ...base,
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "third-client-key",
+    });
+    expect(retry.id).toBe(first.id);
+    expect(retry.fingerprint).toBe(first.fingerprint);
+    expect(differentPolicy.id).not.toBe(first.id);
+    expect(differentPolicy.fingerprint).not.toBe(first.fingerprint);
+  });
+
+  it("keeps tenant-master menu items out of branch POS visibility until activation", async () => {
+    const preview = await service.previewImport({
+      targetMode: "TENANT_MASTER",
+      kind: "MENU",
+      originalName: "tenant-master.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "templateVersion,itemCode,name,categoryCode,basePrice,currency\n2,MASTER-ONLY,Master item,MAIN,100,KES",
+      ),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "tenant-master-preview",
+    });
+    const committed = await service.commitImport(preview.id, preview.commitKey);
+    expect(committed).toMatchObject({
+      status: "COMMITTED",
+      queued: false,
+      verification: { status: "VERIFIED", catalogueVerified: true, branchSettings: 0 },
+    });
+    expect(await service.listMenuCatalog()).toContainEqual(
+      expect.objectContaining({ code: "MASTER-ONLY", branch_activated: 0 }),
+    );
+    expect(await service.listMenuCatalog(branchId)).not.toContainEqual(
+      expect.objectContaining({ code: "MASTER-ONLY" }),
+    );
+    expect(await createMenuCatalogReader(db)(tenantId, branchId)).toHaveLength(0);
+  });
+
+  it("activates selected branches with mapped stations and branch prices", async () => {
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId, secondBranchId],
+      kind: "MENU",
+      originalName: "branch-menu.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "templateVersion,itemCode,name,categoryCode,basePrice,currency,stationCode,branchPrice\n2,BRANCH-ITEM,Branch item,MAIN,100,KES,KITCHEN,99.50",
+      ),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "branch-menu-preview",
+      referenceMap: { stations: { KITCHEN: "MAIN" } },
+    });
+    expect(preview).toMatchObject({ errorCount: 0, targetBranchIds: [branchId, secondBranchId] });
+    const committed = await service.commitImport(preview.id, preview.commitKey);
+    expect(committed).toMatchObject({
+      verification: { status: "VERIFIED", branchSettings: 2 },
+    });
+    const settings = await db
+      .prepare(
+        `SELECT branch_id,station_id,selling_price_minor FROM menu_item_branch_settings
+         WHERE tenant_id=? AND menu_item_id='menu-branch-item' ORDER BY branch_id`,
+      )
+      .bind(tenantId)
+      .all<{ branch_id: string; station_id: string; selling_price_minor: number }>();
+    expect(settings.results).toEqual([
+      { branch_id: branchId, station_id: "station-main", selling_price_minor: 9950 },
+      { branch_id: secondBranchId, station_id: "station-main-b", selling_price_minor: 9950 },
+    ]);
+    expect(await createMenuCatalogReader(db)(tenantId, secondBranchId)).toContainEqual(
+      expect.objectContaining({ itemCode: "BRANCH-ITEM", price: 99.5, productionStation: "MAIN" }),
+    );
+    expect(
+      await db
+        .prepare(
+          `SELECT COUNT(*) count FROM setup_import_reference_aliases
+           WHERE tenant_id=? AND source_value_normalized='KITCHEN'`,
+        )
+        .bind(tenantId)
+        .first("count"),
+    ).toBe(2);
+  });
+
+  it("keeps explicitly unavailable branch items out of the operational catalogue", async () => {
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "unavailable.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "itemCode,name,categoryCode,basePrice,currency,available\nUNAVAILABLE-1,Unavailable item,MAIN,100,KES,false",
+      ),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "unavailable-preview",
+    });
+    await service.commitImport(preview.id, preview.commitKey);
+    expect(await service.listMenuCatalog(branchId)).toContainEqual(
+      expect.objectContaining({ code: "UNAVAILABLE-1", available: 0 }),
+    );
+    expect(await createMenuCatalogReader(db)(tenantId, branchId)).not.toContainEqual(
+      expect.objectContaining({ itemCode: "UNAVAILABLE-1" }),
+    );
+  });
+
+  it("creates one tenant item for multiple row-branch assignments", async () => {
+    const preview = await service.previewImport({
+      targetMode: "ROW_BRANCHES",
+      kind: "MENU",
+      originalName: "row-branches.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        [
+          "templateVersion,itemCode,name,categoryCode,basePrice,currency,stationCode,branchCode,branchPrice",
+          "2,ROW-BRANCH-1,Row branch item,MAIN,100,KES,MAIN,A,95",
+          "2,ROW-BRANCH-1,Row branch item,MAIN,100,KES,MAIN,B,105",
+        ].join("\n"),
+      ),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "row-branch-preview",
+    });
+    expect(preview).toMatchObject({ rowCount: 2, errorCount: 0 });
+    const committed = await service.commitImport(preview.id, preview.commitKey);
+    expect(committed).toMatchObject({
+      verification: { created: 1, updated: 0, branchSettings: 2, catalogueVerified: true },
+    });
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND code='ROW-BRANCH-1'",
+        )
+        .bind(tenantId)
+        .first("count"),
+    ).toBe(1);
+  });
+
+  it("regresses the 343-row repeated-station import through the operational catalogue", async () => {
+    const csv = [
+      "templateVersion,itemCode,name,categoryCode,basePrice,currency,stationCode,available",
+      ...Array.from(
+        { length: 343 },
+        (_, index) =>
+          `2,REGRESSION-${index + 1},Imported item ${index + 1},MAIN,350,KES,Main Kitchen,true`,
+      ),
+    ].join("\n");
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "real-menu-regression.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(csv),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "real-menu-regression-preview",
+      referenceMap: { stations: { "Main Kitchen": "MAIN" } },
+    });
+    expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
+    const result = await service.commitImport(preview.id, preview.commitKey);
+    expect(result).toMatchObject({
+      status: "COMMITTED",
+      verification: {
+        created: 343,
+        failed: 0,
+        branchSettings: 343,
+        catalogueVerified: true,
+      },
+    });
+    const operational = await createMenuCatalogReader(db)(tenantId, branchId);
+    expect(operational).toHaveLength(343);
+    expect(operational[0]).toMatchObject({
+      price: 350,
+      productionStation: "MAIN",
+      out: false,
+    });
+    expect(
+      await db
+        .prepare(
+          `SELECT COUNT(*) count FROM setup_import_reference_aliases
+           WHERE tenant_id=? AND branch_id=? AND source_value_normalized='MAIN KITCHEN'`,
+        )
+        .bind(tenantId, branchId)
+        .first("count"),
+    ).toBe(1);
+  });
+
+  it("rejects expired and catalogue-stale previews before mutation", async () => {
+    const expired = await previewCsv(
+      service,
+      "MENU",
+      "itemCode,name,categoryCode,basePrice,currency\nEXPIRED-1,Expired item,MAIN,100,KES",
+      "expired-menu-preview",
+      "CREATE",
+    );
+    await db
+      .prepare("UPDATE setup_imports SET expires_at=? WHERE tenant_id=? AND id=?")
+      .bind("2020-01-01T00:00:00.000Z", tenantId, expired.id)
+      .run();
+    await expect(service.commitImport(expired.id, expired.commitKey)).rejects.toThrow(
+      "preview expired",
+    );
+
+    const stale = await previewCsv(
+      service,
+      "MENU",
+      "itemCode,name,categoryCode,basePrice,currency\nSTALE-1,Stale item,MAIN,100,KES",
+      "stale-menu-preview",
+      "CREATE",
+    );
+    await db
+      .prepare(
+        `INSERT INTO menu_catalog_items
+          (tenant_id,id,code,name,category_code,selling_price_minor,currency,sellable,active,
+           payload_json,created_at,updated_at)
+         VALUES (?,'menu-external-change','EXTERNAL-CHANGE','External change','MAIN',10000,'KES',1,1,'{}',?,?)`,
+      )
+      .bind(tenantId, stamp, "2026-09-01T08:00:01.000Z")
+      .run();
+    await expect(service.commitImport(stale.id, stale.commitKey)).rejects.toThrow(
+      "catalogue changed after preview",
+    );
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND code='STALE-1'",
+        )
+        .bind(tenantId)
+        .first("count"),
+    ).toBe(0);
+  });
+
+  it("rejects branch activation outside the actor assignment", async () => {
+    const restricted = new OnboardingService(db, actor([branchId]), env);
+    await expect(
+      restricted.previewImport({
+        targetMode: "SELECTED_BRANCHES",
+        targetBranchIds: [secondBranchId],
+        kind: "MENU",
+        originalName: "unauthorized-branch.csv",
+        mimeType: "text/csv",
+        bytes: new TextEncoder().encode(
+          "itemCode,name,categoryCode,basePrice,currency\nDENIED,Denied item,MAIN,100,KES",
+        ),
+        duplicateStrategy: "CREATE",
+        idempotencyKey: "unauthorized-branch-preview",
+      }),
+    ).rejects.toThrow("outside the authenticated import assignment");
+  });
+
   it("rejects missing stable item codes and prevents committing a rejected preview", async () => {
     const preview = await previewCsv(
       service,
@@ -153,7 +566,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
     expect(preview.errorCount).toBe(1);
     expect(preview.rows[0]?.errors).toContainEqual(
-      expect.objectContaining({ code: "REQUIRED", field: "code" }),
+      expect.objectContaining({ code: "REQUIRED", field: "itemCode" }),
     );
     await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toThrow(
       "validation errors",
@@ -175,8 +588,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "duplicate-create",
       "CREATE",
     );
-    await expect(service.commitImport(duplicate.id, duplicate.commitKey)).rejects.toThrow(
-      "cannot be created twice",
+    expect(duplicate).toMatchObject({ status: "REJECTED", canCommit: false, errorCount: 1 });
+    expect(duplicate.rows[0]?.errors).toContainEqual(
+      expect.objectContaining({ code: "DUPLICATE_ITEM", field: "itemCode" }),
     );
     const update = await previewCsv(
       service,
@@ -640,7 +1054,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("returns redacted diagnostics and never includes secrets or session material", async () => {
     const diagnostics = await service.diagnostics();
     expect(diagnostics).toMatchObject({
-      schema: { current: 17, required: 17, pending: 0 },
+      schema: { current: 20, required: 20, pending: 0 },
       redaction: { secrets: "EXCLUDED", tokens: "EXCLUDED", credentials: "EXCLUDED" },
     });
     expect(JSON.stringify(diagnostics)).not.toContain("sensitive-secret");
@@ -999,6 +1413,12 @@ function seedFoundation(db: SqliteD1TestDatabase) {
     .run(tenantId, branchId);
   db.sqlite
     .prepare(
+      `INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json)
+       VALUES (?,'station-main-b',?,'MAIN','Main station B','KITCHEN',1,'{}')`,
+    )
+    .run(tenantId, secondBranchId);
+  db.sqlite
+    .prepare(
       `INSERT INTO plan_definitions (id,code,name,status,created_at,updated_at)
        VALUES ('plan-professional','PROFESSIONAL','Professional','ACTIVE',?,?)`,
     )
@@ -1075,4 +1495,89 @@ async function workerCount(db: SqliteD1TestDatabase, type: string) {
       .bind(tenantId, type)
       .first("count"),
   );
+}
+
+function createXlsx(rows: string[][]) {
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows
+    .map(
+      (row, rowIndex) =>
+        `<row r="${rowIndex + 1}">${row
+          .map(
+            (value, columnIndex) =>
+              `<c r="${xlsxColumn(columnIndex)}${rowIndex + 1}" t="inlineStr"><is><t>${xml(value)}</t></is></c>`,
+          )
+          .join("")}</row>`,
+    )
+    .join("")}</sheetData></worksheet>`;
+  return storedZip({
+    "xl/workbook.xml":
+      '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Menu" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    "xl/_rels/workbook.xml.rels":
+      '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+    "xl/worksheets/sheet1.xml": sheet,
+  });
+}
+
+function storedZip(entries: Record<string, string>) {
+  const encoder = new TextEncoder();
+  const localParts: Uint8Array[] = [];
+  const centralParts: Uint8Array[] = [];
+  let offset = 0;
+  for (const [name, content] of Object.entries(entries)) {
+    const nameBytes = encoder.encode(name);
+    const data = encoder.encode(content);
+    const local = new Uint8Array(30 + nameBytes.length + data.length);
+    const localView = new DataView(local.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+    local.set(data, 30 + nameBytes.length);
+    localParts.push(local);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const centralView = new DataView(central.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint32(20, data.length, true);
+    centralView.setUint32(24, data.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+    centralParts.push(central);
+    offset += local.length;
+  }
+  const centralSize = centralParts.reduce((total, part) => total + part.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, centralParts.length, true);
+  endView.setUint16(10, centralParts.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+  const output = new Uint8Array(offset + centralSize + end.length);
+  let cursor = 0;
+  for (const part of [...localParts, ...centralParts, end]) {
+    output.set(part, cursor);
+    cursor += part.length;
+  }
+  return output;
+}
+
+function xlsxColumn(index: number) {
+  let value = index + 1;
+  let output = "";
+  while (value > 0) {
+    output = String.fromCharCode(65 + ((value - 1) % 26)) + output;
+    value = Math.floor((value - 1) / 26);
+  }
+  return output;
+}
+
+function xml(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

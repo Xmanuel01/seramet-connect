@@ -120,10 +120,10 @@ export async function handleSupabaseAuthApi(
         availability,
         error,
       });
-      if (error instanceof ServerOperationError && error.status < 500) {
+      if (error instanceof ServerOperationError) {
         return Response.json(publicError(error, correlationId).body, { status: error.status });
       }
-      return Response.json({ ok: false, message: "Seramet API failure" }, { status: 500 });
+      return Response.json(publicError(error, correlationId).body, { status: 500 });
     }
   }
 
@@ -247,8 +247,22 @@ async function supabaseRequest<T = Record<string, unknown>>(
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: controller.signal,
     });
+    if (response.status >= 500) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "Sign-in service is temporarily unavailable. Please try again.",
+      );
+    }
     if (!response.ok) throw new ServerOperationError("AUTHENTICATION_REQUIRED", 401, publicError);
     return (await response.json().catch(() => ({}))) as T;
+  } catch (error) {
+    if (error instanceof ServerOperationError) throw error;
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "Sign-in service is temporarily unavailable. Please try again.",
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -319,11 +333,23 @@ function assertSameOrigin(request: Request, env: SerametEnv) {
 }
 
 function trustedOrigin(request: Request, env: SerametEnv) {
+  if (!resolveRuntimeConfiguration(env).productionLike) {
+    return new URL(request.url).origin;
+  }
   return (env.SERAMET_PUBLIC_ORIGIN ?? new URL(request.url).origin).replace(/\/$/, "");
 }
 
 function normalizedSupabaseUrl(value?: string) {
-  const url = new URL(value ?? "");
+  let url: URL;
+  try {
+    url = new URL(value ?? "");
+  } catch {
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "Identity provider is unavailable",
+    );
+  }
   if (url.protocol !== "https:") {
     throw new ServerOperationError(
       "EXTERNAL_SERVICE_UNAVAILABLE",

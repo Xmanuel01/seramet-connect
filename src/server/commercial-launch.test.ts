@@ -205,6 +205,37 @@ describe.sequential("commercial launch foundation", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
+  it("uses the request origin for development auth redirects and same-origin checks", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "development-access-token",
+          refresh_token: "development-refresh-token",
+          expires_in: 3600,
+          user: { id: "supabase-user-1", email: "owner@example.test" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const response = await handleSupabaseAuthApi(
+      new Request("http://127.0.0.1:5210/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: { origin: "http://127.0.0.1:5210", "content-type": "application/json" },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_ENVIRONMENT: "development",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(200);
+  });
+
   it("allows public auth login without a database binding", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -240,7 +271,7 @@ describe.sequential("commercial launch foundation", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
-  it("logs internal login failures with safe context and preserves the generic browser error", async () => {
+  it("logs unavailable identity configuration and returns an actionable safe browser error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await handleSerametApiRequest(
@@ -261,16 +292,46 @@ describe.sequential("commercial launch foundation", () => {
       } as SerametEnv,
     );
 
-    expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
       ok: false,
-      message: "Seramet API failure",
+      code: "EXTERNAL_SERVICE_UNAVAILABLE",
+      message: "Identity provider is unavailable",
     });
     expect(errorSpy).toHaveBeenCalled();
     const logLine = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(logLine).toContain('"operation":"public-auth-login"');
     expect(logLine).toContain('"route":"/api/seramet/public/auth/login"');
     expect(logLine).toContain('"stage":"supabase-auth"');
+    errorSpy.mockRestore();
+  });
+
+  it("returns a controlled temporary-unavailable response when the identity request fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network socket failed"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: { origin: "https://app.seramet.test", "content-type": "application/json" },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(503);
+    await expect(response?.json()).resolves.toMatchObject({
+      ok: false,
+      code: "EXTERNAL_SERVICE_UNAVAILABLE",
+      message: "Sign-in service is temporarily unavailable. Please try again.",
+    });
+    const logLine = errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(logLine).not.toContain("network socket failed");
     errorSpy.mockRestore();
   });
 

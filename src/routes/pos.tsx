@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -139,7 +139,9 @@ function POS() {
   const [tenderCurrency, setTenderCurrency] = useState(tenant.defaultCurrency);
   const [acceptedCurrencies, setAcceptedCurrencies] = useState<AcceptedCurrency[]>([]);
   const [paymentInvoiceId, setPaymentInvoiceId] = useState<string | null>(null);
+  const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
+  const paymentSubmitRef = useRef(false);
   const [payments, setPayments] = useState<
     {
       id: string;
@@ -366,11 +368,11 @@ function POS() {
     if (channel) setOrderSource(channel.id);
     setKitchenNote(activeOrder.kitchenNote ?? "");
     setLines(
-      Object.fromEntries(
-        activeOrder.lines
-          .filter((line) => line.productId)
-          .map((line) => [line.productId!, line.quantity]),
-      ),
+      activeOrder.lines.reduce<Record<string, number>>((quantities, line) => {
+        if (!line.productId || line.productionStatus === "CANCELLED") return quantities;
+        quantities[line.productId] = (quantities[line.productId] ?? 0) + line.quantity;
+        return quantities;
+      }, {}),
     );
     setItemNotes(
       Object.fromEntries(
@@ -382,6 +384,18 @@ function POS() {
     setPrintNotice(`${activeOrder.id} loaded. Print routing is running in the background.`);
     setPrintNoticeType("idle");
   }, [activeOrder, orderChannels]);
+
+  const sentQuantities = useMemo(
+    () =>
+      activeOrder?.lines.reduce<Record<string, number>>((quantities, line) => {
+        if (!line.productId || !line.sentAt || line.productionStatus === "CANCELLED") {
+          return quantities;
+        }
+        quantities[line.productId] = (quantities[line.productId] ?? 0) + line.quantity;
+        return quantities;
+      }, {}) ?? {},
+    [activeOrder],
+  );
 
   const visible = branchMenu.filter((product) =>
     cat === "All items" ? true : product.category === cat,
@@ -487,37 +501,81 @@ function POS() {
     })),
   });
 
-  const buildTransactionDraft = (tableNo = orderTable): OrderDraft => ({
-    tenantId: activeTenantId,
-    branchId,
-    branch,
-    ...(tableNo ? { table: tableNo } : {}),
-    customer: isOnlineSource
-      ? (selectedChannel?.displayName ?? "Online customer")
-      : selectedChannel?.channelType === "TAKEAWAY"
-        ? "Walk-in"
-        : tableNo
-          ? `Table ${tableNo}`
-          : "Unassigned table",
-    channel: selectedChannel?.code ?? selectedChannel?.id ?? "UNCONFIGURED",
-    cashier: currentUser.name,
-    waiter: currentUser.name,
-    ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
-    financialOverride: { subtotal, tax, total },
-    lines: items.map((line) => ({
-      id: `${line.p.id}-${Date.now()}`,
-      productId: line.p.id,
-      name: line.p.name,
-      category: line.p.category,
-      quantity: line.qty,
-      unitPrice: line.p.price,
-      productionStation: line.p.productionStation ?? "NONE",
-      ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
-    })),
-  });
+  const buildTransactionDraft = (tableNo = orderTable): OrderDraft => {
+    const draftLines = activeOrder
+      ? [
+          ...activeOrder.lines.filter((line) => line.sentAt).map((line) => ({ ...line })),
+          ...items.flatMap((line) => {
+            const sentQuantity = activeOrder.lines
+              .filter(
+                (candidate) =>
+                  candidate.productId === line.p.id &&
+                  candidate.sentAt &&
+                  candidate.productionStatus !== "CANCELLED",
+              )
+              .reduce((sum, candidate) => sum + candidate.quantity, 0);
+            if (line.qty < sentQuantity) {
+              throw new Error(
+                `${line.p.name} has already been sent to production. Use the authorized cancellation workflow to reduce it.`,
+              );
+            }
+            const remainingQuantity = line.qty - sentQuantity;
+            if (remainingQuantity === 0) return [];
+            const existingUnsent = activeOrder.lines.find(
+              (candidate) => candidate.productId === line.p.id && !candidate.sentAt,
+            );
+            return [
+              {
+                ...(existingUnsent ?? {}),
+                id: existingUnsent?.id ?? `${line.p.id}-${crypto.randomUUID()}`,
+                productId: line.p.id,
+                name: line.p.name,
+                category: line.p.category,
+                quantity: remainingQuantity,
+                unitPrice: line.p.price,
+                productionStation: line.p.productionStation ?? "NONE",
+                ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
+              },
+            ];
+          }),
+        ]
+      : items.map((line) => ({
+          id: `${line.p.id}-${crypto.randomUUID()}`,
+          productId: line.p.id,
+          name: line.p.name,
+          category: line.p.category,
+          quantity: line.qty,
+          unitPrice: line.p.price,
+          productionStation: line.p.productionStation ?? "NONE",
+          ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
+        }));
+
+    return {
+      tenantId: activeTenantId,
+      branchId,
+      branch,
+      ...(tableNo ? { table: tableNo } : {}),
+      customer: isOnlineSource
+        ? (selectedChannel?.displayName ?? "Online customer")
+        : selectedChannel?.channelType === "TAKEAWAY"
+          ? "Walk-in"
+          : tableNo
+            ? `Table ${tableNo}`
+            : "Unassigned table",
+      channel: selectedChannel?.code ?? selectedChannel?.id ?? "UNCONFIGURED",
+      cashier: currentUser.name,
+      waiter: currentUser.name,
+      ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
+      financialOverride: { subtotal, tax, total },
+      lines: draftLines,
+    };
+  };
 
   const bump = (id: string, d: number) =>
-    setLines((l) => ({ ...l, [id]: Math.max(0, (l[id] ?? 0) + d) }));
+    setLines((current) => ({
+      ...current,
+      [id]: Math.max(sentQuantities[id] ?? 0, (current[id] ?? 0) + d),
+    }));
 
   const clearCurrentOrder = (
     message = "Ready for the next POS order.",
@@ -534,6 +592,7 @@ function POS() {
   };
 
   const createOrUpdateActiveOrder = async (targetStatus: "HELD" | "OPEN", tableNo = orderTable) => {
+    const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const draft = buildTransactionDraft(tableNo);
     const result = await mutateTransaction("upsertOrderDraft", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
@@ -542,7 +601,7 @@ function POS() {
     });
     const order = activeOrder?.id
       ? result?.state.orders.find((candidate) => candidate.id === activeOrder.id)
-      : result?.state.orders[0];
+      : result?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
     if (!order) throw new Error("Server did not return the active order");
     return order.id;
   };
@@ -562,19 +621,29 @@ function POS() {
     setPayments([]);
     setPaymentReference("");
     setPaymentConfirmed(false);
+    setPaymentInvoiceId(null);
+    setPaymentOrderId(null);
     setPaymentBusy(true);
     try {
+      const orderId = await createOrUpdateActiveOrder("OPEN");
       const prepared = await mutateTransaction("prepareInvoiceForPayment", {
-        ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
-        draft: buildTransactionDraft(),
+        orderId,
       });
-      const order = activeOrder?.id
-        ? prepared?.state.orders.find((candidate) => candidate.id === activeOrder.id)
-        : prepared?.state.orders[0];
-      const bill = order
-        ? prepared?.state.bills.find((candidate) => candidate.orderIds.includes(order.id))
-        : undefined;
+      const order = prepared?.state.orders.find((candidate) => candidate.id === orderId);
+      const bill = prepared?.state.bills.find(
+        (candidate) =>
+          candidate.orderIds.includes(orderId) &&
+          ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
+      );
+      if (!order) throw new Error("The selected order is no longer available");
       if (!bill) throw new Error("The server could not prepare this bill for payment");
+      if (
+        (bill.tenantId ?? activeTenantId) !== activeTenantId ||
+        (bill.branchId ?? branchId) !== branchId
+      ) {
+        throw new Error("The prepared invoice is outside the active restaurant branch");
+      }
+      setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPaymentOpen(true);
     } catch (error) {
@@ -677,13 +746,22 @@ function POS() {
 
   const holdOrder = async () => {
     if (!items.length) return;
-    await createOrUpdateActiveOrder("HELD");
-    clearCurrentOrder("Order held in active orders.");
+    try {
+      await createOrUpdateActiveOrder("HELD");
+      clearCurrentOrder("Order held in active orders.");
+    } catch (error) {
+      setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
+      setPrintNoticeType("warning");
+    }
   };
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return;
-    const amendmentType = activeOrder?.status === "SENT_TO_KITCHEN" ? "ADDITION" : "NEW";
+    const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
+    const sentLineIds = new Set(
+      activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
+    );
+    const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const draft = buildTransactionDraft(tableNo);
     const resultState = await mutateTransaction(
       "upsertAndSendKitchen",
@@ -694,9 +772,35 @@ function POS() {
       undefined,
       { kotPrinted: true },
     );
-    const orderId = activeOrder?.id ?? resultState?.state.orders[0]?.id;
-    if (!orderId) throw new Error("Kitchen order did not receive an authoritative identity");
-    const result = sendKitchenTickets({ ...buildPrintOrder(tableNo), orderId }, amendmentType);
+    const authoritativeOrder = activeOrder?.id
+      ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
+      : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
+    if (!authoritativeOrder) {
+      throw new Error("Kitchen order did not receive an authoritative identity");
+    }
+    const ticketLines = authoritativeOrder.lines.filter(
+      (line) => line.sentAt && !sentLineIds.has(line.id),
+    );
+    if (ticketLines.length === 0) {
+      clearCurrentOrder("No new kitchen items required printing.", "idle");
+      return;
+    }
+    const result = sendKitchenTickets(
+      {
+        ...buildPrintOrder(tableNo),
+        orderId: authoritativeOrder.id,
+        lines: ticketLines.map((line) => ({
+          id: line.id,
+          name: line.name,
+          category: line.category,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          productionStation: line.productionStation ?? "NONE",
+          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+        })),
+      },
+      amendmentType,
+    );
     clearCurrentOrder(
       result.jobs.length > 0
         ? "Kitchen Order Ticket Printed"
@@ -711,7 +815,12 @@ function POS() {
       setTablePickerOpen(true);
       return;
     }
-    void queueKitchenTicketsForTable();
+    void queueKitchenTicketsForTable().catch((error: unknown) => {
+      setPrintNotice(
+        error instanceof Error ? error.message : "The kitchen order could not be sent.",
+      );
+      setPrintNoticeType("warning");
+    });
   };
 
   const moveOrderToInvoice = async (printBill: boolean) => {
@@ -720,22 +829,27 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
-    const orderForPrint = buildPrintOrder();
-    await mutateTransaction("requestBillWithDraft", {
-      orderId: activeOrder.id,
-      draft: buildTransactionDraft(),
-    });
-    if (printBill) {
-      const result = printCustomerDocument(orderForPrint, "BILL");
-      clearCurrentOrder(
-        result.jobs.length > 0
-          ? "Customer bill printed and moved to Invoices."
-          : `Invoice created without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
-        result.jobs.length > 0 ? "success" : "warning",
-      );
-      return;
+    try {
+      const orderForPrint = buildPrintOrder();
+      await mutateTransaction("requestBillWithDraft", {
+        orderId: activeOrder.id,
+        draft: buildTransactionDraft(),
+      });
+      if (printBill) {
+        const result = printCustomerDocument(orderForPrint, "BILL");
+        clearCurrentOrder(
+          result.jobs.length > 0
+            ? "Customer bill printed and moved to Invoices."
+            : `Invoice created without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
+          result.jobs.length > 0 ? "success" : "warning",
+        );
+        return;
+      }
+      clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
+    } catch (error) {
+      setPrintNotice(error instanceof Error ? error.message : "The invoice could not be created.");
+      setPrintNoticeType("warning");
     }
-    clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
   };
 
   const toggleReceipt = (option: string) => {
@@ -748,111 +862,164 @@ function POS() {
 
   const confirmPayment = async () => {
     if (paid < total && paymentMode !== "partial") return;
-    const prepared = await mutateTransaction("prepareInvoiceForPayment", {
-      ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
-      draft: buildTransactionDraft(),
-    });
-    let nextState = prepared?.state;
-    const order = activeOrder?.id
-      ? nextState?.orders.find((candidate) => candidate.id === activeOrder.id)
-      : nextState?.orders[0];
-    const bill = order
-      ? nextState?.bills.find((candidate) => candidate.orderIds.includes(order.id))
-      : undefined;
-    if (!bill) {
-      setPrintNotice("The server could not prepare an invoice for payment.");
+    if (paymentSubmitRef.current || paymentBusy) return;
+    if (!paymentInvoiceId || !paymentOrderId) {
+      setPrintNotice("Payment session is no longer valid. Reopen payment from the invoice.");
       setPrintNoticeType("warning");
       return;
     }
+    paymentSubmitRef.current = true;
+    setPaymentBusy(true);
+    try {
+      const refreshed = await syncFromBackend();
+      let nextState = refreshed?.state;
+      const bill = nextState?.bills.find((candidate) => candidate.id === paymentInvoiceId);
+      if (
+        !bill ||
+        !bill.orderIds.includes(paymentOrderId) ||
+        (bill.tenantId ?? activeTenantId) !== activeTenantId ||
+        (bill.branchId ?? branchId) !== branchId ||
+        !["OPEN", "PARTIAL", "PENDING"].includes(bill.status)
+      ) {
+        throw new Error("Payment session is no longer valid. Reopen payment from the invoice.");
+      }
 
-    const providerJobs: Array<{
-      invoiceId: string;
-      methodCode: string;
-      amount: number;
-      operation: "prompt" | "qr";
-    }> = [];
-    let hasPendingVerification = false;
-    for (const payment of payments) {
-      const method = paymentMethods.find((item) => item.id === payment.methodId);
-      if (!method) continue;
-      const providerOperation = method.metadata["providerOperation"];
-      if (providerOperation === "PAYMENT_PROMPT" || providerOperation === "QR_PAYMENT") {
-        if (backendStatus !== "synced") {
-          setPrintNotice(`${method.displayName} cannot be initiated while the POS is offline.`);
+      const providerJobs: Array<{
+        invoiceId: string;
+        methodCode: string;
+        amount: number;
+        operation: "prompt" | "qr";
+      }> = [];
+      let hasPendingVerification = false;
+      for (const payment of payments) {
+        const method = paymentMethods.find((item) => item.id === payment.methodId);
+        if (!method) continue;
+        const providerOperation = method.metadata["providerOperation"];
+        if (providerOperation === "PAYMENT_PROMPT" || providerOperation === "QR_PAYMENT") {
+          if (backendStatus !== "synced") {
+            setPrintNotice(`${method.displayName} cannot be initiated while the POS is offline.`);
+            setPrintNoticeType("warning");
+            return;
+          }
+          providerJobs.push({
+            invoiceId: bill.id,
+            methodCode: method.code,
+            amount: payment.amount,
+            operation: providerOperation === "QR_PAYMENT" ? "qr" : "prompt",
+          });
+          hasPendingVerification = true;
+          continue;
+        }
+        if (backendStatus !== "synced" && method.category !== "CASH") {
+          setPrintNotice(`${method.displayName} cannot be confirmed while the POS is offline.`);
           setPrintNoticeType("warning");
           return;
         }
-        providerJobs.push({
-          invoiceId: bill.id,
-          methodCode: method.code,
-          amount: payment.amount,
-          operation: providerOperation === "QR_PAYMENT" ? "qr" : "prompt",
-        });
-        hasPendingVerification = true;
-        continue;
+        try {
+          const result = await mutateTransaction("applyConfiguredPayment", {
+            invoiceId: bill.id,
+            paymentMethodId: method.id,
+            amountMinor: parseMajorAmount(payment.amount, tenant.defaultCurrency),
+            cashTenderedMinor: payment.cashTenderedMinor,
+            ...(payment.fxQuote
+              ? {
+                  fxQuoteId: payment.fxQuote.id,
+                  tenderCurrency: payment.tenderCurrency,
+                  tenderedAmountMinor: payment.cashTenderedMinor,
+                }
+              : {}),
+            ...(payment.reference ? { reference: payment.reference } : {}),
+            terminalId,
+          });
+          nextState = result?.state ?? nextState;
+        } catch (error) {
+          setPrintNotice(error instanceof Error ? error.message : "Payment could not be recorded.");
+          setPrintNoticeType("warning");
+          return;
+        }
+        if (["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category)) {
+          hasPendingVerification = true;
+        }
       }
-      if (backendStatus !== "synced" && method.category !== "CASH") {
-        setPrintNotice(`${method.displayName} cannot be confirmed while the POS is offline.`);
+      for (const job of providerJobs) await initiateProviderPayment(job);
+      if (providerJobs.length) nextState = (await syncFromBackend())?.state ?? nextState;
+      const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
+      const completedInvoice = updatedBill?.paymentStatus === "PAID";
+      if (
+        receiptOptions["Print"] &&
+        completedInvoice &&
+        !hasPendingVerification &&
+        backendStatus === "synced"
+      ) {
+        const receipt = nextState?.receipts.find((candidate) => candidate.invoiceId === bill.id);
+        const paidOrder = nextState?.orders.find((candidate) => candidate.id === paymentOrderId);
+        if (!receipt || !paidOrder || !updatedBill) {
+          throw new Error(
+            "Payment was confirmed but the authoritative receipt is not available yet",
+          );
+        }
+        const result = printCustomerDocument(
+          {
+            orderId: paidOrder.id,
+            branch: receipt.branch,
+            terminalId,
+            ...(updatedBill.table ? { table: updatedBill.table } : {}),
+            orderType: paidOrder.channel,
+            requestedBy: currentUser.name,
+            cashier: receipt.cashier,
+            waiter: paidOrder.waiter ?? paidOrder.cashier,
+            createdAt: receipt.issuedAt,
+            customer: receipt.customer,
+            receiptNumber: receipt.id,
+            invoiceNumber: updatedBill.id,
+            lines: updatedBill.lines.map((line) => ({
+              id: line.id,
+              name: line.name,
+              category: line.category,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              productionStation: line.productionStation ?? "NONE",
+              ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+            })),
+            subtotal: updatedBill.subtotal,
+            tax: updatedBill.tax,
+            total: updatedBill.total,
+            paid: receipt.paidAmount,
+            change: receipt.change,
+            paymentMethod: receipt.paymentBreakdown.map((entry) => entry.method).join(" + "),
+            paymentBreakdown: receipt.paymentBreakdown.map((entry) => ({
+              method: entry.method,
+              amount: entry.amount,
+              reference: entry.reference,
+            })),
+          },
+          "RECEIPT",
+        );
+        setPrintNotice(
+          result.jobs.length > 0
+            ? "Receipt printed."
+            : `Payment confirmed without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
+        );
+        setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
+      } else if (backendStatus !== "synced" && completedInvoice) {
+        setPrintNotice(`Cash sale saved offline. ${pendingSyncCount + 1} command(s) pending sync.`);
         setPrintNoticeType("warning");
-        return;
-      }
-      try {
-        const result = await mutateTransaction("applyConfiguredPayment", {
-          invoiceId: bill.id,
-          paymentMethodId: method.id,
-          amountMinor: parseMajorAmount(payment.amount, tenant.defaultCurrency),
-          cashTenderedMinor: payment.cashTenderedMinor,
-          ...(payment.fxQuote
-            ? {
-                fxQuoteId: payment.fxQuote.id,
-                tenderCurrency: payment.tenderCurrency,
-                tenderedAmountMinor: payment.cashTenderedMinor,
-              }
-            : {}),
-          ...(payment.reference ? { reference: payment.reference } : {}),
-          terminalId,
-        });
-        nextState = result?.state ?? nextState;
-      } catch (error) {
-        setPrintNotice(error instanceof Error ? error.message : "Payment could not be recorded.");
+      } else if (hasPendingVerification) {
+        setPrintNotice(
+          providerJobs.length
+            ? "Payment request sent. The invoice remains open until provider confirmation."
+            : "Payment recorded for verification. No paid receipt has been created.",
+        );
         setPrintNoticeType("warning");
-        return;
       }
-      if (["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category)) {
-        hasPendingVerification = true;
-      }
-    }
-    for (const job of providerJobs) {
-      await initiateProviderPayment(job);
-    }
-    if (providerJobs.length) await syncFromBackend();
-    const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
-    const completedInvoice = updatedBill?.paymentStatus === "PAID";
-    if (
-      receiptOptions["Print"] &&
-      completedInvoice &&
-      !hasPendingVerification &&
-      backendStatus === "synced"
-    ) {
-      const result = printCustomerDocument(buildPrintOrder(), "RECEIPT");
-      setPrintNotice(
-        result.jobs.length > 0
-          ? "Receipt printed."
-          : `Payment confirmed without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
-      );
-      setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
-    } else if (backendStatus !== "synced" && completedInvoice) {
-      setPrintNotice(`Cash sale saved offline. ${pendingSyncCount + 1} command(s) pending sync.`);
+      setPaymentConfirmed(Boolean(completedInvoice && !hasPendingVerification));
+    } catch (error) {
+      setPrintNotice(error instanceof Error ? error.message : "Payment could not be completed.");
       setPrintNoticeType("warning");
-    } else if (hasPendingVerification) {
-      setPrintNotice(
-        providerJobs.length
-          ? "Payment request sent. The invoice remains open until provider confirmation."
-          : "Payment recorded for verification. No paid receipt has been created.",
-      );
-      setPrintNoticeType("warning");
+    } finally {
+      paymentSubmitRef.current = false;
+      setPaymentBusy(false);
     }
-    setPaymentConfirmed(Boolean(completedInvoice && !hasPendingVerification));
   };
 
   const initiateProviderPayment = async (job: {
@@ -884,8 +1051,7 @@ function POS() {
     );
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { message?: string };
-      setPrintNotice(body.message ?? "Payment provider request failed.");
-      setPrintNoticeType("warning");
+      throw new Error(body.message ?? "Payment provider request failed.");
     }
   };
 
@@ -900,6 +1066,7 @@ function POS() {
     setCashReceived(0);
     setTenderCurrency(tenant.defaultCurrency);
     setPaymentInvoiceId(null);
+    setPaymentOrderId(null);
     setPaymentConfirmed(false);
     setPaymentOpen(false);
   };
@@ -1149,7 +1316,7 @@ function POS() {
                       <div className="flex shrink-0 items-center gap-1.5">
                         <button
                           type="button"
-                          disabled={p.out || qty === 0}
+                          disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
                           onClick={(event) => {
                             event.stopPropagation();
                             bump(p.id, -1);
@@ -1197,40 +1364,50 @@ function POS() {
                 Tap a dish to start the order.
               </p>
             )}
-            {items.map((l) => (
-              <div key={l.p.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="truncate text-[13px] font-semibold">{l.p.name}</div>
-                  <div className="text-[11px] text-muted-foreground">{ksh(l.p.price)} each</div>
-                  <input
-                    value={itemNotes[l.p.id] ?? ""}
-                    onChange={(event) =>
-                      setItemNotes((current) => ({ ...current, [l.p.id]: event.target.value }))
-                    }
-                    placeholder="Item note"
-                    className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-[12px] outline-none focus:border-primary"
-                  />
+            {items.map((l) => {
+              const sentQuantity = sentQuantities[l.p.id] ?? 0;
+              return (
+                <div key={l.p.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[13px] font-semibold">{l.p.name}</div>
+                    <div className="text-[11px] text-muted-foreground">{ksh(l.p.price)} each</div>
+                    {sentQuantity > 0 && (
+                      <div className="mt-1 text-[10px] font-semibold uppercase text-primary">
+                        {sentQuantity} sent / {Math.max(0, l.qty - sentQuantity)} unsent
+                      </div>
+                    )}
+                    <input
+                      value={itemNotes[l.p.id] ?? ""}
+                      onChange={(event) =>
+                        setItemNotes((current) => ({ ...current, [l.p.id]: event.target.value }))
+                      }
+                      placeholder="Item note"
+                      disabled={l.qty <= sentQuantity}
+                      className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-[12px] outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => bump(l.p.id, -1)}
+                      disabled={l.qty <= sentQuantity}
+                      className="grid h-7 w-7 place-items-center rounded-md border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="num w-5 text-center text-[13px] font-bold">{l.qty}</span>
+                    <button
+                      onClick={() => bump(l.p.id, 1)}
+                      className="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="num w-16 text-right text-[13px] font-bold">
+                      {ksh(l.p.price * l.qty)}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => bump(l.p.id, -1)}
-                    className="grid h-7 w-7 place-items-center rounded-md border border-border"
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="num w-5 text-center text-[13px] font-bold">{l.qty}</span>
-                  <button
-                    onClick={() => bump(l.p.id, 1)}
-                    className="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="num w-16 text-right text-[13px] font-bold">
-                    {ksh(l.p.price * l.qty)}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="border-t border-border p-4">
             <textarea
@@ -1276,7 +1453,7 @@ function POS() {
                 onClick={() => void openPayment()}
                 disabled={paymentBusy}
               >
-                Pay {ksh(total)}
+                {paymentBusy ? "Preparing..." : `Pay ${ksh(total)}`}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
@@ -1341,7 +1518,14 @@ function POS() {
                     onClick={() => {
                       setSelectedTableNo(table.no);
                       setTablePickerOpen(false);
-                      queueKitchenTicketsForTable(table.no);
+                      void queueKitchenTicketsForTable(table.no).catch((error: unknown) => {
+                        setPrintNotice(
+                          error instanceof Error
+                            ? error.message
+                            : "The kitchen order could not be sent.",
+                        );
+                        setPrintNoticeType("warning");
+                      });
                     }}
                     className={cn(
                       "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
@@ -1709,7 +1893,7 @@ function POS() {
                   )}
                   <div className="flex justify-end gap-2 border-t border-border pt-4">
                     <Btn onClick={() => setPaymentOpen(false)}>Cancel</Btn>
-                    <Btn variant="primary" onClick={confirmPayment}>
+                    <Btn variant="primary" onClick={confirmPayment} disabled={paymentBusy}>
                       Confirm{" "}
                       {paymentMode === "partial"
                         ? "partial"

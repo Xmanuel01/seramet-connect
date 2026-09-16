@@ -1,6 +1,7 @@
 import type { Product } from "@/lib/menu-product";
 import { formatDateTime } from "@/lib/currency";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
 
 export type MenuImportSource = "csv" | "xlsx";
 export type MenuImportSeverity = "error" | "warning";
@@ -26,7 +27,6 @@ export type MenuImportPreview = {
 type RawMenuRow = Record<string, string>;
 
 const requiredColumns = ["name", "category", "price"] as const;
-const productionStations = ["MAIN KITCHEN", "GRILL", "BAR", "DESSERT", "DISPATCH", "NONE"] as const;
 const truthy = new Set(["1", "yes", "true", "y", "on", "available"]);
 const falsy = new Set(["0", "no", "false", "n", "off", "unavailable"]);
 
@@ -124,54 +124,8 @@ export function exportMenuToCsv(items: Product[], branch?: string) {
   return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
-export function exportMenuImportTemplate(branchNames = configuredBranchNames()) {
-  const headers = [
-    "itemCode",
-    "name",
-    "category",
-    "menuSection",
-    "description",
-    "price",
-    "costPrice",
-    "taxCategory",
-    "unitOfMeasure",
-    "productionStation",
-    "kitchenPrinterGroup",
-    "modifierGroup",
-    "barcode",
-    "sku",
-    ...branchNames.map((name) => `${branchColumnPrefix(name)}Available`),
-    "channelAvailability",
-    "status",
-    "prep",
-    "par",
-    "imageFilename",
-    ...branchNames.map((name) => `${branchColumnPrefix(name)}Price`),
-  ];
-  const sample = [
-    "ITEM-001",
-    "Example item",
-    "CATEGORY",
-    "DEFAULT",
-    "Replace this row with an actual menu item",
-    "0",
-    "0",
-    "",
-    "unit",
-    "",
-    "",
-    "",
-    "",
-    "ITEM-001",
-    ...branchNames.map(() => "yes"),
-    "",
-    "active",
-    "18",
-    "20",
-    "",
-    ...branchNames.map(() => "0"),
-  ];
-  return [headers, sample].map((row) => row.map(csvCell).join(",")).join("\n");
+export function exportMenuImportTemplate(_branchNames = configuredBranchNames()) {
+  return createCanonicalMenuTemplate();
 }
 
 export function exportMenuErrorReport(preview: MenuImportPreview) {
@@ -252,7 +206,7 @@ export function validateMenuRows(
         row: rowNumber,
         field: "productionStation",
         severity: "error",
-        message: `Production station must be one of ${productionStations.join(", ")}`,
+        message: "Production station is required for this legacy local preview",
       });
 
     const duplicateKey = `${name.toLowerCase()}::${category.toLowerCase()}`;
@@ -264,15 +218,6 @@ export function validateMenuRows(
         message: "Duplicate item in this import",
       });
     }
-    if (station === "BAR" && !category.toLowerCase().includes("drink")) {
-      rowIssues.push({
-        row: rowNumber,
-        field: "productionStation",
-        severity: "warning",
-        message: "BAR station is usually used for drink categories",
-      });
-    }
-
     issues.push(...rowIssues);
     if (
       rowIssues.some((issue) => issue.severity === "error") ||
@@ -369,6 +314,9 @@ export function parseCsvRows(text: string): RawMenuRow[] {
 export async function parseXlsxRows(buffer: ArrayBuffer): Promise<RawMenuRow[]> {
   const files = await readZipEntries(buffer);
   const workbook = files.get("xl/workbook.xml") ?? "";
+  if ((workbook.match(/<sheet\b/g) ?? []).length > 10) {
+    throw new Error("Workbook has too many sheets");
+  }
   const rels = files.get("xl/_rels/workbook.xml.rels") ?? "";
   const firstSheetTarget =
     firstMatch(rels, /Target="([^"]*worksheets\/sheet\d+\.xml)"/) ??
@@ -395,8 +343,10 @@ async function readZipEntries(buffer: ArrayBuffer) {
   }
   if (eocd < 0) throw new Error("Invalid XLSX file: missing ZIP directory");
   const totalEntries = view.getUint16(eocd + 10, true);
+  if (totalEntries > 500) throw new Error("Workbook has too many archive entries");
   let cursor = view.getUint32(eocd + 16, true);
   const decoder = new TextDecoder();
+  let expandedBytes = 0;
 
   for (let count = 0; count < totalEntries; count += 1) {
     if (view.getUint32(cursor, true) !== 0x02014b50) break;
@@ -413,9 +363,14 @@ async function readZipEntries(buffer: ArrayBuffer) {
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = new Uint8Array(buffer, dataStart, compressedSize);
     if (method === 0) {
+      expandedBytes += compressed.byteLength;
+      if (expandedBytes > 50 * 1024 * 1024) throw new Error("Workbook is too large when expanded");
       entries.set(fileName, decoder.decode(compressed));
     } else if (method === 8) {
-      entries.set(fileName, decoder.decode(await inflateRaw(compressed)));
+      const expanded = await inflateRaw(compressed);
+      expandedBytes += expanded.byteLength;
+      if (expandedBytes > 50 * 1024 * 1024) throw new Error("Workbook is too large when expanded");
+      entries.set(fileName, decoder.decode(expanded));
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
@@ -478,7 +433,7 @@ function normalizeHeader(header: string) {
 
 function normalizeStation(value?: string) {
   const station = clean(value).replace(/-/g, " ").replace(/\s+/g, " ").toUpperCase();
-  return productionStations.find((item) => item === station);
+  return station || undefined;
 }
 
 function parseMoney(value?: string) {
@@ -524,7 +479,8 @@ function slugify(value: string) {
 }
 
 function csvCell(value: string) {
-  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  const safe = /^[=+@]/.test(value) || /^-\D/.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 function clean(value?: string) {

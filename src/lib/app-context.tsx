@@ -141,13 +141,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (active) setBootstrap(result);
       })
       .catch((error) => {
-        if (active) {
-          setBootstrap({
-            status: "ERROR",
-            message:
-              error instanceof Error ? error.message : "Secure session initialization failed",
-          });
-        }
+        if (!active) return;
+        void fetch("/api/seramet/public/device/startup", { credentials: "same-origin" })
+          .then((response) => response.json() as Promise<{ state?: string }>)
+          .then((device) => {
+            if (device.state === "ACTIVE") {
+              window.location.assign("/pos-login");
+              return;
+            }
+            setBootstrap({
+              status: "ERROR",
+              message:
+                error instanceof Error ? error.message : "Secure session initialization failed",
+            });
+          })
+          .catch(() =>
+            setBootstrap({
+              status: "ERROR",
+              message:
+                error instanceof Error ? error.message : "Secure session initialization failed",
+            }),
+          );
       });
     return () => {
       active = false;
