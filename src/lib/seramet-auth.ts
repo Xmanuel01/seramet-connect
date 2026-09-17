@@ -203,7 +203,7 @@ async function authenticateBearer(
             (tenant_id,id,user_id,device_id,issued_at,expires_at,revoked_at,last_seen_at,
              token_version,ip_hash,metadata_json)
            VALUES (?,?,?,?,?,?,NULL,?,?,NULL,?)
-           ON CONFLICT(tenant_id,id) DO UPDATE SET last_seen_at=excluded.last_seen_at`,
+           ON CONFLICT(tenant_id,id) DO UPDATE SET expires_at=excluded.expires_at,last_seen_at=excluded.last_seen_at`,
         )
         .bind(
           membership.tenant_id,

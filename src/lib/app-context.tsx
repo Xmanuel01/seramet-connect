@@ -14,6 +14,7 @@ import {
   type ConfigurationRepository,
 } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import {
   buildModuleAccessProfile,
   moduleDecision,
@@ -550,18 +551,18 @@ async function bootstrapAuthoritativeSession(
       ? undefined
       : window.localStorage.getItem(sessionTenantStorageKey)?.trim();
   if (selectedTenant) headers["x-seramet-tenant-id"] = selectedTenant;
-  const sessionResponse = await fetch("/api/seramet/auth/session", { headers });
+  const sessionResponse = await authenticatedFetch("/api/seramet/auth/session", { headers });
   if (!sessionResponse.ok) throw new Error("A valid, non-revoked Seramet session is required");
   const session = (await sessionResponse.json()) as { actor?: AuthoritativeActor };
   if (!session.actor) throw new Error("Authenticated session did not resolve an actor");
-  const configurationResponse = await fetch("/api/seramet/configuration", { headers });
+  const configurationResponse = await authenticatedFetch("/api/seramet/configuration", { headers });
   if (!configurationResponse.ok) throw new Error("Tenant configuration could not be loaded");
   const configuration = (await configurationResponse.json()) as { configuration?: PlatformState };
   if (!configuration.configuration) throw new Error("Tenant configuration response was incomplete");
   repository.configurePersistence({
     persistBrowser: false,
     onCommit: (state) => {
-      void fetch("/api/seramet/configuration/import", {
+      void authenticatedFetch("/api/seramet/configuration/import", {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({ mode: "APPLY", configuration: { ...state, users: [] } }),

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
 import type {
   DuplicateStrategy,
@@ -165,7 +166,7 @@ export function useSetupCentre() {
 
   const get = useCallback(
     async <T>(path: string) => {
-      const response = await fetch(path, { headers });
+      const response = await authenticatedFetch(path, { headers });
       const body = (await response.json().catch(() => ({}))) as T & {
         message?: string;
         error?: string;
@@ -279,7 +280,7 @@ export function useSetupCentre() {
 
   const command = useCallback(
     async <T>(path: string, body: unknown) => {
-      const response = await fetch(path, { method: "POST", headers, body: JSON.stringify(body) });
+      const response = await authenticatedFetch(path, { method: "POST", headers, body: JSON.stringify(body) });
       const payload = (await response.json().catch(() => ({}))) as T & {
         message?: string;
         error?: string;
