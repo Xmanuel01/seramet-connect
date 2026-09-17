@@ -16,7 +16,7 @@ const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_00
 const client = await pool.connect();
 try {
   await client.query("BEGIN");
-  await client.query("SELECT pg_advisory_xact_lock(736372616d6574)");
+  await client.query("SELECT pg_advisory_xact_lock($1::bigint)", ["32478965233706356"]);
   await client.query(postgresCompatibilityPrelude);
   const migrationTable = await client.query<{ table_name: string | null }>(
     "SELECT to_regclass('public.schema_migrations')::text AS table_name",
