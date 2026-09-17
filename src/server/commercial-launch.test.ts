@@ -205,6 +205,29 @@ describe.sequential("commercial launch foundation", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
+  it("reports public auth disabled when the publishable key is missing", async () => {
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/config"),
+      {
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+      },
+    );
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toMatchObject({ enabled: false });
+  });
+
+  it("returns unregistered device startup without requiring database access", async () => {
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/device/startup"),
+      { SERAMET_ENVIRONMENT: "production" } as SerametEnv,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, state: "UNREGISTERED" });
+  });
+
   it("uses the request origin for development auth redirects and same-origin checks", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

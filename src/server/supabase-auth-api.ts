@@ -32,7 +32,10 @@ export async function handleSupabaseAuthApi(
     return Response.json({
       ok: true,
       provider: env.SERAMET_IDENTITY_PROVIDER ?? "unconfigured",
-      enabled: env.SERAMET_IDENTITY_PROVIDER === "supabase" && Boolean(env.SERAMET_SUPABASE_URL),
+      enabled:
+        env.SERAMET_IDENTITY_PROVIDER === "supabase" &&
+        Boolean(env.SERAMET_SUPABASE_URL?.trim()) &&
+        Boolean(env.SERAMET_SUPABASE_PUBLISHABLE_KEY?.trim()),
     });
   }
   assertSameOrigin(request, env);

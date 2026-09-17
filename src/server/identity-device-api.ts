@@ -56,6 +56,13 @@ const ownershipTransferSchema = z
 export async function handleIdentityDeviceApi(request: Request, env: SerametEnv) {
   const url = new URL(request.url);
   if (!isHandledPath(url.pathname)) return null;
+  if (
+    url.pathname === "/api/seramet/public/device/startup" &&
+    request.method === "GET" &&
+    !readCookie(request, "seramet_device")
+  ) {
+    return Response.json({ ok: true, state: "UNREGISTERED" }, { headers: noStore() });
+  }
   if (!env.SERAMET_DB)
     throw new ServerOperationError(
       "DATABASE_UNAVAILABLE",

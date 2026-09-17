@@ -7,20 +7,12 @@ import type { SerametEnv } from "./lib/seramet-auth";
 import type { D1Database } from "./server/database/d1";
 import type { DurableQueueBatch } from "./server/environment";
 import { resolveRuntimeConfiguration } from "./server/environment";
+import { cloudflareBindings } from "./server/cloudflare-bindings";
 import {
   handleWorkerQueue,
   scheduleDurableWork,
   type SerametWorkerMessage,
 } from "./server/workers";
-
-type NitroCloudflareRequest = Request & {
-  runtime?: {
-    cloudflare?: {
-      env?: unknown;
-      context?: unknown;
-    };
-  };
-};
 
 type ServerEntry = {
   fetch: (request: Request) => Promise<Response> | Response;
@@ -220,26 +212,7 @@ async function resolveServerEnvironment(
   request: Request,
   fallbackBindings?: unknown,
 ): Promise<SerametEnv> {
-  const runtimeRequest = request as NitroCloudflareRequest;
-
-  const cloudflareBindings = runtimeRequest.runtime?.cloudflare?.env;
-
-  const runtimeBindings =
-    cloudflareBindings && typeof cloudflareBindings === "object"
-      ? (cloudflareBindings as Record<string, unknown>)
-      : {};
-
-  // Compatibility fallback for direct tests or
-  // runtimes that explicitly provide bindings.
-  const fallback =
-    fallbackBindings && typeof fallbackBindings === "object"
-      ? (fallbackBindings as Record<string, unknown>)
-      : {};
-
-  return resolveEnvironmentFromBindings({
-    ...fallback,
-    ...runtimeBindings,
-  });
+  return resolveEnvironmentFromBindings(cloudflareBindings(request, fallbackBindings));
 }
 
 async function resolveEnvironmentFromBindings(bindingsInput: unknown): Promise<SerametEnv> {
