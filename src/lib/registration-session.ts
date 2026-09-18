@@ -1,6 +1,7 @@
 import type { AuthStatus } from "@/lib/auth-client";
 
-export type RegistrationSessionPhase = "INITIAL" | "VERIFICATION_PENDING" | "VERIFICATION_CONFIRMED";
+export type RegistrationSessionPhase =
+  "INITIAL" | "VERIFICATION_PENDING" | "VERIFICATION_CONFIRMED";
 
 export type RegistrationSessionDestination =
   | { kind: "ACCOUNT" }

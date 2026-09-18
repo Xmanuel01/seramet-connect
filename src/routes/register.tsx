@@ -24,7 +24,8 @@ function RegisterPage() {
 
   const checkSession = useCallback(async (phase?: RegistrationSessionPhase) => {
     const requestId = ++sessionCheck.current;
-    const effectivePhase = phase ?? (verificationPending.current ? "VERIFICATION_PENDING" : "INITIAL");
+    const effectivePhase =
+      phase ?? (verificationPending.current ? "VERIFICATION_PENDING" : "INITIAL");
     setStage("CHECKING");
     setMessage(undefined);
     try {
@@ -147,7 +148,11 @@ function RegisterPage() {
 
   if (stage === "CHECKING") {
     return (
-      <AuthShell title="Checking your account" subtitle="Checking your secure session..." footer={<span />}>
+      <AuthShell
+        title="Checking your account"
+        subtitle="Checking your secure session..."
+        footer={<span />}
+      >
         <div className="flex justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
         </div>
@@ -157,16 +162,24 @@ function RegisterPage() {
 
   if (stage === "ERROR") {
     return (
-      <AuthShell title="We couldn't check your account" subtitle="Your account may already exist." footer={<span />}>
+      <AuthShell
+        title="We couldn't check your account"
+        subtitle="Your account may already exist."
+        footer={<span />}
+      >
         <div role="alert" className="rounded-md bg-danger-soft px-3 py-3 text-sm text-danger">
           {message}
         </div>
-        <button className={`${authButtonClass} mt-4`} type="button" onClick={() => void checkSession()}>
+        <button
+          className={`${authButtonClass} mt-4`}
+          type="button"
+          onClick={() => void checkSession()}
+        >
           Try checking again
         </button>
-        <Link to="/login?account=1" className="mt-4 block text-center font-semibold text-primary">
+        <a href="/login?account=1" className="mt-4 block text-center font-semibold text-primary">
           Sign in with an existing account
-        </Link>
+        </a>
       </AuthShell>
     );
   }
@@ -177,13 +190,14 @@ function RegisterPage() {
         title="Verify your email"
         subtitle="After confirming your email, sign in to continue creating your restaurant."
         footer={
-          <Link to="/login?account=1" className="font-semibold text-primary">
+          <a href="/login?account=1" className="font-semibold text-primary">
             Return to sign in
-          </Link>
+          </a>
         }
       >
         <div className="rounded-md border border-border bg-secondary/50 px-4 py-3 text-sm">
-          Email verification does not automatically sign you in. No restaurant or operational records are created until you are authenticated.
+          Email verification does not automatically sign you in. No restaurant or operational
+          records are created until you are authenticated.
         </div>
         <button
           className={`${authButtonClass} mt-4`}
@@ -198,7 +212,11 @@ function RegisterPage() {
 
   if (stage === "CHOOSE_RESTAURANT") {
     return (
-      <AuthShell title="Choose your restaurant" subtitle="Select an existing restaurant to continue." footer={<span />}>
+      <AuthShell
+        title="Choose your restaurant"
+        subtitle="Select an existing restaurant to continue."
+        footer={<span />}
+      >
         <div className="space-y-2">
           {restaurants.map((restaurant) => (
             <button
@@ -226,9 +244,9 @@ function RegisterPage() {
       footer={
         <>
           Already registered?{" "}
-          <Link to="/login?account=1" className="font-semibold text-primary">
+          <a href="/login?account=1" className="font-semibold text-primary">
             Sign in
-          </Link>
+          </a>
         </>
       }
     >
