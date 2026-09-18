@@ -3,7 +3,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
 import { authMutation, authStatus, enterRestaurant, type AuthRestaurant } from "@/lib/auth-client";
-import { registrationSessionDestination } from "@/lib/registration-session";
+import {
+  registrationSessionDestination,
+  type RegistrationSessionPhase,
+} from "@/lib/registration-session";
 
 export const Route = createFileRoute("/register")({ component: RegisterPage });
 
@@ -15,21 +18,33 @@ function RegisterPage() {
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
   const sessionCheck = useRef(0);
+  const verificationPending = useRef(false);
   const idempotencyKey = useRef<string | undefined>(undefined);
   idempotencyKey.current ??= crypto.randomUUID();
 
-  const checkSession = useCallback(async () => {
+  const checkSession = useCallback(async (phase?: RegistrationSessionPhase) => {
     const requestId = ++sessionCheck.current;
+    const effectivePhase = phase ?? (verificationPending.current ? "VERIFICATION_PENDING" : "INITIAL");
     setStage("CHECKING");
     setMessage(undefined);
     try {
       const status = await authStatus();
       if (requestId !== sessionCheck.current) return;
-      const destination = registrationSessionDestination(status);
+      const destination = registrationSessionDestination(status, effectivePhase);
+      if (destination.kind === "SIGN_IN") {
+        window.location.assign("/login?account=1");
+        return;
+      }
       if (destination.kind === "ENTER_RESTAURANT") {
         enterRestaurant(destination.tenantId);
         return;
       }
+      if (destination.kind === "VERIFY") {
+        setRestaurants([]);
+        setStage("VERIFY");
+        return;
+      }
+      if (status.authenticated) verificationPending.current = false;
       if (destination.kind === "CHOOSE_RESTAURANT") {
         setRestaurants(status.restaurants);
       } else {
@@ -79,6 +94,7 @@ function RegisterPage() {
       if (result.authenticated) {
         await checkSession();
       } else {
+        verificationPending.current = true;
         setStage("VERIFY");
       }
     } catch (error) {
@@ -159,7 +175,7 @@ function RegisterPage() {
     return (
       <AuthShell
         title="Verify your email"
-        subtitle="We sent a verification link to your email address. Verify the account, then sign in to create the restaurant."
+        subtitle="After confirming your email, sign in to continue creating your restaurant."
         footer={
           <Link to="/login?account=1" className="font-semibold text-primary">
             Return to sign in
@@ -167,9 +183,13 @@ function RegisterPage() {
         }
       >
         <div className="rounded-md border border-border bg-secondary/50 px-4 py-3 text-sm">
-          No restaurant or operational records are created until the account is verified.
+          Email verification does not automatically sign you in. No restaurant or operational records are created until you are authenticated.
         </div>
-        <button className={`${authButtonClass} mt-4`} type="button" onClick={() => void checkSession()}>
+        <button
+          className={`${authButtonClass} mt-4`}
+          type="button"
+          onClick={() => void checkSession("VERIFICATION_CONFIRMED")}
+        >
           I've verified my email
         </button>
       </AuthShell>
