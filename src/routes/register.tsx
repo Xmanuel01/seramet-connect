@@ -1,29 +1,85 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
-import { authMutation, authStatus, enterRestaurant } from "@/lib/auth-client";
+import { authMutation, authStatus, enterRestaurant, type AuthRestaurant } from "@/lib/auth-client";
+import {
+  registrationSessionDestination,
+  type RegistrationSessionPhase,
+} from "@/lib/registration-session";
 
 export const Route = createFileRoute("/register")({ component: RegisterPage });
 
-type Stage = "CHECKING" | "ACCOUNT" | "VERIFY" | "RESTAURANT";
+type Stage = "CHECKING" | "ACCOUNT" | "VERIFY" | "RESTAURANT" | "CHOOSE_RESTAURANT" | "ERROR";
 
 function RegisterPage() {
   const [stage, setStage] = useState<Stage>("CHECKING");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
+  const sessionCheck = useRef(0);
+  const verificationPending = useRef(false);
   const idempotencyKey = useRef<string | undefined>(undefined);
   idempotencyKey.current ??= crypto.randomUUID();
 
-  useEffect(() => {
-    void authStatus()
-      .then((status) => {
-        if (status.restaurants.length === 1)
-          return enterRestaurant(status.restaurants[0]!.tenantId);
-        setStage(status.authenticated ? "RESTAURANT" : "ACCOUNT");
-      })
-      .catch(() => setStage("ACCOUNT"));
+  const checkSession = useCallback(async (phase?: RegistrationSessionPhase) => {
+    const requestId = ++sessionCheck.current;
+    const effectivePhase =
+      phase ?? (verificationPending.current ? "VERIFICATION_PENDING" : "INITIAL");
+    setStage("CHECKING");
+    setMessage(undefined);
+    try {
+      const status = await authStatus();
+      if (requestId !== sessionCheck.current) return;
+      const destination = registrationSessionDestination(status, effectivePhase);
+      if (destination.kind === "SIGN_IN") {
+        window.location.assign("/login?account=1");
+        return;
+      }
+      if (destination.kind === "ENTER_RESTAURANT") {
+        enterRestaurant(destination.tenantId);
+        return;
+      }
+      if (destination.kind === "VERIFY") {
+        setRestaurants([]);
+        setStage("VERIFY");
+        return;
+      }
+      if (status.authenticated) verificationPending.current = false;
+      if (destination.kind === "CHOOSE_RESTAURANT") {
+        setRestaurants(status.restaurants);
+      } else {
+        setRestaurants([]);
+      }
+      setStage(destination.kind);
+    } catch {
+      if (requestId !== sessionCheck.current) return;
+      setStage("ERROR");
+      setMessage("We could not confirm your session. Try again without creating another account.");
+    }
   }, []);
+
+  useEffect(() => {
+    void checkSession();
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void checkSession();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void checkSession();
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void checkSession();
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      sessionCheck.current += 1;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [checkSession]);
 
   const createAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -36,7 +92,12 @@ function RegisterPage() {
         email: String(data.get("email")),
         password: String(data.get("password")),
       });
-      setStage(result.authenticated ? "RESTAURANT" : "VERIFY");
+      if (result.authenticated) {
+        await checkSession();
+      } else {
+        verificationPending.current = true;
+        setStage("VERIFY");
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Account creation failed");
     } finally {
@@ -88,7 +149,7 @@ function RegisterPage() {
   if (stage === "CHECKING") {
     return (
       <AuthShell
-        title="Create your account"
+        title="Checking your account"
         subtitle="Checking your secure session..."
         footer={<span />}
       >
@@ -99,19 +160,74 @@ function RegisterPage() {
     );
   }
 
+  if (stage === "ERROR") {
+    return (
+      <AuthShell
+        title="We couldn't check your account"
+        subtitle="Your account may already exist."
+        footer={<span />}
+      >
+        <div role="alert" className="rounded-md bg-danger-soft px-3 py-3 text-sm text-danger">
+          {message}
+        </div>
+        <button
+          className={`${authButtonClass} mt-4`}
+          type="button"
+          onClick={() => void checkSession()}
+        >
+          Try checking again
+        </button>
+        <a href="/login?account=1" className="mt-4 block text-center font-semibold text-primary">
+          Sign in with an existing account
+        </a>
+      </AuthShell>
+    );
+  }
+
   if (stage === "VERIFY") {
     return (
       <AuthShell
         title="Verify your email"
-        subtitle="We sent a verification link to your email address. Verify the account, then sign in to create the restaurant."
+        subtitle="After confirming your email, sign in to continue creating your restaurant."
         footer={
-          <Link to="/login" className="font-semibold text-primary">
+          <a href="/login?account=1" className="font-semibold text-primary">
             Return to sign in
-          </Link>
+          </a>
         }
       >
         <div className="rounded-md border border-border bg-secondary/50 px-4 py-3 text-sm">
-          No restaurant or operational records are created until the account is verified.
+          Email verification does not automatically sign you in. No restaurant or operational
+          records are created until you are authenticated.
+        </div>
+        <button
+          className={`${authButtonClass} mt-4`}
+          type="button"
+          onClick={() => void checkSession("VERIFICATION_CONFIRMED")}
+        >
+          I've verified my email
+        </button>
+      </AuthShell>
+    );
+  }
+
+  if (stage === "CHOOSE_RESTAURANT") {
+    return (
+      <AuthShell
+        title="Choose your restaurant"
+        subtitle="Select an existing restaurant to continue."
+        footer={<span />}
+      >
+        <div className="space-y-2">
+          {restaurants.map((restaurant) => (
+            <button
+              key={restaurant.tenantId}
+              type="button"
+              className="w-full rounded-md border border-border px-3 py-3 text-left text-sm font-semibold hover:bg-accent/50"
+              onClick={() => enterRestaurant(restaurant.tenantId)}
+            >
+              {restaurant.name}
+            </button>
+          ))}
         </div>
       </AuthShell>
     );
@@ -128,9 +244,9 @@ function RegisterPage() {
       footer={
         <>
           Already registered?{" "}
-          <Link to="/login" className="font-semibold text-primary">
+          <a href="/login?account=1" className="font-semibold text-primary">
             Sign in
-          </Link>
+          </a>
         </>
       }
     >

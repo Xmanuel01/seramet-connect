@@ -43,6 +43,7 @@ export async function employeePinLogin(identifier: string, pin: string) {
 export async function authStatus(): Promise<AuthStatus> {
   const response = await fetch("/api/seramet/public/auth/status", {
     credentials: "same-origin",
+    cache: "no-store",
     headers: { accept: "application/json" },
   });
   if (!response.ok) throw new Error("Authentication service is unavailable");
