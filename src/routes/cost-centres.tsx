@@ -4,6 +4,8 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { currentMonthSettledSales } from "@/lib/financial-reporting";
 
 export const Route = createFileRoute("/cost-centres")({
   head: () => ({
@@ -26,14 +28,17 @@ export const Route = createFileRoute("/cost-centres")({
   component: CostCentres,
 });
 
-const centres = emptyRecords();
 
 const allocations = emptyRecords();
 
 function CostCentres() {
-  const { branchLabel } = useAppContext();
-  const revenue = centres.reduce((s, c) => s + c.revenue, 0);
-  const contribution = centres.reduce((s, c) => s + (c.revenue - c.direct - c.labour), 0);
+  const { branchLabel, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const sales = currentMonthSettledSales(state, matchesBranch);
+  const centres = sales.revenueByCategory.map((row) => ({
+    centre: row.category,
+    revenue: row.revenue,
+  }));
   return (
     <AppShell
       title="Cost centres"
@@ -46,14 +51,10 @@ function CostCentres() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Revenue" value={revenue} money />
-        <Metric label="Contribution" value={contribution} money />
-        <Metric
-          label="Contribution margin"
-          value={Math.round((contribution / revenue) * 100)}
-          suffix="%"
-        />
-        <Metric label="Cost centres" value={centres.length} />
+        <Metric label="Revenue MTD" value={sales.netSales} money />
+        <Metric label="Contribution" value="Not available" />
+        <Metric label="Contribution margin" value="Not available" />
+        <Metric label="Revenue categories" value={centres.length} />
       </div>
       <Panel className="mt-4">
         <PanelHead
@@ -74,22 +75,19 @@ function CostCentres() {
               </tr>
             </thead>
             <tbody>
-              {centres.map((row) => {
-                const value = row.revenue - row.direct - row.labour;
-                return (
-                  <tr key={row.centre} className="hover:bg-secondary/40">
-                    <TD className="font-semibold">{row.centre}</TD>
-                    <TD className="num text-right">{ksh(row.revenue)}</TD>
-                    <TD className="num text-right text-muted-foreground">{ksh(row.direct)}</TD>
-                    <TD className="num text-right text-muted-foreground">{ksh(row.labour)}</TD>
-                    <TD className="num text-right font-semibold">{ksh(value)}</TD>
-                    <TD className="num text-right">{Math.round((value / row.revenue) * 100)}%</TD>
-                    <TD>
-                      <Status>{row.status}</Status>
-                    </TD>
-                  </tr>
-                );
-              })}
+              {centres.map((row) => (
+                <tr key={row.centre} className="hover:bg-secondary/40">
+                  <TD className="font-semibold">{row.centre}</TD>
+                  <TD className="num text-right">{ksh(row.revenue)}</TD>
+                  <TD className="text-right text-muted-foreground">Not available</TD>
+                  <TD className="text-right text-muted-foreground">Not available</TD>
+                  <TD className="text-right text-muted-foreground">Not available</TD>
+                  <TD className="text-right text-muted-foreground">Not available</TD>
+                  <TD>
+                    <Status>Revenue only</Status>
+                  </TD>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
