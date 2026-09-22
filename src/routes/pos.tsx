@@ -284,23 +284,44 @@ function POS() {
     () => new Set(transactionState.bills.flatMap((bill) => bill.orderIds)),
     [transactionState.bills],
   );
+  const branchOrders = useMemo(
+    () =>
+      transactionState.orders.filter(
+        (order) =>
+          (order.tenantId ?? activeTenantId) === activeTenantId &&
+          (order.branchId ?? branchId) === branchId,
+      ),
+    [activeTenantId, branchId, transactionState.orders],
+  );
   const activePosOrders = useMemo(
     () =>
-      transactionState.orders
-        .filter(
-          (order) =>
-            (order.tenantId ?? activeTenantId) === activeTenantId &&
-            (order.branchId ?? branchId) === branchId,
-        )
+      branchOrders
         .filter((order) =>
           ["HELD", "OPEN", "SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
             order.status,
           ),
         )
         .filter((order) => !billedOrderIds.has(order.id)),
-    [activeTenantId, billedOrderIds, branchId, transactionState.orders],
+    [billedOrderIds, branchOrders],
   );
-  const activeOrder = activePosOrders.find((order) => order.id === activeOrderId) ?? null;
+  const openTableOrders = useMemo(
+    () =>
+      branchOrders.filter(
+        (order) =>
+          Boolean(order.table) &&
+          [
+            "HELD",
+            "OPEN",
+            "SENT_TO_KITCHEN",
+            "IN_PROGRESS",
+            "READY",
+            "SERVED",
+            "BILL_REQUESTED",
+          ].includes(order.status),
+      ),
+    [branchOrders],
+  );
+  const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
   const canPrintBill =
     activeOrder !== null &&
     ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status);
@@ -344,7 +365,7 @@ function POS() {
         (table) => table.tenantId === activeTenantId && table.branchId === branchId && table.active,
       )
       .map((table) => {
-        const activeTableOrder = activePosOrders.find((order) => order.table === table.code);
+        const activeTableOrder = openTableOrders.find((order) => order.table === table.code);
         return {
           no: table.code,
           seats: table.seats,
@@ -358,7 +379,7 @@ function POS() {
           orderStatus: activeTableOrder?.status,
         };
       });
-  }, [activePosOrders, activeTenantId, branchId, branchServiceAreas, platformState.tables]);
+  }, [activeTenantId, branchId, branchServiceAreas, openTableOrders, platformState.tables]);
 
   const posCategories = useMemo(() => {
     const importedCategories = Array.from(new Set(branchMenu.map((product) => product.category)));
