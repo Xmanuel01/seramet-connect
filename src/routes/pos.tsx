@@ -874,6 +874,7 @@ function POS() {
     selectedChannel?.channelType === "TAKEAWAY" ||
     selectedChannel?.channelType === "KIOSK" ||
     selectedChannel?.metadata["payBeforeKitchen"] === true;
+  const kitchenRouteUnavailable = !profile || Boolean(configurationError);
 
   const bump = (id: string, d: number) =>
     setLines((current) => ({
@@ -1835,7 +1836,8 @@ function POS() {
                         <Status>{order.status.replaceAll("_", " ")}</Status>
                       </div>
                       <div className="mt-1 truncate text-[12px] text-muted-foreground">
-                        {order.customer} - {order.lines.length} items - {ksh(order.total)}
+                        {order.table ? `Table ${order.table} - ` : ""}
+                        {order.customer} - {order.channel} - {order.lines.length} items - {ksh(order.total)}
                       </div>
                     </button>
                   ))}
@@ -2084,14 +2086,18 @@ function POS() {
               <Btn
                 onClick={queueKitchenTickets}
                 disabled={
-                  (!items.length && !kitchenStarted) || (kitchenStarted && !hasKitchenChanges)
+                  kitchenRouteUnavailable ||
+                  (!items.length && !kitchenStarted) ||
+                  (kitchenStarted && !hasKitchenChanges)
                 }
               >
-                {kitchenStarted
-                  ? hasKitchenChanges
-                    ? "Send kitchen update"
-                    : "Kitchen up to date"
-                  : "Send kitchen"}
+                {kitchenRouteUnavailable
+                  ? "Configure kitchen route"
+                  : kitchenStarted
+                    ? hasKitchenChanges
+                      ? "Send kitchen update"
+                      : "Kitchen up to date"
+                    : "Send kitchen"}
               </Btn>
               <Btn
                 variant="primary"
@@ -2101,7 +2107,10 @@ function POS() {
                   paymentBusy ||
                   !items.length ||
                   (!payMayAutoSendKitchen &&
-                    (!activeOrder || !kitchenStarted || hasKitchenChanges))
+                    (!activeOrder || !kitchenStarted || hasKitchenChanges)) ||
+                  (payMayAutoSendKitchen &&
+                    (!activeOrder || !kitchenStarted || hasKitchenChanges) &&
+                    kitchenRouteUnavailable)
                 }
               >
                 {paymentBusy
