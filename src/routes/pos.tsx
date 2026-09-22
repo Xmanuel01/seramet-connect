@@ -137,6 +137,11 @@ function POS() {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(() => paymentMethods[0]?.id ?? "");
   const [paymentMode, setPaymentMode] = useState<"full" | "split" | "partial">("full");
+  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitMethodId, setSplitMethodId] = useState("");
+  const [splitAmount, setSplitAmount] = useState("");
+  const [splitReference, setSplitReference] = useState("");
+  const [splitCashReceived, setSplitCashReceived] = useState("");
   const [tendered, setTendered] = useState(0);
   const [cashReceived, setCashReceived] = useState(0);
   const [tenderCurrency, setTenderCurrency] = useState(tenant.defaultCurrency);
@@ -465,7 +470,7 @@ function POS() {
   const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
   const due = Math.max(0, total - paid);
   const change = Math.max(0, paid - total);
-  const suggestedAmount = paymentMode === "split" ? Math.ceil(due / 2) : due;
+  const suggestedAmount = due;
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
@@ -852,6 +857,58 @@ function POS() {
   const removePayment = (id: string) => {
     setPayments((current) => current.filter((payment) => payment.id !== id));
     setPaymentConfirmed(false);
+  };
+
+  const addSplitPayment = () => {
+    const method = paymentMethods.find((candidate) => candidate.id === splitMethodId);
+    const amount = Number(splitAmount);
+    if (!method || !Number.isFinite(amount) || amount <= 0) {
+      setPrintNotice("Enter a valid split amount and payment method.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (amount > due) {
+      setPrintNotice(`Split amount cannot exceed the remaining balance of ${ksh(due)}.`);
+      setPrintNoticeType("warning");
+      return;
+    }
+    const reference = splitReference.trim().toUpperCase();
+    if (method.requiresReference && !reference) {
+      setPrintNotice(`${method.displayName} requires a transaction reference.`);
+      setPrintNoticeType("warning");
+      return;
+    }
+    const cashAmount =
+      method.category === "CASH" ? Number(splitCashReceived || splitAmount) : amount;
+    if (method.category === "CASH" && (!Number.isFinite(cashAmount) || cashAmount < amount)) {
+      setPrintNotice("Cash received must be at least the split amount.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    const amountMinor = parseMajorAmount(amount, tenant.defaultCurrency);
+    setPayments((current) => [
+      ...current,
+      {
+        id: `split-${Date.now()}-${current.length}`,
+        methodId: method.id,
+        method: method.displayName,
+        amount,
+        tenderCurrency: tenant.defaultCurrency,
+        tenderAmountMinor: amountMinor,
+        cashTenderedMinor:
+          method.category === "CASH"
+            ? parseMajorAmount(cashAmount, tenant.defaultCurrency)
+            : amountMinor,
+        ...(reference ? { reference } : {}),
+      },
+    ]);
+    setPaymentMode("split");
+    setSplitOpen(false);
+    setSplitAmount("");
+    setSplitReference("");
+    setSplitCashReceived("");
+    setPrintNotice(`${method.displayName} split of ${ksh(amount)} added. ${ksh(due - amount)} remains.`);
+    setPrintNoticeType("idle");
   };
 
   const holdOrder = async () => {
@@ -2008,9 +2065,11 @@ function POS() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button
                       onClick={() => {
-                        setPaymentMode("split");
-                        setTendered(Math.ceil(due / 2));
-                        setCashReceived(Math.ceil(due / 2));
+                        setSplitMethodId(selectedPaymentMethod?.id ?? paymentMethods[0]?.id ?? "");
+                        setSplitAmount("");
+                        setSplitReference("");
+                        setSplitCashReceived("");
+                        setSplitOpen(true);
                       }}
                       className={cn(
                         "rounded-md border px-3 py-2 text-left text-[13px] hover:bg-secondary",
@@ -2019,9 +2078,9 @@ function POS() {
                           : "border-border",
                       )}
                     >
-                      <span className="block font-semibold">Split payment</span>
+                      <span className="block font-semibold">Add split payment</span>
                       <span className="text-[12px] text-muted-foreground">
-                        Add another method or guest split
+                        Enter any amount and method; repeat for as many people as needed
                       </span>
                     </button>
                     <button
@@ -2151,7 +2210,9 @@ function POS() {
                       Confirm{" "}
                       {paymentMode === "partial"
                         ? "partial"
-                        : (selectedPaymentMethod?.displayName ?? "configured")}{" "}
+                        : paymentMode === "split"
+                          ? "split"
+                          : (selectedPaymentMethod?.displayName ?? "configured")}{" "}
                       payment
                     </Btn>
                   </div>
