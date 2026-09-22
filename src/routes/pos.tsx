@@ -406,8 +406,52 @@ function POS() {
   }, [configurationError]);
 
   useEffect(() => {
+    const latestKitchenJob = printJobs.find((job) =>
+      ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET", "DISPATCH_TICKET"].includes(job.documentType),
+    );
+    if (!latestKitchenJob) return;
+    if (latestKitchenJob.status === "Failed") {
+      setPrintNotice(
+        `Kitchen ticket failed: ${latestKitchenJob.failureReason ?? "printer did not accept the job"}`,
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (["Printed", "Displayed", "Fallback Printed"].includes(latestKitchenJob.status)) {
+      setPrintNotice(
+        latestKitchenJob.amendmentType && latestKitchenJob.amendmentType !== "NEW"
+          ? `Kitchen ${latestKitchenJob.amendmentType.toLowerCase()} confirmed by print routing.`
+          : "Kitchen ticket confirmed by print routing.",
+      );
+      setPrintNoticeType("success");
+      return;
+    }
+    if (["Queued", "Sending", "Retrying"].includes(latestKitchenJob.status)) {
+      setPrintNotice(`Kitchen ticket ${latestKitchenJob.status.toLowerCase()} - awaiting confirmation.`);
+      setPrintNoticeType("idle");
+    }
+  }, [printJobs]);
+
+  useEffect(() => {
     if (!selectedChannel && orderChannels[0]) setOrderSource(orderChannels[0].id);
   }, [orderChannels, selectedChannel]);
+
+  useEffect(() => {
+    if (!paymentMethods.length) {
+      if (paymentMethod) setPaymentMethod("");
+      return;
+    }
+    if (!paymentMethods.some((method) => method.id === paymentMethod)) {
+      setPaymentMethod(paymentMethods[0]!.id);
+    }
+  }, [paymentMethod, paymentMethods]);
+
+  useEffect(() => {
+    if (!splitOpen || !paymentMethods.length) return;
+    if (!paymentMethods.some((method) => method.id === splitMethodId)) {
+      setSplitMethodId(paymentMethods[0]!.id);
+    }
+  }, [paymentMethods, splitMethodId, splitOpen]);
 
   useEffect(() => {
     const token = getSerametAccessToken();
