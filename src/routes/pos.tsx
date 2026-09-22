@@ -282,7 +282,8 @@ function POS() {
             order.status,
           ),
         )
-        .filter((order) => !billedOrderIds.has(order.id)),
+        .filter((order) => !billedOrderIds.has(order.id))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [activeTenantId, billedOrderIds, branchId, transactionState.orders],
   );
   const activeOrder = activePosOrders.find((order) => order.id === activeOrderId) ?? null;
@@ -516,6 +517,7 @@ function POS() {
         ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status)),
   );
   const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
+  const canFinalizeBill = canPrintBill && !hasUnsentItems;
   const posStateLabel = paymentOpen
     ? "Paying"
     : activeOrder?.status === "HELD"
@@ -1043,6 +1045,11 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
+    if (hasUnsentItems) {
+      setPrintNotice("Send the latest additions to kitchen before billing this order.");
+      setPrintNoticeType("warning");
+      return;
+    }
     try {
       const orderForPrint = buildPrintOrder();
       await mutateTransaction("requestBillWithDraft", {
@@ -1501,7 +1508,11 @@ function POS() {
                         <Status>{order.status.replaceAll("_", " ")}</Status>
                       </div>
                       <div className="mt-1 truncate text-[12px] text-muted-foreground">
-                        {order.customer} - {order.lines.length} items - {ksh(order.total)}
+                        {order.table ? `Table ${order.table}` : order.channel} · {order.customer}
+                      </div>
+                      <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                        <span>{order.lines.length} line{order.lines.length === 1 ? "" : "s"}</span>
+                        <span className="num font-semibold text-foreground">{ksh(order.total)}</span>
                       </div>
                     </button>
                   ))}
@@ -1748,8 +1759,8 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder}>Hold</Btn>
-              {canPrintBill ? (
+              <Btn onClick={holdOrder} disabled={channelLocked}>Hold</Btn>
+              {canFinalizeBill ? (
                 <>
                   <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
                   <Btn onClick={() => moveOrderToInvoice(false)}>
