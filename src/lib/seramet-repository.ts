@@ -215,6 +215,11 @@ export function applyServerMutation(
         throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
+    case "amendKitchenOrder": {
+      const orderId = String(input["orderId"]);
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.amendKitchenOrder>[2];
+      return TransactionEngine.amendKitchenOrder(state, orderId, draft, actor.name);
+    }
     case "createGuestOrder": {
       const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
       const customerValueInput = input["customerValueInput"] as
