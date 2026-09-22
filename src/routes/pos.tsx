@@ -1709,7 +1709,9 @@ function POS() {
           <DialogHeader>
             <DialogTitle>Select table</DialogTitle>
             <DialogDescription>
-              Choose the guest table before sending Order {currentOrderNumber} to kitchen.
+              {tablePickerIntent === "payment"
+                ? `Choose the guest table for Order ${currentOrderNumber}. Seramet will route the KOT before payment.`
+                : `Choose the guest table before sending Order ${currentOrderNumber} to kitchen.`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -1731,14 +1733,42 @@ function POS() {
                     onClick={() => {
                       setSelectedTableNo(table.no);
                       setTablePickerOpen(false);
-                      void queueKitchenTicketsForTable(table.no).catch((error: unknown) => {
+                      if (table.orderId) {
+                        setActiveOrderId(table.orderId);
                         setPrintNotice(
-                          error instanceof Error
-                            ? error.message
-                            : "The kitchen order could not be sent.",
+                          `Table ${table.no} already has ${table.orderId}. Existing order opened instead of creating a duplicate.`,
                         );
-                        setPrintNoticeType("warning");
-                      });
+                        setPrintNoticeType("idle");
+                        return;
+                      }
+                      void queueKitchenTicketsForTable(table.no)
+                        .then((queued) => {
+                          if (!queued || tablePickerIntent !== "payment") return;
+                          if (queued.jobIds.length > 0) {
+                            setPendingPaymentAfterKitchen(queued);
+                            setPrintNotice(
+                              "KOT queued. Payment will open after production delivery is confirmed.",
+                            );
+                            setPrintNoticeType("idle");
+                            return;
+                          }
+                          void preparePaymentSession(queued.orderId).catch((error: unknown) => {
+                            setPrintNotice(
+                              error instanceof Error
+                                ? error.message
+                                : "Payment could not be prepared.",
+                            );
+                            setPrintNoticeType("warning");
+                          });
+                        })
+                        .catch((error: unknown) => {
+                          setPrintNotice(
+                            error instanceof Error
+                              ? error.message
+                              : "The kitchen order could not be sent.",
+                          );
+                          setPrintNoticeType("warning");
+                        });
                     }}
                     className={cn(
                       "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
@@ -1799,8 +1829,8 @@ function POS() {
                 </div>
               </dl>
               <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                Clicking a table immediately sends this order to kitchen and updates the Orders
-                page.
+                Available tables create this order. Occupied tables open their existing order, so
+                Seramet never creates a second live order for the same table.
               </div>
             </aside>
           </div>
