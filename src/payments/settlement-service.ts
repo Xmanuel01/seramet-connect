@@ -28,17 +28,24 @@ export type SettlementDisposition =
 const compactCode = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export class SettlementService {
-  constructor(private repository: ConfigurationRepository = getConfigurationRepository()) {}
+  // The server creates a module-level SettlementService before its first request
+  // hydrates tenant configuration. Never capture the empty startup repository.
+  // An explicitly injected repository remains stable for isolated callers/tests.
+  constructor(private readonly repository?: ConfigurationRepository) {}
+
+  private get configuration(): ConfigurationRepository {
+    return this.repository ?? getConfigurationRepository();
+  }
 
   listMethods(tenantId: string) {
-    return this.repository.listPaymentMethods(tenantId, true);
+    return this.configuration.listPaymentMethods(tenantId, true);
   }
 
   recommendMethod(tenantId: string, invoice: BillingRecord, state: TransactionState) {
     const methods = this.listMethods(tenantId);
     const order = state.orders.find((candidate) => invoice.orderIds.includes(candidate.id));
     const channel = order
-      ? this.repository
+      ? this.configuration
           .listOrderChannels(tenantId, true)
           .find(
             (candidate) =>
@@ -92,9 +99,9 @@ export class SettlementService {
     }
 
     const branch = invoice.branchId
-      ? this.repository.getBranch(input.tenantId, invoice.branchId)
-      : this.repository.resolveBranch(input.tenantId, invoice.branch);
-    const tenant = this.repository.getTenant(input.tenantId);
+      ? this.configuration.getBranch(input.tenantId, invoice.branchId)
+      : this.configuration.resolveBranch(input.tenantId, invoice.branch);
+    const tenant = this.configuration.getTenant(input.tenantId);
     const currency = tenant.defaultCurrency;
     const outstanding = Math.max(0, invoice.total - invoice.paid);
     const allocatedMajor = Math.min(input.amount, outstanding);
