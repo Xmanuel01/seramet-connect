@@ -971,6 +971,7 @@ function POS() {
     setPayments([]);
     setPaymentReference("");
     setPaymentConfirmed(false);
+    setExistingPaid(0);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
     setPaymentBusy(true);
@@ -992,6 +993,7 @@ function POS() {
       ) {
         throw new Error("The prepared invoice is outside the active restaurant branch");
       }
+      setExistingPaid(bill.paid);
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPaymentOpen(true);
@@ -1589,6 +1591,7 @@ function POS() {
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
     setPaymentConfirmed(false);
+    setExistingPaid(0);
     setPaymentOpen(false);
   };
 
