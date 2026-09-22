@@ -1006,6 +1006,12 @@ function POS() {
   const addPayment = async () => {
     const amount = Math.min(due, Math.max(0, tendered || suggestedAmount));
     if (!amount || !selectedPaymentMethod) return;
+    const methodIssue = paymentMethodIssue(selectedPaymentMethod);
+    if (methodIssue) {
+      setPrintNotice(`${selectedPaymentMethod.displayName} is unavailable: ${methodIssue}.`);
+      setPrintNoticeType("warning");
+      return;
+    }
     if (selectedPaymentMethod.requiresReference && !paymentReference.trim()) {
       setPrintNotice(`${selectedPaymentMethod.displayName} requires a transaction reference.`);
       setPrintNoticeType("warning");
@@ -1078,6 +1084,7 @@ function POS() {
         tenderCurrency,
         tenderAmountMinor,
         cashTenderedMinor,
+        status: "draft",
         ...(quote ? { fxQuote: quote } : {}),
         ...(reference ? { reference } : {}),
       },
@@ -1094,10 +1101,10 @@ function POS() {
   };
 
   const addSplitPayment = () => {
-    const method = paymentMethods.find((candidate) => candidate.id === splitMethodId);
+    const method = usablePaymentMethods.find((candidate) => candidate.id === splitMethodId);
     const amount = Number(splitAmount);
     if (!method || !Number.isFinite(amount) || amount <= 0) {
-      setPrintNotice("Enter a valid split amount and payment method.");
+      setPrintNotice("Choose an available payment method and enter a valid split amount.");
       setPrintNoticeType("warning");
       return;
     }
@@ -1133,6 +1140,7 @@ function POS() {
           method.category === "CASH"
             ? parseMajorAmount(cashAmount, tenant.defaultCurrency)
             : amountMinor,
+        status: "draft",
         ...(reference ? { reference } : {}),
       },
     ]);
