@@ -877,7 +877,7 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     expect(state.receipts).toHaveLength(0);
   });
 
-  it("prepares the explicitly selected order for payment once without falling back to another order", () => {
+  it("requires explicit kitchen dispatch before preparing the selected order for payment", () => {
     let state = TransactionEngine.createOrder(blank(), { ...draft, table: "01" }, "OPEN");
     const selectedOrderId = state.orders[0]!.id;
     state = TransactionEngine.createOrder(
@@ -887,6 +887,12 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     );
     const otherOrderId = state.orders[0]!.id;
 
+    expect(() =>
+      TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W."),
+    ).toThrow(/Send the order to kitchen/);
+    expect(state.bills).toHaveLength(0);
+
+    state = TransactionEngine.sendToKitchen(state, selectedOrderId, "Amina W.");
     state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
     state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
 
@@ -908,6 +914,15 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     const orderId = state.orders[0]!.id;
     state = TransactionEngine.sendToKitchen(state, orderId, "Amina W.");
     const sentLines = state.orders[0]!.lines.map((line) => ({ ...line }));
+
+    expect(() =>
+      TransactionEngine.updateOrderDraft(
+        state,
+        orderId,
+        { ...draft, channel: "TAKEAWAY", lines: sentLines },
+        "Amina W.",
+      ),
+    ).toThrow(/channel is locked/i);
 
     expect(() =>
       TransactionEngine.updateOrderDraft(
