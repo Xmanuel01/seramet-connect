@@ -3,6 +3,8 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { currentMonthJournalStatus, currentMonthSettledSales } from "@/lib/financial-reporting";
 
 export const Route = createFileRoute("/accounting")({
   head: () => ({
@@ -75,7 +77,17 @@ const postings = [
 ];
 
 function AccountingHub() {
-  const { branchLabel } = useAppContext();
+  const { branchLabel, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const sales = currentMonthSettledSales(state, matchesBranch);
+  const journal = currentMonthJournalStatus(state, matchesBranch);
+  const salesPct = (amount: number) =>
+    sales.grossSales > 0 ? Math.round((amount / sales.grossSales) * 1000) / 10 : 0;
+  const summaryRows = [
+    ["Gross settled sales", sales.grossSales, 100],
+    ["Net sales before tax", sales.netSales, salesPct(sales.netSales)],
+    ["Tax collected", sales.taxCollected, salesPct(sales.taxCollected)],
+  ] as const;
   return (
     <AppShell
       title="Accounting"
@@ -88,10 +100,10 @@ function AccountingHub() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Revenue MTD" value={4128600} money />
-        <Metric label="Prime cost" value={58.4} suffix="%" invert />
-        <Metric label="Out of balance" value={0} money />
-        <Metric label="Unposted vouchers" value={2} invert />
+        <Metric label="Settled sales MTD" value={sales.grossSales} money />
+        <Metric label="Tax MTD" value={sales.taxCollected} money />
+        <Metric label="Out of balance" value={journal.outOfBalance} money invert />
+        <Metric label="Unposted vouchers" value={journal.unpostedVouchers} invert />
       </div>
 
       <Panel className="mt-4">
@@ -140,7 +152,10 @@ function AccountingHub() {
       </Panel>
 
       <Panel className="mt-4">
-        <PanelHead title="Month to date summary" sub="Accrual basis, all posted vouchers" />
+        <PanelHead
+          title="Month to date summary"
+          sub="Authoritative settled invoices for the selected branch"
+        />
         <table className="w-full">
           <thead>
             <tr>
@@ -150,14 +165,7 @@ function AccountingHub() {
             </tr>
           </thead>
           <tbody>
-            {[
-              ["Food & beverage sales", 4128600, 100],
-              ["Cost of sales", 1362400, 33],
-              ["Gross profit", 2766200, 67],
-              ["Labour cost", 1048900, 25.4],
-              ["Operating expenses", 704300, 17.1],
-              ["Net profit", 1013000, 24.5],
-            ].map(([line, amount, pct]) => (
+            {summaryRows.map(([line, amount, pct]) => (
               <tr key={String(line)} className="hover:bg-secondary/40">
                 <TD className="font-semibold">{line}</TD>
                 <TD className="num text-right font-semibold">{ksh(Number(amount))}</TD>
