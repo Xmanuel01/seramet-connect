@@ -169,7 +169,9 @@ function POS() {
     Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
-  const [printNotice, setPrintNotice] = useState("POS ready. Production delivery state will appear here.");
+  const [printNotice, setPrintNotice] = useState(
+    "POS ready. Production delivery state will appear here.",
+  );
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
   const [kitchenNote, setKitchenNote] = useState("");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
@@ -219,9 +221,9 @@ function POS() {
   const selectedProviderOperation = selectedPaymentMethod?.metadata["providerOperation"];
   const selectedMethodRequiresReference = Boolean(
     selectedPaymentMethod &&
-      (selectedPaymentMethod.requiresReference ||
-        selectedPaymentMethod.category === "BANK_TRANSFER" ||
-        (selectedPaymentMethod.category === "DIGITAL_WALLET" && !selectedProviderOperation)),
+    (selectedPaymentMethod.requiresReference ||
+      selectedPaymentMethod.category === "BANK_TRANSFER" ||
+      (selectedPaymentMethod.category === "DIGITAL_WALLET" && !selectedProviderOperation)),
   );
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
@@ -456,13 +458,9 @@ function POS() {
   const visible = branchMenu.filter((product) => {
     if (cat !== "All items" && product.category !== cat) return false;
     if (!normalizedSearch) return true;
-    return [
-      product.name,
-      product.category,
-      product.itemCode,
-      product.sku,
-      product.barcode,
-    ].some((value) => value?.toLowerCase().includes(normalizedSearch));
+    return [product.name, product.category, product.itemCode, product.sku, product.barcode].some(
+      (value) => value?.toLowerCase().includes(normalizedSearch),
+    );
   });
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
@@ -514,8 +512,8 @@ function POS() {
   const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
   const channelLocked = Boolean(
     activeOrder &&
-      (activeOrder.lines.some((line) => Boolean(line.sentAt)) ||
-        ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status)),
+    (activeOrder.lines.some((line) => Boolean(line.sentAt)) ||
+      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status)),
   );
   const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
   const canFinalizeBill = canPrintBill && !hasUnsentItems;
@@ -962,9 +960,7 @@ function POS() {
     setSelectedTableNo(tableNo ?? persistedOrder.table ?? null);
 
     if (ticketLines.length === 0) {
-      if (
-        ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(persistedOrder.status)
-      ) {
+      if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(persistedOrder.status)) {
         setPrintNotice("No new kitchen items. Existing KOT remains authoritative.");
         setPrintNoticeType("idle");
         return { orderId: persistedOrder.id, jobIds: [] };
@@ -1013,8 +1009,7 @@ function POS() {
           ? result.jobs.map((job) => job.id)
           : printJobs
               .filter(
-                (job) =>
-                  job.orderId === persistedOrder.id && job.amendmentType === amendmentType,
+                (job) => job.orderId === persistedOrder.id && job.amendmentType === amendmentType,
               )
               .map((job) => job.id);
       if (jobIds.length === 0) {
@@ -1026,12 +1021,9 @@ function POS() {
       reusedExistingRoute = duplicateAlreadyQueued;
     }
 
-    await mutateTransaction(
-      "sendToKitchen",
-      { orderId: persistedOrder.id },
-      undefined,
-      { kotPrinted: true },
-    );
+    await mutateTransaction("sendToKitchen", { orderId: persistedOrder.id }, undefined, {
+      kotPrinted: true,
+    });
 
     setPrintNotice(
       reusedExistingRoute
@@ -1561,8 +1553,12 @@ function POS() {
                         {order.table ? `Table ${order.table}` : order.channel} · {order.customer}
                       </div>
                       <div className="mt-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                        <span>{order.lines.length} line{order.lines.length === 1 ? "" : "s"}</span>
-                        <span className="num font-semibold text-foreground">{ksh(order.total)}</span>
+                        <span>
+                          {order.lines.length} line{order.lines.length === 1 ? "" : "s"}
+                        </span>
+                        <span className="num font-semibold text-foreground">
+                          {ksh(order.total)}
+                        </span>
                       </div>
                     </button>
                   ))}
@@ -1809,7 +1805,9 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder} disabled={channelLocked}>Hold</Btn>
+              <Btn onClick={holdOrder} disabled={channelLocked}>
+                Hold
+              </Btn>
               {canFinalizeBill ? (
                 <>
                   <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
@@ -1855,7 +1853,8 @@ function POS() {
                       usable ? "border-border" : "border-warning/30 bg-warning-soft text-warning",
                     )}
                   >
-                    {method.displayName}{usable ? "" : " · unavailable"}
+                    {method.displayName}
+                    {usable ? "" : " · unavailable"}
                   </span>
                 );
               })}
