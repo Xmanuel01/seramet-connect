@@ -995,6 +995,38 @@ function POS() {
     });
   };
 
+  useEffect(() => {
+    if (!pendingPaymentAfterKitchen) return;
+    const pendingJobs = printJobs.filter((job) =>
+      pendingPaymentAfterKitchen.jobIds.includes(job.id),
+    );
+    if (pendingJobs.length !== pendingPaymentAfterKitchen.jobIds.length) return;
+
+    const failed = pendingJobs.find((job) => job.status === "Failed" || job.status === "Cancelled");
+    if (failed) {
+      setPendingPaymentAfterKitchen(null);
+      setPrintNotice(
+        `KOT delivery failed at ${failed.destination}. Retry the print job before taking payment.`,
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
+
+    const delivered = pendingJobs.every((job) =>
+      ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
+    );
+    if (!delivered) return;
+
+    const orderId = pendingPaymentAfterKitchen.orderId;
+    setPendingPaymentAfterKitchen(null);
+    setPrintNotice("KOT delivered to production. Payment is now available.");
+    setPrintNoticeType("success");
+    void preparePaymentSession(orderId).catch((error: unknown) => {
+      setPrintNotice(error instanceof Error ? error.message : "Payment could not be prepared.");
+      setPrintNoticeType("warning");
+    });
+  }, [pendingPaymentAfterKitchen, preparePaymentSession, printJobs]);
+
   const moveOrderToInvoice = async (printBill: boolean) => {
     if (!activeOrder || !canPrintBill) {
       setPrintNotice("Send the order to kitchen before printing a bill or creating an invoice.");
