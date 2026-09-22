@@ -161,6 +161,7 @@ function POS() {
       tenderAmountMinor: number;
       cashTenderedMinor: number;
       fxQuote?: FxPaymentQuote;
+      status?: "draft" | "recorded" | "pending";
     }[]
   >([]);
   const [paymentReference, setPaymentReference] = useState("");
@@ -188,8 +189,13 @@ function POS() {
     backendStatus,
     pendingSyncCount,
   } = useTransactionEngine();
-  const { profile, configurationError, sendKitchenTickets, printCustomerDocument } =
-    useSerametPrintQueue(branchId);
+  const {
+    profile,
+    configurationError,
+    jobs: printJobs,
+    sendKitchenTickets,
+    printCustomerDocument,
+  } = useSerametPrintQueue(branchId);
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
