@@ -1028,9 +1028,8 @@ function POS() {
   const addPayment = async () => {
     const requestedAmount =
       paymentMode === "partial" ? tendered : tendered || suggestedAmount;
-    const amount = Math.min(due, Math.max(0, requestedAmount));
     if (!selectedPaymentMethod) return;
-    if (!amount) {
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
       setPrintNotice(
         paymentMode === "partial"
           ? "Enter the exact partial-payment amount before adding it."
@@ -1039,6 +1038,14 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
+    const requestedAmountMinor = parseMajorAmount(requestedAmount, tenant.defaultCurrency);
+    const amountMinor = Math.min(dueMinor, requestedAmountMinor);
+    if (amountMinor <= 0) {
+      setPrintNotice("The payment amount is below the smallest supported currency unit.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    const amount = majorFromMinor(amountMinor, tenant.defaultCurrency);
     const methodIssue = paymentMethodIssue(selectedPaymentMethod);
     if (methodIssue) {
       setPrintNotice(`${selectedPaymentMethod.displayName} is unavailable: ${methodIssue}.`);
@@ -1051,7 +1058,6 @@ function POS() {
       return;
     }
     const reference = paymentReference.trim().toUpperCase();
-    const amountMinor = parseMajorAmount(amount, tenant.defaultCurrency);
     let quote: FxPaymentQuote | undefined;
     let tenderAmountMinor = amountMinor;
     let cashTenderedMinor =
@@ -1114,6 +1120,7 @@ function POS() {
         methodId: selectedPaymentMethod.id,
         method: selectedPaymentMethod.displayName,
         amount,
+        amountMinor,
         tenderCurrency,
         tenderAmountMinor,
         cashTenderedMinor,
@@ -1122,8 +1129,9 @@ function POS() {
         ...(reference ? { reference } : {}),
       },
     ]);
-    setTendered(Math.max(0, due - amount));
-    setCashReceived(Math.max(0, due - amount));
+    const remaining = majorFromMinor(Math.max(0, dueMinor - amountMinor), tenant.defaultCurrency);
+    setTendered(remaining);
+    setCashReceived(remaining);
     setTenderCurrency(tenant.defaultCurrency);
     setPaymentReference("");
   };
@@ -1135,31 +1143,44 @@ function POS() {
 
   const addSplitPayment = () => {
     const method = usablePaymentMethods.find((candidate) => candidate.id === splitMethodId);
-    const amount = Number(splitAmount);
-    if (!method || !Number.isFinite(amount) || amount <= 0) {
+    const rawAmount = Number(splitAmount);
+    if (!method || !Number.isFinite(rawAmount) || rawAmount <= 0) {
       setPrintNotice("Choose an available payment method and enter a valid split amount.");
       setPrintNoticeType("warning");
       return;
     }
-    if (amount > due) {
+    const amountMinor = parseMajorAmount(rawAmount, tenant.defaultCurrency);
+    if (amountMinor <= 0) {
+      setPrintNotice("The split amount is below the smallest supported currency unit.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (amountMinor > dueMinor) {
       setPrintNotice(`Split amount cannot exceed the remaining balance of ${ksh(due)}.`);
       setPrintNoticeType("warning");
       return;
     }
+    const amount = majorFromMinor(amountMinor, tenant.defaultCurrency);
     const reference = splitReference.trim().toUpperCase();
     if (method.requiresReference && !reference) {
       setPrintNotice(`${method.displayName} requires a transaction reference.`);
       setPrintNoticeType("warning");
       return;
     }
-    const cashAmount =
+    const rawCashAmount =
       method.category === "CASH" ? Number(splitCashReceived || splitAmount) : amount;
-    if (method.category === "CASH" && (!Number.isFinite(cashAmount) || cashAmount < amount)) {
+    const cashTenderedMinor =
+      method.category === "CASH"
+        ? parseMajorAmount(rawCashAmount, tenant.defaultCurrency)
+        : amountMinor;
+    if (
+      method.category === "CASH" &&
+      (!Number.isFinite(rawCashAmount) || cashTenderedMinor < amountMinor)
+    ) {
       setPrintNotice("Cash received must be at least the split amount.");
       setPrintNoticeType("warning");
       return;
     }
-    const amountMinor = parseMajorAmount(amount, tenant.defaultCurrency);
     setPayments((current) => [
       ...current,
       {
@@ -1167,12 +1188,10 @@ function POS() {
         methodId: method.id,
         method: method.displayName,
         amount,
+        amountMinor,
         tenderCurrency: tenant.defaultCurrency,
         tenderAmountMinor: amountMinor,
-        cashTenderedMinor:
-          method.category === "CASH"
-            ? parseMajorAmount(cashAmount, tenant.defaultCurrency)
-            : amountMinor,
+        cashTenderedMinor,
         status: "draft",
         ...(reference ? { reference } : {}),
       },
@@ -1182,7 +1201,8 @@ function POS() {
     setSplitAmount("");
     setSplitReference("");
     setSplitCashReceived("");
-    setPrintNotice(`${method.displayName} split of ${ksh(amount)} added. ${ksh(due - amount)} remains.`);
+    const remaining = majorFromMinor(Math.max(0, dueMinor - amountMinor), tenant.defaultCurrency);
+    setPrintNotice(`${method.displayName} split of ${ksh(amount)} added. ${ksh(remaining)} remains.`);
     setPrintNoticeType("idle");
   };
 
