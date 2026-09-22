@@ -129,6 +129,8 @@ function POS() {
     role,
   });
   const [cat, setCat] = useState("All items");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [clockNow, setClockNow] = useState(() => new Date());
   const [orderSource, setOrderSource] = useState(() => orderChannels[0]?.id ?? "");
   const [lines, setLines] = useState<Record<string, number>>({});
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -170,7 +172,13 @@ function POS() {
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
+  const [tablePickerIntent, setTablePickerIntent] = useState<"kitchen" | "payment">("kitchen");
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
+  const [authoritativePaid, setAuthoritativePaid] = useState(0);
+  const [pendingPaymentAfterKitchen, setPendingPaymentAfterKitchen] = useState<{
+    orderId: string;
+    jobIds: string[];
+  } | null>(null);
   const {
     state: transactionState,
     mutate: mutateTransaction,
@@ -178,8 +186,29 @@ function POS() {
     backendStatus,
     pendingSyncCount,
   } = useTransactionEngine();
-  const { profile, configurationError, sendKitchenTickets, printCustomerDocument } =
-    useSerametPrintQueue(branchId);
+  const {
+    profile,
+    configurationError,
+    jobs: printJobs,
+    sendKitchenTickets,
+    printCustomerDocument,
+    retryJob,
+  } = useSerametPrintQueue(branchId);
+
+  const hasOpenCashDrawer = transactionState.cashDrawers.some(
+    (drawer) =>
+      (drawer.tenantId ?? activeTenantId) === activeTenantId &&
+      (drawer.branchId ? drawer.branchId === branchId : drawer.branch === branch) &&
+      drawer.status === "OPEN",
+  );
+  const usablePaymentMethods = useMemo(
+    () =>
+      paymentMethods.filter((method) => {
+        if (method.category === "CASH") return hasOpenCashDrawer;
+        return backendStatus === "synced";
+      }),
+    [backendStatus, hasOpenCashDrawer, paymentMethods],
+  );
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
@@ -302,6 +331,7 @@ function POS() {
           state: activeTableOrder ? "Occupied" : "Available",
           guests: Number(activeTableOrder?.customer.match(/(\d+)\s+guest/i)?.[1] ?? 0),
           amount: activeTableOrder?.total,
+          orderId: activeTableOrder?.id,
         };
       });
   }, [activePosOrders, activeTenantId, branchId, branchServiceAreas, platformState.tables]);
@@ -314,6 +344,21 @@ function POS() {
   useEffect(() => {
     if (!posCategories.includes(cat)) setCat("All items");
   }, [cat, posCategories]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (usablePaymentMethods.length === 0) {
+      if (paymentMethod) setPaymentMethod("");
+      return;
+    }
+    if (!usablePaymentMethods.some((method) => method.id === paymentMethod)) {
+      setPaymentMethod(usablePaymentMethods[0]!.id);
+    }
+  }, [paymentMethod, usablePaymentMethods]);
 
   useEffect(() => {
     if (!configurationError) return;
@@ -397,9 +442,18 @@ function POS() {
     [activeOrder],
   );
 
-  const visible = branchMenu.filter((product) =>
-    cat === "All items" ? true : product.category === cat,
-  );
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const visible = branchMenu.filter((product) => {
+    if (cat !== "All items" && product.category !== cat) return false;
+    if (!normalizedSearch) return true;
+    return [
+      product.name,
+      product.category,
+      product.itemCode,
+      product.sku,
+      product.barcode,
+    ].some((value) => value?.toLowerCase().includes(normalizedSearch));
+  });
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
     .filter((l) => l.p && l.qty > 0);
@@ -438,7 +492,8 @@ function POS() {
     subtotalMinor + taxTotals.added + serviceTotals.added,
     tenant.defaultCurrency,
   );
-  const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const stagedPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const paid = authoritativePaid + stagedPaid;
   const due = Math.max(0, total - paid);
   const change = Math.max(0, paid - total);
   const suggestedAmount = paymentMode === "split" ? Math.ceil(due / 2) : due;
@@ -447,6 +502,27 @@ function POS() {
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
   const currentOrderNumber = activeOrder?.id ?? predictedNextOrderId();
   const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
+  const channelLocked = Boolean(
+    activeOrder &&
+      (activeOrder.lines.some((line) => Boolean(line.sentAt)) ||
+        ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status)),
+  );
+  const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
+  const posStateLabel = paymentOpen
+    ? "Paying"
+    : activeOrder?.status === "HELD"
+      ? "Held"
+      : activeOrder && ["READY", "SERVED"].includes(activeOrder.status)
+        ? "Ready"
+        : activeOrder && ["SENT_TO_KITCHEN", "IN_PROGRESS"].includes(activeOrder.status)
+          ? "Kitchen"
+          : activeOrder
+            ? "Open"
+            : "New";
+  const formattedClock = new Intl.DateTimeFormat(activeLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(clockNow);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
