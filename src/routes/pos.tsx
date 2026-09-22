@@ -1258,14 +1258,21 @@ function POS() {
           <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
             Seramet POS
           </span>
-          <Status>Occupied</Status>
+          <Status>{posStateLabel}</Status>
           <span className="text-[13px] text-muted-foreground">
             {branch} - {role} {currentUser.name}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Status>Present</Status>
-          <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
+          <Status>{role}</Status>
+          <span
+            className={cn(
+              "rounded-md px-2 py-1 text-[12px] font-semibold",
+              orderTable
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-muted-foreground",
+            )}
+          >
             {orderTable ? `Table ${orderTable}` : "Table not selected"}
           </span>
           <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
@@ -1292,7 +1299,7 @@ function POS() {
             {connectionLabel(backendStatus, pendingSyncCount)}
           </span>
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> 12:46
+            <Clock className="h-3.5 w-3.5" /> {formattedClock}
           </span>
         </div>
       </div>
@@ -1326,9 +1333,12 @@ function POS() {
             {orderChannels.map((source) => (
               <button
                 key={source.id}
+                type="button"
+                disabled={channelLocked}
+                title={channelLocked ? "Channel is locked after production has started" : undefined}
                 onClick={() => setOrderSource(source.id)}
                 className={cn(
-                  "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors",
+                  "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                   orderSource === source.id
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -1339,15 +1349,23 @@ function POS() {
             ))}
             <button
               type="button"
+              onClick={() => clearCurrentOrder("New order started.")}
+              className="ml-auto inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md bg-secondary px-3 text-[12px] font-bold text-foreground transition-colors hover:bg-secondary/80"
+            >
+              <Plus className="h-4 w-4" />
+              New order
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveOrdersOpen((open) => !open)}
               className={cn(
-                "ml-auto inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
+                "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
                 activeOrdersOpen
                   ? "bg-primary text-primary-foreground"
                   : "bg-primary text-primary-foreground hover:bg-primary/90",
               )}
             >
-              <Plus className="h-4 w-4" />
+              <FileText className="h-4 w-4" />
               Orders
               <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px]">
                 {activePosOrders.length}
@@ -1391,6 +1409,24 @@ function POS() {
           <div className="mb-3 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                const exact = searchQuery.trim().toLowerCase();
+                if (!exact) return;
+                const scanned = branchMenu.find((product) =>
+                  [product.barcode, product.sku, product.itemCode].some(
+                    (value) => value?.toLowerCase() === exact,
+                  ),
+                );
+                if (scanned && !scanned.out) {
+                  event.preventDefault();
+                  setCat("All items");
+                  bump(scanned.id, 1);
+                  setSearchQuery("");
+                }
+              }}
               placeholder="Search dishes or scan barcode"
               className="w-full bg-transparent text-[13px] outline-none"
             />
@@ -1410,6 +1446,11 @@ function POS() {
             <div className="mb-3 rounded-lg border border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
               No sellable menu items are configured for this branch. Use Setup Centre or Menu Import
               before taking orders.
+            </div>
+          )}
+          {normalizedSearch && visible.length === 0 && (
+            <div className="mb-3 rounded-lg border border-border bg-secondary/40 px-3 py-4 text-[12px] text-muted-foreground">
+              No menu item matches “{searchQuery.trim()}”.
             </div>
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
