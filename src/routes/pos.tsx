@@ -850,6 +850,10 @@ function POS() {
     !activeOrder || !kitchenStarted
       ? items.length > 0
       : quantityChanged || noteChanged;
+  const payMayAutoSendKitchen =
+    selectedChannel?.channelType === "TAKEAWAY" ||
+    selectedChannel?.channelType === "KIOSK" ||
+    selectedChannel?.metadata["payBeforeKitchen"] === true;
 
   const bump = (id: string, d: number) =>
     setLines((current) => ({
@@ -896,10 +900,6 @@ function POS() {
       return;
     }
 
-    const payMayAutoSendKitchen =
-      selectedChannel?.channelType === "TAKEAWAY" ||
-      selectedChannel?.channelType === "KIOSK" ||
-      selectedChannel?.metadata["payBeforeKitchen"] === true;
     let orderId = activeOrder?.id;
 
     if (!activeOrder || !kitchenStarted || hasKitchenChanges) {
@@ -2003,15 +2003,22 @@ function POS() {
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={paymentBusy || !activeOrder || !kitchenStarted || hasKitchenChanges}
+                disabled={
+                  paymentBusy ||
+                  !items.length ||
+                  (!payMayAutoSendKitchen &&
+                    (!activeOrder || !kitchenStarted || hasKitchenChanges))
+                }
               >
                 {paymentBusy
                   ? "Preparing..."
-                  : !activeOrder || !kitchenStarted
-                    ? "Send kitchen first"
-                    : hasKitchenChanges
-                      ? "Send update first"
-                      : `Pay ${ksh(total)}`}
+                  : payMayAutoSendKitchen && (!activeOrder || !kitchenStarted || hasKitchenChanges)
+                    ? `Send & pay ${ksh(total)}`
+                    : !activeOrder || !kitchenStarted
+                      ? "Send kitchen first"
+                      : hasKitchenChanges
+                        ? "Send update first"
+                        : `Pay ${ksh(total)}`}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
