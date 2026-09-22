@@ -1786,6 +1786,159 @@ export const TransactionEngine = {
     return next;
   },
 
+  amendKitchenOrder(
+    state: TransactionState,
+    orderId: string,
+    draft: OrderDraft,
+    user: string,
+  ) {
+    const next = clone(state);
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (!["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status)) {
+      throw new Error(`Order ${orderId} cannot be amended from ${order.status}`);
+    }
+
+    const scope = resolveScope(
+      draft.branchId ?? draft.branch,
+      draft.tenantId ?? order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID,
+    );
+    const currentTenantId = order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID;
+    const currentBranchId =
+      order.branchId ?? configurationRepository.resolveBranch(currentTenantId, order.branch).id;
+    if (scope.tenantId !== currentTenantId || scope.branchId !== currentBranchId) {
+      throw new Error("An existing order cannot be moved to another tenant or branch");
+    }
+
+    const beforeStatus = order.status;
+    const beforeLines = order.lines
+      .filter((line) => line.productionStatus !== "CANCELLED")
+      .map((line) => ({ ...line }));
+    const desiredLines = draft.lines
+      .filter((line) => line.quantity > 0)
+      .map((line) => ({
+        ...line,
+        ...(line.productionStation && line.productionStation !== "NONE"
+          ? { productionStatus: line.productionStatus ?? "NEW" }
+          : {}),
+      }));
+    const additions: TransactionLine[] = [];
+    const removals: TransactionLine[] = [];
+    const contentChanged = (left: TransactionLine, right: TransactionLine) =>
+      left.productId !== right.productId ||
+      left.name !== right.name ||
+      left.unitPrice !== right.unitPrice ||
+      left.productionStation !== right.productionStation ||
+      left.itemNote !== right.itemNote;
+
+    for (const previous of beforeLines) {
+      const current = desiredLines.find((candidate) => candidate.id === previous.id);
+      if (!current) {
+        removals.push({ ...previous, productionStatus: "CANCELLED" });
+        continue;
+      }
+      if (contentChanged(previous, current)) {
+        removals.push({ ...previous, productionStatus: "CANCELLED" });
+        additions.push({ ...current });
+        continue;
+      }
+      if (current.quantity > previous.quantity) {
+        additions.push({ ...current, quantity: current.quantity - previous.quantity });
+      } else if (current.quantity < previous.quantity) {
+        removals.push({
+          ...previous,
+          quantity: previous.quantity - current.quantity,
+          productionStatus: "CANCELLED",
+        });
+      }
+    }
+    for (const current of desiredLines) {
+      if (!beforeLines.some((previous) => previous.id === current.id)) additions.push({ ...current });
+    }
+    if (additions.length === 0 && removals.length === 0) return next;
+
+    const stamp = now();
+    const normalizedLines = desiredLines.map((line) => {
+      const previous = beforeLines.find((candidate) => candidate.id === line.id);
+      const changed = previous ? contentChanged(previous, line) : true;
+      return {
+        ...line,
+        sentAt: previous && !changed ? (previous.sentAt ?? stamp) : stamp,
+        sentQuantity: line.quantity,
+      };
+    });
+    if (additions.length) {
+      next.productionAmendments.unshift({
+        id: id("AMD", next, "productionAmendments"),
+        tenantId: scope.tenantId,
+        branchId: scope.branchId,
+        branch: scope.branch,
+        orderId,
+        type: "ADDITION",
+        lines: additions.map((line) => ({
+          ...line,
+          sentAt: stamp,
+          sentQuantity: line.quantity,
+        })),
+        reason: "POS order amended after the original kitchen ticket",
+        requestedBy: user,
+        printStatus: "PENDING",
+        createdAt: stamp,
+      });
+    }
+    if (removals.length) {
+      next.productionAmendments.unshift({
+        id: id("AMD", next, "productionAmendments"),
+        tenantId: scope.tenantId,
+        branchId: scope.branchId,
+        branch: scope.branch,
+        orderId,
+        type: "CANCEL_ITEM",
+        lines: removals.map((line) => ({ ...line, productionStatus: "CANCELLED" })),
+        reason: "POS order amended after the original kitchen ticket",
+        requestedBy: user,
+        printStatus: "PENDING",
+        createdAt: stamp,
+      });
+    }
+
+    const total = draft.financialOverride ?? totals(normalizedLines);
+    order.tenantId = scope.tenantId;
+    order.branchId = scope.branchId;
+    order.branch = scope.branch;
+    if (draft.table) order.table = draft.table;
+    else delete order.table;
+    order.customer = draft.customer;
+    if (draft.customerId) order.customerId = draft.customerId;
+    else delete order.customerId;
+    if (draft.customerCode) order.customerCode = draft.customerCode;
+    else delete order.customerCode;
+    order.channel = draft.channel;
+    order.cashier = draft.cashier;
+    if (draft.waiter) order.waiter = draft.waiter;
+    else delete order.waiter;
+    if (draft.kitchenNote) order.kitchenNote = draft.kitchenNote;
+    else delete order.kitchenNote;
+    if (draft.guestContext) order.guestContext = { ...draft.guestContext };
+    order.lines = normalizedLines;
+    order.subtotal = total.subtotal;
+    order.tax = total.tax;
+    order.total = total.total;
+    if (additions.length) order.status = "SENT_TO_KITCHEN";
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Cashier",
+      branch: order.branch,
+      module: "Orders",
+      action: "Amended kitchen order",
+      record: order.id,
+      before: beforeStatus,
+      after: `${additions.length} addition line(s), ${removals.length} cancellation line(s)`,
+    });
+    return next;
+  },
+
   setProductionStationStatus(
     state: TransactionState,
     orderId: string,
