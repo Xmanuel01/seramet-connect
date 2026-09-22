@@ -142,6 +142,25 @@ describe("POS kitchen amendments", () => {
     expect(next.orders[0]!.lines[0]!.itemNote).toBe("Extra gravy");
   });
 
+  it("rejects changing the order source after kitchen production has started", () => {
+    const { state, orderId, baseDraft } = sentOrder();
+
+    expect(() =>
+      TransactionEngine.amendKitchenOrder(
+        state,
+        orderId,
+        {
+          ...baseDraft,
+          channel: "TAKEAWAY",
+          lines: state.orders[0]!.lines.map((line) => ({ ...line, quantity: line.quantity + 1 })),
+        },
+        "Cashier",
+      ),
+    ).toThrow(/source cannot be changed after kitchen production/i);
+
+    expect(state.orders[0]!.channel).toBe("DINE_IN");
+  });
+
   it("creates a cancellation amendment when a sent item is removed entirely", () => {
     const { state, orderId, baseDraft } = sentOrder();
 
