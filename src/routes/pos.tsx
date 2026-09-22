@@ -1764,17 +1764,37 @@ function POS() {
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={paymentBusy}
+                disabled={paymentBusy || Boolean(pendingPaymentAfterKitchen)}
               >
-                {paymentBusy ? "Preparing..." : `Pay ${ksh(total)}`}
+                {pendingPaymentAfterKitchen
+                  ? "Waiting for KOT..."
+                  : paymentBusy
+                    ? "Preparing..."
+                    : `Pay ${ksh(total)}`}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {paymentMethods.map((method) => (
-                <span key={method.id} className="rounded border border-border px-1.5 py-0.5">
-                  {method.displayName}
-                </span>
-              ))}
+              {paymentMethods.map((method) => {
+                const usable = usablePaymentMethods.some((candidate) => candidate.id === method.id);
+                return (
+                  <span
+                    key={method.id}
+                    title={
+                      usable
+                        ? "Available"
+                        : method.category === "CASH"
+                          ? "Open a cash drawer to use cash"
+                          : "Unavailable while POS is offline"
+                    }
+                    className={cn(
+                      "rounded border px-1.5 py-0.5",
+                      usable ? "border-border" : "border-warning/30 bg-warning-soft text-warning",
+                    )}
+                  >
+                    {method.displayName}{usable ? "" : " · unavailable"}
+                  </span>
+                );
+              })}
               <span className="rounded border border-border px-1.5 py-0.5">Split</span>
             </div>
             <div
@@ -1796,10 +1816,43 @@ function POS() {
                 <div className="min-w-0">
                   <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
                   <div className="mt-0.5 text-[11px]">
-                    Print routing continues in the background.
+                    Production delivery status is tracked separately from the order database state.
                   </div>
                 </div>
               </div>
+              {printJobs.filter(
+                (job) => job.orderId === currentOrderNumber && Boolean(job.amendmentType),
+              ).length > 0 && (
+                <div className="mt-2 space-y-1 border-t border-current/10 pt-2">
+                  {printJobs
+                    .filter(
+                      (job) => job.orderId === currentOrderNumber && Boolean(job.amendmentType),
+                    )
+                    .slice(0, 4)
+                    .map((job) => (
+                      <div
+                        key={job.id}
+                        className="flex items-center justify-between gap-2 text-[11px]"
+                      >
+                        <span className="truncate">
+                          {job.destination} · {job.amendmentType}
+                        </span>
+                        <span className="inline-flex items-center gap-2 font-semibold">
+                          {job.status}
+                          {job.status === "Failed" && (
+                            <button
+                              type="button"
+                              onClick={() => retryJob(job.id)}
+                              className="rounded border border-current/20 px-1.5 py-0.5 hover:bg-card"
+                            >
+                              Retry
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         </aside>
