@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -104,6 +104,7 @@ function configuredChargeMinor(
 }
 
 function POS() {
+  const navigate = useNavigate();
   const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
@@ -129,6 +130,8 @@ function POS() {
     role,
   });
   const [cat, setCat] = useState("All items");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [clockNow, setClockNow] = useState(() => new Date());
   const [orderSource, setOrderSource] = useState(() => orderChannels[0]?.id ?? "");
   const [lines, setLines] = useState<Record<string, number>>({});
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -170,6 +173,8 @@ function POS() {
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
+  const [tablePickerIntent, setTablePickerIntent] = useState<"select" | "send">("select");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
   const {
     state: transactionState,
@@ -219,7 +224,7 @@ function POS() {
   }, [acceptedCurrencies, branchId, selectedPaymentMethod, tenant.defaultCurrency]);
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
-  const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
+  const channelUsesOnlinePrice = selectedChannel?.metadata["useOnlinePrice"] === true;
   const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
@@ -263,9 +268,15 @@ function POS() {
             branchId,
             product.id,
           );
-          const price = isOnlineSource
-            ? Math.round(branchPrice * onlinePriceMultiplier)
-            : branchPrice;
+          const onlinePriceAllowedForItem =
+            channelUsesOnlinePrice &&
+            product.onlinePrice !== undefined &&
+            (!product.onlinePriceChannelCodes?.length ||
+              (selectedChannel &&
+                product.onlinePriceChannelCodes.some(
+                  (code) => code === selectedChannel.code || code === selectedChannel.id,
+                )));
+          const price = onlinePriceAllowedForItem ? product.onlinePrice! : branchPrice;
           return {
             ...product,
             price,
@@ -278,9 +289,10 @@ function POS() {
     [
       branch,
       branchId,
+      channelUsesOnlinePrice,
       isOnlineSource,
-      onlinePriceMultiplier,
       operationalMenu.items,
+      selectedChannel,
       tenant.defaultCurrency,
       transactionState,
     ],
@@ -295,6 +307,7 @@ function POS() {
         const activeTableOrder = activePosOrders.find((order) => order.table === table.code);
         return {
           no: table.code,
+          orderId: activeTableOrder?.id,
           seats: table.seats,
           area: table.serviceAreaId
             ? (serviceAreaNames.get(table.serviceAreaId) ?? "Dining")
@@ -397,9 +410,15 @@ function POS() {
     [activeOrder],
   );
 
-  const visible = branchMenu.filter((product) =>
-    cat === "All items" ? true : product.category === cat,
-  );
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const visible = branchMenu.filter((product) => {
+    const categoryMatch = cat === "All items" || product.category === cat;
+    if (!categoryMatch) return false;
+    if (!normalizedSearch) return true;
+    return [product.name, product.category, product.itemCode, product.sku]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedSearch));
+  });
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
     .filter((l) => l.p && l.qty > 0);
@@ -574,7 +593,7 @@ function POS() {
   const bump = (id: string, d: number) =>
     setLines((current) => ({
       ...current,
-      [id]: Math.max(sentQuantities[id] ?? 0, (current[id] ?? 0) + d),
+      [id]: Math.max(0, (current[id] ?? 0) + d),
     }));
 
   const clearCurrentOrder = (
