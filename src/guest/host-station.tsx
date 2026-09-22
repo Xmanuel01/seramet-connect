@@ -1,10 +1,13 @@
-import { BellRing, Clock3, DoorOpen, Users } from "lucide-react";
+import { BellRing, CalendarDays, Clock3, DoorOpen, RefreshCcw, Users } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link, useLocation } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { DataTable } from "@/components/app/Tabs";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { useCrmApi, useCrmQuery } from "@/crm/use-crm";
 import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
+import { cn } from "@/lib/utils";
 
 type ReservationRow = {
   id: string;
@@ -48,24 +51,47 @@ type HostResponse = {
   serviceRequests: RequestRow[];
 };
 
+const views = [
+  { to: "/reservations", label: "Reservations", icon: CalendarDays, permission: permissions.reservationView },
+  { to: "/host", label: "Seating", icon: DoorOpen, permission: permissions.tableManage },
+  { to: "/waitlist", label: "Waitlist", icon: Clock3, permission: permissions.waitlistView },
+  { to: "/guest-service", label: "Guest requests", icon: BellRing, permission: permissions.guestServiceManage },
+] as const;
+
+/** The legacy URLs remain valid bookmarks, but share a single backend-backed workspace. */
 export function HostStation() {
-  const { branchId, branchLabel } = useAppContext();
+  const { branchId, branchLabel, hasPermission } = useAppContext();
+  const { pathname } = useLocation();
   const { command } = useCrmApi();
   const [businessDate, setBusinessDate] = useState("");
-  const path = `/api/seramet/guest-admin/host?branchId=${encodeURIComponent(branchId)}${businessDate ? `&businessDate=${businessDate}` : ""}`;
+  const path = `/api/seramet/guest-admin/host?branchId=${encodeURIComponent(branchId)}${businessDate ? `&businessDate=${encodeURIComponent(businessDate)}` : ""}`;
   const query = useCrmQuery<HostResponse>(path);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [walkIn, setWalkIn] = useState({ guestName: "", partySize: 2, tableId: "" });
   const [waitlistTables, setWaitlistTables] = useState<Record<string, string>>({});
   const data = query.data;
+  const canViewReservations = hasPermission(permissions.reservationView);
+  const canViewWaitlist = hasPermission(permissions.waitlistView);
+  const canManageWaitlist = hasPermission(permissions.waitlistManage);
+  const canManageTables = hasPermission(permissions.tableManage);
+  const canSeat = hasPermission(permissions.reservationSeat);
+  const canManageRequests = hasPermission(permissions.guestServiceManage);
+  const canSeeSeating = canManageTables || canSeat || canViewReservations;
+  const visibleViews = views.filter((view) =>
+    view.to === "/host" ? canSeeSeating : hasPermission(view.permission),
+  );
+  const currentView = visibleViews.find((view) => view.to === pathname) ?? visibleViews[0];
   const covers = useMemo(
     () => data?.reservations.reduce((sum, row) => sum + row.party_size, 0) ?? 0,
     [data],
   );
   const availableTables = data?.tables.filter((table) => table.status === "AVAILABLE") ?? [];
+  const pendingRequests = data?.serviceRequests.filter((row) => row.status !== "COMPLETED") ?? [];
 
   const reservationAction = async (reservationId: string, status: string) => {
+    if (status === "SEATED" && !canSeat) return;
+    if (status !== "SEATED" && !hasPermission(permissions.reservationModify)) return;
     setBusy(reservationId);
     try {
       await command("/api/seramet/guest-admin/reservations/transition", {
@@ -76,7 +102,7 @@ export function HostStation() {
       setNotice(`Reservation moved to ${status.replaceAll("_", " ").toLowerCase()}.`);
       await query.refresh();
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Reservation could not be updated");
+      setNotice(cause instanceof Error ? cause.message : "Reservation could not be updated.");
     } finally {
       setBusy("");
     }
@@ -88,6 +114,8 @@ export function HostStation() {
     status: string,
     tableId?: string,
   ) => {
+    if (area === "waitlist" && !canManageWaitlist) return;
+    if (area === "service-requests" && !canManageRequests) return;
     setBusy(id);
     try {
       await command(`/api/seramet/guest-admin/${area}/transition`, {
@@ -96,21 +124,28 @@ export function HostStation() {
         status,
         ...(tableId ? { tableId } : {}),
       });
-      setNotice(`${area === "waitlist" ? "Waitlist" : "Service"} status updated.`);
+      setNotice(`${area === "waitlist" ? "Waitlist" : "Guest request"} updated.`);
       await query.refresh();
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Status could not be updated");
+      setNotice(cause instanceof Error ? cause.message : "Status could not be updated.");
     } finally {
       setBusy("");
     }
   };
 
   const seatWalkIn = async () => {
-    if (!walkIn.guestName.trim() || !walkIn.tableId) return;
+    if (!canSeat || !walkIn.guestName.trim() || !walkIn.tableId) return;
+    if (!Number.isInteger(walkIn.partySize) || walkIn.partySize < 1) return;
+    const chosen = availableTables.find((table) => table.id === walkIn.tableId);
+    if (!chosen || chosen.seats < walkIn.partySize) {
+      setNotice("Choose an available table with enough seats for the party.");
+      return;
+    }
     setBusy("walk-in");
     try {
       await command("/api/seramet/guest-admin/walk-ins", {
         ...walkIn,
+        guestName: walkIn.guestName.trim(),
         branchId,
         idempotencyKey: crypto.randomUUID(),
       });
@@ -118,13 +153,14 @@ export function HostStation() {
       setNotice("Walk-in seated and table session opened.");
       await query.refresh();
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Walk-in could not be seated");
+      setNotice(cause instanceof Error ? cause.message : "Walk-in could not be seated.");
     } finally {
       setBusy("");
     }
   };
 
   const closeTable = async (tableSessionId: string) => {
+    if (!canManageTables) return;
     setBusy(tableSessionId);
     try {
       await command("/api/seramet/guest-admin/tables/close", {
@@ -135,7 +171,7 @@ export function HostStation() {
       setNotice("Table session closed.");
       await query.refresh();
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "Table could not be closed");
+      setNotice(cause instanceof Error ? cause.message : "Table could not be closed.");
     } finally {
       setBusy("");
     }
@@ -143,48 +179,74 @@ export function HostStation() {
 
   return (
     <AppShell
-      title="Host station"
-      subtitle={`Reservations, seating, waitlist and guest requests - ${branchLabel}`}
-      actions={<Btn onClick={() => query.refresh()}>Refresh</Btn>}
+      title="Front of House"
+      subtitle={`Reservations, arrivals, seating, waitlist and guest requests - ${branchLabel}`}
+      actions={
+        <Btn onClick={() => void query.refresh()} disabled={query.status === "loading"}>
+          <RefreshCcw className="h-4 w-4" /> Refresh
+        </Btn>
+      }
     >
       {notice && (
-        <div
-          role="status"
-          className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium"
-        >
+        <div role="status" className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium">
           {notice}
         </div>
       )}
+      {query.status === "error" && (
+        <div role="alert" className="mb-4 rounded-md border border-danger/30 bg-danger-soft p-4 text-sm text-danger">
+          {query.error}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric
-          label="Bookings"
-          value={data?.reservations.length ?? 0}
-          note={data?.businessDate ?? "Loading"}
-        />
-        <Metric label="Covers" value={covers} note="Reserved and seated" />
-        <Metric label="Waitlist" value={data?.waitlist.length ?? 0} note="Needs host attention" />
-        <Metric
-          label="Open requests"
-          value={data?.serviceRequests.length ?? 0}
-          note="Guest service"
-        />
+        <Metric label="Bookings" value={canViewReservations ? data?.reservations.length ?? 0 : "—"} note={data?.businessDate ?? "Loading"} />
+        <Metric label="Reserved covers" value={canViewReservations ? covers : "—"} note="Reservation party sizes" />
+        <Metric label="Waiting parties" value={canViewWaitlist ? data?.waitlist.length ?? 0 : "—"} note="Waitlist" />
+        <Metric label="Open requests" value={canManageRequests ? pendingRequests.length : "—"} note="Guest service" />
       </div>
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <Panel>
+
+      <nav aria-label="Front of House sections" className="mt-4 flex flex-wrap gap-2 border-b border-border pb-3">
+        {visibleViews.map((view) => {
+          const Icon = view.icon;
+          const selected = currentView?.to === view.to;
+          return (
+            <Link
+              key={view.to}
+              to={view.to}
+              aria-current={selected ? "page" : undefined}
+              className={cn(
+                "inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-[13px] font-semibold transition-colors",
+                selected
+                  ? "border-primary bg-accent text-accent-foreground"
+                  : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground",
+              )}
+            >
+              <Icon className="h-4 w-4" /> {view.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {!currentView && (
+        <p className="mt-4 rounded-md border border-border bg-card p-6 text-sm text-muted-foreground">
+          You do not have permission to view any Front of House sections.
+        </p>
+      )}
+
+      {currentView?.to === "/reservations" && (
+        <Panel className="mt-4">
           <PanelHead
-            title="Arrivals"
-            sub="Authoritative reservations and table assignments"
+            title="Reservations & arrivals"
+            sub="Confirm bookings, track arrivals and manage reservation status"
             right={
               <input
                 type="date"
                 value={businessDate || data?.businessDate || ""}
                 onChange={(event) => setBusinessDate(event.target.value)}
                 className="h-8 rounded-md border border-border bg-card px-2 text-[12px]"
-                aria-label="Business date"
+                aria-label="Reservation business date"
               />
             }
           />
-          {query.status === "error" && <p className="p-4 text-sm text-danger">{query.error}</p>}
           <DataTable
             cols={["Time", "Guest", { l: "Party", r: true }, "Table", "Status", "Action"]}
             mobileCards={
@@ -195,6 +257,8 @@ export function HostStation() {
                     row={row}
                     busy={busy === row.id}
                     action={reservationAction}
+                    canSeat={canSeat}
+                    canModify={hasPermission(permissions.reservationModify)}
                   />
                 ))}
               </div>
@@ -205,206 +269,154 @@ export function HostStation() {
                 <TD className="num font-semibold">{time(row.starts_at)}</TD>
                 <TD>
                   <div className="font-semibold">{row.guest_name}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {row.confirmation_state.replaceAll("_", " ")}
-                  </div>
+                  <div className="text-[11px] text-muted-foreground">{row.confirmation_state.replaceAll("_", " ")}</div>
                 </TD>
                 <TD className="num text-right">{row.party_size}</TD>
                 <TD>{row.table_codes ?? "Unassigned"}</TD>
+                <TD><Status>{row.status}</Status></TD>
                 <TD>
-                  <Status>{row.status}</Status>
-                </TD>
-                <TD>
-                  <ReservationActions row={row} busy={busy === row.id} action={reservationAction} />
+                  <ReservationActions row={row} busy={busy === row.id} action={reservationAction} canSeat={canSeat} canModify={hasPermission(permissions.reservationModify)} />
                 </TD>
               </tr>
             ))}
           </DataTable>
           {!data?.reservations.length && query.status !== "loading" && (
-            <p className="p-8 text-center text-sm text-muted-foreground">
-              No reservations for this business date.
-            </p>
+            <p className="p-8 text-center text-sm text-muted-foreground">No reservations for this business date.</p>
           )}
         </Panel>
-        <div className="grid gap-4 self-start">
+      )}
+
+      {currentView?.to === "/host" && (
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
           <Panel>
-            <PanelHead title="Seat walk-in" sub="Starts a normal table session" />
-            <div className="grid gap-3 p-4">
-              <label className="text-[12px] font-semibold">
-                Guest name
-                <input
-                  value={walkIn.guestName}
-                  onChange={(event) =>
-                    setWalkIn((current) => ({ ...current, guestName: event.target.value }))
-                  }
-                  maxLength={120}
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
-                />
-              </label>
-              <label className="text-[12px] font-semibold">
-                Party size
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={walkIn.partySize}
-                  onChange={(event) =>
-                    setWalkIn((current) => ({ ...current, partySize: Number(event.target.value) }))
-                  }
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
-                />
-              </label>
-              <label className="text-[12px] font-semibold">
-                Available table
-                <select
-                  value={walkIn.tableId}
-                  onChange={(event) =>
-                    setWalkIn((current) => ({ ...current, tableId: event.target.value }))
-                  }
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
-                >
-                  <option value="">Choose table</option>
-                  {availableTables
-                    .filter((table) => table.seats >= walkIn.partySize)
-                    .map((table) => (
-                      <option key={table.id} value={table.id}>
-                        {table.code} · {table.seats} seats
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <Btn
-                variant="primary"
-                onClick={seatWalkIn}
-                disabled={busy !== "" || !walkIn.guestName.trim() || !walkIn.tableId}
-              >
-                <DoorOpen className="h-4 w-4" />
-                Seat party
-              </Btn>
-            </div>
-          </Panel>
-          <Panel>
-            <PanelHead title="Table status" sub={`${availableTables.length} available`} />
-            <div className="grid grid-cols-2 gap-2 p-4">
+            <PanelHead title="Table status & seating" sub={`${availableTables.length} available · live branch table sessions`} />
+            <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4">
               {data?.tables.map((table) => (
-                <div key={table.id} className="rounded-md border border-border p-3">
+                <div key={table.id} className="rounded-lg border border-border bg-card p-3">
                   <div className="flex items-center justify-between gap-2">
                     <strong className="text-[13px]">{table.code}</strong>
                     <Status>{table.status}</Status>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {table.area ?? "Dining"} · {table.seats} seats
-                  </p>
-                  {table.table_session_id && (
-                    <Btn
-                      className="mt-2 w-full"
-                      disabled={busy === table.table_session_id}
-                      onClick={() => closeTable(table.table_session_id!)}
-                    >
-                      Close
+                  <p className="mt-1 text-[11px] text-muted-foreground">{table.area ?? "Dining"} · {table.seats} seats</p>
+                  {table.table_session_id && canManageTables && (
+                    <Btn className="mt-3 w-full" disabled={busy !== ""} onClick={() => void closeTable(table.table_session_id!)}>
+                      Close session
                     </Btn>
                   )}
                 </div>
               ))}
+              {!data?.tables.length && query.status !== "loading" && (
+                <p className="col-span-full p-5 text-center text-sm text-muted-foreground">No tables are configured for this branch.</p>
+              )}
             </div>
           </Panel>
+          {canSeat && (
+            <Panel>
+              <PanelHead title="Seat walk-in" sub="Opens an existing guest table session" />
+              <div className="grid gap-3 p-4">
+                <label className="text-[12px] font-semibold">
+                  Guest name
+                  <input
+                    value={walkIn.guestName}
+                    onChange={(event) => setWalkIn((current) => ({ ...current, guestName: event.target.value }))}
+                    maxLength={120}
+                    className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
+                  />
+                </label>
+                <label className="text-[12px] font-semibold">
+                  Party size
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={walkIn.partySize}
+                    onChange={(event) => setWalkIn((current) => ({ ...current, partySize: Number(event.target.value), tableId: "" }))}
+                    className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
+                  />
+                </label>
+                <label className="text-[12px] font-semibold">
+                  Available table
+                  <select
+                    value={walkIn.tableId}
+                    onChange={(event) => setWalkIn((current) => ({ ...current, tableId: event.target.value }))}
+                    className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
+                  >
+                    <option value="">Choose table</option>
+                    {availableTables.filter((table) => table.seats >= walkIn.partySize).map((table) => (
+                      <option key={table.id} value={table.id}>{table.code} · {table.seats} seats</option>
+                    ))}
+                  </select>
+                </label>
+                <Btn variant="primary" onClick={() => void seatWalkIn()} disabled={busy !== "" || !walkIn.guestName.trim() || !walkIn.tableId || !Number.isInteger(walkIn.partySize) || walkIn.partySize < 1}>
+                  <DoorOpen className="h-4 w-4" /> Seat party
+                </Btn>
+              </div>
+            </Panel>
+          )}
         </div>
-      </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Panel>
-          <PanelHead title="Waitlist" sub="Deterministic operational estimates" />
+      )}
+
+      {currentView?.to === "/waitlist" && (
+        <Panel className="mt-4">
+          <PanelHead title="Waitlist" sub="Notify guests and assign a suitable available table" />
           <div className="divide-y divide-border">
             {data?.waitlist.map((row) => (
-              <div key={row.id} className="grid gap-3 p-4 sm:grid-cols-[1fr_150px_auto]">
+              <div key={row.id} className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_160px_auto]">
                 <div>
-                  <div className="text-[13px] font-semibold">
-                    {row.guest_name} · {row.party_size}
+                  <div className="flex items-center gap-2 text-[13px] font-semibold">
+                    {row.guest_name} · {row.party_size} guests <Status>{row.status}</Status>
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    Joined {time(row.joined_at)} · estimated {row.estimated_wait_minutes} min
-                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Joined {time(row.joined_at)} · estimated {row.estimated_wait_minutes} min</p>
                 </div>
                 <select
                   aria-label={`Table for ${row.guest_name}`}
                   value={waitlistTables[row.id] ?? ""}
-                  onChange={(event) =>
-                    setWaitlistTables((current) => ({ ...current, [row.id]: event.target.value }))
-                  }
+                  disabled={!canManageWaitlist || busy !== ""}
+                  onChange={(event) => setWaitlistTables((current) => ({ ...current, [row.id]: event.target.value }))}
                   className="h-9 rounded-md border border-border bg-card px-2 text-[12px]"
                 >
                   <option value="">Choose table</option>
-                  {availableTables
-                    .filter((table) => table.seats >= row.party_size)
-                    .map((table) => (
-                      <option key={table.id} value={table.id}>
-                        {table.code} · {table.seats}
-                      </option>
-                    ))}
+                  {availableTables.filter((table) => table.seats >= row.party_size).map((table) => (
+                    <option key={table.id} value={table.id}>{table.code} · {table.seats} seats</option>
+                  ))}
                 </select>
-                <div className="flex gap-1">
-                  <Btn
-                    disabled={busy === row.id}
-                    onClick={() => operationalAction("waitlist", row.id, "NOTIFIED")}
-                  >
-                    Notify
-                  </Btn>
-                  <Btn
-                    variant="primary"
-                    disabled={busy === row.id || !waitlistTables[row.id]}
-                    onClick={() =>
-                      operationalAction("waitlist", row.id, "SEATED", waitlistTables[row.id])
-                    }
-                  >
-                    Seat
-                  </Btn>
+                <div className="flex flex-wrap gap-2">
+                  <Btn disabled={!canManageWaitlist || busy !== "" || row.status === "NOTIFIED"} onClick={() => void operationalAction("waitlist", row.id, "NOTIFIED")}>Notify</Btn>
+                  <Btn variant="primary" disabled={!canManageWaitlist || busy !== "" || !waitlistTables[row.id]} onClick={() => void operationalAction("waitlist", row.id, "SEATED", waitlistTables[row.id])}>Seat</Btn>
                 </div>
               </div>
             ))}
-            {!data?.waitlist.length && (
-              <p className="p-6 text-center text-sm text-muted-foreground">Waitlist is clear.</p>
+            {!data?.waitlist.length && query.status !== "loading" && (
+              <p className="p-8 text-center text-sm text-muted-foreground">Waitlist is clear.</p>
             )}
           </div>
         </Panel>
-        <Panel>
-          <PanelHead title="Guest requests" sub="QR table service actions" />
+      )}
+
+      {currentView?.to === "/guest-service" && (
+        <Panel className="mt-4">
+          <PanelHead title="Guest requests" sub="Acknowledge and complete table service requests" />
           <div className="divide-y divide-border">
             {data?.serviceRequests.map((row) => (
-              <div key={row.id} className="flex items-center justify-between gap-3 p-4">
+              <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <div>
                   <div className="flex items-center gap-2 text-[13px] font-semibold">
-                    <BellRing className="h-4 w-4" />
-                    {row.request_type.replaceAll("_", " ")}
+                    <BellRing className="h-4 w-4" /> {row.request_type.replaceAll("_", " ")} <Status>{row.status}</Status>
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
-                    {time(row.created_at)}
-                    {row.note ? ` · ${row.note}` : ""}
-                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{time(row.created_at)}{row.note ? ` · ${row.note}` : ""}</p>
                 </div>
-                <div className="flex gap-1">
-                  <Btn
-                    disabled={busy === row.id}
-                    onClick={() => operationalAction("service-requests", row.id, "ACKNOWLEDGED")}
-                  >
-                    Acknowledge
-                  </Btn>
-                  <Btn
-                    variant="primary"
-                    disabled={busy === row.id}
-                    onClick={() => operationalAction("service-requests", row.id, "COMPLETED")}
-                  >
-                    Complete
-                  </Btn>
+                <div className="flex flex-wrap gap-2">
+                  <Btn disabled={busy !== "" || row.status === "ACKNOWLEDGED" || row.status === "COMPLETED"} onClick={() => void operationalAction("service-requests", row.id, "ACKNOWLEDGED")}>Acknowledge</Btn>
+                  <Btn variant="primary" disabled={busy !== "" || row.status === "COMPLETED"} onClick={() => void operationalAction("service-requests", row.id, "COMPLETED")}>Complete</Btn>
                 </div>
               </div>
             ))}
-            {!data?.serviceRequests.length && (
-              <p className="p-6 text-center text-sm text-muted-foreground">
-                No guest requests need attention.
-              </p>
+            {!data?.serviceRequests.length && query.status !== "loading" && (
+              <p className="p-8 text-center text-sm text-muted-foreground">No guest requests need attention.</p>
             )}
           </div>
         </Panel>
-      </div>
+      )}
     </AppShell>
   );
 }
@@ -413,34 +425,29 @@ function ReservationActions({
   row,
   busy,
   action,
+  canSeat,
+  canModify,
 }: {
   row: ReservationRow;
   busy: boolean;
   action: (id: string, status: string) => Promise<void>;
+  canSeat: boolean;
+  canModify: boolean;
 }) {
-  if (row.status === "PENDING")
+  if (row.status === "PENDING") {
+    return <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "CONFIRMED")}>Confirm</Btn>;
+  }
+  if (row.status === "CONFIRMED") {
     return (
-      <Btn disabled={busy} onClick={() => action(row.id, "CONFIRMED")}>
-        Confirm
-      </Btn>
-    );
-  if (row.status === "CONFIRMED")
-    return (
-      <div className="flex gap-1">
-        <Btn variant="primary" disabled={busy} onClick={() => action(row.id, "SEATED")}>
-          Seat
-        </Btn>
-        <Btn disabled={busy} onClick={() => action(row.id, "NO_SHOW")}>
-          No-show
-        </Btn>
+      <div className="flex flex-wrap gap-1">
+        <Btn variant="primary" disabled={busy || !canSeat} onClick={() => void action(row.id, "SEATED")}>Seat</Btn>
+        <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "NO_SHOW")}>No-show</Btn>
       </div>
     );
-  if (row.status === "SEATED")
-    return (
-      <Btn disabled={busy} onClick={() => action(row.id, "COMPLETED")}>
-        Complete
-      </Btn>
-    );
+  }
+  if (row.status === "SEATED") {
+    return <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "COMPLETED")}>Complete</Btn>;
+  }
   return null;
 }
 
@@ -448,10 +455,14 @@ function ReservationCard({
   row,
   busy,
   action,
+  canSeat,
+  canModify,
 }: {
   row: ReservationRow;
   busy: boolean;
   action: (id: string, status: string) => Promise<void>;
+  canSeat: boolean;
+  canModify: boolean;
 }) {
   return (
     <article className="rounded-md border border-border bg-card p-4">
@@ -459,23 +470,17 @@ function ReservationCard({
         <div>
           <h3 className="text-[14px] font-semibold">{row.guest_name}</h3>
           <p className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock3 className="h-3.5 w-3.5" />
-            {time(row.starts_at)} · <Users className="ml-1 h-3.5 w-3.5" />
-            {row.party_size}
+            <Clock3 className="h-3.5 w-3.5" /> {time(row.starts_at)} · <Users className="ml-1 h-3.5 w-3.5" /> {row.party_size}
           </p>
         </div>
         <Status>{row.status}</Status>
       </div>
       <p className="mt-3 text-[12px]">Table {row.table_codes ?? "unassigned"}</p>
-      <div className="mt-3">
-        <ReservationActions row={row} busy={busy} action={action} />
-      </div>
+      <div className="mt-3"><ReservationActions row={row} busy={busy} action={action} canSeat={canSeat} canModify={canModify} /></div>
     </article>
   );
 }
 
 function time(value: string) {
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(
-    new Date(value),
-  );
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
