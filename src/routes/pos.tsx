@@ -798,7 +798,6 @@ function POS() {
     setPaymentOpen(false);
     setTendered(0);
     setCashReceived(0);
-    setTrackedPrint(null);
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -1546,7 +1545,6 @@ function POS() {
     setPaymentReference("");
     setPayments([]);
     setPreviouslyPaid(0);
-    setTrackedPrint(null);
     setTendered(0);
     setCashReceived(0);
     setTenderCurrency(tenant.defaultCurrency);
