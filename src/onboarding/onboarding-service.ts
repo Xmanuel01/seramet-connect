@@ -4116,6 +4116,9 @@ export class OnboardingService {
         parLevel: value.parLevel,
         imageFilename: value.imageFilename,
         onlinePriceMinor: value.onlinePriceMinor,
+        onlinePriceChannelCodes: Array.isArray(value.onlinePriceChannelCodes)
+          ? value.onlinePriceChannelCodes
+          : [],
         recipePending: Boolean(value.recipePending),
       };
       const insertSql = `INSERT INTO menu_catalog_items
