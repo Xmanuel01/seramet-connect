@@ -2327,6 +2327,12 @@ function POS() {
                   <dt className="text-muted-foreground">Paid</dt>
                   <dd className="num">{ksh(paid)}</dd>
                 </div>
+                {pendingAllocated > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Allocated / pending</dt>
+                    <dd className="num">{ksh(pendingAllocated)}</dd>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">Balance</dt>
                   <dd className="num">{ksh(due)}</dd>
@@ -2343,7 +2349,18 @@ function POS() {
                       key={payment.id}
                       className="flex items-center justify-between rounded-md bg-card px-2.5 py-2 text-[12px]"
                     >
-                      <span className="font-semibold">{payment.method}</span>
+                      <span className="min-w-0 font-semibold">
+                        <span className="block truncate">{payment.method}</span>
+                        <span className="mt-1 block">
+                          <Status>
+                            {payment.status === "recorded"
+                              ? "Recorded"
+                              : payment.status === "pending"
+                                ? "Pending"
+                                : "Ready"}
+                          </Status>
+                        </span>
+                      </span>
                       <span className="num text-right">
                         <span className="block">{ksh(payment.amount)}</span>
                         {payment.fxQuote && (
@@ -2356,7 +2373,7 @@ function POS() {
                           </span>
                         )}
                       </span>
-                      {!paymentConfirmed && (
+                      {!paymentConfirmed && (!payment.status || payment.status === "draft") && (
                         <button
                           onClick={() => removePayment(payment.id)}
                           className="text-muted-foreground hover:text-danger"
@@ -2415,21 +2432,32 @@ function POS() {
                       Payment method
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {paymentMethods.map((method) => (
+                      {usablePaymentMethods.map((method) => (
                         <button
                           key={method.id}
                           onClick={() => setPaymentMethod(method.id)}
                           className={cn(
-                            "h-12 rounded-md border px-3 text-[13px] font-semibold",
+                            "min-h-12 rounded-md border px-3 py-2 text-[13px] font-semibold",
                             paymentMethod === method.id
                               ? "border-primary bg-accent text-accent-foreground"
                               : "border-border hover:bg-secondary",
                           )}
                         >
-                          {method.displayName}
+                          <span className="block">{method.displayName}</span>
+                          <span className="mt-0.5 block text-[10px] font-medium opacity-70">Ready</span>
                         </button>
                       ))}
                     </div>
+                    {unavailablePaymentMethods.length > 0 && (
+                      <div className="mt-2 rounded-md bg-secondary/60 px-3 py-2 text-[11px] text-muted-foreground">
+                        {unavailablePaymentMethods.map(({ method, issue }) => (
+                          <div key={method.id}>
+                            <span className="font-semibold text-foreground">{method.displayName}:</span>{" "}
+                            {issue}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {paymentCurrencies.length > 1 && (
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -2458,7 +2486,7 @@ function POS() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button
                       onClick={() => {
-                        setSplitMethodId(selectedPaymentMethod?.id ?? paymentMethods[0]?.id ?? "");
+                        setSplitMethodId(selectedPaymentMethod?.id ?? usablePaymentMethods[0]?.id ?? "");
                         setSplitAmount("");
                         setSplitReference("");
                         setSplitCashReceived("");
@@ -2479,8 +2507,8 @@ function POS() {
                     <button
                       onClick={() => {
                         setPaymentMode("partial");
-                        setTendered(Math.ceil(due / 2));
-                        setCashReceived(Math.ceil(due / 2));
+                        setTendered(0);
+                        setCashReceived(0);
                       }}
                       className={cn(
                         "rounded-md border px-3 py-2 text-left text-[13px] hover:bg-secondary",
@@ -2592,9 +2620,9 @@ function POS() {
                       ))}
                     </div>
                   </div>
-                  {paid < total && paymentMode !== "partial" && (
+                  {covered < total && paymentMode !== "partial" && (
                     <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
-                      Add {ksh(total - paid)} more before confirming, or switch to partial payment.
+                      Allocate {ksh(total - covered)} more before confirming, or switch to partial payment.
                     </div>
                   )}
                   <div className="flex justify-end gap-2 border-t border-border pt-4">
@@ -2637,7 +2665,7 @@ function POS() {
                 className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground"
               >
                 <option value="">Select payment method</option>
-                {paymentMethods.map((method) => (
+                {usablePaymentMethods.map((method) => (
                   <option key={method.id} value={method.id}>
                     {method.displayName}
                   </option>
