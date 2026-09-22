@@ -193,6 +193,7 @@ function POS() {
     Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [existingPaid, setExistingPaid] = useState(0);
   const [printNotice, setPrintNotice] = useState("Print routing is running in the background.");
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
   const [kitchenNote, setKitchenNote] = useState("");
@@ -593,9 +594,16 @@ function POS() {
     subtotalMinor + taxTotals.added + serviceTotals.added,
     tenant.defaultCurrency,
   );
-  const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
-  const due = Math.max(0, total - paid);
-  const change = Math.max(0, paid - total);
+  const recordedSessionPaid = payments
+    .filter((payment) => payment.status === "recorded")
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const pendingAllocated = payments
+    .filter((payment) => payment.status === "pending" || payment.status === "draft" || !payment.status)
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const paid = existingPaid + recordedSessionPaid;
+  const covered = paid + pendingAllocated;
+  const due = Math.max(0, total - covered);
+  const change = Math.max(0, covered - total);
   const suggestedAmount = due;
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
