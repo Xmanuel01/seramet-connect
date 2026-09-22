@@ -789,8 +789,31 @@ function POS() {
   const addPayment = async () => {
     const amount = Math.min(due, Math.max(0, tendered || suggestedAmount));
     if (!amount || !selectedPaymentMethod) return;
-    if (selectedPaymentMethod.requiresReference && !paymentReference.trim()) {
+    if (!usablePaymentMethods.some((method) => method.id === selectedPaymentMethod.id)) {
+      setPrintNotice(
+        selectedPaymentMethod.category === "CASH"
+          ? "Cash is unavailable until a cash drawer is opened for this branch."
+          : `${selectedPaymentMethod.displayName} is unavailable while the POS is offline.`,
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
+    const providerOperation = selectedPaymentMethod.metadata["providerOperation"];
+    const requiresReference =
+      selectedPaymentMethod.requiresReference ||
+      selectedPaymentMethod.category === "BANK_TRANSFER" ||
+      (selectedPaymentMethod.category === "DIGITAL_WALLET" && !providerOperation);
+    if (requiresReference && !paymentReference.trim()) {
       setPrintNotice(`${selectedPaymentMethod.displayName} requires a transaction reference.`);
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (
+      providerOperation === "PAYMENT_PROMPT" &&
+      selectedPaymentMethod.requiresCustomer &&
+      !customerPhone.trim()
+    ) {
+      setPrintNotice(`${selectedPaymentMethod.displayName} requires the customer's phone number.`);
       setPrintNoticeType("warning");
       return;
     }
@@ -959,7 +982,8 @@ function POS() {
 
   const queueKitchenTickets = () => {
     if (!items.length) return;
-    if (selectedChannel?.requiresTable && !activeOrder?.table) {
+    if (selectedChannel?.requiresTable && !orderTable) {
+      setTablePickerIntent("kitchen");
       setTablePickerOpen(true);
       return;
     }
