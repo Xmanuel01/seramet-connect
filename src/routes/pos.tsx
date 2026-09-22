@@ -212,11 +212,17 @@ function POS() {
       }),
     [backendStatus, hasOpenCashDrawer, paymentMethods],
   );
+  const selectedProviderOperation = selectedPaymentMethod?.metadata["providerOperation"];
+  const selectedMethodRequiresReference = Boolean(
+    selectedPaymentMethod &&
+      (selectedPaymentMethod.requiresReference ||
+        selectedPaymentMethod.category === "BANK_TRANSFER" ||
+        (selectedPaymentMethod.category === "DIGITAL_WALLET" && !selectedProviderOperation)),
+  );
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
-  const selectedPaymentMethod =
-    paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
+  const selectedPaymentMethod = paymentMethods.find((method) => method.id === paymentMethod);
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
       ? acceptedCurrencies
@@ -2048,7 +2054,7 @@ function POS() {
                       Payment method
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {paymentMethods.map((method) => (
+                      {usablePaymentMethods.map((method) => (
                         <button
                           key={method.id}
                           onClick={() => setPaymentMethod(method.id)}
@@ -2063,6 +2069,23 @@ function POS() {
                         </button>
                       ))}
                     </div>
+                    {usablePaymentMethods.length === 0 && (
+                      <div className="mt-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
+                        No payment method is currently usable.
+                      </div>
+                    )}
+                    {!hasOpenCashDrawer &&
+                      paymentMethods.some((method) => method.category === "CASH") && (
+                        <div className="mt-2 rounded-md border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] text-warning">
+                          Cash unavailable: open a cash drawer for this branch first.
+                        </div>
+                      )}
+                    {backendStatus !== "synced" &&
+                      paymentMethods.some((method) => method.category !== "CASH") && (
+                        <div className="mt-2 text-[11px] text-muted-foreground">
+                          Digital, bank and provider payments are hidden until the POS reconnects.
+                        </div>
+                      )}
                   </div>
                   {paymentCurrencies.length > 1 && (
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -2163,7 +2186,7 @@ function POS() {
                       />
                     </label>
                   )}
-                  {selectedPaymentMethod?.requiresReference && (
+                  {selectedMethodRequiresReference && selectedPaymentMethod && (
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                       {selectedPaymentMethod.displayName} transaction reference
                       <input
@@ -2230,7 +2253,15 @@ function POS() {
                   )}
                   <div className="flex justify-end gap-2 border-t border-border pt-4">
                     <Btn onClick={() => setPaymentOpen(false)}>Cancel</Btn>
-                    <Btn variant="primary" onClick={confirmPayment} disabled={paymentBusy}>
+                    <Btn
+                      variant="primary"
+                      onClick={confirmPayment}
+                      disabled={
+                        paymentBusy ||
+                        payments.length === 0 ||
+                        (paid < total && paymentMode !== "partial")
+                      }
+                    >
                       Confirm{" "}
                       {paymentMode === "partial"
                         ? "partial"
