@@ -662,6 +662,15 @@ function POS() {
     setKitchenNote("");
     setItemNotes({});
     setPaymentReference("");
+    setPayments([]);
+    setAuthoritativePaid(0);
+    setTendered(0);
+    setCashReceived(0);
+    setPaymentInvoiceId(null);
+    setPaymentOrderId(null);
+    setPaymentConfirmed(false);
+    setPaymentOpen(false);
+    setPendingPaymentAfterKitchen(null);
     setSelectedTableNo(null);
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
@@ -679,18 +688,25 @@ function POS() {
       ? result?.state.orders.find((candidate) => candidate.id === activeOrder.id)
       : result?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
     if (!order) throw new Error("Server did not return the active order");
-    return order.id;
+    return order;
   };
 
-  const openPayment = async () => {
-    if (!items.length || paymentBusy) return;
+  const preparePaymentSession = async (orderId: string) => {
     const defaultMethod =
       (selectedChannel?.isExternallyPaid
-        ? paymentMethods.find((method) => method.category === "CREDIT")
-        : paymentMethods.find((method) => method.category === "DIGITAL_WALLET")) ??
-      paymentMethods[0];
+        ? usablePaymentMethods.find((method) => method.category === "CREDIT")
+        : usablePaymentMethods.find((method) => method.category === "DIGITAL_WALLET")) ??
+      usablePaymentMethods[0];
+    if (!defaultMethod) {
+      throw new Error(
+        hasOpenCashDrawer
+          ? "No usable payment method is available right now."
+          : "No usable payment method is available. Open a cash drawer for cash, or reconnect for digital payments.",
+      );
+    }
+
     setPaymentMode("full");
-    setPaymentMethod(defaultMethod?.id ?? "");
+    setPaymentMethod(defaultMethod.id);
     setTendered(total);
     setCashReceived(total);
     setTenderCurrency(tenant.defaultCurrency);
@@ -701,10 +717,7 @@ function POS() {
     setPaymentOrderId(null);
     setPaymentBusy(true);
     try {
-      const orderId = await createOrUpdateActiveOrder("OPEN");
-      const prepared = await mutateTransaction("prepareInvoiceForPayment", {
-        orderId,
-      });
+      const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId });
       const order = prepared?.state.orders.find((candidate) => candidate.id === orderId);
       const bill = prepared?.state.bills.find(
         (candidate) =>
@@ -719,14 +732,57 @@ function POS() {
       ) {
         throw new Error("The prepared invoice is outside the active restaurant branch");
       }
+      setAuthoritativePaid(bill.paid ?? 0);
+      setTendered(Math.max(0, bill.total - (bill.paid ?? 0)));
+      setCashReceived(Math.max(0, bill.total - (bill.paid ?? 0)));
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPaymentOpen(true);
-    } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "Payment could not be prepared.");
-      setPrintNoticeType("warning");
     } finally {
       setPaymentBusy(false);
+    }
+  };
+
+  const openPayment = async () => {
+    if (!items.length || paymentBusy) return;
+    if (selectedChannel?.requiresTable && !orderTable) {
+      setTablePickerIntent("payment");
+      setTablePickerOpen(true);
+      setPrintNotice("Select a table before payment. Seramet will route the KOT first.");
+      setPrintNoticeType("idle");
+      return;
+    }
+
+    setPaymentBusy(true);
+    try {
+      const alreadyInProduction =
+        activeOrder &&
+        ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status) &&
+        !hasUnsentItems;
+      if (alreadyInProduction) {
+        setPaymentBusy(false);
+        await preparePaymentSession(activeOrder.id);
+        return;
+      }
+
+      const queued = await queueKitchenTicketsForTable(orderTable);
+      if (!queued) {
+        setPaymentBusy(false);
+        return;
+      }
+      if (queued.jobIds.length > 0) {
+        setPendingPaymentAfterKitchen(queued);
+        setPrintNotice("KOT queued. Payment will open after production delivery is confirmed.");
+        setPrintNoticeType("idle");
+        setPaymentBusy(false);
+        return;
+      }
+      setPaymentBusy(false);
+      await preparePaymentSession(queued.orderId);
+    } catch (error) {
+      setPaymentBusy(false);
+      setPrintNotice(error instanceof Error ? error.message : "Payment could not be prepared.");
+      setPrintNoticeType("warning");
     }
   };
 
