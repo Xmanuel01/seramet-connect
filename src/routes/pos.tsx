@@ -176,7 +176,10 @@ function POS() {
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
-  const [lastKitchenJobIds, setLastKitchenJobIds] = useState<string[]>([]);
+  const [trackedPrint, setTrackedPrint] = useState<{
+    jobIds: string[];
+    label: string;
+  } | null>(null);
   const {
     state: transactionState,
     mutate: mutateTransaction,
@@ -437,13 +440,13 @@ function POS() {
   }, [paymentMethod, paymentMethodAvailability, paymentMethods]);
 
   useEffect(() => {
-    if (!lastKitchenJobIds.length) return;
-    const tracked = printJobs.filter((job) => lastKitchenJobIds.includes(job.id));
+    if (!trackedPrint?.jobIds.length) return;
+    const tracked = printJobs.filter((job) => trackedPrint.jobIds.includes(job.id));
     if (!tracked.length) return;
     const failed = tracked.find((job) => job.status === "Failed");
     if (failed) {
       setPrintNotice(
-        `KOT delivery failed${failed.failureReason ? `: ${failed.failureReason}` : "."} Open Printers, correct the route, then retry.`,
+        `${trackedPrint.label} delivery failed${failed.failureReason ? `: ${failed.failureReason}` : "."} Open Printers, correct the route, then retry.`,
       );
       setPrintNoticeType("warning");
       return;
@@ -454,18 +457,20 @@ function POS() {
     if (delivered) {
       setPrintNotice(
         tracked.some((job) => job.status === "Displayed")
-          ? "Kitchen ticket delivered to the configured KDS/production route."
-          : "Kitchen Order Ticket delivered to the configured printer route.",
+          ? `${trackedPrint.label} delivered to the configured KDS/production route.`
+          : `${trackedPrint.label} delivered to the configured printer route.`,
       );
       setPrintNoticeType("success");
       return;
     }
     const active = tracked.find((job) => ["Queued", "Sending", "Retrying"].includes(job.status));
     if (active) {
-      setPrintNotice(`Kitchen ticket ${active.status.toLowerCase()} — delivery is not yet confirmed.`);
+      setPrintNotice(
+        `${trackedPrint.label} ${active.status.toLowerCase()} — delivery is not yet confirmed.`,
+      );
       setPrintNoticeType("idle");
     }
-  }, [lastKitchenJobIds, printJobs]);
+  }, [printJobs, trackedPrint]);
 
   useEffect(() => {
     const token = getSerametAccessToken();
@@ -793,7 +798,7 @@ function POS() {
     setPaymentOpen(false);
     setTendered(0);
     setCashReceived(0);
-    setLastKitchenJobIds([]);
+    setTrackedPrint(null);
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -1170,7 +1175,10 @@ function POS() {
       },
       amendmentType,
     );
-    setLastKitchenJobIds(printResult.jobs.map((job) => job.id));
+    setTrackedPrint({
+      jobIds: printResult.jobs.map((job) => job.id),
+      label: amendmentType === "ADDITION" ? "Kitchen amendment" : "Kitchen ticket",
+    });
     setActiveOrderId(authoritativeOrder.id);
     setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
     if (printResult.jobs.length > 0) {
@@ -1223,10 +1231,16 @@ function POS() {
         const result = printCustomerDocument(orderForPrint, "BILL");
         clearCurrentOrder(
           result.jobs.length > 0
-            ? "Customer bill printed and moved to Invoices."
-            : `Invoice created without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
-          result.jobs.length > 0 ? "success" : "warning",
+            ? "Customer bill queued for the configured printer. Delivery is not yet confirmed."
+            : `Invoice created without a bill print job. ${result.skipped[0] ?? "Printing is not configured."}`,
+          result.jobs.length > 0 ? "idle" : "warning",
         );
+        if (result.jobs.length > 0) {
+          setTrackedPrint({
+            jobIds: result.jobs.map((job) => job.id),
+            label: "Customer bill",
+          });
+        }
         return;
       }
       clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
@@ -1427,10 +1441,16 @@ function POS() {
         );
         setPrintNotice(
           result.jobs.length > 0
-            ? "Payment confirmed. Receipt queued for the configured customer printer."
-            : `Payment confirmed without receipt printing: ${result.skipped[0] ?? "printing is not configured"}.`,
+            ? "Payment confirmed. Receipt queued for the configured customer printer; delivery is not yet confirmed."
+            : `Payment confirmed without a receipt print job: ${result.skipped[0] ?? "printing is not configured"}.`,
         );
-        setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
+        setPrintNoticeType(result.jobs.length > 0 ? "idle" : "warning");
+        if (result.jobs.length > 0) {
+          setTrackedPrint({
+            jobIds: result.jobs.map((job) => job.id),
+            label: "Receipt",
+          });
+        }
       } else if (backendStatus !== "synced" && completedInvoice) {
         setPrintNotice(`Cash sale saved offline. ${pendingSyncCount + 1} command(s) pending sync.`);
         setPrintNoticeType("warning");
@@ -1525,6 +1545,8 @@ function POS() {
     setItemNotes({});
     setPaymentReference("");
     setPayments([]);
+    setPreviouslyPaid(0);
+    setTrackedPrint(null);
     setTendered(0);
     setCashReceived(0);
     setTenderCurrency(tenant.defaultCurrency);
@@ -1952,7 +1974,7 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder} disabled={!items.length}>Hold</Btn>
+              <Btn onClick={holdOrder} disabled={!items.length || activeOrderHasSentLines}>Hold</Btn>
               {canPrintBill ? (
                 <>
                   <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
@@ -2023,8 +2045,8 @@ function POS() {
                 <div className="min-w-0">
                   <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
                   <div className="mt-0.5 text-[11px]">
-                    {lastKitchenJobIds.length
-                      ? "Kitchen delivery status is tracked here until confirmed or failed."
+                    {trackedPrint
+                      ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
                       : "Operational feedback and printing state appear here."}
                   </div>
                 </div>
