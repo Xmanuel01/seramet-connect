@@ -190,8 +190,6 @@ function POS() {
   const [customerPhone, setCustomerPhone] = useState("");
   const [receiptOptions, setReceiptOptions] = useState<Record<string, boolean>>({
     Print: true,
-    WhatsApp: false,
-    Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [existingPaid, setExistingPaid] = useState(0);
@@ -1428,7 +1426,7 @@ function POS() {
 
   const toggleReceipt = (option: string) => {
     if (option === "No receipt") {
-      setReceiptOptions({ Print: false, WhatsApp: false, Email: false });
+      setReceiptOptions({ Print: false });
       return;
     }
     setReceiptOptions((current) => ({ ...current, [option]: !current[option] }));
@@ -2669,7 +2667,7 @@ function POS() {
                       Receipt options
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {["Print", "WhatsApp", "Email", "No receipt"].map((r) => (
+                      {["Print", "No receipt"].map((r) => (
                         <button
                           key={r}
                           onClick={() => toggleReceipt(r)}
@@ -2688,6 +2686,9 @@ function POS() {
                         </button>
                       ))}
                     </div>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      WhatsApp and email delivery are available from Receipts after an authoritative paid receipt exists.
+                    </p>
                   </div>
                   {dueMinor > 0 && paymentMode !== "partial" && (
                     <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
