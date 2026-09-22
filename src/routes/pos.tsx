@@ -2093,11 +2093,17 @@ function POS() {
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {paymentMethods.map((method) => (
+              {usablePaymentMethods.map((method) => (
                 <span key={method.id} className="rounded border border-border px-1.5 py-0.5">
                   {method.displayName}
                 </span>
               ))}
+              {unavailablePaymentMethods.length > 0 && (
+                <span className="rounded border border-warning/30 bg-warning-soft px-1.5 py-0.5 text-warning">
+                  {unavailablePaymentMethods.length} payment method
+                  {unavailablePaymentMethods.length === 1 ? "" : "s"} unavailable
+                </span>
+              )}
               <span className="rounded border border-border px-1.5 py-0.5">Split</span>
             </div>
             <div
@@ -2119,7 +2125,11 @@ function POS() {
                 <div className="min-w-0">
                   <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
                   <div className="mt-0.5 text-[11px]">
-                    Print routing continues in the background.
+                    {printNoticeType === "success"
+                      ? "Printer/KDS delivery is confirmed."
+                      : printNoticeType === "warning"
+                        ? "Resolve this before relying on kitchen output."
+                        : "Routing status updates here as the job progresses."}
                   </div>
                 </div>
               </div>
