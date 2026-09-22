@@ -867,11 +867,66 @@ function POS() {
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return;
+
+    if (activeOrder && kitchenStarted) {
+      if (!hasKitchenChanges) {
+        setPrintNotice("This order is already in the kitchen. Edit an item before sending an update.");
+        setPrintNoticeType("idle");
+        return;
+      }
+      const knownAmendmentIds = new Set(
+        transactionState.productionAmendments.map((amendment) => amendment.id),
+      );
+      const resultState = await mutateTransaction(
+        "amendKitchenOrder",
+        {
+          orderId: activeOrder.id,
+          draft: buildKitchenAmendmentDraft(tableNo),
+        },
+        undefined,
+        { kotPrinted: true },
+      );
+      const amendments =
+        resultState?.state.productionAmendments.filter(
+          (amendment) =>
+            amendment.orderId === activeOrder.id && !knownAmendmentIds.has(amendment.id),
+        ) ?? [];
+      let printedJobs = 0;
+      const skipped: string[] = [];
+      for (const amendment of amendments) {
+        const result = sendKitchenTickets(
+          {
+            ...buildPrintOrder(tableNo),
+            orderId: activeOrder.id,
+            lines: amendment.lines.map((line) => ({
+              id: line.id,
+              name: line.name,
+              category: line.category,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              productionStation: line.productionStation ?? "NONE",
+              ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+            })),
+          },
+          amendment.type === "ADDITION" ? "ADDITION" : "VOID",
+        );
+        printedJobs += result.jobs.length;
+        skipped.push(...result.skipped);
+      }
+      clearCurrentOrder(
+        printedJobs > 0
+          ? `Kitchen update printed: ${amendments
+              .map((amendment) =>
+                amendment.type === "ADDITION" ? "addition" : "cancel item",
+              )
+              .join(" + ")}.`
+          : `Kitchen update saved. ${skipped[0] ?? "Printing is not configured."}`,
+        printedJobs > 0 ? "success" : "warning",
+      );
+      return;
+    }
+
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
-    const sentLineIds = new Set(
-      activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
-    );
-    const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const draft = buildTransactionDraft(tableNo);
     const resultState = await mutateTransaction(
       "upsertAndSendKitchen",
@@ -888,9 +943,7 @@ function POS() {
     if (!authoritativeOrder) {
       throw new Error("Kitchen order did not receive an authoritative identity");
     }
-    const ticketLines = authoritativeOrder.lines.filter(
-      (line) => line.sentAt && !sentLineIds.has(line.id),
-    );
+    const ticketLines = authoritativeOrder.lines.filter((line) => line.sentAt);
     if (ticketLines.length === 0) {
       clearCurrentOrder("No new kitchen items required printing.", "idle");
       return;
@@ -909,7 +962,7 @@ function POS() {
           ...(line.itemNote ? { itemNote: line.itemNote } : {}),
         })),
       },
-      amendmentType,
+      "NEW",
     );
     clearCurrentOrder(
       result.jobs.length > 0
@@ -921,7 +974,8 @@ function POS() {
 
   const queueKitchenTickets = () => {
     if (!items.length) return;
-    if (selectedChannel?.requiresTable && !activeOrder?.table) {
+    if (selectedChannel?.requiresTable && !orderTable) {
+      setTablePickerIntent("send");
       setTablePickerOpen(true);
       return;
     }
