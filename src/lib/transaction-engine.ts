@@ -1952,13 +1952,13 @@ export const TransactionEngine = {
     if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
       throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
     }
-    if (order.status === "HELD") next = this.releaseHeldOrder(next, orderId, user);
     const current = next.orders.find((candidate) => candidate.id === orderId)!;
-    if (current.status === "OPEN") next = this.sendToKitchen(next, orderId, user);
-    const sent = next.orders.find((candidate) => candidate.id === orderId)!;
-    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(sent.status)) {
+    if (["HELD", "OPEN"].includes(current.status)) {
+      throw new Error("Send the order to kitchen and confirm the KOT before taking payment");
+    }
+    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(current.status)) {
       next = this.requestBill(next, orderId, user);
-    } else if (sent.status === "BILL_REQUESTED") {
+    } else if (current.status === "BILL_REQUESTED") {
       next = this.createOpenBill(next, orderId);
     }
     const invoice = next.bills.find(
@@ -2252,6 +2252,12 @@ export const TransactionEngine = {
       order.branchId ?? configurationRepository.resolveBranch(currentTenantId, order.branch).id;
     if (scope.tenantId !== currentTenantId || scope.branchId !== currentBranchId) {
       throw new Error("An existing order cannot be moved to another tenant or branch");
+    }
+    const productionStarted =
+      order.lines.some((line) => Boolean(line.sentAt)) ||
+      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status);
+    if (productionStarted && draft.channel !== order.channel) {
+      throw new Error("Order channel is locked after production has started");
     }
     const incomingById = new Map(draft.lines.map((line) => [line.id, line]));
     for (const sentLine of order.lines.filter((line) => line.sentAt)) {
