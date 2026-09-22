@@ -144,6 +144,7 @@ function POS() {
   const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const paymentSubmitRef = useRef(false);
+  const kitchenRouteJobsRef = useRef<Map<string, string[]>>(new Map());
   const [payments, setPayments] = useState<
     {
       id: string;
@@ -168,7 +169,7 @@ function POS() {
     Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
-  const [printNotice, setPrintNotice] = useState("Print routing is running in the background.");
+  const [printNotice, setPrintNotice] = useState("POS ready. Production delivery state will appear here.");
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
   const [kitchenNote, setKitchenNote] = useState("");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
@@ -435,7 +436,7 @@ function POS() {
           .map((line) => [line.productId!, line.itemNote!]),
       ),
     );
-    setPrintNotice(`${activeOrder.id} loaded. Print routing is running in the background.`);
+    setPrintNotice(`${activeOrder.id} loaded. Production and print state are shown below.`);
     setPrintNoticeType("idle");
   }, [activeOrder, orderChannels]);
 
@@ -945,31 +946,57 @@ function POS() {
     }
 
     const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
-    const result = sendKitchenTickets(
-      {
-        ...buildPrintOrder(tableNo),
-        orderId: persistedOrder.id,
-        lines: ticketLines.map((line) => ({
-          id: line.id,
-          name: line.name,
-          category: line.category,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          productionStation: line.productionStation ?? "NONE",
-          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-        })),
-      },
-      amendmentType,
-    );
+    const routeKey = `${persistedOrder.id}:${amendmentType}:${ticketLines
+      .map((line) => line.id)
+      .sort()
+      .join(",")}`;
+    let jobIds = kitchenRouteJobsRef.current.get(routeKey) ?? [];
+    let reusedExistingRoute = jobIds.length > 0;
 
-    const duplicateAlreadyQueued =
-      result.jobs.length === 0 &&
-      result.skipped.length > 0 &&
-      result.skipped.every((message) => message.includes("already exists"));
-    if (result.jobs.length === 0 && !duplicateAlreadyQueued) {
-      throw new Error(
-        `KOT was not routed. ${result.skipped[0] ?? "Configure a kitchen/KDS production route before sending this order."}`,
+    if (jobIds.length === 0) {
+      const result = sendKitchenTickets(
+        {
+          ...buildPrintOrder(tableNo),
+          orderId: persistedOrder.id,
+          lines: ticketLines.map((line) => ({
+            id: line.id,
+            name: line.name,
+            category: line.category,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            productionStation: line.productionStation ?? "NONE",
+            ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+          })),
+        },
+        amendmentType,
       );
+
+      const duplicateAlreadyQueued =
+        result.jobs.length === 0 &&
+        result.skipped.length > 0 &&
+        result.skipped.every((message) => message.includes("already exists"));
+      if (result.jobs.length === 0 && !duplicateAlreadyQueued) {
+        throw new Error(
+          `KOT was not routed. ${result.skipped[0] ?? "Configure a kitchen/KDS production route before sending this order."}`,
+        );
+      }
+
+      jobIds =
+        result.jobs.length > 0
+          ? result.jobs.map((job) => job.id)
+          : printJobs
+              .filter(
+                (job) =>
+                  job.orderId === persistedOrder.id && job.amendmentType === amendmentType,
+              )
+              .map((job) => job.id);
+      if (jobIds.length === 0) {
+        throw new Error(
+          "An existing KOT route was detected but its delivery state is unavailable. Review the print queue before continuing.",
+        );
+      }
+      kitchenRouteJobsRef.current.set(routeKey, jobIds);
+      reusedExistingRoute = duplicateAlreadyQueued;
     }
 
     await mutateTransaction(
@@ -979,17 +1006,13 @@ function POS() {
       { kotPrinted: true },
     );
 
-    if (duplicateAlreadyQueued) {
-      setPrintNotice("Existing KOT route detected. Production state synchronized without a duplicate ticket.");
-      setPrintNoticeType("idle");
-      return { orderId: persistedOrder.id, jobIds: [] };
-    }
-
     setPrintNotice(
-      `KOT queued to ${result.jobs.length} production destination${result.jobs.length === 1 ? "" : "s"}.`,
+      reusedExistingRoute
+        ? "Existing KOT route reused safely; no duplicate ticket was created."
+        : `KOT queued to ${jobIds.length} production destination${jobIds.length === 1 ? "" : "s"}.`,
     );
     setPrintNoticeType("idle");
-    return { orderId: persistedOrder.id, jobIds: result.jobs.map((job) => job.id) };
+    return { orderId: persistedOrder.id, jobIds };
   };
 
   const queueKitchenTickets = () => {
