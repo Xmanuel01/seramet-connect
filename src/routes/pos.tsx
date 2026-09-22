@@ -510,7 +510,7 @@ function POS() {
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
-  const currentOrderNumber = activeOrder?.id ?? predictedNextOrderId();
+  const currentOrderNumber = activeOrder?.id ?? paymentOrderId ?? predictedNextOrderId();
   const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
   const channelLocked = Boolean(
     activeOrder &&
