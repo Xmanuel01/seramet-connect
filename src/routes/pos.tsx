@@ -1257,9 +1257,16 @@ function POS() {
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <Status>Present</Status>
-          <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
-            {orderTable ? `Table ${orderTable}` : "Table not selected"}
-          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setTablePickerIntent("select");
+              setTablePickerOpen(true);
+            }}
+            className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold hover:bg-secondary/80"
+          >
+            {orderTable ? `Table ${orderTable}` : "Select table"}
+          </button>
           <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
             {selectedChannel?.displayName ?? "No channel configured"}
           </span>
@@ -1485,7 +1492,7 @@ function POS() {
                       <div className="flex shrink-0 items-center gap-1.5">
                         <button
                           type="button"
-                          disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
+                          disabled={p.out || qty <= 0}
                           onClick={(event) => {
                             event.stopPropagation();
                             bump(p.id, -1);
@@ -1551,14 +1558,13 @@ function POS() {
                         setItemNotes((current) => ({ ...current, [l.p.id]: event.target.value }))
                       }
                       placeholder="Item note"
-                      disabled={l.qty <= sentQuantity}
                       className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-[12px] outline-none focus:border-primary"
                     />
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => bump(l.p.id, -1)}
-                      disabled={l.qty <= sentQuantity}
+                      disabled={l.qty <= 0}
                       className="grid h-7 w-7 place-items-center rounded-md border border-border disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Minus className="h-3.5 w-3.5" />
@@ -1611,11 +1617,22 @@ function POS() {
                   </Btn>
                 </>
               ) : (
-                <Btn className="col-span-2">More</Btn>
+                <Btn className="col-span-2" onClick={() => setMoreOpen(true)}>
+                  More
+                </Btn>
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets}>Send kitchen</Btn>
+              <Btn
+                onClick={queueKitchenTickets}
+                disabled={!items.length || (kitchenStarted && !hasKitchenChanges)}
+              >
+                {kitchenStarted
+                  ? hasKitchenChanges
+                    ? "Send kitchen update"
+                    : "Kitchen up to date"
+                  : "Send kitchen"}
+              </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
