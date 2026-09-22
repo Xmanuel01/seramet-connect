@@ -177,6 +177,7 @@ function POS() {
       methodId: string;
       method: string;
       amount: number;
+      amountMinor: number;
       reference?: string;
       tenderCurrency: string;
       tenderAmountMinor: number;
@@ -602,20 +603,26 @@ function POS() {
     );
   const subtotal = majorFromMinor(subtotalMinor, tenant.defaultCurrency);
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
-  const total = majorFromMinor(
-    subtotalMinor + taxTotals.added + serviceTotals.added,
-    tenant.defaultCurrency,
-  );
-  const recordedSessionPaid = payments
+  const totalMinor = subtotalMinor + taxTotals.added + serviceTotals.added;
+  const total = majorFromMinor(totalMinor, tenant.defaultCurrency);
+  const existingPaidMinor = parseMajorAmount(existingPaid, tenant.defaultCurrency);
+  const recordedSessionPaidMinor = payments
     .filter((payment) => payment.status === "recorded")
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const pendingAllocated = payments
-    .filter((payment) => payment.status === "pending" || payment.status === "draft" || !payment.status)
-    .reduce((sum, payment) => sum + payment.amount, 0);
-  const paid = existingPaid + recordedSessionPaid;
-  const covered = paid + pendingAllocated;
-  const due = Math.max(0, total - covered);
-  const change = Math.max(0, covered - total);
+    .reduce((sum, payment) => sum + payment.amountMinor, 0);
+  const pendingAllocatedMinor = payments
+    .filter(
+      (payment) => payment.status === "pending" || payment.status === "draft" || !payment.status,
+    )
+    .reduce((sum, payment) => sum + payment.amountMinor, 0);
+  const paidMinor = existingPaidMinor + recordedSessionPaidMinor;
+  const coveredMinor = paidMinor + pendingAllocatedMinor;
+  const dueMinor = Math.max(0, totalMinor - coveredMinor);
+  const changeMinor = Math.max(0, coveredMinor - totalMinor);
+  const paid = majorFromMinor(paidMinor, tenant.defaultCurrency);
+  const pendingAllocated = majorFromMinor(pendingAllocatedMinor, tenant.defaultCurrency);
+  const covered = majorFromMinor(coveredMinor, tenant.defaultCurrency);
+  const due = majorFromMinor(dueMinor, tenant.defaultCurrency);
+  const change = majorFromMinor(changeMinor, tenant.defaultCurrency);
   const suggestedAmount = due;
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
