@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -701,7 +701,7 @@ function POS() {
     return order;
   };
 
-  const preparePaymentSession = async (orderId: string) => {
+  const preparePaymentSession = useCallback(async (orderId: string) => {
     const defaultMethod =
       (selectedChannel?.isExternallyPaid
         ? usablePaymentMethods.find((method) => method.category === "CREDIT")
@@ -752,7 +752,16 @@ function POS() {
     } finally {
       setPaymentBusy(false);
     }
-  };
+  }, [
+    activeTenantId,
+    branchId,
+    hasOpenCashDrawer,
+    mutateTransaction,
+    selectedChannel?.isExternallyPaid,
+    tenant.defaultCurrency,
+    total,
+    usablePaymentMethods,
+  ]);
 
   const openPayment = async () => {
     if (!items.length || paymentBusy) return;
