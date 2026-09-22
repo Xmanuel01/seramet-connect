@@ -1435,7 +1435,7 @@ function POS() {
   };
 
   const confirmPayment = async () => {
-    if (covered < total && paymentMode !== "partial") return;
+    if (dueMinor > 0 && paymentMode !== "partial") return;
     if (paymentSubmitRef.current || paymentBusy) return;
     const draftPayments = payments.filter(
       (payment) => !payment.status || payment.status === "draft",
@@ -1452,7 +1452,7 @@ function POS() {
     }
     paymentSubmitRef.current = true;
     setPaymentBusy(true);
-    let recordedThisAttempt = 0;
+    let recordedThisAttemptMinor = 0;
     let processedParts = 0;
     try {
       const refreshed = await syncFromBackend();
@@ -1505,7 +1505,7 @@ function POS() {
           const result = await mutateTransaction("applyConfiguredPayment", {
             invoiceId: bill.id,
             paymentMethodId: method.id,
-            amountMinor: parseMajorAmount(payment.amount, tenant.defaultCurrency),
+            amountMinor: payment.amountMinor,
             cashTenderedMinor: payment.cashTenderedMinor,
             ...(payment.fxQuote
               ? {
@@ -1529,7 +1529,7 @@ function POS() {
           if (pending) {
             hasPendingVerification = true;
           } else {
-            recordedThisAttempt += payment.amount;
+            recordedThisAttemptMinor += payment.amountMinor;
           }
           processedParts += 1;
         } catch (error) {
@@ -1566,7 +1566,7 @@ function POS() {
       const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
       const completedInvoice = updatedBill?.paymentStatus === "PAID";
       const partialRecorded =
-        paymentMode === "partial" && recordedThisAttempt > 0 && !hasPendingVerification;
+        paymentMode === "partial" && recordedThisAttemptMinor > 0 && !hasPendingVerification;
       if (
         receiptOptions["Print"] &&
         completedInvoice &&
@@ -2689,9 +2689,9 @@ function POS() {
                       ))}
                     </div>
                   </div>
-                  {covered < total && paymentMode !== "partial" && (
+                  {dueMinor > 0 && paymentMode !== "partial" && (
                     <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
-                      Allocate {ksh(total - covered)} more before confirming, or switch to partial payment.
+                      Allocate {ksh(due)} more before confirming, or switch to partial payment.
                     </div>
                   )}
                   <div className="flex justify-end gap-2 border-t border-border pt-4">
