@@ -98,6 +98,16 @@ function compileTriggerBody(body: string) {
     /SELECT\s+RAISE\(ABORT,\s*'([^']+)'\s*\);/gi,
     (_full, message: string) => `RAISE EXCEPTION '${message.replace(/'/g, "''")}';`,
   );
+  // SQLite resolves the bare right-hand `revision` in an UPSERT, but
+  // PostgreSQL PL/pgSQL sees both the target column and the function's
+  // expression scope and reports "column reference revision is ambiguous".
+  // Qualify only access_control_revisions UPSERTs, never unrelated revisions.
+  if (/\bINSERT\s+INTO\s+access_control_revisions\b/i.test(compiled)) {
+    compiled = compiled.replace(
+      /\b(revision\s*=\s*)revision\s*\+\s*1\b/gi,
+      "$1access_control_revisions.revision+1",
+    );
+  }
   return compiled;
 }
 
