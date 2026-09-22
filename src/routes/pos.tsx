@@ -345,6 +345,18 @@ function POS() {
       (entry): entry is { method: (typeof paymentMethods)[number]; issue: string } =>
         Boolean(entry.issue),
     );
+
+  useEffect(() => {
+    if (!paymentOpen) return;
+    if (usablePaymentMethods.some((method) => method.id === paymentMethod)) return;
+    setPaymentMethod(usablePaymentMethods[0]?.id ?? "");
+  }, [paymentMethod, paymentOpen, usablePaymentMethods]);
+
+  useEffect(() => {
+    if (!splitOpen) return;
+    if (usablePaymentMethods.some((method) => method.id === splitMethodId)) return;
+    setSplitMethodId(usablePaymentMethods[0]?.id ?? "");
+  }, [splitMethodId, splitOpen, usablePaymentMethods]);
   const branchMenu = useMemo(
     () =>
       operationalMenu.items
@@ -1006,8 +1018,19 @@ function POS() {
   };
 
   const addPayment = async () => {
-    const amount = Math.min(due, Math.max(0, tendered || suggestedAmount));
-    if (!amount || !selectedPaymentMethod) return;
+    const requestedAmount =
+      paymentMode === "partial" ? tendered : tendered || suggestedAmount;
+    const amount = Math.min(due, Math.max(0, requestedAmount));
+    if (!selectedPaymentMethod) return;
+    if (!amount) {
+      setPrintNotice(
+        paymentMode === "partial"
+          ? "Enter the exact partial-payment amount before adding it."
+          : "Enter a payment amount greater than zero.",
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
     const methodIssue = paymentMethodIssue(selectedPaymentMethod);
     if (methodIssue) {
       setPrintNotice(`${selectedPaymentMethod.displayName} is unavailable: ${methodIssue}.`);
@@ -1091,8 +1114,8 @@ function POS() {
         ...(reference ? { reference } : {}),
       },
     ]);
-    setTendered(Math.max(0, total - paid - amount));
-    setCashReceived(Math.max(0, total - paid - amount));
+    setTendered(Math.max(0, due - amount));
+    setCashReceived(Math.max(0, due - amount));
     setTenderCurrency(tenant.defaultCurrency);
     setPaymentReference("");
   };
