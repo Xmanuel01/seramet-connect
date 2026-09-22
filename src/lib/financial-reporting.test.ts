@@ -78,7 +78,7 @@ describe("financial reporting", () => {
         tenantId: "tenant-1",
         branchId: "branch-1",
         branch: "Westlands",
-        sourceType: "Manual",
+        sourceType: "Invoice",
         sourceId: "DRAFT-1",
         status: "DRAFT",
         lines: [],
