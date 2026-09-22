@@ -5008,6 +5008,16 @@ async function sha256Text(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 function menuRowMatchesExisting(normalized: ImportValue, existing: Record<string, unknown>) {
+  const payload = parseJson<Record<string, unknown>>(string(existing["payload_json"]), {});
+  const existingOnlineChannels = Array.isArray(payload["onlinePriceChannelCodes"])
+    ? payload["onlinePriceChannelCodes"]
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.toUpperCase())
+        .sort()
+    : [];
+  const desiredOnlineChannels = Array.isArray(normalized.onlinePriceChannelCodes)
+    ? (normalized.onlinePriceChannelCodes as string[]).map((value) => value.toUpperCase()).sort()
+    : [];
   return (
     string(existing["code"]).toUpperCase() === string(normalized.code).toUpperCase() &&
     optionalString(existing["sku"]) === optionalString(normalized.sku) &&
@@ -5015,6 +5025,8 @@ function menuRowMatchesExisting(normalized: ImportValue, existing: Record<string
     string(existing["category_code"]) === string(normalized.categoryCode) &&
     optionalString(existing["description"]) === optionalString(normalized.description) &&
     number(existing["selling_price_minor"]) === number(normalized.sellingPriceMinor) &&
+    payload["onlinePriceMinor"] === normalized.onlinePriceMinor &&
+    existingOnlineChannels.join("|") === desiredOnlineChannels.join("|") &&
     string(existing["currency"]).toUpperCase() === string(normalized.currency).toUpperCase() &&
     optionalString(existing["tax_rule_id"]) === optionalString(normalized.taxRuleId) &&
     number(existing["service_charge_applicable"]) ===
