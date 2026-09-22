@@ -329,6 +329,11 @@ function POS() {
   }, [cat, posCategories]);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!configurationError) return;
     setPrintNotice(`Printing unavailable: ${configurationError}`);
     setPrintNoticeType("warning");
@@ -466,6 +471,12 @@ function POS() {
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
   const currentOrderNumber = activeOrder?.id ?? predictedNextOrderId();
   const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
+  const currentTime = new Intl.DateTimeFormat(activeLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: tenant.timezone,
+  }).format(clockNow);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
@@ -1105,7 +1116,7 @@ function POS() {
           <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
             Seramet POS
           </span>
-          <Status>Occupied</Status>
+          <Status>{activeOrder?.status.replaceAll("_", " ") ?? (items.length ? "Open" : "New")}</Status>
           <span className="text-[13px] text-muted-foreground">
             {branch} - {role} {currentUser.name}
           </span>
@@ -1139,7 +1150,7 @@ function POS() {
             {connectionLabel(backendStatus, pendingSyncCount)}
           </span>
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> 12:46
+            <Clock className="h-3.5 w-3.5" /> {currentTime}
           </span>
         </div>
       </div>
@@ -1238,14 +1249,19 @@ function POS() {
           <div className="mb-3 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input
-              placeholder="Search dishes or scan barcode"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search dishes, category, item code or scan barcode"
               className="w-full bg-transparent text-[13px] outline-none"
             />
           </div>
           {isOnlineSource && (
             <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-              {selectedChannel?.displayName} selected: menu cards now use online prices and
-              settlement defaults to partner credit where required.
+              {selectedChannel?.displayName} selected:{" "}
+              {channelUsesOnlinePrice
+                ? "items with an explicit online price use it for this channel."
+                : "this channel uses the normal branch price."}{" "}
+              Settlement still follows the channel payment configuration.
             </div>
           )}
           {operationalMenu.status === "error" && (
