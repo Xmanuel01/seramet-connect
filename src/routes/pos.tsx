@@ -1384,8 +1384,16 @@ function POS() {
   };
 
   const confirmPayment = async () => {
-    if (paid < total && paymentMode !== "partial") return;
+    if (covered < total && paymentMode !== "partial") return;
     if (paymentSubmitRef.current || paymentBusy) return;
+    const draftPayments = payments.filter(
+      (payment) => !payment.status || payment.status === "draft",
+    );
+    if (!draftPayments.length) {
+      setPrintNotice("Add at least one new payment allocation before confirming.");
+      setPrintNoticeType("warning");
+      return;
+    }
     if (!paymentInvoiceId || !paymentOrderId) {
       setPrintNotice("Payment session is no longer valid. Reopen payment from the invoice.");
       setPrintNoticeType("warning");
@@ -1393,6 +1401,8 @@ function POS() {
     }
     paymentSubmitRef.current = true;
     setPaymentBusy(true);
+    let recordedThisAttempt = 0;
+    let processedParts = 0;
     try {
       const refreshed = await syncFromBackend();
       let nextState = refreshed?.state;
@@ -1408,23 +1418,27 @@ function POS() {
       }
 
       const providerJobs: Array<{
+        localPaymentId: string;
         invoiceId: string;
         methodCode: string;
         amount: number;
         operation: "prompt" | "qr";
       }> = [];
       let hasPendingVerification = false;
-      for (const payment of payments) {
+      for (const payment of draftPayments) {
         const method = paymentMethods.find((item) => item.id === payment.methodId);
         if (!method) continue;
+        const issue = paymentMethodIssue(method);
+        if (issue) {
+          throw new Error(`${method.displayName} is unavailable: ${issue}`);
+        }
         const providerOperation = method.metadata["providerOperation"];
         if (providerOperation === "PAYMENT_PROMPT" || providerOperation === "QR_PAYMENT") {
           if (backendStatus !== "synced") {
-            setPrintNotice(`${method.displayName} cannot be initiated while the POS is offline.`);
-            setPrintNoticeType("warning");
-            return;
+            throw new Error(`${method.displayName} cannot be initiated while the POS is offline`);
           }
           providerJobs.push({
+            localPaymentId: payment.id,
             invoiceId: bill.id,
             methodCode: method.code,
             amount: payment.amount,
@@ -1434,9 +1448,7 @@ function POS() {
           continue;
         }
         if (backendStatus !== "synced" && method.category !== "CASH") {
-          setPrintNotice(`${method.displayName} cannot be confirmed while the POS is offline.`);
-          setPrintNoticeType("warning");
-          return;
+          throw new Error(`${method.displayName} cannot be confirmed while the POS is offline`);
         }
         try {
           const result = await mutateTransaction("applyConfiguredPayment", {
@@ -1455,19 +1467,55 @@ function POS() {
             terminalId,
           });
           nextState = result?.state ?? nextState;
+          const pending = ["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category);
+          setPayments((current) =>
+            current.map((candidate) =>
+              candidate.id === payment.id
+                ? { ...candidate, status: pending ? "pending" : "recorded" }
+                : candidate,
+            ),
+          );
+          if (pending) {
+            hasPendingVerification = true;
+          } else {
+            recordedThisAttempt += payment.amount;
+          }
+          processedParts += 1;
         } catch (error) {
-          setPrintNotice(error instanceof Error ? error.message : "Payment could not be recorded.");
-          setPrintNoticeType("warning");
-          return;
-        }
-        if (["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category)) {
-          hasPendingVerification = true;
+          const base = friendlyPosError(error, "Payment could not be recorded.");
+          throw new Error(
+            processedParts
+              ? `${base} ${processedParts} earlier payment allocation(s) were already recorded and will not be submitted again.`
+              : base,
+          );
         }
       }
-      for (const job of providerJobs) await initiateProviderPayment(job);
+
+      for (const job of providerJobs) {
+        try {
+          await initiateProviderPayment(job);
+          setPayments((current) =>
+            current.map((candidate) =>
+              candidate.id === job.localPaymentId
+                ? { ...candidate, status: "pending" }
+                : candidate,
+            ),
+          );
+          processedParts += 1;
+        } catch (error) {
+          const base = friendlyPosError(error, "Payment provider request failed.");
+          throw new Error(
+            processedParts
+              ? `${base} ${processedParts} earlier payment allocation(s) were already submitted and will not be duplicated.`
+              : base,
+          );
+        }
+      }
       if (providerJobs.length) nextState = (await syncFromBackend())?.state ?? nextState;
       const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
       const completedInvoice = updatedBill?.paymentStatus === "PAID";
+      const partialRecorded =
+        paymentMode === "partial" && recordedThisAttempt > 0 && !hasPendingVerification;
       if (
         receiptOptions["Print"] &&
         completedInvoice &&
@@ -1520,13 +1568,17 @@ function POS() {
         );
         setPrintNotice(
           result.jobs.length > 0
-            ? "Receipt printed."
+            ? "Payment confirmed and receipt queued for printing."
             : `Payment confirmed without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
         );
         setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
       } else if (backendStatus !== "synced" && completedInvoice) {
         setPrintNotice(`Cash sale saved offline. ${pendingSyncCount + 1} command(s) pending sync.`);
         setPrintNoticeType("warning");
+      } else if (partialRecorded) {
+        const remaining = Math.max(0, (updatedBill?.total ?? total) - (updatedBill?.paid ?? 0));
+        setPrintNotice(`Partial payment recorded. ${ksh(remaining)} remains on the invoice.`);
+        setPrintNoticeType("success");
       } else if (hasPendingVerification) {
         setPrintNotice(
           providerJobs.length
@@ -1535,9 +1587,9 @@ function POS() {
         );
         setPrintNoticeType("warning");
       }
-      setPaymentConfirmed(Boolean(completedInvoice && !hasPendingVerification));
+      setPaymentConfirmed(Boolean((completedInvoice || partialRecorded) && !hasPendingVerification));
     } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "Payment could not be completed.");
+      setPrintNotice(friendlyPosError(error, "Payment could not be completed."));
       setPrintNoticeType("warning");
     } finally {
       paymentSubmitRef.current = false;
