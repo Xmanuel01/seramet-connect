@@ -1,6 +1,17 @@
 name: POS Page 1 Validation
 
 on:
+  push:
+    branches:
+      - "fix/pos-page-1-hardening"
+    paths:
+      - "src/routes/pos.tsx"
+      - "src/lib/transaction-engine.ts"
+      - "src/lib/seramet-flows.test.ts"
+      - "src/lib/menu-product.ts"
+      - "src/hooks/use-operational-menu.ts"
+      - "src/lib/seramet-api.ts"
+      - ".github/workflows/pos-page1-validation.yml"
   pull_request:
     paths:
       - "src/routes/pos.tsx"
