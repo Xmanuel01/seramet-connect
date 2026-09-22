@@ -28,7 +28,11 @@ export type SettlementDisposition =
 const compactCode = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 export class SettlementService {
-  constructor(private repository: ConfigurationRepository = getConfigurationRepository()) {}
+  constructor(private readonly configuredRepository?: ConfigurationRepository) {}
+
+  private get repository() {
+    return this.configuredRepository ?? getConfigurationRepository();
+  }
 
   listMethods(tenantId: string) {
     return this.repository.listPaymentMethods(tenantId, true);
