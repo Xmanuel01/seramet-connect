@@ -195,6 +195,7 @@ function POS() {
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
+  const splitPaymentMethod = paymentMethods.find((method) => method.id === splitMethodId);
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
       ? acceptedCurrencies
@@ -2218,6 +2219,86 @@ function POS() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={splitOpen} onOpenChange={setSplitOpen}>
+        <DialogContent className="max-w-[460px] border-border bg-card">
+          <DialogHeader>
+            <DialogTitle>Add split payment</DialogTitle>
+            <DialogDescription>
+              Enter this person's amount and payment method. Remaining balance: {ksh(due)}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+              Payment method
+              <select
+                value={splitMethodId}
+                onChange={(event) => {
+                  setSplitMethodId(event.target.value);
+                  setSplitReference("");
+                  setSplitCashReceived("");
+                }}
+                className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground"
+              >
+                <option value="">Select payment method</option>
+                {paymentMethods.map((method) => (
+                  <option key={method.id} value={method.id}>
+                    {method.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+              Split amount ({tenant.defaultCurrency})
+              <input
+                type="number"
+                min={0}
+                max={due}
+                step="any"
+                value={splitAmount}
+                onChange={(event) => setSplitAmount(event.target.value)}
+                className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground"
+                placeholder="Enter amount"
+              />
+            </label>
+            {splitPaymentMethod?.category === "CASH" && (
+              <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                Cash received ({tenant.defaultCurrency})
+                <input
+                  type="number"
+                  min={0}
+                  step="any"
+                  value={splitCashReceived}
+                  onChange={(event) => setSplitCashReceived(event.target.value)}
+                  className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground"
+                  placeholder={splitAmount || "Enter cash received"}
+                />
+              </label>
+            )}
+            {splitPaymentMethod?.requiresReference && (
+              <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                {splitPaymentMethod.displayName} transaction reference
+                <input
+                  value={splitReference}
+                  onChange={(event) =>
+                    setSplitReference(
+                      event.target.value.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 32),
+                    )
+                  }
+                  className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold uppercase text-foreground"
+                  placeholder="Transaction reference"
+                />
+              </label>
+            )}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Btn onClick={() => setSplitOpen(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={addSplitPayment}>
+                Add split
+              </Btn>
             </div>
           </div>
         </DialogContent>
