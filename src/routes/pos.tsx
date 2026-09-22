@@ -1677,6 +1677,47 @@ function POS() {
           </div>
         </aside>
       </div>
+      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+        <DialogContent className="max-w-[460px] border-border bg-card">
+          <DialogHeader>
+            <DialogTitle>Order actions</DialogTitle>
+            <DialogDescription>
+              Actions for {activeOrder?.id ?? currentOrderNumber}. Nothing here records a placeholder
+              action.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Btn
+              onClick={() => {
+                setMoreOpen(false);
+                setTablePickerIntent("select");
+                setTablePickerOpen(true);
+              }}
+            >
+              {orderTable ? "Change table" : "Select table"}
+            </Btn>
+            <Btn
+              onClick={() => {
+                setMoreOpen(false);
+                setActiveOrdersOpen(true);
+              }}
+            >
+              Open active orders
+            </Btn>
+            <Btn
+              onClick={() => {
+                setMoreOpen(false);
+                clearCurrentOrder(
+                  activeOrder ? "Order closed from the POS view; it remains in active orders." : "Draft cleared.",
+                );
+              }}
+            >
+              {activeOrder ? "Close order view" : "Clear draft"}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={tablePickerOpen} onOpenChange={setTablePickerOpen}>
         <DialogContent className="max-w-[920px] border-border bg-card">
           <DialogHeader>
