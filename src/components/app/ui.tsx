@@ -290,15 +290,11 @@ export function Btn({
     ghost: "text-muted-foreground hover:bg-secondary hover:text-foreground",
     danger: "bg-danger-soft text-danger hover:opacity-90",
   }[variant];
+  const missingAction = type === "button" && !onClick;
+  const isDisabled = disabled || missingAction;
   const handleClick: ButtonHTMLAttributes<HTMLButtonElement>["onClick"] = (event) => {
-    if (disabled) return;
-    if (onClick) {
-      onClick(event);
-      return;
-    }
-    const label = getTextFromChildren(children).trim();
-    if (!label || typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("seramet:workflow-action", { detail: { label } }));
+    if (isDisabled || !onClick) return;
+    onClick(event);
   };
 
   return (
@@ -306,7 +302,7 @@ export function Btn({
       {...buttonProps}
       type={type}
       onClick={handleClick}
-      disabled={disabled}
+      disabled={isDisabled}
       className={cn(
         "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         v,
