@@ -2016,11 +2016,19 @@ function POS() {
                   <dd className="num">{ksh(tax)}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Paid</dt>
-                  <dd className="num">{ksh(paid)}</dd>
+                  <dt className="text-muted-foreground">Recorded</dt>
+                  <dd className="num">{ksh(authoritativePaid)}</dd>
                 </div>
+                {stagedPaid > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Staged</dt>
+                    <dd className="num">{ksh(stagedPaid)}</dd>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Balance</dt>
+                  <dt className="text-muted-foreground">
+                    {stagedPaid > 0 ? "Remaining after staged" : "Balance"}
+                  </dt>
                   <dd className="num">{ksh(due)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-border pt-2">
@@ -2056,6 +2064,30 @@ function POS() {
                           Remove
                         </button>
                       )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {settlementProgress.length > 0 && (
+                <div className="mt-4 space-y-2 border-t border-border pt-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Server payment state
+                  </div>
+                  {settlementProgress.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-center justify-between gap-2 rounded-md bg-card px-2.5 py-2 text-[12px]"
+                    >
+                      <span className="font-semibold">{entry.method}</span>
+                      <span className="num">{ksh(entry.amount)}</span>
+                      <span
+                        className={cn(
+                          "text-[10px] font-bold",
+                          entry.status === "Confirmed" ? "text-success" : "text-warning",
+                        )}
+                      >
+                        {entry.status}
+                      </span>
                     </div>
                   ))}
                 </div>
