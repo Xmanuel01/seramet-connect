@@ -1682,7 +1682,9 @@ function POS() {
           <DialogHeader>
             <DialogTitle>Select table</DialogTitle>
             <DialogDescription>
-              Choose the guest table before sending Order {currentOrderNumber} to kitchen.
+              {tablePickerIntent === "send"
+                ? `Choose a table for Order ${currentOrderNumber}; the order will then be sent to kitchen.`
+                : `Choose or change the table for Order ${currentOrderNumber}.`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -1695,23 +1697,47 @@ function POS() {
                   </span>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {floorTables.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border p-6 text-center">
+                  <div className="text-[13px] font-semibold">No restaurant tables are configured</div>
+                  <p className="mt-1 text-[12px] text-muted-foreground">
+                    Add the branch tables first, then return to POS to allocate dine-in orders.
+                  </p>
+                  <Btn className="mt-3" onClick={() => void navigate({ to: "/tables" })}>
+                    Configure tables
+                  </Btn>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {floorTables.map((table) => (
                   <button
                     key={table.no}
                     type="button"
                     disabled={table.state === "Unavailable"}
                     onClick={() => {
+                      if (table.orderId) {
+                        setActiveOrderId(table.orderId);
+                        setSelectedTableNo(table.no);
+                        setTablePickerIntent("select");
+                        setTablePickerOpen(false);
+                        setPrintNotice(`Opened the active order for Table ${table.no}.`);
+                        setPrintNoticeType("idle");
+                        return;
+                      }
                       setSelectedTableNo(table.no);
+                      const shouldSend = tablePickerIntent === "send";
+                      setTablePickerIntent("select");
                       setTablePickerOpen(false);
-                      void queueKitchenTicketsForTable(table.no).catch((error: unknown) => {
-                        setPrintNotice(
-                          error instanceof Error
-                            ? error.message
-                            : "The kitchen order could not be sent.",
-                        );
-                        setPrintNoticeType("warning");
-                      });
+                      if (shouldSend) {
+                        void queueKitchenTicketsForTable(table.no).catch((error: unknown) => {
+                          setPrintNotice(
+                            error instanceof Error
+                              ? error.message
+                              : "The kitchen order could not be sent.",
+                          );
+                          setPrintNoticeType("warning");
+                        });
+                      }
                     }}
                     className={cn(
                       "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
@@ -1747,7 +1773,8 @@ function POS() {
                     </div>
                   </button>
                 ))}
-              </div>
+                </div>
+              )}
             </div>
             <aside className="rounded-xl border border-border bg-secondary/40 p-4">
               <div className="text-[13px] font-bold">Order summary</div>
@@ -1772,8 +1799,8 @@ function POS() {
                 </div>
               </dl>
               <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                Clicking a table immediately sends this order to kitchen and updates the Orders
-                page.
+                Available tables can be allocated to this order. Selecting an occupied table opens
+                its existing order instead of creating a duplicate.
               </div>
             </aside>
           </div>
