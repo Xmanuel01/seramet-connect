@@ -575,7 +575,8 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   const rows = await env.SERAMET_DB.prepare(
     `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
             m.currency,m.tax_rule_id,m.service_charge_applicable,bs.station_id,
-            s.code AS station_code,m.sellable,
+            s.code AS station_code,m.sellable,m.payload_json AS item_payload_json,
+            bs.payload_json AS branch_payload_json,
             COALESCE(bs.selling_price_minor,m.selling_price_minor) AS effective_price_minor,
             bs.available AS available
      FROM menu_catalog_items m
