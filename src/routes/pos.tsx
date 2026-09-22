@@ -867,16 +867,6 @@ function POS() {
 
   const openPayment = async () => {
     if (!items.length || paymentBusy) return;
-    if (!activeOrder || !kitchenStarted) {
-      setPrintNotice("Send the order to kitchen before taking payment.");
-      setPrintNoticeType("warning");
-      return;
-    }
-    if (hasKitchenChanges) {
-      setPrintNotice("Send the kitchen update before taking payment.");
-      setPrintNoticeType("warning");
-      return;
-    }
     if (selectedChannel?.requiresTable && !orderTable) {
       setTablePickerIntent("select");
       setTablePickerOpen(true);
@@ -884,11 +874,66 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
+
+    const payMayAutoSendKitchen =
+      selectedChannel?.channelType === "TAKEAWAY" ||
+      selectedChannel?.channelType === "KIOSK" ||
+      selectedChannel?.metadata["payBeforeKitchen"] === true;
+    let orderId = activeOrder?.id;
+
+    if (!activeOrder || !kitchenStarted || hasKitchenChanges) {
+      if (!payMayAutoSendKitchen) {
+        setPrintNotice(
+          activeOrder && kitchenStarted
+            ? "Send the kitchen update before taking payment."
+            : "Send the dine-in order to kitchen before taking payment.",
+        );
+        setPrintNoticeType("warning");
+        return;
+      }
+      setPaymentBusy(true);
+      try {
+        orderId = await queueKitchenTicketsForTable(orderTable, { retainOrder: true });
+      } catch (error) {
+        setPrintNotice(
+          friendlyPosError(error, "The takeaway order could not be sent to kitchen before payment."),
+        );
+        setPrintNoticeType("warning");
+        return;
+      } finally {
+        setPaymentBusy(false);
+      }
+      if (!orderId) {
+        setPrintNotice(
+          "Payment is blocked until the takeaway KOT is accepted by a configured printer or KDS route.",
+        );
+        setPrintNoticeType("warning");
+        return;
+      }
+    }
+
+    if (!orderId) {
+      setPrintNotice("Select or create an order before taking payment.");
+      setPrintNoticeType("warning");
+      return;
+    }
+
+    const readyMethods = usablePaymentMethods;
+    if (!readyMethods.length) {
+      const reason = unavailablePaymentMethods[0]?.issue;
+      setPrintNotice(
+        reason
+          ? `No payment method is currently usable: ${reason}.`
+          : "No active payment methods are configured for this restaurant.",
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
     const defaultMethod =
       (selectedChannel?.isExternallyPaid
-        ? paymentMethods.find((method) => method.category === "CREDIT")
-        : paymentMethods.find((method) => method.category === "DIGITAL_WALLET")) ??
-      paymentMethods[0];
+        ? readyMethods.find((method) => method.category === "CREDIT")
+        : readyMethods.find((method) => method.category === "DIGITAL_WALLET")) ??
+      readyMethods[0];
     setPaymentMode("full");
     setPaymentMethod(defaultMethod?.id ?? "");
     setTendered(total);
@@ -901,7 +946,6 @@ function POS() {
     setPaymentOrderId(null);
     setPaymentBusy(true);
     try {
-      const orderId = await createOrUpdateActiveOrder("OPEN");
       const prepared = await mutateTransaction("prepareInvoiceForPayment", {
         orderId,
       });
@@ -923,7 +967,7 @@ function POS() {
       setPaymentInvoiceId(bill.id);
       setPaymentOpen(true);
     } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "Payment could not be prepared.");
+      setPrintNotice(friendlyPosError(error, "Payment could not be prepared."));
       setPrintNoticeType("warning");
     } finally {
       setPaymentBusy(false);
