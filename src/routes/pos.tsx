@@ -212,6 +212,9 @@ function POS() {
       }),
     [backendStatus, hasOpenCashDrawer, paymentMethods],
   );
+  const selectedChannel =
+    orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
+  const selectedPaymentMethod = paymentMethods.find((method) => method.id === paymentMethod);
   const selectedProviderOperation = selectedPaymentMethod?.metadata["providerOperation"];
   const selectedMethodRequiresReference = Boolean(
     selectedPaymentMethod &&
@@ -219,10 +222,6 @@ function POS() {
         selectedPaymentMethod.category === "BANK_TRANSFER" ||
         (selectedPaymentMethod.category === "DIGITAL_WALLET" && !selectedProviderOperation)),
   );
-
-  const selectedChannel =
-    orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
-  const selectedPaymentMethod = paymentMethods.find((method) => method.id === paymentMethod);
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
       ? acceptedCurrencies
