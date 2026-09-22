@@ -587,6 +587,45 @@ function POS() {
     hour12: false,
     timeZone: tenant.timezone,
   }).format(clockNow);
+  const businessDateParts = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: tenant.timezone,
+  }).formatToParts(clockNow);
+  const businessDate = ["year", "month", "day"]
+    .map((part) => businessDateParts.find((value) => value.type === part)?.value ?? "")
+    .join("-");
+  const operatorEmployee = transactionState.employees.find(
+    (employee) =>
+      (employee.tenantId ?? activeTenantId) === activeTenantId &&
+      (employee.branchId ?? branchId) === branchId &&
+      employee.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase(),
+  );
+  const operatorAttendance = transactionState.attendanceRecords.find(
+    (attendance) =>
+      (attendance.tenantId ?? activeTenantId) === activeTenantId &&
+      (attendance.branchId ?? branchId) === branchId &&
+      attendance.date === businessDate &&
+      (attendance.employeeId === operatorEmployee?.id ||
+        attendance.employeeName.trim().toLowerCase() === currentUser.name.trim().toLowerCase()),
+  );
+  const operatorAttendanceLabel =
+    operatorAttendance?.status.replaceAll("_", " ") ?? "Not clocked in";
+  const posStateLabel = paymentOpen
+    ? "Paying"
+    : activeOrder?.status === "HELD"
+      ? "Held"
+      : activeOrder?.status === "READY"
+        ? "Ready"
+        : activeOrder?.status === "SERVED"
+          ? "Served"
+          : activeOrder &&
+              ["SENT_TO_KITCHEN", "IN_PROGRESS"].includes(activeOrder.status)
+            ? "Kitchen"
+            : activeOrder
+              ? "Open"
+              : "New";
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
@@ -1429,20 +1468,39 @@ function POS() {
           <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
             Seramet POS
           </span>
-          <Status>{activeOrder?.status.replaceAll("_", " ") ?? (items.length ? "Open" : "New")}</Status>
+          <Status>{posStateLabel}</Status>
           <span className="text-[13px] text-muted-foreground">
             {branch} - {role} {currentUser.name}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Status>Present</Status>
+          <Btn
+            variant="primary"
+            className="h-8 px-2.5 text-[12px]"
+            onClick={() =>
+              clearCurrentOrder(
+                activeOrder
+                  ? "New order started. The previous order remains available under Orders."
+                  : "New order started.",
+              )
+            }
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New order
+          </Btn>
+          <Status>{operatorAttendanceLabel}</Status>
           <button
             type="button"
             onClick={() => {
               setTablePickerIntent("select");
               setTablePickerOpen(true);
             }}
-            className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold hover:bg-secondary/80"
+            className={cn(
+              "rounded-md px-2 py-1 text-[12px] font-semibold transition-colors",
+              orderTable
+                ? "bg-accent text-accent-foreground hover:bg-accent/80"
+                : "bg-secondary hover:bg-secondary/80",
+            )}
           >
             {orderTable ? `Table ${orderTable}` : "Select table"}
           </button>
