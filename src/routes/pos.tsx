@@ -1071,6 +1071,11 @@ function POS() {
 
   const confirmPayment = async () => {
     if (paid < total && paymentMode !== "partial") return;
+    if (payments.length === 0) {
+      setPrintNotice("Add at least one payment component before confirming.");
+      setPrintNoticeType("warning");
+      return;
+    }
     if (paymentSubmitRef.current || paymentBusy) return;
     if (!paymentInvoiceId || !paymentOrderId) {
       setPrintNotice("Payment session is no longer valid. Reopen payment from the invoice.");
@@ -1094,6 +1099,8 @@ function POS() {
       }
 
       const providerJobs: Array<{
+        paymentId: string;
+        methodName: string;
         invoiceId: string;
         methodCode: string;
         amount: number;
@@ -1102,7 +1109,9 @@ function POS() {
       let hasPendingVerification = false;
       for (const payment of payments) {
         const method = paymentMethods.find((item) => item.id === payment.methodId);
-        if (!method) continue;
+        if (!method) {
+          throw new Error(`${payment.method} is no longer configured for this branch.`);
+        }
         const providerOperation = method.metadata["providerOperation"];
         if (providerOperation === "PAYMENT_PROMPT" || providerOperation === "QR_PAYMENT") {
           if (backendStatus !== "synced") {
@@ -1111,6 +1120,8 @@ function POS() {
             return;
           }
           providerJobs.push({
+            paymentId: payment.id,
+            methodName: method.displayName,
             invoiceId: bill.id,
             methodCode: method.code,
             amount: payment.amount,
@@ -1141,18 +1152,59 @@ function POS() {
             terminalId,
           });
           nextState = result?.state ?? nextState;
+          const progressedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
+          if (progressedBill) setAuthoritativePaid(progressedBill.paid ?? 0);
+          const pending = ["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category);
+          setSettlementProgress((current) => [
+            ...current.filter((entry) => entry.id !== payment.id),
+            {
+              id: payment.id,
+              method: method.displayName,
+              amount: payment.amount,
+              status: pending ? "Pending verification" : "Confirmed",
+            },
+          ]);
+          setPayments((current) => current.filter((entry) => entry.id !== payment.id));
+          if (pending) hasPendingVerification = true;
         } catch (error) {
-          setPrintNotice(error instanceof Error ? error.message : "Payment could not be recorded.");
+          const recovered = await syncFromBackend();
+          const recoveredBill = recovered?.state.bills.find(
+            (candidate) => candidate.id === bill.id,
+          );
+          if (recoveredBill) setAuthoritativePaid(recoveredBill.paid ?? 0);
+          setPrintNotice(
+            `${error instanceof Error ? error.message : "A payment component failed."} Any successful components remain recorded; review the balance before retrying.`,
+          );
           setPrintNoticeType("warning");
           return;
         }
-        if (["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category)) {
-          hasPendingVerification = true;
+      }
+
+      for (const job of providerJobs) {
+        try {
+          await initiateProviderPayment(job);
+          setSettlementProgress((current) => [
+            ...current.filter((entry) => entry.id !== job.paymentId),
+            {
+              id: job.paymentId,
+              method: job.methodName,
+              amount: job.amount,
+              status: "Pending verification",
+            },
+          ]);
+          setPayments((current) => current.filter((entry) => entry.id !== job.paymentId));
+        } catch (error) {
+          await syncFromBackend();
+          setPrintNotice(
+            `${error instanceof Error ? error.message : "Payment provider request failed."} Earlier components remain recorded; do not repeat them.`,
+          );
+          setPrintNoticeType("warning");
+          return;
         }
       }
-      for (const job of providerJobs) await initiateProviderPayment(job);
       if (providerJobs.length) nextState = (await syncFromBackend())?.state ?? nextState;
       const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
+      if (updatedBill) setAuthoritativePaid(updatedBill.paid ?? 0);
       const completedInvoice = updatedBill?.paymentStatus === "PAID";
       if (
         receiptOptions["Print"] &&
@@ -1220,6 +1272,11 @@ function POS() {
             : "Payment recorded for verification. No paid receipt has been created.",
         );
         setPrintNoticeType("warning");
+      } else if (updatedBill?.paymentStatus === "PARTIAL") {
+        setPrintNotice(
+          `Partial payment recorded. ${ksh(Math.max(0, updatedBill.total - updatedBill.paid))} remains due.`,
+        );
+        setPrintNoticeType("success");
       }
       setPaymentConfirmed(Boolean(completedInvoice && !hasPendingVerification));
     } catch (error) {
