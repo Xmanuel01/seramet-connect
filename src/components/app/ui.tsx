@@ -314,17 +314,6 @@ export function Btn({
   );
 }
 
-function getTextFromChildren(children: ReactNode): string {
-  return Children.toArray(children)
-    .map((child) => {
-      if (typeof child === "string" || typeof child === "number") return String(child);
-      if (isValidElement<{ children?: ReactNode }>(child))
-        return getTextFromChildren(child.props.children);
-      return "";
-    })
-    .join(" ")
-    .replace(/\s+/g, " ");
-}
 
 export function Empty({ title, body, action }: { title: string; body: string; action: string }) {
   return (
