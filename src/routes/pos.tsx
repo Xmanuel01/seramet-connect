@@ -1054,7 +1054,7 @@ function POS() {
         const result = printCustomerDocument(orderForPrint, "BILL");
         clearCurrentOrder(
           result.jobs.length > 0
-            ? "Customer bill printed and moved to Invoices."
+            ? "Customer bill queued for printing and moved to Invoices."
             : `Invoice created without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
           result.jobs.length > 0 ? "success" : "warning",
         );
@@ -1264,7 +1264,7 @@ function POS() {
         );
         setPrintNotice(
           result.jobs.length > 0
-            ? "Receipt printed."
+            ? "Receipt queued for printing."
             : `Payment confirmed without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
         );
         setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
@@ -1334,12 +1334,16 @@ function POS() {
     setItemNotes({});
     setPaymentReference("");
     setPayments([]);
+    setSettlementProgress([]);
+    setAuthoritativePaid(0);
     setTendered(0);
     setCashReceived(0);
     setTenderCurrency(tenant.defaultCurrency);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
     setPaymentConfirmed(false);
+    setPendingPaymentAfterKitchen(null);
+    setSelectedTableNo(null);
     setPaymentOpen(false);
   };
 
