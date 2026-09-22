@@ -157,6 +157,9 @@ function POS() {
       fxQuote?: FxPaymentQuote;
     }[]
   >([]);
+  const [settlementProgress, setSettlementProgress] = useState<
+    { id: string; method: string; amount: number; status: "Confirmed" | "Pending verification" }[]
+  >([]);
   const [paymentReference, setPaymentReference] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [receiptOptions, setReceiptOptions] = useState<Record<string, boolean>>({
@@ -663,6 +666,7 @@ function POS() {
     setItemNotes({});
     setPaymentReference("");
     setPayments([]);
+    setSettlementProgress([]);
     setAuthoritativePaid(0);
     setTendered(0);
     setCashReceived(0);
@@ -711,6 +715,7 @@ function POS() {
     setCashReceived(total);
     setTenderCurrency(tenant.defaultCurrency);
     setPayments([]);
+    setSettlementProgress([]);
     setPaymentReference("");
     setPaymentConfirmed(false);
     setPaymentInvoiceId(null);
