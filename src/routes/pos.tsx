@@ -144,6 +144,7 @@ function POS() {
   const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const paymentSubmitRef = useRef(false);
+  const [previouslyPaid, setPreviouslyPaid] = useState(0);
   const [payments, setPayments] = useState<
     {
       id: string;
@@ -366,6 +367,13 @@ function POS() {
       )
       .map((table) => {
         const activeTableOrder = openTableOrders.find((order) => order.table === table.code);
+        const activeBill = activeTableOrder
+          ? transactionState.bills.find(
+              (bill) =>
+                bill.orderIds.includes(activeTableOrder.id) &&
+                ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+            )
+          : undefined;
         return {
           no: table.code,
           seats: table.seats,
@@ -374,12 +382,21 @@ function POS() {
             : "Dining",
           state: activeTableOrder ? "Occupied" : "Available",
           guests: Number(activeTableOrder?.customer.match(/(\d+)\s+guest/i)?.[1] ?? 0),
-          amount: activeTableOrder?.total,
+          amount: activeBill
+            ? Math.max(0, activeBill.total - activeBill.paid)
+            : activeTableOrder?.total,
           orderId: activeTableOrder?.id,
           orderStatus: activeTableOrder?.status,
         };
       });
-  }, [activeTenantId, branchId, branchServiceAreas, openTableOrders, platformState.tables]);
+  }, [
+    activeTenantId,
+    branchId,
+    branchServiceAreas,
+    openTableOrders,
+    platformState.tables,
+    transactionState.bills,
+  ]);
 
   const posCategories = useMemo(() => {
     const importedCategories = Array.from(new Set(branchMenu.map((product) => product.category)));
@@ -596,10 +613,12 @@ function POS() {
     subtotalMinor + taxTotals.added + serviceTotals.added,
     tenant.defaultCurrency,
   );
-  const paid = payments.reduce(
-    (sum, payment) => sum + (payment.status === "failed" ? 0 : payment.amount),
-    0,
-  );
+  const paid =
+    previouslyPaid +
+    payments.reduce(
+      (sum, payment) => sum + (payment.status === "failed" ? 0 : payment.amount),
+      0,
+    );
   const due = Math.max(0, total - paid);
   const change = Math.max(0, paid - total);
   const suggestedAmount = paymentMode === "split" ? Math.ceil(due / 2) : due;
@@ -767,6 +786,7 @@ function POS() {
     setCustomerPhone("");
     setSelectedTableNo(null);
     setPayments([]);
+    setPreviouslyPaid(0);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
     setPaymentConfirmed(false);
@@ -841,6 +861,7 @@ function POS() {
     setCashReceived(total);
     setTenderCurrency(tenant.defaultCurrency);
     setPayments([]);
+    setPreviouslyPaid(0);
     setPaymentReference("");
     setCustomerPhone("");
     setPaymentConfirmed(false);
@@ -898,6 +919,9 @@ function POS() {
       }
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
+      setPreviouslyPaid(bill.paid ?? 0);
+      setTendered(Math.max(0, total - (bill.paid ?? 0)));
+      setCashReceived(Math.max(0, total - (bill.paid ?? 0)));
       setPaymentOpen(true);
     } catch (error) {
       setPrintNotice(cashierErrorMessage(error, "Payment could not be prepared."));
@@ -1067,9 +1091,35 @@ function POS() {
     );
     const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const draft = buildTransactionDraft(tableNo);
+    const previewLines = items.flatMap((line) => {
+      const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
+      if (unsentQuantity <= 0) return [];
+      return [
+        {
+          id: `preview-${line.p.id}`,
+          name: line.p.name,
+          category: line.p.category,
+          quantity: unsentQuantity,
+          unitPrice: line.p.price,
+          productionStation: line.p.productionStation ?? "NONE",
+          ...(itemNotes[line.p.id]?.trim()
+            ? { itemNote: itemNotes[line.p.id]!.trim() }
+            : {}),
+        },
+      ];
+    });
+    if (!previewLines.length && activeOrder) {
+      setPrintNotice("No new kitchen items require a KOT amendment.");
+      setPrintNoticeType("idle");
+      return {
+        order: activeOrder,
+        state: transactionState,
+        printResult: null,
+      };
+    }
     const preflight = SerametPrintService.createProductionTicketJobs(
       profile,
-      buildPrintOrder(tableNo),
+      { ...buildPrintOrder(tableNo), lines: previewLines },
       printJobs,
       amendmentType,
     );
