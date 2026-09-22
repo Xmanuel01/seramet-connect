@@ -773,6 +773,33 @@ function POS() {
         ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status) &&
         !hasUnsentItems;
       if (alreadyInProduction) {
+        const knownProductionJobs = printJobs.filter(
+          (job) => job.orderId === activeOrder.id && Boolean(job.amendmentType),
+        );
+        const failedJob = knownProductionJobs.find(
+          (job) => job.status === "Failed" || job.status === "Cancelled",
+        );
+        if (failedJob) {
+          setPaymentBusy(false);
+          setPrintNotice(
+            `Payment blocked: KOT delivery failed at ${failedJob.destination}. Retry that production job first.`,
+          );
+          setPrintNoticeType("warning");
+          return;
+        }
+        const pendingJobs = knownProductionJobs.filter(
+          (job) => !["Printed", "Displayed", "Fallback Printed"].includes(job.status),
+        );
+        if (pendingJobs.length > 0) {
+          setPendingPaymentAfterKitchen({
+            orderId: activeOrder.id,
+            jobIds: knownProductionJobs.map((job) => job.id),
+          });
+          setPaymentBusy(false);
+          setPrintNotice("Payment is waiting for the current KOT delivery to finish.");
+          setPrintNoticeType("idle");
+          return;
+        }
         setPaymentBusy(false);
         await preparePaymentSession(activeOrder.id);
         return;
