@@ -4,10 +4,10 @@ import { HostStation } from "@/guest/host-station";
 export const Route = createFileRoute("/host")({
   head: () => ({
     meta: [
-      { title: "Host Station - Seramet" },
+      { title: "Front of House - Seramet" },
       {
         name: "description",
-        content: "Live seating, waitlist, table and guest service operations.",
+        content: "Unified reservations, seating, waitlist and guest service operations.",
       },
     ],
   }),
