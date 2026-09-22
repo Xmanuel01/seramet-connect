@@ -1809,6 +1809,9 @@ export const TransactionEngine = {
     if (scope.tenantId !== currentTenantId || scope.branchId !== currentBranchId) {
       throw new Error("An existing order cannot be moved to another tenant or branch");
     }
+    if (draft.channel !== order.channel) {
+      throw new Error("Order source cannot be changed after kitchen production has started");
+    }
 
     const beforeStatus = order.status;
     const beforeLines = order.lines
@@ -1913,7 +1916,6 @@ export const TransactionEngine = {
     else delete order.customerId;
     if (draft.customerCode) order.customerCode = draft.customerCode;
     else delete order.customerCode;
-    order.channel = draft.channel;
     order.cashier = draft.cashier;
     if (draft.waiter) order.waiter = draft.waiter;
     else delete order.waiter;
