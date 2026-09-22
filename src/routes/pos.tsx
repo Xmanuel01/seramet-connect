@@ -601,6 +601,86 @@ function POS() {
     };
   };
 
+  const buildKitchenAmendmentDraft = (tableNo = orderTable): OrderDraft => {
+    if (!activeOrder) return buildTransactionDraft(tableNo);
+    const draftLines = items.flatMap((line) => {
+      let remaining = line.qty;
+      const note = itemNotes[line.p.id]?.trim() ?? "";
+      const existing = activeOrder.lines.filter(
+        (candidate) =>
+          candidate.productId === line.p.id && candidate.productionStatus !== "CANCELLED",
+      );
+      const desired = existing.flatMap((candidate) => {
+        if (remaining <= 0) return [];
+        const quantity = Math.min(candidate.quantity, remaining);
+        remaining -= quantity;
+        const { itemNote: _itemNote, ...base } = candidate;
+        return [
+          {
+            ...base,
+            quantity,
+            ...(note ? { itemNote: note } : {}),
+          },
+        ];
+      });
+      if (remaining > 0) {
+        desired.push({
+          id: `${line.p.id}-${crypto.randomUUID()}`,
+          productId: line.p.id,
+          name: line.p.name,
+          category: line.p.category,
+          quantity: remaining,
+          unitPrice: line.p.price,
+          productionStation: line.p.productionStation ?? "NONE",
+          ...(note ? { itemNote: note } : {}),
+        });
+      }
+      return desired;
+    });
+    return {
+      tenantId: activeTenantId,
+      branchId,
+      branch,
+      ...(tableNo ? { table: tableNo } : {}),
+      customer: isOnlineSource
+        ? (selectedChannel?.displayName ?? "Online customer")
+        : selectedChannel?.channelType === "TAKEAWAY"
+          ? "Walk-in"
+          : tableNo
+            ? `Table ${tableNo}`
+            : "Unassigned table",
+      channel: selectedChannel?.code ?? selectedChannel?.id ?? "UNCONFIGURED",
+      cashier: currentUser.name,
+      waiter: currentUser.name,
+      ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
+      financialOverride: { subtotal, tax, total },
+      lines: draftLines,
+    };
+  };
+
+  const kitchenStarted = Boolean(
+    activeOrder &&
+      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status),
+  );
+  const activeQuantities = activeOrder?.lines.reduce<Record<string, number>>((result, line) => {
+    if (!line.productId || line.productionStatus === "CANCELLED") return result;
+    result[line.productId] = (result[line.productId] ?? 0) + line.quantity;
+    return result;
+  }, {}) ?? {};
+  const desiredProductIds = new Set([...Object.keys(activeQuantities), ...Object.keys(lines)]);
+  const quantityChanged = [...desiredProductIds].some(
+    (productId) => (lines[productId] ?? 0) !== (activeQuantities[productId] ?? 0),
+  );
+  const noteChanged = Boolean(
+    activeOrder?.lines
+      .filter((line) => line.productId && line.productionStatus !== "CANCELLED")
+      .some((line) => (itemNotes[line.productId!] ?? "").trim() !== (line.itemNote ?? "").trim()),
+  );
+  const hasKitchenChanges =
+    !activeOrder || !kitchenStarted
+      ? items.length > 0
+      : quantityChanged || noteChanged || kitchenNote.trim() !== (activeOrder.kitchenNote ?? "").trim();
+
   const bump = (id: string, d: number) =>
     setLines((current) => ({
       ...current,
