@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -201,35 +201,42 @@ function POS() {
       drawer.branchId === branchId &&
       drawer.status === "OPEN",
   );
-  const paymentMethodAvailability = (method: (typeof paymentMethods)[number]) => {
-    if (method.category === "CASH" && !openCashDrawer) {
-      return { usable: false, label: "Open drawer", reason: "Open a cash drawer before taking cash." };
-    }
-    if (backendStatus !== "synced" && method.category !== "CASH") {
-      return {
-        usable: false,
-        label: "Online required",
-        reason: `${method.displayName} requires an online connection.`,
-      };
-    }
-    const providerOperation = method.metadata["providerOperation"];
-    if (providerOperation === "PAYMENT_PROMPT") {
-      return { usable: true, label: "Phone required", reason: "" };
-    }
-    if (providerOperation === "QR_PAYMENT") {
-      return { usable: true, label: "Provider QR", reason: "" };
-    }
-    if (method.category === "BANK_TRANSFER") {
-      return { usable: true, label: "Reference required", reason: "" };
-    }
-    if (method.category === "DIGITAL_WALLET") {
-      return { usable: true, label: "Reference required", reason: "" };
-    }
-    if (method.category === "CASH") {
-      return { usable: true, label: "Drawer open", reason: "" };
-    }
-    return { usable: true, label: "Ready", reason: "" };
-  };
+  const paymentMethodAvailability = useCallback(
+    (method: (typeof paymentMethods)[number]) => {
+      if (method.category === "CASH" && !openCashDrawer) {
+        return {
+          usable: false,
+          label: "Open drawer",
+          reason: "Open a cash drawer before taking cash.",
+        };
+      }
+      if (backendStatus !== "synced" && method.category !== "CASH") {
+        return {
+          usable: false,
+          label: "Online required",
+          reason: `${method.displayName} requires an online connection.`,
+        };
+      }
+      const providerOperation = method.metadata["providerOperation"];
+      if (providerOperation === "PAYMENT_PROMPT") {
+        return { usable: true, label: "Phone required", reason: "" };
+      }
+      if (providerOperation === "QR_PAYMENT") {
+        return { usable: true, label: "Provider QR", reason: "" };
+      }
+      if (method.category === "BANK_TRANSFER") {
+        return { usable: true, label: "Reference required", reason: "" };
+      }
+      if (method.category === "DIGITAL_WALLET") {
+        return { usable: true, label: "Reference required", reason: "" };
+      }
+      if (method.category === "CASH") {
+        return { usable: true, label: "Drawer open", reason: "" };
+      }
+      return { usable: true, label: "Ready", reason: "" };
+    },
+    [backendStatus, openCashDrawer],
+  );
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
       ? acceptedCurrencies
@@ -389,7 +396,7 @@ function POS() {
       selected ??
       paymentMethods[0];
     if (next && next.id !== paymentMethod) setPaymentMethod(next.id);
-  }, [backendStatus, openCashDrawer?.id, paymentMethod, paymentMethods]);
+  }, [paymentMethod, paymentMethodAvailability, paymentMethods]);
 
   useEffect(() => {
     if (!lastKitchenJobIds.length) return;
