@@ -685,7 +685,7 @@ function POS() {
   const hasKitchenChanges =
     !activeOrder || !kitchenStarted
       ? items.length > 0
-      : quantityChanged || noteChanged || kitchenNote.trim() !== (activeOrder.kitchenNote ?? "").trim();
+      : quantityChanged || noteChanged;
 
   const bump = (id: string, d: number) =>
     setLines((current) => ({
@@ -724,6 +724,23 @@ function POS() {
 
   const openPayment = async () => {
     if (!items.length || paymentBusy) return;
+    if (!activeOrder || !kitchenStarted) {
+      setPrintNotice("Send the order to kitchen before taking payment.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (hasKitchenChanges) {
+      setPrintNotice("Send the kitchen update before taking payment.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (selectedChannel?.requiresTable && !orderTable) {
+      setTablePickerIntent("select");
+      setTablePickerOpen(true);
+      setPrintNotice("Select a table before taking payment for this dine-in order.");
+      setPrintNoticeType("warning");
+      return;
+    }
     const defaultMethod =
       (selectedChannel?.isExternallyPaid
         ? paymentMethods.find((method) => method.category === "CREDIT")
@@ -924,7 +941,7 @@ function POS() {
   };
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
-    if (!items.length) return;
+    if (!items.length && !(activeOrder && kitchenStarted && hasKitchenChanges)) return;
 
     if (activeOrder && kitchenStarted) {
       if (!hasKitchenChanges) {
@@ -1031,7 +1048,7 @@ function POS() {
   };
 
   const queueKitchenTickets = () => {
-    if (!items.length) return;
+    if (!items.length && !(activeOrder && kitchenStarted && hasKitchenChanges)) return;
     if (selectedChannel?.requiresTable && !orderTable) {
       setTablePickerIntent("send");
       setTablePickerOpen(true);
@@ -1383,6 +1400,8 @@ function POS() {
             {orderChannels.map((source) => (
               <button
                 key={source.id}
+                disabled={kitchenStarted}
+                title={kitchenStarted ? "Order source is locked after the kitchen ticket is sent" : undefined}
                 onClick={() => setOrderSource(source.id)}
                 className={cn(
                   "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors",
@@ -1595,7 +1614,9 @@ function POS() {
           <div className="flex-1 divide-y divide-border overflow-y-auto">
             {items.length === 0 && (
               <p className="p-6 text-center text-[13px] text-muted-foreground">
-                Tap a dish to start the order.
+                {activeOrder && kitchenStarted && hasKitchenChanges
+                  ? "All items are marked for removal. Send the kitchen update to print the cancellation."
+                  : "Tap a dish to start the order."}
               </p>
             )}
             {items.map((l) => {
@@ -1683,7 +1704,9 @@ function POS() {
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
               <Btn
                 onClick={queueKitchenTickets}
-                disabled={!items.length || (kitchenStarted && !hasKitchenChanges)}
+                disabled={
+                  (!items.length && !kitchenStarted) || (kitchenStarted && !hasKitchenChanges)
+                }
               >
                 {kitchenStarted
                   ? hasKitchenChanges
@@ -1695,9 +1718,15 @@ function POS() {
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={paymentBusy}
+                disabled={paymentBusy || !activeOrder || !kitchenStarted || hasKitchenChanges}
               >
-                {paymentBusy ? "Preparing..." : `Pay ${ksh(total)}`}
+                {paymentBusy
+                  ? "Preparing..."
+                  : !activeOrder || !kitchenStarted
+                    ? "Send kitchen first"
+                    : hasKitchenChanges
+                      ? "Send update first"
+                      : `Pay ${ksh(total)}`}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
