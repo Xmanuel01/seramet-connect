@@ -184,9 +184,6 @@ export function AppShell({
     { id: string; label: string; branch: string }[]
   >([]);
   const [workflowAction, setWorkflowAction] = useState<WorkflowAction | null>(null);
-  const [workflowHistory, setWorkflowHistory] = useState<
-    { id: string; label: string; branch: string; path: string }[]
-  >([]);
   const {
     activeTenantId,
     branchId,
@@ -408,7 +405,7 @@ export function AppShell({
       navigate({ to: route as never });
       return;
     }
-    setWorkflowAction({ label });
+    return;
   };
 
   const exportCurrentPage = (label: string) => {
@@ -437,17 +434,6 @@ export function AppShell({
     link.click();
     URL.revokeObjectURL(url);
     setWorkflowAction({ label, status: "Export downloaded for the current filtered view." });
-  };
-
-  const completeWorkflowAction = () => {
-    if (!workflowAction) return;
-    setWorkflowHistory((current) =>
-      [
-        { id: `${workflowAction.label}-${Date.now()}`, label: workflowAction.label, branch, path },
-        ...current,
-      ].slice(0, 5),
-    );
-    setWorkflowAction(null);
   };
 
   const dispatchWorkflowAction = (label: string) => {
@@ -1018,48 +1004,10 @@ export function AppShell({
                 <CheckCircle2 className="h-5 w-5 text-primary" />
                 {workflowAction?.label}
               </DialogTitle>
-              <DialogDescription>
-                {workflowAction?.status ??
-                  `${title ?? "This page"} action for ${branch} as ${role}.`}
-              </DialogDescription>
+              <DialogDescription>{workflowAction?.status}</DialogDescription>
             </DialogHeader>
-            {!workflowAction?.status && (
-              <div className="space-y-3">
-                {fieldsForAction(workflowAction?.label ?? "").map((field) => (
-                  <label
-                    key={field}
-                    className="grid gap-1 text-[12px] font-semibold text-muted-foreground"
-                  >
-                    {field}
-                    <input className="h-9 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none" />
-                  </label>
-                ))}
-                <div className="rounded-md bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
-                  This action is linked to the active page, role and branch scope, and is recorded
-                  in this session.
-                </div>
-              </div>
-            )}
-            {workflowHistory.length > 0 && (
-              <div className="grid gap-2 border-t border-border pt-3 text-[12px]">
-                {workflowHistory.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between rounded-md bg-secondary/60 px-3 py-2"
-                  >
-                    <span className="font-semibold">{item.label}</span>
-                    <span className="text-muted-foreground">{item.branch}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex justify-end gap-2 border-t border-border pt-4">
+            <div className="flex justify-end border-t border-border pt-4">
               <Btn onClick={() => setWorkflowAction(null)}>Close</Btn>
-              {!workflowAction?.status && (
-                <Btn variant="primary" onClick={completeWorkflowAction}>
-                  Record action
-                </Btn>
-              )}
             </div>
           </DialogContent>
         </Dialog>
@@ -1121,27 +1069,4 @@ function routeForAction(label: string) {
     ["audit", "/audit-trail"],
   ];
   return entries.find(([key]) => normalized.includes(key))?.[1];
-}
-
-function fieldsForAction(label: string) {
-  const normalized = label.toLowerCase();
-  if (
-    normalized.includes("approve") ||
-    normalized.includes("reject") ||
-    normalized.includes("review")
-  ) {
-    return ["Decision note", "Approval reference"];
-  }
-  if (
-    normalized.includes("new") ||
-    normalized.includes("add") ||
-    normalized.includes("create") ||
-    normalized.includes("log")
-  ) {
-    return ["Record name", "Reference", "Notes"];
-  }
-  if (normalized.includes("save") || normalized.includes("publish")) {
-    return ["Change summary", "Approval note"];
-  }
-  return ["Reference", "Notes"];
 }
