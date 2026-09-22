@@ -888,39 +888,32 @@ function POS() {
   };
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
-    if (!items.length) return;
-    const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
+    if (!items.length) return null;
+
+    const persistedOrder = await createOrUpdateActiveOrder("OPEN", tableNo);
     const sentLineIds = new Set(
-      activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
+      persistedOrder.lines.filter((line) => line.sentAt).map((line) => line.id),
     );
-    const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
-    const draft = buildTransactionDraft(tableNo);
-    const resultState = await mutateTransaction(
-      "upsertAndSendKitchen",
-      {
-        ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
-        draft,
-      },
-      undefined,
-      { kotPrinted: true },
-    );
-    const authoritativeOrder = activeOrder?.id
-      ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
-      : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
-    if (!authoritativeOrder) {
-      throw new Error("Kitchen order did not receive an authoritative identity");
-    }
-    const ticketLines = authoritativeOrder.lines.filter(
-      (line) => line.sentAt && !sentLineIds.has(line.id),
-    );
+    const ticketLines = persistedOrder.lines.filter((line) => !line.sentAt);
+    setActiveOrderId(persistedOrder.id);
+    setSelectedTableNo(tableNo ?? persistedOrder.table ?? null);
+
     if (ticketLines.length === 0) {
-      clearCurrentOrder("No new kitchen items required printing.", "idle");
-      return;
+      if (
+        ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(persistedOrder.status)
+      ) {
+        setPrintNotice("No new kitchen items. Existing KOT remains authoritative.");
+        setPrintNoticeType("idle");
+        return { orderId: persistedOrder.id, jobIds: [] };
+      }
+      throw new Error("This order has no unsent items to route to production.");
     }
+
+    const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const result = sendKitchenTickets(
       {
         ...buildPrintOrder(tableNo),
-        orderId: authoritativeOrder.id,
+        orderId: persistedOrder.id,
         lines: ticketLines.map((line) => ({
           id: line.id,
           name: line.name,
@@ -933,12 +926,35 @@ function POS() {
       },
       amendmentType,
     );
-    clearCurrentOrder(
-      result.jobs.length > 0
-        ? "Kitchen Order Ticket Printed"
-        : `Order sent to kitchen. ${result.skipped[0] ?? "Printing is not configured."}`,
-      result.jobs.length > 0 ? "success" : "warning",
+
+    const duplicateAlreadyQueued =
+      result.jobs.length === 0 &&
+      result.skipped.length > 0 &&
+      result.skipped.every((message) => message.includes("already exists"));
+    if (result.jobs.length === 0 && !duplicateAlreadyQueued) {
+      throw new Error(
+        `KOT was not routed. ${result.skipped[0] ?? "Configure a kitchen/KDS production route before sending this order."}`,
+      );
+    }
+
+    await mutateTransaction(
+      "sendToKitchen",
+      { orderId: persistedOrder.id },
+      undefined,
+      { kotPrinted: true },
     );
+
+    if (duplicateAlreadyQueued) {
+      setPrintNotice("Existing KOT route detected. Production state synchronized without a duplicate ticket.");
+      setPrintNoticeType("idle");
+      return { orderId: persistedOrder.id, jobIds: [] };
+    }
+
+    setPrintNotice(
+      `KOT queued to ${result.jobs.length} production destination${result.jobs.length === 1 ? "" : "s"}.`,
+    );
+    setPrintNoticeType("idle");
+    return { orderId: persistedOrder.id, jobIds: result.jobs.map((job) => job.id) };
   };
 
   const queueKitchenTickets = () => {
