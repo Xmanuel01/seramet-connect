@@ -1083,14 +1083,24 @@ function POS() {
     }
   };
 
-  const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
-    if (!items.length && !(activeOrder && kitchenStarted && hasKitchenChanges)) return;
+  const queueKitchenTicketsForTable = async (
+    tableNo = orderTable,
+    options: { retainOrder?: boolean } = {},
+  ): Promise<string | undefined> => {
+    if (!items.length && !(activeOrder && kitchenStarted && hasKitchenChanges)) return undefined;
+    if (!profile || configurationError) {
+      setPrintNotice(
+        `Kitchen send blocked: ${configurationError ?? "configure a kitchen printer or KDS route first"}.`,
+      );
+      setPrintNoticeType("warning");
+      return undefined;
+    }
 
     if (activeOrder && kitchenStarted) {
       if (!hasKitchenChanges) {
-        setPrintNotice("This order is already in the kitchen. Edit an item before sending an update.");
+        setPrintNotice("This order is already up to date in the kitchen.");
         setPrintNoticeType("idle");
-        return;
+        return activeOrder.id;
       }
       const knownAmendmentIds = new Set(
         transactionState.productionAmendments.map((amendment) => amendment.id),
@@ -1109,7 +1119,8 @@ function POS() {
           (amendment) =>
             amendment.orderId === activeOrder.id && !knownAmendmentIds.has(amendment.id),
         ) ?? [];
-      let printedJobs = 0;
+      let routedJobs = 0;
+      let failedJobs = 0;
       const skipped: string[] = [];
       for (const amendment of amendments) {
         const result = sendKitchenTickets(
@@ -1128,43 +1139,57 @@ function POS() {
           },
           amendment.type === "ADDITION" ? "ADDITION" : "VOID",
         );
-        printedJobs += result.jobs.length;
+        const jobIds = new Set(result.jobs.map((job) => job.id));
+        routedJobs += result.jobs.length;
+        failedJobs += result.queue.filter(
+          (job) => jobIds.has(job.id) && job.status === "Failed",
+        ).length;
         skipped.push(...result.skipped);
       }
-      clearCurrentOrder(
-        printedJobs > 0
-          ? `Kitchen update printed: ${amendments
-              .map((amendment) =>
-                amendment.type === "ADDITION" ? "addition" : "cancel item",
-              )
-              .join(" + ")}.`
-          : `Kitchen update saved. ${skipped[0] ?? "Printing is not configured."}`,
-        printedJobs > 0 ? "success" : "warning",
-      );
-      return;
+      const changeLabel =
+        amendments
+          .map((amendment) => (amendment.type === "ADDITION" ? "addition" : "cancel item"))
+          .join(" + ") || "update";
+      const routeOk = routedJobs > 0 && failedJobs < routedJobs;
+      const message =
+        routedJobs === 0
+          ? `Kitchen update saved, but no KOT route accepted it. ${skipped[0] ?? "Check printer/KDS routing."}`
+          : failedJobs > 0
+            ? `Kitchen ${changeLabel} queued, but ${failedJobs} print route(s) failed. Check the printer queue.`
+            : `Kitchen ${changeLabel} queued. Awaiting print/KDS confirmation.`;
+      const noticeType: "idle" | "warning" = routedJobs > 0 && failedJobs === 0 ? "idle" : "warning";
+      if (options.retainOrder) {
+        setActiveOrderId(activeOrder.id);
+        if (tableNo) setSelectedTableNo(tableNo);
+        setPrintNotice(message);
+        setPrintNoticeType(noticeType);
+        return routeOk ? activeOrder.id : undefined;
+      }
+      clearCurrentOrder(message, noticeType);
+      return routeOk ? activeOrder.id : undefined;
     }
 
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const draft = buildTransactionDraft(tableNo);
-    const resultState = await mutateTransaction(
-      "upsertAndSendKitchen",
-      {
-        ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
-        draft,
-      },
-      undefined,
-      { kotPrinted: true },
-    );
+    const draftState = await mutateTransaction("upsertOrderDraft", {
+      ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
+      draft,
+      targetStatus: "OPEN",
+    });
     const authoritativeOrder = activeOrder?.id
-      ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
-      : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
+      ? draftState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
+      : draftState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
     if (!authoritativeOrder) {
       throw new Error("Kitchen order did not receive an authoritative identity");
     }
-    const ticketLines = authoritativeOrder.lines.filter((line) => line.sentAt);
+    const ticketLines = authoritativeOrder.lines.filter(
+      (line) => line.productionStatus !== "CANCELLED",
+    );
     if (ticketLines.length === 0) {
-      clearCurrentOrder("No new kitchen items required printing.", "idle");
-      return;
+      setActiveOrderId(authoritativeOrder.id);
+      setPrintNotice("The order has no kitchen items to send.");
+      setPrintNoticeType("warning");
+      return undefined;
     }
     const result = sendKitchenTickets(
       {
@@ -1182,12 +1207,45 @@ function POS() {
       },
       "NEW",
     );
-    clearCurrentOrder(
-      result.jobs.length > 0
-        ? "Kitchen Order Ticket Printed"
-        : `Order sent to kitchen. ${result.skipped[0] ?? "Printing is not configured."}`,
-      result.jobs.length > 0 ? "success" : "warning",
+    const jobIds = new Set(result.jobs.map((job) => job.id));
+    const failedJobs = result.queue.filter(
+      (job) => jobIds.has(job.id) && job.status === "Failed",
+    ).length;
+    if (result.jobs.length === 0 || failedJobs === result.jobs.length) {
+      setActiveOrderId(authoritativeOrder.id);
+      if (tableNo) setSelectedTableNo(tableNo);
+      setPrintNotice(
+        result.jobs.length === 0
+          ? `Order saved, but kitchen send was not completed: ${result.skipped[0] ?? "no printer/KDS route accepted the KOT"}.`
+          : "Order saved, but the KOT failed on every route. Fix printing/KDS and send again.",
+      );
+      setPrintNoticeType("warning");
+      return undefined;
+    }
+
+    const sentState = await mutateTransaction(
+      "sendToKitchen",
+      { orderId: authoritativeOrder.id },
+      undefined,
+      { kotPrinted: true },
     );
+    const sentOrder =
+      sentState?.state.orders.find((candidate) => candidate.id === authoritativeOrder.id) ??
+      authoritativeOrder;
+    const message =
+      failedJobs > 0
+        ? `Order sent to kitchen; ${failedJobs} KOT route(s) failed. Check the printer queue.`
+        : "Kitchen ticket queued. Awaiting print/KDS confirmation.";
+    const noticeType: "idle" | "warning" = failedJobs > 0 ? "warning" : "idle";
+    if (options.retainOrder) {
+      setActiveOrderId(sentOrder.id);
+      if (tableNo) setSelectedTableNo(tableNo);
+      setPrintNotice(message);
+      setPrintNoticeType(noticeType);
+      return sentOrder.id;
+    }
+    clearCurrentOrder(message, noticeType);
+    return sentOrder.id;
   };
 
   const queueKitchenTickets = () => {
