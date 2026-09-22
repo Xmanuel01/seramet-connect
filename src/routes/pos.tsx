@@ -535,6 +535,7 @@ function POS() {
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
     .filter((l) => l.p && l.qty > 0);
+  const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
   const activeOrderHasSentLines = Boolean(activeOrder?.lines.some((line) => line.sentAt));
   const channelLocked = activeOrderHasSentLines;
   const activeOrderKitchenSent = Boolean(
@@ -606,7 +607,6 @@ function POS() {
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
   const currentOrderNumber = activeOrder?.id ?? paymentOrderId ?? predictedNextOrderId();
-  const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
   const clockLabel = new Intl.DateTimeFormat(tenant.locale || activeLocale(), {
     hour: "2-digit",
     minute: "2-digit",
