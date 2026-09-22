@@ -269,6 +269,60 @@ function POS() {
   const canPrintBill =
     activeOrder !== null &&
     ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status);
+  const paymentContextOrder =
+    transactionState.orders.find(
+      (order) => order.id === (paymentOrderId ?? activeOrderId ?? ""),
+    ) ?? activeOrder;
+  const openCashDrawer =
+    transactionState.paymentOperations?.drawerSessions.find(
+      (drawer) =>
+        drawer.tenantId === activeTenantId &&
+        drawer.branchId === branchId &&
+        drawer.status === "OPEN",
+    ) ??
+    transactionState.cashDrawers.find(
+      (drawer) =>
+        (drawer.tenantId ?? activeTenantId) === activeTenantId &&
+        (drawer.branchId ?? branchId) === branchId &&
+        drawer.status === "OPEN",
+    );
+  const paymentMethodIssue = (method: (typeof paymentMethods)[number]) => {
+    if (method.category === "CASH" && !openCashDrawer) {
+      return "Open a cash drawer in Payment Control";
+    }
+    if (method.metadata["providerOperation"] && backendStatus !== "synced") {
+      return "Online connection required";
+    }
+    if (method.providerConnectionId) {
+      const connection = platformState.connections.find(
+        (candidate) =>
+          candidate.id === method.providerConnectionId &&
+          candidate.tenantId === activeTenantId &&
+          (!candidate.branchId || candidate.branchId === branchId),
+      );
+      if (!connection) return "Provider connection not configured";
+      if (!["ACTIVE", "SANDBOX", "CONFIGURED"].includes(connection.status)) {
+        return `Provider is ${connection.status.toLowerCase().replaceAll("_", " ")}`;
+      }
+    }
+    if (method.category === "CREDIT") {
+      if (!paymentContextOrder?.customerId) return "Verified customer required";
+      if (
+        !method.receivableAccountId ||
+        typeof method.metadata["revenueAccountId"] !== "string"
+      ) {
+        return "Receivable and revenue account mapping required";
+      }
+    }
+    return null;
+  };
+  const usablePaymentMethods = paymentMethods.filter((method) => !paymentMethodIssue(method));
+  const unavailablePaymentMethods = paymentMethods
+    .map((method) => ({ method, issue: paymentMethodIssue(method) }))
+    .filter(
+      (entry): entry is { method: (typeof paymentMethods)[number]; issue: string } =>
+        Boolean(entry.issue),
+    );
   const branchMenu = useMemo(
     () =>
       operationalMenu.items
