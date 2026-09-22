@@ -103,6 +103,27 @@ function configuredChargeMinor(
   return Number((numerator + denominator / 2n) / denominator);
 }
 
+function friendlyPosError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) return fallback;
+  if (/no active payment methods/i.test(message)) {
+    return "No usable payment method is configured for this branch. Review Payment Control settings.";
+  }
+  if (/open a cash drawer/i.test(message)) {
+    return "Cash is unavailable until a cashier opens a drawer in Payment Control.";
+  }
+  if (/requires a reference/i.test(message)) {
+    return message.replace(/requires a reference/i, "requires a transaction reference");
+  }
+  if (/must be sent to kitchen/i.test(message)) {
+    return "Send the current order version to kitchen before opening payment.";
+  }
+  if (/printer|printing|KOT|kitchen ticket/i.test(message)) {
+    return message;
+  }
+  return message;
+}
+
 function POS() {
   const navigate = useNavigate();
   const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
