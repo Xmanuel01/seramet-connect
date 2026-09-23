@@ -1807,6 +1807,7 @@ export const TransactionEngine = {
       throw new Error("Seramet could not allocate the rider remittance");
     }
 
+    next.riderRemittances = next.riderRemittances ?? [];
     const remittance: RiderRemittanceRecord = {
       id: id("RRM", next, "riderRemittances"),
       ...scope,
