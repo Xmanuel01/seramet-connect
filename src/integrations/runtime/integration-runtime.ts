@@ -1453,6 +1453,17 @@ export class IntegrationRuntime {
     const holdForSchedule = Boolean(
       scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
     );
+    const configuredFulfilment = String(channel.metadata["defaultFulfilment"] ?? "").toUpperCase();
+    const fulfilmentType =
+      order.delivery.type === "PICKUP"
+        ? "PICKUP"
+        : ["RESTAURANT", "OWN_DELIVERY", "OWN"].includes(configuredFulfilment)
+          ? "OWN_DELIVERY"
+          : ["PROVIDER", "PLATFORM", "PROVIDER_DELIVERY"].includes(configuredFulfilment)
+            ? "PROVIDER_DELIVERY"
+            : order.delivery.type === "RESTAURANT"
+              ? "OWN_DELIVERY"
+              : "PROVIDER_DELIVERY";
     let next = TransactionEngine.createOrder(
       state,
       {
@@ -1478,12 +1489,7 @@ export class IntegrationRuntime {
           ...(order.payment.amountPaid === undefined
             ? {}
             : { externallyCollectedAmount: order.payment.amountPaid }),
-          fulfilmentType:
-            order.delivery.type === "RESTAURANT"
-              ? "OWN_DELIVERY"
-              : order.delivery.type === "PICKUP"
-                ? "PICKUP"
-                : "PROVIDER_DELIVERY",
+          fulfilmentType,
           isScheduled: Boolean(order.scheduledFor),
           ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
           ...(scheduledReleaseAt ? { scheduledReleaseAt } : {}),
@@ -1499,7 +1505,9 @@ export class IntegrationRuntime {
         },
         delivery: {
           status: "UNASSIGNED",
-          ...(order.delivery.rider?.name ? { rider: order.delivery.rider.name } : {}),
+          ...(fulfilmentType === "PROVIDER_DELIVERY" && order.delivery.rider?.name
+            ? { rider: order.delivery.rider.name }
+            : {}),
         },
       },
       shouldAutoAccept && !holdForSchedule ? "OPEN" : "HELD",
