@@ -434,6 +434,7 @@ function normalizeUberOrder(
   const cart = arrayAt(order, "cart", "items") ?? arrayAt(order, "items");
   if (!id || !storeId || !cart)
     return Promise.resolve(failure("VALIDATION", "Uber order details are incomplete"));
+
   const factor = minorUnitFactor(connection);
   const items = cart.map((entry, index) => normalizeUberItem(entry, index, factor));
   const itemsTotal = items.reduce((sum, item) => sum + item.total, 0);
@@ -454,6 +455,18 @@ function normalizeUberOrder(
   const total =
     moneyAt(order, factor, "payment", "charges", "total", "amount") ??
     subtotal - discount + taxes + serviceFee;
+  const cashAmountDue =
+    moneyAt(order, factor, "payment", "charges", "cash_amount_due", "amount") ?? 0;
+  const marketplaceFeeDueToProvider =
+    moneyAt(order, factor, "payment", "charges", "marketplace_fee_due_to_uber", "amount") ?? 0;
+
+  const providerOrderType = stringAt(order, "type") ?? "DELIVERY_BY_UBER";
+  const restaurantDelivery = providerOrderType === "DELIVERY_BY_RESTAURANT";
+  const pickup = providerOrderType === "PICK_UP";
+  const dineIn = providerOrderType === "DINE_IN";
+  const hasCashDue = cashAmountDue > 0;
+  const externallyPaid = !hasCashDue;
+
   const customerName = [
     stringAt(order, "eater", "first_name"),
     stringAt(order, "eater", "last_name"),
@@ -470,24 +483,26 @@ function normalizeUberOrder(
   const scheduledFor =
     stringAt(order, "scheduled_order_info", "deliver_at") ??
     stringAt(order, "estimated_ready_for_pickup_at");
+  const currency = stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES";
+
   return Promise.resolve({
     ok: true,
     value: {
       providerOrderId: id,
       connectionId: connection.id,
       externalStoreId: storeId,
-      orderType: stringAt(order, "type") === "PICK_UP" ? "PICKUP" : "DELIVERY",
+      orderType: pickup ? "PICKUP" : dineIn ? "DINE_IN" : "DELIVERY",
       createdAt: stringAt(order, "placed_at") ?? new Date().toISOString(),
       ...(scheduledFor ? { scheduledFor } : {}),
-      currency: stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES",
+      currency,
       customer: {
         ...(externalCustomerId ? { externalCustomerId } : {}),
         ...(customerName ? { name: customerName } : {}),
         ...(customerPhone ? { phone: customerPhone } : {}),
       },
       delivery: {
-        type: stringAt(order, "type") === "PICK_UP" ? "PICKUP" : "PROVIDER",
-        providerManaged: stringAt(order, "type") !== "PICK_UP",
+        type: pickup ? "PICKUP" : restaurantDelivery ? "RESTAURANT" : dineIn ? "NONE" : "PROVIDER",
+        providerManaged: !pickup && !restaurantDelivery && !dineIn,
         ...(address ? { address } : {}),
       },
       items,
@@ -499,9 +514,25 @@ function normalizeUberOrder(
         total,
       },
       payment: {
-        externallyPaid: true,
-        amountPaid: total,
+        externallyPaid,
+        ...(externallyPaid ? { amountPaid: total, platformCollectedAmount: total } : {}),
+        collectionMode: hasCashDue ? "CASH_DUE" : "PLATFORM_PREPAID",
+        collector: hasCashDue
+          ? restaurantDelivery
+            ? "RIDER"
+            : "RESTAURANT"
+          : "MARKETPLACE",
+        ...(cashAmountDue > 0 ? { cashAmountDue } : {}),
+        ...(marketplaceFeeDueToProvider > 0 ? { marketplaceFeeDueToProvider } : {}),
         ...(providerPaymentReference ? { providerPaymentReference } : {}),
+      },
+      fulfilmentMetadata: {
+        providerOrderType,
+        cashDueSource: hasCashDue ? "payment.charges.cash_amount_due" : null,
+        marketplaceFeeSource:
+          marketplaceFeeDueToProvider > 0
+            ? "payment.charges.marketplace_fee_due_to_uber"
+            : null,
       },
       ...(discount
         ? {
@@ -510,7 +541,7 @@ function normalizeUberOrder(
                 type: "PROMOTION",
                 description: "Marketplace promotion applied to order",
                 amount: discount,
-                currency: stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES",
+                currency,
                 source: "PROVIDER_ORDER",
                 externalReference: id,
                 metadata: { providerField: "sub_total_promo_applied" },
