@@ -511,12 +511,12 @@ export class ReconciliationEngine {
       if (!receivable) continue;
       const settledMajor = majorFromMinor(settlementLine.amountMinor, batch.currency);
       receivable.settledAmount = Math.min(
-        receivable.externallyCollectedAmount,
+        receivable.grossAmount,
         receivable.settledAmount + settledMajor,
       );
       receivable.outstandingAmount = Math.max(
         0,
-        receivable.externallyCollectedAmount - receivable.settledAmount,
+        receivable.grossAmount - receivable.settledAmount,
       );
       receivable.status = receivable.outstandingAmount === 0 ? "SETTLED" : "PARTIALLY_SETTLED";
       receivable.updatedAt = new Date().toISOString();
