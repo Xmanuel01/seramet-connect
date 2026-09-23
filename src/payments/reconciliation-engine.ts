@@ -180,7 +180,11 @@ export class ReconciliationEngine {
             ) {
               return false;
             }
-            const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+            const bankRemaining = bankResidualMinor(
+              operations,
+              bank.id,
+              Math.abs(bank.amountMinor),
+            );
             if (bankRemaining <= 0) return false;
             const rule = ruleFor(operations, payment, bank, input.timeWindowMinutes);
             if (bankRemaining > remaining && !rule.allowAggregation) return false;
@@ -193,7 +197,11 @@ export class ReconciliationEngine {
             );
           })
           .map((bank) => {
-            const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+            const bankRemaining = bankResidualMinor(
+              operations,
+              bank.id,
+              Math.abs(bank.amountMinor),
+            );
             return scoreMatch(
               payment,
               bank,
@@ -641,8 +649,7 @@ export class ReconciliationEngine {
 
     const settlementRemaining = Math.max(
       0,
-      batch.netExpectedMinor -
-        approvedMatchedMinor(operations, "SETTLEMENT", batch.id, "left"),
+      batch.netExpectedMinor - approvedMatchedMinor(operations, "SETTLEMENT", batch.id, "left"),
     );
     const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
     const amountMinor = input.amountMinor ?? Math.min(settlementRemaining, bankRemaining);
@@ -686,7 +693,8 @@ export class ReconciliationEngine {
       rightId: bank.id,
       amountMinor,
       currency: batch.currency,
-      confidence: amountMinor === settlementRemaining && amountMinor === bankRemaining ? "EXACT" : "HIGH",
+      confidence:
+        amountMinor === settlementRemaining && amountMinor === bankRemaining ? "EXACT" : "HIGH",
       status: "APPROVED",
       matchedBy: input.actor === "SYSTEM" ? "SYSTEM" : "MANUAL",
       ...(input.actor === "SYSTEM" ? {} : { approvedBy: input.actor }),
@@ -1035,10 +1043,7 @@ function confidenceFor(best: ScoredMatch, second: number): PaymentMatch["confide
   ) {
     return "EXACT";
   }
-  if (
-    best.score >= best.rule.minimumAutoApproveScore &&
-    lead >= best.rule.minimumLeadScore
-  ) {
+  if (best.score >= best.rule.minimumAutoApproveScore && lead >= best.rule.minimumLeadScore) {
     return "HIGH";
   }
   if (best.score >= best.rule.minimumSuggestionScore) return "POSSIBLE";
@@ -1081,18 +1086,8 @@ function scoreCustodyMatch(
   operations: PaymentOperationsState,
   overrideTimeWindowMinutes?: number,
 ): ScoredMatch {
-  const rule = ruleForCustody(
-    operations,
-    movement,
-    obligation,
-    bank,
-    overrideTimeWindowMinutes,
-  );
-  const references = [
-    movement.reference,
-    movement.orderId,
-    obligation.externalOrderId,
-  ]
+  const rule = ruleForCustody(operations, movement, obligation, bank, overrideTimeWindowMinutes);
+  const references = [movement.reference, movement.orderId, obligation.externalOrderId]
     .filter(Boolean)
     .map((value) => normalizeReference(String(value)));
   const bankReferences = [
@@ -1199,15 +1194,18 @@ function defaultRule(
 }
 
 function ruleSpecificity(rule: ReconciliationRule) {
-  return Number(Boolean(rule.branchId)) * 4 +
+  return (
+    Number(Boolean(rule.branchId)) * 4 +
     Number(Boolean(rule.providerConnectionId)) * 2 +
-    Number(Boolean(rule.bankAccountId));
+    Number(Boolean(rule.bankAccountId))
+  );
 }
 
 function validateRule(
   rule: Omit<ReconciliationRule, "createdAt" | "updatedAt"> & { createdAt?: string },
 ) {
-  if (!rule.id.trim() || !rule.name.trim()) throw new Error("Reconciliation rule id and name are required");
+  if (!rule.id.trim() || !rule.name.trim())
+    throw new Error("Reconciliation rule id and name are required");
   const nonNegative = [
     rule.timeWindowMinutes,
     rule.amountToleranceMinor,
@@ -1257,8 +1255,7 @@ function paymentResidualMinor(
 ) {
   return Math.max(
     0,
-    amountMinor -
-      approvedMatchedMinor(operations, "PAYMENT_TRANSACTION", paymentId, "left"),
+    amountMinor - approvedMatchedMinor(operations, "PAYMENT_TRANSACTION", paymentId, "left"),
   );
 }
 
@@ -1280,8 +1277,7 @@ function custodyResidualMinor(
 ) {
   return Math.max(
     0,
-    amountMinor -
-      approvedMatchedMinor(operations, "CUSTODY_MOVEMENT", movementId, "left"),
+    amountMinor - approvedMatchedMinor(operations, "CUSTODY_MOVEMENT", movementId, "left"),
   );
 }
 
@@ -1477,11 +1473,7 @@ function postCustodyBankReconciliation(
   },
 ) {
   const destination = input.movement.destinationAccountId;
-  if (
-    !destination ||
-    input.movement.toHolder === "BANK" ||
-    destination === input.bank.accountId
-  ) {
+  if (!destination || input.movement.toHolder === "BANK" || destination === input.bank.accountId) {
     return;
   }
   if (
