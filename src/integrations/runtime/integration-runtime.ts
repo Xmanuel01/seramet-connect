@@ -1540,6 +1540,10 @@ export class IntegrationRuntime {
         appPaidAmount: paymentSplit.appPaidAmount,
         providerCashCollectedAmount: paymentSplit.providerCashCollectedAmount,
         restaurantCollectableAmount: paymentSplit.restaurantCollectableAmount,
+        providerReceivableGrossAmount: Math.max(
+          0,
+          marketplaceFinancials(order).total - paymentSplit.restaurantCollectableAmount,
+        ),
         externallyCollectedAmount: paymentSplit.providerCollectedAmount,
         receivableAccount: marketplaceConfig.settlementAccountId ?? "Marketplace Receivables",
         metadata: {
@@ -2215,7 +2219,9 @@ function marketplacePaymentSplit(order: NormalizedExternalOrder) {
       explicitAppPaid ?? (order.payment.externallyPaid ? orderTotal : 0),
     ),
   );
-  const inferredCashDue = Math.max(0, orderTotal - appPaidAmount);
+  const inferredCashDue = order.payment.externallyPaid
+    ? 0
+    : Math.max(0, orderTotal - appPaidAmount);
   const cashDueAmount = Math.max(
     0,
     Math.min(orderTotal - appPaidAmount, order.payment.cashDueAmount ?? inferredCashDue),
