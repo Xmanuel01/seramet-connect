@@ -80,6 +80,35 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     }
 
     const runtime = resolveRuntimeConfiguration(env);
+    if (url.pathname === "/api/seramet/health/operational" && request.method === "GET") {
+      const issues = validateRuntimeConfiguration(env).filter(
+        (issue) => issue.code !== "MALWARE_SCANNER_REQUIRED",
+      );
+      if (env.SERAMET_DB) {
+        try {
+          await assertDatabaseAvailable(env.SERAMET_DB);
+          if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB);
+          else await createTransactionRepository(env.SERAMET_DB).migrate();
+        } catch (error) {
+          issues.push({
+            code: "DATABASE_UNAVAILABLE",
+            message: error instanceof Error ? error.message : "Authoritative database failed",
+          });
+        }
+      }
+      return json(
+        {
+          ok: issues.length === 0,
+          environment: runtime.environment,
+          database: env.SERAMET_DB ? "authoritative" : "unavailable",
+          queue: runtime.durableQueue ? "available" : "unavailable",
+          schemaVersion: env.SERAMET_DB ? CURRENT_SCHEMA_VERSION : null,
+          issues,
+        },
+        issues.length === 0 ? 200 : 503,
+      );
+    }
+
     if (url.pathname === "/api/seramet/health/ready" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
       if (env.SERAMET_DB) {
@@ -100,6 +129,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
           environment: runtime.environment,
           database: env.SERAMET_DB ? "authoritative" : "unavailable",
           queue: runtime.durableQueue ? "available" : "unavailable",
+          schemaVersion: env.SERAMET_DB ? CURRENT_SCHEMA_VERSION : null,
           issues,
         },
         issues.length === 0 ? 200 : 503,
