@@ -1636,7 +1636,7 @@ export const TransactionEngine = {
   assignDeliveryRider(state: TransactionState, orderId: string, rider: string, user: string) {
     const next = clone(normalizeTransactionState(state));
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || !order.delivery || !rider.trim()) return next;
+    if (!order || !rider.trim()) return next;
     const before = order.delivery?.rider ?? "Unassigned";
     order.delivery = {
       ...(order.delivery ?? { status: "UNASSIGNED" as const }),
@@ -1666,7 +1666,7 @@ export const TransactionEngine = {
   ) {
     const next = clone(normalizeTransactionState(state));
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || !order.delivery) return next;
+    if (!order) return next;
     const before = order.delivery?.status ?? "UNASSIGNED";
     const stamp = now();
     const pickedUpAt =
