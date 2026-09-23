@@ -878,9 +878,16 @@ describe("Pass 3 marketplace acceptance", () => {
       productionStatus: "NEW",
     });
     const previous = structuredClone(f.transactions.state);
-    const kitchenReady = TransactionEngine.setProductionStationStatus(
+    const kitchenPreparing = TransactionEngine.setProductionStationStatus(
       previous,
       previous.orders[0]!.id,
+      "MAIN KITCHEN",
+      "PREPARING",
+      "Chef",
+    );
+    const kitchenReady = TransactionEngine.setProductionStationStatus(
+      kitchenPreparing,
+      kitchenPreparing.orders[0]!.id,
       "MAIN KITCHEN",
       "READY",
       "Chef",
@@ -892,9 +899,16 @@ describe("Pass 3 marketplace acceptance", () => {
       ),
     ).toHaveLength(0);
 
-    const allReady = TransactionEngine.setProductionStationStatus(
+    const barPreparing = TransactionEngine.setProductionStationStatus(
       kitchenReady,
       kitchenReady.orders[0]!.id,
+      "BAR",
+      "PREPARING",
+      "Bartender",
+    );
+    const allReady = TransactionEngine.setProductionStationStatus(
+      barPreparing,
+      barPreparing.orders[0]!.id,
       "BAR",
       "READY",
       "Bartender",
