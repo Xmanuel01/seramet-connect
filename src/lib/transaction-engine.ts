@@ -58,6 +58,7 @@ export type ProductionStatus = "NEW" | "PREPARING" | "READY" | "SERVED" | "CANCE
 
 export type DeliveryFulfilmentOwner = "RESTAURANT" | "PROVIDER" | "PICKUP";
 export type DeliveryCollectionMethod =
+  | "CUSTOMER_DUE"
   | "COMPANY_TILL_DIRECT"
   | "RIDER_CASH"
   | "RIDER_MPESA"
@@ -2365,6 +2366,11 @@ export const TransactionEngine = {
       requestedBy: string;
       providerStatus?: string;
       financialOverride?: { subtotal: number; tax: number; total: number };
+      paymentBreakdown?: {
+        appPaidAmount: number;
+        cashDueAmount: number;
+        cashDueCollector: "PROVIDER" | "RESTAURANT" | "NONE";
+      };
     },
   ) {
     const next = clone(normalizeTransactionState(state));
@@ -2443,6 +2449,19 @@ export const TransactionEngine = {
     order.updatedAt = now();
     if (order.externalSource && input.providerStatus) {
       order.externalSource.providerStatus = input.providerStatus;
+    }
+    if (order.externalSource && input.paymentBreakdown) {
+      order.externalSource.providerAppPaidAmount = money(input.paymentBreakdown.appPaidAmount);
+      order.externalSource.cashDueAmount = money(input.paymentBreakdown.cashDueAmount);
+      order.externalSource.cashDueCollector = input.paymentBreakdown.cashDueCollector;
+      order.externalSource.externallyCollectedAmount = money(
+        input.paymentBreakdown.appPaidAmount +
+          (input.paymentBreakdown.cashDueCollector === "PROVIDER"
+            ? input.paymentBreakdown.cashDueAmount
+            : 0),
+      );
+      order.externalSource.externallyPaid =
+        input.paymentBreakdown.cashDueCollector !== "RESTAURANT";
     }
     const receivable = next.marketplaceReceivables.find(
       (candidate) => candidate.orderId === orderId && candidate.status !== "CANCELLED",
