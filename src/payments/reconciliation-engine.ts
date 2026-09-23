@@ -27,6 +27,7 @@ import type {
 export type SettlementAccountMappings = {
   bankAccountId: string;
   marketplaceReceivableAccountId: string;
+  marketplacePayableAccountId?: string;
   commissionExpenseAccountId: string;
   serviceFeeExpenseAccountId: string;
   deliveryAdjustmentAccountId: string;
@@ -640,7 +641,7 @@ export class ReconciliationEngine {
       line(
         input.accounts.marketplaceReceivableAccountId,
         0,
-        batch.grossSalesMinor,
+        batch.grossSalesMinor - (batch.merchantCollectionsMinor ?? 0),
         batch.currency,
         { settlementBatchId: batch.id },
       ),
@@ -665,13 +666,16 @@ export class ReconciliationEngine {
       );
       if (!receivable) continue;
       const settledMajor = majorFromMinor(settlementLine.amountMinor, batch.currency);
+      const platformExpected =
+        receivable.platformExpectedAmount ?? receivable.externallyCollectedAmount;
+      const merchantCollected = receivable.merchantCollectedAmount ?? 0;
       receivable.settledAmount = Math.min(
-        receivable.externallyCollectedAmount,
+        platformExpected,
         receivable.settledAmount + settledMajor,
       );
       receivable.outstandingAmount = Math.max(
         0,
-        receivable.externallyCollectedAmount - receivable.settledAmount,
+        receivable.grossAmount - merchantCollected - receivable.settledAmount,
       );
       receivable.status = receivable.outstandingAmount === 0 ? "SETTLED" : "PARTIALLY_SETTLED";
       receivable.updatedAt = new Date().toISOString();
@@ -1099,6 +1103,8 @@ function settlementTotals(lines: NormalizedSettlementImport["lines"]) {
   const promotionsMinor = total("PROMOTION");
   const refundsMinor = total("REFUND");
   const taxAdjustmentsMinor = total("TAX_ADJUSTMENT");
+  const merchantCollectionsMinor = total("MERCHANT_COLLECTION");
+  const marketplacePayableOffsetsMinor = total("MARKETPLACE_PAYABLE_OFFSET");
   const otherAdjustmentsMinor = total("OTHER_ADJUSTMENT");
   return {
     grossSalesMinor,
@@ -1108,6 +1114,8 @@ function settlementTotals(lines: NormalizedSettlementImport["lines"]) {
     promotionsMinor,
     refundsMinor,
     taxAdjustmentsMinor,
+    merchantCollectionsMinor,
+    marketplacePayableOffsetsMinor,
     otherAdjustmentsMinor,
     totalDeductionsMinor:
       commissionsMinor +
@@ -1116,6 +1124,8 @@ function settlementTotals(lines: NormalizedSettlementImport["lines"]) {
       promotionsMinor +
       refundsMinor +
       taxAdjustmentsMinor +
+      merchantCollectionsMinor +
+      marketplacePayableOffsetsMinor +
       otherAdjustmentsMinor,
   };
 }
@@ -1125,7 +1135,7 @@ function deductionJournalLines(
   currency: string,
   accounts: SettlementAccountMappings,
 ) {
-  const mapping: Record<Exclude<SettlementLineType, "GROSS_SALE">, string> = {
+  const expenseMapping: Partial<Record<SettlementLineType, string>> = {
     COMMISSION: accounts.commissionExpenseAccountId,
     SERVICE_FEE: accounts.serviceFeeExpenseAccountId,
     DELIVERY_ADJUSTMENT: accounts.deliveryAdjustmentAccountId,
@@ -1134,17 +1144,28 @@ function deductionJournalLines(
     TAX_ADJUSTMENT: accounts.taxAdjustmentAccountId,
     OTHER_ADJUSTMENT: accounts.otherAdjustmentAccountId,
   };
-  return lines
-    .filter(
-      (item): item is SettlementLine & { type: Exclude<SettlementLineType, "GROSS_SALE"> } =>
-        item.type !== "GROSS_SALE",
-    )
-    .map((item) =>
-      line(mapping[item.type], item.amountMinor, 0, currency, {
+  return lines.flatMap((item) => {
+    if (item.type === "GROSS_SALE" || item.type === "MERCHANT_COLLECTION") return [];
+    if (item.type === "MARKETPLACE_PAYABLE_OFFSET") {
+      if (!accounts.marketplacePayableAccountId) {
+        throw new Error("Marketplace payable account is required for payable settlement offsets");
+      }
+      return [
+        line(accounts.marketplacePayableAccountId, item.amountMinor, 0, currency, {
+          settlementLineId: item.id,
+          type: item.type,
+        }),
+      ];
+    }
+    const accountId = expenseMapping[item.type];
+    if (!accountId) throw new Error(`No settlement account mapping for ${item.type}`);
+    return [
+      line(accountId, item.amountMinor, 0, currency, {
         settlementLineId: item.id,
         type: item.type,
       }),
-    );
+    ];
+  });
 }
 
 function line(
