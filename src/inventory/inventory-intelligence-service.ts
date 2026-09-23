@@ -1572,7 +1572,7 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, input.recipeVersionId)
       .first<{ id: string; yield_quantity_minor: number; production_item_id: string | null }>();
-    if (!recipe) throw new ServerOperationError("NOT_FOUND", 404, "Active recipe version not found");
+    if (!recipe) throw new ServerOperationError("VALIDATION_FAILED", 404, "Active recipe version not found");
     if (!recipe.production_item_id || recipe.production_item_id !== input.outputItemId) {
       throw new ServerOperationError(
         "INVALID_STATE_TRANSITION",
@@ -1588,7 +1588,7 @@ export class InventoryIntelligenceService {
       .bind(this.actor.tenantId, input.warehouseId, input.branchId)
       .first<{ id: string }>();
     if (!warehouse) {
-      throw new ServerOperationError("NOT_FOUND", 404, "Production warehouse is unavailable");
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Production warehouse is unavailable");
     }
 
     const id = input.id ?? crypto.randomUUID();
@@ -1914,7 +1914,7 @@ export class InventoryIntelligenceService {
         business_date: string;
         yield_variance_bps: number | null;
       }>();
-    if (!batch) throw new ServerOperationError("NOT_FOUND", 404, "Production batch not found");
+    if (!batch) throw new ServerOperationError("VALIDATION_FAILED", 404, "Production batch not found");
     return batch;
   }
 
