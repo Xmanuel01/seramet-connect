@@ -1453,6 +1453,13 @@ export class IntegrationRuntime {
     const holdForSchedule = Boolean(
       scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
     );
+    const paymentSplit = marketplacePaymentSplit(order);
+    const fulfilmentOwner =
+      order.delivery.type === "RESTAURANT"
+        ? "RESTAURANT"
+        : order.delivery.type === "PICKUP"
+          ? "PICKUP"
+          : "PROVIDER";
     let next = TransactionEngine.createOrder(
       state,
       {
@@ -1474,14 +1481,15 @@ export class IntegrationRuntime {
             ? { providerDisplayReference: order.rawExternalReference }
             : {}),
           ...(order.providerStatus ? { providerStatus: order.providerStatus } : {}),
-          externallyPaid: order.payment.externallyPaid,
-          ...(order.payment.amountPaid === undefined
-            ? {}
-            : { externallyCollectedAmount: order.payment.amountPaid }),
+          externallyPaid: paymentSplit.restaurantCollectableAmount === 0,
+          externallyCollectedAmount: paymentSplit.providerCollectedAmount,
+          providerAppPaidAmount: paymentSplit.appPaidAmount,
+          cashDueAmount: paymentSplit.cashDueAmount,
+          cashDueCollector: paymentSplit.cashDueCollector,
           fulfilmentType:
-            order.delivery.type === "RESTAURANT"
+            fulfilmentOwner === "RESTAURANT"
               ? "OWN_DELIVERY"
-              : order.delivery.type === "PICKUP"
+              : fulfilmentOwner === "PICKUP"
                 ? "PICKUP"
                 : "PROVIDER_DELIVERY",
           isScheduled: Boolean(order.scheduledFor),
@@ -1499,7 +1507,17 @@ export class IntegrationRuntime {
         },
         delivery: {
           status: "UNASSIGNED",
+          fulfilmentOwner,
           ...(order.delivery.rider?.name ? { rider: order.delivery.rider.name } : {}),
+          ...(paymentSplit.restaurantCollectableAmount > 0
+            ? {
+                collection: {
+                  method: "CUSTOMER_DUE" as const,
+                  status: "AWAITING_PAYMENT" as const,
+                  amount: paymentSplit.restaurantCollectableAmount,
+                },
+              }
+            : {}),
         },
       },
       shouldAutoAccept && !holdForSchedule ? "OPEN" : "HELD",
@@ -1510,7 +1528,7 @@ export class IntegrationRuntime {
     if (shouldAutoAccept && created.externalSource) {
       created.externalSource.acceptedAt = new Date().toISOString();
     }
-    if (order.payment.externallyPaid) {
+    if (paymentSplit.providerCollectedAmount > 0 || paymentSplit.restaurantCollectableAmount > 0) {
       next = TransactionEngine.recordMarketplaceReceivable(next, created.id, {
         connectionId: connection.id,
         providerId: connection.providerId,
@@ -1519,9 +1537,16 @@ export class IntegrationRuntime {
           ? { providerDisplayReference: order.rawExternalReference }
           : {}),
         currency: order.currency,
-        externallyCollectedAmount: order.payment.amountPaid ?? order.pricing.total,
+        appPaidAmount: paymentSplit.appPaidAmount,
+        providerCashCollectedAmount: paymentSplit.providerCashCollectedAmount,
+        restaurantCollectableAmount: paymentSplit.restaurantCollectableAmount,
+        externallyCollectedAmount: paymentSplit.providerCollectedAmount,
         receivableAccount: marketplaceConfig.settlementAccountId ?? "Marketplace Receivables",
-        metadata: { externalPaymentReference: order.payment.providerPaymentReference },
+        metadata: {
+          externalPaymentReference: order.payment.providerPaymentReference,
+          cashDueAmount: paymentSplit.cashDueAmount,
+          cashDueCollector: paymentSplit.cashDueCollector,
+        },
       });
     }
     if (order.charges?.length) {
@@ -1581,7 +1606,12 @@ export class IntegrationRuntime {
       accepted: shouldAutoAccept,
       branchId: branch.id,
       scheduled: holdForSchedule,
-      paymentStatus: order.payment.externallyPaid ? "PROVIDER_RECEIVABLE" : "UNPAID",
+      paymentStatus:
+        paymentSplit.providerCollectedAmount > 0 && paymentSplit.restaurantCollectableAmount > 0
+          ? "PARTIAL"
+          : paymentSplit.providerCollectedAmount > 0
+            ? "PROVIDER_RECEIVABLE"
+            : "UNPAID",
     };
   }
 
@@ -1681,6 +1711,7 @@ export class IntegrationRuntime {
       reason: "Provider order update",
       requestedBy: adapter.definition.displayName,
       financialOverride: marketplaceFinancials(normalized.value),
+      paymentBreakdown: marketplacePaymentSplit(normalized.value),
       ...(normalized.value.providerStatus
         ? { providerStatus: normalized.value.providerStatus }
         : {}),
@@ -2174,6 +2205,47 @@ function marketplaceFinancials(order: NormalizedExternalOrder) {
     total: nonTaxRevenue + order.pricing.taxes,
   };
 }
+function marketplacePaymentSplit(order: NormalizedExternalOrder) {
+  const orderTotal = Math.max(0, order.pricing.total);
+  const explicitAppPaid = order.payment.appPaidAmount ?? order.payment.amountPaid;
+  const appPaidAmount = Math.max(
+    0,
+    Math.min(
+      orderTotal,
+      explicitAppPaid ?? (order.payment.externallyPaid ? orderTotal : 0),
+    ),
+  );
+  const inferredCashDue = Math.max(0, orderTotal - appPaidAmount);
+  const cashDueAmount = Math.max(
+    0,
+    Math.min(orderTotal - appPaidAmount, order.payment.cashDueAmount ?? inferredCashDue),
+  );
+  const cashDueCollector =
+    cashDueAmount <= 0
+      ? "NONE"
+      : order.payment.cashDueCollector ??
+        (order.delivery.providerManaged ? "PROVIDER" : "RESTAURANT");
+  const providerCashCollectedAmount =
+    cashDueCollector === "PROVIDER" ? cashDueAmount : 0;
+  const restaurantCollectableAmount =
+    cashDueCollector === "RESTAURANT" ? cashDueAmount : 0;
+  const providerCollectedAmount = appPaidAmount + providerCashCollectedAmount;
+  const accounted = providerCollectedAmount + restaurantCollectableAmount;
+  if (Math.abs(accounted - orderTotal) > 1) {
+    throw new IntegrationValidationError(
+      `Marketplace payment split is inconsistent: order ${orderTotal}, provider ${providerCollectedAmount}, restaurant ${restaurantCollectableAmount}`,
+    );
+  }
+  return {
+    appPaidAmount,
+    cashDueAmount,
+    cashDueCollector,
+    providerCashCollectedAmount,
+    restaurantCollectableAmount,
+    providerCollectedAmount,
+  };
+}
+
 function estimatePrepMinutes(
   lines: TransactionLine[],
   config: ReturnType<typeof parseMarketplaceConnectionConfig>,
