@@ -56,6 +56,20 @@ export type ExternalDirection = "INBOUND" | "OUTBOUND";
 export type JournalEntryStatus = "DRAFT" | "POSTED" | "REVERSED";
 export type ProductionStatus = "NEW" | "PREPARING" | "READY" | "SERVED" | "CANCELLED";
 
+export type DeliveryFulfilmentOwner = "RESTAURANT" | "PROVIDER" | "PICKUP";
+export type DeliveryCollectionMethod =
+  | "COMPANY_TILL_DIRECT"
+  | "RIDER_CASH"
+  | "RIDER_MPESA"
+  | "PREPAID"
+  | "PROVIDER_SETTLEMENT";
+export type DeliveryCollectionStatus =
+  | "NOT_REQUIRED"
+  | "AWAITING_PAYMENT"
+  | "COLLECTED_BY_RIDER"
+  | "REMITTED_PENDING_CONFIRMATION"
+  | "CONFIRMED";
+
 export type TransactionLine = {
   id: string;
   productId?: string;
@@ -100,9 +114,21 @@ export type TransactionOrder = {
   delivery?: {
     rider?: string;
     status: "UNASSIGNED" | "ASSIGNED" | "PICKED_UP" | "OUT_FOR_DELIVERY" | "DELIVERED";
+    fulfilmentOwner?: DeliveryFulfilmentOwner;
     assignedAt?: string;
     pickedUpAt?: string;
     deliveredAt?: string;
+    collection?: {
+      method: DeliveryCollectionMethod;
+      status: DeliveryCollectionStatus;
+      amount: number;
+      customerReference?: string;
+      remittanceReference?: string;
+      collectedAt?: string;
+      remittedAt?: string;
+      confirmedAt?: string;
+      confirmedBy?: string;
+    };
   };
   guestContext?: {
     guestSessionId: string;
@@ -1628,6 +1654,185 @@ export const TransactionEngine = {
       record: order.id,
       before,
       after: status,
+    });
+    return next;
+  },
+
+  setDeliveryFulfilmentOwner(
+    state: TransactionState,
+    orderId: string,
+    owner: DeliveryFulfilmentOwner,
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    const before =
+      order.delivery?.fulfilmentOwner ??
+      (order.externalSource?.fulfilmentType === "OWN_DELIVERY"
+        ? "RESTAURANT"
+        : order.externalSource?.fulfilmentType === "PROVIDER_DELIVERY"
+          ? "PROVIDER"
+          : order.externalSource?.fulfilmentType === "PICKUP"
+            ? "PICKUP"
+            : "UNSET");
+    order.delivery = {
+      ...(order.delivery ?? { status: "UNASSIGNED" as const }),
+      fulfilmentOwner: owner,
+      ...(owner === "RESTAURANT"
+        ? {}
+        : {
+            rider: undefined,
+            assignedAt: undefined,
+          }),
+    };
+    order.updatedAt = now();
+    audit(next, {
+      actor: user,
+      role: "Dispatch",
+      branch: order.branch,
+      module: "Delivery",
+      action: "Changed delivery fulfilment owner",
+      record: order.id,
+      before,
+      after: owner,
+    });
+    return next;
+  },
+
+  recordDeliveryCollection(
+    state: TransactionState,
+    orderId: string,
+    input: {
+      method: DeliveryCollectionMethod;
+      amount?: number;
+      customerReference?: string;
+    },
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order || !order.delivery) throw new Error("Delivery order was not found");
+    const amount = money(input.amount ?? order.total);
+    if (!Number.isFinite(amount) || amount < 0) throw new Error("Collection amount is invalid");
+    const riderMethod = input.method === "RIDER_CASH" || input.method === "RIDER_MPESA";
+    if (riderMethod && !order.delivery.rider) {
+      throw new Error("Assign a restaurant rider before recording rider-held customer funds");
+    }
+    if (input.method === "RIDER_MPESA" && !input.customerReference?.trim()) {
+      throw new Error("Rider M-Pesa collection requires the customer's transaction reference");
+    }
+    const status: DeliveryCollectionStatus = riderMethod
+      ? "COLLECTED_BY_RIDER"
+      : input.method === "COMPANY_TILL_DIRECT"
+        ? order.paymentStatus === "PAID"
+          ? "CONFIRMED"
+          : "AWAITING_PAYMENT"
+        : "NOT_REQUIRED";
+    const stamp = now();
+    const before = order.delivery.collection
+      ? `${order.delivery.collection.method}/${order.delivery.collection.status}`
+      : "No collection route";
+    order.delivery = {
+      ...order.delivery,
+      collection: {
+        method: input.method,
+        status,
+        amount,
+        ...(input.customerReference?.trim()
+          ? { customerReference: input.customerReference.trim().toUpperCase() }
+          : {}),
+        ...(riderMethod ? { collectedAt: stamp } : {}),
+        ...(status === "CONFIRMED" ? { confirmedAt: stamp, confirmedBy: user } : {}),
+      },
+    };
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Dispatch",
+      branch: order.branch,
+      module: "Delivery",
+      action: "Recorded delivery collection route",
+      record: order.id,
+      before,
+      after: `${input.method}/${status}/${amount}`,
+    });
+    return next;
+  },
+
+  markDeliveryRemitted(
+    state: TransactionState,
+    orderId: string,
+    input: { remittanceReference?: string },
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    const collection = order?.delivery?.collection;
+    if (!order || !collection) throw new Error("No rider collection is recorded for this order");
+    if (!["RIDER_CASH", "RIDER_MPESA"].includes(collection.method)) {
+      throw new Error("Only rider-held funds require remittance");
+    }
+    if (collection.status !== "COLLECTED_BY_RIDER") {
+      throw new Error("Rider funds are not awaiting remittance");
+    }
+    if (collection.method === "RIDER_MPESA" && !input.remittanceReference?.trim()) {
+      throw new Error("M-Pesa remittance requires the company Till transaction reference");
+    }
+    const stamp = now();
+    order.delivery = {
+      ...order.delivery!,
+      collection: {
+        ...collection,
+        status: "REMITTED_PENDING_CONFIRMATION",
+        ...(input.remittanceReference?.trim()
+          ? { remittanceReference: input.remittanceReference.trim().toUpperCase() }
+          : {}),
+        remittedAt: stamp,
+      },
+    };
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Dispatch",
+      branch: order.branch,
+      module: "Delivery",
+      action: "Marked rider funds remitted",
+      record: order.id,
+      before: "COLLECTED_BY_RIDER",
+      after: "REMITTED_PENDING_CONFIRMATION",
+    });
+    return next;
+  },
+
+  confirmDeliveryRemittance(state: TransactionState, orderId: string, user: string) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    const collection = order?.delivery?.collection;
+    if (!order || !collection) throw new Error("No rider collection is recorded for this order");
+    if (collection.status !== "REMITTED_PENDING_CONFIRMATION") {
+      throw new Error("Rider remittance is not awaiting confirmation");
+    }
+    const stamp = now();
+    order.delivery = {
+      ...order.delivery!,
+      collection: {
+        ...collection,
+        status: "CONFIRMED",
+        confirmedAt: stamp,
+        confirmedBy: user,
+      },
+    };
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Finance",
+      branch: order.branch,
+      module: "Delivery",
+      action: "Confirmed rider remittance",
+      record: order.id,
+      before: "REMITTED_PENDING_CONFIRMATION",
+      after: `CONFIRMED; financial order status remains ${order.paymentStatus}`,
     });
     return next;
   },
