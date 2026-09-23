@@ -62,6 +62,8 @@ export const uberEatsDefinition: ProviderDefinition = {
     availabilitySyncEnabled: { type: "boolean" },
     priceSyncEnabled: { type: "boolean" },
     storeStatusSyncEnabled: { type: "boolean" },
+    defaultFulfilmentOwner: { type: "string" },
+    defaultCashDueCollector: { type: "string" },
   },
   secretFields: ["clientId", "clientSecret"],
   adapterMetadata: {
@@ -470,13 +472,45 @@ function normalizeUberOrder(
   const scheduledFor =
     stringAt(order, "scheduled_order_info", "deliver_at") ??
     stringAt(order, "estimated_ready_for_pickup_at");
+  const uberOrderType = stringAt(order, "type");
+  const defaultFulfilmentOwner = stringConfig(connection, "defaultFulfilmentOwner");
+  const deliveryType =
+    uberOrderType === "PICK_UP"
+      ? "PICKUP"
+      : uberOrderType === "DELIVERY_BY_RESTAURANT"
+        ? "RESTAURANT"
+        : uberOrderType === "DELIVERY_BY_UBER"
+          ? "PROVIDER"
+          : defaultFulfilmentOwner === "RESTAURANT"
+            ? "RESTAURANT"
+            : "PROVIDER";
+  const explicitCashDue =
+    moneyAt(order, factor, "payment", "cash_due", "amount") ??
+    moneyAt(order, factor, "payment", "charges", "cash_due", "amount") ??
+    moneyAt(order, factor, "cash_due", "amount") ??
+    0;
+  const explicitAppPaid =
+    moneyAt(order, factor, "payment", "amount_paid", "amount") ??
+    moneyAt(order, factor, "payment", "paid_amount", "amount");
+  const cashDueAmount = Math.max(0, Math.min(total, explicitCashDue));
+  const appPaidAmount = Math.max(
+    0,
+    Math.min(total - cashDueAmount, explicitAppPaid ?? total - cashDueAmount),
+  );
+  const defaultCashDueCollector = stringConfig(connection, "defaultCashDueCollector");
+  const cashDueCollector =
+    cashDueAmount <= 0
+      ? "NONE"
+      : defaultCashDueCollector === "RESTAURANT" || deliveryType === "RESTAURANT"
+        ? "RESTAURANT"
+        : "PROVIDER";
   return Promise.resolve({
     ok: true,
     value: {
       providerOrderId: id,
       connectionId: connection.id,
       externalStoreId: storeId,
-      orderType: stringAt(order, "type") === "PICK_UP" ? "PICKUP" : "DELIVERY",
+      orderType: deliveryType === "PICKUP" ? "PICKUP" : "DELIVERY",
       createdAt: stringAt(order, "placed_at") ?? new Date().toISOString(),
       ...(scheduledFor ? { scheduledFor } : {}),
       currency: stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES",
@@ -486,8 +520,8 @@ function normalizeUberOrder(
         ...(customerPhone ? { phone: customerPhone } : {}),
       },
       delivery: {
-        type: stringAt(order, "type") === "PICK_UP" ? "PICKUP" : "PROVIDER",
-        providerManaged: stringAt(order, "type") !== "PICK_UP",
+        type: deliveryType,
+        providerManaged: deliveryType === "PROVIDER",
         ...(address ? { address } : {}),
       },
       items,
@@ -499,8 +533,11 @@ function normalizeUberOrder(
         total,
       },
       payment: {
-        externallyPaid: true,
-        amountPaid: total,
+        externallyPaid: cashDueCollector !== "RESTAURANT",
+        amountPaid: appPaidAmount,
+        appPaidAmount,
+        cashDueAmount,
+        cashDueCollector,
         ...(providerPaymentReference ? { providerPaymentReference } : {}),
       },
       ...(discount
