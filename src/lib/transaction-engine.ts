@@ -70,6 +70,9 @@ export type TransactionLine = {
   productionStartedAt?: string;
   productionReadyAt?: string;
   productionServedAt?: string;
+  productionReworkStartedAt?: string;
+  productionReworkCount?: number;
+  productionLastReworkReason?: string;
   sentAt?: string;
   sentQuantity?: number;
 };
@@ -947,6 +950,46 @@ function availableRecipePortions(state: TransactionState, branch: string, produc
       ),
     ),
   );
+}
+
+function productionStatusRank(status: Exclude<ProductionStatus, "CANCELLED">) {
+  return { NEW: 0, PREPARING: 1, READY: 2, SERVED: 3 }[status];
+}
+
+function validateForwardStationTransition(
+  lines: TransactionLine[],
+  target: Exclude<ProductionStatus, "CANCELLED">,
+) {
+  const targetRank = productionStatusRank(target);
+  for (const line of lines) {
+    const current = line.productionStatus ?? "NEW";
+    if (current === "CANCELLED") continue;
+    const currentRank = productionStatusRank(current);
+    if (currentRank >= targetRank) continue;
+    if (targetRank - currentRank > 1) {
+      throw new Error(
+        `Illegal production transition ${current} -> ${target} for ${line.name}; advance one stage at a time`,
+      );
+    }
+  }
+}
+
+function deriveProductionOrderStatus(order: TransactionOrder): OrderStatus {
+  const productionLines = order.lines.filter(
+    (line) => line.productionStation && line.productionStation !== "NONE",
+  );
+  const active = productionLines.filter((line) => line.productionStatus !== "CANCELLED");
+  if (active.length === 0) return order.status;
+  if (active.every((line) => line.productionStatus === "SERVED")) return "SERVED";
+  if (
+    active.every(
+      (line) => line.productionStatus === "READY" || line.productionStatus === "SERVED",
+    )
+  ) {
+    return "READY";
+  }
+  if (active.some((line) => line.productionStatus === "PREPARING")) return "IN_PROGRESS";
+  return "SENT_TO_KITCHEN";
 }
 
 function postOrderInventoryConsumption(
@@ -1951,49 +1994,51 @@ export const TransactionEngine = {
     status: ProductionStatus,
     user: string,
   ) {
-    const next = clone(state);
+    const next = clone(normalizeTransactionState(state));
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order || order.status === "CANCELLED" || order.status === "PAID") return next;
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (order.status === "CANCELLED" || order.status === "REFUNDED") {
+      throw new Error(`Order ${orderId} cannot change production state from ${order.status}`);
+    }
+    if (status === "CANCELLED") {
+      throw new Error("Kitchen cancellation must use the audited order amendment workflow");
+    }
 
-    const matchingLines = order.lines.filter((line) => line.productionStation === station);
-    if (matchingLines.length === 0) return next;
+    const matchingLines = order.lines.filter(
+      (line) => line.productionStation === station && line.productionStatus !== "CANCELLED",
+    );
+    if (matchingLines.length === 0) {
+      throw new Error(`No active production lines exist for station ${station}`);
+    }
+
+    validateForwardStationTransition(matchingLines, status);
 
     const before = order.status;
     const stamp = now();
     matchingLines.forEach((line) => {
+      const current = line.productionStatus ?? "NEW";
+      if (productionStatusRank(current) >= productionStatusRank(status)) return;
       line.productionStatus = status;
       if (status === "PREPARING" && !line.productionStartedAt) line.productionStartedAt = stamp;
       if (status === "READY") line.productionReadyAt = stamp;
       if (status === "SERVED") line.productionServedAt = stamp;
     });
 
-    const productionLines = order.lines.filter(
-      (line) => line.productionStation && line.productionStation !== "NONE",
-    );
-    const active = productionLines.filter((line) => line.productionStatus !== "CANCELLED");
-    if (active.length > 0 && active.every((line) => line.productionStatus === "SERVED")) {
-      order.status = "SERVED";
-    } else if (
-      active.length > 0 &&
-      active.every(
-        (line) => line.productionStatus === "READY" || line.productionStatus === "SERVED",
-      )
-    ) {
-      order.status = "READY";
-    } else if (active.some((line) => line.productionStatus === "PREPARING")) {
-      order.status = "IN_PROGRESS";
-    } else {
-      order.status = "SENT_TO_KITCHEN";
-    }
+    const productionState = deriveProductionOrderStatus(order);
+    if (before !== "PAID") order.status = productionState;
     order.updatedAt = stamp;
+
+    if (productionState === "SERVED") {
+      postOrderInventoryConsumption(next, order, user);
+    }
     if (order.externalSource) {
       if (status === "PREPARING" && !order.externalSource.preparationStartedAt) {
         order.externalSource.preparationStartedAt = stamp;
       }
-      if (order.status === "READY" && !order.externalSource.readyAt) {
+      if (productionState === "READY" && !order.externalSource.readyAt) {
         order.externalSource.readyAt = stamp;
       }
-      if (order.status === "SERVED" && !order.externalSource.completedAt) {
+      if (productionState === "SERVED" && !order.externalSource.completedAt) {
         order.externalSource.completedAt = stamp;
       }
     }
@@ -2006,7 +2051,68 @@ export const TransactionEngine = {
       action: `Updated ${station} station`,
       record: order.id,
       before,
-      after: `${station}: ${status}; order: ${order.status}`,
+      after:
+        before === "PAID"
+          ? `${station}: ${status}; order remains PAID; production: ${productionState}`
+          : `${station}: ${status}; order: ${order.status}`,
+    });
+    return next;
+  },
+
+  recallProductionStation(
+    state: TransactionState,
+    orderId: string,
+    station: string,
+    reason: string,
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (order.status === "CANCELLED" || order.status === "REFUNDED") {
+      throw new Error(`Order ${orderId} cannot be recalled from ${order.status}`);
+    }
+    if (order.inventoryPostedAt) {
+      throw new Error("Served production cannot be recalled after inventory consumption");
+    }
+    const normalizedReason = reason.trim();
+    if (normalizedReason.length < 4) throw new Error("A rework reason is required");
+
+    const matchingLines = order.lines.filter(
+      (line) => line.productionStation === station && line.productionStatus !== "CANCELLED",
+    );
+    if (matchingLines.length === 0) {
+      throw new Error(`No active production lines exist for station ${station}`);
+    }
+    if (matchingLines.some((line) => line.productionStatus === "SERVED")) {
+      throw new Error("Served station lines cannot be recalled from the KDS");
+    }
+    if (!matchingLines.some((line) => line.productionStatus === "READY")) {
+      throw new Error("Only a ready station can be recalled for rework");
+    }
+
+    const before = order.status;
+    const stamp = now();
+    matchingLines.forEach((line) => {
+      if (line.productionStatus !== "READY") return;
+      line.productionStatus = "PREPARING";
+      line.productionReworkStartedAt = stamp;
+      line.productionReworkCount = (line.productionReworkCount ?? 0) + 1;
+      line.productionLastReworkReason = normalizedReason;
+    });
+    const productionState = deriveProductionOrderStatus(order);
+    if (before !== "PAID") order.status = productionState;
+    order.updatedAt = stamp;
+
+    audit(next, {
+      actor: user,
+      role: "Kitchen",
+      branch: order.branch,
+      module: "Kitchen",
+      action: `Recalled ${station} for rework`,
+      record: order.id,
+      before,
+      after: `${station}: PREPARING; reason: ${normalizedReason}; production: ${productionState}`,
     });
     return next;
   },
