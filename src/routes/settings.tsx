@@ -89,6 +89,9 @@ function Settings() {
   const [channelName, setChannelName] = useState("");
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
+  const [channelFulfilment, setChannelFulfilment] = useState<
+    "NONE" | "RESTAURANT" | "PROVIDER" | "PICKUP"
+  >("NONE");
   const [configNotice, setConfigNotice] = useState(
     "Configuration changes apply to the active tenant.",
   );
@@ -192,11 +195,13 @@ function Settings() {
       requiresAddress: channelType === "OWN_DELIVERY",
       isExternallyPaid: channelType === "MARKETPLACE",
       sortOrder: (orderChannels.at(-1)?.sortOrder ?? 0) + 10,
-      metadata: {},
+      metadata:
+        channelFulfilment === "NONE" ? {} : { defaultFulfilment: channelFulfilment },
     });
     refreshConfiguration();
     setChannelName("");
     setChannelCode("");
+    setChannelFulfilment("NONE");
     setConfigNotice(`${displayName} is now available in the POS order-source control.`);
   };
 
@@ -666,7 +671,7 @@ function Settings() {
                 title="Order channels"
                 sub="POS source options are sorted from these tenant records"
               />
-              <div className="grid gap-3 p-4 md:grid-cols-4">
+              <div className="grid gap-3 p-4 md:grid-cols-5">
                 <ConfigField label="Display name" value={channelName} onChange={setChannelName} />
                 <ConfigField label="Code" value={channelCode} onChange={setChannelCode} />
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -694,6 +699,23 @@ function Settings() {
                     ))}
                   </select>
                 </label>
+                <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                  Default fulfilment
+                  <select
+                    value={channelFulfilment}
+                    onChange={(event) =>
+                      setChannelFulfilment(
+                        event.target.value as "NONE" | "RESTAURANT" | "PROVIDER" | "PICKUP",
+                      )
+                    }
+                    className="h-9 rounded-md border border-border bg-card px-3 text-foreground"
+                  >
+                    <option value="NONE">Not delivery / decide per order</option>
+                    <option value="RESTAURANT">Restaurant rider</option>
+                    <option value="PROVIDER">Platform rider</option>
+                    <option value="PICKUP">Pickup</option>
+                  </select>
+                </label>
                 <Btn className="self-end" onClick={addOrderChannel}>
                   Add channel
                 </Btn>
@@ -707,10 +729,41 @@ function Settings() {
                     <div>
                       <div className="text-[13px] font-semibold">{channel.displayName}</div>
                       <div className="text-[11px] text-muted-foreground">
-                        {channel.code} - {channel.channelType}
+                        {channel.code} - {channel.channelType} -{" "}
+                        {String(channel.metadata["defaultFulfilment"] ?? "per order")}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <select
+                        value={String(channel.metadata["defaultFulfilment"] ?? "NONE")}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          repository.upsertOrderChannel(activeTenantId, {
+                            ...channel,
+                            metadata: {
+                              ...channel.metadata,
+                              ...(value === "NONE" ? {} : { defaultFulfilment: value }),
+                            },
+                          });
+                          if (value === "NONE") {
+                            const updated = repository
+                              .listOrderChannels(activeTenantId, false)
+                              .find((item) => item.id === channel.id);
+                            if (updated) {
+                              const { defaultFulfilment: _removed, ...metadata } = updated.metadata;
+                              repository.upsertOrderChannel(activeTenantId, { ...updated, metadata });
+                            }
+                          }
+                          refreshConfiguration();
+                        }}
+                        className="h-9 rounded-md border border-border bg-card px-2 text-[12px]"
+                        title="Who normally delivers orders from this channel"
+                      >
+                        <option value="NONE">Per order</option>
+                        <option value="RESTAURANT">Restaurant rider</option>
+                        <option value="PROVIDER">Platform rider</option>
+                        <option value="PICKUP">Pickup</option>
+                      </select>
                       <Status>Active</Status>
                       <Btn
                         onClick={() => {
