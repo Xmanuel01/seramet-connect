@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 
 export const Route = createFileRoute("/accounting")({
   head: () => ({
@@ -75,7 +76,30 @@ const postings = [
 ];
 
 function AccountingHub() {
-  const { branchLabel } = useAppContext();
+  const { branchLabel, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const marketplaceReceivables = state.marketplaceReceivables
+    .filter((item) => matchesBranch(item.branchId))
+    .filter((item) => item.status !== "CANCELLED");
+  const openMarketplace = marketplaceReceivables.filter((item) => item.status !== "SETTLED");
+  const providerOutstanding = openMarketplace.reduce(
+    (sum, item) => sum + item.outstandingAmount,
+    0,
+  );
+  const knownCharges = openMarketplace.reduce((sum, item) => sum + item.knownChargesAmount, 0);
+  const expectedNet = openMarketplace.reduce(
+    (sum, item) => sum + item.expectedNetSettlementAmount,
+    0,
+  );
+  const restaurantCollectable = marketplaceReceivables.reduce(
+    (sum, item) => sum + item.restaurantCollectableAmount,
+    0,
+  );
+  const marketplaceJournalCount = state.journalEntries.filter(
+    (entry) =>
+      matchesBranch(entry.branchId ?? entry.branch) &&
+      ["Marketplace Sale", "Marketplace Reversal"].includes(entry.sourceType),
+  ).length;
   return (
     <AppShell
       title="Accounting"
@@ -110,6 +134,20 @@ function AccountingHub() {
               <div className="text-[12px] text-muted-foreground">{module.sub}</div>
             </Link>
           ))}
+        </div>
+      </Panel>
+
+      <Panel className="mt-4">
+        <PanelHead
+          title="Marketplace accounting control"
+          sub="Live marketplace receivables and restaurant-side customer collections"
+          right={<Status>{marketplaceJournalCount} marketplace journal(s)</Status>}
+        />
+        <div className="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
+          <Metric label="Provider gross outstanding" value={providerOutstanding} money />
+          <Metric label="Known charges" value={knownCharges} money />
+          <Metric label="Expected net from marketplaces" value={expectedNet} money />
+          <Metric label="Restaurant-side customer due" value={restaurantCollectable} money />
         </div>
       </Panel>
 
