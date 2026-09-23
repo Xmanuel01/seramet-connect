@@ -52,10 +52,16 @@ import {
   type OrderForPrint,
 } from "@/lib/seramet-print-service";
 import {
+  createEmptyTransactionState,
   TransactionEngine,
   type OrderDraft,
   type TransactionState,
 } from "@/lib/transaction-engine";
+import {
+  deliveryOwnership,
+  riderFundsInHandAmount,
+  riderRemittancePendingAmount,
+} from "@/lib/delivery-operations";
 import { createInitialTransactionState } from "@/testing/transaction-state-fixture";
 import { resetMemoryTransactionRepositoryForTests } from "@/lib/seramet-repository";
 
@@ -1486,3 +1492,186 @@ function apiRequest(path: string, body: unknown, extraHeaders: Record<string, st
     body: JSON.stringify(body),
   });
 }
+
+
+describe("delivery ownership, rider accountability and marketplace settlement", () => {
+  const deliveryDraft = (overrides: Partial<OrderDraft> = {}): OrderDraft => ({
+    tenantId: DEMO_TENANT_ID,
+    branchId: DEMO_WESTLANDS_BRANCH_ID,
+    branch: "Westlands",
+    customer: "Delivery customer",
+    channel: "Uber Eats",
+    cashier: "Dispatch",
+    delivery: {
+      status: "UNASSIGNED",
+      fulfilmentOwner: "RESTAURANT",
+    },
+    lines: [
+      {
+        id: "delivery-line-1",
+        name: "Delivery meal",
+        category: "Food",
+        quantity: 1,
+        unitPrice: 2500,
+        productionStation: "MAIN KITCHEN",
+      },
+    ],
+    ...overrides,
+  });
+
+  it("resolves configured marketplace fulfilment independently from order source", () => {
+    const platform = createDefaultDemoPlatformState();
+    const uber = platform.orderChannels.find((channel) => channel.displayName === "Uber Eats");
+    const glovo = platform.orderChannels.find((channel) => channel.displayName === "Glovo");
+    const order = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      deliveryDraft(),
+      "OPEN",
+    ).orders[0]!;
+
+    expect(deliveryOwnership(order, uber)).toBe("RESTAURANT");
+    expect(
+      deliveryOwnership(
+        {
+          ...order,
+          channel: "Glovo",
+          delivery: { status: "UNASSIGNED" },
+        },
+        glovo,
+      ),
+    ).toBe("PROVIDER");
+  });
+
+  it("keeps rider-held money outstanding until remitted and independently confirmed", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      deliveryDraft(),
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.assignDeliveryRider(state, orderId, "Wycliff", "Dispatch");
+    state = TransactionEngine.recordDeliveryCollection(
+      state,
+      orderId,
+      { method: "RIDER_CASH", amount: 1000 },
+      "Dispatch",
+    );
+
+    expect(riderFundsInHandAmount(state.orders[0]!)).toBe(1000);
+    expect(state.orders[0]?.delivery?.collection?.status).toBe("COLLECTED_BY_RIDER");
+
+    state = TransactionEngine.markDeliveryRemitted(state, orderId, {}, "Wycliff");
+    expect(riderFundsInHandAmount(state.orders[0]!)).toBe(0);
+    expect(riderRemittancePendingAmount(state.orders[0]!)).toBe(1000);
+
+    state = TransactionEngine.confirmDeliveryRemittance(state, orderId, "Finance");
+    expect(riderRemittancePendingAmount(state.orders[0]!)).toBe(0);
+    expect(state.orders[0]?.delivery?.collection?.status).toBe("CONFIRMED");
+  });
+
+  it("splits marketplace app-paid and restaurant cash-due amounts into balanced accounting", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      deliveryDraft({
+        externalSource: {
+          connectionId: "connection-demo-uber-eats",
+          providerId: "provider-delivery-uber-eats",
+          externalStoreId: "westlands",
+          externalOrderId: "UBER-SPLIT-001",
+          externallyPaid: false,
+          fulfilmentType: "OWN_DELIVERY",
+          isScheduled: false,
+          receivedAt: "2026-09-23T10:00:00.000Z",
+          metadata: {},
+        },
+      }),
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+
+    state = TransactionEngine.recordMarketplaceReceivable(state, orderId, {
+      connectionId: "connection-demo-uber-eats",
+      providerId: "provider-delivery-uber-eats",
+      externalOrderId: "UBER-SPLIT-001",
+      currency: "KES",
+      appPaidAmount: 1500,
+      providerCashCollectedAmount: 0,
+      restaurantCollectableAmount: 1000,
+      externallyCollectedAmount: 1500,
+      receivableAccount: "Marketplace Receivables",
+    });
+
+    const receivable = state.marketplaceReceivables[0]!;
+    expect(receivable).toMatchObject({
+      orderGrossAmount: 2500,
+      appPaidAmount: 1500,
+      providerCashCollectedAmount: 0,
+      restaurantCollectableAmount: 1000,
+      grossAmount: 1500,
+      outstandingAmount: 1500,
+      expectedNetSettlementAmount: 1500,
+    });
+    expect(state.orders.find((order) => order.id === orderId)?.paymentStatus).toBe("PARTIAL");
+    const invoice = state.bills.find((bill) => bill.orderIds.includes(orderId));
+    expect(invoice).toMatchObject({ status: "PARTIAL", paymentStatus: "PARTIAL", paid: 1500 });
+
+    const journal = state.journalEntries.find((entry) => entry.sourceId === receivable.id)!;
+    expect(journal.lines.reduce((sum, line) => sum + line.debit, 0)).toBe(2500);
+    expect(journal.lines.reduce((sum, line) => sum + line.credit, 0)).toBe(2500);
+    expect(journal.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ account: "Marketplace Receivables", debit: 1500 }),
+        expect.objectContaining({ account: "Delivery Customer Receivable", debit: 1000 }),
+      ]),
+    );
+
+    state = TransactionEngine.recordMarketplaceCharges(state, orderId, [
+      {
+        connectionId: "connection-demo-uber-eats",
+        type: "COMMISSION",
+        description: "Marketplace commission",
+        amount: 300,
+        currency: "KES",
+        source: "PROVIDER_ORDER",
+        externalReference: "UBER-SPLIT-001:commission",
+        metadata: {},
+      },
+    ]);
+    expect(state.marketplaceReceivables[0]).toMatchObject({
+      knownChargesAmount: 300,
+      expectedNetSettlementAmount: 1200,
+    });
+  });
+
+  it("includes provider-collected cash due in the marketplace receivable", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      deliveryDraft({
+        channel: "Glovo",
+        delivery: { status: "UNASSIGNED", fulfilmentOwner: "PROVIDER" },
+      }),
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.recordMarketplaceReceivable(state, orderId, {
+      connectionId: "connection-demo-glovo",
+      providerId: "provider-delivery-glovo",
+      externalOrderId: "GLOVO-CASH-001",
+      currency: "KES",
+      appPaidAmount: 1500,
+      providerCashCollectedAmount: 1000,
+      restaurantCollectableAmount: 0,
+      externallyCollectedAmount: 2500,
+      receivableAccount: "Marketplace Receivables",
+    });
+
+    expect(state.marketplaceReceivables[0]).toMatchObject({
+      appPaidAmount: 1500,
+      providerCashCollectedAmount: 1000,
+      restaurantCollectableAmount: 0,
+      grossAmount: 2500,
+      expectedNetSettlementAmount: 2500,
+    });
+    expect(state.orders[0]?.paymentStatus).toBe("PROVIDER_RECEIVABLE");
+  });
+});
