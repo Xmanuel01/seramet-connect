@@ -65,14 +65,14 @@ const services = process.env.SERAMET_MALWARE_SCANNER_SERVICE?.trim()
   : [];
 
 const config = {
-  $schema: "node_modules/wrangler/config-schema.json",
+  $schema: "../node_modules/wrangler/config-schema.json",
   name: process.env.SERAMET_CLOUDFLARE_WORKER_NAME ?? `seramet-${target}`,
-  main: ".output/server/index.mjs",
+  main: "../.output/server/index.mjs",
   compatibility_date: "2026-09-10",
   compatibility_flags: ["nodejs_compat"],
   no_bundle: true,
   keep_vars: reuseExistingVars,
-  assets: { binding: "ASSETS", directory: ".output/public" },
+  assets: { binding: "ASSETS", directory: "../.output/public" },
   hyperdrive: [
     {
       binding: "SERAMET_HYPERDRIVE",
