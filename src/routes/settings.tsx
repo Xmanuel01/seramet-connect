@@ -89,6 +89,7 @@ function Settings() {
   const [channelName, setChannelName] = useState("");
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
+  const [channelUsesOnlinePrice, setChannelUsesOnlinePrice] = useState(false);
   const [configNotice, setConfigNotice] = useState(
     "Configuration changes apply to the active tenant.",
   );
@@ -192,11 +193,12 @@ function Settings() {
       requiresAddress: channelType === "OWN_DELIVERY",
       isExternallyPaid: channelType === "MARKETPLACE",
       sortOrder: (orderChannels.at(-1)?.sortOrder ?? 0) + 10,
-      metadata: {},
+      metadata: { useOnlinePrice: channelUsesOnlinePrice },
     });
     refreshConfiguration();
     setChannelName("");
     setChannelCode("");
+    setChannelUsesOnlinePrice(false);
     setConfigNotice(`${displayName} is now available in the POS order-source control.`);
   };
 
@@ -666,7 +668,7 @@ function Settings() {
                 title="Order channels"
                 sub="POS source options are sorted from these tenant records"
               />
-              <div className="grid gap-3 p-4 md:grid-cols-4">
+              <div className="grid gap-3 p-4 md:grid-cols-5">
                 <ConfigField label="Display name" value={channelName} onChange={setChannelName} />
                 <ConfigField label="Code" value={channelCode} onChange={setChannelCode} />
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -694,6 +696,14 @@ function Settings() {
                     ))}
                   </select>
                 </label>
+                <label className="flex h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={channelUsesOnlinePrice}
+                    onChange={(event) => setChannelUsesOnlinePrice(event.target.checked)}
+                  />
+                  Use online price
+                </label>
                 <Btn className="self-end" onClick={addOrderChannel}>
                   Add channel
                 </Btn>
@@ -710,8 +720,29 @@ function Settings() {
                         {channel.code} - {channel.channelType}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>Active</Status>
+                      <Btn
+                        onClick={() => {
+                          const enablingOnlinePrice = channel.metadata["useOnlinePrice"] !== true;
+                          repository.upsertOrderChannel(activeTenantId, {
+                            ...channel,
+                            metadata: {
+                              ...channel.metadata,
+                              useOnlinePrice: enablingOnlinePrice,
+                            },
+                          });
+                          refreshConfiguration();
+                          setConfigNotice(
+                            channel.displayName +
+                              (enablingOnlinePrice
+                                ? " now uses online pricing."
+                                : " now uses base pricing."),
+                          );
+                        }}
+                      >
+                        Online price: {channel.metadata["useOnlinePrice"] === true ? "On" : "Off"}
+                      </Btn>
                       <Btn
                         onClick={() => {
                           repository.archiveOrderChannel(activeTenantId, channel.id);
