@@ -2003,6 +2003,7 @@ export const TransactionEngine = {
     if (status === "CANCELLED") {
       throw new Error("Kitchen cancellation must use the audited order amendment workflow");
     }
+    const targetStatus = status as Exclude<ProductionStatus, "CANCELLED">;
 
     const matchingLines = order.lines.filter(
       (line) => line.productionStation === station && line.productionStatus !== "CANCELLED",
@@ -2011,17 +2012,18 @@ export const TransactionEngine = {
       throw new Error(`No active production lines exist for station ${station}`);
     }
 
-    validateForwardStationTransition(matchingLines, status);
+    validateForwardStationTransition(matchingLines, targetStatus);
 
     const before = order.status;
     const stamp = now();
     matchingLines.forEach((line) => {
       const current = line.productionStatus ?? "NEW";
-      if (productionStatusRank(current) >= productionStatusRank(status)) return;
-      line.productionStatus = status;
-      if (status === "PREPARING" && !line.productionStartedAt) line.productionStartedAt = stamp;
-      if (status === "READY") line.productionReadyAt = stamp;
-      if (status === "SERVED") line.productionServedAt = stamp;
+      if (productionStatusRank(current) >= productionStatusRank(targetStatus)) return;
+      line.productionStatus = targetStatus;
+      if (targetStatus === "PREPARING" && !line.productionStartedAt)
+        line.productionStartedAt = stamp;
+      if (targetStatus === "READY") line.productionReadyAt = stamp;
+      if (targetStatus === "SERVED") line.productionServedAt = stamp;
     });
 
     const productionState = deriveProductionOrderStatus(order);
@@ -2032,7 +2034,7 @@ export const TransactionEngine = {
       postOrderInventoryConsumption(next, order, user);
     }
     if (order.externalSource) {
-      if (status === "PREPARING" && !order.externalSource.preparationStartedAt) {
+      if (targetStatus === "PREPARING" && !order.externalSource.preparationStartedAt) {
         order.externalSource.preparationStartedAt = stamp;
       }
       if (productionState === "READY" && !order.externalSource.readyAt) {
@@ -2053,8 +2055,8 @@ export const TransactionEngine = {
       before,
       after:
         before === "PAID"
-          ? `${station}: ${status}; order remains PAID; production: ${productionState}`
-          : `${station}: ${status}; order: ${order.status}`,
+          ? `${station}: ${targetStatus}; order remains PAID; production: ${productionState}`
+          : `${station}: ${targetStatus}; order: ${order.status}`,
     });
     return next;
   },
