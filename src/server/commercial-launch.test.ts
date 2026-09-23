@@ -431,6 +431,13 @@ describe.sequential("commercial launch foundation", () => {
     expect(
       replaceQuestionMarkParameters("SELECT '?' literal, ? value, \"?\" identifier, ? other"),
     ).toBe("SELECT '?' literal, $1 value, \"?\" identifier, $2 other");
+    expect(
+      replaceQuestionMarkParameters(
+        "SELECT '? IS NULL' literal FROM menu_catalog_items WHERE (? IS NULL OR branch_id=?)",
+      ),
+    ).toBe(
+      "SELECT '? IS NULL' literal FROM menu_catalog_items WHERE (CAST($1 AS text) IS NULL OR branch_id=$2)",
+    );
     expect(normalizePostgresSql("INSERT OR IGNORE INTO jobs(id,name) VALUES (?,?);")).toBe(
       "INSERT INTO jobs(id,name) VALUES ($1,$2) ON CONFLICT DO NOTHING",
     );
