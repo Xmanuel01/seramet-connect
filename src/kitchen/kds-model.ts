@@ -1,9 +1,5 @@
 import type { Product } from "@/lib/menu-product";
-import type {
-  ProductionStatus,
-  TransactionLine,
-  TransactionOrder,
-} from "@/lib/transaction-engine";
+import type { ProductionStatus, TransactionLine, TransactionOrder } from "@/lib/transaction-engine";
 import type { Station } from "@/platform/types";
 
 export type KitchenState = Exclude<ProductionStatus, "CANCELLED">;
@@ -167,9 +163,5 @@ function minutesBetween(startedAt: string, nowMs: number) {
 }
 
 function normalizeStation(value: string) {
-  return value
-    .trim()
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .toUpperCase();
+  return value.trim().replace(/[-_]+/g, " ").replace(/\s+/g, " ").toUpperCase();
 }
