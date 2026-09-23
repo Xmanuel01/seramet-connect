@@ -305,6 +305,190 @@ export class CustodyLedger {
     return next;
   }
 
+  recordDirectCompanyCollection(
+    state: TransactionState,
+    input: {
+      tenantId: string;
+      obligationId: string;
+      amountMinor: number;
+      merchantAppliedMinor: number;
+      marketplaceFeeAppliedMinor: number;
+      unclassifiedAppliedMinor: number;
+      tender: CustodyMovement["tender"];
+      toHolder: Extract<CustodyMovement["toHolder"], "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK">;
+      destinationAccountId: string;
+      actor: string;
+      paymentTransactionId?: string;
+      reference?: string;
+      occurredAt?: string;
+    },
+  ) {
+    for (const amount of [
+      input.amountMinor,
+      input.merchantAppliedMinor,
+      input.marketplaceFeeAppliedMinor,
+      input.unclassifiedAppliedMinor,
+    ]) {
+      assertMinorAmount(amount);
+    }
+    if (input.amountMinor <= 0) throw new Error("Collection amount must be positive");
+    if (!input.destinationAccountId.trim()) throw new Error("Destination account is required");
+    if (
+      input.merchantAppliedMinor +
+        input.marketplaceFeeAppliedMinor +
+        input.unclassifiedAppliedMinor !==
+      input.amountMinor
+    ) {
+      throw new Error("Every collected amount must be classified");
+    }
+
+    const next = normalizeTransactionState(state);
+    assertTenant(next, input.tenantId);
+    const operations = requiredOperations(next);
+    const obligation = operations.custodyObligations.find(
+      (candidate) => candidate.id === input.obligationId && candidate.tenantId === input.tenantId,
+    );
+    if (!obligation || ["CANCELLED", "REMITTED"].includes(obligation.status)) {
+      throw new Error("Open custody obligation not found");
+    }
+
+    const customerRemaining = obligation.amountDueMinor - obligation.collectedMinor;
+    const merchantRemaining = obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor;
+    const feeRemaining =
+      obligation.marketplaceFeeDueMinor - obligation.marketplaceFeeCollectedMinor;
+    const unclassifiedRemaining =
+      obligation.unclassifiedDueMinor - obligation.unclassifiedCollectedMinor;
+    if (
+      input.amountMinor > customerRemaining ||
+      input.merchantAppliedMinor > merchantRemaining ||
+      input.marketplaceFeeAppliedMinor > feeRemaining ||
+      input.unclassifiedAppliedMinor > unclassifiedRemaining
+    ) {
+      throw new Error("Collection exceeds the remaining custody obligation");
+    }
+    if (input.marketplaceFeeAppliedMinor > 0 && !obligation.marketplacePayableAccountId) {
+      throw new Error("Marketplace payable account is required before collecting provider funds");
+    }
+    if (input.unclassifiedAppliedMinor > 0 && !obligation.suspenseAccountId) {
+      throw new Error("Suspense account is required before collecting unclassified provider funds");
+    }
+
+    const stamp = input.occurredAt ?? new Date().toISOString();
+    const movement: CustodyMovement = Object.freeze({
+      id: nextId("CUSTMOV", operations.custodyMovements),
+      tenantId: input.tenantId,
+      branchId: obligation.branchId,
+      obligationId: obligation.id,
+      orderId: obligation.orderId,
+      type: "CUSTOMER_COLLECTION",
+      tender: input.tender,
+      fromHolder: "CUSTOMER",
+      toHolder: input.toHolder,
+      destinationAccountId: input.destinationAccountId,
+      amountMinor: input.amountMinor,
+      currency: obligation.currency,
+      ...(input.reference ? { reference: input.reference.trim() } : {}),
+      actor: input.actor,
+      occurredAt: stamp,
+      createdAt: new Date().toISOString(),
+    });
+    operations.custodyMovements.unshift(movement);
+
+    obligation.collectedMinor += input.amountMinor;
+    obligation.merchantCollectedMinor += input.merchantAppliedMinor;
+    obligation.marketplaceFeeCollectedMinor += input.marketplaceFeeAppliedMinor;
+    obligation.unclassifiedCollectedMinor += input.unclassifiedAppliedMinor;
+    obligation.remittedMinor += input.amountMinor;
+    if (
+      input.paymentTransactionId &&
+      !obligation.paymentTransactionIds.includes(input.paymentTransactionId)
+    ) {
+      obligation.paymentTransactionIds.push(input.paymentTransactionId);
+    }
+    updateStatus(obligation);
+    obligation.updatedAt = new Date().toISOString();
+
+    if (input.merchantAppliedMinor > 0) {
+      const receivable = next.marketplaceReceivables.find(
+        (candidate) =>
+          candidate.orderId === obligation.orderId &&
+          candidate.tenantId === input.tenantId &&
+          candidate.status !== "CANCELLED",
+      );
+      if (receivable) {
+        const merchantAppliedMajor = majorFromMinor(
+          input.merchantAppliedMinor,
+          receivable.currency,
+        );
+        receivable.merchantCollectedAmount = Math.min(
+          receivable.grossAmount,
+          (receivable.merchantCollectedAmount ?? 0) + merchantAppliedMajor,
+        );
+        receivable.outstandingAmount = Math.max(
+          0,
+          receivable.grossAmount -
+            (receivable.merchantCollectedAmount ?? 0) -
+            receivable.settledAmount,
+        );
+        receivable.status =
+          receivable.outstandingAmount === 0
+            ? "SETTLED"
+            : (receivable.merchantCollectedAmount ?? 0) > 0 || receivable.settledAmount > 0
+              ? "PARTIALLY_SETTLED"
+              : "OPEN";
+        if (receivable.status === "SETTLED") receivable.settledAt = stamp;
+        receivable.updatedAt = stamp;
+      }
+    }
+
+    const nonMerchantMinor = input.marketplaceFeeAppliedMinor + input.unclassifiedAppliedMinor;
+    if (nonMerchantMinor > 0) {
+      const lines = [
+        journalLine(input.destinationAccountId, nonMerchantMinor, 0, obligation.currency, {
+          custodyObligationId: obligation.id,
+          custodyMovementId: movement.id,
+          collectionPurpose: "DIRECT_COMPANY_COLLECTION",
+        }),
+        ...(input.marketplaceFeeAppliedMinor > 0
+          ? [
+              journalLine(
+                obligation.marketplacePayableAccountId!,
+                0,
+                input.marketplaceFeeAppliedMinor,
+                obligation.currency,
+                { role: "marketplace-fee-payable", custodyObligationId: obligation.id },
+              ),
+            ]
+          : []),
+        ...(input.unclassifiedAppliedMinor > 0
+          ? [
+              journalLine(
+                obligation.suspenseAccountId!,
+                0,
+                input.unclassifiedAppliedMinor,
+                obligation.currency,
+                { role: "unclassified-provider-funds", custodyObligationId: obligation.id },
+              ),
+            ]
+          : []),
+      ];
+      operations.journals.unshift(
+        createJournal({
+          id: nextId("JRN4", operations.journals),
+          tenantId: input.tenantId,
+          branchId: obligation.branchId,
+          sourceType: "CUSTODY_COLLECTION",
+          sourceId: movement.id,
+          businessDate: stamp.slice(0, 10),
+          description: `Customer funds collected directly by company for ${obligation.orderId}`,
+          postedBy: input.actor,
+          lines,
+        }),
+      );
+    }
+    return next;
+  }
+
   recordRemittance(
     state: TransactionState,
     input: {
@@ -446,7 +630,7 @@ function updateStatus(obligation: CustodyObligation) {
     obligation.remittedMinor >= obligation.collectedMinor
   ) {
     obligation.status = "REMITTED";
-  } else if (obligation.remittedMinor > 0) {
+  } else if (obligation.remittedMinor > 0 && obligation.remittedMinor < obligation.collectedMinor) {
     obligation.status = "PARTIALLY_REMITTED";
   } else if (obligation.collectedMinor >= obligation.amountDueMinor) {
     obligation.status = "COLLECTED";

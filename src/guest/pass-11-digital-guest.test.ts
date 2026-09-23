@@ -409,7 +409,7 @@ describe("Pass 11 digital guest experience", () => {
     expect(events.count).toBe(3);
   });
 
-  it("provides deterministic wait estimates and an authorized host dashboard", async () => {
+  it("provides permission-scoped Front of House data without leaking adjacent modules", async () => {
     const first = await service.joinWaitlist(restaurantSlug, branchSlug, {
       guestName: "Walk in one",
       partySize: 2,
@@ -419,11 +419,76 @@ describe("Pass 11 digital guest experience", () => {
       partySize: 3,
     });
     expect(second.estimatedWaitMinutes).toBeGreaterThanOrEqual(first.estimatedWaitMinutes);
-    const host = await service.hostDashboard(manager(), branchId);
-    expect(host.waitlist).toHaveLength(2);
-    expect(host.tables.length).toBeGreaterThan(0);
+
+    const scopedStartsAt = futureLocalIso(4, 18);
+    await service.createReservation(restaurantSlug, branchSlug, {
+      startsAt: scopedStartsAt,
+      partySize: 2,
+      guestName: "Scoped reservation",
+      idempotencyKey: "front-of-house-scope-reservation",
+    });
+
+    const scopedBusinessDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Africa/Nairobi",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(scopedStartsAt));
+    const full = await service.hostDashboard(manager(), branchId, scopedBusinessDate);
+    expect(full.waitlist).toHaveLength(2);
+    expect(full.reservations.length).toBeGreaterThan(0);
+    expect(full.tables.length).toBeGreaterThan(0);
+
+    const waitlistOnly = await service.hostDashboard(
+      { ...manager(), permissions: [permissions.waitlistView] },
+      branchId,
+    );
+    expect(waitlistOnly.waitlist).toHaveLength(2);
+    expect(waitlistOnly.reservations).toEqual([]);
+    expect(waitlistOnly.tables).toEqual([]);
+    expect(waitlistOnly.serviceRequests).toEqual([]);
+
+    const seatingOnly = await service.hostDashboard(
+      { ...manager(), permissions: [permissions.tableManage] },
+      branchId,
+    );
+    expect(seatingOnly.tables.length).toBeGreaterThan(0);
+    expect(seatingOnly.reservations).toEqual([]);
+    expect(seatingOnly.waitlist).toEqual([]);
+    expect(seatingOnly.serviceRequests).toEqual([]);
+
+    const reservationsOnly = await service.hostDashboard(
+      { ...manager(), permissions: [permissions.reservationView] },
+      branchId,
+      scopedBusinessDate,
+    );
+    expect(reservationsOnly.reservations.length).toBeGreaterThan(0);
+    expect(reservationsOnly.tables.length).toBeGreaterThan(0);
+    expect(reservationsOnly.waitlist).toEqual([]);
+    expect(reservationsOnly.serviceRequests).toEqual([]);
+
+    const guestServiceOnly = await service.hostDashboard(
+      { ...manager(), permissions: [permissions.guestServiceManage] },
+      branchId,
+    );
+    expect(guestServiceOnly.reservations).toEqual([]);
+    expect(guestServiceOnly.waitlist).toEqual([]);
+    expect(guestServiceOnly.tables).toEqual([]);
+
     await expect(
       service.hostDashboard({ ...manager(), permissions: [] }, branchId),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      service.hostDashboard(
+        {
+          ...manager(),
+          permissions: [permissions.waitlistView],
+          assignedBranchIds: [],
+          assignedBranches: [],
+          branchScope: { type: "BRANCH", branchId: "branch-demo-ngong-road" },
+        },
+        branchId,
+      ),
     ).rejects.toMatchObject({ status: 403 });
   });
 

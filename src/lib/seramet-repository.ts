@@ -216,6 +216,11 @@ export function applyServerMutation(
         throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
+    case "amendKitchenOrder": {
+      const orderId = String(input["orderId"]);
+      const draft = input["draft"] as Parameters<typeof TransactionEngine.amendKitchenOrder>[2];
+      return TransactionEngine.amendKitchenOrder(state, orderId, draft, actor.name);
+    }
     case "createGuestOrder": {
       const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
       const customerValueInput = input["customerValueInput"] as
@@ -805,6 +810,210 @@ export function applyServerMutation(
         ...(reference ? { reference } : {}),
         ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
       });
+    }
+    case "recordDirectCompanyCollection": {
+      const requested = input["input"] as Record<string, unknown>;
+      const obligationId = String(requested["obligationId"] ?? "");
+      const amountMinor = Number(requested["amountMinor"]);
+      const paymentMethodId = String(requested["paymentMethodId"] ?? "");
+      const reference =
+        typeof requested["reference"] === "string"
+          ? requested["reference"].trim().toUpperCase()
+          : "";
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error("Direct collection amount must be a positive integer in minor units");
+      }
+      if (!reference) throw new Error("Company collection requires a transaction reference");
+
+      const operations = state.paymentOperations;
+      const obligation = operations?.custodyObligations.find(
+        (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
+      );
+      if (!obligation) throw new Error("Cash-due obligation was not found");
+
+      const configuration = getConfigurationRepository();
+      const method = configuration
+        .listPaymentMethods(actor.tenantId, false)
+        .find(
+          (candidate) => candidate.id === paymentMethodId || candidate.code === paymentMethodId,
+        );
+      if (!method?.enabled || !["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category)) {
+        throw new Error("Choose an enabled company Till or bank payment method");
+      }
+      const destinationAccountId = method.clearingAccountId ?? method.settlementAccountId;
+      if (!destinationAccountId) {
+        throw new Error(
+          "Company collection payment method requires a clearing or settlement account",
+        );
+      }
+
+      let remaining = amountMinor;
+      const merchantRemaining = Math.max(
+        0,
+        obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor,
+      );
+      const merchantAppliedMinor = Math.min(remaining, merchantRemaining);
+      remaining -= merchantAppliedMinor;
+      const feeRemaining = Math.max(
+        0,
+        obligation.marketplaceFeeDueMinor - obligation.marketplaceFeeCollectedMinor,
+      );
+      const marketplaceFeeAppliedMinor = Math.min(remaining, feeRemaining);
+      remaining -= marketplaceFeeAppliedMinor;
+      const suspenseRemaining = Math.max(
+        0,
+        obligation.unclassifiedDueMinor - obligation.unclassifiedCollectedMinor,
+      );
+      const unclassifiedAppliedMinor = Math.min(remaining, suspenseRemaining);
+      remaining -= unclassifiedAppliedMinor;
+      if (remaining !== 0) {
+        throw new Error("Collection exceeds the remaining classified cash-due obligation");
+      }
+
+      let next = state;
+      let paymentTransactionId: string | undefined;
+      if (merchantAppliedMinor > 0) {
+        const receivable = state.marketplaceReceivables.find(
+          (candidate) =>
+            candidate.orderId === obligation.orderId &&
+            candidate.tenantId === actor.tenantId &&
+            candidate.status !== "CANCELLED",
+        );
+        if (!receivable) {
+          throw new Error("Marketplace receivable was not found for the cash-due order");
+        }
+        const before = new Set(
+          next.paymentOperations?.transactions.map((transaction) => transaction.id) ?? [],
+        );
+        next = paymentOrchestrator.recordCustodyCollection(next, {
+          tenantId: actor.tenantId,
+          branchId: obligation.branchId,
+          paymentMethodId: method.id,
+          merchantReference: obligation.externalOrderId ?? obligation.orderId,
+          amountMinor: merchantAppliedMinor,
+          currency: obligation.currency,
+          custodyAccountId: destinationAccountId,
+          collectionCreditAccountId: receivable.receivableAccount,
+          collectionPurpose: "DIRECT_COMPANY_COLLECTION",
+          actor: actor.name,
+          reference,
+          ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+        });
+        paymentTransactionId = next.paymentOperations?.transactions.find(
+          (transaction) => !before.has(transaction.id),
+        )?.id;
+      }
+
+      return custodyLedger.recordDirectCompanyCollection(next, {
+        tenantId: actor.tenantId,
+        obligationId,
+        amountMinor,
+        merchantAppliedMinor,
+        marketplaceFeeAppliedMinor,
+        unclassifiedAppliedMinor,
+        tender: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY",
+        toHolder: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY_TILL",
+        destinationAccountId,
+        actor: actor.name,
+        ...(paymentTransactionId ? { paymentTransactionId } : {}),
+        reference,
+        ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+      });
+    }
+    case "recordRiderBatchRemittance": {
+      const requested = input["input"] as Record<string, unknown>;
+      const riderName = String(requested["riderName"] ?? "").trim();
+      const amountMinor = Number(requested["amountMinor"]);
+      const toHolder = String(requested["toHolder"] ?? "").toUpperCase();
+      const tender = String(requested["tender"] ?? "CASH").toUpperCase();
+      const destinationAccountId = String(requested["destinationAccountId"] ?? "").trim();
+      const reference =
+        typeof requested["reference"] === "string"
+          ? requested["reference"].trim().toUpperCase()
+          : "";
+      if (!riderName) throw new Error("Rider name is required");
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error("Remittance amount must be a positive integer in minor units");
+      }
+      if (!["CASH_DRAWER", "MOBILE_MONEY_TILL", "BANK"].includes(toHolder)) {
+        throw new Error("Unsupported rider remittance destination");
+      }
+      if (!["CASH", "MOBILE_MONEY", "BANK"].includes(tender)) {
+        throw new Error("Unsupported rider remittance tender");
+      }
+      if (!destinationAccountId) throw new Error("Destination account is required");
+      if (tender !== "CASH" && !reference) {
+        throw new Error("A transaction reference is required for non-cash remittance");
+      }
+
+      const operations = state.paymentOperations;
+      if (!operations) throw new Error("Payment operations state was not initialized");
+      const destination = operations.accounts.find(
+        (account) =>
+          account.id === destinationAccountId &&
+          account.tenantId === actor.tenantId &&
+          account.active &&
+          (!account.branchId || account.branchId === actor.branchId),
+      );
+      if (!destination)
+        throw new Error("Destination payment account is unavailable for this branch");
+      const expectedAccountType =
+        toHolder === "CASH_DRAWER"
+          ? "CASH"
+          : toHolder === "MOBILE_MONEY_TILL"
+            ? "MOBILE_MONEY"
+            : "BANK";
+      if (destination.type !== expectedAccountType) {
+        throw new Error(`Remittance destination must use a ${expectedAccountType} account`);
+      }
+
+      const obligations = operations.custodyObligations
+        .filter(
+          (obligation) =>
+            obligation.tenantId === actor.tenantId &&
+            obligation.branchId === actor.branchId &&
+            obligation.riderName === riderName &&
+            !["CANCELLED", "DISPUTED", "REMITTED"].includes(obligation.status) &&
+            obligation.collectedMinor > obligation.remittedMinor,
+        )
+        .sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        );
+      const totalOutstanding = obligations.reduce(
+        (sum, obligation) => sum + (obligation.collectedMinor - obligation.remittedMinor),
+        0,
+      );
+      if (amountMinor > totalOutstanding) {
+        throw new Error("Remittance exceeds rider-held funds");
+      }
+
+      let next = state;
+      let remaining = amountMinor;
+      for (const obligation of obligations) {
+        if (remaining <= 0) break;
+        const current = next.paymentOperations?.custodyObligations.find(
+          (candidate) => candidate.id === obligation.id,
+        );
+        if (!current) continue;
+        const outstanding = Math.max(0, current.collectedMinor - current.remittedMinor);
+        const allocated = Math.min(remaining, outstanding);
+        if (allocated <= 0) continue;
+        next = custodyLedger.recordRemittance(next, {
+          tenantId: actor.tenantId,
+          obligationId: current.id,
+          amountMinor: allocated,
+          tender: tender as "CASH" | "MOBILE_MONEY" | "BANK",
+          toHolder: toHolder as "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK",
+          destinationAccountId,
+          actor: actor.name,
+          ...(reference ? { reference } : {}),
+          ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+        });
+        remaining -= allocated;
+      }
+      if (remaining !== 0) throw new Error("Rider remittance could not be fully allocated");
+      return next;
     }
     case "recordRiderRemittance": {
       const requested = input["input"] as Record<string, unknown>;

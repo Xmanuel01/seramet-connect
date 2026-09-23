@@ -7,6 +7,7 @@ type CatalogRow = {
   id: string;
   code: string;
   sku: string | null;
+  barcode: string | null;
   name: string;
   category_code: string;
   description: string | null;
@@ -72,6 +73,7 @@ export function useOperationalMenu(input: {
           id: row.id,
           itemCode: row.code,
           ...(row.sku ? { sku: row.sku } : {}),
+          ...(row.barcode ? { barcode: row.barcode } : {}),
           name: row.name,
           category: row.category_code.replaceAll("_", " "),
           price: majorFromMinor(row.effective_price_minor, row.currency),

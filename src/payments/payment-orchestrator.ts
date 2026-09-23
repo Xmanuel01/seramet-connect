@@ -277,13 +277,14 @@ export class PaymentOrchestrator {
       currency: string;
       custodyAccountId: string;
       collectionCreditAccountId: string;
+      collectionPurpose?: "RIDER_CUSTODY" | "DIRECT_COMPANY_COLLECTION";
       actor: string;
       reference?: string;
       deviceId?: string;
       occurredAt?: string;
     },
   ) {
-    if (!input.custodyAccountId.trim()) throw new Error("Rider custody account is required");
+    if (!input.custodyAccountId.trim()) throw new Error("Collection debit account is required");
     if (!input.collectionCreditAccountId.trim()) {
       throw new Error("Collection credit account is required");
     }
@@ -305,7 +306,7 @@ export class PaymentOrchestrator {
       metadata: {
         collectionDebitAccountId: input.custodyAccountId,
         collectionCreditAccountId: input.collectionCreditAccountId,
-        collectionPurpose: "RIDER_CUSTODY",
+        collectionPurpose: input.collectionPurpose ?? "RIDER_CUSTODY",
       },
     });
   }
@@ -1618,7 +1619,10 @@ export class PaymentOrchestrator {
       input.metadata["collectionDebitAccountId"].trim()
         ? input.metadata["collectionDebitAccountId"]
         : collectionAccount(method);
-    const isCustodyCollection = input.metadata?.["collectionPurpose"] === "RIDER_CUSTODY";
+    const collectionPurpose = input.metadata?.["collectionPurpose"];
+    const isCustodyCollection = collectionPurpose === "RIDER_CUSTODY";
+    const isReceivableCollection =
+      isCustodyCollection || collectionPurpose === "DIRECT_COMPANY_COLLECTION";
     let lastLegacyPaymentId: string | undefined;
     for (const allocation of input.allocations) {
       const beforeIds = new Set(next.payments.map((payment) => payment.id));
@@ -1683,7 +1687,7 @@ export class PaymentOrchestrator {
       ...(providerConnectionId ? { providerConnectionId } : {}),
       direction: "COLLECTION",
       amountMinor: input.amountMinor,
-      unallocatedAmountMinor: isCustodyCollection ? 0 : input.amountMinor - allocatedMinor,
+      unallocatedAmountMinor: isReceivableCollection ? 0 : input.amountMinor - allocatedMinor,
       currency: input.currency.toUpperCase(),
       status: input.status ?? "CONFIRMED",
       ...(input.providerTransactionId

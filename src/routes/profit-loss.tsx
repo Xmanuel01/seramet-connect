@@ -3,8 +3,10 @@ import { AppShell } from "@/components/app/AppShell";
 import { EmptyState } from "@/components/app/EmptyState";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
-import { emptyRecords } from "@/lib/empty-records";
 import { cn } from "@/lib/utils";
+import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { currentMonthSettledSales } from "@/lib/financial-reporting";
 
 export const Route = createFileRoute("/profit-loss")({
   head: () => ({
@@ -26,7 +28,10 @@ export const Route = createFileRoute("/profit-loss")({
 });
 
 function ProfitLoss() {
-  const pnl = emptyRecords<{
+  const { matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
+  const sales = currentMonthSettledSales(state, matchesBranch);
+  const pnl: Array<{
     label: string;
     value: number;
     budget?: number;
@@ -36,7 +41,10 @@ function ProfitLoss() {
     bold?: boolean;
     total?: boolean;
     strong?: boolean;
-  }>();
+  }> =
+    sales.netSales > 0
+      ? [{ label: "Food & beverage sales", value: sales.netSales, bold: true, strong: true }]
+      : [];
   return (
     <AppShell
       title="Profit & loss"
@@ -50,7 +58,7 @@ function ProfitLoss() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Revenue" value="Not available" />
+        <Metric label="Revenue MTD" value={sales.netSales} money />
         <Metric label="Gross margin" value="Not available" />
         <Metric label="Operating profit" value="Not available" />
         <Metric label="Net profit" value="Not available" />
@@ -65,7 +73,7 @@ function ProfitLoss() {
         {pnl.length === 0 && (
           <EmptyState
             title="No posted financial activity"
-            description="The statement will populate from posted journals after pilot transactions begin."
+            description="The statement will populate after settled sales are recorded for this branch."
           />
         )}
         <div className="grid gap-2 p-3 md:hidden">

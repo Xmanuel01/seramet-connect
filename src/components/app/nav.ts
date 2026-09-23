@@ -13,7 +13,6 @@ import {
   ChefHat,
   ClipboardCheck,
   ClipboardList,
-  Clock3,
   Component,
   FileSpreadsheet,
   FileText,
@@ -86,18 +85,8 @@ export const navGroups: NavGroup[] = [
   {
     group: "Sales",
     items: [
-      {
-        label: "POS",
-        to: "/pos",
-        icon: ShoppingCart,
-        permission: permissions.posAccess,
-      },
-      {
-        label: "Orders",
-        to: "/orders",
-        icon: ShoppingCart,
-        permission: permissions.ordersView,
-      },
+      { label: "POS", to: "/pos", icon: ShoppingCart, permission: permissions.posAccess },
+      { label: "Orders", to: "/orders", icon: ShoppingCart, permission: permissions.ordersView },
       {
         label: "Online Orders",
         to: "/online-orders",
@@ -110,53 +99,21 @@ export const navGroups: NavGroup[] = [
         icon: Globe2,
         permission: permissions.integrationsView,
       },
-      {
-        label: "Tables",
-        to: "/tables",
-        icon: ShoppingCart,
-        permission: permissions.tableManage,
-      },
-      {
-        label: "Invoices",
-        to: "/invoices",
-        icon: FileText,
-        permission: permissions.invoicesView,
-      },
-      {
-        label: "Pending",
-        to: "/pending",
-        icon: ReceiptText,
-        permission: permissions.invoicesView,
-      },
+      { label: "Tables", to: "/tables", icon: ShoppingCart, permission: permissions.tableManage },
+      { label: "Invoices", to: "/invoices", icon: FileText, permission: permissions.invoicesView },
+      { label: "Pending", to: "/pending", icon: ReceiptText, permission: permissions.invoicesView },
       {
         label: "Receipts",
         to: "/receipts",
         icon: ReceiptText,
         permission: permissions.receiptsView,
       },
+      // Reservations, Waitlist and Guest Requests remain direct URLs/tabs, not duplicate sidebar pages.
       {
-        label: "Reservations",
-        to: "/reservations",
-        icon: CalendarDays,
-        permission: permissions.reservationView,
-      },
-      {
-        label: "Host Station",
+        label: "Front of House",
         to: "/host",
         icon: Users,
         permission: permissions.reservationView,
-      },
-      {
-        label: "Waitlist",
-        to: "/waitlist",
-        icon: Clock3,
-        permission: permissions.waitlistView,
-      },
-      {
-        label: "Guest Requests",
-        to: "/guest-service",
-        icon: Bell,
-        permission: permissions.guestServiceManage,
       },
       {
         label: "QR Management",
@@ -201,11 +158,7 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Recipes", to: "/recipes", icon: ChefHat, permission: permissions.productionView },
       { label: "Prep", to: "/prep", icon: ChefHat, permission: permissions.productionView },
-      {
-        label: "Kitchen Analytics",
-        to: "/kitchen-analytics",
-        icon: ChefHat,
-      },
+      { label: "Kitchen Analytics", to: "/kitchen-analytics", icon: ChefHat },
     ],
   },
   {
@@ -274,12 +227,7 @@ export const navGroups: NavGroup[] = [
         icon: GitBranch,
         permission: permissions.crmView,
       },
-      {
-        label: "Loyalty",
-        to: "/loyalty",
-        icon: HandCoins,
-        permission: permissions.loyaltyView,
-      },
+      { label: "Loyalty", to: "/loyalty", icon: HandCoins, permission: permissions.loyaltyView },
       {
         label: "Complaints",
         to: "/complaints",
@@ -403,12 +351,7 @@ export const navGroups: NavGroup[] = [
   {
     group: "Intelligence",
     items: [
-      {
-        label: "Ask Seramet",
-        to: "/ai",
-        icon: Sparkles,
-        permission: permissions.intelligenceAsk,
-      },
+      { label: "Ask Seramet", to: "/ai", icon: Sparkles, permission: permissions.intelligenceAsk },
       { label: "Reports", to: "/reports", icon: BarChart3, permission: permissions.reportsView },
     ],
   },
@@ -450,12 +393,7 @@ export const navGroups: NavGroup[] = [
         icon: Activity,
         permission: permissions.auditView,
       },
-      {
-        label: "Settings",
-        to: "/settings",
-        icon: Settings,
-        permission: permissions.settingsView,
-      },
+      { label: "Settings", to: "/settings", icon: Settings, permission: permissions.settingsView },
     ],
   },
 ];

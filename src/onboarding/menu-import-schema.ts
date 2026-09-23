@@ -1,5 +1,5 @@
-export const MENU_IMPORT_TEMPLATE_VERSION = 2;
-export const MENU_IMPORTER_VERSION = "menu-import-v2";
+export const MENU_IMPORT_TEMPLATE_VERSION = 3;
+export const MENU_IMPORTER_VERSION = "menu-import-v3";
 
 export const menuImportHeaders = [
   "templateVersion",
@@ -9,6 +9,7 @@ export const menuImportHeaders = [
   "menuSection",
   "description",
   "basePrice",
+  "onlinePrice",
   "currency",
   "taxCode",
   "serviceChargeApplicable",
@@ -24,6 +25,7 @@ export const menuImportHeaders = [
   "branchPrice",
   "available",
   "channels",
+  "onlinePriceChannels",
   "prepMinutes",
   "parLevel",
   "imageFilename",
@@ -39,6 +41,8 @@ const legacyAliases: Record<string, MenuImportHeader> = {
   category: "categoryCode",
   price: "basePrice",
   sellingprice: "basePrice",
+  onlineprice: "onlinePrice",
+  digitalprice: "onlinePrice",
   tax: "taxCode",
   taxcategory: "taxCode",
   taxrule: "taxCode",
@@ -51,6 +55,8 @@ const legacyAliases: Record<string, MenuImportHeader> = {
   modifiergroup: "modifierGroupCode",
   modifiergroupreference: "modifierGroupCode",
   channelavailability: "channels",
+  onlinepricechannels: "onlinePriceChannels",
+  digitalpricechannels: "onlinePriceChannels",
   prep: "prepMinutes",
   par: "parLevel",
 };
@@ -80,6 +86,7 @@ export function createCanonicalMenuTemplate() {
     menuSection: "DEFAULT",
     description: "Replace this row with an actual menu item",
     basePrice: "0",
+    onlinePrice: "",
     currency: "",
     taxCode: "",
     serviceChargeApplicable: "false",
@@ -95,6 +102,7 @@ export function createCanonicalMenuTemplate() {
     branchPrice: "",
     available: "true",
     channels: "",
+    onlinePriceChannels: "",
     prepMinutes: "0",
     parLevel: "0",
     imageFilename: "",

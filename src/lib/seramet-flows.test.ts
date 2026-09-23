@@ -877,7 +877,7 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     expect(state.receipts).toHaveLength(0);
   });
 
-  it("prepares the explicitly selected order for payment once without falling back to another order", () => {
+  it("prepares only an explicitly kitchen-sent order for payment and never auto-sends another order", () => {
     let state = TransactionEngine.createOrder(blank(), { ...draft, table: "01" }, "OPEN");
     const selectedOrderId = state.orders[0]!.id;
     state = TransactionEngine.createOrder(
@@ -887,6 +887,13 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     );
     const otherOrderId = state.orders[0]!.id;
 
+    expect(() =>
+      TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W."),
+    ).toThrow(/must be sent to kitchen/i);
+    expect(state.bills).toHaveLength(0);
+    expect(state.orders.find((order) => order.id === selectedOrderId)?.status).toBe("OPEN");
+
+    state = TransactionEngine.sendToKitchen(state, selectedOrderId, "Amina W.");
     state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
     state = TransactionEngine.prepareInvoiceForPayment(state, selectedOrderId, "Amina W.");
 

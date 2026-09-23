@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -30,7 +30,7 @@ import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
-import type { OrderForPrint } from "@/lib/seramet-print-service";
+import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -129,6 +129,8 @@ function POS() {
     role,
   });
   const [cat, setCat] = useState("All items");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [clockNow, setClockNow] = useState(() => new Date());
   const [orderSource, setOrderSource] = useState(() => orderChannels[0]?.id ?? "");
   const [lines, setLines] = useState<Record<string, number>>({});
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -142,6 +144,7 @@ function POS() {
   const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const paymentSubmitRef = useRef(false);
+  const [previouslyPaid, setPreviouslyPaid] = useState(0);
   const [payments, setPayments] = useState<
     {
       id: string;
@@ -153,6 +156,8 @@ function POS() {
       tenderAmountMinor: number;
       cashTenderedMinor: number;
       fxQuote?: FxPaymentQuote;
+      status: "staged" | "confirmed" | "pending" | "failed";
+      error?: string;
     }[]
   >([]);
   const [paymentReference, setPaymentReference] = useState("");
@@ -171,6 +176,10 @@ function POS() {
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
+  const [trackedPrint, setTrackedPrint] = useState<{
+    jobIds: string[];
+    label: string;
+  } | null>(null);
   const {
     state: transactionState,
     mutate: mutateTransaction,
@@ -178,13 +187,60 @@ function POS() {
     backendStatus,
     pendingSyncCount,
   } = useTransactionEngine();
-  const { profile, configurationError, sendKitchenTickets, printCustomerDocument } =
-    useSerametPrintQueue(branchId);
+  const {
+    profile,
+    configurationError,
+    jobs: printJobs,
+    sendKitchenTickets,
+    printCustomerDocument,
+  } = useSerametPrintQueue(branchId);
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
+  const openCashDrawer = transactionState.paymentOperations?.drawerSessions.find(
+    (drawer) =>
+      drawer.tenantId === activeTenantId &&
+      drawer.branchId === branchId &&
+      drawer.status === "OPEN",
+  );
+  const paymentMethodAvailability = useCallback(
+    (method: (typeof paymentMethods)[number]) => {
+      if (method.category === "CASH" && !openCashDrawer) {
+        return {
+          usable: false,
+          label: "Open drawer",
+          reason: "Open a cash drawer before taking cash.",
+        };
+      }
+      if (backendStatus !== "synced" && method.category !== "CASH") {
+        return {
+          usable: false,
+          label: "Online required",
+          reason: `${method.displayName} requires an online connection.`,
+        };
+      }
+      const providerOperation = method.metadata["providerOperation"];
+      if (providerOperation === "PAYMENT_PROMPT") {
+        return { usable: true, label: "Phone required", reason: "" };
+      }
+      if (providerOperation === "QR_PAYMENT") {
+        return { usable: true, label: "Provider QR", reason: "" };
+      }
+      if (method.category === "BANK_TRANSFER") {
+        return { usable: true, label: "Reference required", reason: "" };
+      }
+      if (method.category === "DIGITAL_WALLET") {
+        return { usable: true, label: "Reference required", reason: "" };
+      }
+      if (method.category === "CASH") {
+        return { usable: true, label: "Drawer open", reason: "" };
+      }
+      return { usable: true, label: "Ready", reason: "" };
+    },
+    [backendStatus, openCashDrawer],
+  );
   const paymentCurrencies = useMemo(() => {
     const configured = acceptedCurrencies.length
       ? acceptedCurrencies
@@ -232,23 +288,44 @@ function POS() {
     () => new Set(transactionState.bills.flatMap((bill) => bill.orderIds)),
     [transactionState.bills],
   );
+  const branchOrders = useMemo(
+    () =>
+      transactionState.orders.filter(
+        (order) =>
+          (order.tenantId ?? activeTenantId) === activeTenantId &&
+          (order.branchId ?? branchId) === branchId,
+      ),
+    [activeTenantId, branchId, transactionState.orders],
+  );
   const activePosOrders = useMemo(
     () =>
-      transactionState.orders
-        .filter(
-          (order) =>
-            (order.tenantId ?? activeTenantId) === activeTenantId &&
-            (order.branchId ?? branchId) === branchId,
-        )
+      branchOrders
         .filter((order) =>
           ["HELD", "OPEN", "SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
             order.status,
           ),
         )
         .filter((order) => !billedOrderIds.has(order.id)),
-    [activeTenantId, billedOrderIds, branchId, transactionState.orders],
+    [billedOrderIds, branchOrders],
   );
-  const activeOrder = activePosOrders.find((order) => order.id === activeOrderId) ?? null;
+  const openTableOrders = useMemo(
+    () =>
+      branchOrders.filter(
+        (order) =>
+          Boolean(order.table) &&
+          [
+            "HELD",
+            "OPEN",
+            "SENT_TO_KITCHEN",
+            "IN_PROGRESS",
+            "READY",
+            "SERVED",
+            "BILL_REQUESTED",
+          ].includes(order.status),
+      ),
+    [branchOrders],
+  );
+  const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
   const canPrintBill =
     activeOrder !== null &&
     ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status);
@@ -292,7 +369,14 @@ function POS() {
         (table) => table.tenantId === activeTenantId && table.branchId === branchId && table.active,
       )
       .map((table) => {
-        const activeTableOrder = activePosOrders.find((order) => order.table === table.code);
+        const activeTableOrder = openTableOrders.find((order) => order.table === table.code);
+        const activeBill = activeTableOrder
+          ? transactionState.bills.find(
+              (bill) =>
+                bill.orderIds.includes(activeTableOrder.id) &&
+                ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+            )
+          : undefined;
         return {
           no: table.code,
           seats: table.seats,
@@ -301,10 +385,21 @@ function POS() {
             : "Dining",
           state: activeTableOrder ? "Occupied" : "Available",
           guests: Number(activeTableOrder?.customer.match(/(\d+)\s+guest/i)?.[1] ?? 0),
-          amount: activeTableOrder?.total,
+          amount: activeBill
+            ? Math.max(0, activeBill.total - activeBill.paid)
+            : activeTableOrder?.total,
+          orderId: activeTableOrder?.id,
+          orderStatus: activeTableOrder?.status,
         };
       });
-  }, [activePosOrders, activeTenantId, branchId, branchServiceAreas, platformState.tables]);
+  }, [
+    activeTenantId,
+    branchId,
+    branchServiceAreas,
+    openTableOrders,
+    platformState.tables,
+    transactionState.bills,
+  ]);
 
   const posCategories = useMemo(() => {
     const importedCategories = Array.from(new Set(branchMenu.map((product) => product.category)));
@@ -324,6 +419,58 @@ function POS() {
   useEffect(() => {
     if (!selectedChannel && orderChannels[0]) setOrderSource(orderChannels[0].id);
   }, [orderChannels, selectedChannel]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(new Date()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!paymentMethods.length) {
+      if (paymentMethod) setPaymentMethod("");
+      return;
+    }
+    const selected = paymentMethods.find((method) => method.id === paymentMethod);
+    if (selected && paymentMethodAvailability(selected).usable) return;
+    const next =
+      paymentMethods.find((method) => paymentMethodAvailability(method).usable) ??
+      selected ??
+      paymentMethods[0];
+    if (next && next.id !== paymentMethod) setPaymentMethod(next.id);
+  }, [paymentMethod, paymentMethodAvailability, paymentMethods]);
+
+  useEffect(() => {
+    if (!trackedPrint?.jobIds.length) return;
+    const tracked = printJobs.filter((job) => trackedPrint.jobIds.includes(job.id));
+    if (!tracked.length) return;
+    const failed = tracked.find((job) => job.status === "Failed");
+    if (failed) {
+      setPrintNotice(
+        `${trackedPrint.label} delivery failed${failed.failureReason ? `: ${failed.failureReason}` : "."} Open Printers, correct the route, then retry.`,
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
+    const delivered = tracked.every((job) =>
+      ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
+    );
+    if (delivered) {
+      setPrintNotice(
+        tracked.some((job) => job.status === "Displayed")
+          ? `${trackedPrint.label} delivered to the configured KDS/production route.`
+          : `${trackedPrint.label} delivered to the configured printer route.`,
+      );
+      setPrintNoticeType("success");
+      return;
+    }
+    const active = tracked.find((job) => ["Queued", "Sending", "Retrying"].includes(job.status));
+    if (active) {
+      setPrintNotice(
+        `${trackedPrint.label} ${active.status.toLowerCase()} — delivery is not yet confirmed.`,
+      );
+      setPrintNoticeType("idle");
+    }
+  }, [printJobs, trackedPrint]);
 
   useEffect(() => {
     const token = getSerametAccessToken();
@@ -366,6 +513,7 @@ function POS() {
         item.displayName === activeOrder.channel,
     );
     if (channel) setOrderSource(channel.id);
+    setSelectedTableNo(activeOrder.table ?? null);
     setKitchenNote(activeOrder.kitchenNote ?? "");
     setLines(
       activeOrder.lines.reduce<Record<string, number>>((quantities, line) => {
@@ -397,12 +545,43 @@ function POS() {
     [activeOrder],
   );
 
-  const visible = branchMenu.filter((product) =>
-    cat === "All items" ? true : product.category === cat,
-  );
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const visible = branchMenu.filter((product) => {
+    const categoryMatches = cat === "All items" ? true : product.category === cat;
+    if (!categoryMatches) return false;
+    if (!normalizedSearch) return true;
+    return [product.name, product.category, product.itemCode, product.sku, product.barcode].some(
+      (value) => value?.toLocaleLowerCase().includes(normalizedSearch),
+    );
+  });
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
     .filter((l) => l.p && l.qty > 0);
+  const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
+  const activeOrderHasSentLines = Boolean(activeOrder?.lines.some((line) => line.sentAt));
+  const channelLocked = activeOrderHasSentLines;
+  const activeOrderKitchenSent = Boolean(
+    activeOrder &&
+    ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED", "BILL_REQUESTED"].includes(
+      activeOrder.status,
+    ),
+  );
+  const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
+  const dineInPaymentReady =
+    !selectedChannel?.requiresTable ||
+    Boolean(orderTable && activeOrderKitchenSent && !hasUnsentItems);
+  const workflowState =
+    paymentOpen || paymentBusy
+      ? "Paying"
+      : !activeOrder
+        ? "New"
+        : activeOrder.status === "HELD"
+          ? "Held"
+          : activeOrder.status === "READY" || activeOrder.status === "SERVED"
+            ? "Ready"
+            : activeOrderKitchenSent
+              ? "Kitchen"
+              : "New";
   const subtotalMinor = items.reduce((sum, line) => sum + (line.p.priceMinor ?? 0) * line.qty, 0);
   const pricingRules = new Map(operationalMenu.pricingRules.map((rule) => [rule.id, rule]));
   const taxTotals = items.reduce(
@@ -438,15 +617,23 @@ function POS() {
     subtotalMinor + taxTotals.added + serviceTotals.added,
     tenant.defaultCurrency,
   );
-  const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+  const paid =
+    previouslyPaid +
+    payments.reduce((sum, payment) => sum + (payment.status === "failed" ? 0 : payment.amount), 0);
   const due = Math.max(0, total - paid);
   const change = Math.max(0, paid - total);
   const suggestedAmount = paymentMode === "split" ? Math.ceil(due / 2) : due;
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
-  const currentOrderNumber = activeOrder?.id ?? predictedNextOrderId();
-  const orderTable = activeOrder?.table ?? selectedTableNo ?? undefined;
+  const currentOrderNumber = activeOrder?.id ?? paymentOrderId ?? predictedNextOrderId();
+  const clockLabel = new Intl.DateTimeFormat(tenant.locale || activeLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: branchRecord.timezone ?? tenant.timezone,
+  }).format(clockNow);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
@@ -491,14 +678,19 @@ function POS() {
     paid,
     change,
     paymentMethod:
-      payments.map((payment) => payment.method).join(" + ") ||
+      payments
+        .filter((payment) => payment.status !== "failed")
+        .map((payment) => payment.method)
+        .join(" + ") ||
       selectedPaymentMethod?.displayName ||
       "Configured payment",
-    paymentBreakdown: payments.map((payment) => ({
-      method: payment.method,
-      amount: payment.amount,
-      ...(payment.reference ? { reference: payment.reference } : {}),
-    })),
+    paymentBreakdown: payments
+      .filter((payment) => payment.status !== "failed")
+      .map((payment) => ({
+        method: payment.method,
+        amount: payment.amount,
+        ...(payment.reference ? { reference: payment.reference } : {}),
+      })),
   });
 
   const buildTransactionDraft = (tableNo = orderTable): OrderDraft => {
@@ -555,14 +747,20 @@ function POS() {
       branchId,
       branch,
       ...(tableNo ? { table: tableNo } : {}),
-      customer: isOnlineSource
-        ? (selectedChannel?.displayName ?? "Online customer")
-        : selectedChannel?.channelType === "TAKEAWAY"
-          ? "Walk-in"
-          : tableNo
-            ? `Table ${tableNo}`
-            : "Unassigned table",
-      channel: selectedChannel?.code ?? selectedChannel?.id ?? "UNCONFIGURED",
+      customer:
+        channelLocked && activeOrder
+          ? activeOrder.customer
+          : isOnlineSource
+            ? (selectedChannel?.displayName ?? "Online customer")
+            : selectedChannel?.channelType === "TAKEAWAY"
+              ? "Walk-in"
+              : tableNo
+                ? `Table ${tableNo}`
+                : "Unassigned table",
+      channel:
+        channelLocked && activeOrder
+          ? activeOrder.channel
+          : (selectedChannel?.code ?? selectedChannel?.id ?? "UNCONFIGURED"),
       cashier: currentUser.name,
       waiter: currentUser.name,
       ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
@@ -586,9 +784,24 @@ function POS() {
     setKitchenNote("");
     setItemNotes({});
     setPaymentReference("");
+    setCustomerPhone("");
     setSelectedTableNo(null);
+    setPayments([]);
+    setPreviouslyPaid(0);
+    setPaymentInvoiceId(null);
+    setPaymentOrderId(null);
+    setPaymentConfirmed(false);
+    setPaymentOpen(false);
+    setTendered(0);
+    setCashReceived(0);
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
+  };
+
+  const startNewOrder = () => {
+    clearCurrentOrder("New order ready.");
+    setSearchQuery("");
+    setActiveOrdersOpen(false);
   };
 
   const createOrUpdateActiveOrder = async (targetStatus: "HELD" | "OPEN", tableNo = orderTable) => {
@@ -608,46 +821,105 @@ function POS() {
 
   const openPayment = async () => {
     if (!items.length || paymentBusy) return;
-    const defaultMethod =
+    if (!paymentMethods.length) {
+      setPrintNotice("No payment methods are configured for this restaurant.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (selectedChannel?.requiresTable) {
+      if (!orderTable) {
+        setTablePickerOpen(true);
+        setPrintNotice("Select a table, then send the dine-in order to kitchen before payment.");
+        setPrintNoticeType("warning");
+        return;
+      }
+      if (!activeOrderKitchenSent) {
+        setPrintNotice("Send the dine-in order to kitchen before opening payment.");
+        setPrintNoticeType("warning");
+        return;
+      }
+      if (hasUnsentItems) {
+        setPrintNotice("Send the new items as a kitchen amendment before taking payment.");
+        setPrintNoticeType("warning");
+        return;
+      }
+    }
+
+    const preferredDefault =
       (selectedChannel?.isExternallyPaid
         ? paymentMethods.find((method) => method.category === "CREDIT")
         : paymentMethods.find((method) => method.category === "DIGITAL_WALLET")) ??
       paymentMethods[0];
+    const defaultMethod =
+      [preferredDefault, ...paymentMethods].find(
+        (method) => method && paymentMethodAvailability(method).usable,
+      ) ?? paymentMethods[0];
+
     setPaymentMode("full");
     setPaymentMethod(defaultMethod?.id ?? "");
     setTendered(total);
     setCashReceived(total);
     setTenderCurrency(tenant.defaultCurrency);
     setPayments([]);
+    setPreviouslyPaid(0);
     setPaymentReference("");
+    setCustomerPhone("");
     setPaymentConfirmed(false);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
     setPaymentBusy(true);
     try {
-      const orderId = await createOrUpdateActiveOrder("OPEN");
-      const prepared = await mutateTransaction("prepareInvoiceForPayment", {
-        orderId,
-      });
+      let orderId = activeOrder?.id;
+      let optimisticPaymentState = transactionState;
+
+      if (!selectedChannel?.requiresTable) {
+        const mustSendToKitchen = !activeOrder || !activeOrderKitchenSent || hasUnsentItems;
+        if (mustSendToKitchen) {
+          const kitchen = await queueKitchenTicketsForTable(orderTable);
+          if (!kitchen) throw new Error("The order could not be routed to kitchen.");
+          orderId = kitchen.order.id;
+          optimisticPaymentState = kitchen.state;
+          if (!kitchen.printResult?.jobs.length) {
+            throw new Error(
+              "Payment was not opened because no KOT/KDS delivery job was created for this order.",
+            );
+          }
+        }
+      }
+
+      if (!orderId) {
+        throw new Error("Create and send the order to kitchen before payment.");
+      }
+
+      const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
+        TransactionEngine.prepareInvoiceForPayment(
+          optimisticPaymentState,
+          orderId!,
+          currentUser.name,
+        ),
+      );
       const order = prepared?.state.orders.find((candidate) => candidate.id === orderId);
       const bill = prepared?.state.bills.find(
         (candidate) =>
-          candidate.orderIds.includes(orderId) &&
+          candidate.orderIds.includes(orderId!) &&
           ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
       );
-      if (!order) throw new Error("The selected order is no longer available");
-      if (!bill) throw new Error("The server could not prepare this bill for payment");
+      if (!order) throw new Error("The selected order is no longer available.");
+      if (!bill) throw new Error("Seramet could not prepare a payable invoice for this order.");
       if (
         (bill.tenantId ?? activeTenantId) !== activeTenantId ||
         (bill.branchId ?? branchId) !== branchId
       ) {
-        throw new Error("The prepared invoice is outside the active restaurant branch");
+        throw new Error("The prepared invoice belongs to another restaurant branch.");
       }
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
+      setPreviouslyPaid(bill.paid ?? 0);
+      setTendered(Math.max(0, total - (bill.paid ?? 0)));
+      setCashReceived(Math.max(0, total - (bill.paid ?? 0)));
       setPaymentOpen(true);
     } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "Payment could not be prepared.");
+      setPrintNotice(cashierErrorMessage(error, "Payment could not be prepared."));
       setPrintNoticeType("warning");
     } finally {
       setPaymentBusy(false);
@@ -657,8 +929,26 @@ function POS() {
   const addPayment = async () => {
     const amount = Math.min(due, Math.max(0, tendered || suggestedAmount));
     if (!amount || !selectedPaymentMethod) return;
-    if (selectedPaymentMethod.requiresReference && !paymentReference.trim()) {
+    const availability = paymentMethodAvailability(selectedPaymentMethod);
+    if (!availability.usable) {
+      setPrintNotice(availability.reason || `${selectedPaymentMethod.displayName} is unavailable.`);
+      setPrintNoticeType("warning");
+      return;
+    }
+    const providerOperation = selectedPaymentMethod.metadata["providerOperation"];
+    const referenceRequired =
+      selectedPaymentMethod.requiresReference ||
+      selectedPaymentMethod.category === "BANK_TRANSFER" ||
+      (selectedPaymentMethod.category === "DIGITAL_WALLET" &&
+        providerOperation !== "PAYMENT_PROMPT" &&
+        providerOperation !== "QR_PAYMENT");
+    if (referenceRequired && !paymentReference.trim()) {
       setPrintNotice(`${selectedPaymentMethod.displayName} requires a transaction reference.`);
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (providerOperation === "PAYMENT_PROMPT" && !customerPhone.trim()) {
+      setPrintNotice("Enter the customer's phone number before adding the M-Pesa STK payment.");
       setPrintNoticeType("warning");
       return;
     }
@@ -731,6 +1021,7 @@ function POS() {
         cashTenderedMinor,
         ...(quote ? { fxQuote: quote } : {}),
         ...(reference ? { reference } : {}),
+        status: "staged",
       },
     ]);
     setTendered(Math.max(0, total - paid - amount));
@@ -740,8 +1031,31 @@ function POS() {
   };
 
   const removePayment = (id: string) => {
-    setPayments((current) => current.filter((payment) => payment.id !== id));
+    setPayments((current) =>
+      current.filter(
+        (payment) =>
+          payment.id !== id || (payment.status !== "staged" && payment.status !== "failed"),
+      ),
+    );
     setPaymentConfirmed(false);
+  };
+
+  const updatePaymentStatus = (
+    id: string,
+    status: "staged" | "confirmed" | "pending" | "failed",
+    error?: string,
+  ) => {
+    setPayments((current) =>
+      current.map((payment) =>
+        payment.id === id
+          ? {
+              ...payment,
+              status,
+              ...(error ? { error } : {}),
+            }
+          : payment,
+      ),
+    );
   };
 
   const holdOrder = async () => {
@@ -756,36 +1070,84 @@ function POS() {
   };
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
-    if (!items.length) return;
+    if (!items.length) return null;
+    if (selectedChannel?.requiresTable && !tableNo) {
+      throw new Error("Select a table before sending a dine-in order to kitchen.");
+    }
+    if (!profile) {
+      throw new Error(
+        `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
+      );
+    }
+
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const sentLineIds = new Set(
       activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
     );
     const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const draft = buildTransactionDraft(tableNo);
-    const resultState = await mutateTransaction(
-      "upsertAndSendKitchen",
-      {
-        ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
-        draft,
-      },
-      undefined,
-      { kotPrinted: true },
+    const previewLines = items.flatMap((line) => {
+      const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
+      if (unsentQuantity <= 0) return [];
+      return [
+        {
+          id: `preview-${line.p.id}`,
+          name: line.p.name,
+          category: line.p.category,
+          quantity: unsentQuantity,
+          unitPrice: line.p.price,
+          productionStation: line.p.productionStation ?? "NONE",
+          ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
+        },
+      ];
+    });
+    if (!previewLines.length && activeOrder) {
+      setPrintNotice("No new kitchen items require a KOT amendment.");
+      setPrintNoticeType("idle");
+      return {
+        order: activeOrder,
+        state: transactionState,
+        printResult: null,
+      };
+    }
+    const preflight = SerametPrintService.createProductionTicketJobs(
+      profile,
+      { ...buildPrintOrder(tableNo), lines: previewLines },
+      printJobs,
+      amendmentType,
     );
+    if (!preflight.jobs.length) {
+      throw new Error(
+        `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
+      );
+    }
+
+    const resultState = await mutateTransaction("upsertAndSendKitchen", {
+      ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
+      draft,
+    });
     const authoritativeOrder = activeOrder?.id
       ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
       : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
-    if (!authoritativeOrder) {
-      throw new Error("Kitchen order did not receive an authoritative identity");
+    if (!authoritativeOrder || !resultState?.state) {
+      throw new Error("Kitchen order did not receive an authoritative identity.");
     }
     const ticketLines = authoritativeOrder.lines.filter(
       (line) => line.sentAt && !sentLineIds.has(line.id),
     );
     if (ticketLines.length === 0) {
-      clearCurrentOrder("No new kitchen items required printing.", "idle");
-      return;
+      setActiveOrderId(authoritativeOrder.id);
+      setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
+      setPrintNotice("No new kitchen items require a KOT amendment.");
+      setPrintNoticeType("idle");
+      return {
+        order: authoritativeOrder,
+        state: resultState.state,
+        printResult: null,
+      };
     }
-    const result = sendKitchenTickets(
+
+    const printResult = sendKitchenTickets(
       {
         ...buildPrintOrder(tableNo),
         orderId: authoritativeOrder.id,
@@ -801,24 +1163,42 @@ function POS() {
       },
       amendmentType,
     );
-    clearCurrentOrder(
-      result.jobs.length > 0
-        ? "Kitchen Order Ticket Printed"
-        : `Order sent to kitchen. ${result.skipped[0] ?? "Printing is not configured."}`,
-      result.jobs.length > 0 ? "success" : "warning",
-    );
+    setTrackedPrint({
+      jobIds: printResult.jobs.map((job) => job.id),
+      label: amendmentType === "ADDITION" ? "Kitchen amendment" : "Kitchen ticket",
+    });
+    setActiveOrderId(authoritativeOrder.id);
+    setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
+    if (printResult.jobs.length > 0) {
+      setPrintNotice(
+        amendmentType === "ADDITION"
+          ? "Kitchen amendment queued — waiting for delivery confirmation."
+          : "Kitchen ticket queued — waiting for delivery confirmation.",
+      );
+      setPrintNoticeType("idle");
+    } else {
+      setPrintNotice(
+        `Order reached kitchen state, but KOT delivery was not queued: ${printResult.skipped[0] ?? "check printer/KDS routing"}.`,
+      );
+      setPrintNoticeType("warning");
+    }
+    return {
+      order: authoritativeOrder,
+      state: resultState.state,
+      printResult,
+    };
   };
 
   const queueKitchenTickets = () => {
     if (!items.length) return;
-    if (selectedChannel?.requiresTable && !activeOrder?.table) {
+    if (selectedChannel?.requiresTable && !orderTable) {
       setTablePickerOpen(true);
+      setPrintNotice("Select a table before sending this dine-in order to kitchen.");
+      setPrintNoticeType("warning");
       return;
     }
     void queueKitchenTicketsForTable().catch((error: unknown) => {
-      setPrintNotice(
-        error instanceof Error ? error.message : "The kitchen order could not be sent.",
-      );
+      setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
       setPrintNoticeType("warning");
     });
   };
@@ -839,10 +1219,16 @@ function POS() {
         const result = printCustomerDocument(orderForPrint, "BILL");
         clearCurrentOrder(
           result.jobs.length > 0
-            ? "Customer bill printed and moved to Invoices."
-            : `Invoice created without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
-          result.jobs.length > 0 ? "success" : "warning",
+            ? "Customer bill queued for the configured printer. Delivery is not yet confirmed."
+            : `Invoice created without a bill print job. ${result.skipped[0] ?? "Printing is not configured."}`,
+          result.jobs.length > 0 ? "idle" : "warning",
         );
+        if (result.jobs.length > 0) {
+          setTrackedPrint({
+            jobIds: result.jobs.map((job) => job.id),
+            label: "Customer bill",
+          });
+        }
         return;
       }
       clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
@@ -864,10 +1250,17 @@ function POS() {
     if (paid < total && paymentMode !== "partial") return;
     if (paymentSubmitRef.current || paymentBusy) return;
     if (!paymentInvoiceId || !paymentOrderId) {
-      setPrintNotice("Payment session is no longer valid. Reopen payment from the invoice.");
+      setPrintNotice("Payment session expired. Reopen payment for this invoice.");
       setPrintNoticeType("warning");
       return;
     }
+    const stagedPayments = payments.filter((payment) => payment.status === "staged");
+    if (!stagedPayments.length) {
+      setPrintNotice("Add a payment component before confirming.");
+      setPrintNoticeType("warning");
+      return;
+    }
+
     paymentSubmitRef.current = true;
     setPaymentBusy(true);
     try {
@@ -881,27 +1274,41 @@ function POS() {
         (bill.branchId ?? branchId) !== branchId ||
         !["OPEN", "PARTIAL", "PENDING"].includes(bill.status)
       ) {
-        throw new Error("Payment session is no longer valid. Reopen payment from the invoice.");
+        throw new Error("Payment session expired. Reopen payment for this invoice.");
       }
 
       const providerJobs: Array<{
+        paymentId: string;
+        methodName: string;
         invoiceId: string;
         methodCode: string;
         amount: number;
         operation: "prompt" | "qr";
       }> = [];
-      let hasPendingVerification = false;
-      for (const payment of payments) {
+      let hasPendingVerification = payments.some((payment) => payment.status === "pending");
+      let committedThisAttempt = 0;
+
+      for (const payment of stagedPayments) {
         const method = paymentMethods.find((item) => item.id === payment.methodId);
-        if (!method) continue;
+        if (!method) {
+          updatePaymentStatus(payment.id, "failed", "Payment method is no longer configured.");
+          setPrintNotice(`${payment.method} is no longer configured. Choose another method.`);
+          setPrintNoticeType("warning");
+          return;
+        }
+        const availability = paymentMethodAvailability(method);
+        if (!availability.usable) {
+          updatePaymentStatus(payment.id, "failed", availability.reason);
+          setPrintNotice(availability.reason || `${method.displayName} is unavailable.`);
+          setPrintNoticeType("warning");
+          return;
+        }
+
         const providerOperation = method.metadata["providerOperation"];
         if (providerOperation === "PAYMENT_PROMPT" || providerOperation === "QR_PAYMENT") {
-          if (backendStatus !== "synced") {
-            setPrintNotice(`${method.displayName} cannot be initiated while the POS is offline.`);
-            setPrintNoticeType("warning");
-            return;
-          }
           providerJobs.push({
+            paymentId: payment.id,
+            methodName: method.displayName,
             invoiceId: bill.id,
             methodCode: method.code,
             amount: payment.amount,
@@ -910,11 +1317,7 @@ function POS() {
           hasPendingVerification = true;
           continue;
         }
-        if (backendStatus !== "synced" && method.category !== "CASH") {
-          setPrintNotice(`${method.displayName} cannot be confirmed while the POS is offline.`);
-          setPrintNoticeType("warning");
-          return;
-        }
+
         try {
           const result = await mutateTransaction("applyConfiguredPayment", {
             invoiceId: bill.id,
@@ -932,19 +1335,53 @@ function POS() {
             terminalId,
           });
           nextState = result?.state ?? nextState;
+          const pendingMethod = ["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(
+            method.category,
+          );
+          updatePaymentStatus(payment.id, pendingMethod ? "pending" : "confirmed");
+          committedThisAttempt += 1;
+          if (pendingMethod) hasPendingVerification = true;
         } catch (error) {
-          setPrintNotice(error instanceof Error ? error.message : "Payment could not be recorded.");
+          const message = cashierErrorMessage(
+            error,
+            `${method.displayName} could not be recorded.`,
+          );
+          updatePaymentStatus(payment.id, "failed", message);
+          await syncFromBackend().catch(() => undefined);
+          setPrintNotice(
+            committedThisAttempt
+              ? `${committedThisAttempt} payment component(s) were recorded, but ${method.displayName} failed: ${message}`
+              : message,
+          );
           setPrintNoticeType("warning");
           return;
         }
-        if (["BANK_TRANSFER", "DIGITAL_WALLET", "CREDIT"].includes(method.category)) {
-          hasPendingVerification = true;
+      }
+
+      for (const job of providerJobs) {
+        try {
+          await initiateProviderPayment(job);
+          updatePaymentStatus(job.paymentId, "pending");
+          committedThisAttempt += 1;
+        } catch (error) {
+          const message = cashierErrorMessage(error, `${job.methodName} request failed.`);
+          updatePaymentStatus(job.paymentId, "failed", message);
+          await syncFromBackend().catch(() => undefined);
+          setPrintNotice(
+            committedThisAttempt
+              ? `${committedThisAttempt} payment component(s) were recorded, but ${job.methodName} failed: ${message}`
+              : message,
+          );
+          setPrintNoticeType("warning");
+          return;
         }
       }
-      for (const job of providerJobs) await initiateProviderPayment(job);
+
       if (providerJobs.length) nextState = (await syncFromBackend())?.state ?? nextState;
       const updatedBill = nextState?.bills.find((candidate) => candidate.id === bill.id);
       const completedInvoice = updatedBill?.paymentStatus === "PAID";
+      const partialInvoice = updatedBill?.paymentStatus === "PARTIAL";
+
       if (
         receiptOptions["Print"] &&
         completedInvoice &&
@@ -955,7 +1392,7 @@ function POS() {
         const paidOrder = nextState?.orders.find((candidate) => candidate.id === paymentOrderId);
         if (!receipt || !paidOrder || !updatedBill) {
           throw new Error(
-            "Payment was confirmed but the authoritative receipt is not available yet",
+            "Payment is confirmed, but the authoritative receipt is not available yet.",
           );
         }
         const result = printCustomerDocument(
@@ -997,24 +1434,39 @@ function POS() {
         );
         setPrintNotice(
           result.jobs.length > 0
-            ? "Receipt printed."
-            : `Payment confirmed without printing. ${result.skipped[0] ?? "Printing is not configured."}`,
+            ? "Payment confirmed. Receipt queued for the configured customer printer; delivery is not yet confirmed."
+            : `Payment confirmed without a receipt print job: ${result.skipped[0] ?? "printing is not configured"}.`,
         );
-        setPrintNoticeType(result.jobs.length > 0 ? "success" : "warning");
+        setPrintNoticeType(result.jobs.length > 0 ? "idle" : "warning");
+        if (result.jobs.length > 0) {
+          setTrackedPrint({
+            jobIds: result.jobs.map((job) => job.id),
+            label: "Receipt",
+          });
+        }
       } else if (backendStatus !== "synced" && completedInvoice) {
         setPrintNotice(`Cash sale saved offline. ${pendingSyncCount + 1} command(s) pending sync.`);
         setPrintNoticeType("warning");
       } else if (hasPendingVerification) {
         setPrintNotice(
           providerJobs.length
-            ? "Payment request sent. The invoice remains open until provider confirmation."
-            : "Payment recorded for verification. No paid receipt has been created.",
+            ? "Payment request sent. The invoice remains pending until provider confirmation."
+            : "Payment component recorded for verification. No final receipt has been created.",
         );
         setPrintNoticeType("warning");
+      } else if (partialInvoice) {
+        setPrintNotice("Partial payment recorded. The invoice remains open for the balance.");
+        setPrintNoticeType("success");
       }
-      setPaymentConfirmed(Boolean(completedInvoice && !hasPendingVerification));
+
+      setPaymentConfirmed(
+        Boolean(
+          (completedInvoice || (paymentMode === "partial" && partialInvoice)) &&
+          !hasPendingVerification,
+        ),
+      );
     } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "Payment could not be completed.");
+      setPrintNotice(cashierErrorMessage(error, "Payment could not be completed."));
       setPrintNoticeType("warning");
     } finally {
       paymentSubmitRef.current = false;
@@ -1055,6 +1507,33 @@ function POS() {
     }
   };
 
+  const selectOrOpenTable = (table: (typeof floorTables)[number]) => {
+    if (table.orderId) {
+      if (table.orderId !== activeOrderId && hasUnsentItems) {
+        setPrintNotice(
+          `Table ${table.no} already has ${table.orderId}. Your current unsent items were kept; start a new order or send/hold them before switching.`,
+        );
+        setPrintNoticeType("warning");
+        return;
+      }
+      setActiveOrderId(table.orderId);
+      setSelectedTableNo(table.no);
+      setTablePickerOpen(false);
+      setPrintNotice(`Opened ${table.orderId} for Table ${table.no}.`);
+      setPrintNoticeType("idle");
+      return;
+    }
+    if (channelLocked && activeOrder?.table && activeOrder.table !== table.no) {
+      setPrintNotice("Table assignment is locked after an order has been sent to production.");
+      setPrintNoticeType("warning");
+      return;
+    }
+    setSelectedTableNo(table.no);
+    setTablePickerOpen(false);
+    setPrintNotice(`Table ${table.no} selected. Review the order, then press Send kitchen.`);
+    setPrintNoticeType("idle");
+  };
+
   const closePaidOrder = () => {
     setActiveOrderId(null);
     setLines({});
@@ -1062,6 +1541,7 @@ function POS() {
     setItemNotes({});
     setPaymentReference("");
     setPayments([]);
+    setPreviouslyPaid(0);
     setTendered(0);
     setCashReceived(0);
     setTenderCurrency(tenant.defaultCurrency);
@@ -1086,16 +1566,30 @@ function POS() {
           <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
             Seramet POS
           </span>
-          <Status>Occupied</Status>
+          <Status>{workflowState}</Status>
           <span className="text-[13px] text-muted-foreground">
             {branch} - {role} {currentUser.name}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Status>Present</Status>
-          <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
-            {orderTable ? `Table ${orderTable}` : "Table not selected"}
-          </span>
+          <button
+            type="button"
+            disabled={!selectedChannel?.requiresTable}
+            onClick={() => setTablePickerOpen(true)}
+            className={cn(
+              "rounded-md border px-2 py-1 text-[12px] font-semibold transition-colors",
+              orderTable
+                ? "border-primary/30 bg-accent text-accent-foreground"
+                : "border-border bg-secondary",
+              !selectedChannel?.requiresTable && "cursor-default opacity-70",
+            )}
+          >
+            {selectedChannel?.requiresTable
+              ? orderTable
+                ? `Table ${orderTable}`
+                : "Select table"
+              : "No table required"}
+          </button>
           <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
             {selectedChannel?.displayName ?? "No channel configured"}
           </span>
@@ -1120,7 +1614,7 @@ function POS() {
             {connectionLabel(backendStatus, pendingSyncCount)}
           </span>
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> 12:46
+            <Clock className="h-3.5 w-3.5" /> {clockLabel}
           </span>
         </div>
       </div>
@@ -1154,9 +1648,13 @@ function POS() {
             {orderChannels.map((source) => (
               <button
                 key={source.id}
-                onClick={() => setOrderSource(source.id)}
+                onClick={() => {
+                  if (!channelLocked) setOrderSource(source.id);
+                }}
+                disabled={channelLocked && orderSource !== source.id}
+                title={channelLocked ? "Order channel is locked after kitchen send" : undefined}
                 className={cn(
-                  "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors",
+                  "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
                   orderSource === source.id
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
@@ -1167,12 +1665,20 @@ function POS() {
             ))}
             <button
               type="button"
+              onClick={startNewOrder}
+              className="ml-auto inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md bg-primary px-3 text-[12px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <Plus className="h-4 w-4" />
+              New order
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveOrdersOpen((open) => !open)}
               className={cn(
-                "ml-auto inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
+                "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
                 activeOrdersOpen
                   ? "bg-primary text-primary-foreground"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90",
+                  : "bg-secondary text-foreground hover:bg-secondary/80",
               )}
             >
               <Plus className="h-4 w-4" />
@@ -1183,7 +1689,7 @@ function POS() {
             </button>
             {activeOrdersOpen && (
               <div className="absolute right-1 top-12 z-30 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-border bg-card p-2 shadow-xl">
-                <div className="px-2 py-1 text-[12px] font-bold">Held and kitchen orders</div>
+                <div className="px-2 py-1 text-[12px] font-bold">Active orders</div>
                 <div className="max-h-80 space-y-1 overflow-y-auto">
                   {activePosOrders.length === 0 && (
                     <div className="rounded-md border border-dashed border-border px-3 py-4 text-[12px] text-muted-foreground">
@@ -1208,7 +1714,8 @@ function POS() {
                         <Status>{order.status.replaceAll("_", " ")}</Status>
                       </div>
                       <div className="mt-1 truncate text-[12px] text-muted-foreground">
-                        {order.customer} - {order.lines.length} items - {ksh(order.total)}
+                        {order.table ? `Table ${order.table}` : order.channel} - {order.customer} -{" "}
+                        {order.lines.length} lines - {ksh(order.total)}
                       </div>
                     </button>
                   ))}
@@ -1219,9 +1726,33 @@ function POS() {
           <div className="mb-3 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                const exact = branchMenu.find((product) =>
+                  [product.barcode, product.sku, product.itemCode].some(
+                    (value) =>
+                      value?.trim().toLocaleLowerCase() === searchQuery.trim().toLocaleLowerCase(),
+                  ),
+                );
+                if (!exact || exact.out) return;
+                event.preventDefault();
+                bump(exact.id, 1);
+                setSearchQuery("");
+              }}
               placeholder="Search dishes or scan barcode"
               className="w-full bg-transparent text-[13px] outline-none"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
           </div>
           {isOnlineSource && (
             <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
@@ -1238,6 +1769,11 @@ function POS() {
             <div className="mb-3 rounded-lg border border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
               No sellable menu items are configured for this branch. Use Setup Centre or Menu Import
               before taking orders.
+            </div>
+          )}
+          {branchMenu.length > 0 && visible.length === 0 && (
+            <div className="mb-3 rounded-lg border border-dashed border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
+              No menu items match “{searchQuery}” in {cat}.
             </div>
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
@@ -1432,7 +1968,9 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder}>Hold</Btn>
+              <Btn onClick={holdOrder} disabled={!items.length || activeOrderHasSentLines}>
+                Hold
+              </Btn>
               {canPrintBill ? (
                 <>
                   <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
@@ -1446,22 +1984,44 @@ function POS() {
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets}>Send kitchen</Btn>
+              <Btn onClick={queueKitchenTickets} disabled={!items.length}>
+                Send kitchen
+              </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={paymentBusy}
+                disabled={paymentBusy || !items.length || !dineInPaymentReady}
+                title={
+                  !dineInPaymentReady && selectedChannel?.requiresTable
+                    ? "Select a table and send all items to kitchen first"
+                    : undefined
+                }
               >
-                {paymentBusy ? "Preparing..." : `Pay ${ksh(total)}`}
+                {paymentBusy
+                  ? "Preparing..."
+                  : !dineInPaymentReady && selectedChannel?.requiresTable
+                    ? "Send kitchen first"
+                    : `Pay ${ksh(total)}`}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {paymentMethods.map((method) => (
-                <span key={method.id} className="rounded border border-border px-1.5 py-0.5">
-                  {method.displayName}
-                </span>
-              ))}
+              {paymentMethods.map((method) => {
+                const availability = paymentMethodAvailability(method);
+                return (
+                  <span
+                    key={method.id}
+                    className={cn(
+                      "rounded border px-1.5 py-0.5",
+                      availability.usable
+                        ? "border-border"
+                        : "border-warning/30 bg-warning-soft text-warning",
+                    )}
+                  >
+                    {method.displayName}: {availability.label}
+                  </span>
+                );
+              })}
               <span className="rounded border border-border px-1.5 py-0.5">Split</span>
             </div>
             <div
@@ -1483,7 +2043,9 @@ function POS() {
                 <div className="min-w-0">
                   <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
                   <div className="mt-0.5 text-[11px]">
-                    Print routing continues in the background.
+                    {trackedPrint
+                      ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
+                      : "Operational feedback and printing state appear here."}
                   </div>
                 </div>
               </div>
@@ -1496,7 +2058,7 @@ function POS() {
           <DialogHeader>
             <DialogTitle>Select table</DialogTitle>
             <DialogDescription>
-              Choose the guest table before sending Order {currentOrderNumber} to kitchen.
+              Choose a free table for this order, or open the existing order on an occupied table.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -1515,18 +2077,7 @@ function POS() {
                     key={table.no}
                     type="button"
                     disabled={table.state === "Unavailable"}
-                    onClick={() => {
-                      setSelectedTableNo(table.no);
-                      setTablePickerOpen(false);
-                      void queueKitchenTicketsForTable(table.no).catch((error: unknown) => {
-                        setPrintNotice(
-                          error instanceof Error
-                            ? error.message
-                            : "The kitchen order could not be sent.",
-                        );
-                        setPrintNoticeType("warning");
-                      });
-                    }}
+                    onClick={() => selectOrOpenTable(table)}
                     className={cn(
                       "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
                       tableStateStyle[table.state],
@@ -1550,9 +2101,25 @@ function POS() {
                           {table.guests ?? 0}
                         </span>
                       </div>
-                      {table.amount && (
+                      {table.orderId && (
+                        <div className="flex justify-between gap-2">
+                          <span>Order</span>
+                          <span className="num truncate font-semibold text-foreground">
+                            {table.orderId}
+                          </span>
+                        </div>
+                      )}
+                      {table.orderStatus && (
+                        <div className="flex justify-between gap-2">
+                          <span>Status</span>
+                          <span className="font-semibold text-foreground">
+                            {table.orderStatus.replaceAll("_", " ")}
+                          </span>
+                        </div>
+                      )}
+                      {table.amount !== undefined && (
                         <div className="flex justify-between">
-                          <span>Open bill</span>
+                          <span>Open value</span>
                           <span className="num font-semibold text-foreground">
                             {ksh(table.amount)}
                           </span>
@@ -1586,8 +2153,9 @@ function POS() {
                 </div>
               </dl>
               <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                Clicking a table immediately sends this order to kitchen and updates the Orders
-                page.
+                Selecting a free table does not send the order automatically. Review the order, then
+                press Send kitchen. Occupied tables open their existing order instead of creating a
+                duplicate.
               </div>
             </aside>
           </div>
@@ -1639,7 +2207,28 @@ function POS() {
                       key={payment.id}
                       className="flex items-center justify-between rounded-md bg-card px-2.5 py-2 text-[12px]"
                     >
-                      <span className="font-semibold">{payment.method}</span>
+                      <span className="min-w-0 font-semibold">
+                        <span className="block truncate">{payment.method}</span>
+                        <span
+                          className={cn(
+                            "mt-0.5 block text-[10px] font-semibold uppercase",
+                            payment.status === "failed"
+                              ? "text-danger"
+                              : payment.status === "confirmed"
+                                ? "text-success"
+                                : payment.status === "pending"
+                                  ? "text-warning"
+                                  : "text-muted-foreground",
+                          )}
+                        >
+                          {payment.status}
+                        </span>
+                        {payment.error && (
+                          <span className="mt-0.5 block text-[10px] font-normal text-danger">
+                            {payment.error}
+                          </span>
+                        )}
+                      </span>
                       <span className="num text-right">
                         <span className="block">{ksh(payment.amount)}</span>
                         {payment.fxQuote && (
@@ -1652,14 +2241,15 @@ function POS() {
                           </span>
                         )}
                       </span>
-                      {!paymentConfirmed && (
-                        <button
-                          onClick={() => removePayment(payment.id)}
-                          className="text-muted-foreground hover:text-danger"
-                        >
-                          Remove
-                        </button>
-                      )}
+                      {!paymentConfirmed &&
+                        (payment.status === "staged" || payment.status === "failed") && (
+                          <button
+                            onClick={() => removePayment(payment.id)}
+                            className="text-muted-foreground hover:text-danger"
+                          >
+                            Remove
+                          </button>
+                        )}
                     </div>
                   ))}
                 </div>
@@ -1678,22 +2268,32 @@ function POS() {
                       : `Partial payment recorded with ${ksh(due)} balance.`}
                   </p>
                   <div className="mt-4 grid gap-2 text-[12px]">
-                    {Object.entries(receiptOptions)
-                      .filter(([, enabled]) => enabled)
-                      .map(([option]) => (
-                        <div
-                          key={option}
-                          className="flex items-center justify-between rounded-md bg-card px-3 py-2"
-                        >
-                          <span className="inline-flex items-center gap-2 font-semibold">
-                            <ReceiptText className="h-4 w-4" /> {option} receipt
-                          </span>
-                          <span className="text-success">Queued</span>
-                        </div>
-                      ))}
-                    {Object.values(receiptOptions).every((enabled) => !enabled) && (
-                      <div className="rounded-md bg-card px-3 py-2 font-semibold">
-                        Receipt skipped
+                    {paid >= total ? (
+                      <>
+                        {Object.entries(receiptOptions)
+                          .filter(([, enabled]) => enabled)
+                          .map(([option]) => (
+                            <div
+                              key={option}
+                              className="flex items-center justify-between rounded-md bg-card px-3 py-2"
+                            >
+                              <span className="inline-flex items-center gap-2 font-semibold">
+                                <ReceiptText className="h-4 w-4" /> {option} receipt
+                              </span>
+                              <span className="text-success">
+                                {option === "Print" ? "Requested" : "Selected"}
+                              </span>
+                            </div>
+                          ))}
+                        {Object.values(receiptOptions).every((enabled) => !enabled) && (
+                          <div className="rounded-md bg-card px-3 py-2 font-semibold">
+                            Receipt skipped
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="rounded-md bg-card px-3 py-2 font-semibold text-warning">
+                        Invoice remains partially paid. A final receipt is not issued yet.
                       </div>
                     )}
                   </div>
@@ -1711,20 +2311,28 @@ function POS() {
                       Payment method
                     </div>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {paymentMethods.map((method) => (
-                        <button
-                          key={method.id}
-                          onClick={() => setPaymentMethod(method.id)}
-                          className={cn(
-                            "h-12 rounded-md border px-3 text-[13px] font-semibold",
-                            paymentMethod === method.id
-                              ? "border-primary bg-accent text-accent-foreground"
-                              : "border-border hover:bg-secondary",
-                          )}
-                        >
-                          {method.displayName}
-                        </button>
-                      ))}
+                      {paymentMethods.map((method) => {
+                        const availability = paymentMethodAvailability(method);
+                        return (
+                          <button
+                            key={method.id}
+                            onClick={() => setPaymentMethod(method.id)}
+                            disabled={!availability.usable}
+                            title={availability.reason || undefined}
+                            className={cn(
+                              "min-h-12 rounded-md border px-3 py-2 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-50",
+                              paymentMethod === method.id
+                                ? "border-primary bg-accent text-accent-foreground"
+                                : "border-border hover:bg-secondary",
+                            )}
+                          >
+                            <span className="block">{method.displayName}</span>
+                            <span className="mt-0.5 block text-[10px] font-medium text-muted-foreground">
+                              {availability.label}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                   {paymentCurrencies.length > 1 && (
@@ -1803,7 +2411,11 @@ function POS() {
                     <Btn
                       className="self-end"
                       onClick={() => void addPayment()}
-                      disabled={paymentBusy}
+                      disabled={
+                        paymentBusy ||
+                        !selectedPaymentMethod ||
+                        !paymentMethodAvailability(selectedPaymentMethod).usable
+                      }
                     >
                       {paymentBusy ? "Checking rate" : "Add payment"}
                     </Btn>
@@ -1826,41 +2438,43 @@ function POS() {
                       />
                     </label>
                   )}
-                  {selectedPaymentMethod?.requiresReference && (
-                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                      {selectedPaymentMethod.displayName} transaction reference
-                      <input
-                        value={paymentReference}
-                        onChange={(event) =>
-                          setPaymentReference(
-                            event.target.value
-                              .replace(/[^a-z0-9]/gi, "")
-                              .toUpperCase()
-                              .slice(0, 32),
-                          )
-                        }
-                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold uppercase text-foreground outline-none"
-                        placeholder="Transaction reference"
-                      />
-                    </label>
-                  )}
-                  {selectedPaymentMethod?.requiresCustomer &&
-                    selectedPaymentMethod.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
+                  {selectedPaymentMethod &&
+                    (selectedPaymentMethod.requiresReference ||
+                      selectedPaymentMethod.category === "BANK_TRANSFER" ||
+                      (selectedPaymentMethod.category === "DIGITAL_WALLET" &&
+                        selectedPaymentMethod.metadata["providerOperation"] !== "PAYMENT_PROMPT" &&
+                        selectedPaymentMethod.metadata["providerOperation"] !== "QR_PAYMENT")) && (
                       <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                        Customer phone
+                        {selectedPaymentMethod.displayName} transaction reference
                         <input
-                          inputMode="tel"
-                          value={customerPhone}
+                          value={paymentReference}
                           onChange={(event) =>
-                            setCustomerPhone(
-                              event.target.value.replace(/[^+0-9]/g, "").slice(0, 16),
+                            setPaymentReference(
+                              event.target.value
+                                .replace(/[^a-z0-9]/gi, "")
+                                .toUpperCase()
+                                .slice(0, 32),
                             )
                           }
-                          className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none"
-                          placeholder="2547XXXXXXXX"
+                          className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold uppercase text-foreground outline-none"
+                          placeholder="Transaction reference"
                         />
                       </label>
                     )}
+                  {selectedPaymentMethod?.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
+                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                      Customer phone
+                      <input
+                        inputMode="tel"
+                        value={customerPhone}
+                        onChange={(event) =>
+                          setCustomerPhone(event.target.value.replace(/[^+0-9]/g, "").slice(0, 16))
+                        }
+                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none"
+                        placeholder="2547XXXXXXXX"
+                      />
+                    </label>
+                  )}
                   <div>
                     <div className="mb-2 text-[12px] font-semibold text-muted-foreground">
                       Receipt options
@@ -1893,7 +2507,15 @@ function POS() {
                   )}
                   <div className="flex justify-end gap-2 border-t border-border pt-4">
                     <Btn onClick={() => setPaymentOpen(false)}>Cancel</Btn>
-                    <Btn variant="primary" onClick={confirmPayment} disabled={paymentBusy}>
+                    <Btn
+                      variant="primary"
+                      onClick={confirmPayment}
+                      disabled={
+                        paymentBusy ||
+                        payments.every((payment) => payment.status !== "staged") ||
+                        (paid < total && paymentMode !== "partial")
+                      }
+                    >
                       Confirm{" "}
                       {paymentMode === "partial"
                         ? "partial"
@@ -1909,6 +2531,23 @@ function POS() {
       </Dialog>
     </AppShell>
   );
+}
+
+function cashierErrorMessage(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  if (/open a cash drawer/i.test(message)) {
+    return "Cash is unavailable: open a cash drawer in Payment Control, then retry.";
+  }
+  if (/changed on another terminal|conflict/i.test(message)) {
+    return "This order changed on another terminal. Reopen it before continuing.";
+  }
+  if (/printer|KOT|KDS|routing/i.test(message)) {
+    return message;
+  }
+  if (/reference/i.test(message)) {
+    return message;
+  }
+  return message || fallback;
 }
 
 function connectionLabel(status: string, pending: number) {
