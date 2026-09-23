@@ -257,6 +257,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   upsertReconciliationRule: permissions.reconciliationManage,
   setReconciliationRuleActive: permissions.reconciliationManage,
   recordRiderCollection: permissions.paymentsCollect,
+  recordDirectCompanyCollection: permissions.paymentsCollect,
   recordRiderRemittance: permissions.paymentsReconcile,
   resolveReconciliationException: permissions.reconciliationManage,
   openPaymentDrawer: permissions.cashOpen,
