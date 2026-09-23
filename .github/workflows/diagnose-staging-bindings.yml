@@ -13,7 +13,7 @@ jobs:
     environment: staging
     timeout-minutes: 5
     steps:
-      - name: Inspect existing Worker bindings
+      - name: Inspect existing Worker bindings and account resources
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -24,17 +24,37 @@ jobs:
             echo "Cloudflare deployment credentials are not configured in the staging environment."
             exit 2
           fi
-          curl --fail-with-body --silent --show-error \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/seramet-staging/settings" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -o /tmp/worker-settings.json
+
+          api() {
+            local path="$1"
+            local out="$2"
+            curl --fail-with-body --silent --show-error \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/${path}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -o "${out}"
+          }
+
+          api "workers/scripts/seramet-staging/settings" /tmp/worker-settings.json
+          api "workers/scripts" /tmp/scripts.json || true
+          api "queues?per_page=100" /tmp/queues.json || true
+          api "r2/buckets?per_page=100" /tmp/r2.json || true
+          api "hyperdrive/configs?per_page=100" /tmp/hyperdrive.json || true
+
           node <<'NODE'
           const fs = require("fs");
-          const payload = JSON.parse(fs.readFileSync("/tmp/worker-settings.json", "utf8"));
-          if (!payload.success || !payload.result) {
+
+          const read = (path) => {
+            try { return JSON.parse(fs.readFileSync(path, "utf8")); }
+            catch { return null; }
+          };
+          const usefulName = (value) => /seramet|staging|scanner|malware/i.test(String(value ?? ""));
+
+          const settings = read("/tmp/worker-settings.json");
+          if (!settings?.success || !settings.result) {
             console.error("Cloudflare settings lookup did not succeed.");
             process.exit(3);
           }
+
           const wanted = new Set([
             "SERAMET_HYPERDRIVE",
             "SERAMET_WORK_QUEUE",
@@ -46,7 +66,7 @@ jobs:
             "SERAMET_ALLOWED_ORIGINS",
             "SERAMET_JWT_SECRET",
           ]);
-          const safe = (payload.result.bindings ?? [])
+          const bindings = (settings.result.bindings ?? [])
             .filter((binding) => wanted.has(binding.name))
             .map((binding) => ({
               name: binding.name,
@@ -61,5 +81,43 @@ jobs:
                 : {}),
               ...(binding.type === "service" && binding.service ? { service: binding.service } : {}),
             }));
-          console.log(JSON.stringify({ bindings: safe }, null, 2));
+
+          const scriptsPayload = read("/tmp/scripts.json");
+          const scripts = Array.isArray(scriptsPayload?.result)
+            ? scriptsPayload.result
+                .map((row) => row.id ?? row.name)
+                .filter(usefulName)
+            : [];
+
+          const queuesPayload = read("/tmp/queues.json");
+          const queueRows = Array.isArray(queuesPayload?.result)
+            ? queuesPayload.result
+            : Array.isArray(queuesPayload?.result?.queues)
+              ? queuesPayload.result.queues
+              : [];
+          const queues = queueRows
+            .map((row) => ({ id: row.queue_id ?? row.id, name: row.queue_name ?? row.name }))
+            .filter((row) => usefulName(row.name));
+
+          const r2Payload = read("/tmp/r2.json");
+          const r2Rows = Array.isArray(r2Payload?.result?.buckets)
+            ? r2Payload.result.buckets
+            : Array.isArray(r2Payload?.result)
+              ? r2Payload.result
+              : [];
+          const buckets = r2Rows
+            .map((row) => ({ name: row.name }))
+            .filter((row) => usefulName(row.name));
+
+          const hyperPayload = read("/tmp/hyperdrive.json");
+          const hyperRows = Array.isArray(hyperPayload?.result)
+            ? hyperPayload.result
+            : Array.isArray(hyperPayload?.result?.configs)
+              ? hyperPayload.result.configs
+              : [];
+          const hyperdrives = hyperRows
+            .map((row) => ({ id: row.id, name: row.name }))
+            .filter((row) => usefulName(row.name) || row.id === "c8cc4b932f564daeb71047422ea6c42f");
+
+          console.log(JSON.stringify({ bindings, scripts, queues, buckets, hyperdrives }, null, 2));
           NODE
