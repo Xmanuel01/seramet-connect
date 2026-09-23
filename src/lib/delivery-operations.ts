@@ -56,6 +56,8 @@ export function isOwnDelivery(order: TransactionOrder, channel?: OrderChannelDef
 
 export function collectionMethodLabel(method?: DeliveryCollectionMethod) {
   switch (method) {
+    case "CUSTOMER_DUE":
+      return "Customer due";
     case "COMPANY_TILL_DIRECT":
       return "Company Till direct";
     case "RIDER_CASH":
