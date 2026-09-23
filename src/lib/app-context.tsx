@@ -132,7 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     | { status: "LOADING" }
     | { status: "DEVELOPMENT" }
     | { status: "AUTHENTICATED"; actor: AuthoritativeActor }
-    | { status: "ERROR"; message: string }
+    | { status: "ERROR"; kind: BootstrapFailureKind; message: string }
   >({ status: "LOADING" });
 
   useEffect(() => {
@@ -143,26 +143,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .catch((error) => {
         if (!active) return;
+        const failure = bootstrapFailure(error);
         void fetch("/api/seramet/public/device/startup", { credentials: "same-origin" })
-          .then((response) => response.json() as Promise<{ state?: string }>)
+          .then(async (response) => {
+            if (!response.ok) throw new Error(`Device startup failed: ${response.status}`);
+            return response.json() as Promise<{ state?: string }>;
+          })
           .then((device) => {
             if (device.state === "ACTIVE") {
               window.location.assign("/pos-login");
               return;
             }
-            setBootstrap({
-              status: "ERROR",
-              message:
-                error instanceof Error ? error.message : "Secure session initialization failed",
-            });
+            setBootstrap({ status: "ERROR", ...failure });
           })
-          .catch(() =>
-            setBootstrap({
-              status: "ERROR",
-              message:
-                error instanceof Error ? error.message : "Secure session initialization failed",
-            }),
-          );
+          .catch(() => setBootstrap({ status: "ERROR", ...failure }));
       });
     return () => {
       active = false;
@@ -204,7 +198,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     );
   }
   if (bootstrap.status === "ERROR") {
-    return <SessionGate title="Authentication required" detail={bootstrap.message} />;
+    const serviceUnavailable = bootstrap.kind === "SERVICE_UNAVAILABLE";
+    return (
+      <SessionGate
+        title={
+          serviceUnavailable ? "Seramet is temporarily unavailable" : "Authentication required"
+        }
+        detail={bootstrap.message}
+        action={serviceUnavailable ? "RETRY" : "AUTH"}
+      />
+    );
   }
   return (
     <ConfiguredAppProvider
@@ -522,6 +525,28 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
   return null;
 }
 
+type BootstrapFailureKind = "AUTHENTICATION" | "SERVICE_UNAVAILABLE";
+
+class SerametBootstrapError extends Error {
+  constructor(
+    readonly kind: BootstrapFailureKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SerametBootstrapError";
+  }
+}
+
+function bootstrapFailure(error: unknown): { kind: BootstrapFailureKind; message: string } {
+  if (error instanceof SerametBootstrapError) {
+    return { kind: error.kind, message: error.message };
+  }
+  return {
+    kind: "SERVICE_UNAVAILABLE",
+    message: error instanceof Error ? error.message : "Secure session initialization failed",
+  };
+}
+
 type AuthoritativeActor = {
   id: string;
   name: string;
@@ -540,8 +565,13 @@ type AuthoritativeActor = {
 async function bootstrapAuthoritativeSession(
   repository: ConfigurationRepository,
 ): Promise<{ status: "DEVELOPMENT" } | { status: "AUTHENTICATED"; actor: AuthoritativeActor }> {
-  const healthResponse = await fetch("/api/seramet/health");
-  if (!healthResponse.ok) throw new Error("Seramet server is not ready");
+  const healthResponse = await fetch("/api/seramet/health", { cache: "no-store" });
+  if (!healthResponse.ok) {
+    throw new SerametBootstrapError(
+      "SERVICE_UNAVAILABLE",
+      await readinessFailureMessage(healthResponse.status),
+    );
+  }
   const health = (await healthResponse.json()) as { database?: string; environment?: string };
   if (health.database !== "authoritative") return { status: "DEVELOPMENT" };
   const token = getSerametAccessToken();
@@ -552,13 +582,45 @@ async function bootstrapAuthoritativeSession(
       : window.localStorage.getItem(sessionTenantStorageKey)?.trim();
   if (selectedTenant) headers["x-seramet-tenant-id"] = selectedTenant;
   const sessionResponse = await authenticatedFetch("/api/seramet/auth/session", { headers });
-  if (!sessionResponse.ok) throw new Error("A valid, non-revoked Seramet session is required");
+  if (!sessionResponse.ok) {
+    if (sessionResponse.status === 401 || sessionResponse.status === 403) {
+      throw new SerametBootstrapError(
+        "AUTHENTICATION",
+        "A valid, non-revoked Seramet session is required",
+      );
+    }
+    throw new SerametBootstrapError(
+      "SERVICE_UNAVAILABLE",
+      `Session service is temporarily unavailable (${sessionResponse.status}).`,
+    );
+  }
   const session = (await sessionResponse.json()) as { actor?: AuthoritativeActor };
-  if (!session.actor) throw new Error("Authenticated session did not resolve an actor");
+  if (!session.actor) {
+    throw new SerametBootstrapError(
+      "AUTHENTICATION",
+      "Authenticated session did not resolve an actor",
+    );
+  }
   const configurationResponse = await authenticatedFetch("/api/seramet/configuration", { headers });
-  if (!configurationResponse.ok) throw new Error("Tenant configuration could not be loaded");
+  if (!configurationResponse.ok) {
+    if (configurationResponse.status === 401 || configurationResponse.status === 403) {
+      throw new SerametBootstrapError(
+        "AUTHENTICATION",
+        "Your session does not have access to this restaurant configuration",
+      );
+    }
+    throw new SerametBootstrapError(
+      "SERVICE_UNAVAILABLE",
+      `Restaurant configuration is temporarily unavailable (${configurationResponse.status}).`,
+    );
+  }
   const configuration = (await configurationResponse.json()) as { configuration?: PlatformState };
-  if (!configuration.configuration) throw new Error("Tenant configuration response was incomplete");
+  if (!configuration.configuration) {
+    throw new SerametBootstrapError(
+      "SERVICE_UNAVAILABLE",
+      "Restaurant configuration response was incomplete",
+    );
+  }
   repository.configurePersistence({
     persistBrowser: false,
     onCommit: (state) => {
@@ -575,6 +637,25 @@ async function bootstrapAuthoritativeSession(
   });
   repository.replaceState(configuration.configuration);
   return { status: "AUTHENTICATED", actor: session.actor };
+}
+
+async function readinessFailureMessage(status: number) {
+  try {
+    const response = await fetch("/api/seramet/health/ready", { cache: "no-store" });
+    const payload = (await response.json()) as {
+      issues?: Array<{ code?: string; message?: string }>;
+    };
+    const issues = (payload.issues ?? [])
+      .map((issue) => issue.code?.trim())
+      .filter((code): code is string => Boolean(code))
+      .slice(0, 3);
+    if (issues.length > 0) {
+      return `Seramet services are not ready (${issues.join(", ")}). Please retry after the deployment is healthy.`;
+    }
+  } catch {
+    // Keep the public message generic when readiness diagnostics are unavailable.
+  }
+  return `Seramet services are temporarily unavailable (HTTP ${status}). Please retry shortly.`;
 }
 
 function authoritativeSession(
@@ -599,13 +680,21 @@ function authoritativeSession(
   };
 }
 
-function SessionGate({ title, detail }: { title: string; detail: string }) {
+function SessionGate({
+  title,
+  detail,
+  action = "NONE",
+}: {
+  title: string;
+  detail: string;
+  action?: "NONE" | "AUTH" | "RETRY";
+}) {
   return (
     <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
       <div className="w-full max-w-sm rounded-lg border border-border bg-card p-5 shadow-sm">
         <h1 className="text-base font-semibold">{title}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
-        {title === "Authentication required" && (
+        {action === "AUTH" && (
           <div className="mt-4 flex gap-2">
             <a
               href="/login"
@@ -620,6 +709,15 @@ function SessionGate({ title, detail }: { title: string; detail: string }) {
               Create restaurant
             </a>
           </div>
+        )}
+        {action === "RETRY" && (
+          <button
+            type="button"
+            className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
+            onClick={() => window.location.reload()}
+          >
+            Retry connection
+          </button>
         )}
       </div>
     </main>

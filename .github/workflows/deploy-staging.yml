@@ -2,6 +2,12 @@ name: Deploy staging
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: seramet-staging
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -42,5 +48,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify liveness
+        run: curl --fail-with-body --retry 8 --retry-delay 5 "${{ vars.SERAMET_PUBLIC_ORIGIN }}/api/seramet/health/live"
       - name: Verify readiness
-        run: curl --fail --retry 8 --retry-delay 5 "${{ vars.SERAMET_PUBLIC_ORIGIN }}/api/seramet/health/ready"
+        run: curl --fail-with-body --retry 8 --retry-delay 5 "${{ vars.SERAMET_PUBLIC_ORIGIN }}/api/seramet/health/ready"
