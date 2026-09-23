@@ -365,11 +365,18 @@ export type CustodyObligation = {
   currency: string;
   collectionMode: CustodyCollectionMode;
   amountDueMinor: MinorAmount;
+  merchantAmountDueMinor: MinorAmount;
   marketplaceFeeDueMinor: MinorAmount;
+  unclassifiedDueMinor: MinorAmount;
   collectedMinor: MinorAmount;
+  merchantCollectedMinor: MinorAmount;
+  marketplaceFeeCollectedMinor: MinorAmount;
+  unclassifiedCollectedMinor: MinorAmount;
   remittedMinor: MinorAmount;
+  paymentTransactionIds: string[];
   custodyAccountId?: string;
   marketplacePayableAccountId?: string;
+  suspenseAccountId?: string;
   status:
     | "AWAITING_COLLECTION"
     | "PARTIALLY_COLLECTED"
