@@ -335,6 +335,8 @@ export type MarketplaceReceivable = {
   currency: string;
   grossAmount: number;
   externallyCollectedAmount: number;
+  platformExpectedAmount?: number;
+  merchantCollectedAmount?: number;
   settledAmount: number;
   outstandingAmount: number;
   status: "OPEN" | "PARTIALLY_SETTLED" | "SETTLED" | "DISPUTED" | "CANCELLED";
@@ -2026,6 +2028,8 @@ export const TransactionEngine = {
       currency: input.currency,
       grossAmount: order.total,
       externallyCollectedAmount: money(input.externallyCollectedAmount),
+      platformExpectedAmount: money(input.externallyCollectedAmount),
+      merchantCollectedAmount: 0,
       settledAmount: 0,
       outstandingAmount: order.total,
       status: "OPEN",
@@ -2052,8 +2056,9 @@ export const TransactionEngine = {
         metadata: {},
       }),
       marketplaceReceivableId: receivable.id,
-      externallyPaid: true,
+      externallyPaid: order.externalSource?.externallyPaid ?? true,
       externallyCollectedAmount: receivable.externallyCollectedAmount,
+      platformCollectedAmount: receivable.platformExpectedAmount,
     };
     next.journalEntries.unshift(createMarketplaceSaleJournal(next, order, receivable));
     audit(next, {
