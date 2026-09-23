@@ -206,6 +206,9 @@ export class CustodyLedger {
       tender: input.tender,
       fromHolder: "CUSTOMER",
       toHolder: "RIDER",
+      ...(obligation.custodyAccountId
+        ? { destinationAccountId: obligation.custodyAccountId }
+        : {}),
       amountMinor: input.amountMinor,
       currency: obligation.currency,
       ...(input.reference ? { reference: input.reference.trim() } : {}),
@@ -369,6 +372,8 @@ export class CustodyLedger {
       tender: input.tender,
       fromHolder: "RIDER",
       toHolder: input.toHolder,
+      sourceAccountId: obligation.custodyAccountId,
+      destinationAccountId: input.destinationAccountId,
       amountMinor: input.amountMinor,
       currency: obligation.currency,
       ...(input.reference ? { reference: input.reference.trim() } : {}),
