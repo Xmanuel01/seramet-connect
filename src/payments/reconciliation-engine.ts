@@ -18,6 +18,7 @@ import type {
   PaymentOperationsState,
   ReconciliationSession,
   ReconciliationException,
+  ReconciliationRule,
   SettlementBatch,
   SettlementLine,
   SettlementLineType,
@@ -78,6 +79,49 @@ export class ReconciliationEngine {
     return next;
   }
 
+  upsertRule(
+    state: TransactionState,
+    input: Omit<ReconciliationRule, "createdAt" | "updatedAt"> & { createdAt?: string },
+  ) {
+    const next = normalizeTransactionState(state);
+    assertTenant(next, input.tenantId);
+    validateRule(input);
+    const operations = requiredOperations(next);
+    const stamp = new Date().toISOString();
+    const existing = operations.reconciliationRules.find(
+      (rule) => rule.id === input.id && rule.tenantId === input.tenantId,
+    );
+    const rule: ReconciliationRule = {
+      ...input,
+      createdAt: existing?.createdAt ?? input.createdAt ?? stamp,
+      updatedAt: stamp,
+    };
+    if (existing) {
+      operations.reconciliationRules = operations.reconciliationRules.map((candidate) =>
+        candidate.id === rule.id ? rule : candidate,
+      );
+    } else {
+      operations.reconciliationRules.unshift(rule);
+    }
+    return next;
+  }
+
+  setRuleActive(
+    state: TransactionState,
+    input: { tenantId: string; ruleId: string; active: boolean },
+  ) {
+    const next = normalizeTransactionState(state);
+    assertTenant(next, input.tenantId);
+    const operations = requiredOperations(next);
+    const rule = operations.reconciliationRules.find(
+      (candidate) => candidate.id === input.ruleId && candidate.tenantId === input.tenantId,
+    );
+    if (!rule) throw new Error("Reconciliation rule not found");
+    rule.active = input.active;
+    rule.updatedAt = new Date().toISOString();
+    return next;
+  }
+
   automaticallyMatchPayments(
     state: TransactionState,
     input: {
@@ -103,11 +147,7 @@ export class ReconciliationEngine {
       updatedAt: stamp,
     };
     operations.reconciliationSessions.unshift(session);
-    const usedBankIds = new Set(
-      operations.matches
-        .filter((match) => match.status === "APPROVED")
-        .map((match) => match.rightId),
-    );
+
     const candidates = operations.transactions.filter(
       (transaction) =>
         transaction.tenantId === input.tenantId &&
@@ -117,60 +157,95 @@ export class ReconciliationEngine {
         ) &&
         (!input.branchId || transaction.branchId === input.branchId),
     );
+
     for (const payment of candidates) {
-      const ranked = operations.bankTransactions
-        .filter(
-          (bank) =>
-            bank.tenantId === input.tenantId &&
-            !usedBankIds.has(bank.id) &&
-            bank.currency === payment.currency &&
-            (!input.branchId || !bank.branchId || bank.branchId === input.branchId),
-        )
-        .map((bank) => scoreMatch(payment, bank, input.timeWindowMinutes ?? 180))
-        .sort((left, right) => right.score - left.score);
-      const best = ranked[0];
-      const second = ranked[1];
-      const confidence = confidenceFor(best?.score ?? 0, second?.score ?? 0);
-      if (!best || confidence === "UNMATCHED") {
-        addException(operations, {
+      let remaining = paymentResidualMinor(operations, payment.id, payment.amountMinor);
+      let guard = 0;
+      while (remaining > 0 && guard < Math.max(operations.bankTransactions.length, 1) + 1) {
+        guard += 1;
+        const ranked = operations.bankTransactions
+          .filter((bank) => {
+            if (
+              bank.tenantId !== input.tenantId ||
+              bank.currency !== payment.currency ||
+              ["DUPLICATE", "IGNORED"].includes(bank.status) ||
+              (input.branchId && bank.branchId && bank.branchId !== input.branchId)
+            ) {
+              return false;
+            }
+            const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+            if (bankRemaining <= 0) return false;
+            const rule = ruleFor(operations, payment, bank, input.timeWindowMinutes);
+            if (bankRemaining > remaining && !rule.allowAggregation) return false;
+            if (remaining > bankRemaining && !rule.allowSplit) return false;
+            return !operations.matches.some(
+              (match) =>
+                match.leftId === payment.id &&
+                match.rightId === bank.id &&
+                match.status === "SUGGESTED",
+            );
+          })
+          .map((bank) => {
+            const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+            return scoreMatch(
+              payment,
+              bank,
+              remaining,
+              bankRemaining,
+              operations,
+              input.timeWindowMinutes,
+            );
+          })
+          .sort((left, right) => right.score - left.score);
+
+        const best = ranked[0];
+        const second = ranked[1];
+        if (!best) break;
+        const confidence = confidenceFor(best, second?.score ?? 0);
+        if (confidence === "UNMATCHED") break;
+
+        const amountMinor = Math.min(remaining, best.bankRemainingMinor);
+        if (amountMinor <= 0) break;
+        const verified = ["CONFIRMED", "MANUALLY_CONFIRMED"].includes(payment.status);
+        const autoApprove =
+          verified &&
+          ["EXACT", "HIGH"].includes(confidence) &&
+          best.score >= best.rule.minimumAutoApproveScore &&
+          best.score - (second?.score ?? 0) >= best.rule.minimumLeadScore &&
+          (!best.rule.requireExactReferenceForAutoApprove || best.exactReference);
+
+        const match: PaymentMatch = Object.freeze({
+          id: nextId("MATCH4", operations.matches),
           tenantId: input.tenantId,
           branchId: payment.branchId,
-          sourceType: "PAYMENT",
-          sourceId: payment.id,
-          reason: "OTHER",
-          amountMinor: payment.amountMinor,
+          reconciliationSessionId: session.id,
+          leftType: "PAYMENT_TRANSACTION",
+          leftId: payment.id,
+          rightType: "BANK_TRANSACTION",
+          rightId: best.bank.id,
+          amountMinor,
           currency: payment.currency,
-          severity: "WARNING",
-          detail: "Incoming collection has no safe bank/provider match",
+          confidence,
+          status: autoApprove ? "APPROVED" : "SUGGESTED",
+          matchedBy: "SYSTEM",
+          reason: best.reason,
+          createdAt: stamp,
         });
-        continue;
-      }
-      const autoApprove = confidence === "EXACT" || confidence === "HIGH";
-      const match: PaymentMatch = Object.freeze({
-        id: nextId("MATCH4", operations.matches),
-        tenantId: input.tenantId,
-        branchId: payment.branchId,
-        reconciliationSessionId: session.id,
-        leftType: "PAYMENT_TRANSACTION",
-        leftId: payment.id,
-        rightType: "BANK_TRANSACTION",
-        rightId: best.bank.id,
-        amountMinor: Math.min(payment.amountMinor, Math.abs(best.bank.amountMinor)),
-        currency: payment.currency,
-        confidence,
-        status: autoApprove ? "APPROVED" : "SUGGESTED",
-        matchedBy: "SYSTEM",
-        reason: best.reason,
-        createdAt: stamp,
-      });
-      operations.matches.unshift(match);
-      if (autoApprove) {
-        usedBankIds.add(best.bank.id);
+        operations.matches.unshift(match);
+
+        if (!autoApprove) break;
+
+        const bankAfter = bankResidualMinor(
+          operations,
+          best.bank.id,
+          Math.abs(best.bank.amountMinor),
+        );
         replaceBank(operations, best.bank.id, {
           ...best.bank,
-          status: Math.abs(best.bank.amountMinor) === payment.amountMinor ? "MATCHED" : "PARTIAL",
+          status: bankAfter === 0 ? "MATCHED" : "PARTIAL",
         });
         postPaymentBankReconciliation(operations, {
+          matchId: match.id,
           paymentTransactionId: payment.id,
           bankTransactionId: best.bank.id,
           bankAccountId: best.bank.accountId,
@@ -179,8 +254,27 @@ export class ReconciliationEngine {
           businessDate: input.businessDate,
           actor: "SYSTEM",
         });
+        remaining = paymentResidualMinor(operations, payment.id, payment.amountMinor);
+      }
+
+      const residual = paymentResidualMinor(operations, payment.id, payment.amountMinor);
+      if (residual > 0) {
+        addException(operations, {
+          tenantId: input.tenantId,
+          branchId: payment.branchId,
+          sourceType: "PAYMENT",
+          sourceId: payment.id,
+          reason: "OTHER",
+          amountMinor: residual,
+          currency: payment.currency,
+          severity: "WARNING",
+          detail: "Collection has an unreconciled residual after automatic matching",
+        });
+      } else {
+        resolveResidualException(operations, "PAYMENT", payment.id);
       }
     }
+
     session.status = operations.matches.some(
       (match) => match.reconciliationSessionId === session.id && match.status === "SUGGESTED",
     )
@@ -206,6 +300,7 @@ export class ReconciliationEngine {
   ) {
     if (!input.reason.trim()) throw new Error("Manual reconciliation reason is required");
     assertMinorAmount(input.amountMinor);
+    if (input.amountMinor <= 0) throw new Error("Manual reconciliation amount must be positive");
     const next = normalizeTransactionState(state);
     assertTenant(next, input.tenantId);
     const operations = requiredOperations(next);
@@ -217,29 +312,30 @@ export class ReconciliationEngine {
     );
     if (!payment || !bank) throw new Error("Tenant-scoped reconciliation records not found");
     assertSameCurrency(payment.currency, bank.currency);
-    if (input.amountMinor > payment.amountMinor || input.amountMinor > Math.abs(bank.amountMinor)) {
-      throw new Error("Manual match amount exceeds the payment or bank transaction");
+    const paymentRemaining = paymentResidualMinor(operations, payment.id, payment.amountMinor);
+    const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+    if (input.amountMinor > paymentRemaining || input.amountMinor > bankRemaining) {
+      throw new Error("Manual match amount exceeds the remaining payment or bank balance");
     }
-    operations.matches.unshift(
-      Object.freeze({
-        id: nextId("MATCH4", operations.matches),
-        tenantId: input.tenantId,
-        ...(input.branchId ? { branchId: input.branchId } : {}),
-        reconciliationSessionId: input.sessionId,
-        leftType: "PAYMENT_TRANSACTION",
-        leftId: payment.id,
-        rightType: "BANK_TRANSACTION",
-        rightId: bank.id,
-        amountMinor: input.amountMinor,
-        currency: payment.currency,
-        confidence: "POSSIBLE",
-        status: "APPROVED",
-        matchedBy: "MANUAL",
-        approvedBy: input.actor,
-        reason: input.reason,
-        createdAt: new Date().toISOString(),
-      }),
-    );
+    const match: PaymentMatch = Object.freeze({
+      id: nextId("MATCH4", operations.matches),
+      tenantId: input.tenantId,
+      ...(input.branchId ? { branchId: input.branchId } : {}),
+      reconciliationSessionId: input.sessionId,
+      leftType: "PAYMENT_TRANSACTION",
+      leftId: payment.id,
+      rightType: "BANK_TRANSACTION",
+      rightId: bank.id,
+      amountMinor: input.amountMinor,
+      currency: payment.currency,
+      confidence: "POSSIBLE",
+      status: "APPROVED",
+      matchedBy: "MANUAL",
+      approvedBy: input.actor,
+      reason: input.reason,
+      createdAt: new Date().toISOString(),
+    });
+    operations.matches.unshift(match);
     operations.fraudFlags.unshift({
       id: nextId("FRAUD", operations.fraudFlags),
       tenantId: input.tenantId,
@@ -251,11 +347,13 @@ export class ReconciliationEngine {
       detail: input.reason,
       createdAt: new Date().toISOString(),
     });
+    const bankAfter = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
     replaceBank(operations, bank.id, {
       ...bank,
-      status: input.amountMinor === Math.abs(bank.amountMinor) ? "MATCHED" : "PARTIAL",
+      status: bankAfter === 0 ? "MATCHED" : "PARTIAL",
     });
     postPaymentBankReconciliation(operations, {
+      matchId: match.id,
       paymentTransactionId: payment.id,
       bankTransactionId: bank.id,
       bankAccountId: bank.accountId,
@@ -264,6 +362,9 @@ export class ReconciliationEngine {
       businessDate: bank.date.slice(0, 10),
       actor: input.actor,
     });
+    if (paymentResidualMinor(operations, payment.id, payment.amountMinor) === 0) {
+      resolveResidualException(operations, "PAYMENT", payment.id);
+    }
     return next;
   }
 
@@ -416,6 +517,7 @@ export class ReconciliationEngine {
       settlementBatchId: string;
       bankTransactionId: string;
       actor: string;
+      amountMinor?: number;
     },
   ) {
     const next = normalizeTransactionState(state);
@@ -433,27 +535,75 @@ export class ReconciliationEngine {
     if (["POSTED", "REVERSED"].includes(batch.status))
       throw new Error("Posted settlement is locked");
     assertSameCurrency(batch.currency, bank.currency);
-    batch.bankTransactionId = bank.id;
-    batch.netSettledMinor = Math.abs(bank.amountMinor);
-    const variance = batch.netSettledMinor - batch.netExpectedMinor;
-    if (variance !== 0) {
-      batch.status = "EXCEPTION";
-      addException(operations, {
+
+    const settlementRemaining = Math.max(
+      0,
+      batch.netExpectedMinor -
+        approvedMatchedMinor(operations, "SETTLEMENT", batch.id, "left"),
+    );
+    const bankRemaining = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+    const amountMinor = input.amountMinor ?? Math.min(settlementRemaining, bankRemaining);
+    assertMinorAmount(amountMinor);
+    if (amountMinor <= 0) throw new Error("Settlement match has no remaining amount");
+    if (amountMinor > settlementRemaining || amountMinor > bankRemaining) {
+      throw new Error("Settlement match exceeds the remaining settlement or bank balance");
+    }
+
+    const session =
+      operations.reconciliationSessions.find(
+        (candidate) =>
+          candidate.tenantId === input.tenantId &&
+          candidate.type === "SETTLEMENT" &&
+          candidate.businessDate === batch.periodEnd &&
+          candidate.status !== "REVERSED",
+      ) ??
+      ({
+        id: nextId("RECON", operations.reconciliationSessions),
         tenantId: input.tenantId,
         ...(batch.branchId ? { branchId: batch.branchId } : {}),
-        sourceType: "SETTLEMENT",
-        sourceId: batch.id,
-        reason: variance < 0 ? "BANK_SHORTFALL" : "OTHER",
-        amountMinor: variance,
-        currency: batch.currency,
-        severity: "CRITICAL",
-        detail: `Expected ${batch.netExpectedMinor}; bank received ${batch.netSettledMinor}`,
-      });
-    } else {
-      batch.status = "MATCHED";
-      replaceBank(operations, bank.id, { ...bank, status: "MATCHED" });
+        type: "SETTLEMENT" as const,
+        businessDate: batch.periodEnd,
+        status: "MATCHING" as const,
+        createdBy: input.actor,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } satisfies ReconciliationSession);
+    if (!operations.reconciliationSessions.some((candidate) => candidate.id === session.id)) {
+      operations.reconciliationSessions.unshift(session);
     }
+
+    const match: PaymentMatch = Object.freeze({
+      id: nextId("MATCH4", operations.matches),
+      tenantId: input.tenantId,
+      ...(batch.branchId ? { branchId: batch.branchId } : {}),
+      reconciliationSessionId: session.id,
+      leftType: "SETTLEMENT",
+      leftId: batch.id,
+      rightType: "BANK_TRANSACTION",
+      rightId: bank.id,
+      amountMinor,
+      currency: batch.currency,
+      confidence: amountMinor === settlementRemaining && amountMinor === bankRemaining ? "EXACT" : "HIGH",
+      status: "APPROVED",
+      matchedBy: input.actor === "SYSTEM" ? "SYSTEM" : "MANUAL",
+      ...(input.actor === "SYSTEM" ? {} : { approvedBy: input.actor }),
+      reason: "Settlement allocated against remaining bank balance",
+      createdAt: new Date().toISOString(),
+    });
+    operations.matches.unshift(match);
+
+    batch.bankTransactionId ??= bank.id;
+    batch.netSettledMinor = approvedMatchedMinor(operations, "SETTLEMENT", batch.id, "left");
+    const settlementAfter = Math.max(0, batch.netExpectedMinor - batch.netSettledMinor);
+    batch.status = settlementAfter === 0 ? "MATCHED" : "MATCHING";
     batch.updatedAt = new Date().toISOString();
+
+    const bankAfter = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+    replaceBank(operations, bank.id, {
+      ...bank,
+      status: bankAfter === 0 ? "MATCHED" : "PARTIAL",
+    });
+    if (settlementAfter === 0) resolveResidualException(operations, "SETTLEMENT", batch.id);
     return next;
   }
 
@@ -697,46 +847,241 @@ function assertTenant(state: TransactionState, tenantId: string) {
 function scoreMatch(
   payment: PaymentOperationsState["transactions"][number],
   bank: BankTransaction,
-  timeWindowMinutes: number,
+  paymentRemainingMinor: number,
+  bankRemainingMinor: number,
+  operations: PaymentOperationsState,
+  overrideTimeWindowMinutes?: number,
 ) {
+  const rule = ruleFor(operations, payment, bank, overrideTimeWindowMinutes);
   const references = [
     payment.providerTransactionId,
     payment.customerReference,
     payment.merchantReference,
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeReference(String(value)));
   const bankReferences = [
     bank.externalTransactionId,
     bank.reference,
     bank.rawReference,
     bank.description,
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeReference(String(value)));
   const exactReference = references.some((reference) =>
     bankReferences.some((candidate) => candidate === reference),
   );
-  const containsReference = references.some((reference) =>
-    bankReferences.some(
-      (candidate) => candidate.includes(reference) || reference.includes(candidate),
-    ),
-  );
-  const amountMatches = payment.amountMinor === Math.abs(bank.amountMinor);
-  const minutes = Math.abs(Date.parse(payment.occurredAt) - Date.parse(bank.date)) / 60000;
-  const timeMatches = minutes <= timeWindowMinutes;
+  const containsReference =
+    !exactReference &&
+    references.some((reference) =>
+      bankReferences.some(
+        (candidate) =>
+          reference.length >= 5 &&
+          candidate.length >= 5 &&
+          (candidate.includes(reference) || reference.includes(candidate)),
+      ),
+    );
+  const amountDifference = Math.abs(paymentRemainingMinor - bankRemainingMinor);
+  const amountMatches = amountDifference <= rule.amountToleranceMinor;
+  const paymentTime = Date.parse(payment.occurredAt);
+  const bankTime = Date.parse(bank.date);
+  const minutes =
+    Number.isFinite(paymentTime) && Number.isFinite(bankTime)
+      ? Math.abs(paymentTime - bankTime) / 60000
+      : Number.POSITIVE_INFINITY;
+  const timeMatches = minutes <= rule.timeWindowMinutes;
   const score =
-    (exactReference ? 75 : containsReference ? 45 : 0) +
-    (amountMatches ? 25 : 0) +
-    (timeMatches ? 5 : 0);
+    (exactReference
+      ? rule.exactReferenceWeight
+      : containsReference
+        ? rule.containedReferenceWeight
+        : 0) +
+    (amountMatches ? rule.amountWeight : 0) +
+    (timeMatches ? rule.timeWeight : 0);
   return {
     bank,
+    bankRemainingMinor,
     score,
-    reason: `${exactReference ? "exact reference" : containsReference ? "reference contained" : "no reference"}; ${amountMatches ? "amount matched" : "amount differed"}; ${Math.round(minutes)} minutes apart`,
+    exactReference,
+    amountMatches,
+    rule,
+    reason: `${exactReference ? "exact reference" : containsReference ? "reference contained" : "no reference"}; ${amountMatches ? "residual amount matched" : `residual differed by ${amountDifference}`}; ${Number.isFinite(minutes) ? Math.round(minutes) : "unknown"} minutes apart; rule ${rule.name}`,
   };
 }
 
-function confidenceFor(best: number, second: number): PaymentMatch["confidence"] {
-  if (best >= 100 && best - second >= 20) return "EXACT";
-  if (best >= 75 && best - second >= 20) return "HIGH";
-  if (best >= 50) return "POSSIBLE";
+type ScoredMatch = ReturnType<typeof scoreMatch>;
+
+function confidenceFor(best: ScoredMatch, second: number): PaymentMatch["confidence"] {
+  const lead = best.score - second;
+  if (
+    best.exactReference &&
+    best.amountMatches &&
+    best.score >= best.rule.minimumAutoApproveScore &&
+    lead >= best.rule.minimumLeadScore
+  ) {
+    return "EXACT";
+  }
+  if (
+    best.score >= best.rule.minimumAutoApproveScore &&
+    lead >= best.rule.minimumLeadScore
+  ) {
+    return "HIGH";
+  }
+  if (best.score >= best.rule.minimumSuggestionScore) return "POSSIBLE";
   return "UNMATCHED";
+}
+
+function ruleFor(
+  operations: PaymentOperationsState,
+  payment: PaymentOperationsState["transactions"][number],
+  bank: BankTransaction,
+  overrideTimeWindowMinutes?: number,
+): ReconciliationRule {
+  const candidates = operations.reconciliationRules
+    .filter(
+      (rule) =>
+        rule.active &&
+        rule.tenantId === payment.tenantId &&
+        (!rule.branchId || rule.branchId === payment.branchId) &&
+        (!rule.providerConnectionId ||
+          rule.providerConnectionId === payment.providerConnectionId ||
+          rule.providerConnectionId === bank.providerConnectionId) &&
+        (!rule.bankAccountId || rule.bankAccountId === bank.accountId),
+    )
+    .sort((left, right) => ruleSpecificity(right) - ruleSpecificity(left));
+  const configured = candidates[0];
+  if (configured) {
+    return overrideTimeWindowMinutes === undefined
+      ? configured
+      : { ...configured, timeWindowMinutes: overrideTimeWindowMinutes };
+  }
+  return defaultRule(payment.tenantId, payment.branchId, overrideTimeWindowMinutes);
+}
+
+function defaultRule(
+  tenantId: string,
+  branchId?: string,
+  timeWindowMinutes = 180,
+): ReconciliationRule {
+  const stamp = new Date(0).toISOString();
+  return {
+    id: "SYSTEM-DEFAULT",
+    tenantId,
+    ...(branchId ? { branchId } : {}),
+    name: "System safe default",
+    active: true,
+    timeWindowMinutes,
+    amountToleranceMinor: 0,
+    exactReferenceWeight: 75,
+    containedReferenceWeight: 45,
+    amountWeight: 25,
+    timeWeight: 5,
+    minimumSuggestionScore: 50,
+    minimumAutoApproveScore: 75,
+    minimumLeadScore: 20,
+    requireExactReferenceForAutoApprove: false,
+    allowSplit: true,
+    allowAggregation: true,
+    createdAt: stamp,
+    updatedAt: stamp,
+  };
+}
+
+function ruleSpecificity(rule: ReconciliationRule) {
+  return Number(Boolean(rule.branchId)) * 4 +
+    Number(Boolean(rule.providerConnectionId)) * 2 +
+    Number(Boolean(rule.bankAccountId));
+}
+
+function validateRule(
+  rule: Omit<ReconciliationRule, "createdAt" | "updatedAt"> & { createdAt?: string },
+) {
+  if (!rule.id.trim() || !rule.name.trim()) throw new Error("Reconciliation rule id and name are required");
+  const nonNegative = [
+    rule.timeWindowMinutes,
+    rule.amountToleranceMinor,
+    rule.exactReferenceWeight,
+    rule.containedReferenceWeight,
+    rule.amountWeight,
+    rule.timeWeight,
+    rule.minimumSuggestionScore,
+    rule.minimumAutoApproveScore,
+    rule.minimumLeadScore,
+  ];
+  if (nonNegative.some((value) => !Number.isSafeInteger(value) || value < 0)) {
+    throw new Error("Reconciliation rule numeric values must be non-negative safe integers");
+  }
+  if (rule.minimumAutoApproveScore < rule.minimumSuggestionScore) {
+    throw new Error("Auto-approve score cannot be below suggestion score");
+  }
+}
+
+function normalizeReference(value: string) {
+  return value.trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function approvedMatchedMinor(
+  operations: PaymentOperationsState,
+  type: PaymentMatch["leftType"] | PaymentMatch["rightType"],
+  id: string,
+  side: "left" | "right",
+) {
+  return sumMinor(
+    operations.matches
+      .filter(
+        (match) =>
+          match.status === "APPROVED" &&
+          (side === "left"
+            ? match.leftType === type && match.leftId === id
+            : match.rightType === type && match.rightId === id),
+      )
+      .map((match) => match.amountMinor),
+  );
+}
+
+function paymentResidualMinor(
+  operations: PaymentOperationsState,
+  paymentId: string,
+  amountMinor: number,
+) {
+  return Math.max(
+    0,
+    amountMinor -
+      approvedMatchedMinor(operations, "PAYMENT_TRANSACTION", paymentId, "left"),
+  );
+}
+
+function bankResidualMinor(
+  operations: PaymentOperationsState,
+  bankId: string,
+  amountMinor: number,
+) {
+  return Math.max(
+    0,
+    amountMinor - approvedMatchedMinor(operations, "BANK_TRANSACTION", bankId, "right"),
+  );
+}
+
+function resolveResidualException(
+  operations: PaymentOperationsState,
+  sourceType: ReconciliationException["sourceType"],
+  sourceId: string,
+) {
+  const stamp = new Date().toISOString();
+  for (const exception of operations.exceptions) {
+    if (
+      exception.sourceType === sourceType &&
+      exception.sourceId === sourceId &&
+      exception.reason === "OTHER" &&
+      exception.status === "OPEN" &&
+      exception.detail.includes("unreconciled residual")
+    ) {
+      exception.status = "RESOLVED";
+      exception.resolvedAt = stamp;
+      exception.resolvedBy = "SYSTEM";
+      exception.resolution = "Residual fully reconciled";
+    }
+  }
 }
 
 function settlementTotals(lines: NormalizedSettlementImport["lines"]) {
@@ -816,6 +1161,7 @@ function line(
 function postPaymentBankReconciliation(
   operations: PaymentOperationsState,
   input: {
+    matchId: string;
     paymentTransactionId: string;
     bankTransactionId: string;
     bankAccountId: string;
@@ -830,7 +1176,7 @@ function postPaymentBankReconciliation(
   );
   if (!collection || collection.collectionState === "IN_HAND") return;
   assertSameCurrency(collection.currency, input.currency);
-  const sourceId = `${input.paymentTransactionId}:${input.bankTransactionId}`;
+  const sourceId = input.matchId;
   if (
     operations.journals.some(
       (journal) =>
