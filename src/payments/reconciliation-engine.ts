@@ -155,6 +155,11 @@ export class ReconciliationEngine {
         ["CONFIRMED", "MANUALLY_CONFIRMED", "UNVERIFIED", "VERIFYING"].includes(
           transaction.status,
         ) &&
+        !operations.collections.some(
+          (collection) =>
+            collection.paymentTransactionId === transaction.id &&
+            collection.collectionState === "IN_CUSTODY",
+        ) &&
         (!input.branchId || transaction.branchId === input.branchId),
     );
 
