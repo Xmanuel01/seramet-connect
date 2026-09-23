@@ -259,6 +259,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   recordRiderCollection: permissions.paymentsCollect,
   recordDirectCompanyCollection: permissions.paymentsCollect,
   recordRiderRemittance: permissions.paymentsReconcile,
+  recordRiderBatchRemittance: permissions.paymentsReconcile,
   resolveReconciliationException: permissions.reconciliationManage,
   openPaymentDrawer: permissions.cashOpen,
   closePaymentDrawer: permissions.cashClose,
