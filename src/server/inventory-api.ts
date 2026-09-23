@@ -4,6 +4,7 @@ import type {
   GoodsReceiptInput,
   InventoryMovementInput,
   ProductionCompletionInput,
+  ProductionPlanInput,
   PurchaseOrderInput,
   PurchaseRequisitionInput,
   StagedTransferDispatchInput,
@@ -20,6 +21,9 @@ import {
   parPolicySchema,
   portionCheckSchema,
   portionStandardSchema,
+  productionBatchCompletionSchema,
+  productionCancellationSchema,
+  productionPlanSchema,
   productionSchema,
   purchaseQuoteSchema,
   purchaseOrderSchema,
@@ -61,6 +65,9 @@ const goodsReceiptRequestSchema = goodsReceiptSchema.extend({
 const productionRequestSchema = productionSchema.extend({
   businessDate: productionSchema.shape.businessDate.optional(),
 });
+const productionPlanRequestSchema = productionPlanSchema.extend({
+  businessDate: productionPlanSchema.shape.businessDate.optional(),
+});
 const stockCountRequestSchema = stockCountSchema.extend({
   businessDate: stockCountSchema.shape.businessDate.optional(),
 });
@@ -95,6 +102,9 @@ type GoodsReceiptRequest = Omit<GoodsReceiptInput, "receiptNumber" | "businessDa
   businessDate?: string;
 };
 type ProductionRequest = Omit<ProductionCompletionInput, "businessDate"> & {
+  businessDate?: string;
+};
+type ProductionPlanRequest = Omit<ProductionPlanInput, "businessDate"> & {
   businessDate?: string;
 };
 type StockCountRequest = Omit<StockCountInput, "businessDate"> & { businessDate?: string };
@@ -554,6 +564,67 @@ export async function handleInventoryApi(
       supplierReturn: await service.confirmSupplierReturnCredit(
         decodeURIComponent(supplierReturnCredit[1]!),
         body.creditNoteNumber,
+      ),
+    });
+  }
+  if (url.pathname === "/api/seramet/production/overview" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, branchId);
+    return json({
+      ok: true,
+      businessDate: context.businessDate,
+      production: await service.productionOverview(branchId, boundedLimit(url)),
+    });
+  }
+  if (url.pathname === "/api/seramet/production/batches/plan" && request.method === "POST") {
+    const body = await parse<ProductionPlanRequest>(request, productionPlanRequestSchema);
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        productionBatch: await service.planProduction({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const productionStart = /^\/api\/seramet\/production\/batches\/([^/]+)\/start$/.exec(
+    url.pathname,
+  );
+  if (productionStart && request.method === "POST") {
+    return json({
+      ok: true,
+      productionBatch: await service.startProduction(
+        decodeURIComponent(productionStart[1]!),
+      ),
+    });
+  }
+  const productionComplete =
+    /^\/api\/seramet\/production\/batches\/([^/]+)\/complete$/.exec(url.pathname);
+  if (productionComplete && request.method === "POST") {
+    const body = await parse<{ actualOutputQuantityMicro: number }>(
+      request,
+      productionBatchCompletionSchema,
+    );
+    return json({
+      ok: true,
+      productionBatch: await service.completePlannedProduction(
+        decodeURIComponent(productionComplete[1]!),
+        body.actualOutputQuantityMicro,
+      ),
+    });
+  }
+  const productionCancel =
+    /^\/api\/seramet\/production\/batches\/([^/]+)\/cancel$/.exec(url.pathname);
+  if (productionCancel && request.method === "POST") {
+    const body = await parse<{ reason: string }>(request, productionCancellationSchema);
+    return json({
+      ok: true,
+      productionBatch: await service.cancelProduction(
+        decodeURIComponent(productionCancel[1]!),
+        body.reason,
       ),
     });
   }
