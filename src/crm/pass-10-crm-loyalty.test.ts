@@ -61,7 +61,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toMatchObject({
-      version: 20,
+      version: 21,
     });
     const tables = db.sqlite
       .prepare(
