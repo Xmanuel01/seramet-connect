@@ -1683,7 +1683,7 @@ export class PaymentOrchestrator {
       ...(providerConnectionId ? { providerConnectionId } : {}),
       direction: "COLLECTION",
       amountMinor: input.amountMinor,
-      unallocatedAmountMinor: input.amountMinor - allocatedMinor,
+      unallocatedAmountMinor: isCustodyCollection ? 0 : input.amountMinor - allocatedMinor,
       currency: input.currency.toUpperCase(),
       status: input.status ?? "CONFIRMED",
       ...(input.providerTransactionId
