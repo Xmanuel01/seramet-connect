@@ -1,6 +1,6 @@
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
 import { createJournal } from "@/payments/accounting-posting";
-import { assertMinorAmount, assertSameCurrency } from "@/payments/money";
+import { assertMinorAmount, majorFromMinor } from "@/payments/money";
 import type {
   CustodyMovement,
   CustodyObligation,
@@ -238,9 +238,10 @@ export class CustodyLedger {
           candidate.status !== "CANCELLED",
       );
       if (receivable) {
-        const merchantAppliedMajor =
-          input.merchantAppliedMinor /
-          (10 ** currencyMinorDigits(receivable.currency));
+        const merchantAppliedMajor = majorFromMinor(
+          input.merchantAppliedMinor,
+          receivable.currency,
+        );
         receivable.merchantCollectedAmount = Math.min(
           receivable.grossAmount,
           (receivable.merchantCollectedAmount ?? 0) + merchantAppliedMajor,
@@ -474,10 +475,6 @@ function requiredOperations(state: TransactionState) {
 
 function assertTenant(state: TransactionState, tenantId: string) {
   if ((state.tenantId ?? tenantId) !== tenantId) throw new Error("Tenant scope violation");
-}
-
-function currencyMinorDigits(currency: string) {
-  return ["JPY", "KRW"].includes(currency.toUpperCase()) ? 0 : 2;
 }
 
 function journalLine(
