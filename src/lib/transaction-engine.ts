@@ -699,6 +699,15 @@ function resolveConfiguredAccount(tenantId: string, branchId: string, method: Pa
   return typeof shortcode === "string" ? shortcode : paymentMethod.settlementAccountId;
 }
 
+function configuredCustomerReceivableAccount(tenantId: string) {
+  return (
+    configurationRepository
+      .listPaymentMethods(tenantId, false)
+      .find((method) => Boolean(method.receivableAccountId))
+      ?.receivableAccountId ?? "Delivery Customer Receivable"
+  );
+}
+
 function configuredPaymentMethod(
   tenantId: string,
   category: "CASH" | "DIGITAL_WALLET" | "CARD" | "BANK_TRANSFER" | "CREDIT",
@@ -1758,6 +1767,9 @@ export const TransactionEngine = {
     if (input.method === "RIDER_MPESA" && !input.customerReference?.trim()) {
       throw new Error("Rider M-Pesa collection requires the customer's transaction reference");
     }
+    if (input.method === "COMPANY_TILL_DIRECT" && !input.customerReference?.trim()) {
+      throw new Error("Direct company Till collection requires the customer transaction reference");
+    }
     const status: DeliveryCollectionStatus = riderMethod
       ? "COLLECTED_BY_RIDER"
       : input.method === "COMPANY_TILL_DIRECT"
@@ -1842,13 +1854,56 @@ export const TransactionEngine = {
   },
 
   confirmDeliveryRemittance(state: TransactionState, orderId: string, user: string) {
-    const next = clone(normalizeTransactionState(state));
-    const order = next.orders.find((item) => item.id === orderId);
-    const collection = order?.delivery?.collection;
-    if (!order || !collection) throw new Error("No rider collection is recorded for this order");
-    if (collection.status !== "REMITTED_PENDING_CONFIRMATION") {
-      throw new Error("Rider remittance is not awaiting confirmation");
+    let next = clone(normalizeTransactionState(state));
+    let order = next.orders.find((item) => item.id === orderId);
+    let collection = order?.delivery?.collection;
+    if (!order || !collection) throw new Error("No delivery collection is recorded for this order");
+    const directTillAwaiting =
+      collection.method === "COMPANY_TILL_DIRECT" && collection.status === "AWAITING_PAYMENT";
+    const riderRemittanceAwaiting =
+      ["RIDER_CASH", "RIDER_MPESA"].includes(collection.method) &&
+      collection.status === "REMITTED_PENDING_CONFIRMATION";
+    if (!directTillAwaiting && !riderRemittanceAwaiting) {
+      throw new Error("Delivery collection is not awaiting financial confirmation");
     }
+
+    let bill = next.bills.find(
+      (candidate) =>
+        candidate.orderIds.includes(orderId) &&
+        ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
+    );
+    if (!bill) {
+      next = this.createOpenBill(next, orderId);
+      bill = next.bills.find(
+        (candidate) =>
+          candidate.orderIds.includes(orderId) &&
+          ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
+      );
+    }
+    if (!bill) throw new Error("A payable invoice could not be prepared for this delivery");
+
+    if (collection.method === "RIDER_CASH") {
+      next = this.recordCashPayment(next, bill.id, {
+        received: collection.amount,
+        cashier: user,
+        terminal: "DELIVERY_REMITTANCE",
+      });
+    } else {
+      const reference = collection.remittanceReference ?? collection.customerReference;
+      if (!reference) {
+        throw new Error("A company Till reference is required before confirmation");
+      }
+      next = this.recordManualTillPayment(next, bill.id, {
+        amount: collection.amount,
+        reference,
+        cashier: user,
+        terminal: "DELIVERY_REMITTANCE",
+      });
+    }
+
+    order = next.orders.find((item) => item.id === orderId);
+    collection = order?.delivery?.collection;
+    if (!order || !collection) throw new Error("Delivery collection changed during confirmation");
     const stamp = now();
     order.delivery = {
       ...order.delivery!,
@@ -1865,10 +1920,10 @@ export const TransactionEngine = {
       role: "Finance",
       branch: order.branch,
       module: "Delivery",
-      action: "Confirmed rider remittance",
+      action: "Confirmed delivery collection",
       record: order.id,
-      before: "REMITTED_PENDING_CONFIRMATION",
-      after: `CONFIRMED; financial order status remains ${order.paymentStatus}`,
+      before: directTillAwaiting ? "AWAITING_PAYMENT" : "REMITTED_PENDING_CONFIRMATION",
+      after: `CONFIRMED; posted against invoice ${bill.id}`,
     });
     return next;
   },
@@ -3467,6 +3522,7 @@ function createMarketplaceSaleJournal(
   order: TransactionOrder,
   receivable: MarketplaceReceivable,
 ): JournalEntry {
+  const customerReceivableAccount = configuredCustomerReceivableAccount(receivable.tenantId);
   const debitLines = [
     ...(receivable.grossAmount
       ? [
@@ -3481,7 +3537,7 @@ function createMarketplaceSaleJournal(
     ...(receivable.restaurantCollectableAmount
       ? [
           {
-            account: "Delivery Customer Receivable",
+            account: customerReceivableAccount,
             debit: receivable.restaurantCollectableAmount,
             credit: 0,
             costCentre: order.branch,
@@ -3526,6 +3582,7 @@ function createMarketplaceAdjustmentJournal(
   receivable: MarketplaceReceivable,
   delta: { subtotal: number; tax: number; total: number },
 ): JournalEntry {
+  const customerReceivableAccount = configuredCustomerReceivableAccount(receivable.tenantId);
   const increase = delta.total >= 0;
   const absoluteSubtotal = Math.abs(delta.subtotal);
   const absoluteTax = Math.abs(delta.tax);
@@ -3548,7 +3605,7 @@ function createMarketplaceAdjustmentJournal(
     ...(restaurantDelta
       ? [
           {
-            account: "Delivery Customer Receivable",
+            account: customerReceivableAccount,
             debit: restaurantDelta,
             credit: 0,
             costCentre: order.branch,
@@ -3570,7 +3627,7 @@ function createMarketplaceAdjustmentJournal(
     ...(restaurantDelta
       ? [
           {
-            account: "Delivery Customer Receivable",
+            account: customerReceivableAccount,
             debit: 0,
             credit: restaurantDelta,
             costCentre: order.branch,
@@ -3634,6 +3691,7 @@ function createMarketplaceReversalJournal(
   order: TransactionOrder,
   receivable: MarketplaceReceivable,
 ): JournalEntry {
+  const customerReceivableAccount = configuredCustomerReceivableAccount(receivable.tenantId);
   return {
     id: id("JE", state, "journalEntries"),
     tenantId: receivable.tenantId,
@@ -3673,7 +3731,7 @@ function createMarketplaceReversalJournal(
       ...(receivable.restaurantCollectableAmount
         ? [
             {
-              account: "Delivery Customer Receivable",
+              account: customerReceivableAccount,
               debit: 0,
               credit: receivable.restaurantCollectableAmount,
               costCentre: order.branch,
