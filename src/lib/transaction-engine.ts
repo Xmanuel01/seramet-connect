@@ -985,11 +985,7 @@ function deriveProductionOrderStatus(order: TransactionOrder): OrderStatus {
   const active = productionLines.filter((line) => line.productionStatus !== "CANCELLED");
   if (active.length === 0) return order.status;
   if (active.every((line) => line.productionStatus === "SERVED")) return "SERVED";
-  if (
-    active.every(
-      (line) => line.productionStatus === "READY" || line.productionStatus === "SERVED",
-    )
-  ) {
+  if (active.every((line) => line.productionStatus === "READY" || line.productionStatus === "SERVED")) {
     return "READY";
   }
   if (active.some((line) => line.productionStatus === "PREPARING")) return "IN_PROGRESS";
