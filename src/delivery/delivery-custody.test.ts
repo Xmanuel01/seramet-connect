@@ -82,7 +82,10 @@ describe("delivery fulfilment and rider custody", () => {
         metadata: {},
       },
     };
-    expect(resolveDeliveryFulfilment(providerOverride, uber)).toBe("PROVIDER_DELIVERY");
+    expect(resolveDeliveryFulfilment(providerOverride, uber)).toBe("OWN_DELIVERY");
+    expect(
+      resolveDeliveryFulfilment(providerOverride, { ...uber, metadata: {} }),
+    ).toBe("PROVIDER_DELIVERY");
   });
 
   it("records rider-held customer money without creating another sale", () => {
