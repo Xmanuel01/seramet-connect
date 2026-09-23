@@ -245,6 +245,8 @@ export type SettlementLineType =
   | "PROMOTION"
   | "REFUND"
   | "TAX_ADJUSTMENT"
+  | "MERCHANT_COLLECTION"
+  | "MARKETPLACE_PAYABLE_OFFSET"
   | "OTHER_ADJUSTMENT";
 
 export type SettlementLine = Readonly<{
@@ -281,6 +283,8 @@ export type SettlementBatch = {
   promotionsMinor: MinorAmount;
   refundsMinor: MinorAmount;
   taxAdjustmentsMinor: MinorAmount;
+  merchantCollectionsMinor?: MinorAmount;
+  marketplacePayableOffsetsMinor?: MinorAmount;
   otherAdjustmentsMinor: MinorAmount;
   netExpectedMinor: MinorAmount;
   netSettledMinor: MinorAmount;
