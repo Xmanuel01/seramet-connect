@@ -952,6 +952,10 @@ function availableRecipePortions(state: TransactionState, branch: string, produc
   );
 }
 
+function preservesFinancialOrderStatus(status: OrderStatus) {
+  return ["BILL_REQUESTED", "AWAITING_PAYMENT", "PARTIALLY_PAID", "PAID"].includes(status);
+}
+
 function productionStatusRank(status: Exclude<ProductionStatus, "CANCELLED">) {
   return { NEW: 0, PREPARING: 1, READY: 2, SERVED: 3 }[status];
 }
@@ -2027,7 +2031,7 @@ export const TransactionEngine = {
     });
 
     const productionState = deriveProductionOrderStatus(order);
-    if (before !== "PAID") order.status = productionState;
+    if (!preservesFinancialOrderStatus(before)) order.status = productionState;
     order.updatedAt = stamp;
 
     if (productionState === "SERVED") {
@@ -2074,9 +2078,6 @@ export const TransactionEngine = {
     if (order.status === "CANCELLED" || order.status === "REFUNDED") {
       throw new Error(`Order ${orderId} cannot be recalled from ${order.status}`);
     }
-    if (order.inventoryPostedAt) {
-      throw new Error("Served production cannot be recalled after inventory consumption");
-    }
     const normalizedReason = reason.trim();
     if (normalizedReason.length < 4) throw new Error("A rework reason is required");
 
@@ -2103,7 +2104,7 @@ export const TransactionEngine = {
       line.productionLastReworkReason = normalizedReason;
     });
     const productionState = deriveProductionOrderStatus(order);
-    if (before !== "PAID") order.status = productionState;
+    if (!preservesFinancialOrderStatus(before)) order.status = productionState;
     order.updatedAt = stamp;
 
     audit(next, {
