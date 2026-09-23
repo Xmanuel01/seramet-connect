@@ -484,6 +484,48 @@ describe.sequential("commercial launch foundation", () => {
     expect(events.map((event) => event.entityId)).toEqual(["order-1"]);
   });
 
+  it("keeps core operational health available when only malware scanning is unavailable", async () => {
+    const env = {
+      SERAMET_ENVIRONMENT: "staging",
+      SERAMET_DB: database,
+      SERAMET_DATABASE_PROVIDER: "postgres",
+      SERAMET_HYPERDRIVE: {},
+      SERAMET_WORK_QUEUE: {},
+      SERAMET_OBJECTS: {},
+      SERAMET_IDENTITY_PROVIDER: "supabase",
+      SERAMET_SUPABASE_URL: "https://example.supabase.co",
+      SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+      SERAMET_CALLBACK_BASE_URL: "https://app.seramet.test",
+      SERAMET_JWT_SECRET: "a-production-guest-signing-secret-with-enough-entropy",
+      SERAMET_SECRET_STORE: "managed",
+      SERAMET_REQUIRE_BEARER: "true",
+      SERAMET_ENABLE_DEV_AUTH: "false",
+      SERAMET_ENABLE_LOCAL_DATABASE: "false",
+      SERAMET_ALLOW_TEST_PROVIDERS: "false",
+    } as SerametEnv;
+
+    const operational = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/operational"),
+      env,
+    );
+    expect(operational.status).toBe(200);
+    await expect(operational.json()).resolves.toMatchObject({
+      ok: true,
+      database: "authoritative",
+    });
+
+    const fullReadiness = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/ready"),
+      env,
+    );
+    expect(fullReadiness.status).toBe(503);
+    const payload = (await fullReadiness.json()) as {
+      issues: Array<{ code: string }>;
+    };
+    expect(payload.issues.map((issue) => issue.code)).toContain("MALWARE_SCANNER_REQUIRED");
+  });
+
   it("fails production readiness without real Hyperdrive, R2, queue and scanner bindings", () => {
     const issues = validateRuntimeConfiguration({
       SERAMET_ENVIRONMENT: "production",
