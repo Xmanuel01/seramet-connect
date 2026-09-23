@@ -10,17 +10,8 @@ import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 function productionStation(value?: string): ProductionStation {
-  const allowed: ProductionStation[] = [
-    "MAIN KITCHEN",
-    "GRILL",
-    "BAR",
-    "DESSERT",
-    "DISPATCH",
-    "NONE",
-  ];
-  return allowed.includes(value as ProductionStation)
-    ? (value as ProductionStation)
-    : "MAIN KITCHEN";
+  const station = value?.trim();
+  return (station || "NONE") as ProductionStation;
 }
 
 function orderTypeFromBilling(row: BillingRecord, orders: TransactionOrder[] = []) {
