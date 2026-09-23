@@ -303,6 +303,6 @@ describe("KDS production hardening", () => {
       amendmentType: "REPRINT",
       status: "Queued",
     });
-    expect(physical?.content).toContain("No salt");
+    expect(physical?.content).toContain("NO SALT");
   });
 });
