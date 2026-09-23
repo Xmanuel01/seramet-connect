@@ -13,6 +13,8 @@ type CatalogRow = {
   selling_price_minor: number;
   effective_price_minor: number;
   currency: string;
+  item_payload_json: string | null;
+  branch_payload_json: string | null;
   tax_rule_id: string | null;
   service_charge_applicable: number;
   station_code: string | null;
@@ -68,22 +70,46 @@ export function useOperationalMenu(input: {
         if (!response.ok) {
           throw new Error(body.message ?? body.error ?? `Menu request failed (${response.status})`);
         }
-        const catalog = (body.items ?? []).map<Product>((row) => ({
-          id: row.id,
-          itemCode: row.code,
-          ...(row.sku ? { sku: row.sku } : {}),
-          name: row.name,
-          category: row.category_code.replaceAll("_", " "),
-          price: majorFromMinor(row.effective_price_minor, row.currency),
-          priceMinor: row.effective_price_minor,
-          currency: row.currency,
-          ...(row.tax_rule_id ? { taxRuleId: row.tax_rule_id } : {}),
-          serviceChargeApplicable: row.service_charge_applicable === 1,
-          prep: 0,
-          out: !row.available,
-          productionStation: row.station_code ?? "NONE",
-          importSource: "menu-import",
-        }));
+        const catalog = (body.items ?? []).map<Product>((row) => {
+          const itemPayload = parseCatalogPayload(row.item_payload_json);
+          const branchPayload = parseCatalogPayload(row.branch_payload_json);
+          const rawOnlinePriceMinor =
+            branchPayload["onlinePriceMinor"] ?? itemPayload["onlinePriceMinor"];
+          const onlinePriceMinor =
+            typeof rawOnlinePriceMinor === "number" && Number.isSafeInteger(rawOnlinePriceMinor)
+              ? rawOnlinePriceMinor
+              : undefined;
+          const rawOnlinePriceChannels =
+            branchPayload["onlinePriceChannelCodes"] ?? itemPayload["onlinePriceChannelCodes"];
+          const onlinePriceChannelCodes = Array.isArray(rawOnlinePriceChannels)
+            ? rawOnlinePriceChannels
+                .filter((value): value is string => typeof value === "string")
+                .map((value) => value.toUpperCase())
+            : [];
+          return {
+            id: row.id,
+            itemCode: row.code,
+            ...(row.sku ? { sku: row.sku } : {}),
+            name: row.name,
+            category: row.category_code.replaceAll("_", " "),
+            price: majorFromMinor(row.effective_price_minor, row.currency),
+            priceMinor: row.effective_price_minor,
+            ...(onlinePriceMinor !== undefined
+              ? {
+                  onlinePrice: majorFromMinor(onlinePriceMinor, row.currency),
+                  onlinePriceMinor,
+                }
+              : {}),
+            ...(onlinePriceChannelCodes.length ? { onlinePriceChannelCodes } : {}),
+            currency: row.currency,
+            ...(row.tax_rule_id ? { taxRuleId: row.tax_rule_id } : {}),
+            serviceChargeApplicable: row.service_charge_applicable === 1,
+            prep: 0,
+            out: !row.available,
+            productionStation: row.station_code ?? "NONE",
+            importSource: "menu-import",
+          };
+        });
         setItems(catalog);
         setPricingRules(body.pricingRules ?? []);
         setStatus("ready");
@@ -99,4 +125,17 @@ export function useOperationalMenu(input: {
   }, [headers, input.branchId]);
 
   return { items, pricingRules, status, error };
+}
+
+
+function parseCatalogPayload(value: string | null) {
+  if (!value) return {} as Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
