@@ -168,7 +168,7 @@ export function replaceQuestionMarkParameters(sql: string) {
     }
     if (character === "?") {
       parameter += 1;
-      const placeholder = `${parameter}`;
+      const placeholder = "$" + parameter;
       const following = sql.slice(index + 1);
       output += /^\s+IS\s+NULL\b/i.test(following) ? `CAST(${placeholder} AS text)` : placeholder;
       continue;
