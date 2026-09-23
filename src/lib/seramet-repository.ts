@@ -928,7 +928,9 @@ export function applyServerMutation(
       const tender = String(requested["tender"] ?? "CASH").toUpperCase();
       const destinationAccountId = String(requested["destinationAccountId"] ?? "").trim();
       const reference =
-        typeof requested["reference"] === "string" ? requested["reference"].trim().toUpperCase() : "";
+        typeof requested["reference"] === "string"
+          ? requested["reference"].trim().toUpperCase()
+          : "";
       if (!riderName) throw new Error("Rider name is required");
       if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
         throw new Error("Remittance amount must be a positive integer in minor units");
@@ -953,9 +955,14 @@ export function applyServerMutation(
           account.active &&
           (!account.branchId || account.branchId === actor.branchId),
       );
-      if (!destination) throw new Error("Destination payment account is unavailable for this branch");
+      if (!destination)
+        throw new Error("Destination payment account is unavailable for this branch");
       const expectedAccountType =
-        toHolder === "CASH_DRAWER" ? "CASH" : toHolder === "MOBILE_MONEY_TILL" ? "MOBILE_MONEY" : "BANK";
+        toHolder === "CASH_DRAWER"
+          ? "CASH"
+          : toHolder === "MOBILE_MONEY_TILL"
+            ? "MOBILE_MONEY"
+            : "BANK";
       if (destination.type !== expectedAccountType) {
         throw new Error(`Remittance destination must use a ${expectedAccountType} account`);
       }
