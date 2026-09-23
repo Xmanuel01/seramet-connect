@@ -135,7 +135,12 @@ export type ExternalOrderSource = {
   providerStatus?: string;
   externallyPaid: boolean;
   externallyCollectedAmount?: number;
+  platformCollectedAmount?: number;
+  collectionMode?: "PLATFORM_PREPAID" | "CASH_DUE" | "DIGITAL_DUE" | "MIXED";
+  cashAmountDue?: number;
+  marketplaceFeeDueToProvider?: number;
   marketplaceReceivableId?: string;
+  custodyObligationId?: string;
   fulfilmentType: "PROVIDER_DELIVERY" | "OWN_DELIVERY" | "PICKUP";
   isScheduled: boolean;
   scheduledFor?: string;
