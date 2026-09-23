@@ -1707,7 +1707,8 @@ export const TransactionEngine = {
   ) {
     const next = clone(normalizeTransactionState(state));
     const order = next.orders.find((item) => item.id === orderId);
-    if (!order?.delivery) throw new Error("Delivery order was not found");
+    if (!order) throw new Error("Delivery order was not found");
+    order.delivery = order.delivery ?? { status: "UNASSIGNED" };
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new Error("Collected amount must be greater than zero");
     }
