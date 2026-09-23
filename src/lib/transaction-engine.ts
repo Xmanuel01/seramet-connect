@@ -161,6 +161,9 @@ export type ExternalOrderSource = {
   providerStatus?: string;
   externallyPaid: boolean;
   externallyCollectedAmount?: number;
+  providerAppPaidAmount?: number;
+  cashDueAmount?: number;
+  cashDueCollector?: "PROVIDER" | "RESTAURANT" | "NONE";
   marketplaceReceivableId?: string;
   fulfilmentType: "PROVIDER_DELIVERY" | "OWN_DELIVERY" | "PICKUP";
   isScheduled: boolean;
@@ -354,8 +357,14 @@ export type MarketplaceReceivable = {
   externalOrderId: string;
   providerDisplayReference?: string;
   currency: string;
+  orderGrossAmount: number;
+  appPaidAmount: number;
+  providerCashCollectedAmount: number;
+  restaurantCollectableAmount: number;
   grossAmount: number;
   externallyCollectedAmount: number;
+  knownChargesAmount: number;
+  expectedNetSettlementAmount: number;
   settledAmount: number;
   outstandingAmount: number;
   status: "OPEN" | "PARTIALLY_SETTLED" | "SETTLED" | "DISPUTED" | "CANCELLED";
@@ -2184,6 +2193,9 @@ export const TransactionEngine = {
       externalOrderId: string;
       providerDisplayReference?: string;
       currency: string;
+      appPaidAmount?: number;
+      providerCashCollectedAmount?: number;
+      restaurantCollectableAmount?: number;
       externallyCollectedAmount: number;
       receivableAccount: string;
       metadata?: Record<string, unknown>;
@@ -2224,11 +2236,17 @@ export const TransactionEngine = {
         ? { providerDisplayReference: input.providerDisplayReference }
         : {}),
       currency: input.currency,
-      grossAmount: order.total,
+      orderGrossAmount: order.total,
+      appPaidAmount: money(input.appPaidAmount ?? input.externallyCollectedAmount),
+      providerCashCollectedAmount: money(input.providerCashCollectedAmount ?? 0),
+      restaurantCollectableAmount: money(input.restaurantCollectableAmount ?? 0),
+      grossAmount: money(input.externallyCollectedAmount),
       externallyCollectedAmount: money(input.externallyCollectedAmount),
+      knownChargesAmount: 0,
+      expectedNetSettlementAmount: money(input.externallyCollectedAmount),
       settledAmount: 0,
-      outstandingAmount: order.total,
-      status: "OPEN",
+      outstandingAmount: money(input.externallyCollectedAmount),
+      status: input.externallyCollectedAmount > 0 ? "OPEN" : "SETTLED",
       receivableAccount: input.receivableAccount,
       createdAt: stamp,
       updatedAt: stamp,
@@ -2238,7 +2256,12 @@ export const TransactionEngine = {
     bill.status = "PROVIDER_RECEIVABLE";
     bill.paymentStatus = "PROVIDER_RECEIVABLE";
     bill.paid = 0;
-    order.paymentStatus = "PROVIDER_RECEIVABLE";
+    order.paymentStatus =
+      receivable.restaurantCollectableAmount > 0 && receivable.grossAmount > 0
+        ? "PARTIAL"
+        : receivable.grossAmount > 0
+          ? "PROVIDER_RECEIVABLE"
+          : "UNPAID";
     order.externalSource = {
       ...(order.externalSource ?? {
         connectionId: input.connectionId,
@@ -2252,8 +2275,17 @@ export const TransactionEngine = {
         metadata: {},
       }),
       marketplaceReceivableId: receivable.id,
-      externallyPaid: true,
+      externallyPaid: receivable.restaurantCollectableAmount === 0,
       externallyCollectedAmount: receivable.externallyCollectedAmount,
+      providerAppPaidAmount: receivable.appPaidAmount,
+      cashDueAmount:
+        receivable.providerCashCollectedAmount + receivable.restaurantCollectableAmount,
+      cashDueCollector:
+        receivable.restaurantCollectableAmount > 0
+          ? "RESTAURANT"
+          : receivable.providerCashCollectedAmount > 0
+            ? "PROVIDER"
+            : "NONE",
     };
     next.journalEntries.unshift(createMarketplaceSaleJournal(next, order, receivable));
     audit(next, {
@@ -2264,7 +2296,10 @@ export const TransactionEngine = {
       action: "Recorded marketplace receivable",
       record: receivable.id,
       before: "No provider receivable",
-      after: `${input.currency} ${receivable.outstandingAmount} due from provider`,
+      after:
+        receivable.outstandingAmount > 0
+          ? `${input.currency} ${receivable.outstandingAmount} due from provider; ${receivable.restaurantCollectableAmount} due via restaurant collection`
+          : `${input.currency} ${receivable.restaurantCollectableAmount} due via restaurant collection; no provider receivable`,
     });
     return next;
   },
@@ -2303,6 +2338,20 @@ export const TransactionEngine = {
         metadata: { ...charge.metadata },
         createdAt: now(),
       });
+    }
+    const receivable = next.marketplaceReceivables.find(
+      (candidate) => candidate.orderId === orderId && candidate.status !== "CANCELLED",
+    );
+    if (receivable) {
+      receivable.knownChargesAmount = money(
+        next.marketplaceCharges
+          .filter((charge) => charge.orderId === orderId)
+          .reduce((sum, charge) => sum + charge.amount, 0),
+      );
+      receivable.expectedNetSettlementAmount = money(
+        receivable.grossAmount - receivable.knownChargesAmount,
+      );
+      receivable.updatedAt = now();
     }
     return next;
   },
@@ -2404,8 +2453,34 @@ export const TransactionEngine = {
         tax: money(nextTotals.tax - previousTotals.tax),
         total: money(nextTotals.total - previousTotals.total),
       };
-      receivable.grossAmount = nextTotals.total;
-      receivable.outstandingAmount = money(nextTotals.total - receivable.settledAmount);
+      receivable.orderGrossAmount = nextTotals.total;
+      const providerShare =
+        order.externalSource?.providerAppPaidAmount !== undefined ||
+        order.externalSource?.cashDueAmount !== undefined
+          ? money(
+              (order.externalSource?.providerAppPaidAmount ?? 0) +
+                (order.externalSource?.cashDueCollector === "PROVIDER"
+                  ? (order.externalSource?.cashDueAmount ?? 0)
+                  : 0),
+            )
+          : nextTotals.total;
+      const restaurantShare =
+        order.externalSource?.cashDueCollector === "RESTAURANT"
+          ? money(order.externalSource?.cashDueAmount ?? 0)
+          : 0;
+      receivable.appPaidAmount = money(order.externalSource?.providerAppPaidAmount ?? providerShare);
+      receivable.providerCashCollectedAmount = money(
+        order.externalSource?.cashDueCollector === "PROVIDER"
+          ? (order.externalSource?.cashDueAmount ?? 0)
+          : 0,
+      );
+      receivable.restaurantCollectableAmount = restaurantShare;
+      receivable.grossAmount = providerShare;
+      receivable.externallyCollectedAmount = providerShare;
+      receivable.expectedNetSettlementAmount = money(
+        providerShare - receivable.knownChargesAmount,
+      );
+      receivable.outstandingAmount = money(providerShare - receivable.settledAmount);
       receivable.updatedAt = now();
       const bill = next.bills.find((candidate) => candidate.id === receivable.invoiceId);
       if (bill) {
@@ -3333,6 +3408,28 @@ function createMarketplaceSaleJournal(
   order: TransactionOrder,
   receivable: MarketplaceReceivable,
 ): JournalEntry {
+  const debitLines = [
+    ...(receivable.grossAmount
+      ? [
+          {
+            account: receivable.receivableAccount,
+            debit: receivable.grossAmount,
+            credit: 0,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+    ...(receivable.restaurantCollectableAmount
+      ? [
+          {
+            account: "Delivery Customer Receivable",
+            debit: receivable.restaurantCollectableAmount,
+            credit: 0,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+  ];
   return {
     id: id("JE", state, "journalEntries"),
     tenantId: receivable.tenantId,
@@ -3343,12 +3440,7 @@ function createMarketplaceSaleJournal(
     status: "POSTED",
     postedAt: now(),
     lines: [
-      {
-        account: receivable.receivableAccount,
-        debit: order.total,
-        credit: 0,
-        costCentre: order.branch,
-      },
+      ...debitLines,
       {
         account: "Restaurant Revenue",
         debit: 0,
@@ -3379,6 +3471,54 @@ function createMarketplaceAdjustmentJournal(
   const absoluteSubtotal = Math.abs(delta.subtotal);
   const absoluteTax = Math.abs(delta.tax);
   const absoluteTotal = Math.abs(delta.total);
+  const providerRatio =
+    receivable.orderGrossAmount > 0 ? receivable.grossAmount / receivable.orderGrossAmount : 0;
+  const providerDelta = money(absoluteTotal * providerRatio);
+  const restaurantDelta = money(absoluteTotal - providerDelta);
+  const debitReceivableLines = [
+    ...(providerDelta
+      ? [
+          {
+            account: receivable.receivableAccount,
+            debit: providerDelta,
+            credit: 0,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+    ...(restaurantDelta
+      ? [
+          {
+            account: "Delivery Customer Receivable",
+            debit: restaurantDelta,
+            credit: 0,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+  ];
+  const creditReceivableLines = [
+    ...(providerDelta
+      ? [
+          {
+            account: receivable.receivableAccount,
+            debit: 0,
+            credit: providerDelta,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+    ...(restaurantDelta
+      ? [
+          {
+            account: "Delivery Customer Receivable",
+            debit: 0,
+            credit: restaurantDelta,
+            costCentre: order.branch,
+          },
+        ]
+      : []),
+  ];
   return {
     id: id("JE", state, "journalEntries"),
     tenantId: receivable.tenantId,
@@ -3390,12 +3530,7 @@ function createMarketplaceAdjustmentJournal(
     postedAt: now(),
     lines: increase
       ? [
-          {
-            account: receivable.receivableAccount,
-            debit: absoluteTotal,
-            credit: 0,
-            costCentre: order.branch,
-          },
+          ...debitReceivableLines,
           {
             account: "Restaurant Revenue",
             debit: 0,
@@ -3430,12 +3565,7 @@ function createMarketplaceAdjustmentJournal(
                 },
               ]
             : []),
-          {
-            account: receivable.receivableAccount,
-            debit: 0,
-            credit: absoluteTotal,
-            costCentre: order.branch,
-          },
+          ...creditReceivableLines,
         ],
   };
 }
