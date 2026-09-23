@@ -817,7 +817,7 @@ export function applyServerMutation(
         obligationId: String(requested["obligationId"] ?? ""),
         amountMinor: Number(requested["amountMinor"]),
         tender: String(requested["tender"] ?? "CASH").toUpperCase() as
-          | "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER",
+          "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER",
         toHolder: toHolder as "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK" | "OTHER",
         destinationAccountId: String(requested["destinationAccountId"] ?? ""),
         actor: actor.name,
