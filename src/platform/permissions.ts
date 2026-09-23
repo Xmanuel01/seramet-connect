@@ -223,6 +223,8 @@ export const mutationPermission: Record<string, PermissionCode> = {
   addRider: permissions.ridersManage,
   assignDeliveryRider: permissions.deliveryDispatch,
   setDeliveryStatus: permissions.deliveryDispatch,
+  recordDeliveryCollection: permissions.deliveryDispatch,
+  recordRiderRemittance: permissions.deliveryDispatch,
   releaseHeldOrder: permissions.ordersUpdate,
   createOpenBill: permissions.invoicesManage,
   createPaymentIntent: permissions.paymentsRecord,
