@@ -43,7 +43,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("applies schema version 9 and the commercial onboarding tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(20);
+    ).toBe(21);
     for (const table of [
       "tenant_onboarding_profiles",
       "branch_operating_profiles",
@@ -1054,7 +1054,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("returns redacted diagnostics and never includes secrets or session material", async () => {
     const diagnostics = await service.diagnostics();
     expect(diagnostics).toMatchObject({
-      schema: { current: 20, required: 20, pending: 0 },
+      schema: { current: 21, required: 21, pending: 0 },
       redaction: { secrets: "EXCLUDED", tokens: "EXCLUDED", credentials: "EXCLUDED" },
     });
     expect(JSON.stringify(diagnostics)).not.toContain("sensitive-secret");
