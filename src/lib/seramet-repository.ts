@@ -377,12 +377,7 @@ export function applyServerMutation(
     case "assignDeliveryRider": {
       const orderId = String(input["orderId"]);
       const riderName = String(input["rider"]).trim();
-      const assigned = TransactionEngine.assignDeliveryRider(
-        state,
-        orderId,
-        riderName,
-        actor.name,
-      );
+      const assigned = TransactionEngine.assignDeliveryRider(state, orderId, riderName, actor.name);
       const rider = assigned.employees.find(
         (candidate) =>
           candidate.tenantId === actor.tenantId &&
@@ -711,8 +706,7 @@ export function applyServerMutation(
       }
       const operations = state.paymentOperations;
       const obligation = operations?.custodyObligations.find(
-        (candidate) =>
-          candidate.id === obligationId && candidate.tenantId === actor.tenantId,
+        (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
       );
       if (!obligation) throw new Error("Rider custody obligation was not found");
       if (!obligation.custodyAccountId) {
@@ -733,7 +727,8 @@ export function applyServerMutation(
             ? candidate.id === requestedMethod || candidate.code === requestedMethod
             : tender === "CASH"
               ? candidate.enabled && candidate.category === "CASH"
-              : candidate.enabled && ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(candidate.category),
+              : candidate.enabled &&
+                ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(candidate.category),
         );
       if (!method?.enabled) {
         throw new Error("No enabled payment method is configured for this rider collection");
@@ -822,10 +817,7 @@ export function applyServerMutation(
         obligationId: String(requested["obligationId"] ?? ""),
         amountMinor: Number(requested["amountMinor"]),
         tender: String(requested["tender"] ?? "CASH").toUpperCase() as
-          | "CASH"
-          | "MOBILE_MONEY"
-          | "BANK"
-          | "OTHER",
+          | "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER",
         toHolder: toHolder as "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK" | "OTHER",
         destinationAccountId: String(requested["destinationAccountId"] ?? ""),
         actor: actor.name,
