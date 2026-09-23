@@ -14,6 +14,8 @@ type Receivable = {
   invoice: string;
   due: string;
   amount: number;
+  deductions: number;
+  expectedNet: number;
   paid: number;
   outstanding: number;
   age: string;
@@ -41,8 +43,22 @@ const columns: EnterpriseColumn<Receivable>[] = [
     render: (row) => <span className="num font-semibold">{ksh(row.amount)}</span>,
   },
   {
+    key: "deductions",
+    label: "Known charges",
+    align: "right",
+    sortable: true,
+    render: (row) => <span className="num text-muted-foreground">{ksh(row.deductions)}</span>,
+  },
+  {
+    key: "expectedNet",
+    label: "Expected net",
+    align: "right",
+    sortable: true,
+    render: (row) => <span className="num font-semibold">{ksh(row.expectedNet)}</span>,
+  },
+  {
     key: "paid",
-    label: "Paid",
+    label: "Settled",
     align: "right",
     sortable: true,
     render: (row) => <span className="num text-muted-foreground">{ksh(row.paid)}</span>,
@@ -73,6 +89,8 @@ function Receivables() {
       invoice: receivable.invoiceId,
       due: "Provider settlement",
       amount: receivable.grossAmount,
+      deductions: receivable.knownChargesAmount,
+      expectedNet: receivable.expectedNetSettlementAmount,
       paid: receivable.settledAmount,
       outstanding: receivable.outstandingAmount,
       age: ageLabel(receivable.createdAt),
@@ -85,6 +103,9 @@ function Receivables() {
   const providerReceivables = marketplaceRows
     .filter((row) => row.outstanding > 0)
     .reduce((sum, row) => sum + row.outstanding, 0);
+  const expectedMarketplaceNet = marketplaceRows
+    .filter((row) => row.outstanding > 0)
+    .reduce((sum, row) => sum + row.expectedNet, 0);
   return (
     <AppShell
       title="Accounts receivable"
@@ -98,8 +119,8 @@ function Receivables() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Receivables" value={receivables} money />
-        <Metric label="Marketplace due" value={providerReceivables} money />
-        <Metric label="Overdue" value={0} money invert />
+        <Metric label="Marketplace gross due" value={providerReceivables} money />
+        <Metric label="Expected marketplace net" value={expectedMarketplaceNet} money />
         <Metric label="Open accounts" value={openRows.length} />
       </div>
       <Panel className="mt-4">
