@@ -1454,6 +1454,17 @@ export class IntegrationRuntime {
     const holdForSchedule = Boolean(
       scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
     );
+    const configuredFulfilment = String(channel.metadata["defaultFulfilment"] ?? "").toUpperCase();
+    const fulfilmentType =
+      order.delivery.type === "PICKUP"
+        ? "PICKUP"
+        : ["RESTAURANT", "OWN_DELIVERY", "OWN"].includes(configuredFulfilment)
+          ? "OWN_DELIVERY"
+          : ["PROVIDER", "PLATFORM", "PROVIDER_DELIVERY"].includes(configuredFulfilment)
+            ? "PROVIDER_DELIVERY"
+            : order.delivery.type === "RESTAURANT"
+              ? "OWN_DELIVERY"
+              : "PROVIDER_DELIVERY";
     const financials = marketplaceFinancials(order);
     const cashAmountDue = Math.max(0, order.payment.cashAmountDue ?? 0);
     const marketplaceFeeDue = Math.max(0, order.payment.marketplaceFeeDueToProvider ?? 0);
@@ -1503,12 +1514,7 @@ export class IntegrationRuntime {
           ...(order.payment.marketplaceFeeDueToProvider === undefined
             ? {}
             : { marketplaceFeeDueToProvider: order.payment.marketplaceFeeDueToProvider }),
-          fulfilmentType:
-            order.delivery.type === "RESTAURANT"
-              ? "OWN_DELIVERY"
-              : order.delivery.type === "PICKUP"
-                ? "PICKUP"
-                : "PROVIDER_DELIVERY",
+          fulfilmentType,
           isScheduled: Boolean(order.scheduledFor),
           ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
           ...(scheduledReleaseAt ? { scheduledReleaseAt } : {}),
@@ -1524,7 +1530,9 @@ export class IntegrationRuntime {
         },
         delivery: {
           status: "UNASSIGNED",
-          ...(order.delivery.rider?.name ? { rider: order.delivery.rider.name } : {}),
+          ...(fulfilmentType === "PROVIDER_DELIVERY" && order.delivery.rider?.name
+            ? { rider: order.delivery.rider.name }
+            : {}),
         },
       },
       shouldAutoAccept && !holdForSchedule ? "OPEN" : "HELD",
