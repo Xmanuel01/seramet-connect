@@ -213,8 +213,8 @@ describe("delivery fulfilment and rider custody", () => {
       "Supervisor",
     );
 
-    expect(state.riderRemittances[0]?.reference).toBe("TILL-2000");
-    expect(state.riderRemittances[0]?.allocations.reduce((sum, item) => sum + item.amount, 0)).toBe(
+    expect(state.riderRemittances![0]?.reference).toBe("TILL-2000");
+    expect(state.riderRemittances![0]?.allocations.reduce((sum, item) => sum + item.amount, 0)).toBe(
       2_000,
     );
     expect(
