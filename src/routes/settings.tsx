@@ -190,9 +190,11 @@ function Settings() {
       displayName,
       channelType,
       enabled: true,
-      requiresCustomer: ["OWN_DELIVERY", "PHONE", "WHATSAPP"].includes(channelType),
+      requiresCustomer:
+        ["OWN_DELIVERY", "PHONE", "WHATSAPP"].includes(channelType) ||
+        channelFulfilment === "RESTAURANT",
       requiresTable: channelType === "DINE_IN",
-      requiresAddress: channelType === "OWN_DELIVERY",
+      requiresAddress: channelType === "OWN_DELIVERY" || channelFulfilment === "RESTAURANT",
       isExternallyPaid: channelType === "MARKETPLACE",
       sortOrder: (orderChannels.at(-1)?.sortOrder ?? 0) + 10,
       metadata:
@@ -740,6 +742,10 @@ function Settings() {
                           const value = event.target.value;
                           repository.upsertOrderChannel(activeTenantId, {
                             ...channel,
+                            requiresCustomer:
+                              channel.requiresCustomer || value === "RESTAURANT",
+                            requiresAddress:
+                              channel.requiresAddress || value === "RESTAURANT",
                             metadata: {
                               ...channel.metadata,
                               ...(value === "NONE" ? {} : { defaultFulfilment: value }),
