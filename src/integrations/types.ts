@@ -138,6 +138,11 @@ export type NormalizedExternalOrder = {
     externallyPaid: boolean;
     providerPaymentReference?: string;
     amountPaid?: number;
+    collectionMode?: "PLATFORM_PREPAID" | "CASH_DUE" | "DIGITAL_DUE" | "MIXED";
+    collector?: "MARKETPLACE" | "RESTAURANT" | "RIDER" | "CUSTOMER_DIRECT";
+    platformCollectedAmount?: number;
+    cashAmountDue?: number;
+    marketplaceFeeDueToProvider?: number;
   };
   charges?: Array<{
     type: MarketplaceChargeType;
