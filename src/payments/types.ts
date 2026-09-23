@@ -417,6 +417,8 @@ export type CustodyMovement = Readonly<{
   tender: "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER";
   fromHolder: CustodyHolderType;
   toHolder: CustodyHolderType;
+  sourceAccountId?: string;
+  destinationAccountId?: string;
   amountMinor: MinorAmount;
   currency: string;
   reference?: string;
@@ -443,7 +445,7 @@ export type PaymentMatch = Readonly<{
   tenantId: string;
   branchId?: string;
   reconciliationSessionId: string;
-  leftType: "PAYMENT_TRANSACTION" | "SETTLEMENT" | "CASH_EXPECTED";
+  leftType: "PAYMENT_TRANSACTION" | "SETTLEMENT" | "CASH_EXPECTED" | "CUSTODY_MOVEMENT";
   leftId: string;
   rightType: "BANK_TRANSACTION" | "PROVIDER_TRANSACTION" | "CASH_COUNT";
   rightId: string;
