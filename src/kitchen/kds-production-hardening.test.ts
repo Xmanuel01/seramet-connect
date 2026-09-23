@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { buildKitchenTickets, shouldShowKitchenOrder } from "@/kitchen/kds-model";
 import {
   TransactionEngine,
@@ -12,7 +12,19 @@ import {
 } from "@/lib/seramet-print-service";
 import type { Product } from "@/lib/menu-product";
 import type { Station } from "@/platform/types";
-import { DEMO_TENANT_ID, DEMO_WESTLANDS_BRANCH_ID } from "@/platform/demo/default-demo-data";
+import {
+  createDefaultDemoPlatformState,
+  DEMO_TENANT_ID,
+  DEMO_WESTLANDS_BRANCH_ID,
+} from "@/platform/demo/default-demo-data";
+import {
+  ConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
+
+beforeEach(() => {
+  setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+});
 
 const branch = "Westlands";
 
