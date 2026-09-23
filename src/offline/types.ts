@@ -6,6 +6,7 @@ export const offlineAllowedCommands = new Set([
   "updateOrderDraft",
   "upsertOrderDraft",
   "upsertAndSendKitchen",
+  "amendKitchenOrder",
   "requestBillWithDraft",
   "prepareInvoiceForPayment",
   "applyConfiguredPayment",
@@ -19,6 +20,7 @@ export type OfflineAllowedCommand =
   | "updateOrderDraft"
   | "upsertOrderDraft"
   | "upsertAndSendKitchen"
+  | "amendKitchenOrder"
   | "requestBillWithDraft"
   | "prepareInvoiceForPayment"
   | "applyConfiguredPayment";
