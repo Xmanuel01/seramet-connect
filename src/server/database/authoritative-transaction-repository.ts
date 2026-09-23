@@ -3078,6 +3078,7 @@ const financiallyLockedActions = new Set([
   "recordRiderCollection",
   "recordDirectCompanyCollection",
   "recordRiderRemittance",
+  "recordRiderBatchRemittance",
   "requestRefund",
   "approveRefund",
   "recordWastage",
