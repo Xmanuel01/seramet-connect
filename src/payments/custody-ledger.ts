@@ -1,11 +1,7 @@
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
 import { createJournal } from "@/payments/accounting-posting";
 import { assertMinorAmount, majorFromMinor } from "@/payments/money";
-import type {
-  CustodyMovement,
-  CustodyObligation,
-  PaymentOperationsState,
-} from "@/payments/types";
+import type { CustodyMovement, CustodyObligation, PaymentOperationsState } from "@/payments/types";
 
 export class CustodyLedger {
   createObligation(
@@ -155,15 +151,13 @@ export class CustodyLedger {
     assertTenant(next, input.tenantId);
     const operations = requiredOperations(next);
     const obligation = operations.custodyObligations.find(
-      (candidate) =>
-        candidate.id === input.obligationId && candidate.tenantId === input.tenantId,
+      (candidate) => candidate.id === input.obligationId && candidate.tenantId === input.tenantId,
     );
     if (!obligation || ["CANCELLED", "REMITTED"].includes(obligation.status)) {
       throw new Error("Open custody obligation not found");
     }
     const customerRemaining = obligation.amountDueMinor - obligation.collectedMinor;
-    const merchantRemaining =
-      obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor;
+    const merchantRemaining = obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor;
     const feeRemaining =
       obligation.marketplaceFeeDueMinor - obligation.marketplaceFeeCollectedMinor;
     const unclassifiedRemaining =
@@ -196,19 +190,17 @@ export class CustodyLedger {
       branchId: obligation.branchId,
       obligationId: obligation.id,
       orderId: obligation.orderId,
-      ...(input.riderId ?? obligation.riderId
+      ...((input.riderId ?? obligation.riderId)
         ? { riderId: input.riderId ?? obligation.riderId }
         : {}),
-      ...(input.riderName ?? obligation.riderName
+      ...((input.riderName ?? obligation.riderName)
         ? { riderName: input.riderName ?? obligation.riderName }
         : {}),
       type: "CUSTOMER_COLLECTION",
       tender: input.tender,
       fromHolder: "CUSTOMER",
       toHolder: "RIDER",
-      ...(obligation.custodyAccountId
-        ? { destinationAccountId: obligation.custodyAccountId }
-        : {}),
+      ...(obligation.custodyAccountId ? { destinationAccountId: obligation.custodyAccountId } : {}),
       amountMinor: input.amountMinor,
       currency: obligation.currency,
       ...(input.reference ? { reference: input.reference.trim() } : {}),
@@ -266,8 +258,7 @@ export class CustodyLedger {
       }
     }
 
-    const nonMerchantMinor =
-      input.marketplaceFeeAppliedMinor + input.unclassifiedAppliedMinor;
+    const nonMerchantMinor = input.marketplaceFeeAppliedMinor + input.unclassifiedAppliedMinor;
     if (nonMerchantMinor > 0) {
       const lines = [
         journalLine(obligation.custodyAccountId!, nonMerchantMinor, 0, obligation.currency, {
@@ -339,8 +330,7 @@ export class CustodyLedger {
     assertTenant(next, input.tenantId);
     const operations = requiredOperations(next);
     const obligation = operations.custodyObligations.find(
-      (candidate) =>
-        candidate.id === input.obligationId && candidate.tenantId === input.tenantId,
+      (candidate) => candidate.id === input.obligationId && candidate.tenantId === input.tenantId,
     );
     if (!obligation || ["CANCELLED"].includes(obligation.status)) {
       throw new Error("Custody obligation not found");
@@ -397,20 +387,14 @@ export class CustodyLedger {
         description: `Rider custody remitted for ${obligation.orderId}`,
         postedBy: input.actor,
         lines: [
-          journalLine(
-            input.destinationAccountId,
-            input.amountMinor,
-            0,
-            obligation.currency,
-            { custodyMovementId: movement.id, toHolder: input.toHolder },
-          ),
-          journalLine(
-            obligation.custodyAccountId,
-            0,
-            input.amountMinor,
-            obligation.currency,
-            { custodyMovementId: movement.id, fromHolder: "RIDER" },
-          ),
+          journalLine(input.destinationAccountId, input.amountMinor, 0, obligation.currency, {
+            custodyMovementId: movement.id,
+            toHolder: input.toHolder,
+          }),
+          journalLine(obligation.custodyAccountId, 0, input.amountMinor, obligation.currency, {
+            custodyMovementId: movement.id,
+            fromHolder: "RIDER",
+          }),
         ],
       }),
     );
