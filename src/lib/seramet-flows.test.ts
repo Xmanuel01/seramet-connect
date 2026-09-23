@@ -1525,7 +1525,7 @@ describe("delivery ownership, rider accountability and marketplace settlement", 
     const glovo = platform.orderChannels.find((channel) => channel.displayName === "Glovo");
     const order = TransactionEngine.createOrder(
       createEmptyTransactionState(DEMO_TENANT_ID),
-      deliveryDraft(),
+      deliveryDraft({ delivery: { status: "UNASSIGNED" } }),
       "OPEN",
     ).orders[0]!;
 
