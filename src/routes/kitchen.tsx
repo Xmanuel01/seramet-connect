@@ -7,11 +7,7 @@ import { useAppContext } from "@/lib/app-context";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import type {
-  OrderForPrint,
-  PrintJob,
-  ProductionStation,
-} from "@/lib/seramet-print-service";
+import type { OrderForPrint, PrintJob, ProductionStation } from "@/lib/seramet-print-service";
 import type { TransactionOrder } from "@/lib/transaction-engine";
 import {
   buildKitchenTickets,
@@ -189,7 +185,8 @@ function KDS() {
       return;
     }
     const physical = result.jobs.find(
-      (job) => job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT",
+      (job) =>
+        job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT",
     );
     setNotice(
       physical
@@ -212,7 +209,9 @@ function KDS() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-[16px] font-extrabold tracking-tight">Seramet Kitchen</h1>
-              <Status>{profile?.kitchenMode.replaceAll("_", " ") ?? "Configuration required"}</Status>
+              <Status>
+                {profile?.kitchenMode.replaceAll("_", " ") ?? "Configuration required"}
+              </Status>
               <Status>{backendStatus === "synced" ? "Healthy" : backendStatus}</Status>
             </div>
             <p className="mt-1 text-[12px] text-muted-foreground">
@@ -356,7 +355,9 @@ function KitchenTicketCard({
   onRetryPrint: () => void;
 }) {
   const next = nextForwardKitchenState(ticket.state);
-  const printBusy = Boolean(printJob && ["Queued", "Sending", "Retrying"].includes(printJob.status));
+  const printBusy = Boolean(
+    printJob && ["Queued", "Sending", "Retrying"].includes(printJob.status),
+  );
   return (
     <article className={cn("rounded-lg border p-3", urgency(ticket.slaState))}>
       <div className="flex items-baseline justify-between gap-3">
