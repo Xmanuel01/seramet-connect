@@ -2,13 +2,11 @@ export type Product = {
   id: string;
   itemCode?: string;
   sku?: string;
+  barcode?: string;
   name: string;
   category: string;
   price: number;
   priceMinor?: number;
-  onlinePrice?: number;
-  onlinePriceMinor?: number;
-  onlinePriceChannelCodes?: string[];
   currency?: string;
   taxRuleId?: string;
   serviceChargeApplicable?: boolean;
