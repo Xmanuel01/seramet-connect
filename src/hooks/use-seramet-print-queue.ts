@@ -1,4 +1,12 @@
-import {\n  useCallback,\n  useEffect,\n  useMemo,\n  useState,\n  useSyncExternalStore,\n  type Dispatch,\n  type SetStateAction,\n} from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   SerametLocalPrintBridge,
   SerametPrintService,
@@ -13,7 +21,8 @@ import {
   loadInstalledPrintBridgeConfig,
   type InstalledPrintBridgeConfig,
 } from "@/lib/print-bridge-client-config";
-import { formatDateTime } from "@/lib/currency";\nimport { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
+import { formatDateTime } from "@/lib/currency";
+import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
