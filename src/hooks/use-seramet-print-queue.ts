@@ -55,7 +55,20 @@ export function useSerametPrintQueue(branch: string) {
     targetProfile: BranchHardwareProfile,
   ) => {
     if (!bridgeConfigReady(bridgeConfig)) {
-      const processed = SerametPrintService.processQueuedJobs([...nextJobs, ...existingJobs]);
+      const processedNext = nextJobs.map((job) =>
+        job.printerId === "KDS-DISPLAY"
+          ? {
+              ...job,
+              status: "Displayed" as const,
+              printedAt: formatDateTime(new Date(), { hour12: false }),
+            }
+          : {
+              ...job,
+              status: "Failed" as const,
+              failureReason: "Installed print bridge is not configured on this POS device",
+            },
+      );
+      const processed = [...processedNext, ...existingJobs];
       setJobs(processed);
       return processed;
     }
