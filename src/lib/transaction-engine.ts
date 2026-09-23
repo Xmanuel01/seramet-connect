@@ -2218,6 +2218,7 @@ export const TransactionEngine = {
       appPaidAmount?: number;
       providerCashCollectedAmount?: number;
       restaurantCollectableAmount?: number;
+      providerReceivableGrossAmount?: number;
       externallyCollectedAmount: number;
       receivableAccount: string;
       metadata?: Record<string, unknown>;
@@ -2262,13 +2263,26 @@ export const TransactionEngine = {
       appPaidAmount: money(input.appPaidAmount ?? input.externallyCollectedAmount),
       providerCashCollectedAmount: money(input.providerCashCollectedAmount ?? 0),
       restaurantCollectableAmount: money(input.restaurantCollectableAmount ?? 0),
-      grossAmount: money(input.externallyCollectedAmount),
+      grossAmount: money(
+        input.providerReceivableGrossAmount ??
+          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0)),
+      ),
       externallyCollectedAmount: money(input.externallyCollectedAmount),
       knownChargesAmount: 0,
-      expectedNetSettlementAmount: money(input.externallyCollectedAmount),
+      expectedNetSettlementAmount: money(
+        input.providerReceivableGrossAmount ??
+          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0)),
+      ),
       settledAmount: 0,
-      outstandingAmount: money(input.externallyCollectedAmount),
-      status: input.externallyCollectedAmount > 0 ? "OPEN" : "SETTLED",
+      outstandingAmount: money(
+        input.providerReceivableGrossAmount ??
+          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0)),
+      ),
+      status:
+        (input.providerReceivableGrossAmount ??
+          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0))) > 0
+          ? "OPEN"
+          : "SETTLED",
       receivableAccount: input.receivableAccount,
       createdAt: stamp,
       updatedAt: stamp,
@@ -2501,33 +2515,26 @@ export const TransactionEngine = {
         total: money(nextTotals.total - previousTotals.total),
       };
       receivable.orderGrossAmount = nextTotals.total;
-      const providerShare =
-        order.externalSource?.providerAppPaidAmount !== undefined ||
-        order.externalSource?.cashDueAmount !== undefined
-          ? money(
-              (order.externalSource?.providerAppPaidAmount ?? 0) +
-                (order.externalSource?.cashDueCollector === "PROVIDER"
-                  ? (order.externalSource?.cashDueAmount ?? 0)
-                  : 0),
-            )
-          : nextTotals.total;
-      const restaurantShare =
-        order.externalSource?.cashDueCollector === "RESTAURANT"
-          ? money(order.externalSource?.cashDueAmount ?? 0)
-          : 0;
-      receivable.appPaidAmount = money(order.externalSource?.providerAppPaidAmount ?? providerShare);
-      receivable.providerCashCollectedAmount = money(
+      const appPaidAmount = money(order.externalSource?.providerAppPaidAmount ?? 0);
+      const providerCashCollectedAmount = money(
         order.externalSource?.cashDueCollector === "PROVIDER"
           ? (order.externalSource?.cashDueAmount ?? 0)
           : 0,
       );
+      const restaurantShare =
+        order.externalSource?.cashDueCollector === "RESTAURANT"
+          ? money(order.externalSource?.cashDueAmount ?? 0)
+          : 0;
+      const providerGross = money(Math.max(0, nextTotals.total - restaurantShare));
+      receivable.appPaidAmount = appPaidAmount;
+      receivable.providerCashCollectedAmount = providerCashCollectedAmount;
       receivable.restaurantCollectableAmount = restaurantShare;
-      receivable.grossAmount = providerShare;
-      receivable.externallyCollectedAmount = providerShare;
+      receivable.grossAmount = providerGross;
+      receivable.externallyCollectedAmount = money(appPaidAmount + providerCashCollectedAmount);
       receivable.expectedNetSettlementAmount = money(
-        providerShare - receivable.knownChargesAmount,
+        providerGross - receivable.knownChargesAmount,
       );
-      receivable.outstandingAmount = money(providerShare - receivable.settledAmount);
+      receivable.outstandingAmount = money(providerGross - receivable.settledAmount);
       receivable.updatedAt = now();
       const bill = next.bills.find((candidate) => candidate.id === receivable.invoiceId);
       if (bill) {
