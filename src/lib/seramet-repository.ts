@@ -811,6 +811,112 @@ export function applyServerMutation(
         ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
       });
     }
+    case "recordDirectCompanyCollection": {
+      const requested = input["input"] as Record<string, unknown>;
+      const obligationId = String(requested["obligationId"] ?? "");
+      const amountMinor = Number(requested["amountMinor"]);
+      const paymentMethodId = String(requested["paymentMethodId"] ?? "");
+      const reference =
+        typeof requested["reference"] === "string" ? requested["reference"].trim().toUpperCase() : "";
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error("Direct collection amount must be a positive integer in minor units");
+      }
+      if (!reference) throw new Error("Company collection requires a transaction reference");
+
+      const operations = state.paymentOperations;
+      const obligation = operations?.custodyObligations.find(
+        (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
+      );
+      if (!obligation) throw new Error("Cash-due obligation was not found");
+
+      const configuration = getConfigurationRepository();
+      const method = configuration
+        .listPaymentMethods(actor.tenantId, false)
+        .find((candidate) => candidate.id === paymentMethodId || candidate.code === paymentMethodId);
+      if (
+        !method?.enabled ||
+        !["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category)
+      ) {
+        throw new Error("Choose an enabled company Till or bank payment method");
+      }
+      const destinationAccountId = method.clearingAccountId ?? method.settlementAccountId;
+      if (!destinationAccountId) {
+        throw new Error("Company collection payment method requires a clearing or settlement account");
+      }
+
+      let remaining = amountMinor;
+      const merchantRemaining = Math.max(
+        0,
+        obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor,
+      );
+      const merchantAppliedMinor = Math.min(remaining, merchantRemaining);
+      remaining -= merchantAppliedMinor;
+      const feeRemaining = Math.max(
+        0,
+        obligation.marketplaceFeeDueMinor - obligation.marketplaceFeeCollectedMinor,
+      );
+      const marketplaceFeeAppliedMinor = Math.min(remaining, feeRemaining);
+      remaining -= marketplaceFeeAppliedMinor;
+      const suspenseRemaining = Math.max(
+        0,
+        obligation.unclassifiedDueMinor - obligation.unclassifiedCollectedMinor,
+      );
+      const unclassifiedAppliedMinor = Math.min(remaining, suspenseRemaining);
+      remaining -= unclassifiedAppliedMinor;
+      if (remaining !== 0) {
+        throw new Error("Collection exceeds the remaining classified cash-due obligation");
+      }
+
+      let next = state;
+      let paymentTransactionId: string | undefined;
+      if (merchantAppliedMinor > 0) {
+        const receivable = state.marketplaceReceivables.find(
+          (candidate) =>
+            candidate.orderId === obligation.orderId &&
+            candidate.tenantId === actor.tenantId &&
+            candidate.status !== "CANCELLED",
+        );
+        if (!receivable) {
+          throw new Error("Marketplace receivable was not found for the cash-due order");
+        }
+        const before = new Set(
+          next.paymentOperations?.transactions.map((transaction) => transaction.id) ?? [],
+        );
+        next = paymentOrchestrator.recordCustodyCollection(next, {
+          tenantId: actor.tenantId,
+          branchId: obligation.branchId,
+          paymentMethodId: method.id,
+          merchantReference: obligation.externalOrderId ?? obligation.orderId,
+          amountMinor: merchantAppliedMinor,
+          currency: obligation.currency,
+          custodyAccountId: destinationAccountId,
+          collectionCreditAccountId: receivable.receivableAccount,
+          collectionPurpose: "DIRECT_COMPANY_COLLECTION",
+          actor: actor.name,
+          reference,
+          ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+        });
+        paymentTransactionId = next.paymentOperations?.transactions.find(
+          (transaction) => !before.has(transaction.id),
+        )?.id;
+      }
+
+      return custodyLedger.recordDirectCompanyCollection(next, {
+        tenantId: actor.tenantId,
+        obligationId,
+        amountMinor,
+        merchantAppliedMinor,
+        marketplaceFeeAppliedMinor,
+        unclassifiedAppliedMinor,
+        tender: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY",
+        toHolder: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY_TILL",
+        destinationAccountId,
+        actor: actor.name,
+        ...(paymentTransactionId ? { paymentTransactionId } : {}),
+        reference,
+        ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+      });
+    }
     case "recordRiderRemittance": {
       const requested = input["input"] as Record<string, unknown>;
       const toHolder = String(requested["toHolder"] ?? "").toUpperCase();
