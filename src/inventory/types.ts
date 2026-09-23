@@ -270,6 +270,19 @@ export type RecipeVersionInput = {
   components: RecipeComponentInput[];
 };
 
+export type ProductionPlanInput = {
+  id?: string;
+  branchId: string;
+  warehouseId: string;
+  recipeVersionId: string;
+  outputItemId: string;
+  plannedQuantityMicro: number;
+  idempotencyKey: string;
+  businessDate: string;
+  stationId?: string;
+  employeeId?: string;
+};
+
 export type ProductionCompletionInput = {
   id?: string;
   branchId: string;

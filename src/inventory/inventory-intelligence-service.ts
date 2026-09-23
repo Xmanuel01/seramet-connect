@@ -23,6 +23,7 @@ import type {
   PortionCheckInput,
   PortionStandardInput,
   ProductionCompletionInput,
+  ProductionPlanInput,
   PurchaseQuoteInput,
   PurchaseOrderInput,
   PurchaseRequisitionInput,
@@ -1478,6 +1479,453 @@ export class InventoryIntelligenceService {
     }
     visited.delete(recipeVersionId);
     return total;
+  }
+
+  async productionOverview(branchId: string, limit = 100) {
+    this.requirePermission(permissions.productionView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const pageSize = Math.min(200, Math.max(1, limit));
+    const [batches, recipes, warehouses, stations] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT b.id,b.branch_id,b.warehouse_id,w.name AS warehouse_name,
+                  b.recipe_version_id,r.id AS recipe_id,r.name AS recipe_name,
+                  b.planned_quantity_minor,b.actual_output_quantity_minor,b.output_item_id,
+                  i.name AS output_item_name,u.symbol AS unit_symbol,b.station_id,b.employee_id,
+                  b.status,b.started_at,b.completed_at,b.business_date,b.expected_yield_minor,
+                  b.yield_variance_bps,b.created_at,b.updated_at,
+                  COALESCE((
+                    SELECT SUM(m.total_cost_minor) FROM inventory_movements m
+                    WHERE m.tenant_id=b.tenant_id AND m.source_type='PRODUCTION_BATCH'
+                      AND m.source_id=b.id AND m.movement_type='PRODUCTION_OUTPUT'
+                  ),0) AS output_value_minor
+             FROM production_batches b
+             JOIN recipe_versions rv ON rv.tenant_id=b.tenant_id AND rv.id=b.recipe_version_id
+             JOIN recipes r ON r.tenant_id=rv.tenant_id AND r.id=rv.recipe_id
+             JOIN inventory_items i ON i.tenant_id=b.tenant_id AND i.id=b.output_item_id
+             JOIN warehouses w ON w.tenant_id=b.tenant_id AND w.id=b.warehouse_id
+             LEFT JOIN unit_definitions u ON u.tenant_id=rv.tenant_id AND u.id=rv.yield_unit_id
+             WHERE b.tenant_id=? AND b.branch_id=?
+             ORDER BY b.business_date DESC,b.created_at DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, branchId, pageSize)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT r.id,r.name,r.production_item_id,i.name AS output_item_name,
+                  i.default_warehouse_id,rv.id AS active_version_id,rv.version,
+                  rv.yield_quantity_minor,rv.yield_unit_id,u.symbol AS yield_unit_symbol
+             FROM recipes r
+             JOIN recipe_versions rv ON rv.tenant_id=r.tenant_id AND rv.recipe_id=r.id AND rv.active=1
+             JOIN inventory_items i ON i.tenant_id=r.tenant_id AND i.id=r.production_item_id AND i.active=1
+             LEFT JOIN unit_definitions u ON u.tenant_id=rv.tenant_id AND u.id=rv.yield_unit_id
+             WHERE r.tenant_id=? AND r.active=1
+               AND (r.branch_override_id IS NULL OR r.branch_override_id=?)
+             ORDER BY r.name`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT id,code,name FROM warehouses
+             WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY name`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT id,code,name,station_type FROM stations
+             WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY name`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<Record<string, unknown>>(),
+    ]);
+    return {
+      branchId,
+      batches: batches.results ?? [],
+      recipes: recipes.results ?? [],
+      warehouses: warehouses.results ?? [],
+      stations: stations.results ?? [],
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async planProduction(input: ProductionPlanInput) {
+    this.requirePermission(permissions.productionPlan);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertBusinessDateOpen(input.branchId, input.businessDate);
+    assertScaledInteger(input.plannedQuantityMicro, "planned production quantity");
+    if (input.plannedQuantityMicro <= 0)
+      throw new Error("Planned production quantity must be positive");
+
+    const duplicate = await this.db
+      .prepare("SELECT id,status FROM production_batches WHERE tenant_id=? AND idempotency_key=?")
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, status: duplicate.status, duplicate: true };
+
+    const recipe = await this.db
+      .prepare(
+        `SELECT rv.id,rv.yield_quantity_minor,r.production_item_id
+           FROM recipe_versions rv
+           JOIN recipes r ON r.tenant_id=rv.tenant_id AND r.id=rv.recipe_id
+           WHERE rv.tenant_id=? AND rv.id=? AND rv.active=1 AND r.active=1`,
+      )
+      .bind(this.actor.tenantId, input.recipeVersionId)
+      .first<{ id: string; yield_quantity_minor: number; production_item_id: string | null }>();
+    if (!recipe)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active recipe version not found");
+    if (!recipe.production_item_id || recipe.production_item_id !== input.outputItemId) {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Production output must match the active recipe output item",
+      );
+    }
+
+    const warehouse = await this.db
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND id=? AND branch_id=? AND active=1")
+      .bind(this.actor.tenantId, input.warehouseId, input.branchId)
+      .first<{ id: string }>();
+    if (!warehouse) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        404,
+        "Production warehouse is unavailable",
+      );
+    }
+
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO production_batches
+            (tenant_id,id,branch_id,warehouse_id,recipe_version_id,planned_quantity_minor,
+             actual_output_quantity_minor,output_item_id,station_id,employee_id,status,
+             idempotency_key,started_at,completed_at,business_date,expected_yield_minor,
+             yield_variance_bps,payload_json,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,NULL,?,?,?,'PLANNED',?,NULL,NULL,?,?,NULL,'{}',?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.warehouseId,
+          input.recipeVersionId,
+          input.plannedQuantityMicro,
+          input.outputItemId,
+          input.stationId ?? null,
+          input.employeeId ?? null,
+          input.idempotencyKey,
+          input.businessDate,
+          input.plannedQuantityMicro,
+          stamp,
+          stamp,
+        ),
+      this.auditStatement(
+        "PRODUCTION_BATCH_PLANNED",
+        "PRODUCTION_BATCH",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, status: "PLANNED", duplicate: false };
+  }
+
+  async startProduction(batchId: string) {
+    this.requirePermission(permissions.productionStart);
+    const batch = await this.productionBatchForAction(batchId);
+    authorizeBranchRead(this.actor, this.actor.tenantId, batch.branch_id);
+    await this.assertBusinessDateOpen(batch.branch_id, batch.business_date);
+    if (batch.status === "IN_PROGRESS")
+      return { id: batchId, status: batch.status, duplicate: true };
+    if (batch.status !== "PLANNED") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Cannot start a production batch in ${batch.status} status`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE production_batches SET status='IN_PROGRESS',started_at=COALESCE(started_at,?),
+             updated_at=? WHERE tenant_id=? AND id=? AND status='PLANNED'`,
+        )
+        .bind(stamp, stamp, this.actor.tenantId, batchId),
+      this.auditStatement(
+        "PRODUCTION_BATCH_STARTED",
+        "PRODUCTION_BATCH",
+        batchId,
+        stamp,
+        crypto.randomUUID(),
+        batch.branch_id,
+      ),
+    ]);
+    return { id: batchId, status: "IN_PROGRESS", duplicate: false };
+  }
+
+  async cancelProduction(batchId: string, reason: string) {
+    this.requirePermission(permissions.productionAdjust);
+    const batch = await this.productionBatchForAction(batchId);
+    authorizeBranchRead(this.actor, this.actor.tenantId, batch.branch_id);
+    await this.assertBusinessDateOpen(batch.branch_id, batch.business_date);
+    if (batch.status === "CANCELLED") return { id: batchId, status: batch.status, duplicate: true };
+    if (batch.status === "COMPLETED") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Completed production cannot be cancelled; use an authorized stock adjustment if required",
+      );
+    }
+    const normalizedReason = requiredText(reason, "cancellation reason");
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE production_batches SET status='CANCELLED',payload_json=?,updated_at=?
+             WHERE tenant_id=? AND id=? AND status IN ('PLANNED','IN_PROGRESS')`,
+        )
+        .bind(
+          JSON.stringify({
+            cancellationReason: normalizedReason,
+            cancelledAt: stamp,
+            cancelledBy: this.actor.id,
+          }),
+          stamp,
+          this.actor.tenantId,
+          batchId,
+        ),
+      this.auditStatement(
+        "PRODUCTION_BATCH_CANCELLED",
+        "PRODUCTION_BATCH",
+        batchId,
+        stamp,
+        crypto.randomUUID(),
+        batch.branch_id,
+      ),
+    ]);
+    return { id: batchId, status: "CANCELLED", duplicate: false };
+  }
+
+  async completePlannedProduction(batchId: string, actualOutputQuantityMicro: number) {
+    this.requirePermission(permissions.productionComplete);
+    assertScaledInteger(actualOutputQuantityMicro, "actual production output");
+    if (actualOutputQuantityMicro <= 0)
+      throw new Error("Actual production output must be positive");
+    const batch = await this.productionBatchForAction(batchId);
+    authorizeBranchRead(this.actor, this.actor.tenantId, batch.branch_id);
+    await this.assertBusinessDateOpen(batch.branch_id, batch.business_date);
+    if (batch.status === "COMPLETED") {
+      return {
+        id: batchId,
+        duplicate: true,
+        yieldVarianceBps: batch.yield_variance_bps ?? 0,
+      };
+    }
+    if (batch.status === "CANCELLED") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Cancelled production cannot be completed",
+      );
+    }
+
+    const version = await this.db
+      .prepare("SELECT yield_quantity_minor FROM recipe_versions WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, batch.recipe_version_id)
+      .first<{ yield_quantity_minor: number }>();
+    if (!version) throw new Error("Recipe version not found");
+    const components = await this.db
+      .prepare(
+        `SELECT id,inventory_item_id,sub_recipe_id,quantity_minor,unit_id,waste_factor_bps
+         FROM recipe_version_components WHERE tenant_id=? AND recipe_version_id=?`,
+      )
+      .bind(this.actor.tenantId, batch.recipe_version_id)
+      .all<RecipeComponentRow>();
+
+    let inputValueMinor = 0;
+    const inputMovements: Array<{ itemId: string; quantityMicro: number; valueMinor: number }> = [];
+    for (const component of components.results ?? []) {
+      const itemId =
+        component.inventory_item_id ??
+        (await this.productionItemForRecipe(component.sub_recipe_id));
+      if (!itemId) throw new Error("Production component has no inventory output item");
+      const item = await this.db
+        .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=?")
+        .bind(this.actor.tenantId, itemId)
+        .first<{ base_unit_id: string }>();
+      if (!item?.base_unit_id) throw new Error("Production input is missing its base unit");
+      const componentForBatch = multiplyDivide(
+        component.quantity_minor,
+        batch.planned_quantity_minor,
+        version.yield_quantity_minor,
+        "production input quantity",
+      );
+      const withWaste = multiplyDivide(
+        componentForBatch,
+        BASIS_POINTS_SCALE + component.waste_factor_bps,
+        BASIS_POINTS_SCALE,
+        "production input with process loss",
+      );
+      const baseQuantity = await this.convertItemQuantity(
+        itemId,
+        withWaste,
+        component.unit_id,
+        item.base_unit_id,
+      );
+      const unitCost = await this.weightedItemCost(itemId, batch.branch_id, batch.warehouse_id);
+      const value = quantityCostMinor(baseQuantity, unitCost);
+      inputValueMinor += value;
+      inputMovements.push({ itemId, quantityMicro: -baseQuantity, valueMinor: -value });
+    }
+
+    const outputUnitCost = multiplyDivide(
+      inputValueMinor,
+      QUANTITY_SCALE,
+      actualOutputQuantityMicro,
+      "production output cost",
+    );
+    const yieldVarianceBps = ratioBasisPoints(
+      actualOutputQuantityMicro - batch.planned_quantity_minor,
+      batch.planned_quantity_minor,
+    );
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE production_batches
+             SET actual_output_quantity_minor=?,status='COMPLETED',
+                 started_at=COALESCE(started_at,?),completed_at=?,yield_variance_bps=?,updated_at=?
+             WHERE tenant_id=? AND id=? AND status IN ('PLANNED','IN_PROGRESS')`,
+        )
+        .bind(
+          actualOutputQuantityMicro,
+          stamp,
+          stamp,
+          yieldVarianceBps,
+          stamp,
+          this.actor.tenantId,
+          batchId,
+        ),
+    ];
+
+    inputMovements.forEach((movement, index) => {
+      statements.push(
+        this.movementStatement(
+          {
+            id: crypto.randomUUID(),
+            branchId: batch.branch_id,
+            warehouseId: batch.warehouse_id,
+            inventoryItemId: movement.itemId,
+            movementType: "PRODUCTION_INPUT",
+            quantityBaseMicro: movement.quantityMicro,
+            unitCostMinor: Math.abs(
+              quantityCostFromTotal(movement.quantityMicro, movement.valueMinor),
+            ),
+            totalCostMinor: movement.valueMinor,
+            sourceType: "PRODUCTION_BATCH",
+            sourceId: batchId,
+            idempotencyKey: `production:${batchId}:input:${index}`,
+            businessDate: batch.business_date,
+            occurredAt: stamp,
+          },
+          correlationId,
+        ),
+      );
+    });
+    statements.push(
+      this.movementStatement(
+        {
+          id: crypto.randomUUID(),
+          branchId: batch.branch_id,
+          warehouseId: batch.warehouse_id,
+          inventoryItemId: batch.output_item_id,
+          movementType: "PRODUCTION_OUTPUT",
+          quantityBaseMicro: actualOutputQuantityMicro,
+          unitCostMinor: outputUnitCost,
+          totalCostMinor: inputValueMinor,
+          sourceType: "PRODUCTION_BATCH",
+          sourceId: batchId,
+          idempotencyKey: `production:${batchId}:output`,
+          businessDate: batch.business_date,
+          occurredAt: stamp,
+        },
+        correlationId,
+      ),
+      this.auditStatement(
+        "PRODUCTION_BATCH_COMPLETED",
+        "PRODUCTION_BATCH",
+        batchId,
+        stamp,
+        correlationId,
+        batch.branch_id,
+      ),
+      this.recalculationEventStatement(
+        batch.branch_id,
+        "PRODUCTION_COMPLETED",
+        "PRODUCTION_BATCH",
+        batchId,
+        `production-complete:${batchId}`,
+        stamp,
+        correlationId,
+      ),
+    );
+
+    try {
+      await this.db.batch(statements);
+      return {
+        id: batchId,
+        duplicate: false,
+        inputValueMinor,
+        outputUnitCost,
+        yieldVarianceBps,
+      };
+    } catch (error) {
+      const raced = await this.db
+        .prepare(
+          "SELECT status,yield_variance_bps FROM production_batches WHERE tenant_id=? AND id=?",
+        )
+        .bind(this.actor.tenantId, batchId)
+        .first<{ status: string; yield_variance_bps: number | null }>();
+      if (raced?.status === "COMPLETED") {
+        return {
+          id: batchId,
+          duplicate: true,
+          yieldVarianceBps: raced.yield_variance_bps ?? 0,
+        };
+      }
+      throw error;
+    }
+  }
+
+  private async productionBatchForAction(batchId: string) {
+    const batch = await this.db
+      .prepare(
+        `SELECT id,branch_id,warehouse_id,recipe_version_id,planned_quantity_minor,
+                output_item_id,status,business_date,yield_variance_bps
+           FROM production_batches WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, batchId)
+      .first<{
+        id: string;
+        branch_id: string;
+        warehouse_id: string;
+        recipe_version_id: string;
+        planned_quantity_minor: number;
+        output_item_id: string;
+        status: string;
+        business_date: string;
+        yield_variance_bps: number | null;
+      }>();
+    if (!batch)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Production batch not found");
+    return batch;
   }
 
   async completeProduction(input: ProductionCompletionInput) {

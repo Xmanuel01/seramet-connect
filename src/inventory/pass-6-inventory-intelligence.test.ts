@@ -546,6 +546,88 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect((await inventoryBalance(db, "item-prep")).quantity_minor).toBe(9 * QUANTITY_SCALE);
   });
 
+  it("plans, starts, completes and cancels production batches through explicit states", async () => {
+    await seedBeef(service);
+    await service.createInventoryItem({
+      id: "item-prep-lifecycle",
+      code: "PREP-LIFE",
+      name: "Prepared lifecycle batch",
+      baseUnitId: "unit-piece",
+      purchaseUnitId: "unit-piece",
+    });
+    await opening(service, "opening-production-lifecycle", 12 * QUANTITY_SCALE, 60_000);
+    await service.createRecipe({
+      id: "recipe-production-lifecycle",
+      productionItemId: "item-prep-lifecycle",
+      name: "Lifecycle prep batch",
+    });
+    const version = await service.createRecipeVersion({
+      recipeId: "recipe-production-lifecycle",
+      version: 1,
+      yieldQuantityMicro: 10 * QUANTITY_SCALE,
+      yieldUnitId: "unit-piece",
+      effectiveFrom: "2026-08-01T00:00:00.000Z",
+      components: [
+        {
+          inventoryItemId: "item-beef",
+          quantityMicro: 2_500_000,
+          unitId: "unit-kg",
+        },
+      ],
+    });
+
+    const planned = await service.planProduction({
+      id: "batch-lifecycle",
+      branchId,
+      warehouseId,
+      recipeVersionId: version.id,
+      outputItemId: "item-prep-lifecycle",
+      plannedQuantityMicro: 10 * QUANTITY_SCALE,
+      idempotencyKey: "batch-lifecycle-plan",
+      businessDate: "2026-08-30",
+    });
+    expect(planned).toMatchObject({ id: "batch-lifecycle", status: "PLANNED", duplicate: false });
+
+    const beforeStart = await service.productionOverview(branchId, 10);
+    expect(beforeStart.batches[0]).toMatchObject({
+      id: "batch-lifecycle",
+      status: "PLANNED",
+      recipe_name: "Lifecycle prep batch",
+    });
+
+    await expect(service.startProduction("batch-lifecycle")).resolves.toMatchObject({
+      status: "IN_PROGRESS",
+      duplicate: false,
+    });
+    const completed = await service.completePlannedProduction(
+      "batch-lifecycle",
+      8 * QUANTITY_SCALE,
+    );
+    expect(completed).toMatchObject({ duplicate: false, yieldVarianceBps: -2_000 });
+    await expect(
+      service.completePlannedProduction("batch-lifecycle", 8 * QUANTITY_SCALE),
+    ).resolves.toMatchObject({ duplicate: true, yieldVarianceBps: -2_000 });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(9_500_000);
+    expect((await inventoryBalance(db, "item-prep-lifecycle")).quantity_minor).toBe(
+      8 * QUANTITY_SCALE,
+    );
+
+    await service.planProduction({
+      id: "batch-cancelled",
+      branchId,
+      warehouseId,
+      recipeVersionId: version.id,
+      outputItemId: "item-prep-lifecycle",
+      plannedQuantityMicro: 5 * QUANTITY_SCALE,
+      idempotencyKey: "batch-cancelled-plan",
+      businessDate: "2026-08-30",
+    });
+    await expect(
+      service.cancelProduction("batch-cancelled", "Demand changed before preparation"),
+    ).resolves.toMatchObject({ status: "CANCELLED", duplicate: false });
+    await expect(service.startProduction("batch-cancelled")).rejects.toThrow(/Cannot start/);
+  });
+
   it("posts physical count variance as an append-only adjustment", async () => {
     await seedBeef(service);
     await opening(service, "opening-count", 10 * QUANTITY_SCALE, 58_200);
