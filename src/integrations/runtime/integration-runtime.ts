@@ -48,6 +48,7 @@ import { allPermissionCodes } from "@/platform/permissions";
 import type { IntegrationHealthService } from "@/integrations/runtime/health-service";
 import type { MenuCatalogReader } from "@/integrations/marketplace/menu-catalog-reader";
 import { invoiceBalanceMinor, PaymentOrchestrator } from "@/payments/payment-orchestrator";
+import { custodyLedger } from "@/payments/custody-ledger";
 import { parseMajorAmount } from "@/payments/money";
 
 export type WebhookEnvelope = {
@@ -1453,6 +1454,20 @@ export class IntegrationRuntime {
     const holdForSchedule = Boolean(
       scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
     );
+    const financials = marketplaceFinancials(order);
+    const cashAmountDue = Math.max(0, order.payment.cashAmountDue ?? 0);
+    const marketplaceFeeDue = Math.max(0, order.payment.marketplaceFeeDueToProvider ?? 0);
+    const merchantCashPortion = Math.min(
+      financials.total,
+      Math.max(0, cashAmountDue - marketplaceFeeDue),
+    );
+    const platformExpectedAmount = order.payment.externallyPaid
+      ? (order.payment.platformCollectedAmount ?? order.payment.amountPaid ?? financials.total)
+      : Math.max(0, financials.total - merchantCashPortion);
+    const unclassifiedCashDue = Math.max(
+      0,
+      cashAmountDue - merchantCashPortion - marketplaceFeeDue,
+    );
     let next = TransactionEngine.createOrder(
       state,
       {
@@ -1463,7 +1478,7 @@ export class IntegrationRuntime {
         channel: channel.displayName,
         cashier: adapter.definition.displayName,
         ...(order.specialInstructions ? { kitchenNote: order.specialInstructions } : {}),
-        financialOverride: marketplaceFinancials(order),
+        financialOverride: financials,
         lines,
         externalSource: {
           connectionId: connection.id,
@@ -1478,6 +1493,16 @@ export class IntegrationRuntime {
           ...(order.payment.amountPaid === undefined
             ? {}
             : { externallyCollectedAmount: order.payment.amountPaid }),
+          ...(order.payment.platformCollectedAmount === undefined
+            ? {}
+            : { platformCollectedAmount: order.payment.platformCollectedAmount }),
+          ...(order.payment.collectionMode ? { collectionMode: order.payment.collectionMode } : {}),
+          ...(order.payment.cashAmountDue === undefined
+            ? {}
+            : { cashAmountDue: order.payment.cashAmountDue }),
+          ...(order.payment.marketplaceFeeDueToProvider === undefined
+            ? {}
+            : { marketplaceFeeDueToProvider: order.payment.marketplaceFeeDueToProvider }),
           fulfilmentType:
             order.delivery.type === "RESTAURANT"
               ? "OWN_DELIVERY"
@@ -1510,7 +1535,7 @@ export class IntegrationRuntime {
     if (shouldAutoAccept && created.externalSource) {
       created.externalSource.acceptedAt = new Date().toISOString();
     }
-    if (order.payment.externallyPaid) {
+    if (order.payment.externallyPaid || cashAmountDue > 0) {
       next = TransactionEngine.recordMarketplaceReceivable(next, created.id, {
         connectionId: connection.id,
         providerId: connection.providerId,
@@ -1519,10 +1544,60 @@ export class IntegrationRuntime {
           ? { providerDisplayReference: order.rawExternalReference }
           : {}),
         currency: order.currency,
-        externallyCollectedAmount: order.payment.amountPaid ?? order.pricing.total,
+        externallyCollectedAmount: platformExpectedAmount,
         receivableAccount: marketplaceConfig.settlementAccountId ?? "Marketplace Receivables",
-        metadata: { externalPaymentReference: order.payment.providerPaymentReference },
+        metadata: {
+          externalPaymentReference: order.payment.providerPaymentReference,
+          collectionMode: order.payment.collectionMode ?? "PLATFORM_PREPAID",
+          cashAmountDue,
+          merchantCashPortion,
+          marketplaceFeeDue,
+          unclassifiedCashDue,
+        },
       });
+    }
+    if (cashAmountDue > 0) {
+      const receivable = next.marketplaceReceivables.find(
+        (candidate) => candidate.orderId === created.id && candidate.connectionId === connection.id,
+      );
+      const rawAccounts = connection.configuration["cashDueAccounts"];
+      const accountConfig =
+        rawAccounts && typeof rawAccounts === "object" && !Array.isArray(rawAccounts)
+          ? (rawAccounts as Record<string, unknown>)
+          : {};
+      const account = (key: string) => {
+        const value = accountConfig[key];
+        return typeof value === "string" && value.trim() ? value.trim() : undefined;
+      };
+      next = custodyLedger.createObligation(next, {
+        tenantId: event.tenantId,
+        branchId: branch.id,
+        orderId: created.id,
+        ...(receivable?.invoiceId ? { invoiceId: receivable.invoiceId } : {}),
+        connectionId: connection.id,
+        providerId: connection.providerId,
+        externalOrderId: order.providerOrderId,
+        currency: order.currency,
+        collectionMode: order.payment.collectionMode === "MIXED" ? "MIXED" : "CASH_DUE",
+        amountDueMinor: parseMajorAmount(cashAmountDue, order.currency),
+        merchantAmountDueMinor: parseMajorAmount(merchantCashPortion, order.currency),
+        marketplaceFeeDueMinor: parseMajorAmount(marketplaceFeeDue, order.currency),
+        unclassifiedDueMinor: parseMajorAmount(unclassifiedCashDue, order.currency),
+        ...(account("riderCustodyAccountId")
+          ? { custodyAccountId: account("riderCustodyAccountId") }
+          : {}),
+        ...(account("marketplacePayableAccountId")
+          ? { marketplacePayableAccountId: account("marketplacePayableAccountId") }
+          : {}),
+        ...(account("suspenseAccountId") ? { suspenseAccountId: account("suspenseAccountId") } : {}),
+      });
+      const obligation = next.paymentOperations?.custodyObligations.find(
+        (candidate) => candidate.orderId === created.id,
+      );
+      const currentOrder = next.orders.find((candidate) => candidate.id === created.id);
+      if (obligation && currentOrder?.externalSource) {
+        currentOrder.externalSource.custodyObligationId = obligation.id;
+      }
     }
     if (order.charges?.length) {
       next = TransactionEngine.recordMarketplaceCharges(
@@ -1581,7 +1656,8 @@ export class IntegrationRuntime {
       accepted: shouldAutoAccept,
       branchId: branch.id,
       scheduled: holdForSchedule,
-      paymentStatus: order.payment.externallyPaid ? "PROVIDER_RECEIVABLE" : "UNPAID",
+      paymentStatus:
+        order.payment.externallyPaid || cashAmountDue > 0 ? "PROVIDER_RECEIVABLE" : "UNPAID",
     };
   }
 
