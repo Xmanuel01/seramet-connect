@@ -131,8 +131,7 @@ function Delivery() {
   const companyPaymentMethods = repository
     .listPaymentMethods(activeTenantId, false)
     .filter(
-      (method) =>
-        method.enabled && ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category),
+      (method) => method.enabled && ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category),
     );
   const defaultCompanyPaymentMethodId = companyPaymentMethods[0]?.id ?? "";
   const deliveryChannels = repository
@@ -205,8 +204,7 @@ function Delivery() {
   const ownActive = active.filter((row) => row.ownDispatch);
   const platformRows = scopedRows.filter((row) => !row.ownDispatch);
   const unassigned = ownActive.filter((row) => row.rider === "Unassigned");
-  const visibleRows =
-    view === "OWN" ? ownRows : view === "PLATFORM" ? platformRows : scopedRows;
+  const visibleRows = view === "OWN" ? ownRows : view === "PLATFORM" ? platformRows : scopedRows;
 
   const assign = async (row: DeliveryTask, riderOverride?: string) => {
     const rider =
@@ -234,8 +232,7 @@ function Delivery() {
     try {
       await mutate("setDeliveryStatus", { orderId: row.orderId, status });
       const collectionMissing =
-        status === "DELIVERED" &&
-        cashDueRemaining(state, row.orderRecord) > 0;
+        status === "DELIVERED" && cashDueRemaining(state, row.orderRecord) > 0;
       setNotice(
         collectionMissing
           ? `${row.orderId} delivered. Record how the customer paid before closing rider accountability.`
@@ -342,7 +339,9 @@ function Delivery() {
           : `${ksh(amount)} recorded in ${row.rider}'s custody for ${row.orderId}.`,
       );
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Customer collection could not be recorded.");
+      setNotice(
+        error instanceof Error ? error.message : "Customer collection could not be recorded.",
+      );
     }
   };
 
@@ -587,7 +586,9 @@ function Delivery() {
                       <input
                         inputMode="decimal"
                         value={draft.amount}
-                        onChange={(event) => updateDraft(row.orderId, { amount: event.target.value })}
+                        onChange={(event) =>
+                          updateDraft(row.orderId, { amount: event.target.value })
+                        }
                         className="h-9 w-32 rounded-md border border-border bg-card px-2 text-foreground"
                       />
                     </label>
@@ -622,8 +623,8 @@ function Delivery() {
 
                 <p className="text-muted-foreground">
                   Rider-held cash and personal M-Pesa create custody until remitted. Direct company
-                  Till collections bypass rider custody, clear the cash-due obligation directly,
-                  and remain available for ordinary Till/bank reconciliation.
+                  Till collections bypass rider custody, clear the cash-due obligation directly, and
+                  remain available for ordinary Till/bank reconciliation.
                 </p>
               </div>
             );
