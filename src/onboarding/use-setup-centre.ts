@@ -280,7 +280,11 @@ export function useSetupCentre() {
 
   const command = useCallback(
     async <T>(path: string, body: unknown) => {
-      const response = await authenticatedFetch(path, { method: "POST", headers, body: JSON.stringify(body) });
+      const response = await authenticatedFetch(path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
       const payload = (await response.json().catch(() => ({}))) as T & {
         message?: string;
         error?: string;
