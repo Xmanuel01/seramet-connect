@@ -8,6 +8,9 @@ export type PaymentAccountType =
   | "MARKETPLACE_RECEIVABLE"
   | "PAYMENT_GATEWAY_CLEARING"
   | "CUSTOMER_RECEIVABLE"
+  | "RIDER_CUSTODY"
+  | "MARKETPLACE_PAYABLE"
+  | "CASH_IN_TRANSIT"
   | "VOUCHER_LIABILITY"
   | "LOYALTY_LIABILITY"
   | "REVENUE"
@@ -293,13 +296,14 @@ export type SettlementExceptionReason =
   | "MISSING_SETTLEMENT"
   | "TIMING_DIFFERENCE"
   | "REFUND_MISMATCH"
+  | "CUSTODY_SHORTFALL"
   | "OTHER";
 
 export type ReconciliationException = {
   id: string;
   tenantId: string;
   branchId?: string;
-  sourceType: "PAYMENT" | "BANK" | "SETTLEMENT" | "CASH" | "REFUND";
+  sourceType: "PAYMENT" | "BANK" | "SETTLEMENT" | "CASH" | "REFUND" | "CUSTODY";
   sourceId: string;
   reason: SettlementExceptionReason;
   amountMinor: MinorAmount;
@@ -312,6 +316,97 @@ export type ReconciliationException = {
   resolvedBy?: string;
   resolution?: string;
 };
+
+export type ReconciliationRule = {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  name: string;
+  active: boolean;
+  providerConnectionId?: string;
+  bankAccountId?: string;
+  timeWindowMinutes: number;
+  amountToleranceMinor: MinorAmount;
+  exactReferenceWeight: number;
+  containedReferenceWeight: number;
+  amountWeight: number;
+  timeWeight: number;
+  minimumSuggestionScore: number;
+  minimumAutoApproveScore: number;
+  minimumLeadScore: number;
+  requireExactReferenceForAutoApprove: boolean;
+  allowSplit: boolean;
+  allowAggregation: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CustodyCollectionMode = "CASH_DUE" | "DIGITAL_DUE" | "MIXED";
+export type CustodyHolderType =
+  | "CUSTOMER"
+  | "RIDER"
+  | "CASH_DRAWER"
+  | "MOBILE_MONEY_TILL"
+  | "BANK"
+  | "MARKETPLACE"
+  | "OTHER";
+
+export type CustodyObligation = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  orderId: string;
+  invoiceId?: string;
+  connectionId?: string;
+  providerId?: string;
+  externalOrderId?: string;
+  riderId?: string;
+  riderName?: string;
+  currency: string;
+  collectionMode: CustodyCollectionMode;
+  amountDueMinor: MinorAmount;
+  marketplaceFeeDueMinor: MinorAmount;
+  collectedMinor: MinorAmount;
+  remittedMinor: MinorAmount;
+  custodyAccountId?: string;
+  marketplacePayableAccountId?: string;
+  status:
+    | "AWAITING_COLLECTION"
+    | "PARTIALLY_COLLECTED"
+    | "COLLECTED"
+    | "PARTIALLY_REMITTED"
+    | "REMITTED"
+    | "DISPUTED"
+    | "CANCELLED";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CustodyMovement = Readonly<{
+  id: string;
+  tenantId: string;
+  branchId: string;
+  obligationId: string;
+  orderId: string;
+  riderId?: string;
+  riderName?: string;
+  type:
+    | "CUSTOMER_COLLECTION"
+    | "RIDER_REMITTANCE"
+    | "CASHIER_HANDOVER"
+    | "TILL_TRANSFER"
+    | "BANK_DEPOSIT"
+    | "ADJUSTMENT";
+  tender: "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER";
+  fromHolder: CustodyHolderType;
+  toHolder: CustodyHolderType;
+  amountMinor: MinorAmount;
+  currency: string;
+  reference?: string;
+  actor: string;
+  occurredAt: string;
+  createdAt: string;
+}>;
 
 export type ReconciliationSession = {
   id: string;
@@ -402,7 +497,9 @@ export type FinancialJournal = {
     | "RESERVATION_DEPOSIT_APPLICATION"
     | "HOUSE_ACCOUNT"
     | "PAYMENT_RECONCILIATION"
-    | "CASH_MOVEMENT";
+    | "CASH_MOVEMENT"
+    | "CUSTODY_COLLECTION"
+    | "CUSTODY_REMITTANCE";
   sourceId: string;
   businessDate: string;
   description: string;
@@ -520,8 +617,11 @@ export type PaymentOperationsState = {
   settlementBatches: SettlementBatch[];
   settlementLines: SettlementLine[];
   reconciliationSessions: ReconciliationSession[];
+  reconciliationRules: ReconciliationRule[];
   matches: PaymentMatch[];
   exceptions: ReconciliationException[];
+  custodyObligations: CustodyObligation[];
+  custodyMovements: CustodyMovement[];
   refunds: PaymentRefund[];
   disputes: PaymentDispute[];
   journals: FinancialJournal[];
