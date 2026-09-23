@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { ksh } from "@/lib/currency";
 import {
   configuredTenantCurrency,
   formatBps,
@@ -17,7 +19,8 @@ export const Route = createFileRoute("/finance")({
 });
 
 function Finance() {
-  const { activeTenantId, branchLabel, platformState } = useAppContext();
+  const { activeTenantId, branchLabel, platformState, matchesBranch } = useAppContext();
+  const { state } = useTransactionEngine();
   const management = useManagementIntelligence();
   const control = management.control;
   const pnl = control?.flashPnl;
@@ -25,6 +28,29 @@ function Finance() {
     pnl?.currency ??
     control?.latest?.currency ??
     configuredTenantCurrency(platformState.tenants, activeTenantId);
+  const marketplaceReceivables = state.marketplaceReceivables
+    .filter((item) => matchesBranch(item.branchId))
+    .filter((item) => item.status !== "CANCELLED");
+  const openMarketplaceReceivables = marketplaceReceivables.filter(
+    (item) => item.status !== "SETTLED",
+  );
+  const marketplaceGrossOutstanding = openMarketplaceReceivables.reduce(
+    (sum, item) => sum + item.outstandingAmount,
+    0,
+  );
+  const marketplaceKnownCharges = openMarketplaceReceivables.reduce(
+    (sum, item) => sum + item.knownChargesAmount,
+    0,
+  );
+  const marketplaceExpectedNet = openMarketplaceReceivables.reduce(
+    (sum, item) => sum + item.expectedNetSettlementAmount,
+    0,
+  );
+  const marketplaceRestaurantDue = marketplaceReceivables.reduce(
+    (sum, item) => sum + item.restaurantCollectableAmount,
+    0,
+  );
+
   const rows = pnl
     ? ([
         ["Gross sales", pnl.grossSalesMinor],
@@ -147,6 +173,23 @@ function Finance() {
               </Panel>
             </div>
           </div>
+
+          <Panel className="mt-4">
+            <PanelHead
+              title="Marketplace settlement control"
+              sub="Live split between provider receivables, known deductions and restaurant-collected cash due"
+            />
+            <div className="grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
+              <Metric label="Provider gross outstanding" value={ksh(marketplaceGrossOutstanding)} />
+              <Metric label="Known marketplace charges" value={ksh(marketplaceKnownCharges)} />
+              <Metric label="Expected net settlement" value={ksh(marketplaceExpectedNet)} />
+              <Metric label="Restaurant-side cash due" value={ksh(marketplaceRestaurantDue)} />
+            </div>
+            <p className="border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
+              Provider settlement excludes customer cash collected by Mona riders. Cash held by a
+              rider remains a rider liability until remitted and confirmed.
+            </p>
+          </Panel>
 
           <Panel className="mt-4 overflow-x-auto">
             <PanelHead
