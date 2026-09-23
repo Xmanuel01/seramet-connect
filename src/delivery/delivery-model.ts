@@ -30,13 +30,17 @@ export function resolveDeliveryFulfilment(
   order: TransactionOrder,
   channel?: OrderChannelDefinition,
 ): DeliveryFulfilment {
-  if (order.externalSource?.fulfilmentType) return order.externalSource.fulfilmentType;
+  if (order.externalSource?.fulfilmentType === "PICKUP") return "PICKUP";
   if (order.guestContext?.serviceMode === "PICKUP") return "PICKUP";
-  if (order.guestContext?.serviceMode === "DIRECT_DELIVERY") return "OWN_DELIVERY";
 
+  // A restaurant may contract a marketplace only for ordering/payment while using
+  // its own riders. An explicitly configured channel fulfilment therefore wins
+  // over a provider adapter's generic courier assumption for non-pickup orders.
   const configured = configuredFulfilment(channel);
   if (configured) return configured;
 
+  if (order.externalSource?.fulfilmentType) return order.externalSource.fulfilmentType;
+  if (order.guestContext?.serviceMode === "DIRECT_DELIVERY") return "OWN_DELIVERY";
   if (channel?.channelType === "OWN_DELIVERY") return "OWN_DELIVERY";
   if (channel?.channelType === "MARKETPLACE") return "PROVIDER_DELIVERY";
   return "NOT_DELIVERY";
@@ -77,9 +81,15 @@ export function riderOutstandingForOrder(state: TransactionState, order: Transac
 export function deliveryFundsStatus(state: TransactionState, order: TransactionOrder) {
   const collections = order.delivery?.collections ?? [];
   const outstanding = riderOutstandingForOrder(state, order);
+  const held = riderHeldAmount(order);
   if (outstanding > 0) return "Remittance pending";
-  if (collections.length > 0) return "Cleared";
+  if (held > 0) return "Rider remitted";
   if (order.paymentStatus === "PAID" || order.paymentStatus === "PROVIDER_RECEIVABLE")
-    return "Paid outside rider";
+    return "Cleared";
+  if (collections.some((collection) => collection.method === "COMPANY_TILL"))
+    return "Till reference recorded";
+  if (collections.some((collection) => collection.method === "ALREADY_PAID_ONLINE"))
+    return "Online payment recorded";
+  if (collections.length > 0) return "Customer payment recorded";
   return "Payment not recorded";
 }
