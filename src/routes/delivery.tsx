@@ -18,6 +18,8 @@ type DeliveryTask = {
   rider: string;
   branch: string;
   value: number;
+  cashDue: number;
+  collectionMode: string;
   status: string;
   eta: string;
   ownDispatch: boolean;
@@ -124,8 +126,9 @@ function Delivery() {
     .map((order, index) => {
       const channel = resolveChannel(order.channel)!;
       const ownDispatch =
-        channel.channelType !== "MARKETPLACE" &&
-        channel.metadata["riderManagedExternally"] !== true;
+        order.externalSource?.fulfilmentType === "OWN_DELIVERY" ||
+        (channel.channelType !== "MARKETPLACE" &&
+          channel.metadata["riderManagedExternally"] !== true);
       return {
         id: `DLT-${order.id.replace(/\D/g, "").slice(-6) || String(index + 1).padStart(4, "0")}`,
         orderId: order.id,
@@ -135,6 +138,8 @@ function Delivery() {
         rider: ownDispatch ? (order.delivery?.rider ?? "Unassigned") : "Platform rider",
         branch: order.branch,
         value: order.total,
+        cashDue: order.externalSource?.cashAmountDue ?? 0,
+        collectionMode: order.externalSource?.collectionMode ?? "STANDARD",
         status: deliveryStatus(order, ownDispatch),
         eta: deliveryEta(order),
         ownDispatch,
@@ -175,6 +180,18 @@ function Delivery() {
       align: "right",
       sortable: true,
       render: (row) => <span className="num font-semibold">{ksh(row.value)}</span>,
+    },
+    {
+      key: "cashDue",
+      label: "Cash due",
+      align: "right",
+      sortable: true,
+      render: (row) =>
+        row.cashDue > 0 ? (
+          <span className="num font-semibold">{ksh(row.cashDue)}</span>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
     },
     { key: "eta", label: "ETA" },
     { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
@@ -239,6 +256,11 @@ function Delivery() {
                 </span>
               ) : (
                 <>
+                  {row.cashDue > 0 && (
+                    <span className="rounded-md border border-border bg-muted px-2 py-1 font-semibold">
+                      {row.collectionMode.replaceAll("_", " ")} · collect {ksh(row.cashDue)}
+                    </span>
+                  )}
                   <select
                     value={
                       selectedRiders[row.orderId] ?? (row.rider === "Unassigned" ? "" : row.rider)
