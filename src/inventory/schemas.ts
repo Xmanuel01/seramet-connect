@@ -410,6 +410,33 @@ export const recipeVersionSchema = z
   })
   .strict();
 
+export const productionPlanSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    recipeVersionId: id,
+    outputItemId: id,
+    plannedQuantityMicro: positiveInteger,
+    idempotencyKey: id,
+    businessDate: date,
+    stationId: id.optional(),
+    employeeId: id.optional(),
+  })
+  .strict();
+
+export const productionBatchCompletionSchema = z
+  .object({
+    actualOutputQuantityMicro: positiveInteger,
+  })
+  .strict();
+
+export const productionCancellationSchema = z
+  .object({
+    reason: z.string().trim().min(2).max(500),
+  })
+  .strict();
+
 export const productionSchema = z
   .object({
     id: id.optional(),
