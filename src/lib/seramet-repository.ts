@@ -387,6 +387,19 @@ export function applyServerMutation(
         String(input["status"]) as Parameters<typeof TransactionEngine.setDeliveryStatus>[2],
         actor.name,
       );
+    case "recordDeliveryCollection":
+      return TransactionEngine.recordDeliveryCollection(
+        state,
+        String(input["orderId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordDeliveryCollection>[2],
+        actor.name,
+      );
+    case "recordRiderRemittance":
+      return TransactionEngine.recordRiderRemittance(
+        state,
+        input["input"] as Parameters<typeof TransactionEngine.recordRiderRemittance>[1],
+        actor.name,
+      );
     case "releaseHeldOrder":
       return TransactionEngine.releaseHeldOrder(state, String(input["orderId"]), actor.name);
     case "createOpenBill":
