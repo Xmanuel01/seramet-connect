@@ -2017,7 +2017,7 @@ export const TransactionEngine = {
     const before = order.status;
     const stamp = now();
     matchingLines.forEach((line) => {
-      const current = line.productionStatus ?? "NEW";
+      const current = (line.productionStatus ?? "NEW") as Exclude<ProductionStatus, "CANCELLED">;
       if (productionStatusRank(current) >= productionStatusRank(targetStatus)) return;
       line.productionStatus = targetStatus;
       if (targetStatus === "PREPARING" && !line.productionStartedAt)
