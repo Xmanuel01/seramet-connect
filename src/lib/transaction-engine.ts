@@ -2111,7 +2111,7 @@ export const TransactionEngine = {
       throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
     }
     if (["HELD", "OPEN"].includes(order.status)) {
-      throw new Error("Send the order to kitchen before preparing payment");
+      throw new Error(`Order ${orderId} must be sent to kitchen before payment can be prepared`);
     }
 
     const payable = orderInvoices.find((invoice) =>
