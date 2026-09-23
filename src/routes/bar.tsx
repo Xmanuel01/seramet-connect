@@ -9,11 +9,7 @@ import { useAppContext } from "@/lib/app-context";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import type {
-  OrderForPrint,
-  PrintJob,
-  ProductionStation,
-} from "@/lib/seramet-print-service";
+import type { OrderForPrint, PrintJob, ProductionStation } from "@/lib/seramet-print-service";
 import type { TransactionOrder } from "@/lib/transaction-engine";
 import {
   buildKitchenTickets,
@@ -72,9 +68,7 @@ function BarModule() {
     () =>
       platformState.stations.filter(
         (station) =>
-          station.tenantId === activeTenantId &&
-          station.branchId === branchId &&
-          station.active,
+          station.tenantId === activeTenantId && station.branchId === branchId && station.active,
       ),
     [activeTenantId, branchId, platformState.stations],
   );
@@ -95,9 +89,7 @@ function BarModule() {
         .filter((order) => matchesBranch(order.branchId ?? order.branch))
         .filter(shouldShowKitchenOrder)
         .flatMap((order) => buildKitchenTickets(order, configuredStations, menuItems))
-        .filter(
-          (ticket) => normalizeStation(ticket.station) === "BAR" && ticket.state !== "SERVED",
-        )
+        .filter((ticket) => normalizeStation(ticket.station) === "BAR" && ticket.state !== "SERVED")
         .sort((a, b) => b.ageMinutes - a.ageMinutes),
     [configuredStations, matchesBranch, menuItems, state.orders],
   );
@@ -121,9 +113,7 @@ function BarModule() {
     barModuleEnabled && backendWritable && hasPermission(permissions.kitchenOperate);
   const canRecall = canOperate && hasPermission(permissions.productionAdjust);
   const canPrintProduction =
-    Boolean(profile) &&
-    profile?.kitchenMode !== "KDS_ONLY" &&
-    profile?.kitchenMode !== undefined;
+    Boolean(profile) && profile?.kitchenMode !== "KDS_ONLY" && profile?.kitchenMode !== undefined;
 
   const printQueueCount = barJobs.filter((job) =>
     ["Queued", "Sending", "Retrying"].includes(job.status),
@@ -182,8 +172,7 @@ function BarModule() {
     );
     const physical = result.jobs.find(
       (job) =>
-        job.kitchenDelivery === "PRODUCTION_PRINT" ||
-        job.kitchenDelivery === "POS_FRONT_PRINT",
+        job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT",
     );
 
     if (!physical) {
@@ -201,10 +190,7 @@ function BarModule() {
   };
 
   return (
-    <AppShell
-      title="Bar"
-      subtitle={`Live production queue - ${branchLabel}`}
-    >
+    <AppShell title="Bar" subtitle={`Live production queue - ${branchLabel}`}>
       {(notice || configurationError || !barModuleEnabled) && (
         <div className="mb-4 rounded-md border border-border bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
           {notice ||
@@ -263,9 +249,7 @@ function BarModule() {
                         <div key={item.id}>
                           <div className="font-semibold">{item.label}</div>
                           {item.note && (
-                            <div className="text-[11px] text-muted-foreground">
-                              “{item.note}”
-                            </div>
+                            <div className="text-[11px] text-muted-foreground">“{item.note}”</div>
                           )}
                         </div>
                       ))}
@@ -377,14 +361,8 @@ function BarModule() {
             sub="Branch capability, station routing and printer health"
           />
           <div className="space-y-3 p-4 text-[13px]">
-            <ReadinessRow
-              label="Bar module"
-              value={barModuleEnabled ? "Enabled" : "Disabled"}
-            />
-            <ReadinessRow
-              label="Backend"
-              value={backendStatus}
-            />
+            <ReadinessRow label="Bar module" value={barModuleEnabled ? "Enabled" : "Disabled"} />
+            <ReadinessRow label="Backend" value={backendStatus} />
             <ReadinessRow
               label="Operate permission"
               value={hasPermission(permissions.kitchenOperate) ? "Granted" : "Denied"}
@@ -443,8 +421,7 @@ function latestPhysicalBarPrintJob(jobs: PrintJob[], ticket: KitchenTicket) {
       (job) =>
         job.orderId === ticket.orderId &&
         normalizeStation(job.productionStation ?? "") === normalizeStation(ticket.station) &&
-        (job.kitchenDelivery === "PRODUCTION_PRINT" ||
-          job.kitchenDelivery === "POS_FRONT_PRINT"),
+        (job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT"),
     )
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
 }
