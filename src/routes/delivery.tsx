@@ -231,8 +231,14 @@ function Delivery() {
     const customerReference =
       method === "RIDER_MPESA"
         ? window.prompt("Customer M-Pesa transaction/reference received by the rider")?.trim()
-        : undefined;
-    if (method === "RIDER_MPESA" && !customerReference) return;
+        : method === "COMPANY_TILL_DIRECT"
+          ? window.prompt("Customer transaction/reference sent to the company Till")?.trim()
+          : undefined;
+    if (
+      (method === "RIDER_MPESA" || method === "COMPANY_TILL_DIRECT") &&
+      !customerReference
+    )
+      return;
     try {
       await mutate("recordDeliveryCollection", {
         orderId: row.orderId,
@@ -276,7 +282,7 @@ function Delivery() {
   const confirmRemittance = async (row: DeliveryTask) => {
     try {
       await mutate("confirmDeliveryRemittance", { orderId: row.orderId });
-      setNotice(`${row.orderId} rider remittance confirmed.`);
+      setNotice(`${row.orderId} collection confirmed and posted to the invoice.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Remittance confirmation failed.");
     }
@@ -473,9 +479,12 @@ function Delivery() {
                       Mark remitted
                     </Btn>
                   )}
-                  {row.raw.delivery?.collection?.status === "REMITTED_PENDING_CONFIRMATION" && (
+                  {(row.raw.delivery?.collection?.status ===
+                    "REMITTED_PENDING_CONFIRMATION" ||
+                    (row.raw.delivery?.collection?.method === "COMPANY_TILL_DIRECT" &&
+                      row.raw.delivery?.collection?.status === "AWAITING_PAYMENT")) && (
                     <Btn variant="primary" onClick={() => void confirmRemittance(row)}>
-                      Confirm restaurant received funds
+                      Confirm & post payment
                     </Btn>
                   )}
                 </div>
