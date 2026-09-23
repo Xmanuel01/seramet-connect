@@ -34,6 +34,7 @@ const transactionCollections = [
   "receipts",
   "marketplaceReceivables",
   "marketplaceCharges",
+  "riderRemittances",
   "productionAmendments",
   "externalTransactions",
   "reconciliationMatches",
