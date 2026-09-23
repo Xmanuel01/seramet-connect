@@ -73,6 +73,16 @@ const postings = [
   ["Payroll run", "Wages expense -> Payroll liabilities, PAYE, NSSF, NHIF", "On payroll approval"],
   ["Supplier payment", "Accounts payable -> Bank / cash", "On payment"],
   ["Refund / void", "Sales revenue, VAT payable -> Cash", "On approved refund"],
+  [
+    "Marketplace order",
+    "Marketplace receivable + Delivery customer receivable -> Sales revenue / VAT",
+    "On marketplace order intake",
+  ],
+  [
+    "Marketplace settlement",
+    "Bank + marketplace fees / commissions -> Marketplace receivable",
+    "After provider settlement and bank match",
+  ],
 ];
 
 function AccountingHub() {
