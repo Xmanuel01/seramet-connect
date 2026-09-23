@@ -148,10 +148,24 @@ function MarketplaceControlCentre() {
     .filter((order) => providerFilter === "ALL" || order.source.connectionId === providerFilter)
     .filter((order) => statusFilter === "ALL" || statusGroup(order.status) === statusFilter);
 
-  const totalReceivable = state.marketplaceReceivables
+  const scopedReceivables = state.marketplaceReceivables
     .filter((item) => matchesBranch(item.branchId))
-    .filter((item) => !["SETTLED", "CANCELLED"].includes(item.status))
-    .reduce((sum, item) => sum + item.outstandingAmount, 0);
+    .filter((item) => item.status !== "CANCELLED");
+  const openReceivables = scopedReceivables.filter((item) => item.status !== "SETTLED");
+  const totalReceivable = openReceivables.reduce((sum, item) => sum + item.outstandingAmount, 0);
+  const appPaidTotal = scopedReceivables.reduce((sum, item) => sum + item.appPaidAmount, 0);
+  const providerCashDueTotal = scopedReceivables.reduce(
+    (sum, item) => sum + item.providerCashCollectedAmount,
+    0,
+  );
+  const restaurantCashDueTotal = scopedReceivables.reduce(
+    (sum, item) => sum + item.restaurantCollectableAmount,
+    0,
+  );
+  const expectedMarketplaceSettlement = openReceivables.reduce(
+    (sum, item) => sum + item.expectedNetSettlementAmount,
+    0,
+  );
   const openExceptions = diagnostics.deadLetters.filter((letter) => letter.status === "OPEN");
   const selectedConnection = connections.find(
     (connection) => connection.id === selectedConnectionId,
@@ -295,16 +309,23 @@ function MarketplaceControlCentre() {
           {notice}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         <Metric label="Marketplace orders" value={marketplaceOrders.length} />
+        <Metric label="Paid through apps" value={appPaidTotal} money />
+        <Metric label="Cash due via marketplace" value={providerCashDueTotal} money />
+        <Metric label="Cash due via restaurant" value={restaurantCashDueTotal} money />
         <Metric label="Provider receivable" value={totalReceivable} money />
-        <Metric label="Open exceptions" value={openExceptions.length} invert />
-        <Metric
-          label="SLA attention"
-          value={marketplaceOrders.filter((order) => order.slaWarning).length}
-          invert
-        />
+        <Metric label="Expected net settlement" value={expectedMarketplaceSettlement} money />
       </div>
+      {(openExceptions.length > 0 ||
+        marketplaceOrders.some((order) => order.slaWarning)) && (
+        <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
+          <Status>{openExceptions.length} open exception(s)</Status>
+          <Status>
+            {marketplaceOrders.filter((order) => order.slaWarning).length} SLA attention
+          </Status>
+        </div>
+      )}
 
       <div className="mt-4 flex gap-1 overflow-x-auto border-b border-border pb-2">
         {(["ORDERS", "MENU_SYNC", "EXCEPTIONS"] as const).map((item) => (
@@ -361,7 +382,10 @@ function MarketplaceControlCentre() {
                   "External order",
                   "Seramet order",
                   "Customer",
-                  { l: "Amount", r: true },
+                  { l: "Order value", r: true },
+                  { l: "App paid", r: true },
+                  { l: "Cash due", r: true },
+                  { l: "Expected settlement", r: true },
                   "Received",
                   "Prep timer",
                   "Status",
@@ -378,6 +402,18 @@ function MarketplaceControlCentre() {
                     <TD className="num font-semibold">{order.id}</TD>
                     <TD>{order.customer}</TD>
                     <TD className="num text-right font-semibold">{ksh(order.total)}</TD>
+                    <TD className="num text-right">
+                      {ksh(order.receivable?.appPaidAmount ?? order.source.providerAppPaidAmount ?? 0)}
+                    </TD>
+                    <TD className="num text-right">
+                      {ksh(
+                        (order.receivable?.providerCashCollectedAmount ?? 0) +
+                          (order.receivable?.restaurantCollectableAmount ?? 0),
+                      )}
+                    </TD>
+                    <TD className="num text-right font-semibold">
+                      {ksh(order.receivable?.expectedNetSettlementAmount ?? 0)}
+                    </TD>
                     <TD>{relativeAge(order.ageMinutes)}</TD>
                     <TD className={order.slaWarning ? "font-semibold text-warning" : ""}>
                       {order.ageMinutes} min
@@ -395,7 +431,7 @@ function MarketplaceControlCentre() {
                 ))}
                 {!marketplaceOrders.length && (
                   <tr>
-                    <TD colSpan={10} className="text-muted-foreground">
+                    <TD colSpan={13} className="text-muted-foreground">
                       No marketplace orders match these filters.
                     </TD>
                   </tr>
@@ -417,8 +453,23 @@ function MarketplaceControlCentre() {
                     </div>
                     <Status>{statusGroup(order.status)}</Status>
                   </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-                    <Mini label="Amount" value={ksh(order.total)} />
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                    <Mini label="Order value" value={ksh(order.total)} />
+                    <Mini
+                      label="App paid"
+                      value={ksh(order.receivable?.appPaidAmount ?? order.source.providerAppPaidAmount ?? 0)}
+                    />
+                    <Mini
+                      label="Cash due"
+                      value={ksh(
+                        (order.receivable?.providerCashCollectedAmount ?? 0) +
+                          (order.receivable?.restaurantCollectableAmount ?? 0),
+                      )}
+                    />
+                    <Mini
+                      label="Expected settlement"
+                      value={ksh(order.receivable?.expectedNetSettlementAmount ?? 0)}
+                    />
                     <Mini
                       label="Prep"
                       value={`${order.ageMinutes} min`}
