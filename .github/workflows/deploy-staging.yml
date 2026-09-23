@@ -95,6 +95,18 @@ jobs:
           }
           NODE
 
+      - name: Synchronize Hyperdrive origin credentials
+        run: |
+          npx --yes wrangler@4.15.2 hyperdrive update "$SERAMET_CLOUDFLARE_HYPERDRIVE_ID" \
+            --connection-string "$SERAMET_POSTGRES_URL"
+          curl --fail-with-body --silent --show-error -X POST \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/hyperdrive/configs/${SERAMET_CLOUDFLARE_HYPERDRIVE_ID}/restart" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Generate Cloudflare binding configuration
         run: node scripts/render-cloudflare-config.mjs staging
         env:
