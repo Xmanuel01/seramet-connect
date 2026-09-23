@@ -630,10 +630,7 @@ function updateStatus(obligation: CustodyObligation) {
     obligation.remittedMinor >= obligation.collectedMinor
   ) {
     obligation.status = "REMITTED";
-  } else if (
-    obligation.remittedMinor > 0 &&
-    obligation.remittedMinor < obligation.collectedMinor
-  ) {
+  } else if (obligation.remittedMinor > 0 && obligation.remittedMinor < obligation.collectedMinor) {
     obligation.status = "PARTIALLY_REMITTED";
   } else if (obligation.collectedMinor >= obligation.amountDueMinor) {
     obligation.status = "COLLECTED";
