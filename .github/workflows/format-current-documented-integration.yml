@@ -1,0 +1,42 @@
+name: Format current documented integration
+
+on:
+  push:
+    branches:
+      - integration/documented-implementations-20260923
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/documented-implementations-20260923
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Format current Front of House integration
+        run: |
+          npx prettier --write \
+            src/components/app/nav.ts \
+            src/guest/front-of-house-navigation.test.ts \
+            src/guest/guest-service.ts \
+            src/guest/host-station.tsx \
+            src/guest/pass-11-digital-guest.test.ts \
+            src/routes/host.tsx
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/app/nav.ts src/guest/front-of-house-navigation.test.ts src/guest/guest-service.ts src/guest/host-station.tsx src/guest/pass-11-digital-guest.test.ts src/routes/host.tsx
+          git commit -m "Format Front of House integration"
+          git push origin HEAD:integration/documented-implementations-20260923
