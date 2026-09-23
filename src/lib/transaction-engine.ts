@@ -123,6 +123,8 @@ export type TransactionOrder = {
       method: DeliveryCollectionMethod;
       status: DeliveryCollectionStatus;
       amount: number;
+      merchantAmount?: number;
+      providerChargeAmount?: number;
       customerReference?: string;
       remittanceReference?: string;
       collectedAt?: string;
@@ -165,6 +167,7 @@ export type ExternalOrderSource = {
   providerAppPaidAmount?: number;
   cashDueAmount?: number;
   cashDueCollector?: "PROVIDER" | "RESTAURANT" | "NONE";
+  cashDueProviderChargeAmount?: number;
   marketplaceReceivableId?: string;
   fulfilmentType: "PROVIDER_DELIVERY" | "OWN_DELIVERY" | "PICKUP";
   isScheduled: boolean;
@@ -362,6 +365,7 @@ export type MarketplaceReceivable = {
   appPaidAmount: number;
   providerCashCollectedAmount: number;
   restaurantCollectableAmount: number;
+  customerProviderChargesAmount: number;
   grossAmount: number;
   externallyCollectedAmount: number;
   knownChargesAmount: number;
@@ -560,7 +564,8 @@ export type JournalEntry = {
     | "Expense"
     | "Reconciliation"
     | "Marketplace Sale"
-    | "Marketplace Reversal";
+    | "Marketplace Reversal"
+    | "Marketplace Cash Collection";
   sourceId: string;
   branch: string;
   status: JournalEntryStatus;
@@ -922,6 +927,7 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
       const appPaidAmount = record.appPaidAmount ?? record.externallyCollectedAmount;
       const providerCashCollectedAmount = record.providerCashCollectedAmount ?? 0;
       const restaurantCollectableAmount = record.restaurantCollectableAmount ?? 0;
+      const customerProviderChargesAmount = record.customerProviderChargesAmount ?? 0;
       const knownChargesAmount =
         record.knownChargesAmount ??
         money(
@@ -935,10 +941,12 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
         appPaidAmount,
         providerCashCollectedAmount,
         restaurantCollectableAmount,
+        customerProviderChargesAmount,
         grossAmount: legacyProviderGross,
         knownChargesAmount,
         expectedNetSettlementAmount:
-          record.expectedNetSettlementAmount ?? legacyProviderGross - knownChargesAmount,
+          record.expectedNetSettlementAmount ??
+          legacyProviderGross - knownChargesAmount - customerProviderChargesAmount,
       };
     }),
     marketplaceCharges,
@@ -2278,6 +2286,7 @@ export const TransactionEngine = {
       appPaidAmount?: number;
       providerCashCollectedAmount?: number;
       restaurantCollectableAmount?: number;
+      customerProviderChargesAmount?: number;
       providerReceivableGrossAmount?: number;
       externallyCollectedAmount: number;
       receivableAccount: string;
@@ -2323,6 +2332,7 @@ export const TransactionEngine = {
       appPaidAmount: money(input.appPaidAmount ?? input.externallyCollectedAmount),
       providerCashCollectedAmount: money(input.providerCashCollectedAmount ?? 0),
       restaurantCollectableAmount: money(input.restaurantCollectableAmount ?? 0),
+      customerProviderChargesAmount: money(input.customerProviderChargesAmount ?? 0),
       grossAmount: money(
         input.providerReceivableGrossAmount ??
           Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0)),
@@ -2330,8 +2340,9 @@ export const TransactionEngine = {
       externallyCollectedAmount: money(input.externallyCollectedAmount),
       knownChargesAmount: 0,
       expectedNetSettlementAmount: money(
-        input.providerReceivableGrossAmount ??
-          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0)),
+        (input.providerReceivableGrossAmount ??
+          Math.max(0, order.total - money(input.restaurantCollectableAmount ?? 0))) -
+          money(input.customerProviderChargesAmount ?? 0),
       ),
       settledAmount: 0,
       outstandingAmount: money(
@@ -2384,11 +2395,12 @@ export const TransactionEngine = {
       cashDueAmount:
         receivable.providerCashCollectedAmount + receivable.restaurantCollectableAmount,
       cashDueCollector:
-        receivable.restaurantCollectableAmount > 0
+        receivable.restaurantCollectableAmount > 0 || receivable.customerProviderChargesAmount > 0
           ? "RESTAURANT"
           : receivable.providerCashCollectedAmount > 0
             ? "PROVIDER"
             : "NONE",
+      cashDueProviderChargeAmount: receivable.customerProviderChargesAmount,
     };
     next.journalEntries.unshift(createMarketplaceSaleJournal(next, order, receivable));
     audit(next, {
@@ -2452,7 +2464,9 @@ export const TransactionEngine = {
           .reduce((sum, charge) => sum + charge.amount, 0),
       );
       receivable.expectedNetSettlementAmount = money(
-        receivable.grossAmount - receivable.knownChargesAmount,
+        receivable.grossAmount -
+          receivable.knownChargesAmount -
+          receivable.customerProviderChargesAmount,
       );
       receivable.updatedAt = now();
     }
@@ -2472,6 +2486,7 @@ export const TransactionEngine = {
         appPaidAmount: number;
         cashDueAmount: number;
         cashDueCollector: "PROVIDER" | "RESTAURANT" | "NONE";
+        cashDueProviderChargeAmount?: number;
       };
     },
   ) {
@@ -2556,6 +2571,9 @@ export const TransactionEngine = {
       order.externalSource.providerAppPaidAmount = money(input.paymentBreakdown.appPaidAmount);
       order.externalSource.cashDueAmount = money(input.paymentBreakdown.cashDueAmount);
       order.externalSource.cashDueCollector = input.paymentBreakdown.cashDueCollector;
+      order.externalSource.cashDueProviderChargeAmount = money(
+        input.paymentBreakdown.cashDueProviderChargeAmount ?? 0,
+      );
       order.externalSource.externallyCollectedAmount = money(
         input.paymentBreakdown.appPaidAmount +
           (input.paymentBreakdown.cashDueCollector === "PROVIDER"
@@ -2585,14 +2603,18 @@ export const TransactionEngine = {
         order.externalSource?.cashDueCollector === "RESTAURANT"
           ? money(order.externalSource?.cashDueAmount ?? 0)
           : 0;
+      const customerProviderChargesAmount = money(
+        order.externalSource?.cashDueProviderChargeAmount ?? 0,
+      );
       const providerGross = money(Math.max(0, nextTotals.total - restaurantShare));
       receivable.appPaidAmount = appPaidAmount;
       receivable.providerCashCollectedAmount = providerCashCollectedAmount;
       receivable.restaurantCollectableAmount = restaurantShare;
+      receivable.customerProviderChargesAmount = customerProviderChargesAmount;
       receivable.grossAmount = providerGross;
       receivable.externallyCollectedAmount = money(appPaidAmount + providerCashCollectedAmount);
       receivable.expectedNetSettlementAmount = money(
-        providerGross - receivable.knownChargesAmount,
+        providerGross - receivable.knownChargesAmount - customerProviderChargesAmount,
       );
       receivable.outstandingAmount = money(providerGross - receivable.settledAmount);
       receivable.updatedAt = now();
