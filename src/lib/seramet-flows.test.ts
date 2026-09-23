@@ -1621,7 +1621,7 @@ describe("delivery ownership, rider accountability and marketplace settlement", 
     expect(journal.lines).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ account: "Marketplace Receivables", debit: 1500 }),
-        expect.objectContaining({ account: "Delivery Customer Receivable", debit: 1000 }),
+        expect.objectContaining({ account: "account-demo-customer-receivable", debit: 1000 }),
       ]),
     );
 
