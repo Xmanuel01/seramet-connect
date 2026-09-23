@@ -1029,17 +1029,16 @@ describe("production residual reconciliation", () => {
     expect(approved).toHaveLength(3);
     expect(approved.reduce((total, match) => total + match.amountMinor, 0)).toBe(kes(10_000));
     expect(operations.bankTransactions[0]!.status).toBe("MATCHED");
+    const reconciledCollections = operations.collections.filter((collection) =>
+      operations.transactions.some(
+        (transaction) =>
+          transaction.id === collection.paymentTransactionId &&
+          transaction.merchantReference === "TILL-BATCH-10000",
+      ),
+    );
+    expect(reconciledCollections).toHaveLength(3);
     expect(
-      operations.collections
-        .filter((collection) => payments.some(([invoiceId]) =>
-          operations.transactions.some(
-            (transaction) =>
-              transaction.id === collection.paymentTransactionId &&
-              transaction.merchantReference === "TILL-BATCH-10000" &&
-              transaction.metadata["legacyPaymentId"] !== invoiceId,
-          ),
-        ))
-        .every((collection) => collection.collectionState === "IN_BANK"),
+      reconciledCollections.every((collection) => collection.collectionState === "IN_BANK"),
     ).toBe(true);
 
     state = reconciliation.automaticallyMatchPayments(state, {
