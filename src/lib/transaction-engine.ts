@@ -2099,10 +2099,6 @@ export const TransactionEngine = {
     const order = next.orders.find((candidate) => candidate.id === orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
     const orderInvoices = next.bills.filter((invoice) => invoice.orderIds.includes(orderId));
-    const payable = orderInvoices.find((invoice) =>
-      ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
-    );
-    if (payable) return next;
     if (orderInvoices.some((invoice) => invoice.status === "PAID")) {
       throw new Error("The invoice has already been paid");
     }
@@ -2115,16 +2111,22 @@ export const TransactionEngine = {
       throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
     }
     if (["HELD", "OPEN"].includes(order.status)) {
-      throw new Error(
-        `Order ${orderId} must be sent to kitchen before payment can be prepared`,
-      );
+      throw new Error("Send the order to kitchen before preparing payment");
     }
-    const sent = next.orders.find((candidate) => candidate.id === orderId)!;
-    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(sent.status)) {
+
+    const payable = orderInvoices.find((invoice) =>
+      ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
+    );
+    if (payable) return next;
+
+    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status)) {
       next = this.requestBill(next, orderId, user);
-    } else if (sent.status === "BILL_REQUESTED") {
+    } else if (order.status === "BILL_REQUESTED") {
       next = this.createOpenBill(next, orderId);
+    } else {
+      throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
     }
+
     const invoice = next.bills.find(
       (candidate) =>
         candidate.orderIds.includes(orderId) &&
