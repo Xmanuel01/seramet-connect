@@ -520,6 +520,8 @@ export function createDefaultDemoPlatformState(): PlatformState {
           maximumPrepMinutes: 90,
           scheduledOrderBufferMinutes: 5,
           allowScheduledOrders: true,
+          defaultFulfilmentOwner: displayName === "Uber Eats" ? "RESTAURANT" : "PROVIDER",
+          defaultCashDueCollector: displayName === "Uber Eats" ? "RESTAURANT" : "PROVIDER",
           settlementAccountId: "account-demo-marketplace-receivable",
           settlementAccounts: {
             bankAccountId: "account-demo-bank",
@@ -776,7 +778,10 @@ export function createDefaultDemoPlatformState(): PlatformState {
         requiresAddress: false,
         isExternallyPaid: true,
         sortOrder: 30 + index * 10,
-        metadata: {},
+        metadata: {
+          fulfilmentOwner: displayName === "Uber Eats" ? "RESTAURANT" : "PROVIDER",
+          cashDueCollector: displayName === "Uber Eats" ? "RESTAURANT" : "PROVIDER",
+        },
       })),
     ],
     devices: [
