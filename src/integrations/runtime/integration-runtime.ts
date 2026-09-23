@@ -967,11 +967,8 @@ export class IntegrationRuntime {
       const source = order.externalSource;
       if (!source || !order.branchId) continue;
       const becameProductionReady =
-        Boolean(source.readyAt) && !Boolean(before?.externalSource?.readyAt);
-      if (
-        (order.status === "READY" && before?.status !== "READY") ||
-        becameProductionReady
-      ) {
+        source.readyAt !== undefined && !before?.externalSource?.readyAt;
+      if ((order.status === "READY" && before?.status !== "READY") || becameProductionReady) {
         const adapter = this.dependencies.registry.resolve(
           this.requireTenantConnection(tenantId, source.connectionId),
         );
