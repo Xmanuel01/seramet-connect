@@ -148,13 +148,7 @@ export type PaymentCollection = Readonly<{
   accountId: string;
   amountMinor: MinorAmount;
   currency: string;
-  collectionState:
-    | "IN_HAND"
-    | "IN_CUSTODY"
-    | "IN_CLEARING"
-    | "RECEIVABLE"
-    | "IN_BANK"
-    | "REVERSED";
+  collectionState: "IN_HAND" | "IN_CUSTODY" | "IN_CLEARING" | "RECEIVABLE" | "IN_BANK" | "REVERSED";
   collectedAt: string;
   settledAt?: string;
   createdAt: string;
@@ -353,13 +347,7 @@ export type ReconciliationRule = {
 
 export type CustodyCollectionMode = "CASH_DUE" | "DIGITAL_DUE" | "MIXED";
 export type CustodyHolderType =
-  | "CUSTOMER"
-  | "RIDER"
-  | "CASH_DRAWER"
-  | "MOBILE_MONEY_TILL"
-  | "BANK"
-  | "MARKETPLACE"
-  | "OTHER";
+  "CUSTOMER" | "RIDER" | "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK" | "MARKETPLACE" | "OTHER";
 
 export type CustodyObligation = {
   id: string;
