@@ -1,0 +1,65 @@
+name: Diagnose staging bindings
+
+on:
+  push:
+    branches: [diag/staging-bindings]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - name: Inspect existing Worker bindings
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Cloudflare deployment credentials are not configured in the staging environment."
+            exit 2
+          fi
+          curl --fail-with-body --silent --show-error \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/seramet-staging/settings" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -o /tmp/worker-settings.json
+          node <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync("/tmp/worker-settings.json", "utf8"));
+          if (!payload.success || !payload.result) {
+            console.error("Cloudflare settings lookup did not succeed.");
+            process.exit(3);
+          }
+          const wanted = new Set([
+            "SERAMET_HYPERDRIVE",
+            "SERAMET_WORK_QUEUE",
+            "SERAMET_OBJECTS",
+            "SERAMET_MALWARE_SCANNER",
+            "SERAMET_SUPABASE_URL",
+            "SERAMET_SUPABASE_PUBLISHABLE_KEY",
+            "SERAMET_PUBLIC_ORIGIN",
+            "SERAMET_ALLOWED_ORIGINS",
+            "SERAMET_JWT_SECRET",
+          ]);
+          const safe = (payload.result.bindings ?? [])
+            .filter((binding) => wanted.has(binding.name))
+            .map((binding) => ({
+              name: binding.name,
+              type: binding.type,
+              configured: true,
+              ...(binding.type === "hyperdrive" && binding.id ? { id: binding.id } : {}),
+              ...(binding.type === "r2_bucket" && binding.bucket_name
+                ? { bucket_name: binding.bucket_name }
+                : {}),
+              ...(binding.type === "queue" && binding.queue_name
+                ? { queue_name: binding.queue_name }
+                : {}),
+              ...(binding.type === "service" && binding.service ? { service: binding.service } : {}),
+            }));
+          console.log(JSON.stringify({ bindings: safe }, null, 2));
+          NODE
