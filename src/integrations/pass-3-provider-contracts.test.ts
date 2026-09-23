@@ -226,11 +226,9 @@ describe("Pass 3 Uber Eats official contract", () => {
     });
     const cashDueOrder = structuredClone(uberOrderFixture);
     cashDueOrder.type = "DELIVERY_BY_RESTAURANT";
-    cashDueOrder.payment.charges = {
-      ...cashDueOrder.payment.charges,
-      cash_amount_due: { amount: 315000, currency_code: "KES" },
-      marketplace_fee_due_to_uber: { amount: 15000, currency_code: "KES" },
-    };
+    const cashDueCharges = cashDueOrder.payment.charges as Record<string, unknown>;
+    cashDueCharges["cash_amount_due"] = { amount: 315000, currency_code: "KES" };
+    cashDueCharges["marketplace_fee_due_to_uber"] = { amount: 15000, currency_code: "KES" };
 
     expect(await adapter.normalizeIncomingOrder!(cashDueOrder, connectionValue)).toMatchObject({
       ok: true,
