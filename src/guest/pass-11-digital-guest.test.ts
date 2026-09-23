@@ -460,6 +460,7 @@ describe("Pass 11 digital guest experience", () => {
     const reservationsOnly = await service.hostDashboard(
       { ...manager(), permissions: [permissions.reservationView] },
       branchId,
+      scopedBusinessDate,
     );
     expect(reservationsOnly.reservations.length).toBeGreaterThan(0);
     expect(reservationsOnly.tables.length).toBeGreaterThan(0);
