@@ -21,11 +21,7 @@ async function refreshSession(): Promise<boolean> {
 
 function isPublicAuthRequest(input: RequestInfo | URL) {
   const value =
-    typeof input === "string"
-      ? input
-      : input instanceof URL
-        ? input.pathname
-        : input.url;
+    typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
 
   return value.includes("/api/seramet/public/auth/");
 }
