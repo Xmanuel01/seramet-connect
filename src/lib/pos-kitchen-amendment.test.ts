@@ -15,9 +15,7 @@ import {
 } from "@/platform/repositories/configuration-repository";
 
 beforeEach(() => {
-  setConfigurationRepositoryForTests(
-    new ConfigurationRepository(createDefaultDemoPlatformState()),
-  );
+  setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
 });
 
 function sentOrder() {
@@ -136,9 +134,9 @@ describe("POS kitchen amendments", () => {
       "ADDITION",
       "CANCEL_ITEM",
     ]);
-    expect(
-      amendments.find((amendment) => amendment.type === "ADDITION")?.lines[0]?.itemNote,
-    ).toBe("Extra gravy");
+    expect(amendments.find((amendment) => amendment.type === "ADDITION")?.lines[0]?.itemNote).toBe(
+      "Extra gravy",
+    );
     expect(next.orders[0]!.lines[0]!.itemNote).toBe("Extra gravy");
   });
 

@@ -562,27 +562,26 @@ function POS() {
   const channelLocked = activeOrderHasSentLines;
   const activeOrderKitchenSent = Boolean(
     activeOrder &&
-      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED", "BILL_REQUESTED"].includes(
-        activeOrder.status,
-      ),
+    ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED", "BILL_REQUESTED"].includes(
+      activeOrder.status,
+    ),
   );
-  const hasUnsentItems = items.some(
-    (line) => line.qty > (sentQuantities[line.p.id] ?? 0),
-  );
+  const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
   const dineInPaymentReady =
     !selectedChannel?.requiresTable ||
     Boolean(orderTable && activeOrderKitchenSent && !hasUnsentItems);
-  const workflowState = paymentOpen || paymentBusy
-    ? "Paying"
-    : !activeOrder
-      ? "New"
-      : activeOrder.status === "HELD"
-        ? "Held"
-        : activeOrder.status === "READY" || activeOrder.status === "SERVED"
-          ? "Ready"
-          : activeOrderKitchenSent
-            ? "Kitchen"
-            : "New";
+  const workflowState =
+    paymentOpen || paymentBusy
+      ? "Paying"
+      : !activeOrder
+        ? "New"
+        : activeOrder.status === "HELD"
+          ? "Held"
+          : activeOrder.status === "READY" || activeOrder.status === "SERVED"
+            ? "Ready"
+            : activeOrderKitchenSent
+              ? "Kitchen"
+              : "New";
   const subtotalMinor = items.reduce((sum, line) => sum + (line.p.priceMinor ?? 0) * line.qty, 0);
   const pricingRules = new Map(operationalMenu.pricingRules.map((rule) => [rule.id, rule]));
   const taxTotals = items.reduce(
@@ -620,10 +619,7 @@ function POS() {
   );
   const paid =
     previouslyPaid +
-    payments.reduce(
-      (sum, payment) => sum + (payment.status === "failed" ? 0 : payment.amount),
-      0,
-    );
+    payments.reduce((sum, payment) => sum + (payment.status === "failed" ? 0 : payment.amount), 0);
   const due = Math.max(0, total - paid);
   const change = Math.max(0, paid - total);
   const suggestedAmount = paymentMode === "split" ? Math.ceil(due / 2) : due;
@@ -877,10 +873,7 @@ function POS() {
       let optimisticPaymentState = transactionState;
 
       if (!selectedChannel?.requiresTable) {
-        const mustSendToKitchen =
-          !activeOrder ||
-          !activeOrderKitchenSent ||
-          hasUnsentItems;
+        const mustSendToKitchen = !activeOrder || !activeOrderKitchenSent || hasUnsentItems;
         if (mustSendToKitchen) {
           const kitchen = await queueKitchenTicketsForTable(orderTable);
           if (!kitchen) throw new Error("The order could not be routed to kitchen.");
@@ -898,10 +891,8 @@ function POS() {
         throw new Error("Create and send the order to kitchen before payment.");
       }
 
-      const prepared = await mutateTransaction(
-        "prepareInvoiceForPayment",
-        { orderId },
-        () => TransactionEngine.prepareInvoiceForPayment(
+      const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
+        TransactionEngine.prepareInvoiceForPayment(
           optimisticPaymentState,
           orderId!,
           currentUser.name,
@@ -1106,9 +1097,7 @@ function POS() {
           quantity: unsentQuantity,
           unitPrice: line.p.price,
           productionStation: line.p.productionStation ?? "NONE",
-          ...(itemNotes[line.p.id]?.trim()
-            ? { itemNote: itemNotes[line.p.id]!.trim() }
-            : {}),
+          ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
         },
       ];
     });
@@ -1353,7 +1342,10 @@ function POS() {
           committedThisAttempt += 1;
           if (pendingMethod) hasPendingVerification = true;
         } catch (error) {
-          const message = cashierErrorMessage(error, `${method.displayName} could not be recorded.`);
+          const message = cashierErrorMessage(
+            error,
+            `${method.displayName} could not be recorded.`,
+          );
           updatePaymentStatus(payment.id, "failed", message);
           await syncFromBackend().catch(() => undefined);
           setPrintNotice(
@@ -1399,7 +1391,9 @@ function POS() {
         const receipt = nextState?.receipts.find((candidate) => candidate.invoiceId === bill.id);
         const paidOrder = nextState?.orders.find((candidate) => candidate.id === paymentOrderId);
         if (!receipt || !paidOrder || !updatedBill) {
-          throw new Error("Payment is confirmed, but the authoritative receipt is not available yet.");
+          throw new Error(
+            "Payment is confirmed, but the authoritative receipt is not available yet.",
+          );
         }
         const result = printCustomerDocument(
           {
@@ -1466,7 +1460,10 @@ function POS() {
       }
 
       setPaymentConfirmed(
-        Boolean((completedInvoice || (paymentMode === "partial" && partialInvoice)) && !hasPendingVerification),
+        Boolean(
+          (completedInvoice || (paymentMode === "partial" && partialInvoice)) &&
+          !hasPendingVerification,
+        ),
       );
     } catch (error) {
       setPrintNotice(cashierErrorMessage(error, "Payment could not be completed."));
@@ -1736,8 +1733,7 @@ function POS() {
                 const exact = branchMenu.find((product) =>
                   [product.barcode, product.sku, product.itemCode].some(
                     (value) =>
-                      value?.trim().toLocaleLowerCase() ===
-                      searchQuery.trim().toLocaleLowerCase(),
+                      value?.trim().toLocaleLowerCase() === searchQuery.trim().toLocaleLowerCase(),
                   ),
                 );
                 if (!exact || exact.out) return;
@@ -1972,7 +1968,9 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder} disabled={!items.length || activeOrderHasSentLines}>Hold</Btn>
+              <Btn onClick={holdOrder} disabled={!items.length || activeOrderHasSentLines}>
+                Hold
+              </Btn>
               {canPrintBill ? (
                 <>
                   <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
@@ -1986,7 +1984,9 @@ function POS() {
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets} disabled={!items.length}>Send kitchen</Btn>
+              <Btn onClick={queueKitchenTickets} disabled={!items.length}>
+                Send kitchen
+              </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
@@ -2153,9 +2153,9 @@ function POS() {
                 </div>
               </dl>
               <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                Selecting a free table does not send the order automatically. Review the order,
-                then press Send kitchen. Occupied tables open their existing order instead of
-                creating a duplicate.
+                Selecting a free table does not send the order automatically. Review the order, then
+                press Send kitchen. Occupied tables open their existing order instead of creating a
+                duplicate.
               </div>
             </aside>
           </div>
@@ -2444,39 +2444,37 @@ function POS() {
                       (selectedPaymentMethod.category === "DIGITAL_WALLET" &&
                         selectedPaymentMethod.metadata["providerOperation"] !== "PAYMENT_PROMPT" &&
                         selectedPaymentMethod.metadata["providerOperation"] !== "QR_PAYMENT")) && (
-                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                      {selectedPaymentMethod.displayName} transaction reference
-                      <input
-                        value={paymentReference}
-                        onChange={(event) =>
-                          setPaymentReference(
-                            event.target.value
-                              .replace(/[^a-z0-9]/gi, "")
-                              .toUpperCase()
-                              .slice(0, 32),
-                          )
-                        }
-                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold uppercase text-foreground outline-none"
-                        placeholder="Transaction reference"
-                      />
-                    </label>
-                  )}
-                  {selectedPaymentMethod?.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
                       <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                        Customer phone
+                        {selectedPaymentMethod.displayName} transaction reference
                         <input
-                          inputMode="tel"
-                          value={customerPhone}
+                          value={paymentReference}
                           onChange={(event) =>
-                            setCustomerPhone(
-                              event.target.value.replace(/[^+0-9]/g, "").slice(0, 16),
+                            setPaymentReference(
+                              event.target.value
+                                .replace(/[^a-z0-9]/gi, "")
+                                .toUpperCase()
+                                .slice(0, 32),
                             )
                           }
-                          className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none"
-                          placeholder="2547XXXXXXXX"
+                          className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold uppercase text-foreground outline-none"
+                          placeholder="Transaction reference"
                         />
                       </label>
                     )}
+                  {selectedPaymentMethod?.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
+                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                      Customer phone
+                      <input
+                        inputMode="tel"
+                        value={customerPhone}
+                        onChange={(event) =>
+                          setCustomerPhone(event.target.value.replace(/[^+0-9]/g, "").slice(0, 16))
+                        }
+                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none"
+                        placeholder="2547XXXXXXXX"
+                      />
+                    </label>
+                  )}
                   <div>
                     <div className="mb-2 text-[12px] font-semibold text-muted-foreground">
                       Receipt options

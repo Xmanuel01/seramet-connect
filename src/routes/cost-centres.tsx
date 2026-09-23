@@ -28,7 +28,6 @@ export const Route = createFileRoute("/cost-centres")({
   component: CostCentres,
 });
 
-
 const allocations = emptyRecords();
 
 function CostCentres() {

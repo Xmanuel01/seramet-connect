@@ -4003,8 +4003,9 @@ export class OnboardingService {
       const suppliedOnlinePriceChannels = Array.isArray(normalized.onlinePriceChannelCodes)
         ? (normalized.onlinePriceChannelCodes as string[])
         : [];
-      const unknownChannels = [...new Set([...suppliedChannels, ...suppliedOnlinePriceChannels])]
-        .filter((channel) => !channelCodes.has(channel));
+      const unknownChannels = [
+        ...new Set([...suppliedChannels, ...suppliedOnlinePriceChannels]),
+      ].filter((channel) => !channelCodes.has(channel));
       if (unknownChannels.length) {
         errors.push(
           importIssue(
@@ -4879,9 +4880,9 @@ function normalizeImportRow(
       channelCodes: parseList(value("channels", "channelAvailability")).map((item) =>
         item.toUpperCase(),
       ),
-      onlinePriceChannelCodes: parseList(
-        value("onlinePriceChannels", "digitalPriceChannels"),
-      ).map((item) => item.toUpperCase()),
+      onlinePriceChannelCodes: parseList(value("onlinePriceChannels", "digitalPriceChannels")).map(
+        (item) => item.toUpperCase(),
+      ),
       channelAvailability: Object.fromEntries(
         parseList(value("channels", "channelAvailability")).map((item) => [
           item.toUpperCase(),

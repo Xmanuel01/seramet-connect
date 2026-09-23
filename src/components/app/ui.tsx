@@ -314,7 +314,6 @@ export function Btn({
   );
 }
 
-
 export function Empty({ title, body, action }: { title: string; body: string; action: string }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-12 text-center">

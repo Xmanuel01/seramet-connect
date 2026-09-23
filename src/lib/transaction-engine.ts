@@ -1793,12 +1793,7 @@ export const TransactionEngine = {
     return next;
   },
 
-  amendKitchenOrder(
-    state: TransactionState,
-    orderId: string,
-    draft: OrderDraft,
-    user: string,
-  ) {
+  amendKitchenOrder(state: TransactionState, orderId: string, draft: OrderDraft, user: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
@@ -1863,7 +1858,8 @@ export const TransactionEngine = {
       }
     }
     for (const current of desiredLines) {
-      if (!beforeLines.some((previous) => previous.id === current.id)) additions.push({ ...current });
+      if (!beforeLines.some((previous) => previous.id === current.id))
+        additions.push({ ...current });
     }
     if (additions.length === 0 && removals.length === 0) return next;
 
