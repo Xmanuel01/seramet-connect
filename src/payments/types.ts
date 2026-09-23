@@ -148,7 +148,13 @@ export type PaymentCollection = Readonly<{
   accountId: string;
   amountMinor: MinorAmount;
   currency: string;
-  collectionState: "IN_HAND" | "IN_CLEARING" | "RECEIVABLE" | "IN_BANK" | "REVERSED";
+  collectionState:
+    | "IN_HAND"
+    | "IN_CUSTODY"
+    | "IN_CLEARING"
+    | "RECEIVABLE"
+    | "IN_BANK"
+    | "REVERSED";
   collectedAt: string;
   settledAt?: string;
   createdAt: string;
