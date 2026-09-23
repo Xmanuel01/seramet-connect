@@ -1569,6 +1569,42 @@ describe("delivery ownership, rider accountability and marketplace settlement", 
     expect(state.orders[0]?.delivery?.collection?.status).toBe("CONFIRMED");
   });
 
+  it("posts direct company Till delivery payment only after authorized confirmation", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      deliveryDraft(),
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+
+    state = TransactionEngine.recordDeliveryCollection(
+      state,
+      orderId,
+      {
+        method: "COMPANY_TILL_DIRECT",
+        amount: 2500,
+        customerReference: "TILL-DELIVERY-001",
+      },
+      "Dispatch",
+    );
+    expect(state.orders[0]?.delivery?.collection?.status).toBe("AWAITING_PAYMENT");
+    expect(state.payments).toHaveLength(0);
+
+    state = TransactionEngine.confirmDeliveryRemittance(state, orderId, "Finance");
+    expect(state.orders.find((order) => order.id === orderId)?.delivery?.collection?.status).toBe(
+      "CONFIRMED",
+    );
+    expect(state.payments[0]).toMatchObject({
+      amount: 2500,
+      reference: "TILL-DELIVERY-001",
+    });
+    expect(state.bills.find((bill) => bill.orderIds.includes(orderId))).toMatchObject({
+      status: "PAID",
+      paymentStatus: "PAID",
+      paid: 2500,
+    });
+  });
+
   it("splits marketplace app-paid and restaurant cash-due amounts into balanced accounting", () => {
     let state = TransactionEngine.createOrder(
       createEmptyTransactionState(DEMO_TENANT_ID),
