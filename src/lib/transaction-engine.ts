@@ -74,6 +74,37 @@ export type TransactionLine = {
   sentQuantity?: number;
 };
 
+export type DeliveryCollectionMethod =
+  | "COMPANY_TILL"
+  | "CASH_TO_RIDER"
+  | "RIDER_MPESA"
+  | "ALREADY_PAID_ONLINE";
+
+export type DeliveryCollectionRecord = {
+  id: string;
+  method: DeliveryCollectionMethod;
+  amount: number;
+  reference?: string;
+  recordedAt: string;
+  recordedBy: string;
+};
+
+export type RiderRemittanceMethod = "CASH_HANDOVER" | "MPESA_TO_TILL";
+
+export type RiderRemittanceRecord = {
+  id: string;
+  tenantId?: string;
+  branchId?: string;
+  branch: string;
+  rider: string;
+  method: RiderRemittanceMethod;
+  amount: number;
+  reference?: string;
+  allocations: Array<{ orderId: string; amount: number }>;
+  receivedBy: string;
+  createdAt: string;
+};
+
 export type TransactionOrder = {
   id: string;
   tenantId?: string;
@@ -103,6 +134,7 @@ export type TransactionOrder = {
     assignedAt?: string;
     pickedUpAt?: string;
     deliveredAt?: string;
+    collections?: DeliveryCollectionRecord[];
   };
   guestContext?: {
     guestSessionId: string;
@@ -596,6 +628,7 @@ export type TransactionState = {
   receipts: ReceiptRecord[];
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
+  riderRemittances: RiderRemittanceRecord[];
   productionAmendments: ProductionAmendmentRecord[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
@@ -871,6 +904,9 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
       ? state.marketplaceCharges
       : []
     ).map((record) => ({ ...record, tenantId: record.tenantId ?? tenantId })),
+    riderRemittances: scoped(
+      Array.isArray(state.riderRemittances) ? state.riderRemittances : [],
+    ),
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
     ),
@@ -977,6 +1013,32 @@ function postOrderInventoryConsumption(
   order.inventoryPostedAt = stamp;
 }
 
+export function riderCollectionAmount(order: TransactionOrder) {
+  return (order.delivery?.collections ?? [])
+    .filter(
+      (collection) =>
+        collection.method === "CASH_TO_RIDER" || collection.method === "RIDER_MPESA",
+    )
+    .reduce((sum, collection) => sum + collection.amount, 0);
+}
+
+export function riderRemittedAmount(state: TransactionState, orderId: string) {
+  return (state.riderRemittances ?? []).reduce(
+    (sum, remittance) =>
+      sum +
+      remittance.allocations
+        .filter((allocation) => allocation.orderId === orderId)
+        .reduce((allocated, allocation) => allocated + allocation.amount, 0),
+    0,
+  );
+}
+
+export function riderOutstandingAmount(state: TransactionState, orderId: string) {
+  const order = state.orders.find((candidate) => candidate.id === orderId);
+  if (!order) return 0;
+  return Math.max(0, riderCollectionAmount(order) - riderRemittedAmount(state, orderId));
+}
+
 export function createEmptyTransactionState(tenantId: string): TransactionState {
   return {
     schemaVersion: 3,
@@ -989,6 +1051,7 @@ export function createEmptyTransactionState(tenantId: string): TransactionState 
     receipts: [],
     marketplaceReceivables: [],
     marketplaceCharges: [],
+    riderRemittances: [],
     productionAmendments: [],
     externalTransactions: [],
     reconciliationMatches: [],
@@ -1628,6 +1691,143 @@ export const TransactionEngine = {
       record: order.id,
       before,
       after: status,
+    });
+    return next;
+  },
+
+  recordDeliveryCollection(
+    state: TransactionState,
+    orderId: string,
+    input: {
+      method: DeliveryCollectionMethod;
+      amount: number;
+      reference?: string;
+    },
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order?.delivery) throw new Error("Delivery order was not found");
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error("Collected amount must be greater than zero");
+    }
+    if (
+      (input.method === "CASH_TO_RIDER" || input.method === "RIDER_MPESA") &&
+      !order.delivery.rider
+    ) {
+      throw new Error("Assign a restaurant rider before recording rider-held funds");
+    }
+    if (input.method === "COMPANY_TILL" && !input.reference?.trim()) {
+      throw new Error("Company Till collections require an M-Pesa transaction reference");
+    }
+    const collections = order.delivery.collections ?? [];
+    const alreadyRecorded = collections.reduce((sum, collection) => sum + collection.amount, 0);
+    if (alreadyRecorded + input.amount > order.total) {
+      throw new Error("Recorded customer collections cannot exceed the order value");
+    }
+    const stamp = now();
+    const collection: DeliveryCollectionRecord = {
+      id: nextTransactionRecordId("DCO", collections),
+      method: input.method,
+      amount: money(input.amount),
+      ...(input.reference?.trim() ? { reference: input.reference.trim().toUpperCase() } : {}),
+      recordedAt: stamp,
+      recordedBy: user,
+    };
+    order.delivery.collections = [...collections, collection];
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Dispatch",
+      branch: order.branch,
+      module: "Delivery",
+      action: "Recorded delivery collection",
+      record: order.id,
+      before: String(alreadyRecorded),
+      after: `${collection.method} ${collection.amount}`,
+    });
+    return next;
+  },
+
+  recordRiderRemittance(
+    state: TransactionState,
+    input: {
+      rider: string;
+      branch: string;
+      method: RiderRemittanceMethod;
+      amount: number;
+      reference?: string;
+    },
+    user: string,
+  ) {
+    const next = clone(normalizeTransactionState(state));
+    const rider = input.rider.trim();
+    if (!rider) throw new Error("Rider is required");
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error("Remittance amount must be greater than zero");
+    }
+    if (input.method === "MPESA_TO_TILL" && !input.reference?.trim()) {
+      throw new Error("M-Pesa remittance requires the company Till transaction reference");
+    }
+    const scope = resolveScope(input.branch, next.tenantId ?? LOCAL_PILOT_TENANT_ID);
+    const eligible = next.orders
+      .filter(
+        (order) =>
+          order.branchId === scope.branchId &&
+          order.delivery?.rider === rider &&
+          riderOutstandingAmount(next, order.id) > 0,
+      )
+      .sort((a, b) => {
+        const aTime = a.delivery?.deliveredAt ?? a.createdAt;
+        const bTime = b.delivery?.deliveredAt ?? b.createdAt;
+        return aTime.localeCompare(bTime);
+      });
+    const totalOutstanding = eligible.reduce(
+      (sum, order) => sum + riderOutstandingAmount(next, order.id),
+      0,
+    );
+    if (input.amount > totalOutstanding) {
+      throw new Error(
+        `Remittance exceeds ${rider}'s outstanding rider-custody balance of ${totalOutstanding}`,
+      );
+    }
+
+    let remaining = money(input.amount);
+    const allocations: Array<{ orderId: string; amount: number }> = [];
+    for (const order of eligible) {
+      if (remaining <= 0) break;
+      const outstanding = riderOutstandingAmount(next, order.id);
+      const amount = Math.min(outstanding, remaining);
+      if (amount > 0) {
+        allocations.push({ orderId: order.id, amount });
+        remaining -= amount;
+      }
+    }
+    if (remaining !== 0 || allocations.length === 0) {
+      throw new Error("Seramet could not allocate the rider remittance");
+    }
+
+    const remittance: RiderRemittanceRecord = {
+      id: id("RRM", next, "riderRemittances"),
+      ...scope,
+      rider,
+      method: input.method,
+      amount: money(input.amount),
+      ...(input.reference?.trim() ? { reference: input.reference.trim().toUpperCase() } : {}),
+      allocations,
+      receivedBy: user,
+      createdAt: now(),
+    };
+    next.riderRemittances.unshift(remittance);
+    audit(next, {
+      actor: user,
+      role: "Dispatch",
+      branch: scope.branch,
+      module: "Delivery",
+      action: "Received rider remittance",
+      record: remittance.id,
+      before: String(totalOutstanding),
+      after: `${remittance.method} ${remittance.amount}; balance ${totalOutstanding - remittance.amount}`,
     });
     return next;
   },
