@@ -141,6 +141,7 @@ export type NormalizedExternalOrder = {
     appPaidAmount?: number;
     cashDueAmount?: number;
     cashDueCollector?: "PROVIDER" | "RESTAURANT" | "NONE";
+    cashDueProviderChargeAmount?: number;
   };
   charges?: Array<{
     type: MarketplaceChargeType;
