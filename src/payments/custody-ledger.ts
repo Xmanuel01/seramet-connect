@@ -230,6 +230,38 @@ export class CustodyLedger {
     updateStatus(obligation);
     obligation.updatedAt = new Date().toISOString();
 
+    if (input.merchantAppliedMinor > 0) {
+      const receivable = next.marketplaceReceivables.find(
+        (candidate) =>
+          candidate.orderId === obligation.orderId &&
+          candidate.tenantId === input.tenantId &&
+          candidate.status !== "CANCELLED",
+      );
+      if (receivable) {
+        const merchantAppliedMajor =
+          input.merchantAppliedMinor /
+          (10 ** currencyMinorDigits(receivable.currency));
+        receivable.merchantCollectedAmount = Math.min(
+          receivable.grossAmount,
+          (receivable.merchantCollectedAmount ?? 0) + merchantAppliedMajor,
+        );
+        receivable.outstandingAmount = Math.max(
+          0,
+          receivable.grossAmount -
+            (receivable.merchantCollectedAmount ?? 0) -
+            receivable.settledAmount,
+        );
+        receivable.status =
+          receivable.outstandingAmount === 0
+            ? "SETTLED"
+            : (receivable.merchantCollectedAmount ?? 0) > 0 || receivable.settledAmount > 0
+              ? "PARTIALLY_SETTLED"
+              : "OPEN";
+        if (receivable.status === "SETTLED") receivable.settledAt = new Date().toISOString();
+        receivable.updatedAt = new Date().toISOString();
+      }
+    }
+
     const nonMerchantMinor =
       input.marketplaceFeeAppliedMinor + input.unclassifiedAppliedMinor;
     if (nonMerchantMinor > 0) {
@@ -442,6 +474,10 @@ function requiredOperations(state: TransactionState) {
 
 function assertTenant(state: TransactionState, tenantId: string) {
   if ((state.tenantId ?? tenantId) !== tenantId) throw new Error("Tenant scope violation");
+}
+
+function currencyMinorDigits(currency: string) {
+  return ["JPY", "KRW"].includes(currency.toUpperCase()) ? 0 : 2;
 }
 
 function journalLine(
