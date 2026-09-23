@@ -889,6 +889,10 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
 
   const scoped = <T extends { tenantId?: string; branchId?: string; branch: string }>(rows: T[]) =>
     rows.map((record) => normalizeScopedRecord(record, tenantId));
+  const marketplaceCharges = (Array.isArray(state.marketplaceCharges)
+    ? state.marketplaceCharges
+    : []
+  ).map((record) => ({ ...record, tenantId: record.tenantId ?? tenantId }));
 
   return {
     ...state,
@@ -907,11 +911,15 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
         record.orderGrossAmount === undefined ? record.grossAmount : record.grossAmount;
       const orderGrossAmount = record.orderGrossAmount ?? record.grossAmount;
       const appPaidAmount = record.appPaidAmount ?? record.externallyCollectedAmount;
-      const providerCashCollectedAmount =
-        record.providerCashCollectedAmount ??
-        Math.max(0, legacyProviderGross - appPaidAmount);
+      const providerCashCollectedAmount = record.providerCashCollectedAmount ?? 0;
       const restaurantCollectableAmount = record.restaurantCollectableAmount ?? 0;
-      const knownChargesAmount = record.knownChargesAmount ?? 0;
+      const knownChargesAmount =
+        record.knownChargesAmount ??
+        money(
+          marketplaceCharges
+            .filter((charge) => charge.orderId === record.orderId)
+            .reduce((sum, charge) => sum + charge.amount, 0),
+        );
       return {
         ...record,
         orderGrossAmount,
@@ -924,10 +932,7 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
           record.expectedNetSettlementAmount ?? legacyProviderGross - knownChargesAmount,
       };
     }),
-    marketplaceCharges: (Array.isArray(state.marketplaceCharges)
-      ? state.marketplaceCharges
-      : []
-    ).map((record) => ({ ...record, tenantId: record.tenantId ?? tenantId })),
+    marketplaceCharges,
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
     ),
