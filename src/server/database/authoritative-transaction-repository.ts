@@ -3068,6 +3068,7 @@ const financiallyLockedActions = new Set([
   "updateOrderDraft",
   "upsertOrderDraft",
   "upsertAndSendKitchen",
+  "amendKitchenOrder",
   "prepareInvoiceForPayment",
   "applyConfiguredPayment",
   "applyVoucherRedemption",
