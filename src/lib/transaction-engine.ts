@@ -902,7 +902,28 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
     receipts: scoped(Array.isArray(state.receipts) ? state.receipts : []),
     marketplaceReceivables: scoped(
       Array.isArray(state.marketplaceReceivables) ? state.marketplaceReceivables : [],
-    ),
+    ).map((record) => {
+      const legacyProviderGross =
+        record.orderGrossAmount === undefined ? record.grossAmount : record.grossAmount;
+      const orderGrossAmount = record.orderGrossAmount ?? record.grossAmount;
+      const appPaidAmount = record.appPaidAmount ?? record.externallyCollectedAmount;
+      const providerCashCollectedAmount =
+        record.providerCashCollectedAmount ??
+        Math.max(0, legacyProviderGross - appPaidAmount);
+      const restaurantCollectableAmount = record.restaurantCollectableAmount ?? 0;
+      const knownChargesAmount = record.knownChargesAmount ?? 0;
+      return {
+        ...record,
+        orderGrossAmount,
+        appPaidAmount,
+        providerCashCollectedAmount,
+        restaurantCollectableAmount,
+        grossAmount: legacyProviderGross,
+        knownChargesAmount,
+        expectedNetSettlementAmount:
+          record.expectedNetSettlementAmount ?? legacyProviderGross - knownChargesAmount,
+      };
+    }),
     marketplaceCharges: (Array.isArray(state.marketplaceCharges)
       ? state.marketplaceCharges
       : []
@@ -2254,15 +2275,22 @@ export const TransactionEngine = {
       metadata: { ...(input.metadata ?? {}) },
     };
     next.marketplaceReceivables.unshift(receivable);
-    bill.status = "PROVIDER_RECEIVABLE";
-    bill.paymentStatus = "PROVIDER_RECEIVABLE";
-    bill.paid = 0;
-    order.paymentStatus =
-      receivable.restaurantCollectableAmount > 0 && receivable.grossAmount > 0
-        ? "PARTIAL"
-        : receivable.grossAmount > 0
-          ? "PROVIDER_RECEIVABLE"
-          : "UNPAID";
+    if (receivable.grossAmount > 0 && receivable.restaurantCollectableAmount > 0) {
+      bill.status = "PARTIAL";
+      bill.paymentStatus = "PARTIAL";
+      bill.paid = receivable.grossAmount;
+      order.paymentStatus = "PARTIAL";
+    } else if (receivable.grossAmount > 0) {
+      bill.status = "PROVIDER_RECEIVABLE";
+      bill.paymentStatus = "PROVIDER_RECEIVABLE";
+      bill.paid = 0;
+      order.paymentStatus = "PROVIDER_RECEIVABLE";
+    } else {
+      bill.status = "OPEN";
+      bill.paymentStatus = "UNPAID";
+      bill.paid = 0;
+      order.paymentStatus = "UNPAID";
+    }
     order.externalSource = {
       ...(order.externalSource ?? {
         connectionId: input.connectionId,
@@ -3620,12 +3648,26 @@ function createMarketplaceReversalJournal(
             },
           ]
         : []),
-      {
-        account: receivable.receivableAccount,
-        debit: 0,
-        credit: order.total,
-        costCentre: order.branch,
-      },
+      ...(receivable.grossAmount
+        ? [
+            {
+              account: receivable.receivableAccount,
+              debit: 0,
+              credit: receivable.grossAmount,
+              costCentre: order.branch,
+            },
+          ]
+        : []),
+      ...(receivable.restaurantCollectableAmount
+        ? [
+            {
+              account: "Delivery Customer Receivable",
+              debit: 0,
+              credit: receivable.restaurantCollectableAmount,
+              costCentre: order.branch,
+            },
+          ]
+        : []),
     ],
   };
 }
