@@ -1763,7 +1763,22 @@ export class GuestExperienceService {
   }
 
   async hostDashboard(actor: ServerActor, branchId: string, businessDate?: string) {
-    assertStaffBranch(actor, branchId, permissions.reservationView);
+    assertStaffBranchAccess(actor, branchId);
+
+    const canViewReservations = actor.permissions.includes(permissions.reservationView);
+    const canViewWaitlist =
+      actor.permissions.includes(permissions.waitlistView) ||
+      actor.permissions.includes(permissions.waitlistManage);
+    const canViewTables =
+      actor.permissions.includes(permissions.tableManage) ||
+      actor.permissions.includes(permissions.reservationSeat) ||
+      canViewReservations;
+    const canViewServiceRequests = actor.permissions.includes(permissions.guestServiceManage);
+
+    if (!canViewReservations && !canViewWaitlist && !canViewTables && !canViewServiceRequests) {
+      throw new GuestDomainError("FORBIDDEN", 403, "Front of House permission is required");
+    }
+
     const branch = await this.db
       .prepare(
         "SELECT timezone,business_day_cutoff_minutes FROM branches WHERE tenant_id=? AND id=? AND active=1",
@@ -1777,44 +1792,55 @@ export class GuestExperienceService {
         timezone: branch.timezone,
         cutoffMinutes: branch.business_day_cutoff_minutes,
       });
-    const [reservations, waitlist, tables, requests] = await Promise.all([
-      this.db
-        .prepare(
-          `SELECT r.id,r.guest_name,r.party_size,r.starts_at,r.ends_at,r.status,r.confirmation_state,
-                GROUP_CONCAT(t.code, ' + ') AS table_codes
-         FROM reservations r
-         LEFT JOIN reservation_table_assignments a ON a.tenant_id=r.tenant_id AND a.reservation_id=r.id AND a.released_at IS NULL
-         LEFT JOIN restaurant_tables t ON t.tenant_id=a.tenant_id AND t.id=a.table_id
-         WHERE r.tenant_id=? AND r.branch_id=? AND r.business_date=?
-         GROUP BY r.id ORDER BY r.starts_at LIMIT 500`,
-        )
-        .bind(actor.tenantId, branchId, date)
-        .all<Row>(),
-      this.db
-        .prepare(
-          `SELECT id,guest_name,party_size,status,estimated_wait_minutes,joined_at
-         FROM waitlist_entries WHERE tenant_id=? AND branch_id=? AND status IN ('WAITING','NOTIFIED')
-         ORDER BY joined_at LIMIT 200`,
-        )
-        .bind(actor.tenantId, branchId)
-        .all<Row>(),
-      this.tableStatus(actor.tenantId, branchId),
-      this.db
-        .prepare(
-          `SELECT id,table_session_id,request_type,status,note,created_at
-         FROM guest_service_requests WHERE tenant_id=? AND branch_id=? AND status IN ('OPEN','ACKNOWLEDGED')
-         ORDER BY created_at LIMIT 200`,
-        )
-        .bind(actor.tenantId, branchId)
-        .all<Row>(),
+
+    const reservationsPromise = canViewReservations
+      ? this.db
+          .prepare(
+            `SELECT r.id,r.guest_name,r.party_size,r.starts_at,r.ends_at,r.status,r.confirmation_state,
+                  GROUP_CONCAT(t.code, ' + ') AS table_codes
+           FROM reservations r
+           LEFT JOIN reservation_table_assignments a ON a.tenant_id=r.tenant_id AND a.reservation_id=r.id AND a.released_at IS NULL
+           LEFT JOIN restaurant_tables t ON t.tenant_id=a.tenant_id AND t.id=a.table_id
+           WHERE r.tenant_id=? AND r.branch_id=? AND r.business_date=?
+           GROUP BY r.id ORDER BY r.starts_at LIMIT 500`,
+          )
+          .bind(actor.tenantId, branchId, date)
+          .all<Row>()
+          .then((result) => result.results ?? [])
+      : Promise.resolve([] as Row[]);
+    const waitlistPromise = canViewWaitlist
+      ? this.db
+          .prepare(
+            `SELECT id,guest_name,party_size,status,estimated_wait_minutes,joined_at
+           FROM waitlist_entries WHERE tenant_id=? AND branch_id=? AND status IN ('WAITING','NOTIFIED')
+           ORDER BY joined_at LIMIT 200`,
+          )
+          .bind(actor.tenantId, branchId)
+          .all<Row>()
+          .then((result) => result.results ?? [])
+      : Promise.resolve([] as Row[]);
+    const tablesPromise = canViewTables
+      ? this.tableStatus(actor.tenantId, branchId)
+      : Promise.resolve([] as Row[]);
+    const requestsPromise = canViewServiceRequests
+      ? this.db
+          .prepare(
+            `SELECT id,table_session_id,request_type,status,note,created_at
+           FROM guest_service_requests WHERE tenant_id=? AND branch_id=? AND status IN ('OPEN','ACKNOWLEDGED')
+           ORDER BY created_at LIMIT 200`,
+          )
+          .bind(actor.tenantId, branchId)
+          .all<Row>()
+          .then((result) => result.results ?? [])
+      : Promise.resolve([] as Row[]);
+
+    const [reservations, waitlist, tables, serviceRequests] = await Promise.all([
+      reservationsPromise,
+      waitlistPromise,
+      tablesPromise,
+      requestsPromise,
     ]);
-    return {
-      businessDate: date,
-      reservations: reservations.results ?? [],
-      waitlist: waitlist.results ?? [],
-      tables,
-      serviceRequests: requests.results ?? [],
-    };
+    return { businessDate: date, reservations, waitlist, tables, serviceRequests };
   }
 
   async staffReservationTransition(
@@ -3840,15 +3866,19 @@ function guestValueActor(profile: ProfileScope, session: GuestSessionRow): Serve
   };
 }
 
-function assertStaffBranch(actor: ServerActor, branchId: string, permission: string) {
-  if (!actor.permissions.includes(permission))
-    throw new GuestDomainError("FORBIDDEN", 403, `${permission} permission is required`);
+function assertStaffBranchAccess(actor: ServerActor, branchId: string) {
   if (
     !actor.assignedBranchIds.includes(branchId) &&
     !actor.permissions.includes(permissions.tenantScopeAllBranches)
   ) {
     throw new GuestDomainError("FORBIDDEN", 403, "Branch access is not assigned");
   }
+}
+
+function assertStaffBranch(actor: ServerActor, branchId: string, permission: string) {
+  if (!actor.permissions.includes(permission))
+    throw new GuestDomainError("FORBIDDEN", 403, `${permission} permission is required`);
+  assertStaffBranchAccess(actor, branchId);
 }
 
 function auditStatement(
