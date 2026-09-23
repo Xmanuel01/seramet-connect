@@ -706,15 +706,34 @@ export class ReconciliationEngine {
     batch.bankTransactionId ??= bank.id;
     batch.netSettledMinor = approvedMatchedMinor(operations, "SETTLEMENT", batch.id, "left");
     const settlementAfter = Math.max(0, batch.netExpectedMinor - batch.netSettledMinor);
-    batch.status = settlementAfter === 0 ? "MATCHED" : "MATCHING";
+    const bankAfter = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
+
+    if (settlementAfter > 0 && bankAfter === 0) {
+      batch.status = "EXCEPTION";
+      addException(operations, {
+        tenantId: input.tenantId,
+        ...(batch.branchId ? { branchId: batch.branchId } : {}),
+        sourceType: "SETTLEMENT",
+        sourceId: batch.id,
+        reason: "BANK_SHORTFALL",
+        amountMinor: -settlementAfter,
+        currency: batch.currency,
+        severity: "CRITICAL",
+        detail: `Settlement remains short by ${settlementAfter} after bank allocation`,
+      });
+    } else {
+      batch.status = settlementAfter === 0 ? "MATCHED" : "MATCHING";
+    }
     batch.updatedAt = new Date().toISOString();
 
-    const bankAfter = bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor));
     replaceBank(operations, bank.id, {
       ...bank,
       status: bankAfter === 0 ? "MATCHED" : "PARTIAL",
     });
-    if (settlementAfter === 0) resolveResidualException(operations, "SETTLEMENT", batch.id);
+    if (settlementAfter === 0) {
+      resolveResidualException(operations, "SETTLEMENT", batch.id);
+      resolveSettlementShortfallException(operations, batch.id);
+    }
     return next;
   }
 
@@ -1279,6 +1298,26 @@ function custodyResidualMinor(
     0,
     amountMinor - approvedMatchedMinor(operations, "CUSTODY_MOVEMENT", movementId, "left"),
   );
+}
+
+function resolveSettlementShortfallException(
+  operations: PaymentOperationsState,
+  settlementId: string,
+) {
+  const stamp = new Date().toISOString();
+  for (const exception of operations.exceptions) {
+    if (
+      exception.sourceType === "SETTLEMENT" &&
+      exception.sourceId === settlementId &&
+      exception.reason === "BANK_SHORTFALL" &&
+      exception.status === "OPEN"
+    ) {
+      exception.status = "RESOLVED";
+      exception.resolvedAt = stamp;
+      exception.resolvedBy = "SYSTEM";
+      exception.resolution = "Settlement residual fully reconciled";
+    }
+  }
 }
 
 function resolveResidualException(
