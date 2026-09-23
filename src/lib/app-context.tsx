@@ -201,7 +201,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const serviceUnavailable = bootstrap.kind === "SERVICE_UNAVAILABLE";
     return (
       <SessionGate
-        title={serviceUnavailable ? "Seramet is temporarily unavailable" : "Authentication required"}
+        title={
+          serviceUnavailable ? "Seramet is temporarily unavailable" : "Authentication required"
+        }
         detail={bootstrap.message}
         action={serviceUnavailable ? "RETRY" : "AUTH"}
       />
