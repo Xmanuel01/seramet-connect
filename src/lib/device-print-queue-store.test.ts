@@ -43,10 +43,7 @@ beforeEach(() => DevicePrintQueueStore.resetForTests());
 describe("device print queue store", () => {
   it("shares one live queue snapshot across consumers on the same branch", () => {
     DevicePrintQueueStore.setJobs("branch-westlands", [job("PJ-1")]);
-    DevicePrintQueueStore.setJobs("branch-westlands", (current) => [
-      job("PJ-2"),
-      ...current,
-    ]);
+    DevicePrintQueueStore.setJobs("branch-westlands", (current) => [job("PJ-2"), ...current]);
 
     expect(DevicePrintQueueStore.snapshot("branch-westlands").jobs.map((row) => row.id)).toEqual([
       "PJ-2",
