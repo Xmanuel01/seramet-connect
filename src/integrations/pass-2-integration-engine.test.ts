@@ -885,13 +885,20 @@ describe("Pass 3 marketplace acceptance", () => {
       "PREPARING",
       "Chef",
     );
-    const kitchenReady = TransactionEngine.setProductionStationStatus(
+    const billed = TransactionEngine.requestBill(
       kitchenPreparing,
       kitchenPreparing.orders[0]!.id,
+      "Cashier",
+    );
+    expect(billed.orders[0]!.status).toBe("BILL_REQUESTED");
+    const kitchenReady = TransactionEngine.setProductionStationStatus(
+      billed,
+      billed.orders[0]!.id,
       "MAIN KITCHEN",
       "READY",
       "Chef",
     );
+    expect(kitchenReady.orders[0]!.status).toBe("BILL_REQUESTED");
     await f.runtime.captureTransactionDomainEvents(previous, kitchenReady);
     expect(
       (await f.repository.listOutbox(DEMO_TENANT_ID)).filter(
@@ -913,6 +920,8 @@ describe("Pass 3 marketplace acceptance", () => {
       "READY",
       "Bartender",
     );
+    expect(allReady.orders[0]!.status).toBe("BILL_REQUESTED");
+    expect(allReady.orders[0]!.externalSource?.readyAt).toBeTruthy();
     await f.runtime.captureTransactionDomainEvents(kitchenReady, allReady);
     expect(
       (await f.repository.listOutbox(DEMO_TENANT_ID)).filter(
