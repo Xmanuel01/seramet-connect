@@ -704,6 +704,19 @@ function resolveConfiguredAccount(tenantId: string, branchId: string, method: Pa
   return typeof shortcode === "string" ? shortcode : paymentMethod.settlementAccountId;
 }
 
+function configuredSettlementAccount(
+  tenantId: string,
+  category: "CASH" | "DIGITAL_WALLET",
+) {
+  const method = configuredPaymentMethod(tenantId, category);
+  if (!method?.settlementAccountId) {
+    throw new PlatformConfigurationError(
+      `${category} payment method requires a configured settlement account`,
+    );
+  }
+  return method.settlementAccountId;
+}
+
 function configuredCustomerReceivableAccount(tenantId: string) {
   return (
     configurationRepository
@@ -1759,6 +1772,8 @@ export const TransactionEngine = {
     input: {
       method: DeliveryCollectionMethod;
       amount?: number;
+      merchantAmount?: number;
+      providerChargeAmount?: number;
       customerReference?: string;
     },
     user: string,
@@ -1768,6 +1783,18 @@ export const TransactionEngine = {
     if (!order || !order.delivery) throw new Error("Delivery order was not found");
     const amount = money(input.amount ?? order.total);
     if (!Number.isFinite(amount) || amount < 0) throw new Error("Collection amount is invalid");
+    const existingCollection = order.delivery.collection;
+    const providerChargeAmount = money(
+      input.providerChargeAmount ?? existingCollection?.providerChargeAmount ?? 0,
+    );
+    const merchantAmount = money(
+      input.merchantAmount ??
+        existingCollection?.merchantAmount ??
+        Math.max(0, amount - providerChargeAmount),
+    );
+    if (merchantAmount < 0 || providerChargeAmount < 0 || merchantAmount + providerChargeAmount > amount) {
+      throw new Error("Delivery collection split is invalid");
+    }
     const riderMethod = input.method === "RIDER_CASH" || input.method === "RIDER_MPESA";
     if (riderMethod && !order.delivery.rider) {
       throw new Error("Assign a restaurant rider before recording rider-held customer funds");
@@ -1795,6 +1822,8 @@ export const TransactionEngine = {
         method: input.method,
         status,
         amount,
+        merchantAmount,
+        providerChargeAmount,
         ...(input.customerReference?.trim()
           ? { customerReference: input.customerReference.trim().toUpperCase() }
           : {}),
@@ -1875,44 +1904,80 @@ export const TransactionEngine = {
       throw new Error("Delivery collection is not awaiting financial confirmation");
     }
 
+    const merchantAmount = money(collection.merchantAmount ?? collection.amount);
+    const providerChargeAmount = money(collection.providerChargeAmount ?? 0);
     let bill = next.bills.find(
       (candidate) =>
         candidate.orderIds.includes(orderId) &&
         ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
     );
-    if (!bill) {
-      next = this.createOpenBill(next, orderId);
-      bill = next.bills.find(
-        (candidate) =>
-          candidate.orderIds.includes(orderId) &&
-          ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
-      );
-    }
-    if (!bill) throw new Error("A payable invoice could not be prepared for this delivery");
 
-    if (collection.method === "RIDER_CASH") {
-      next = this.recordCashPayment(next, bill.id, {
-        received: collection.amount,
-        cashier: user,
-        terminal: "DELIVERY_REMITTANCE",
-      });
-    } else {
-      const reference = collection.remittanceReference ?? collection.customerReference;
-      if (!reference) {
-        throw new Error("A company Till reference is required before confirmation");
+    if (merchantAmount > 0) {
+      if (!bill) {
+        next = this.createOpenBill(next, orderId);
+        bill = next.bills.find(
+          (candidate) =>
+            candidate.orderIds.includes(orderId) &&
+            ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
+        );
       }
-      next = this.recordManualTillPayment(next, bill.id, {
-        amount: collection.amount,
-        reference,
-        cashier: user,
-        terminal: "DELIVERY_REMITTANCE",
-      });
+      if (!bill) throw new Error("A payable invoice could not be prepared for this delivery");
+
+      if (collection.method === "RIDER_CASH") {
+        next = this.recordCashPayment(next, bill.id, {
+          received: merchantAmount,
+          cashier: user,
+          terminal: "DELIVERY_REMITTANCE",
+        });
+      } else {
+        const reference = collection.remittanceReference ?? collection.customerReference;
+        if (!reference) {
+          throw new Error("A company Till reference is required before confirmation");
+        }
+        next = this.recordManualTillPayment(next, bill.id, {
+          amount: merchantAmount,
+          reference,
+          cashier: user,
+          terminal: "DELIVERY_REMITTANCE",
+        });
+      }
     }
 
     order = next.orders.find((item) => item.id === orderId);
     collection = order?.delivery?.collection;
     if (!order || !collection) throw new Error("Delivery collection changed during confirmation");
     const stamp = now();
+
+    if (providerChargeAmount > 0) {
+      const tenantId = order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID;
+      const scope = resolveScope(order.branchId ?? order.branch, tenantId);
+      const settlementAccount = configuredSettlementAccount(
+        tenantId,
+        collection.method === "RIDER_CASH" ? "CASH" : "DIGITAL_WALLET",
+      );
+      next.journalEntries.unshift({
+        id: id("JE", next, "journalEntries"),
+        ...scope,
+        sourceType: "Marketplace Cash Collection",
+        sourceId: `${order.id}:${stamp}`,
+        status: "POSTED",
+        postedAt: stamp,
+        lines: [
+          {
+            account: settlementAccount,
+            debit: providerChargeAmount,
+            credit: 0,
+            costCentre: order.branch,
+          },
+          {
+            account: "Marketplace Payable",
+            debit: 0,
+            credit: providerChargeAmount,
+            costCentre: order.branch,
+          },
+        ],
+      });
+    }
     order.delivery = {
       ...order.delivery!,
       collection: {
@@ -1931,7 +1996,7 @@ export const TransactionEngine = {
       action: "Confirmed delivery collection",
       record: order.id,
       before: directTillAwaiting ? "AWAITING_PAYMENT" : "REMITTED_PENDING_CONFIRMATION",
-      after: `CONFIRMED; posted against invoice ${bill.id}`,
+      after: `CONFIRMED; merchant ${merchantAmount} posted${bill ? ` against invoice ${bill.id}` : ""}; provider cash liability ${providerChargeAmount}`,
     });
     return next;
   },
