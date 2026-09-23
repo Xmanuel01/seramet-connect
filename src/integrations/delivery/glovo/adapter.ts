@@ -454,8 +454,15 @@ function normalizeGlovoOrder(
         total,
       },
       payment: {
-        externallyPaid: String(payment["type"] ?? "PAID").toUpperCase() === "PAID",
-        amountPaid: total,
+        externallyPaid: true,
+        appPaidAmount:
+          String(payment["type"] ?? "PAID").toUpperCase() === "PAID" ? total : 0,
+        amountPaid:
+          String(payment["type"] ?? "PAID").toUpperCase() === "PAID" ? total : 0,
+        cashDueAmount:
+          String(payment["type"] ?? "PAID").toUpperCase() === "PAID" ? 0 : total,
+        cashDueCollector:
+          String(payment["type"] ?? "PAID").toUpperCase() === "PAID" ? "NONE" : "PROVIDER",
       },
       ...(charges.length ? { charges } : {}),
       providerStatus: status,
