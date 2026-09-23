@@ -29,26 +29,91 @@ jobs:
         run: npm run migrate:postgres
         env:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+
+      - name: Resolve existing Cloudflare staging bindings
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/seramet-staging/settings" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -o /tmp/worker-settings.json
+          curl --fail-with-body --silent --show-error \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/queues?per_page=100" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -o /tmp/queues.json
+
+          node <<'NODE'
+          const fs = require("fs");
+          const settings = JSON.parse(fs.readFileSync("/tmp/worker-settings.json", "utf8"));
+          const queuesPayload = JSON.parse(fs.readFileSync("/tmp/queues.json", "utf8"));
+          if (!settings.success || !settings.result) {
+            throw new Error("Existing seramet-staging Worker settings could not be loaded");
+          }
+
+          const bindings = new Map(
+            (settings.result.bindings ?? []).map((binding) => [binding.name, binding]),
+          );
+          const hyperdrive = bindings.get("SERAMET_HYPERDRIVE")?.id;
+          const bucket = bindings.get("SERAMET_OBJECTS")?.bucket_name;
+          const workQueue = bindings.get("SERAMET_WORK_QUEUE")?.queue_name;
+          const publicOrigin = bindings.get("SERAMET_PUBLIC_ORIGIN")?.text;
+          const scannerService = bindings.get("SERAMET_MALWARE_SCANNER")?.service;
+
+          const queueRows = Array.isArray(queuesPayload.result)
+            ? queuesPayload.result
+            : Array.isArray(queuesPayload.result?.queues)
+              ? queuesPayload.result.queues
+              : [];
+          const expectedDlq = workQueue?.replace(/-work$/, "-dlq");
+          const dlq = queueRows
+            .map((row) => row.queue_name ?? row.name)
+            .find((name) => name === expectedDlq || name === "seramet-staging-dlq");
+
+          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin };
+          const missing = Object.entries(required)
+            .filter(([, value]) => !value)
+            .map(([name]) => name);
+          if (missing.length) {
+            throw new Error(`Existing staging resources are incomplete: ${missing.join(", ")}`);
+          }
+
+          const append = (name, value) => {
+            fs.appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
+          };
+          append("SERAMET_CLOUDFLARE_WORKER_NAME", "seramet-staging");
+          append("SERAMET_CLOUDFLARE_HYPERDRIVE_ID", hyperdrive);
+          append("SERAMET_CLOUDFLARE_R2_BUCKET", bucket);
+          append("SERAMET_CLOUDFLARE_QUEUE", workQueue);
+          append("SERAMET_CLOUDFLARE_DLQ", dlq);
+          append("SERAMET_PUBLIC_ORIGIN", publicOrigin);
+          if (scannerService) {
+            append("SERAMET_MALWARE_SCANNER_SERVICE", scannerService);
+          }
+          NODE
+
       - name: Generate Cloudflare binding configuration
         run: node scripts/render-cloudflare-config.mjs staging
         env:
-          SERAMET_CLOUDFLARE_HYPERDRIVE_ID: ${{ vars.SERAMET_CLOUDFLARE_HYPERDRIVE_ID }}
-          SERAMET_CLOUDFLARE_R2_BUCKET: ${{ vars.SERAMET_CLOUDFLARE_R2_BUCKET }}
-          SERAMET_CLOUDFLARE_QUEUE: ${{ vars.SERAMET_CLOUDFLARE_QUEUE }}
-          SERAMET_CLOUDFLARE_DLQ: ${{ vars.SERAMET_CLOUDFLARE_DLQ }}
-          SERAMET_MALWARE_SCANNER_SERVICE: ${{ vars.SERAMET_MALWARE_SCANNER_SERVICE }}
-          SERAMET_SUPABASE_URL: ${{ vars.SERAMET_SUPABASE_URL }}
-          SERAMET_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SERAMET_SUPABASE_PUBLISHABLE_KEY }}
-          SERAMET_PUBLIC_ORIGIN: ${{ vars.SERAMET_PUBLIC_ORIGIN }}
-          SERAMET_ALLOWED_ORIGINS: ${{ vars.SERAMET_ALLOWED_ORIGINS }}
+          SERAMET_REUSE_EXISTING_VARS: "true"
           SERAMET_APP_VERSION: ${{ github.ref_name }}
           SERAMET_BUILD_ID: ${{ github.sha }}
+
       - name: Deploy Worker
         run: npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Verify liveness
-        run: curl --fail-with-body --retry 8 --retry-delay 5 "${{ vars.SERAMET_PUBLIC_ORIGIN }}/api/seramet/health/live"
-      - name: Verify readiness
-        run: curl --fail-with-body --retry 8 --retry-delay 5 "${{ vars.SERAMET_PUBLIC_ORIGIN }}/api/seramet/health/ready"
+        run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/live"
+
+      - name: Verify operational readiness
+        run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/operational"
+
+      - name: Report full readiness
+        continue-on-error: true
+        run: curl --fail-with-body "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/ready"
