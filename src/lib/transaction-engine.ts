@@ -628,7 +628,7 @@ export type TransactionState = {
   receipts: ReceiptRecord[];
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
-  riderRemittances: RiderRemittanceRecord[];
+  riderRemittances?: RiderRemittanceRecord[];
   productionAmendments: ProductionAmendmentRecord[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
