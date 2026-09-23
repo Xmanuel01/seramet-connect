@@ -92,6 +92,8 @@ function SerametPrinters() {
   } = useAppContext();
   const [branch, setBranch] = useState(activeBranch);
   const branchOptions = switchableBranchRecords.map((item) => item.name);
+  const selectedBranchId =
+    switchableBranchRecords.find((item) => item.name === branch)?.id ?? branch;
   const [bridgeStatus, setBridgeStatus] = useState(() => SerametLocalPrintBridge.getStatus());
   const [installedBridge, setInstalledBridge] = useState<{
     online: boolean;
@@ -117,7 +119,7 @@ function SerametPrinters() {
     printCustomerDocument,
     sendKitchenTickets,
     reprintJob,
-  } = useSerametPrintQueue(branch);
+  } = useSerametPrintQueue(selectedBranchId);
   const visiblePrinters = useMemo(
     () => (profile ? SerametLocalPrintBridge.discoverPrinters(profile) : []),
     [profile],

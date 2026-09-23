@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   SerametLocalPrintBridge,
   SerametPrintService,
@@ -14,6 +22,7 @@ import {
   type InstalledPrintBridgeConfig,
 } from "@/lib/print-bridge-client-config";
 import { formatDateTime } from "@/lib/currency";
+import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
@@ -37,8 +46,22 @@ export function useSerametPrintQueue(branch: string) {
     }
   }, [branch]);
   const { profile, configurationError } = profileState;
-  const [jobs, setJobs] = useState<PrintJob[]>([]);
-  const [reprints, setReprints] = useState<ReprintLogEntry[]>([]);
+  const subscribeToQueue = useCallback(
+    (listener: () => void) => DevicePrintQueueStore.subscribe(branch, listener),
+    [branch],
+  );
+  const readQueue = useCallback(() => DevicePrintQueueStore.snapshot(branch), [branch]);
+  const queue = useSyncExternalStore(subscribeToQueue, readQueue, readQueue);
+  const jobs = queue.jobs;
+  const reprints = queue.reprints;
+  const setJobs = useCallback<Dispatch<SetStateAction<PrintJob[]>>>(
+    (update) => DevicePrintQueueStore.setJobs(branch, update),
+    [branch],
+  );
+  const setReprints = useCallback<Dispatch<SetStateAction<ReprintLogEntry[]>>>(
+    (update) => DevicePrintQueueStore.setReprints(branch, update),
+    [branch],
+  );
   const [bridgeConfig, setBridgeConfig] = useState<InstalledPrintBridgeConfig>(() =>
     loadInstalledPrintBridgeConfig(),
   );
