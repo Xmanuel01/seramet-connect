@@ -52,10 +52,20 @@ type HostResponse = {
 };
 
 const views = [
-  { to: "/reservations", label: "Reservations", icon: CalendarDays, permission: permissions.reservationView },
+  {
+    to: "/reservations",
+    label: "Reservations",
+    icon: CalendarDays,
+    permission: permissions.reservationView,
+  },
   { to: "/host", label: "Seating", icon: DoorOpen, permission: permissions.tableManage },
   { to: "/waitlist", label: "Waitlist", icon: Clock3, permission: permissions.waitlistView },
-  { to: "/guest-service", label: "Guest requests", icon: BellRing, permission: permissions.guestServiceManage },
+  {
+    to: "/guest-service",
+    label: "Guest requests",
+    icon: BellRing,
+    permission: permissions.guestServiceManage,
+  },
 ] as const;
 
 /** The legacy URLs remain valid bookmarks, but share a single backend-backed workspace. */
@@ -188,23 +198,48 @@ export function HostStation() {
       }
     >
       {notice && (
-        <div role="status" className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium">
+        <div
+          role="status"
+          className="mb-4 rounded-md border border-border bg-card px-4 py-3 text-[13px] font-medium"
+        >
           {notice}
         </div>
       )}
       {query.status === "error" && (
-        <div role="alert" className="mb-4 rounded-md border border-danger/30 bg-danger-soft p-4 text-sm text-danger">
+        <div
+          role="alert"
+          className="mb-4 rounded-md border border-danger/30 bg-danger-soft p-4 text-sm text-danger"
+        >
           {query.error}
         </div>
       )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric label="Bookings" value={canViewReservations ? data?.reservations.length ?? 0 : "—"} note={data?.businessDate ?? "Loading"} />
-        <Metric label="Reserved covers" value={canViewReservations ? covers : "—"} note="Reservation party sizes" />
-        <Metric label="Waiting parties" value={canViewWaitlist ? data?.waitlist.length ?? 0 : "—"} note="Waitlist" />
-        <Metric label="Open requests" value={canManageRequests ? pendingRequests.length : "—"} note="Guest service" />
+        <Metric
+          label="Bookings"
+          value={canViewReservations ? (data?.reservations.length ?? 0) : "—"}
+          note={data?.businessDate ?? "Loading"}
+        />
+        <Metric
+          label="Reserved covers"
+          value={canViewReservations ? covers : "—"}
+          note="Reservation party sizes"
+        />
+        <Metric
+          label="Waiting parties"
+          value={canViewWaitlist ? (data?.waitlist.length ?? 0) : "—"}
+          note="Waitlist"
+        />
+        <Metric
+          label="Open requests"
+          value={canManageRequests ? pendingRequests.length : "—"}
+          note="Guest service"
+        />
       </div>
 
-      <nav aria-label="Front of House sections" className="mt-4 flex flex-wrap gap-2 border-b border-border pb-3">
+      <nav
+        aria-label="Front of House sections"
+        className="mt-4 flex flex-wrap gap-2 border-b border-border pb-3"
+      >
         {visibleViews.map((view) => {
           const Icon = view.icon;
           const selected = currentView?.to === view.to;
@@ -269,19 +304,31 @@ export function HostStation() {
                 <TD className="num font-semibold">{time(row.starts_at)}</TD>
                 <TD>
                   <div className="font-semibold">{row.guest_name}</div>
-                  <div className="text-[11px] text-muted-foreground">{row.confirmation_state.replaceAll("_", " ")}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {row.confirmation_state.replaceAll("_", " ")}
+                  </div>
                 </TD>
                 <TD className="num text-right">{row.party_size}</TD>
                 <TD>{row.table_codes ?? "Unassigned"}</TD>
-                <TD><Status>{row.status}</Status></TD>
                 <TD>
-                  <ReservationActions row={row} busy={busy === row.id} action={reservationAction} canSeat={canSeat} canModify={hasPermission(permissions.reservationModify)} />
+                  <Status>{row.status}</Status>
+                </TD>
+                <TD>
+                  <ReservationActions
+                    row={row}
+                    busy={busy === row.id}
+                    action={reservationAction}
+                    canSeat={canSeat}
+                    canModify={hasPermission(permissions.reservationModify)}
+                  />
                 </TD>
               </tr>
             ))}
           </DataTable>
           {!data?.reservations.length && query.status !== "loading" && (
-            <p className="p-8 text-center text-sm text-muted-foreground">No reservations for this business date.</p>
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              No reservations for this business date.
+            </p>
           )}
         </Panel>
       )}
@@ -289,7 +336,10 @@ export function HostStation() {
       {currentView?.to === "/host" && (
         <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_330px]">
           <Panel>
-            <PanelHead title="Table status & seating" sub={`${availableTables.length} available · live branch table sessions`} />
+            <PanelHead
+              title="Table status & seating"
+              sub={`${availableTables.length} available · live branch table sessions`}
+            />
             <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-4">
               {data?.tables.map((table) => (
                 <div key={table.id} className="rounded-lg border border-border bg-card p-3">
@@ -297,16 +347,24 @@ export function HostStation() {
                     <strong className="text-[13px]">{table.code}</strong>
                     <Status>{table.status}</Status>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{table.area ?? "Dining"} · {table.seats} seats</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {table.area ?? "Dining"} · {table.seats} seats
+                  </p>
                   {table.table_session_id && canManageTables && (
-                    <Btn className="mt-3 w-full" disabled={busy !== ""} onClick={() => void closeTable(table.table_session_id!)}>
+                    <Btn
+                      className="mt-3 w-full"
+                      disabled={busy !== ""}
+                      onClick={() => void closeTable(table.table_session_id!)}
+                    >
                       Close session
                     </Btn>
                   )}
                 </div>
               ))}
               {!data?.tables.length && query.status !== "loading" && (
-                <p className="col-span-full p-5 text-center text-sm text-muted-foreground">No tables are configured for this branch.</p>
+                <p className="col-span-full p-5 text-center text-sm text-muted-foreground">
+                  No tables are configured for this branch.
+                </p>
               )}
             </div>
           </Panel>
@@ -318,7 +376,9 @@ export function HostStation() {
                   Guest name
                   <input
                     value={walkIn.guestName}
-                    onChange={(event) => setWalkIn((current) => ({ ...current, guestName: event.target.value }))}
+                    onChange={(event) =>
+                      setWalkIn((current) => ({ ...current, guestName: event.target.value }))
+                    }
                     maxLength={120}
                     className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
                   />
@@ -330,7 +390,13 @@ export function HostStation() {
                     min={1}
                     max={100}
                     value={walkIn.partySize}
-                    onChange={(event) => setWalkIn((current) => ({ ...current, partySize: Number(event.target.value), tableId: "" }))}
+                    onChange={(event) =>
+                      setWalkIn((current) => ({
+                        ...current,
+                        partySize: Number(event.target.value),
+                        tableId: "",
+                      }))
+                    }
                     className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
                   />
                 </label>
@@ -338,16 +404,32 @@ export function HostStation() {
                   Available table
                   <select
                     value={walkIn.tableId}
-                    onChange={(event) => setWalkIn((current) => ({ ...current, tableId: event.target.value }))}
+                    onChange={(event) =>
+                      setWalkIn((current) => ({ ...current, tableId: event.target.value }))
+                    }
                     className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3"
                   >
                     <option value="">Choose table</option>
-                    {availableTables.filter((table) => table.seats >= walkIn.partySize).map((table) => (
-                      <option key={table.id} value={table.id}>{table.code} · {table.seats} seats</option>
-                    ))}
+                    {availableTables
+                      .filter((table) => table.seats >= walkIn.partySize)
+                      .map((table) => (
+                        <option key={table.id} value={table.id}>
+                          {table.code} · {table.seats} seats
+                        </option>
+                      ))}
                   </select>
                 </label>
-                <Btn variant="primary" onClick={() => void seatWalkIn()} disabled={busy !== "" || !walkIn.guestName.trim() || !walkIn.tableId || !Number.isInteger(walkIn.partySize) || walkIn.partySize < 1}>
+                <Btn
+                  variant="primary"
+                  onClick={() => void seatWalkIn()}
+                  disabled={
+                    busy !== "" ||
+                    !walkIn.guestName.trim() ||
+                    !walkIn.tableId ||
+                    !Number.isInteger(walkIn.partySize) ||
+                    walkIn.partySize < 1
+                  }
+                >
                   <DoorOpen className="h-4 w-4" /> Seat party
                 </Btn>
               </div>
@@ -366,23 +448,44 @@ export function HostStation() {
                   <div className="flex items-center gap-2 text-[13px] font-semibold">
                     {row.guest_name} · {row.party_size} guests <Status>{row.status}</Status>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Joined {time(row.joined_at)} · estimated {row.estimated_wait_minutes} min</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Joined {time(row.joined_at)} · estimated {row.estimated_wait_minutes} min
+                  </p>
                 </div>
                 <select
                   aria-label={`Table for ${row.guest_name}`}
                   value={waitlistTables[row.id] ?? ""}
                   disabled={!canManageWaitlist || busy !== ""}
-                  onChange={(event) => setWaitlistTables((current) => ({ ...current, [row.id]: event.target.value }))}
+                  onChange={(event) =>
+                    setWaitlistTables((current) => ({ ...current, [row.id]: event.target.value }))
+                  }
                   className="h-9 rounded-md border border-border bg-card px-2 text-[12px]"
                 >
                   <option value="">Choose table</option>
-                  {availableTables.filter((table) => table.seats >= row.party_size).map((table) => (
-                    <option key={table.id} value={table.id}>{table.code} · {table.seats} seats</option>
-                  ))}
+                  {availableTables
+                    .filter((table) => table.seats >= row.party_size)
+                    .map((table) => (
+                      <option key={table.id} value={table.id}>
+                        {table.code} · {table.seats} seats
+                      </option>
+                    ))}
                 </select>
                 <div className="flex flex-wrap gap-2">
-                  <Btn disabled={!canManageWaitlist || busy !== "" || row.status === "NOTIFIED"} onClick={() => void operationalAction("waitlist", row.id, "NOTIFIED")}>Notify</Btn>
-                  <Btn variant="primary" disabled={!canManageWaitlist || busy !== "" || !waitlistTables[row.id]} onClick={() => void operationalAction("waitlist", row.id, "SEATED", waitlistTables[row.id])}>Seat</Btn>
+                  <Btn
+                    disabled={!canManageWaitlist || busy !== "" || row.status === "NOTIFIED"}
+                    onClick={() => void operationalAction("waitlist", row.id, "NOTIFIED")}
+                  >
+                    Notify
+                  </Btn>
+                  <Btn
+                    variant="primary"
+                    disabled={!canManageWaitlist || busy !== "" || !waitlistTables[row.id]}
+                    onClick={() =>
+                      void operationalAction("waitlist", row.id, "SEATED", waitlistTables[row.id])
+                    }
+                  >
+                    Seat
+                  </Btn>
                 </div>
               </div>
             ))}
@@ -401,18 +504,39 @@ export function HostStation() {
               <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <div>
                   <div className="flex items-center gap-2 text-[13px] font-semibold">
-                    <BellRing className="h-4 w-4" /> {row.request_type.replaceAll("_", " ")} <Status>{row.status}</Status>
+                    <BellRing className="h-4 w-4" /> {row.request_type.replaceAll("_", " ")}{" "}
+                    <Status>{row.status}</Status>
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{time(row.created_at)}{row.note ? ` · ${row.note}` : ""}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {time(row.created_at)}
+                    {row.note ? ` · ${row.note}` : ""}
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Btn disabled={busy !== "" || row.status === "ACKNOWLEDGED" || row.status === "COMPLETED"} onClick={() => void operationalAction("service-requests", row.id, "ACKNOWLEDGED")}>Acknowledge</Btn>
-                  <Btn variant="primary" disabled={busy !== "" || row.status === "COMPLETED"} onClick={() => void operationalAction("service-requests", row.id, "COMPLETED")}>Complete</Btn>
+                  <Btn
+                    disabled={
+                      busy !== "" || row.status === "ACKNOWLEDGED" || row.status === "COMPLETED"
+                    }
+                    onClick={() =>
+                      void operationalAction("service-requests", row.id, "ACKNOWLEDGED")
+                    }
+                  >
+                    Acknowledge
+                  </Btn>
+                  <Btn
+                    variant="primary"
+                    disabled={busy !== "" || row.status === "COMPLETED"}
+                    onClick={() => void operationalAction("service-requests", row.id, "COMPLETED")}
+                  >
+                    Complete
+                  </Btn>
                 </div>
               </div>
             ))}
             {!data?.serviceRequests.length && query.status !== "loading" && (
-              <p className="p-8 text-center text-sm text-muted-foreground">No guest requests need attention.</p>
+              <p className="p-8 text-center text-sm text-muted-foreground">
+                No guest requests need attention.
+              </p>
             )}
           </div>
         </Panel>
@@ -435,18 +559,34 @@ function ReservationActions({
   canModify: boolean;
 }) {
   if (row.status === "PENDING") {
-    return <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "CONFIRMED")}>Confirm</Btn>;
+    return (
+      <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "CONFIRMED")}>
+        Confirm
+      </Btn>
+    );
   }
   if (row.status === "CONFIRMED") {
     return (
       <div className="flex flex-wrap gap-1">
-        <Btn variant="primary" disabled={busy || !canSeat} onClick={() => void action(row.id, "SEATED")}>Seat</Btn>
-        <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "NO_SHOW")}>No-show</Btn>
+        <Btn
+          variant="primary"
+          disabled={busy || !canSeat}
+          onClick={() => void action(row.id, "SEATED")}
+        >
+          Seat
+        </Btn>
+        <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "NO_SHOW")}>
+          No-show
+        </Btn>
       </div>
     );
   }
   if (row.status === "SEATED") {
-    return <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "COMPLETED")}>Complete</Btn>;
+    return (
+      <Btn disabled={busy || !canModify} onClick={() => void action(row.id, "COMPLETED")}>
+        Complete
+      </Btn>
+    );
   }
   return null;
 }
@@ -470,17 +610,28 @@ function ReservationCard({
         <div>
           <h3 className="text-[14px] font-semibold">{row.guest_name}</h3>
           <p className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock3 className="h-3.5 w-3.5" /> {time(row.starts_at)} · <Users className="ml-1 h-3.5 w-3.5" /> {row.party_size}
+            <Clock3 className="h-3.5 w-3.5" /> {time(row.starts_at)} ·{" "}
+            <Users className="ml-1 h-3.5 w-3.5" /> {row.party_size}
           </p>
         </div>
         <Status>{row.status}</Status>
       </div>
       <p className="mt-3 text-[12px]">Table {row.table_codes ?? "unassigned"}</p>
-      <div className="mt-3"><ReservationActions row={row} busy={busy} action={action} canSeat={canSeat} canModify={canModify} /></div>
+      <div className="mt-3">
+        <ReservationActions
+          row={row}
+          busy={busy}
+          action={action}
+          canSeat={canSeat}
+          canModify={canModify}
+        />
+      </div>
     </article>
   );
 }
 
 function time(value: string) {
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(
+    new Date(value),
+  );
 }

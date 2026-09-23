@@ -15,7 +15,9 @@ describe("Front of House navigation", () => {
 
   it("keeps legacy deep links registered for each dedicated workspace view", () => {
     for (const path of ["/host", "/reservations", "/waitlist", "/guest-service"]) {
-      expect(moduleDefinitionsForPath(path).some((module) => module.key === "guest-operations")).toBe(true);
+      expect(
+        moduleDefinitionsForPath(path).some((module) => module.key === "guest-operations"),
+      ).toBe(true);
     }
   });
 });
