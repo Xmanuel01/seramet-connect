@@ -157,7 +157,9 @@ type ImportValue = {
   parLevel?: unknown;
   imageFilename?: unknown;
   branchPriceMinor?: unknown;
+  onlinePriceMinor?: unknown;
   channelCodes?: unknown;
+  onlinePriceChannelCodes?: unknown;
   targetBranchIds?: unknown;
   stationIdsByBranch?: unknown;
   recipePending?: unknown;
@@ -166,6 +168,7 @@ type ImportValue = {
   rawBasePrice?: unknown;
   rawCostPrice?: unknown;
   rawBranchPrice?: unknown;
+  rawOnlinePrice?: unknown;
 };
 
 const sectionLabels: Record<SetupSection, string> = {
@@ -3813,6 +3816,9 @@ export class OnboardingService {
         normalized.branchPriceMinor = string(normalized.rawBranchPrice)
           ? parseMenuMoney(string(normalized.rawBranchPrice), currency)
           : undefined;
+        normalized.onlinePriceMinor = string(normalized.rawOnlinePrice)
+          ? parseMenuMoney(string(normalized.rawOnlinePrice), currency)
+          : undefined;
       }
       if (
         !Number.isSafeInteger(normalized.sellingPriceMinor) ||
@@ -3832,6 +3838,13 @@ export class OnboardingService {
           number(normalized.branchPriceMinor) < 0)
       ) {
         errors.push(importIssue("branchPrice", "INVALID_MONEY", "Branch price is not valid money"));
+      }
+      if (
+        normalized.onlinePriceMinor !== undefined &&
+        (!Number.isSafeInteger(normalized.onlinePriceMinor) ||
+          number(normalized.onlinePriceMinor) < 0)
+      ) {
+        errors.push(importIssue("onlinePrice", "INVALID_MONEY", "Online price is not valid money"));
       }
       if (!Number.isSafeInteger(normalized.prepMinutes) || number(normalized.prepMinutes) < 0) {
         errors.push(
@@ -3987,7 +4000,11 @@ export class OnboardingService {
       const suppliedChannels = Array.isArray(normalized.channelCodes)
         ? (normalized.channelCodes as string[])
         : [];
-      const unknownChannels = suppliedChannels.filter((channel) => !channelCodes.has(channel));
+      const suppliedOnlinePriceChannels = Array.isArray(normalized.onlinePriceChannelCodes)
+        ? (normalized.onlinePriceChannelCodes as string[])
+        : [];
+      const unknownChannels = [...new Set([...suppliedChannels, ...suppliedOnlinePriceChannels])]
+        .filter((channel) => !channelCodes.has(channel));
       if (unknownChannels.length) {
         errors.push(
           importIssue(
@@ -4098,6 +4115,10 @@ export class OnboardingService {
         prepMinutes: value.prepMinutes,
         parLevel: value.parLevel,
         imageFilename: value.imageFilename,
+        onlinePriceMinor: value.onlinePriceMinor,
+        onlinePriceChannelCodes: Array.isArray(value.onlinePriceChannelCodes)
+          ? value.onlinePriceChannelCodes
+          : [],
         recipePending: Boolean(value.recipePending),
       };
       const insertSql = `INSERT INTO menu_catalog_items
@@ -4198,7 +4219,13 @@ export class OnboardingService {
               stamp,
               stationId,
               optionalString(value.kitchenPrinterGroup),
-              json({ imported: true, templateVersion: value.templateVersion }),
+              json({
+                imported: true,
+                templateVersion: value.templateVersion,
+                onlinePriceChannelCodes: Array.isArray(value.onlinePriceChannelCodes)
+                  ? value.onlinePriceChannelCodes
+                  : [],
+              }),
             ),
         );
         const stationSource = string(value.stationCode).trim();
@@ -4828,6 +4855,10 @@ function normalizeImportRow(
       description: value("description") || undefined,
       rawBasePrice: value("basePrice", "price", "sellingPrice"),
       sellingPriceMinor: parseMoneyMinor(value("basePrice", "price", "sellingPrice")),
+      rawOnlinePrice: value("onlinePrice", "digitalPrice") || undefined,
+      onlinePriceMinor: value("onlinePrice", "digitalPrice")
+        ? parseMoneyMinor(value("onlinePrice", "digitalPrice"))
+        : undefined,
       rawCostPrice: value("costPrice") || undefined,
       costPriceMinor: value("costPrice") ? parseMoneyMinor(value("costPrice")) : undefined,
       currency: (value("currency") || defaultCurrency || "").toUpperCase(),
@@ -4848,6 +4879,9 @@ function normalizeImportRow(
       channelCodes: parseList(value("channels", "channelAvailability")).map((item) =>
         item.toUpperCase(),
       ),
+      onlinePriceChannelCodes: parseList(
+        value("onlinePriceChannels", "digitalPriceChannels"),
+      ).map((item) => item.toUpperCase()),
       channelAvailability: Object.fromEntries(
         parseList(value("channels", "channelAvailability")).map((item) => [
           item.toUpperCase(),
@@ -4974,6 +5008,16 @@ async function sha256Text(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 function menuRowMatchesExisting(normalized: ImportValue, existing: Record<string, unknown>) {
+  const payload = parseJson<Record<string, unknown>>(string(existing["payload_json"]), {});
+  const existingOnlineChannels = Array.isArray(payload["onlinePriceChannelCodes"])
+    ? payload["onlinePriceChannelCodes"]
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.toUpperCase())
+        .sort()
+    : [];
+  const desiredOnlineChannels = Array.isArray(normalized.onlinePriceChannelCodes)
+    ? (normalized.onlinePriceChannelCodes as string[]).map((value) => value.toUpperCase()).sort()
+    : [];
   return (
     string(existing["code"]).toUpperCase() === string(normalized.code).toUpperCase() &&
     optionalString(existing["sku"]) === optionalString(normalized.sku) &&
@@ -4981,6 +5025,8 @@ function menuRowMatchesExisting(normalized: ImportValue, existing: Record<string
     string(existing["category_code"]) === string(normalized.categoryCode) &&
     optionalString(existing["description"]) === optionalString(normalized.description) &&
     number(existing["selling_price_minor"]) === number(normalized.sellingPriceMinor) &&
+    payload["onlinePriceMinor"] === normalized.onlinePriceMinor &&
+    existingOnlineChannels.join("|") === desiredOnlineChannels.join("|") &&
     string(existing["currency"]).toUpperCase() === string(normalized.currency).toUpperCase() &&
     optionalString(existing["tax_rule_id"]) === optionalString(normalized.taxRuleId) &&
     number(existing["service_charge_applicable"]) ===
