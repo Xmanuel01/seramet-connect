@@ -101,7 +101,7 @@ const strategies = [
 ];
 
 function Riders() {
-  const { activeTenantId, branch, branchLabel, currentUser, isAllBranches, matchesBranch } =
+  const { activeTenantId, branch, branchLabel, isAllBranches, matchesBranch } =
     useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
   const [notice, setNotice] = useState("");
