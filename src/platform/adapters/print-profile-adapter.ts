@@ -484,27 +484,38 @@ function buildStationRoutes(tenantId: string, branchId: string) {
       (station) => station.tenantId === tenantId && station.branchId === branchId && station.active,
     );
   const roleFor = (station: (typeof stations)[number] | undefined): PrinterRole => {
-    if (station?.stationType === "BAR") return "BAR";
+    if (station?.stationType === "BAR" || station?.stationType === "COFFEE") return "BAR";
     if (station?.stationType === "DISPATCH" || station?.stationType === "PASS") return "DISPATCH";
     return "KITCHEN";
   };
-  const find = (station: ProductionStation) =>
-    stations.find(
-      (item) =>
-        item.code.replaceAll("-", " ").toUpperCase() === station ||
-        item.name.toUpperCase() === station ||
-        item.stationType === station,
-    );
-  return {
-    "MAIN KITCHEN": roleFor(
-      stations.find((station) => station.stationType === "KITCHEN") ?? find("MAIN KITCHEN"),
-    ),
-    GRILL: roleFor(find("GRILL")),
-    BAR: roleFor(find("BAR")),
-    DESSERT: roleFor(find("DESSERT")),
-    DISPATCH: roleFor(find("DISPATCH")),
-    NONE: "FRONT",
-  } satisfies Record<ProductionStation, PrinterRole>;
+  const routes: Record<string, PrinterRole> = { NONE: "FRONT" };
+  const register = (key: string | undefined, role: PrinterRole) => {
+    const value = key?.trim();
+    if (!value) return;
+    routes[value] = role;
+    routes[value.replaceAll("-", " ").replaceAll("_", " ").toUpperCase()] = role;
+  };
+
+  for (const station of stations) {
+    const role = roleFor(station);
+    register(station.code, role);
+    register(station.name, role);
+  }
+
+  const legacyDefaults: Array<[string, PrinterRole]> = [
+    ["MAIN KITCHEN", "KITCHEN"],
+    ["GRILL", "KITCHEN"],
+    ["FRYER", "KITCHEN"],
+    ["DESSERT", "KITCHEN"],
+    ["BAR", "BAR"],
+    ["COFFEE", "BAR"],
+    ["DISPATCH", "DISPATCH"],
+  ];
+  for (const [station, role] of legacyDefaults) {
+    if (!routes[station]) routes[station] = role;
+  }
+
+  return routes as Record<ProductionStation, PrinterRole>;
 }
 
 function rolesToOutputRoles(roles: PrinterRole[]) {

@@ -288,6 +288,14 @@ export function applyServerMutation(
         >[3],
         actor.name,
       );
+    case "recallProductionStation":
+      return TransactionEngine.recallProductionStation(
+        state,
+        String(input["orderId"]),
+        String(input["station"]),
+        String(input["reason"] ?? ""),
+        actor.name,
+      );
     case "markOrderServed":
       return TransactionEngine.markOrderServed(state, String(input["orderId"]), actor.name);
     case "generatePurchaseOrders":

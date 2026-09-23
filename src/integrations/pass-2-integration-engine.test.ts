@@ -878,13 +878,27 @@ describe("Pass 3 marketplace acceptance", () => {
       productionStatus: "NEW",
     });
     const previous = structuredClone(f.transactions.state);
-    const kitchenReady = TransactionEngine.setProductionStationStatus(
+    const kitchenPreparing = TransactionEngine.setProductionStationStatus(
       previous,
       previous.orders[0]!.id,
+      "MAIN KITCHEN",
+      "PREPARING",
+      "Chef",
+    );
+    const billed = TransactionEngine.requestBill(
+      kitchenPreparing,
+      kitchenPreparing.orders[0]!.id,
+      "Cashier",
+    );
+    expect(billed.orders[0]!.status).toBe("BILL_REQUESTED");
+    const kitchenReady = TransactionEngine.setProductionStationStatus(
+      billed,
+      billed.orders[0]!.id,
       "MAIN KITCHEN",
       "READY",
       "Chef",
     );
+    expect(kitchenReady.orders[0]!.status).toBe("BILL_REQUESTED");
     await f.runtime.captureTransactionDomainEvents(previous, kitchenReady);
     expect(
       (await f.repository.listOutbox(DEMO_TENANT_ID)).filter(
@@ -892,13 +906,22 @@ describe("Pass 3 marketplace acceptance", () => {
       ),
     ).toHaveLength(0);
 
-    const allReady = TransactionEngine.setProductionStationStatus(
+    const barPreparing = TransactionEngine.setProductionStationStatus(
       kitchenReady,
       kitchenReady.orders[0]!.id,
+      "BAR",
+      "PREPARING",
+      "Bartender",
+    );
+    const allReady = TransactionEngine.setProductionStationStatus(
+      barPreparing,
+      barPreparing.orders[0]!.id,
       "BAR",
       "READY",
       "Bartender",
     );
+    expect(allReady.orders[0]!.status).toBe("BILL_REQUESTED");
+    expect(allReady.orders[0]!.externalSource?.readyAt).toBeTruthy();
     await f.runtime.captureTransactionDomainEvents(kitchenReady, allReady);
     expect(
       (await f.repository.listOutbox(DEMO_TENANT_ID)).filter(
