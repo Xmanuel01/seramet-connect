@@ -966,7 +966,12 @@ export class IntegrationRuntime {
       const before = previous.orders.find((candidate) => candidate.id === order.id);
       const source = order.externalSource;
       if (!source || !order.branchId) continue;
-      if (order.status === "READY" && before?.status !== "READY") {
+      const becameProductionReady =
+        Boolean(source.readyAt) && !Boolean(before?.externalSource?.readyAt);
+      if (
+        (order.status === "READY" && before?.status !== "READY") ||
+        becameProductionReady
+      ) {
         const adapter = this.dependencies.registry.resolve(
           this.requireTenantConnection(tenantId, source.connectionId),
         );
