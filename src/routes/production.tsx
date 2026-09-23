@@ -108,9 +108,7 @@ function Production() {
   const startBatch = (batch: ProductionBatchRow) =>
     run(
       () =>
-        control.command(
-          `/api/seramet/production/batches/${encodeURIComponent(batch.id)}/start`,
-        ),
+        control.command(`/api/seramet/production/batches/${encodeURIComponent(batch.id)}/start`),
       `${batch.recipe_name} production started.`,
     );
 
@@ -275,21 +273,18 @@ function Production() {
         stations={activeData?.production.stations ?? []}
         onOpenChange={setPlanOpen}
         onSubmit={(draft) =>
-          void run(
-            async () => {
-              await control.command("/api/seramet/production/batches/plan", {
-                branchId,
-                warehouseId: draft.warehouseId,
-                recipeVersionId: draft.recipe.active_version_id,
-                outputItemId: draft.recipe.production_item_id,
-                plannedQuantityMicro: toMicro(draft.quantity),
-                idempotencyKey: `production-plan:${branchId}:${crypto.randomUUID()}`,
-                ...(draft.stationId ? { stationId: draft.stationId } : {}),
-              });
-              setPlanOpen(false);
-            },
-            `Production run planned by ${currentUser.name}.`,
-          )
+          void run(async () => {
+            await control.command("/api/seramet/production/batches/plan", {
+              branchId,
+              warehouseId: draft.warehouseId,
+              recipeVersionId: draft.recipe.active_version_id,
+              outputItemId: draft.recipe.production_item_id,
+              plannedQuantityMicro: toMicro(draft.quantity),
+              idempotencyKey: `production-plan:${branchId}:${crypto.randomUUID()}`,
+              ...(draft.stationId ? { stationId: draft.stationId } : {}),
+            });
+            setPlanOpen(false);
+          }, `Production run planned by ${currentUser.name}.`)
         }
       />
 
@@ -302,16 +297,13 @@ function Production() {
         }}
         onSubmit={(quantity) => {
           if (!completion) return;
-          void run(
-            async () => {
-              await control.command(
-                `/api/seramet/production/batches/${encodeURIComponent(completion.id)}/complete`,
-                { actualOutputQuantityMicro: toMicro(quantity) },
-              );
-              setCompletion(null);
-            },
-            `${completion.recipe_name} completed and inventory movements posted.`,
-          );
+          void run(async () => {
+            await control.command(
+              `/api/seramet/production/batches/${encodeURIComponent(completion.id)}/complete`,
+              { actualOutputQuantityMicro: toMicro(quantity) },
+            );
+            setCompletion(null);
+          }, `${completion.recipe_name} completed and inventory movements posted.`);
         }}
       />
 
@@ -324,16 +316,13 @@ function Production() {
         }}
         onSubmit={(reason) => {
           if (!cancellation) return;
-          void run(
-            async () => {
-              await control.command(
-                `/api/seramet/production/batches/${encodeURIComponent(cancellation.id)}/cancel`,
-                { reason },
-              );
-              setCancellation(null);
-            },
-            `${cancellation.recipe_name} production run cancelled.`,
-          );
+          void run(async () => {
+            await control.command(
+              `/api/seramet/production/batches/${encodeURIComponent(cancellation.id)}/cancel`,
+              { reason },
+            );
+            setCancellation(null);
+          }, `${cancellation.recipe_name} production run cancelled.`);
         }}
       />
     </AppShell>
@@ -367,8 +356,7 @@ function PlanProductionDialog({
   const [stationId, setStationId] = useState("");
   const [quantity, setQuantity] = useState("");
   const recipe = recipes.find((candidate) => candidate.id === recipeId) ?? recipes[0];
-  const resolvedQuantity =
-    quantity || (recipe ? formatQuantity(recipe.yield_quantity_minor) : "");
+  const resolvedQuantity = quantity || (recipe ? formatQuantity(recipe.yield_quantity_minor) : "");
 
   const chooseRecipe = (nextId: string) => {
     setRecipeId(nextId);
@@ -383,8 +371,7 @@ function PlanProductionDialog({
     }
   };
 
-  const resolvedWarehouse =
-    warehouseId || recipe?.default_warehouse_id || warehouses[0]?.id || "";
+  const resolvedWarehouse = warehouseId || recipe?.default_warehouse_id || warehouses[0]?.id || "";
   const valid = Boolean(recipe && resolvedWarehouse && Number(resolvedQuantity) > 0);
 
   return (

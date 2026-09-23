@@ -596,13 +596,12 @@ export async function handleInventoryApi(
   if (productionStart && request.method === "POST") {
     return json({
       ok: true,
-      productionBatch: await service.startProduction(
-        decodeURIComponent(productionStart[1]!),
-      ),
+      productionBatch: await service.startProduction(decodeURIComponent(productionStart[1]!)),
     });
   }
-  const productionComplete =
-    /^\/api\/seramet\/production\/batches\/([^/]+)\/complete$/.exec(url.pathname);
+  const productionComplete = /^\/api\/seramet\/production\/batches\/([^/]+)\/complete$/.exec(
+    url.pathname,
+  );
   if (productionComplete && request.method === "POST") {
     const body = await parse<{ actualOutputQuantityMicro: number }>(
       request,
@@ -616,8 +615,9 @@ export async function handleInventoryApi(
       ),
     });
   }
-  const productionCancel =
-    /^\/api\/seramet\/production\/batches\/([^/]+)\/cancel$/.exec(url.pathname);
+  const productionCancel = /^\/api\/seramet\/production\/batches\/([^/]+)\/cancel$/.exec(
+    url.pathname,
+  );
   if (productionCancel && request.method === "POST") {
     const body = await parse<{ reason: string }>(request, productionCancellationSchema);
     return json({

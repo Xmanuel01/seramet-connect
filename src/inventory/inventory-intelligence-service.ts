@@ -1555,7 +1555,8 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertBusinessDateOpen(input.branchId, input.businessDate);
     assertScaledInteger(input.plannedQuantityMicro, "planned production quantity");
-    if (input.plannedQuantityMicro <= 0) throw new Error("Planned production quantity must be positive");
+    if (input.plannedQuantityMicro <= 0)
+      throw new Error("Planned production quantity must be positive");
 
     const duplicate = await this.db
       .prepare("SELECT id,status FROM production_batches WHERE tenant_id=? AND idempotency_key=?")
@@ -1572,7 +1573,8 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, input.recipeVersionId)
       .first<{ id: string; yield_quantity_minor: number; production_item_id: string | null }>();
-    if (!recipe) throw new ServerOperationError("VALIDATION_FAILED", 404, "Active recipe version not found");
+    if (!recipe)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active recipe version not found");
     if (!recipe.production_item_id || recipe.production_item_id !== input.outputItemId) {
       throw new ServerOperationError(
         "INVALID_STATE_TRANSITION",
@@ -1582,13 +1584,15 @@ export class InventoryIntelligenceService {
     }
 
     const warehouse = await this.db
-      .prepare(
-        "SELECT id FROM warehouses WHERE tenant_id=? AND id=? AND branch_id=? AND active=1",
-      )
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND id=? AND branch_id=? AND active=1")
       .bind(this.actor.tenantId, input.warehouseId, input.branchId)
       .first<{ id: string }>();
     if (!warehouse) {
-      throw new ServerOperationError("VALIDATION_FAILED", 404, "Production warehouse is unavailable");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        404,
+        "Production warehouse is unavailable",
+      );
     }
 
     const id = input.id ?? crypto.randomUUID();
@@ -1636,7 +1640,8 @@ export class InventoryIntelligenceService {
     const batch = await this.productionBatchForAction(batchId);
     authorizeBranchRead(this.actor, this.actor.tenantId, batch.branch_id);
     await this.assertBusinessDateOpen(batch.branch_id, batch.business_date);
-    if (batch.status === "IN_PROGRESS") return { id: batchId, status: batch.status, duplicate: true };
+    if (batch.status === "IN_PROGRESS")
+      return { id: batchId, status: batch.status, duplicate: true };
     if (batch.status !== "PLANNED") {
       throw new ServerOperationError(
         "INVALID_STATE_TRANSITION",
@@ -1710,7 +1715,8 @@ export class InventoryIntelligenceService {
   async completePlannedProduction(batchId: string, actualOutputQuantityMicro: number) {
     this.requirePermission(permissions.productionComplete);
     assertScaledInteger(actualOutputQuantityMicro, "actual production output");
-    if (actualOutputQuantityMicro <= 0) throw new Error("Actual production output must be positive");
+    if (actualOutputQuantityMicro <= 0)
+      throw new Error("Actual production output must be positive");
     const batch = await this.productionBatchForAction(batchId);
     authorizeBranchRead(this.actor, this.actor.tenantId, batch.branch_id);
     await this.assertBusinessDateOpen(batch.branch_id, batch.business_date);
@@ -1746,7 +1752,8 @@ export class InventoryIntelligenceService {
     const inputMovements: Array<{ itemId: string; quantityMicro: number; valueMinor: number }> = [];
     for (const component of components.results ?? []) {
       const itemId =
-        component.inventory_item_id ?? (await this.productionItemForRecipe(component.sub_recipe_id));
+        component.inventory_item_id ??
+        (await this.productionItemForRecipe(component.sub_recipe_id));
       if (!itemId) throw new Error("Production component has no inventory output item");
       const item = await this.db
         .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=?")
@@ -1881,7 +1888,9 @@ export class InventoryIntelligenceService {
       };
     } catch (error) {
       const raced = await this.db
-        .prepare("SELECT status,yield_variance_bps FROM production_batches WHERE tenant_id=? AND id=?")
+        .prepare(
+          "SELECT status,yield_variance_bps FROM production_batches WHERE tenant_id=? AND id=?",
+        )
         .bind(this.actor.tenantId, batchId)
         .first<{ status: string; yield_variance_bps: number | null }>();
       if (raced?.status === "COMPLETED") {
@@ -1914,7 +1923,8 @@ export class InventoryIntelligenceService {
         business_date: string;
         yield_variance_bps: number | null;
       }>();
-    if (!batch) throw new ServerOperationError("VALIDATION_FAILED", 404, "Production batch not found");
+    if (!batch)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Production batch not found");
     return batch;
   }
 
