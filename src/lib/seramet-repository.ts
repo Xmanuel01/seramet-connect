@@ -380,6 +380,33 @@ export function applyServerMutation(
         String(input["rider"]),
         actor.name,
       );
+    case "setDeliveryFulfilmentOwner":
+      return TransactionEngine.setDeliveryFulfilmentOwner(
+        state,
+        String(input["orderId"]),
+        String(input["owner"]) as Parameters<typeof TransactionEngine.setDeliveryFulfilmentOwner>[2],
+        actor.name,
+      );
+    case "recordDeliveryCollection":
+      return TransactionEngine.recordDeliveryCollection(
+        state,
+        String(input["orderId"]),
+        input["input"] as Parameters<typeof TransactionEngine.recordDeliveryCollection>[2],
+        actor.name,
+      );
+    case "markDeliveryRemitted":
+      return TransactionEngine.markDeliveryRemitted(
+        state,
+        String(input["orderId"]),
+        (input["input"] ?? {}) as Parameters<typeof TransactionEngine.markDeliveryRemitted>[2],
+        actor.name,
+      );
+    case "confirmDeliveryRemittance":
+      return TransactionEngine.confirmDeliveryRemittance(
+        state,
+        String(input["orderId"]),
+        actor.name,
+      );
     case "setDeliveryStatus":
       return TransactionEngine.setDeliveryStatus(
         state,
