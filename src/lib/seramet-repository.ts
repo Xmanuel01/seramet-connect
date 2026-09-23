@@ -817,7 +817,9 @@ export function applyServerMutation(
       const amountMinor = Number(requested["amountMinor"]);
       const paymentMethodId = String(requested["paymentMethodId"] ?? "");
       const reference =
-        typeof requested["reference"] === "string" ? requested["reference"].trim().toUpperCase() : "";
+        typeof requested["reference"] === "string"
+          ? requested["reference"].trim().toUpperCase()
+          : "";
       if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
         throw new Error("Direct collection amount must be a positive integer in minor units");
       }
@@ -832,16 +834,17 @@ export function applyServerMutation(
       const configuration = getConfigurationRepository();
       const method = configuration
         .listPaymentMethods(actor.tenantId, false)
-        .find((candidate) => candidate.id === paymentMethodId || candidate.code === paymentMethodId);
-      if (
-        !method?.enabled ||
-        !["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category)
-      ) {
+        .find(
+          (candidate) => candidate.id === paymentMethodId || candidate.code === paymentMethodId,
+        );
+      if (!method?.enabled || !["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category)) {
         throw new Error("Choose an enabled company Till or bank payment method");
       }
       const destinationAccountId = method.clearingAccountId ?? method.settlementAccountId;
       if (!destinationAccountId) {
-        throw new Error("Company collection payment method requires a clearing or settlement account");
+        throw new Error(
+          "Company collection payment method requires a clearing or settlement account",
+        );
       }
 
       let remaining = amountMinor;
