@@ -265,6 +265,51 @@ export class PaymentOrchestrator {
     });
   }
 
+  recordCustodyCollection(
+    state: TransactionState,
+    input: {
+      tenantId: string;
+      branchId: string;
+      paymentMethodId: string;
+      merchantReference: string;
+      invoiceId?: string;
+      amountMinor: number;
+      currency: string;
+      custodyAccountId: string;
+      collectionCreditAccountId: string;
+      actor: string;
+      reference?: string;
+      deviceId?: string;
+      occurredAt?: string;
+    },
+  ) {
+    if (!input.custodyAccountId.trim()) throw new Error("Rider custody account is required");
+    if (!input.collectionCreditAccountId.trim()) {
+      throw new Error("Collection credit account is required");
+    }
+    return this.recordConfirmedCollection(state, {
+      tenantId: input.tenantId,
+      branchId: input.branchId,
+      paymentMethodId: input.paymentMethodId,
+      merchantReference: input.merchantReference,
+      amountMinor: input.amountMinor,
+      currency: input.currency,
+      allocations: input.invoiceId
+        ? [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }]
+        : [],
+      actor: input.actor,
+      ...(input.reference ? { customerReference: input.reference.trim() } : {}),
+      ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+      ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+      status: "MANUALLY_CONFIRMED",
+      metadata: {
+        collectionDebitAccountId: input.custodyAccountId,
+        collectionCreditAccountId: input.collectionCreditAccountId,
+        collectionPurpose: "RIDER_CUSTODY",
+      },
+    });
+  }
+
   recordManualTerminalPayment(
     state: TransactionState,
     input: Omit<ConfirmCollectionInput, "status" | "providerTransactionId"> & {
@@ -1568,6 +1613,12 @@ export class PaymentOrchestrator {
       input.metadata["collectionCreditAccountId"].trim()
         ? input.metadata["collectionCreditAccountId"]
         : receivableAccount(method);
+    const collectionDebitAccountId =
+      typeof input.metadata?.["collectionDebitAccountId"] === "string" &&
+      input.metadata["collectionDebitAccountId"].trim()
+        ? input.metadata["collectionDebitAccountId"]
+        : collectionAccount(method);
+    const isCustodyCollection = input.metadata?.["collectionPurpose"] === "RIDER_CUSTODY";
     let lastLegacyPaymentId: string | undefined;
     for (const allocation of input.allocations) {
       const beforeIds = new Set(next.payments.map((payment) => payment.id));
@@ -1581,8 +1632,10 @@ export class PaymentOrchestrator {
           `${operationTransactionId}-${allocation.invoiceId}`,
         cashier: input.actor,
         terminal: input.deviceId ?? "SYSTEM",
-        reconciliationStatus: method.category === "CASH" ? "RECONCILED" : "MATCHED",
-        settlementStatus: method.category === "CASH" ? "NOT_REQUIRED" : "PENDING",
+        reconciliationStatus:
+          method.category === "CASH" && !isCustodyCollection ? "RECONCILED" : "MATCHED",
+        settlementStatus:
+          method.category === "CASH" && !isCustodyCollection ? "NOT_REQUIRED" : "PENDING",
         ...(input.currencyEvidence
           ? {
               tenderCurrency: input.currencyEvidence.tenderCurrency,
@@ -1602,7 +1655,7 @@ export class PaymentOrchestrator {
         ...(input.providerTransactionId
           ? { externalTransactionId: input.providerTransactionId }
           : {}),
-        ...(method.category === "CASH"
+        ...(method.category === "CASH" && !isCustodyCollection
           ? {
               cash: {
                 received: majorFromMinor(
@@ -1630,7 +1683,7 @@ export class PaymentOrchestrator {
       ...(providerConnectionId ? { providerConnectionId } : {}),
       direction: "COLLECTION",
       amountMinor: input.amountMinor,
-      unallocatedAmountMinor: input.amountMinor - allocatedMinor,
+      unallocatedAmountMinor: isCustodyCollection ? 0 : input.amountMinor - allocatedMinor,
       currency: input.currency.toUpperCase(),
       status: input.status ?? "CONFIRMED",
       ...(input.providerTransactionId
@@ -1659,10 +1712,14 @@ export class PaymentOrchestrator {
         tenantId: input.tenantId,
         branchId: input.branchId,
         paymentTransactionId: transaction.id,
-        accountId: collectionAccount(method),
+        accountId: collectionDebitAccountId,
         amountMinor: input.amountMinor,
         currency: input.currency,
-        collectionState: method.category === "CASH" ? "IN_HAND" : "IN_CLEARING",
+        collectionState: isCustodyCollection
+          ? "IN_CUSTODY"
+          : method.category === "CASH"
+            ? "IN_HAND"
+            : "IN_CLEARING",
         collectedAt: occurredAt,
         createdAt: new Date().toISOString(),
       }),
@@ -1678,8 +1735,9 @@ export class PaymentOrchestrator {
         description: `Collection ${transaction.merchantReference}`,
         postedBy: input.actor,
         lines: [
-          journalLine(collectionAccount(method), input.amountMinor, 0, input.currency, {
+          journalLine(collectionDebitAccountId, input.amountMinor, 0, input.currency, {
             paymentMethodId: method.id,
+            ...(isCustodyCollection ? { collectionPurpose: "RIDER_CUSTODY" } : {}),
           }),
           journalLine(collectionCreditAccountId, 0, input.amountMinor, input.currency, {
             allocations: input.allocations.length,

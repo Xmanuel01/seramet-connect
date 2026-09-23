@@ -29,8 +29,8 @@ describe("Cloudflare binding resolution", () => {
     };
     request.runtime = { cloudflare: { env: { SERAMET_ENVIRONMENT: "production" } } };
 
-    expect(
-      cloudflareBindings(request, { SERAMET_ENVIRONMENT: "staging" }),
-    ).toMatchObject({ SERAMET_ENVIRONMENT: "production" });
+    expect(cloudflareBindings(request, { SERAMET_ENVIRONMENT: "staging" })).toMatchObject({
+      SERAMET_ENVIRONMENT: "production",
+    });
   });
 });

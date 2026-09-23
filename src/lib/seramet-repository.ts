@@ -6,6 +6,7 @@ import {
 } from "@/lib/transaction-engine";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
+import { custodyLedger } from "@/payments/custody-ledger";
 import { ReconciliationEngine } from "@/payments/reconciliation-engine";
 import { SettlementService } from "@/payments/settlement-service";
 import { permissions } from "@/platform/permissions";
@@ -373,13 +374,23 @@ export function applyServerMutation(
         },
         actor.name,
       );
-    case "assignDeliveryRider":
-      return TransactionEngine.assignDeliveryRider(
-        state,
-        String(input["orderId"]),
-        String(input["rider"]),
-        actor.name,
+    case "assignDeliveryRider": {
+      const orderId = String(input["orderId"]);
+      const riderName = String(input["rider"]).trim();
+      const assigned = TransactionEngine.assignDeliveryRider(state, orderId, riderName, actor.name);
+      const rider = assigned.employees.find(
+        (candidate) =>
+          candidate.tenantId === actor.tenantId &&
+          candidate.role === "Rider" &&
+          candidate.name === riderName,
       );
+      return custodyLedger.assignRider(assigned, {
+        tenantId: actor.tenantId,
+        orderId,
+        ...(rider?.id ? { riderId: rider.id } : {}),
+        riderName,
+      });
+    }
     case "setDeliveryStatus":
       return TransactionEngine.setDeliveryStatus(
         state,
@@ -443,12 +454,18 @@ export function applyServerMutation(
       const cancellation = input["input"] as { reason?: unknown } | undefined;
       const reason = typeof cancellation?.reason === "string" ? cancellation.reason.trim() : "";
       if (!reason) throw new Error("Order cancellation requires a reason");
-      return TransactionEngine.cancelOrder(state, orderId, {
+      const cancelled = TransactionEngine.cancelOrder(state, orderId, {
         user: actor.name,
         reason,
         affectedItems: order.lines
           .filter((line) => line.productionStatus !== "CANCELLED")
           .map((line) => line.name),
+      });
+      return custodyLedger.cancelObligation(cancelled, {
+        tenantId: actor.tenantId,
+        orderId,
+        actor: actor.name,
+        reason,
       });
     }
     case "requestRefund":
@@ -666,6 +683,148 @@ export function applyServerMutation(
         state,
         input["input"] as Parameters<typeof paymentOrchestrator.applyCustomerDeposit>[1],
       );
+    case "upsertReconciliationRule":
+      return reconciliationEngine.upsertRule(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["upsertRule"]>[1],
+      );
+    case "setReconciliationRuleActive":
+      return reconciliationEngine.setRuleActive(
+        state,
+        input["input"] as Parameters<ReconciliationEngine["setRuleActive"]>[1],
+      );
+    case "recordRiderCollection": {
+      const requested = input["input"] as Record<string, unknown>;
+      const obligationId = String(requested["obligationId"] ?? "");
+      const amountMinor = Number(requested["amountMinor"]);
+      const tender = String(requested["tender"] ?? "CASH").toUpperCase();
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+        throw new Error("Rider collection amount must be a positive integer in minor units");
+      }
+      if (!["CASH", "MOBILE_MONEY", "BANK", "OTHER"].includes(tender)) {
+        throw new Error("Unsupported rider collection tender");
+      }
+      const operations = state.paymentOperations;
+      const obligation = operations?.custodyObligations.find(
+        (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
+      );
+      if (!obligation) throw new Error("Rider custody obligation was not found");
+      if (!obligation.custodyAccountId) {
+        throw new Error("Configure the rider custody account before recording collection");
+      }
+      const reference =
+        typeof requested["reference"] === "string" ? requested["reference"].trim() : "";
+      if (tender !== "CASH" && !reference) {
+        throw new Error("A transaction reference is required for non-cash rider collection");
+      }
+
+      const configuration = getConfigurationRepository();
+      const requestedMethod = String(requested["paymentMethodId"] ?? "");
+      const method = configuration
+        .listPaymentMethods(actor.tenantId, false)
+        .find((candidate) =>
+          requestedMethod
+            ? candidate.id === requestedMethod || candidate.code === requestedMethod
+            : tender === "CASH"
+              ? candidate.enabled && candidate.category === "CASH"
+              : candidate.enabled &&
+                ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(candidate.category),
+        );
+      if (!method?.enabled) {
+        throw new Error("No enabled payment method is configured for this rider collection");
+      }
+
+      let remaining = amountMinor;
+      const merchantRemaining = Math.max(
+        0,
+        obligation.merchantAmountDueMinor - obligation.merchantCollectedMinor,
+      );
+      const merchantAppliedMinor = Math.min(remaining, merchantRemaining);
+      remaining -= merchantAppliedMinor;
+      const feeRemaining = Math.max(
+        0,
+        obligation.marketplaceFeeDueMinor - obligation.marketplaceFeeCollectedMinor,
+      );
+      const marketplaceFeeAppliedMinor = Math.min(remaining, feeRemaining);
+      remaining -= marketplaceFeeAppliedMinor;
+      const suspenseRemaining = Math.max(
+        0,
+        obligation.unclassifiedDueMinor - obligation.unclassifiedCollectedMinor,
+      );
+      const unclassifiedAppliedMinor = Math.min(remaining, suspenseRemaining);
+      remaining -= unclassifiedAppliedMinor;
+      if (remaining !== 0) {
+        throw new Error("Collection exceeds the remaining classified cash-due obligation");
+      }
+
+      let next = state;
+      let paymentTransactionId: string | undefined;
+      if (merchantAppliedMinor > 0) {
+        const receivable = state.marketplaceReceivables.find(
+          (candidate) =>
+            candidate.orderId === obligation.orderId &&
+            candidate.tenantId === actor.tenantId &&
+            candidate.status !== "CANCELLED",
+        );
+        if (!receivable) {
+          throw new Error("Marketplace receivable was not found for the cash-due order");
+        }
+        const before = new Set(
+          next.paymentOperations?.transactions.map((transaction) => transaction.id) ?? [],
+        );
+        next = paymentOrchestrator.recordCustodyCollection(next, {
+          tenantId: actor.tenantId,
+          branchId: obligation.branchId,
+          paymentMethodId: method.id,
+          merchantReference: obligation.externalOrderId ?? obligation.orderId,
+          amountMinor: merchantAppliedMinor,
+          currency: obligation.currency,
+          custodyAccountId: obligation.custodyAccountId,
+          collectionCreditAccountId: receivable.receivableAccount,
+          actor: actor.name,
+          ...(reference ? { reference } : {}),
+          ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+        });
+        paymentTransactionId = next.paymentOperations?.transactions.find(
+          (transaction) => !before.has(transaction.id),
+        )?.id;
+      }
+
+      return custodyLedger.recordCustomerCollection(next, {
+        tenantId: actor.tenantId,
+        obligationId,
+        amountMinor,
+        merchantAppliedMinor,
+        marketplaceFeeAppliedMinor,
+        unclassifiedAppliedMinor,
+        tender: tender as "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER",
+        actor: actor.name,
+        ...(obligation.riderId ? { riderId: obligation.riderId } : {}),
+        ...(obligation.riderName ? { riderName: obligation.riderName } : {}),
+        ...(paymentTransactionId ? { paymentTransactionId } : {}),
+        ...(reference ? { reference } : {}),
+        ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+      });
+    }
+    case "recordRiderRemittance": {
+      const requested = input["input"] as Record<string, unknown>;
+      const toHolder = String(requested["toHolder"] ?? "").toUpperCase();
+      if (!["CASH_DRAWER", "MOBILE_MONEY_TILL", "BANK", "OTHER"].includes(toHolder)) {
+        throw new Error("Unsupported custody remittance destination");
+      }
+      return custodyLedger.recordRemittance(state, {
+        tenantId: actor.tenantId,
+        obligationId: String(requested["obligationId"] ?? ""),
+        amountMinor: Number(requested["amountMinor"]),
+        tender: String(requested["tender"] ?? "CASH").toUpperCase() as
+          "CASH" | "MOBILE_MONEY" | "BANK" | "OTHER",
+        toHolder: toHolder as "CASH_DRAWER" | "MOBILE_MONEY_TILL" | "BANK" | "OTHER",
+        destinationAccountId: String(requested["destinationAccountId"] ?? ""),
+        actor: actor.name,
+        ...(requested["reference"] ? { reference: String(requested["reference"]) } : {}),
+        ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
+      });
+    }
     case "automaticPaymentMatching":
       return reconciliationEngine.automaticallyMatchPayments(
         state,

@@ -983,6 +983,126 @@ describe("Official provider boundaries and integration runtime", () => {
   });
 });
 
+describe("production residual reconciliation", () => {
+  it("reconciles several payments into one bank deposit without consuming the bank row early", () => {
+    let state = stateWithBills(2_000, 3_000, 5_000);
+    const payments = [
+      ["INV-T-1", 2_000, "MPESA-BATCH-A"],
+      ["INV-T-2", 3_000, "MPESA-BATCH-B"],
+      ["INV-T-3", 5_000, "MPESA-BATCH-C"],
+    ] as const;
+
+    for (const [invoiceId, amount, providerTransactionId] of payments) {
+      state = orchestrator.confirmProviderCollection(state, {
+        tenantId,
+        branchId,
+        paymentMethodId: "payment-demo-mpesa-till",
+        providerConnectionId: "connection-demo-daraja-wst",
+        providerTransactionId,
+        merchantReference: "TILL-BATCH-10000",
+        amountMinor: kes(amount),
+        currency,
+        allocations: [{ invoiceId, amountMinor: kes(amount) }],
+        actor,
+      });
+    }
+
+    state = reconciliation.importBankTransactions(state, {
+      tenantId,
+      branchId,
+      accountId: "account-demo-bank",
+      adapterCode: "TEST",
+      rows: [bankRow("BANK-TILL-10000", 10_000, "TILL-BATCH-10000")],
+    });
+
+    state = reconciliation.automaticallyMatchPayments(state, {
+      tenantId,
+      branchId,
+      businessDate: "2026-08-30",
+    });
+
+    const operations = state.paymentOperations!;
+    const approved = operations.matches.filter(
+      (match) =>
+        match.rightId === operations.bankTransactions[0]!.id && match.status === "APPROVED",
+    );
+    expect(approved).toHaveLength(3);
+    expect(approved.reduce((total, match) => total + match.amountMinor, 0)).toBe(kes(10_000));
+    expect(operations.bankTransactions[0]!.status).toBe("MATCHED");
+    const reconciledCollections = operations.collections.filter((collection) =>
+      operations.transactions.some(
+        (transaction) =>
+          transaction.id === collection.paymentTransactionId &&
+          transaction.merchantReference === "TILL-BATCH-10000",
+      ),
+    );
+    expect(reconciledCollections).toHaveLength(3);
+    expect(
+      reconciledCollections.every((collection) => collection.collectionState === "IN_BANK"),
+    ).toBe(true);
+
+    state = reconciliation.automaticallyMatchPayments(state, {
+      tenantId,
+      branchId,
+      businessDate: "2026-08-30",
+    });
+    const replayApproved = state.paymentOperations!.matches.filter(
+      (match) =>
+        match.rightId === state.paymentOperations!.bankTransactions[0]!.id &&
+        match.status === "APPROVED",
+    );
+    expect(replayApproved).toHaveLength(3);
+  });
+
+  it("never lets manual matches exceed either payment or bank residual", () => {
+    let state = stateWithBills(10_000);
+    state = orchestrator.confirmProviderCollection(state, {
+      tenantId,
+      branchId,
+      paymentMethodId: "payment-demo-mpesa-till",
+      providerConnectionId: "connection-demo-daraja-wst",
+      providerTransactionId: "MPESA-RESIDUAL-001",
+      merchantReference: "INV-T-1",
+      amountMinor: kes(10_000),
+      currency,
+      allocations: [{ invoiceId: "INV-T-1", amountMinor: kes(10_000) }],
+      actor,
+    });
+    state = reconciliation.importBankTransactions(state, {
+      tenantId,
+      branchId,
+      accountId: "account-demo-bank",
+      adapterCode: "TEST",
+      rows: [bankRow("BANK-RESIDUAL-001", 6_000, "RESIDUAL-001")],
+    });
+    state = reconciliation.automaticallyMatchPayments(state, {
+      tenantId,
+      branchId,
+      businessDate: "2026-08-30",
+    });
+
+    const operations = state.paymentOperations!;
+    const session = operations.reconciliationSessions[0]!;
+    const payment = operations.transactions.find(
+      (transaction) => transaction.providerTransactionId === "MPESA-RESIDUAL-001",
+    )!;
+    const bank = operations.bankTransactions[0]!;
+
+    expect(() =>
+      reconciliation.manuallyMatch(state, {
+        tenantId,
+        branchId,
+        sessionId: session.id,
+        paymentTransactionId: payment.id,
+        bankTransactionId: bank.id,
+        amountMinor: kes(7_000),
+        actor,
+        reason: "Attempt to overmatch residual",
+      }),
+    ).toThrow(/remaining payment or bank balance/);
+  });
+});
+
 function stateWithBills(...amounts: number[]) {
   const state = createEmptyTransactionState(tenantId);
   state.bills = amounts.map((amount, index) => bill(`INV-T-${index + 1}`, amount));

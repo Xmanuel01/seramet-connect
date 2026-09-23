@@ -219,6 +219,32 @@ describe("Pass 3 Uber Eats official contract", () => {
     });
   });
 
+  it("normalizes restaurant-delivered cash-due orders without inventing a platform payment", async () => {
+    const adapter = createUberEatsAdapter();
+    const connectionValue = connection("provider-delivery-uber-eats", {
+      externalStoreId: "uber-store-1",
+    });
+    const cashDueOrder = structuredClone(uberOrderFixture);
+    cashDueOrder.type = "DELIVERY_BY_RESTAURANT";
+    const cashDueCharges = cashDueOrder.payment.charges as Record<string, unknown>;
+    cashDueCharges["cash_amount_due"] = { amount: 315000, currency_code: "KES" };
+    cashDueCharges["marketplace_fee_due_to_uber"] = { amount: 15000, currency_code: "KES" };
+
+    expect(await adapter.normalizeIncomingOrder!(cashDueOrder, connectionValue)).toMatchObject({
+      ok: true,
+      value: {
+        delivery: { type: "RESTAURANT", providerManaged: false },
+        payment: {
+          externallyPaid: false,
+          collectionMode: "CASH_DUE",
+          collector: "RIDER",
+          cashAmountDue: 3150,
+          marketplaceFeeDueToProvider: 150,
+        },
+      },
+    });
+  });
+
   it("uses documented OAuth scopes, order lifecycle, recovery, and store paths", async () => {
     const mock = adapterRuntime((url) => {
       if (url.hostname === "login.uber.com")

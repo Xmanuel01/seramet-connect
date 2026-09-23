@@ -292,6 +292,8 @@ function isSettlementType(value: string): value is SettlementLineType {
     "PROMOTION",
     "REFUND",
     "TAX_ADJUSTMENT",
+    "MERCHANT_COLLECTION",
+    "MARKETPLACE_PAYABLE_OFFSET",
     "OTHER_ADJUSTMENT",
   ].includes(value);
 }
