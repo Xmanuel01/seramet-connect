@@ -517,11 +517,7 @@ function normalizeUberOrder(
         externallyPaid,
         ...(externallyPaid ? { amountPaid: total, platformCollectedAmount: total } : {}),
         collectionMode: hasCashDue ? "CASH_DUE" : "PLATFORM_PREPAID",
-        collector: hasCashDue
-          ? restaurantDelivery
-            ? "RIDER"
-            : "RESTAURANT"
-          : "MARKETPLACE",
+        collector: hasCashDue ? (restaurantDelivery ? "RIDER" : "RESTAURANT") : "MARKETPLACE",
         ...(cashAmountDue > 0 ? { cashAmountDue } : {}),
         ...(marketplaceFeeDueToProvider > 0 ? { marketplaceFeeDueToProvider } : {}),
         ...(providerPaymentReference ? { providerPaymentReference } : {}),
@@ -530,9 +526,7 @@ function normalizeUberOrder(
         providerOrderType,
         cashDueSource: hasCashDue ? "payment.charges.cash_amount_due" : null,
         marketplaceFeeSource:
-          marketplaceFeeDueToProvider > 0
-            ? "payment.charges.marketplace_fee_due_to_uber"
-            : null,
+          marketplaceFeeDueToProvider > 0 ? "payment.charges.marketplace_fee_due_to_uber" : null,
       },
       ...(discount
         ? {
