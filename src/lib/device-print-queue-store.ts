@@ -20,13 +20,8 @@ function notify(branchKey: string) {
   listeners.get(branchKey)?.forEach((listener) => listener());
 }
 
-function updateList<T>(
-  current: T[],
-  update: SetStateAction<T[]>,
-) {
-  return typeof update === "function"
-    ? (update as (value: T[]) => T[])(current)
-    : update;
+function updateList<T>(current: T[], update: SetStateAction<T[]>) {
+  return typeof update === "function" ? (update as (value: T[]) => T[])(current) : update;
 }
 
 export const DevicePrintQueueStore = {
