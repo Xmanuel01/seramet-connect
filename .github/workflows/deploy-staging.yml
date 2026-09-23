@@ -126,6 +126,34 @@ jobs:
       - name: Verify operational readiness
         run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/operational"
 
+      - name: Verify public authentication bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "${SERAMET_PUBLIC_ORIGIN}/api/seramet/public/auth/config"             -o /tmp/auth-config.json
+          node <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync("/tmp/auth-config.json", "utf8"));
+          if (payload.ok !== true || payload.provider !== "supabase" || payload.enabled !== true) {
+            throw new Error(`Public authentication bootstrap is not ready: ${JSON.stringify(payload)}`);
+          }
+          console.log(JSON.stringify(payload));
+          NODE
+
+      - name: Verify unregistered device bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error             "${SERAMET_PUBLIC_ORIGIN}/api/seramet/public/device/startup"             -o /tmp/device-startup.json
+          node <<'NODE'
+          const fs = require("fs");
+          const payload = JSON.parse(fs.readFileSync("/tmp/device-startup.json", "utf8"));
+          if (payload.ok !== true || payload.state !== "UNREGISTERED") {
+            throw new Error(`Unregistered device bootstrap failed: ${JSON.stringify(payload)}`);
+          }
+          console.log(JSON.stringify(payload));
+          NODE
+
       - name: Report full readiness
         continue-on-error: true
         run: curl --fail-with-body "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/ready"
