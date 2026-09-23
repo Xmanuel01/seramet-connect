@@ -776,7 +776,9 @@ export function createDefaultDemoPlatformState(): PlatformState {
         requiresAddress: false,
         isExternallyPaid: true,
         sortOrder: 30 + index * 10,
-        metadata: {},
+        metadata: {
+          defaultFulfilment: displayName === "Uber Eats" ? "RESTAURANT" : "PROVIDER",
+        },
       })),
     ],
     devices: [
