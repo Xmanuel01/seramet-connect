@@ -1589,7 +1589,9 @@ export class IntegrationRuntime {
         ...(account("marketplacePayableAccountId")
           ? { marketplacePayableAccountId: account("marketplacePayableAccountId") }
           : {}),
-        ...(account("suspenseAccountId") ? { suspenseAccountId: account("suspenseAccountId") } : {}),
+        ...(account("suspenseAccountId")
+          ? { suspenseAccountId: account("suspenseAccountId") }
+          : {}),
       });
       const obligation = next.paymentOperations?.custodyObligations.find(
         (candidate) => candidate.orderId === created.id,
