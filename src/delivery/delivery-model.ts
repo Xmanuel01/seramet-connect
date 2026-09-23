@@ -3,11 +3,7 @@ import { majorFromMinor } from "@/payments/money";
 import type { CustodyObligation } from "@/payments/types";
 import type { OrderChannelDefinition } from "@/platform/types";
 
-export type DeliveryFulfilment =
-  | "OWN_DELIVERY"
-  | "PROVIDER_DELIVERY"
-  | "PICKUP"
-  | "NOT_DELIVERY";
+export type DeliveryFulfilment = "OWN_DELIVERY" | "PROVIDER_DELIVERY" | "PICKUP" | "NOT_DELIVERY";
 
 function configuredFulfilment(channel?: OrderChannelDefinition): DeliveryFulfilment | undefined {
   if (!channel) return undefined;
