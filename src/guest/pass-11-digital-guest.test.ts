@@ -420,14 +420,21 @@ describe("Pass 11 digital guest experience", () => {
     });
     expect(second.estimatedWaitMinutes).toBeGreaterThanOrEqual(first.estimatedWaitMinutes);
 
+    const scopedStartsAt = futureLocalIso(4, 18);
     await service.createReservation(restaurantSlug, branchSlug, {
-      startsAt: futureLocalIso(4, 18),
+      startsAt: scopedStartsAt,
       partySize: 2,
       guestName: "Scoped reservation",
       idempotencyKey: "front-of-house-scope-reservation",
     });
 
-    const full = await service.hostDashboard(manager(), branchId);
+    const scopedBusinessDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Africa/Nairobi",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(scopedStartsAt));
+    const full = await service.hostDashboard(manager(), branchId, scopedBusinessDate);
     expect(full.waitlist).toHaveLength(2);
     expect(full.reservations.length).toBeGreaterThan(0);
     expect(full.tables.length).toBeGreaterThan(0);
