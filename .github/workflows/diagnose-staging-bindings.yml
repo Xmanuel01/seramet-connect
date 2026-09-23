@@ -66,6 +66,10 @@ jobs:
             "SERAMET_ALLOWED_ORIGINS",
             "SERAMET_JWT_SECRET",
           ]);
+          const allBindingNames = (settings.result.bindings ?? []).map((binding) => ({
+            name: binding.name,
+            type: binding.type,
+          }));
           const bindings = (settings.result.bindings ?? [])
             .filter((binding) => wanted.has(binding.name))
             .map((binding) => ({
@@ -119,5 +123,5 @@ jobs:
             .map((row) => ({ id: row.id, name: row.name }))
             .filter((row) => usefulName(row.name) || row.id === "c8cc4b932f564daeb71047422ea6c42f");
 
-          console.log(JSON.stringify({ bindings, scripts, queues, buckets, hyperdrives }, null, 2));
+          console.log(JSON.stringify({ allBindingNames, bindings, scripts, queues, buckets, hyperdrives }, null, 2));
           NODE
