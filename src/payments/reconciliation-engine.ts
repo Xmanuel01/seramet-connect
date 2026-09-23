@@ -156,6 +156,7 @@ export class ReconciliationEngine {
         ["CONFIRMED", "MANUALLY_CONFIRMED", "UNVERIFIED", "VERIFYING"].includes(
           transaction.status,
         ) &&
+        transaction.metadata["collectionPurpose"] !== "RIDER_CUSTODY" &&
         !operations.collections.some(
           (collection) =>
             collection.paymentTransactionId === transaction.id &&
@@ -278,6 +279,102 @@ export class ReconciliationEngine {
         });
       } else {
         resolveResidualException(operations, "PAYMENT", payment.id);
+      }
+    }
+
+    const custodyCandidates = operations.custodyMovements.filter(
+      (movement) =>
+        movement.tenantId === input.tenantId &&
+        ["RIDER_REMITTANCE", "TILL_TRANSFER", "BANK_DEPOSIT"].includes(movement.type) &&
+        ["MOBILE_MONEY_TILL", "BANK", "OTHER"].includes(movement.toHolder) &&
+        (!input.branchId || movement.branchId === input.branchId),
+    );
+    for (const movement of custodyCandidates) {
+      const obligation = operations.custodyObligations.find(
+        (candidate) => candidate.id === movement.obligationId,
+      );
+      if (!obligation) continue;
+      let remaining = custodyResidualMinor(operations, movement.id, movement.amountMinor);
+      if (remaining <= 0) continue;
+      const ranked = operations.bankTransactions
+        .filter(
+          (bank) =>
+            bank.tenantId === input.tenantId &&
+            bank.currency === movement.currency &&
+            !["DUPLICATE", "IGNORED"].includes(bank.status) &&
+            (!input.branchId || !bank.branchId || bank.branchId === input.branchId) &&
+            bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor)) > 0 &&
+            !operations.matches.some(
+              (match) =>
+                match.leftType === "CUSTODY_MOVEMENT" &&
+                match.leftId === movement.id &&
+                match.rightId === bank.id &&
+                match.status === "SUGGESTED",
+            ),
+        )
+        .map((bank) =>
+          scoreCustodyMatch(
+            movement,
+            obligation,
+            bank,
+            remaining,
+            bankResidualMinor(operations, bank.id, Math.abs(bank.amountMinor)),
+            operations,
+            input.timeWindowMinutes,
+          ),
+        )
+        .sort((left, right) => right.score - left.score);
+      const best = ranked[0];
+      const second = ranked[1];
+      if (!best) continue;
+      const confidence = confidenceFor(best, second?.score ?? 0);
+      if (confidence === "UNMATCHED") continue;
+      const amountMinor = Math.min(remaining, best.bankRemainingMinor);
+      const autoApprove =
+        ["EXACT", "HIGH"].includes(confidence) &&
+        best.score >= best.rule.minimumAutoApproveScore &&
+        best.score - (second?.score ?? 0) >= best.rule.minimumLeadScore &&
+        (!best.rule.requireExactReferenceForAutoApprove || best.exactReference);
+      const match: PaymentMatch = Object.freeze({
+        id: nextId("MATCH4", operations.matches),
+        tenantId: input.tenantId,
+        branchId: movement.branchId,
+        reconciliationSessionId: session.id,
+        leftType: "CUSTODY_MOVEMENT",
+        leftId: movement.id,
+        rightType: "BANK_TRANSACTION",
+        rightId: best.bank.id,
+        amountMinor,
+        currency: movement.currency,
+        confidence,
+        status: autoApprove ? "APPROVED" : "SUGGESTED",
+        matchedBy: "SYSTEM",
+        reason: best.reason,
+        createdAt: stamp,
+      });
+      operations.matches.unshift(match);
+      if (!autoApprove) continue;
+
+      const bankAfter = bankResidualMinor(
+        operations,
+        best.bank.id,
+        Math.abs(best.bank.amountMinor),
+      );
+      replaceBank(operations, best.bank.id, {
+        ...best.bank,
+        status: bankAfter === 0 ? "MATCHED" : "PARTIAL",
+      });
+      postCustodyBankReconciliation(operations, {
+        matchId: match.id,
+        movement,
+        bank: best.bank,
+        amountMinor,
+        businessDate: input.businessDate,
+        actor: "SYSTEM",
+      });
+      remaining = custodyResidualMinor(operations, movement.id, movement.amountMinor);
+      if (remaining === 0) {
+        resolveResidualException(operations, "CUSTODY", movement.id);
       }
     }
 
@@ -918,7 +1015,15 @@ function scoreMatch(
   };
 }
 
-type ScoredMatch = ReturnType<typeof scoreMatch>;
+type ScoredMatch = {
+  bank: BankTransaction;
+  bankRemainingMinor: number;
+  score: number;
+  exactReference: boolean;
+  amountMatches: boolean;
+  rule: ReconciliationRule;
+  reason: string;
+};
 
 function confidenceFor(best: ScoredMatch, second: number): PaymentMatch["confidence"] {
   const lead = best.score - second;
@@ -965,6 +1070,103 @@ function ruleFor(
       : { ...configured, timeWindowMinutes: overrideTimeWindowMinutes };
   }
   return defaultRule(payment.tenantId, payment.branchId, overrideTimeWindowMinutes);
+}
+
+function scoreCustodyMatch(
+  movement: PaymentOperationsState["custodyMovements"][number],
+  obligation: PaymentOperationsState["custodyObligations"][number],
+  bank: BankTransaction,
+  movementRemainingMinor: number,
+  bankRemainingMinor: number,
+  operations: PaymentOperationsState,
+  overrideTimeWindowMinutes?: number,
+): ScoredMatch {
+  const rule = ruleForCustody(
+    operations,
+    movement,
+    obligation,
+    bank,
+    overrideTimeWindowMinutes,
+  );
+  const references = [
+    movement.reference,
+    movement.orderId,
+    obligation.externalOrderId,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeReference(String(value)));
+  const bankReferences = [
+    bank.externalTransactionId,
+    bank.reference,
+    bank.rawReference,
+    bank.description,
+  ]
+    .filter(Boolean)
+    .map((value) => normalizeReference(String(value)));
+  const exactReference = references.some((reference) =>
+    bankReferences.some((candidate) => candidate === reference),
+  );
+  const containsReference =
+    !exactReference &&
+    references.some((reference) =>
+      bankReferences.some(
+        (candidate) =>
+          reference.length >= 5 &&
+          candidate.length >= 5 &&
+          (candidate.includes(reference) || reference.includes(candidate)),
+      ),
+    );
+  const amountDifference = Math.abs(movementRemainingMinor - bankRemainingMinor);
+  const amountMatches = amountDifference <= rule.amountToleranceMinor;
+  const movementTime = Date.parse(movement.occurredAt);
+  const bankTime = Date.parse(bank.date);
+  const minutes =
+    Number.isFinite(movementTime) && Number.isFinite(bankTime)
+      ? Math.abs(movementTime - bankTime) / 60000
+      : Number.POSITIVE_INFINITY;
+  const timeMatches = minutes <= rule.timeWindowMinutes;
+  const score =
+    (exactReference
+      ? rule.exactReferenceWeight
+      : containsReference
+        ? rule.containedReferenceWeight
+        : 0) +
+    (amountMatches ? rule.amountWeight : 0) +
+    (timeMatches ? rule.timeWeight : 0);
+  return {
+    bank,
+    bankRemainingMinor,
+    score,
+    exactReference,
+    amountMatches,
+    rule,
+    reason: `${exactReference ? "exact custody reference" : containsReference ? "custody reference contained" : "no custody reference"}; ${amountMatches ? "residual amount matched" : `residual differed by ${amountDifference}`}; ${Number.isFinite(minutes) ? Math.round(minutes) : "unknown"} minutes apart; rule ${rule.name}`,
+  };
+}
+
+function ruleForCustody(
+  operations: PaymentOperationsState,
+  movement: PaymentOperationsState["custodyMovements"][number],
+  obligation: PaymentOperationsState["custodyObligations"][number],
+  bank: BankTransaction,
+  overrideTimeWindowMinutes?: number,
+) {
+  const configured = operations.reconciliationRules
+    .filter(
+      (rule) =>
+        rule.active &&
+        rule.tenantId === movement.tenantId &&
+        (!rule.branchId || rule.branchId === movement.branchId) &&
+        (!rule.providerConnectionId || rule.providerConnectionId === obligation.connectionId) &&
+        (!rule.bankAccountId || rule.bankAccountId === bank.accountId),
+    )
+    .sort((left, right) => ruleSpecificity(right) - ruleSpecificity(left))[0];
+  if (configured) {
+    return overrideTimeWindowMinutes === undefined
+      ? configured
+      : { ...configured, timeWindowMinutes: overrideTimeWindowMinutes };
+  }
+  return defaultRule(movement.tenantId, movement.branchId, overrideTimeWindowMinutes);
 }
 
 function defaultRule(
@@ -1068,6 +1270,18 @@ function bankResidualMinor(
   return Math.max(
     0,
     amountMinor - approvedMatchedMinor(operations, "BANK_TRANSACTION", bankId, "right"),
+  );
+}
+
+function custodyResidualMinor(
+  operations: PaymentOperationsState,
+  movementId: string,
+  amountMinor: number,
+) {
+  return Math.max(
+    0,
+    amountMinor -
+      approvedMatchedMinor(operations, "CUSTODY_MOVEMENT", movementId, "left"),
   );
 }
 
@@ -1249,6 +1463,59 @@ function postPaymentBankReconciliation(
         : candidate,
     );
   }
+}
+
+function postCustodyBankReconciliation(
+  operations: PaymentOperationsState,
+  input: {
+    matchId: string;
+    movement: PaymentOperationsState["custodyMovements"][number];
+    bank: BankTransaction;
+    amountMinor: number;
+    businessDate: string;
+    actor: string;
+  },
+) {
+  const destination = input.movement.destinationAccountId;
+  if (
+    !destination ||
+    input.movement.toHolder === "BANK" ||
+    destination === input.bank.accountId
+  ) {
+    return;
+  }
+  if (
+    operations.journals.some(
+      (journal) =>
+        journal.sourceType === "PAYMENT_RECONCILIATION" &&
+        journal.sourceId === input.matchId &&
+        journal.status === "POSTED",
+    )
+  ) {
+    return;
+  }
+  operations.journals.unshift(
+    createJournal({
+      id: nextId("JRN4", operations.journals),
+      tenantId: input.movement.tenantId,
+      branchId: input.movement.branchId,
+      sourceType: "PAYMENT_RECONCILIATION",
+      sourceId: input.matchId,
+      businessDate: input.businessDate,
+      description: `Custody remittance reconciled to bank ${input.bank.id}`,
+      postedBy: input.actor,
+      lines: [
+        line(input.bank.accountId, input.amountMinor, 0, input.movement.currency, {
+          bankTransactionId: input.bank.id,
+          custodyMovementId: input.movement.id,
+        }),
+        line(destination, 0, input.amountMinor, input.movement.currency, {
+          custodyMovementId: input.movement.id,
+          role: "custody-clearing",
+        }),
+      ],
+    }),
+  );
 }
 
 function addException(
