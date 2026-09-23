@@ -271,10 +271,12 @@ export class PaymentOrchestrator {
       tenantId: string;
       branchId: string;
       paymentMethodId: string;
-      invoiceId: string;
+      merchantReference: string;
+      invoiceId?: string;
       amountMinor: number;
       currency: string;
       custodyAccountId: string;
+      collectionCreditAccountId: string;
       actor: string;
       reference?: string;
       deviceId?: string;
@@ -282,14 +284,19 @@ export class PaymentOrchestrator {
     },
   ) {
     if (!input.custodyAccountId.trim()) throw new Error("Rider custody account is required");
+    if (!input.collectionCreditAccountId.trim()) {
+      throw new Error("Collection credit account is required");
+    }
     return this.recordConfirmedCollection(state, {
       tenantId: input.tenantId,
       branchId: input.branchId,
       paymentMethodId: input.paymentMethodId,
-      merchantReference: input.invoiceId,
+      merchantReference: input.merchantReference,
       amountMinor: input.amountMinor,
       currency: input.currency,
-      allocations: [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }],
+      allocations: input.invoiceId
+        ? [{ invoiceId: input.invoiceId, amountMinor: input.amountMinor }]
+        : [],
       actor: input.actor,
       ...(input.reference ? { customerReference: input.reference.trim() } : {}),
       ...(input.deviceId ? { deviceId: input.deviceId } : {}),
@@ -297,6 +304,7 @@ export class PaymentOrchestrator {
       status: "MANUALLY_CONFIRMED",
       metadata: {
         collectionDebitAccountId: input.custodyAccountId,
+        collectionCreditAccountId: input.collectionCreditAccountId,
         collectionPurpose: "RIDER_CUSTODY",
       },
     });
