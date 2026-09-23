@@ -71,6 +71,16 @@ const config = {
   compatibility_date: "2026-09-10",
   compatibility_flags: ["nodejs_compat"],
   no_bundle: true,
+  find_additional_modules: true,
+  base_dir: "../.output/server",
+  preserve_file_names: true,
+  rules: [
+    {
+      type: "ESModule",
+      globs: ["**/*.mjs"],
+      fallthrough: true,
+    },
+  ],
   keep_vars: reuseExistingVars,
   assets: { binding: "ASSETS", directory: "../.output/public" },
   hyperdrive: [
