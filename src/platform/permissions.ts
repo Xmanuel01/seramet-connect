@@ -212,6 +212,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   prepareInvoiceForPayment: permissions.invoicesManage,
   sendToKitchen: permissions.ordersUpdate,
   setProductionStationStatus: permissions.kitchenOperate,
+  recallProductionStation: permissions.productionAdjust,
   markOrderServed: permissions.ordersServe,
   generatePurchaseOrders: permissions.procurementCreate,
   approvePurchaseOrder: permissions.procurementApprove,
