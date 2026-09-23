@@ -565,7 +565,7 @@ type AuthoritativeActor = {
 async function bootstrapAuthoritativeSession(
   repository: ConfigurationRepository,
 ): Promise<{ status: "DEVELOPMENT" } | { status: "AUTHENTICATED"; actor: AuthoritativeActor }> {
-  const healthResponse = await fetch("/api/seramet/health", { cache: "no-store" });
+  const healthResponse = await fetch("/api/seramet/health/operational", { cache: "no-store" });
   if (!healthResponse.ok) {
     throw new SerametBootstrapError(
       "SERVICE_UNAVAILABLE",
@@ -641,7 +641,7 @@ async function bootstrapAuthoritativeSession(
 
 async function readinessFailureMessage(status: number) {
   try {
-    const response = await fetch("/api/seramet/health/ready", { cache: "no-store" });
+    const response = await fetch("/api/seramet/health/operational", { cache: "no-store" });
     const payload = (await response.json()) as {
       issues?: Array<{ code?: string; message?: string }>;
     };
