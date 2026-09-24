@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
@@ -206,10 +206,10 @@ function WarehouseForm({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">{label}{children}</label>;
 }
-function Notice({ children }: { children: React.ReactNode }) {
+function Notice({ children }: { children: ReactNode }) {
   return <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">{children}</div>;
 }
 function slugCode(value: string) {
