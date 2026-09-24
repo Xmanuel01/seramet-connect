@@ -38,7 +38,7 @@ function Requisitions() {
   const rows = useMemo<DisplayRequisition[]>(
     () =>
       control.data.flatMap((branch) =>
-        branch.procurement.requisitions.map((row) => ({ ...row, branchId: branch.branchId })),
+        branch.requisitions.map((row) => ({ ...row, branchId: branch.branchId })),
       ),
     [control.data],
   );
