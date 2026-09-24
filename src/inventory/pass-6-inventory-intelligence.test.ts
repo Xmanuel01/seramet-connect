@@ -43,7 +43,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(23);
+    expect(version?.version).toBe(24);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",
@@ -54,6 +54,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       "production_batches",
       "stock_count_sessions",
       "inventory_categories",
+      "inventory_adjustment_requests",
       "inventory_forecasts",
       "purchase_recommendations",
       "menu_inventory_availability",
@@ -1123,6 +1124,265 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
         })
       ).duplicate,
     ).toBe(true);
+  });
+
+  it("keeps manual adjustments approval-gated before posting immutable stock", async () => {
+    await seedBeef(service);
+    await opening(service, "opening-adjustment-approval", 10 * QUANTITY_SCALE, 50_000);
+
+    const requester = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryAdjust]),
+    );
+    const request = await requester.requestAdjustment({
+      id: "adjustment-request-a",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: -2 * QUANTITY_SCALE,
+      reason: "Physical stock variance confirmed by recount",
+      idempotencyKey: "adjustment-request-a",
+      businessDate: "2026-08-30",
+    });
+    expect(request).toMatchObject({ status: "PENDING", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(10 * QUANTITY_SCALE);
+    await expect(requester.approveAdjustment(request.id)).rejects.toThrow(
+      /inventory\.adjust\.approve/,
+    );
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryAdjustApprove]),
+    );
+    await expect(
+      approver.approveAdjustment(request.id, "Manager approved recount evidence"),
+    ).resolves.toMatchObject({ status: "APPROVED", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(8 * QUANTITY_SCALE);
+
+    const movement = await db
+      .prepare(
+        `SELECT movement_type,source_type,source_id
+           FROM inventory_movements
+          WHERE tenant_id=? AND source_type='INVENTORY_ADJUSTMENT' AND source_id=?`,
+      )
+      .bind(tenantId, request.id)
+      .first<Record<string, unknown>>();
+    expect(movement).toMatchObject({
+      movement_type: "MANUAL_ADJUSTMENT",
+      source_type: "INVENTORY_ADJUSTMENT",
+      source_id: request.id,
+    });
+
+    await expect(
+      db
+        .prepare(
+          "UPDATE inventory_adjustment_requests SET status='REJECTED' WHERE tenant_id=? AND id=?",
+        )
+        .bind(tenantId, request.id)
+        .run(),
+    ).rejects.toThrow(/INVENTORY_ADJUSTMENT_TERMINAL_IMMUTABLE/);
+  });
+
+  it("requires independent approval for wastage and breakage before stock changes", async () => {
+    await seedBeef(service);
+    await opening(service, "opening-loss-approval", 6 * QUANTITY_SCALE, 60_000);
+
+    const recorder = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageRecord]),
+    );
+    const wastage = await recorder.requestWastageApproval({
+      id: "wastage-request-a",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: 500_000,
+      reasonCode: "SPOILAGE",
+      idempotencyKey: "wastage-request-a",
+      businessDate: "2026-08-30",
+    });
+    expect(wastage).toMatchObject({
+      status: "PENDING",
+      estimatedCostMinor: 30_000,
+      duplicate: false,
+    });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(6 * QUANTITY_SCALE);
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageApprove]),
+    );
+    await expect(
+      approver.approveWastageRequest(wastage.id, "Chef and supervisor verified incident"),
+    ).resolves.toMatchObject({
+      status: "APPROVED",
+      postedCostMinor: 30_000,
+      duplicate: false,
+    });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(5_500_000);
+
+    const breakage = await recorder.requestBreakageApproval({
+      id: "breakage-request-a",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: 250_000,
+      reasonCode: "DAMAGED",
+      idempotencyKey: "breakage-request-a",
+      businessDate: "2026-08-30",
+    });
+    await expect(
+      approver.rejectBreakageRequest(breakage.id, "Incident belongs to equipment, not inventory"),
+    ).resolves.toMatchObject({ status: "REJECTED", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(5_500_000);
+
+    const wastageRows = await recorder.listWastageRequests(branchId);
+    expect(wastageRows[0]).toMatchObject({
+      id: "wastage-request-a",
+      status: "APPROVED",
+      reasonCode: "SPOILAGE",
+      quantityMicro: 500_000,
+      postedCostMinor: 30_000,
+    });
+  });
+
+  it("reads PAR replenishment from available stock and target policy", async () => {
+    await seedBeef(service);
+    await opening(service, "opening-par-control", 5 * QUANTITY_SCALE, 55_000);
+    await service.upsertParPolicy({
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      reorderPointMicro: 6 * QUANTITY_SCALE,
+      targetQuantityMicro: 10 * QUANTITY_SCALE,
+      safetyStockMicro: 2 * QUANTITY_SCALE,
+      recommendationMode: "RECOMMEND",
+    });
+
+    const policies = await service.listParPolicies(branchId);
+    expect(policies).toEqual([
+      expect.objectContaining({
+        inventory_item_id: "item-beef",
+        warehouse_id: warehouseId,
+        available_quantity_minor: 5 * QUANTITY_SCALE,
+        reorder_point_minor: 6 * QUANTITY_SCALE,
+        target_quantity_minor: 10 * QUANTITY_SCALE,
+        suggested_quantity_minor: 5 * QUANTITY_SCALE,
+        suggested_value_minor: 275_000,
+      }),
+    ]);
+  });
+
+  it("manages authoritative warehouses and blocks unsafe archive", async () => {
+    const created = await service.createWarehouse({
+      id: "warehouse-kitchen",
+      branchId,
+      code: "KITCHEN",
+      name: "Kitchen Store",
+      type: "KITCHEN",
+    });
+    expect(created).toMatchObject({ id: "warehouse-kitchen", active: true, type: "KITCHEN" });
+    expect(await service.listWarehouses(branchId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "warehouse-kitchen",
+          type: "KITCHEN",
+          stocked_item_count: 0,
+        }),
+      ]),
+    );
+    await expect(service.archiveWarehouse("warehouse-kitchen")).resolves.toMatchObject({
+      status: "ARCHIVED",
+    });
+
+    await seedBeef(service);
+    await expect(service.archiveWarehouse(warehouseId)).rejects.toThrow(
+      /active items using this default warehouse/,
+    );
+  });
+
+  it("dispatches and receives staged warehouse transfers without browser-side stock mutation", async () => {
+    await seedBeef(service);
+    await opening(service, "opening-staged-transfer", 10 * QUANTITY_SCALE, 50_000);
+    await service.createWarehouse({
+      id: "warehouse-kitchen-transfer",
+      branchId,
+      code: "KIT-TR",
+      name: "Kitchen Transfer Store",
+      type: "KITCHEN",
+    });
+
+    await expect(
+      service.dispatchTransfer({
+        id: "transfer-overdrawn",
+        transferNumber: "TR-STAGED-OVER",
+        sourceBranchId: branchId,
+        sourceWarehouseId: warehouseId,
+        destinationBranchId: branchId,
+        destinationWarehouseId: "warehouse-kitchen-transfer",
+        idempotencyKey: "transfer-overdrawn",
+        businessDate: "2026-08-30",
+        lines: [{ inventoryItemId: "item-beef", quantityMicro: 11 * QUANTITY_SCALE }],
+      }),
+    ).rejects.toThrow(/exceeds available source stock/);
+
+    const dispatched = await service.dispatchTransfer({
+      id: "transfer-staged-a",
+      transferNumber: "TR-STAGED-A",
+      sourceBranchId: branchId,
+      sourceWarehouseId: warehouseId,
+      destinationBranchId: branchId,
+      destinationWarehouseId: "warehouse-kitchen-transfer",
+      idempotencyKey: "transfer-staged-a",
+      businessDate: "2026-08-30",
+      lines: [{ inventoryItemId: "item-beef", quantityMicro: 2 * QUANTITY_SCALE }],
+    });
+    expect(dispatched).toMatchObject({
+      id: "transfer-staged-a",
+      duplicate: false,
+      accountingTreatment: "INTRA_ENTITY",
+    });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(8 * QUANTITY_SCALE);
+
+    const register = await service.listTransfers(branchId);
+    expect(register[0]).toMatchObject({
+      id: "transfer-staged-a",
+      status: "IN_TRANSIT",
+      sent_quantity_minor: 2 * QUANTITY_SCALE,
+      received_quantity_minor: 0,
+    });
+    const beforeReceipt = await service.transferDetail("transfer-staged-a");
+    expect(beforeReceipt.lines[0]).toMatchObject({
+      inventory_item_id: "item-beef",
+      sent_quantity_minor: 2 * QUANTITY_SCALE,
+    });
+
+    await service.receiveTransferShipment({
+      shipmentId: dispatched.shipmentId,
+      receiptReference: "RCV-STAGED-A",
+      idempotencyKey: "receive-staged-a",
+      businessDate: "2026-08-30",
+      final: true,
+      lines: [
+        {
+          transferLineId: String(beforeReceipt.lines[0]!["id"]),
+          receivedQuantityMicro: 2 * QUANTITY_SCALE,
+        },
+      ],
+    });
+    expect(
+      (
+        await inventoryBalance(
+          db,
+          "item-beef",
+          branchId,
+          "warehouse-kitchen-transfer",
+        )
+      ).quantity_minor,
+    ).toBe(2 * QUANTITY_SCALE);
+    const afterReceipt = await service.transferDetail("transfer-staged-a");
+    expect(afterReceipt.transfer).toMatchObject({ status: "RECEIVED" });
+    expect(afterReceipt.receipts).toHaveLength(1);
   });
 
   it("records wastage once with an evidence-backed cost", async () => {
