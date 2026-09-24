@@ -54,7 +54,7 @@ function Par() {
   const { branchLabel } = useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
-  const operations = useInventoryOperations(authoritative);
+  const { branchIds, request, post } = useInventoryOperations(authoritative);
   const control = useInventoryControlCentre(authoritative);
   const [rows, setRows] = useState<ParRow[]>([]);
   const [notice, setNotice] = useState("");
@@ -72,8 +72,8 @@ function Par() {
     setStatus("loading");
     try {
       const result = await Promise.all(
-        operations.branchIds.map(async (branchId) => {
-          const body = await operations.request<{ policies: Omit<ParRow, "branchId">[] }>(
+        branchIds.map(async (branchId) => {
+          const body = await request<{ policies: Omit<ParRow, "branchId">[] }>(
             `/api/seramet/inventory/par-policies?branchId=${encodeURIComponent(branchId)}`,
           );
           return body.policies.map((row) => ({ ...row, branchId }));
@@ -85,7 +85,7 @@ function Par() {
       setNotice(error instanceof Error ? error.message : "PAR policies could not be loaded");
       setStatus("error");
     }
-  }, [authoritative, operations.branchIds, operations.request]);
+  }, [authoritative, branchIds, request]);
 
   useEffect(() => {
     void load();
@@ -119,7 +119,7 @@ function Par() {
       return;
     }
     try {
-      await operations.post("/api/seramet/inventory/par-policies", {
+      await post("/api/seramet/inventory/par-policies", {
         ...(editing.policy_id ? { id: editing.policy_id } : {}),
         branchId: editing.branchId,
         warehouseId: editing.warehouse_id,
@@ -148,7 +148,10 @@ function Par() {
     (sum, row) => sum + Number(row.suggested_value_minor ?? 0),
     0,
   );
-  const incomingMicro = rows.reduce((sum, row) => sum + Number(row.incoming_quantity_minor ?? 0), 0);
+  const incomingMicro = rows.reduce(
+    (sum, row) => sum + Number(row.incoming_quantity_minor ?? 0),
+    0,
+  );
   const displayRows = useMemo(
     () =>
       [...rows].sort(
@@ -176,7 +179,9 @@ function Par() {
                 ),
               )
               .catch((error: unknown) =>
-                setNotice(error instanceof Error ? error.message : "Recalculation could not be queued"),
+                setNotice(
+                  error instanceof Error ? error.message : "Recalculation could not be queued",
+                ),
               )
           }
         >
