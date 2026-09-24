@@ -50,7 +50,7 @@ function Adjustments() {
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const operations = useInventoryOperations(authoritative);
+  const { branchIds, request, post } = useInventoryOperations(authoritative);
   const [rows, setRows] = useState<AdjustmentRow[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [notice, setNotice] = useState("");
@@ -71,8 +71,8 @@ function Adjustments() {
     setStatus("loading");
     try {
       const results = await Promise.all(
-        operations.branchIds.map(async (selectedBranchId) => {
-          const body = await operations.request<{ adjustments: Omit<AdjustmentRow, "branchId">[] }>(
+        branchIds.map(async (selectedBranchId) => {
+          const body = await request<{ adjustments: Omit<AdjustmentRow, "branchId">[] }>(
             `/api/seramet/inventory/adjustments?branchId=${encodeURIComponent(selectedBranchId)}&limit=200`,
           );
           return body.adjustments.map((row) => ({ ...row, branchId: selectedBranchId }));
@@ -84,7 +84,7 @@ function Adjustments() {
       setNotice(error instanceof Error ? error.message : "Adjustment register could not be loaded");
       setStatus("error");
     }
-  }, [authoritative, operations.branchIds, operations.request]);
+  }, [authoritative, branchIds, request]);
 
   useEffect(() => {
     void load();
@@ -116,9 +116,7 @@ function Adjustments() {
   const netValue = rows
     .filter((row) => row.status === "APPROVED")
     .reduce(
-      (sum, row) =>
-        sum +
-        (row.quantity_minor * Number(row.unit_cost_minor ?? 0)) / 1_000_000 / 100,
+      (sum, row) => sum + (row.quantity_minor * Number(row.unit_cost_minor ?? 0)) / 1_000_000 / 100,
       0,
     );
 
@@ -129,7 +127,7 @@ function Adjustments() {
     }
     setNotice("");
     try {
-      await operations.post("/api/seramet/inventory/adjustments/requests", {
+      await post("/api/seramet/inventory/adjustments/requests", {
         branchId,
         warehouseId,
         inventoryItemId: itemId,
@@ -153,10 +151,10 @@ function Adjustments() {
     const decisionReason =
       decision === "reject"
         ? window.prompt("Reason for rejecting this adjustment:")
-        : window.prompt("Approval note (optional):") ?? "";
+        : (window.prompt("Approval note (optional):") ?? "");
     if (decision === "reject" && !decisionReason?.trim()) return;
     try {
-      await operations.post(
+      await post(
         `/api/seramet/inventory/adjustments/${encodeURIComponent(id)}/${decision}`,
         decisionReason?.trim() ? { reason: decisionReason.trim() } : {},
       );
@@ -263,11 +261,19 @@ function Adjustments() {
         <Metric label="Requests" value={rows.length} />
         <Metric label="Awaiting approval" value={pending} invert={pending > 0} />
         <Metric label="Rejected" value={rejected} />
-        <Metric label="Net posted impact" value={Math.round(netValue)} money invert={netValue < 0} />
+        <Metric
+          label="Net posted impact"
+          value={Math.round(netValue)}
+          money
+          invert={netValue < 0}
+        />
       </div>
 
       <Panel className="mt-4">
-        <PanelHead title="Adjustment register" sub="Terminal decisions and posted movements are immutable" />
+        <PanelHead
+          title="Adjustment register"
+          sub="Terminal decisions and posted movements are immutable"
+        />
         <DataTable
           cols={[
             "Adjustment",
