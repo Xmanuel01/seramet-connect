@@ -4497,6 +4497,653 @@ export class InventoryIntelligenceService {
     return units.results ?? [];
   }
 
+  async createInventoryCategory(input: {
+    id?: string;
+    code: string;
+    name: string;
+    description?: string;
+  }) {
+    this.requirePermission(permissions.inventoryAdjust);
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO inventory_categories
+            (tenant_id,id,code,name,description,active,created_by,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          requiredCode(input.code, "category code"),
+          requiredText(input.name, "category name"),
+          input.description?.trim() || null,
+          this.actor.id,
+          stamp,
+          stamp,
+        ),
+      this.auditStatement(
+        "INVENTORY_CATEGORY_CREATED",
+        "INVENTORY_CATEGORY",
+        id,
+        stamp,
+        crypto.randomUUID(),
+      ),
+    ]);
+    return { id, ...input, active: true };
+  }
+
+  async listInventoryCategories(branchId: string) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `WITH balance AS (
+           SELECT item_id,SUM(quantity_minor) AS quantity_minor,SUM(total_value_minor) AS value_minor
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=?
+            GROUP BY item_id
+         ),
+         par AS (
+           SELECT inventory_item_id AS item_id,SUM(reorder_point_minor) AS reorder_point_minor
+             FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND day_of_week IS NULL AND active=1
+            GROUP BY inventory_item_id
+         ),
+         scoped AS (
+           SELECT i.id,i.category_id,
+                  COALESCE(balance.quantity_minor,0) AS quantity_minor,
+                  COALESCE(balance.value_minor,0) AS value_minor,
+                  COALESCE(par.reorder_point_minor,0) AS reorder_point_minor
+             FROM inventory_items i
+             LEFT JOIN balance ON balance.item_id=i.id
+             LEFT JOIN par ON par.item_id=i.id
+             LEFT JOIN warehouses dw
+               ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+              AND dw.branch_id=? AND dw.active=1
+            WHERE i.tenant_id=? AND i.active=1
+              AND (balance.item_id IS NOT NULL OR par.item_id IS NOT NULL OR dw.id IS NOT NULL)
+         )
+         SELECT c.id,c.code,c.name,c.description,
+                COUNT(scoped.id) AS item_count,
+                COALESCE(SUM(scoped.value_minor),0) AS stock_value_minor,
+                COALESCE(SUM(CASE
+                  WHEN scoped.reorder_point_minor>0
+                   AND scoped.quantity_minor<=scoped.reorder_point_minor THEN 1 ELSE 0 END),0)
+                  AS low_stock_count,
+                COALESCE(SUM(CASE
+                  WHEN scoped.id IS NOT NULL AND scoped.quantity_minor<=0 THEN 1 ELSE 0 END),0)
+                  AS out_of_stock_count
+           FROM inventory_categories c
+           LEFT JOIN scoped ON scoped.category_id=c.id
+          WHERE c.tenant_id=? AND c.active=1
+          GROUP BY c.id,c.code,c.name,c.description
+          ORDER BY c.name,c.id`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        branchId,
+        this.actor.tenantId,
+        this.actor.tenantId,
+      )
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async stockDetail(input: { branchId: string; warehouseId?: string }) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    if (input.warehouseId) await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    const warehouseClause = input.warehouseId ? " AND slots.warehouse_id=?" : "";
+    const values: unknown[] = [
+      this.actor.tenantId,
+      input.branchId,
+      this.actor.tenantId,
+      input.branchId,
+      this.actor.tenantId,
+      input.branchId,
+      this.actor.tenantId,
+      input.branchId,
+      this.actor.tenantId,
+      input.branchId,
+      ...(input.warehouseId ? [input.warehouseId] : []),
+    ];
+    const result = await this.db
+      .prepare(
+        `WITH slots AS (
+           SELECT warehouse_id,item_id
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=?
+           UNION
+           SELECT warehouse_id,inventory_item_id
+             FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND active=1
+           UNION
+           SELECT i.default_warehouse_id AS warehouse_id,i.id AS item_id
+             FROM inventory_items i
+             JOIN warehouses w
+               ON w.tenant_id=i.tenant_id AND w.id=i.default_warehouse_id
+              AND w.branch_id=? AND w.active=1
+            WHERE i.tenant_id=? AND i.active=1 AND i.default_warehouse_id IS NOT NULL
+         )
+         SELECT slots.warehouse_id,w.name AS warehouse_name,w.code AS warehouse_code,
+                i.id AS item_id,i.code,i.sku,i.name,i.category_id,c.name AS category_name,
+                i.base_unit_id,u.symbol AS unit_symbol,
+                COALESCE(b.quantity_minor,0) AS quantity_minor,
+                COALESCE(b.quantity_reserved_minor,0) AS quantity_reserved_minor,
+                COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0)
+                  AS quantity_available_minor,
+                COALESCE(b.average_unit_cost_minor,0) AS average_unit_cost_minor,
+                COALESCE(b.total_value_minor,0) AS total_value_minor,
+                b.last_movement_at,
+                COALESCE(p.reorder_point_minor,0) AS reorder_point_minor,
+                COALESCE(p.target_quantity_minor,0) AS target_quantity_minor,
+                COALESCE(p.safety_stock_minor,0) AS safety_stock_minor
+           FROM slots
+           JOIN warehouses w
+             ON w.tenant_id=? AND w.branch_id=? AND w.id=slots.warehouse_id AND w.active=1
+           JOIN inventory_items i
+             ON i.tenant_id=? AND i.id=slots.item_id AND i.active=1
+           LEFT JOIN inventory_categories c
+             ON c.tenant_id=i.tenant_id AND c.id=i.category_id AND c.active=1
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=i.tenant_id AND b.branch_id=? AND b.warehouse_id=slots.warehouse_id
+            AND b.item_id=i.id
+           LEFT JOIN inventory_par_policies p
+             ON p.tenant_id=i.tenant_id AND p.branch_id=? AND p.warehouse_id=slots.warehouse_id
+            AND p.inventory_item_id=i.id AND p.day_of_week IS NULL AND p.active=1
+          WHERE 1=1${warehouseClause}
+          ORDER BY w.name,i.name,i.id`,
+      )
+      .bind(...values)
+      .all<Record<string, unknown>>();
+    return { branchId: input.branchId, rows: result.results ?? [], generatedAt: new Date().toISOString() };
+  }
+
+  async listStockCounts(branchId: string, limit = 50) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const pageSize = Math.min(200, Math.max(1, limit));
+    const result = await this.db
+      .prepare(
+        `SELECT s.id,s.branch_id,s.warehouse_id,w.name AS warehouse_name,s.business_date,
+                s.status,s.blind_count,s.started_by,s.approved_by,s.approval_reason,
+                s.snapshot_at,s.submitted_by,s.submitted_at,s.cancelled_by,s.cancelled_at,
+                s.cancellation_reason,s.revision,s.created_at,s.updated_at,
+                COUNT(l.id) AS item_count,
+                COALESCE(SUM(CASE WHEN l.counted=1 THEN 1 ELSE 0 END),0) AS counted_count,
+                COALESCE(SUM(CASE WHEN l.counted=1 AND l.variance_quantity_minor<>0
+                                  THEN 1 ELSE 0 END),0) AS variance_count,
+                COALESCE(SUM(CASE WHEN l.counted=1 THEN l.variance_value_minor ELSE 0 END),0)
+                  AS variance_value_minor
+           FROM stock_count_sessions s
+           JOIN warehouses w
+             ON w.tenant_id=s.tenant_id AND w.id=s.warehouse_id
+           LEFT JOIN stock_count_lines l
+             ON l.tenant_id=s.tenant_id AND l.stock_count_session_id=s.id
+          WHERE s.tenant_id=? AND s.branch_id=?
+          GROUP BY s.id,s.branch_id,s.warehouse_id,w.name,s.business_date,s.status,s.blind_count,
+                   s.started_by,s.approved_by,s.approval_reason,s.snapshot_at,s.submitted_by,
+                   s.submitted_at,s.cancelled_by,s.cancelled_at,s.cancellation_reason,s.revision,
+                   s.created_at,s.updated_at
+          ORDER BY s.created_at DESC,s.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async stockCountDetail(id: string) {
+    this.requirePermission(permissions.inventoryView);
+    const session = await this.db
+      .prepare(
+        `SELECT s.id,s.branch_id,s.warehouse_id,w.name AS warehouse_name,w.code AS warehouse_code,
+                s.business_date,s.status,s.blind_count,s.started_by,s.approved_by,
+                s.approval_reason,s.snapshot_at,s.submitted_by,s.submitted_at,s.cancelled_by,
+                s.cancelled_at,s.cancellation_reason,s.revision,s.created_at,s.updated_at
+           FROM stock_count_sessions s
+           JOIN warehouses w ON w.tenant_id=s.tenant_id AND w.id=s.warehouse_id
+          WHERE s.tenant_id=? AND s.id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<Record<string, unknown> & { branch_id: string }>();
+    if (!session) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock count not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, session.branch_id);
+    const lines = await this.db
+      .prepare(
+        `SELECT l.id,l.inventory_item_id,i.code,i.sku,i.name,u.symbol AS unit_symbol,
+                l.expected_quantity_minor,l.counted_quantity_minor,l.variance_quantity_minor,
+                l.variance_value_minor,l.reason,l.counted,l.unit_cost_minor,l.counted_at
+           FROM stock_count_lines l
+           JOIN inventory_items i
+             ON i.tenant_id=l.tenant_id AND i.id=l.inventory_item_id
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+          WHERE l.tenant_id=? AND l.stock_count_session_id=?
+          ORDER BY i.name,i.id`,
+      )
+      .bind(this.actor.tenantId, id)
+      .all<Record<string, unknown>>();
+    return { session, lines: lines.results ?? [] };
+  }
+
+  async startStockCount(input: {
+    id?: string;
+    branchId: string;
+    warehouseId: string;
+    businessDate: string;
+    blindCount?: boolean;
+    idempotencyKey: string;
+  }) {
+    this.requirePermission(permissions.inventoryCount);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    const existingByKey = await this.db
+      .prepare("SELECT id FROM stock_count_sessions WHERE tenant_id=? AND idempotency_key=?")
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string }>();
+    if (existingByKey) return { id: existingByKey.id, duplicate: true };
+    const active = await this.db
+      .prepare(
+        `SELECT id,status FROM stock_count_sessions
+          WHERE tenant_id=? AND branch_id=? AND warehouse_id=?
+            AND status IN ('DRAFT','COUNTING','SUBMITTED','REVIEW')
+          ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(this.actor.tenantId, input.branchId, input.warehouseId)
+      .first<{ id: string; status: string }>();
+    if (active) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Warehouse already has an active stock count (${active.status})`,
+      );
+    }
+
+    const stock = await this.stockDetail({ branchId: input.branchId, warehouseId: input.warehouseId });
+    if (!stock.rows.length) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Warehouse has no active inventory items to count",
+      );
+    }
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO stock_count_sessions
+            (tenant_id,id,branch_id,warehouse_id,business_date,status,scope_json,blind_count,
+             started_by,approved_by,approval_reason,idempotency_key,created_at,updated_at,
+             snapshot_at,revision)
+           VALUES (?,?,?,?,?,'DRAFT',?,?,?,?,?,?,?, ?,?,1)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.warehouseId,
+          input.businessDate,
+          JSON.stringify({ type: "WAREHOUSE", itemCount: stock.rows.length }),
+          input.blindCount ? 1 : 0,
+          this.actor.id,
+          null,
+          null,
+          input.idempotencyKey,
+          stamp,
+          stamp,
+          stamp,
+        ),
+    ];
+    for (const row of stock.rows) {
+      const itemId = String(row["item_id"]);
+      const expected = Number(row["quantity_minor"] ?? 0);
+      const unitCost = Number(row["average_unit_cost_minor"] ?? 0);
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO stock_count_lines
+              (tenant_id,id,stock_count_session_id,inventory_item_id,counter_id,
+               expected_quantity_minor,counted_quantity_minor,variance_quantity_minor,
+               variance_value_minor,reason,posted_movement_id,created_at,counted,
+               unit_cost_minor,counted_at)
+             VALUES (?,?,?,?,?,?,0,0,0,NULL,NULL,?,0,?,NULL)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            crypto.randomUUID(),
+            id,
+            itemId,
+            this.actor.id,
+            expected,
+            stamp,
+            unitCost,
+          ),
+      );
+    }
+    statements.push(
+      this.auditStatement(
+        "STOCK_COUNT_STARTED",
+        "STOCK_COUNT",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    );
+    await this.db.batch(statements);
+    return { id, duplicate: false, itemCount: stock.rows.length };
+  }
+
+  async saveStockCount(
+    id: string,
+    input: { lines: Array<{ inventoryItemId: string; countedQuantityMicro: number; reason?: string }> },
+  ) {
+    this.requirePermission(permissions.inventoryCount);
+    const session = await this.db
+      .prepare(
+        "SELECT branch_id,status FROM stock_count_sessions WHERE tenant_id=? AND id=?",
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string }>();
+    if (!session) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock count not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, session.branch_id);
+    if (!["DRAFT", "COUNTING"].includes(session.status)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Cannot edit a stock count in ${session.status} status`,
+      );
+    }
+    const existing = await this.db
+      .prepare(
+        `SELECT inventory_item_id,expected_quantity_minor,unit_cost_minor
+           FROM stock_count_lines WHERE tenant_id=? AND stock_count_session_id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .all<{
+        inventory_item_id: string;
+        expected_quantity_minor: number;
+        unit_cost_minor: number;
+      }>();
+    const byItem = new Map((existing.results ?? []).map((row) => [row.inventory_item_id, row]));
+    const stamp = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [];
+    for (const line of input.lines) {
+      assertScaledInteger(line.countedQuantityMicro, "stock count quantity", true);
+      if (line.countedQuantityMicro < 0) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Stock count quantity cannot be negative",
+        );
+      }
+      const snapshot = byItem.get(line.inventoryItemId);
+      if (!snapshot) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Stock count item is outside the count scope",
+        );
+      }
+      const variance = line.countedQuantityMicro - snapshot.expected_quantity_minor;
+      const value =
+        quantityCostMinor(Math.abs(variance), snapshot.unit_cost_minor) * Math.sign(variance);
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE stock_count_lines
+                SET counter_id=?,counted_quantity_minor=?,variance_quantity_minor=?,
+                    variance_value_minor=?,reason=?,counted=1,counted_at=?
+              WHERE tenant_id=? AND stock_count_session_id=? AND inventory_item_id=?`,
+          )
+          .bind(
+            this.actor.id,
+            line.countedQuantityMicro,
+            variance,
+            value,
+            line.reason?.trim() || null,
+            stamp,
+            this.actor.tenantId,
+            id,
+            line.inventoryItemId,
+          ),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE stock_count_sessions
+              SET status='COUNTING',revision=revision+1,updated_at=?
+            WHERE tenant_id=? AND id=? AND status IN ('DRAFT','COUNTING')`,
+        )
+        .bind(stamp, this.actor.tenantId, id),
+    );
+    await this.db.batch(statements);
+    return this.stockCountDetail(id);
+  }
+
+  async submitStockCount(id: string) {
+    this.requirePermission(permissions.inventoryCount);
+    const detail = await this.stockCountDetail(id);
+    const session = detail.session as Record<string, unknown> & {
+      branch_id: string;
+      warehouse_id: string;
+      status: string;
+      snapshot_at: string | null;
+    };
+    if (!["DRAFT", "COUNTING"].includes(session.status)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Cannot submit a stock count in ${session.status} status`,
+      );
+    }
+    const missing = detail.lines.filter((line) => Number(line["counted"] ?? 0) !== 1);
+    if (missing.length) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        `Stock count has ${missing.length} uncounted item(s)`,
+      );
+    }
+    await this.assertStockCountSnapshotFresh(
+      id,
+      session.branch_id,
+      session.warehouse_id,
+      session.snapshot_at,
+    );
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE stock_count_sessions
+              SET status='SUBMITTED',submitted_by=?,submitted_at=?,updated_at=?,revision=revision+1
+            WHERE tenant_id=? AND id=? AND status IN ('DRAFT','COUNTING')`,
+        )
+        .bind(this.actor.id, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "STOCK_COUNT_SUBMITTED",
+        "STOCK_COUNT",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        session.branch_id,
+      ),
+    ]);
+    return { id, status: "SUBMITTED" as const };
+  }
+
+  async approveStockCount(id: string, approvalReason?: string) {
+    this.requirePermission(permissions.inventoryCountApprove);
+    const detail = await this.stockCountDetail(id);
+    const session = detail.session as Record<string, unknown> & {
+      branch_id: string;
+      warehouse_id: string;
+      business_date: string;
+      status: string;
+      snapshot_at: string | null;
+    };
+    if (session.status === "POSTED") return { id, status: "POSTED" as const, duplicate: true };
+    if (!["SUBMITTED", "REVIEW"].includes(session.status)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Cannot approve a stock count in ${session.status} status`,
+      );
+    }
+    await this.assertBusinessDateOpen(session.branch_id, session.business_date, approvalReason);
+    await this.assertStockCountSnapshotFresh(
+      id,
+      session.branch_id,
+      session.warehouse_id,
+      session.snapshot_at,
+    );
+    const varianceLines = detail.lines.filter(
+      (line) => Number(line["variance_quantity_minor"] ?? 0) !== 0,
+    );
+    if (
+      varianceLines.some((line) => !String(line["reason"] ?? "").trim()) &&
+      !approvalReason?.trim()
+    ) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Stock count variances require a reason before approval",
+      );
+    }
+
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [];
+    for (const [index, line] of varianceLines.entries()) {
+      const variance = Number(line["variance_quantity_minor"]);
+      const varianceValue = Number(line["variance_value_minor"]);
+      const movementId = crypto.randomUUID();
+      const movementInput: InventoryMovementInput & {
+        id: string;
+        occurredAt: string;
+        unitCostMinor: number;
+        totalCostMinor: number;
+      } = {
+        id: movementId,
+        branchId: session.branch_id,
+        warehouseId: session.warehouse_id,
+        inventoryItemId: String(line["inventory_item_id"]),
+        movementType: "STOCK_COUNT_ADJUSTMENT",
+        quantityBaseMicro: variance,
+        unitCostMinor: Number(line["unit_cost_minor"] ?? 0),
+        totalCostMinor: varianceValue,
+        sourceType: "STOCK_COUNT",
+        sourceId: id,
+        idempotencyKey: `stock-count-session:${id}:${index}`,
+        businessDate: session.business_date,
+        occurredAt: stamp,
+        reason: String(line["reason"] ?? approvalReason ?? "Approved stock count variance"),
+        negativeOverride: true,
+      };
+      statements.push(
+        this.movementStatement(movementInput, correlationId),
+        ...(await this.movementAccountingStatements(movementInput, correlationId)),
+        this.db
+          .prepare(
+            `UPDATE stock_count_lines SET posted_movement_id=?
+              WHERE tenant_id=? AND stock_count_session_id=? AND inventory_item_id=?`,
+          )
+          .bind(
+            movementId,
+            this.actor.tenantId,
+            id,
+            String(line["inventory_item_id"]),
+          ),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE stock_count_sessions
+              SET status='POSTED',approved_by=?,approval_reason=?,updated_at=?,revision=revision+1
+            WHERE tenant_id=? AND id=? AND status IN ('SUBMITTED','REVIEW')`,
+        )
+        .bind(
+          this.actor.id,
+          approvalReason?.trim() || null,
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "STOCK_COUNT_POSTED",
+        "STOCK_COUNT",
+        id,
+        stamp,
+        correlationId,
+        session.branch_id,
+      ),
+      this.recalculationEventStatement(
+        session.branch_id,
+        "STOCK_COUNT_POSTED",
+        "STOCK_COUNT",
+        id,
+        `stock-count-session:${id}`,
+        stamp,
+        correlationId,
+      ),
+    );
+    await this.db.batch(statements);
+    return { id, status: "POSTED" as const, duplicate: false, varianceCount: varianceLines.length };
+  }
+
+  async cancelStockCount(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryCount);
+    const detail = await this.stockCountDetail(id);
+    const session = detail.session as Record<string, unknown> & {
+      branch_id: string;
+      status: string;
+    };
+    if (["POSTED", "CANCELLED"].includes(session.status)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Cannot cancel a stock count in ${session.status} status`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE stock_count_sessions
+              SET status='CANCELLED',cancelled_by=?,cancelled_at=?,cancellation_reason=?,
+                  updated_at=?,revision=revision+1
+            WHERE tenant_id=? AND id=? AND status NOT IN ('POSTED','CANCELLED')`,
+        )
+        .bind(
+          this.actor.id,
+          stamp,
+          requiredText(reason, "cancellation reason"),
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "STOCK_COUNT_CANCELLED",
+        "STOCK_COUNT",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        session.branch_id,
+      ),
+    ]);
+    return { id, status: "CANCELLED" as const };
+  }
+
   async listInventory(input: {
     branchId: string;
     warehouseId?: string;
@@ -4545,7 +5192,8 @@ export class InventoryIntelligenceService {
             WHERE tenant_id=? AND branch_id=? AND day_of_week IS NULL AND active=1${parWarehouseClause}
             GROUP BY inventory_item_id
          )
-         SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,i.base_unit_id,
+         SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,c.name AS category_name,
+                i.base_unit_id,
                 i.purchase_unit_id,i.track_inventory,i.track_expiry,i.preferred_supplier_id,
                 s.name AS preferred_supplier_name,i.default_warehouse_id,
                 COALESCE(dw.id,balance.primary_warehouse_id) AS warehouse_id,
@@ -4564,6 +5212,8 @@ export class InventoryIntelligenceService {
            LEFT JOIN par ON par.item_id=i.id
            LEFT JOIN suppliers s
              ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
+           LEFT JOIN inventory_categories c
+             ON c.tenant_id=i.tenant_id AND c.id=i.category_id AND c.active=1
            LEFT JOIN unit_definitions u
              ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
            LEFT JOIN warehouses dw
@@ -4826,6 +5476,57 @@ export class InventoryIntelligenceService {
       dataQualityIssues: issueCount,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  private async assertWarehouseBranch(branchId: string, warehouseId: string) {
+    const row = await this.db
+      .prepare(
+        "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
+      )
+      .bind(this.actor.tenantId, branchId, warehouseId)
+      .first<{ id: string }>();
+    if (!row) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Warehouse does not belong to the selected branch",
+      );
+    }
+  }
+
+  private async assertStockCountSnapshotFresh(
+    sessionId: string,
+    branchId: string,
+    warehouseId: string,
+    snapshotAt: string | null,
+  ) {
+    if (!snapshotAt) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Stock count snapshot timestamp is missing",
+      );
+    }
+    const changed = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+           FROM inventory_movements m
+           JOIN stock_count_lines l
+             ON l.tenant_id=m.tenant_id AND l.stock_count_session_id=?
+            AND l.inventory_item_id=m.item_id
+          WHERE m.tenant_id=? AND m.branch_id=? AND m.warehouse_id=?
+            AND COALESCE(m.occurred_at,m.created_at)>?
+            AND NOT (m.source_type='STOCK_COUNT' AND m.source_id=?)`,
+      )
+      .bind(sessionId, this.actor.tenantId, branchId, warehouseId, snapshotAt, sessionId)
+      .first<{ count: number }>();
+    if ((changed?.count ?? 0) > 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Stock changed after this count started. Cancel it and start a fresh count.",
+      );
+    }
   }
 
   async recalculateTenant(branchId?: string) {
