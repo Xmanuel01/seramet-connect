@@ -27,6 +27,7 @@ import { Route as CashFlowRouteImport } from './routes/cash-flow'
 import { Route as CategoriesRouteImport } from './routes/categories'
 import { Route as CommandCentreRouteImport } from './routes/command-centre'
 import { Route as ComplaintsRouteImport } from './routes/complaints'
+import { Route as CookbookRouteImport } from './routes/cookbook'
 import { Route as CostCentresRouteImport } from './routes/cost-centres'
 import { Route as CostControlRouteImport } from './routes/cost-control'
 import { Route as CreditNotesRouteImport } from './routes/credit-notes'
@@ -209,6 +210,11 @@ const CommandCentreRoute = CommandCentreRouteImport.update({
 const ComplaintsRoute = ComplaintsRouteImport.update({
   id: '/complaints',
   path: '/complaints',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CookbookRoute = CookbookRouteImport.update({
+  id: '/cookbook',
+  path: '/cookbook',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CostCentresRoute = CostCentresRouteImport.update({
@@ -698,6 +704,7 @@ export interface FileRoutesByFullPath {
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cookbook': typeof CookbookRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/credit-notes': typeof CreditNotesRoute
@@ -811,6 +818,7 @@ export interface FileRoutesByTo {
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cookbook': typeof CookbookRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/credit-notes': typeof CreditNotesRoute
@@ -924,6 +932,7 @@ export interface FileRoutesById {
   '/categories': typeof CategoriesRoute
   '/command-centre': typeof CommandCentreRoute
   '/complaints': typeof ComplaintsRoute
+  '/cookbook': typeof CookbookRoute
   '/cost-centres': typeof CostCentresRoute
   '/cost-control': typeof CostControlRoute
   '/credit-notes': typeof CreditNotesRoute
@@ -1039,6 +1048,7 @@ export interface FileRouteTypes {
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cookbook'
     | '/cost-centres'
     | '/cost-control'
     | '/credit-notes'
@@ -1152,6 +1162,7 @@ export interface FileRouteTypes {
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cookbook'
     | '/cost-centres'
     | '/cost-control'
     | '/credit-notes'
@@ -1264,6 +1275,7 @@ export interface FileRouteTypes {
     | '/categories'
     | '/command-centre'
     | '/complaints'
+    | '/cookbook'
     | '/cost-centres'
     | '/cost-control'
     | '/credit-notes'
@@ -1378,6 +1390,7 @@ export interface RootRouteChildren {
   CategoriesRoute: typeof CategoriesRoute
   CommandCentreRoute: typeof CommandCentreRoute
   ComplaintsRoute: typeof ComplaintsRoute
+  CookbookRoute: typeof CookbookRoute
   CostCentresRoute: typeof CostCentresRoute
   CostControlRoute: typeof CostControlRoute
   CreditNotesRoute: typeof CreditNotesRoute
@@ -1593,6 +1606,13 @@ declare module '@tanstack/react-router' {
       path: '/complaints'
       fullPath: '/complaints'
       preLoaderRoute: typeof ComplaintsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/cookbook': {
+      id: '/cookbook'
+      path: '/cookbook'
+      fullPath: '/cookbook'
+      preLoaderRoute: typeof CookbookRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/cost-centres': {
@@ -2290,6 +2310,7 @@ const rootRouteChildren: RootRouteChildren = {
   CategoriesRoute: CategoriesRoute,
   CommandCentreRoute: CommandCentreRoute,
   ComplaintsRoute: ComplaintsRoute,
+  CookbookRoute: CookbookRoute,
   CostCentresRoute: CostCentresRoute,
   CostControlRoute: CostControlRoute,
   CreditNotesRoute: CreditNotesRoute,

@@ -21,6 +21,7 @@ export type ModuleKey =
   | "delivery"
   | "kitchen"
   | "production"
+  | "cookbook"
   | "cost-control"
   | "inventory"
   | "warehouses"
@@ -291,6 +292,21 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     supportedScopes: stockScopes,
     policyCode: "MODULE_ACCESS.PRODUCTION",
     routes: ["/production", "/recipes", "/prep"],
+  },
+  {
+    key: "cookbook",
+    label: "Cookbook",
+    navigationPermission: permissions.cookbookView,
+    routePermission: permissions.cookbookView,
+    actionPermissions: actions(
+      permissions.cookbookView,
+      permissions.cookbookManage,
+      permissions.cookbookManage,
+      permissions.cookbookPublish,
+    ),
+    supportedScopes: stockScopes,
+    policyCode: "MODULE_ACCESS.COOKBOOK",
+    routes: ["/cookbook"],
   },
   {
     key: "cost-control",
