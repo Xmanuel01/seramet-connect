@@ -99,7 +99,7 @@ function Transfers() {
   const { branchLabel, branchRecords, isAllBranches } = useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
-  const operations = useInventoryOperations(authoritative);
+  const { branchIds, request, post } = useInventoryOperations(authoritative);
   const control = useInventoryControlCentre(authoritative);
   const [rows, setRows] = useState<TransferRow[]>([]);
   const [notice, setNotice] = useState("");
@@ -129,8 +129,8 @@ function Transfers() {
     setStatus("loading");
     try {
       const result = await Promise.all(
-        operations.branchIds.map(async (branchId) => {
-          const body = await operations.request<{ transfers: TransferRow[] }>(
+        branchIds.map(async (branchId) => {
+          const body = await request<{ transfers: TransferRow[] }>(
             `/api/seramet/inventory/transfers?branchId=${encodeURIComponent(branchId)}&limit=200`,
           );
           return body.transfers;
@@ -143,7 +143,7 @@ function Transfers() {
       setNotice(error instanceof Error ? error.message : "Transfers could not be loaded");
       setStatus("error");
     }
-  }, [authoritative, operations.branchIds, operations.request]);
+  }, [authoritative, branchIds, request]);
 
   useEffect(() => {
     void load();
@@ -173,7 +173,7 @@ function Transfers() {
     return () => {
       cancelled = true;
     };
-  }, [authoritative, operations.request, sourceBranchId, sourceWarehouseId]);
+  }, [authoritative, request, sourceBranchId, sourceWarehouseId]);
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -182,7 +182,7 @@ function Transfers() {
         return;
       }
       try {
-        const body = await operations.request<{ detail: TransferDetail }>(
+        const body = await request<{ detail: TransferDetail }>(
           `/api/seramet/inventory/transfers/${encodeURIComponent(id)}`,
         );
         setDetail(body.detail);
@@ -211,7 +211,7 @@ function Transfers() {
         setNotice(error instanceof Error ? error.message : "Transfer detail could not be loaded");
       }
     },
-    [operations.request],
+    [request],
   );
 
   const sourceBranch = control.data.find((row) => row.branchId === sourceBranchId);
@@ -257,7 +257,7 @@ function Transfers() {
       return;
     }
     try {
-      const body = await operations.post<{
+      const body = await post<{
         transfer: { id: string; shipmentId: string; accountingTreatment?: string };
       }>("/api/seramet/inventory/transfers/dispatch", {
         sourceBranchId,
@@ -304,7 +304,7 @@ function Transfers() {
       return;
     }
     try {
-      await operations.post(
+      await post(
         `/api/seramet/inventory/transfer-shipments/${encodeURIComponent(
           detail.transfer.shipment_id,
         )}/receive`,
@@ -398,8 +398,7 @@ function Transfers() {
               onChange={setDestinationWarehouseId}
               options={destinationWarehouses
                 .filter(
-                  (row) =>
-                    row.id !== sourceWarehouseId || destinationBranchId !== sourceBranchId,
+                  (row) => row.id !== sourceWarehouseId || destinationBranchId !== sourceBranchId,
                 )
                 .map((row) => ({ value: row.id, label: row.name }))}
             />
@@ -489,13 +488,20 @@ function Transfers() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Open transfers" value={open} />
         <Metric label="In transit" value={inTransit} invert={inTransit > 0} />
-        <Metric label="Exception quantity" value={quantity(exceptionQty)} invert={exceptionQty > 0} />
+        <Metric
+          label="Exception quantity"
+          value={quantity(exceptionQty)}
+          invert={exceptionQty > 0}
+        />
         <Metric label="Transfer value" value={transferValue / 100} money />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
         <Panel>
-          <PanelHead title="Transfer register" sub="Select a transfer to inspect lines and receipts" />
+          <PanelHead
+            title="Transfer register"
+            sub="Select a transfer to inspect lines and receipts"
+          />
           <DataTable
             cols={[
               "Transfer",
@@ -588,7 +594,10 @@ function Transfers() {
                       {receiptLines.map((line) => {
                         const source = detail.lines.find((row) => row.id === line.transferLineId);
                         return (
-                          <div key={line.transferLineId} className="rounded-md border border-border p-3">
+                          <div
+                            key={line.transferLineId}
+                            className="rounded-md border border-border p-3"
+                          >
                             <div className="mb-2 text-[12px] font-semibold">
                               {source?.item_name ?? line.transferLineId}
                             </div>
