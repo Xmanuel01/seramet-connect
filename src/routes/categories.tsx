@@ -26,7 +26,8 @@ export const Route = createFileRoute("/categories")({
       { title: "Inventory Categories - Seramet" },
       {
         name: "description",
-        content: "Authoritative inventory categories with branch stock value and stock-health rollups.",
+        content:
+          "Authoritative inventory categories with branch stock value and stock-health rollups.",
       },
     ],
   }),
