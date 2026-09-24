@@ -4897,7 +4897,6 @@ export class InventoryIntelligenceService {
         this.actor.tenantId,
         branchId,
         this.actor.tenantId,
-        branchId,
         this.actor.tenantId,
         branchId,
         this.actor.tenantId,
