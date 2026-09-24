@@ -3138,6 +3138,128 @@ export class InventoryIntelligenceService {
     return { id, ...input, recommendationMode: input.recommendationMode ?? "RECOMMEND" };
   }
 
+  async listTransfers(branchId: string, limit = 100) {
+    this.requireAnyPermission([permissions.inventoryView, permissions.inventoryTransfer]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const pageSize = Math.min(200, Math.max(1, limit));
+    const result = await this.db
+      .prepare(
+        `WITH exceptions AS (
+           SELECT rl.shipment_id,
+                  COALESCE(SUM(rl.damaged_quantity_micro),0) AS damaged_quantity_minor,
+                  COALESCE(SUM(rl.rejected_quantity_micro),0) AS rejected_quantity_minor,
+                  COALESCE(SUM(rl.missing_quantity_micro),0) AS missing_quantity_minor
+             FROM inventory_transfer_receipt_lines rl
+            WHERE rl.tenant_id=?
+            GROUP BY rl.shipment_id
+         )
+         SELECT t.id,t.transfer_number,t.source_branch_id,t.destination_branch_id,
+                t.source_warehouse_id,sw.name AS source_warehouse_name,
+                t.destination_warehouse_id,dw.name AS destination_warehouse_name,
+                t.status,t.requested_by,t.approved_by,t.received_by,t.created_at,t.updated_at,
+                s.id AS shipment_id,s.status AS shipment_status,s.dispatched_by,s.dispatched_at,
+                COUNT(DISTINCT l.id) AS item_count,
+                COALESCE(SUM(l.sent_quantity_minor),0) AS sent_quantity_minor,
+                COALESCE(SUM(l.received_quantity_minor),0) AS received_quantity_minor,
+                COALESCE(SUM(l.shortage_quantity_minor),0) AS shortage_quantity_minor,
+                COALESCE(SUM((l.sent_quantity_minor*l.unit_cost_minor)/1000000),0)
+                  AS transfer_value_minor,
+                COALESCE(MAX(e.damaged_quantity_minor),0) AS damaged_quantity_minor,
+                COALESCE(MAX(e.rejected_quantity_minor),0) AS rejected_quantity_minor,
+                COALESCE(MAX(e.missing_quantity_minor),0) AS missing_quantity_minor
+           FROM stock_transfers t
+           JOIN warehouses sw
+             ON sw.tenant_id=t.tenant_id AND sw.id=t.source_warehouse_id
+           JOIN warehouses dw
+             ON dw.tenant_id=t.tenant_id AND dw.id=t.destination_warehouse_id
+           LEFT JOIN stock_transfer_lines l
+             ON l.tenant_id=t.tenant_id AND l.transfer_id=t.id
+           LEFT JOIN inventory_transfer_shipments s
+             ON s.tenant_id=t.tenant_id AND s.transfer_id=t.id
+           LEFT JOIN exceptions e ON e.shipment_id=s.id
+          WHERE t.tenant_id=?
+            AND (t.source_branch_id=? OR t.destination_branch_id=?)
+          GROUP BY t.id,t.transfer_number,t.source_branch_id,t.destination_branch_id,
+                   t.source_warehouse_id,sw.name,t.destination_warehouse_id,dw.name,t.status,
+                   t.requested_by,t.approved_by,t.received_by,t.created_at,t.updated_at,
+                   s.id,s.status,s.dispatched_by,s.dispatched_at
+          ORDER BY t.created_at DESC,t.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, this.actor.tenantId, branchId, branchId, pageSize)
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async transferDetail(id: string) {
+    this.requireAnyPermission([permissions.inventoryView, permissions.inventoryTransfer]);
+    const transfer = await this.db
+      .prepare(
+        `SELECT t.id,t.transfer_number,t.source_branch_id,t.destination_branch_id,
+                t.source_warehouse_id,sw.name AS source_warehouse_name,sw.code AS source_warehouse_code,
+                t.destination_warehouse_id,dw.name AS destination_warehouse_name,
+                dw.code AS destination_warehouse_code,t.status,t.requested_by,t.approved_by,
+                t.received_by,t.payload_json,t.created_at,t.updated_at,
+                s.id AS shipment_id,s.status AS shipment_status,s.dispatched_by,s.dispatched_at
+           FROM stock_transfers t
+           JOIN warehouses sw ON sw.tenant_id=t.tenant_id AND sw.id=t.source_warehouse_id
+           JOIN warehouses dw ON dw.tenant_id=t.tenant_id AND dw.id=t.destination_warehouse_id
+           LEFT JOIN inventory_transfer_shipments s
+             ON s.tenant_id=t.tenant_id AND s.transfer_id=t.id
+          WHERE t.tenant_id=? AND t.id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<Record<string, unknown> & {
+        source_branch_id: string;
+        destination_branch_id: string;
+      }>();
+    if (!transfer) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    }
+    this.authorizeEitherBranch(transfer.source_branch_id, transfer.destination_branch_id);
+    const [lines, receipts] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT l.id,l.inventory_item_id,i.name AS item_name,i.code,i.sku,u.symbol AS unit_symbol,
+                  l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
+                  l.shortage_quantity_minor,l.unit_cost_minor,
+                  COALESCE(SUM(rl.damaged_quantity_micro),0) AS damaged_quantity_minor,
+                  COALESCE(SUM(rl.rejected_quantity_micro),0) AS rejected_quantity_minor,
+                  COALESCE(SUM(rl.missing_quantity_micro),0) AS missing_quantity_minor
+             FROM stock_transfer_lines l
+             JOIN inventory_items i
+               ON i.tenant_id=l.tenant_id AND i.id=l.inventory_item_id
+             LEFT JOIN unit_definitions u
+               ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+             LEFT JOIN inventory_transfer_receipt_lines rl
+               ON rl.tenant_id=l.tenant_id AND rl.transfer_line_id=l.id
+            WHERE l.tenant_id=? AND l.transfer_id=?
+            GROUP BY l.id,l.inventory_item_id,i.name,i.code,i.sku,u.symbol,
+                     l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
+                     l.shortage_quantity_minor,l.unit_cost_minor
+            ORDER BY i.name,i.id`,
+        )
+        .bind(this.actor.tenantId, id)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT r.id,r.shipment_id,r.receipt_reference,r.received_by,r.received_at,
+                  r.variance_json
+             FROM inventory_transfer_receipts r
+             JOIN inventory_transfer_shipments s
+               ON s.tenant_id=r.tenant_id AND s.id=r.shipment_id
+            WHERE r.tenant_id=? AND s.transfer_id=?
+            ORDER BY r.received_at,r.id`,
+        )
+        .bind(this.actor.tenantId, id)
+        .all<Record<string, unknown>>(),
+    ]);
+    return {
+      transfer,
+      lines: lines.results ?? [],
+      receipts: receipts.results ?? [],
+    };
+  }
+
   async transferStock(input: {
     id?: string;
     transferNumber: string;
@@ -7475,6 +7597,15 @@ export class InventoryIntelligenceService {
       );
     }
     return mapping;
+  }
+
+  private authorizeEitherBranch(sourceBranchId: string, destinationBranchId: string) {
+    try {
+      authorizeBranchRead(this.actor, this.actor.tenantId, sourceBranchId);
+      return;
+    } catch {
+      authorizeBranchRead(this.actor, this.actor.tenantId, destinationBranchId);
+    }
   }
 
   private async listInventoryLosses(
