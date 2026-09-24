@@ -38,6 +38,7 @@ export type ProcurementOrderRow = {
   supplier_id: string;
   supplier_name: string;
   warehouse_id: string;
+  requisition_id: string | null;
   status: string;
   currency: string;
   total_minor: number;
@@ -54,6 +55,8 @@ export type ProcurementOrderRow = {
     ordered_quantity_minor: number;
     received_purchase_quantity_minor: number;
     unit_price_minor: number;
+    tax_minor: number;
+    discount_minor: number;
     line_total_minor: number;
   }>;
 };
