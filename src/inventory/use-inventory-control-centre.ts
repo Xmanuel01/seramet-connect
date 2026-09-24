@@ -162,22 +162,17 @@ export function useInventoryControlCentre(enabled: boolean) {
       const next = await Promise.all(
         branchIds.map(async (selectedBranchId): Promise<InventoryBranchPayload> => {
           const query = `branchId=${encodeURIComponent(selectedBranchId)}&limit=100`;
-          const [
-            summaryResponse,
-            items,
-            unitsResponse,
-            procurementResponse,
-            controlResponse,
-          ] = await Promise.all([
-            fetch(
-              `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
-              { headers },
-            ),
-            fetchInventoryItems(headers, selectedBranchId),
-            fetch("/api/seramet/inventory/units", { headers }),
-            fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
-            fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
-          ]);
+          const [summaryResponse, items, unitsResponse, procurementResponse, controlResponse] =
+            await Promise.all([
+              fetch(
+                `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
+                { headers },
+              ),
+              fetchInventoryItems(headers, selectedBranchId),
+              fetch("/api/seramet/inventory/units", { headers }),
+              fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
+              fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
+            ]);
           for (const response of [
             summaryResponse,
             unitsResponse,
