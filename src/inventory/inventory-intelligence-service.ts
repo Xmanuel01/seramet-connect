@@ -54,6 +54,7 @@ type PurchaseOrderLineRow = {
   ordered_purchase_quantity_minor: number | null;
   received_purchase_quantity_minor: number;
   unit_cost_minor: number;
+  track_expiry: number;
 };
 
 type RecipeComponentRow = {
@@ -1058,9 +1059,12 @@ export class InventoryIntelligenceService {
     }
     const lines = await this.db
       .prepare(
-        `SELECT id,item_id,purchase_unit_id,conversion_id,ordered_quantity_minor,
-                ordered_purchase_quantity_minor,received_purchase_quantity_minor,unit_cost_minor
-         FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        `SELECT pol.id,pol.item_id,pol.purchase_unit_id,pol.conversion_id,
+                pol.ordered_quantity_minor,pol.ordered_purchase_quantity_minor,
+                pol.received_purchase_quantity_minor,pol.unit_cost_minor,i.track_expiry
+         FROM purchase_order_lines pol
+         JOIN inventory_items i ON i.tenant_id=pol.tenant_id AND i.id=pol.item_id
+         WHERE pol.tenant_id=? AND pol.purchase_order_id=?`,
       )
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .all<PurchaseOrderLineRow>();
@@ -1118,6 +1122,16 @@ export class InventoryIntelligenceService {
           "VALIDATION_FAILED",
           409,
           "Received quantity must be fully dispositioned as accepted plus rejected",
+        );
+      }
+      if (
+        poLine.track_expiry === 1 &&
+        (!lineInput.lotNumber?.trim() || !lineInput.expiryDate)
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Expiry-tracked items require both a lot number and expiry date when receiving",
         );
       }
       const orderedPurchaseQuantity =
