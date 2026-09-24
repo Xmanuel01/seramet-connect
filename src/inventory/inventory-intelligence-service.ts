@@ -4529,6 +4529,7 @@ export class InventoryIntelligenceService {
                   SUM(total_value_minor) AS total_value_minor,
                   MAX(average_unit_cost_minor) AS last_average_unit_cost_minor,
                   MAX(last_movement_at) AS last_movement_at,
+                  MIN(warehouse_id) AS primary_warehouse_id,
                   COUNT(*) AS warehouse_count
              FROM inventory_balances
             WHERE tenant_id=? AND branch_id=?${balanceWarehouseClause}
@@ -4546,6 +4547,7 @@ export class InventoryIntelligenceService {
          SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,i.base_unit_id,
                 i.purchase_unit_id,i.track_inventory,i.track_expiry,i.preferred_supplier_id,
                 s.name AS preferred_supplier_name,i.default_warehouse_id,
+                COALESCE(i.default_warehouse_id,balance.primary_warehouse_id) AS warehouse_id,
                 u.symbol AS base_unit_symbol,
                 COALESCE(balance.quantity_minor,0) AS quantity_minor,
                 COALESCE(balance.quantity_reserved_minor,0) AS quantity_reserved_minor,
