@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useInventoryControlCentre, type InventoryListRow } from "@/inventory/use-inventory-control-centre";
@@ -421,7 +421,7 @@ function uniqueById<T extends { id: string }>(rows: T[]) {
   return [...new Map(rows.map((row) => [row.id, row])).values()];
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
       {label}
