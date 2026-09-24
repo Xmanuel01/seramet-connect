@@ -300,7 +300,7 @@ function actor(permissionCodes = allPermissionCodes): ServerActor {
     assignedBranchIds: [branchId],
     assignedBranches: [{ id: branchId, name: "Cookbook Branch", isPrimary: true }],
     primaryBranchId: branchId,
-    branchScope: { type: "BRANCH", branchIds: [branchId] },
+    branchScope: { type: "BRANCH", branchId },
     branchId,
     branch: "Cookbook Branch",
     role: "Manager",
