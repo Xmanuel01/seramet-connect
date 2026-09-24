@@ -43,7 +43,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(23);
+    expect(version?.version).toBe(24);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",
@@ -54,6 +54,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       "production_batches",
       "stock_count_sessions",
       "inventory_categories",
+      "inventory_adjustments",
       "inventory_forecasts",
       "purchase_recommendations",
       "menu_inventory_availability",
@@ -1123,6 +1124,175 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
         })
       ).duplicate,
     ).toBe(true);
+  });
+
+  it("keeps manual adjustments pending until a separate approval posts the ledger movement", async () => {
+    await seedBeef(service);
+    await opening(service, "adjustment-opening", 5 * QUANTITY_SCALE, 60_000);
+
+    const requester = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryAdjust]),
+    );
+    const requested = await requester.requestInventoryAdjustment({
+      id: "adjustment-controlled",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: -500_000,
+      reasonCode: "COUNT_CORRECTION",
+      idempotencyKey: "adjustment-controlled",
+      businessDate: "2026-08-30",
+    });
+    expect(requested).toMatchObject({ status: "PENDING", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(5 * QUANTITY_SCALE);
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryAdjustApprove]),
+    );
+    await expect(
+      approver.approveInventoryAdjustment("adjustment-controlled", "Independent recount verified"),
+    ).resolves.toMatchObject({ status: "APPROVED", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(4_500_000);
+    const movement = await db
+      .prepare(
+        "SELECT movement_type,source_type,source_id FROM inventory_movements WHERE tenant_id=? AND source_type='INVENTORY_ADJUSTMENT'",
+      )
+      .bind(tenantId)
+      .first<Record<string, unknown>>();
+    expect(movement).toMatchObject({
+      movement_type: "MANUAL_ADJUSTMENT",
+      source_type: "INVENTORY_ADJUSTMENT",
+      source_id: "adjustment-controlled",
+    });
+  });
+
+  it("keeps wastage pending until approval and does not move stock when rejected", async () => {
+    await seedBeef(service);
+    await opening(service, "controlled-waste-opening", 5 * QUANTITY_SCALE, 60_000);
+    const recorder = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageRecord]),
+    );
+    await recorder.requestWastage({
+      id: "waste-controlled",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: 500_000,
+      reasonCode: "SPOILAGE",
+      idempotencyKey: "waste-controlled",
+      businessDate: "2026-08-30",
+    });
+    await recorder.requestWastage({
+      id: "waste-rejected",
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      quantityMicro: 250_000,
+      reasonCode: "QUALITY",
+      idempotencyKey: "waste-rejected",
+      businessDate: "2026-08-30",
+    });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(5 * QUANTITY_SCALE);
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageApprove]),
+    );
+    await approver.rejectWastageRequest("waste-rejected", "Evidence did not support wastage");
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(5 * QUANTITY_SCALE);
+    await approver.approveWastageRequest("waste-controlled", "Incident verified");
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(4_500_000);
+    const row = await db
+      .prepare("SELECT status,movement_id FROM wastage WHERE tenant_id=? AND id=?")
+      .bind(tenantId, "waste-controlled")
+      .first<Record<string, unknown>>();
+    expect(row).toMatchObject({ status: "APPROVED" });
+    expect(row?.["movement_id"]).toBeTruthy();
+  });
+
+  it("approves breakage without creating a food inventory movement", async () => {
+    await seedBeef(service);
+    await opening(service, "breakage-opening", 2 * QUANTITY_SCALE, 50_000);
+    const recorder = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageRecord]),
+    );
+    await recorder.requestBreakage({
+      id: "breakage-controlled",
+      branchId,
+      warehouseId,
+      assetName: "Serving plate",
+      quantityMicro: 2 * QUANTITY_SCALE,
+      unitLabel: "pcs",
+      reasonCode: "DAMAGED",
+      estimatedValueMinor: 80_000,
+      idempotencyKey: "breakage-controlled",
+      businessDate: "2026-08-30",
+    });
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryWastageApprove]),
+    );
+    await approver.approveBreakageRequest("breakage-controlled", "Supervisor verified damage");
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(2 * QUANTITY_SCALE);
+    const movements = await db
+      .prepare("SELECT COUNT(*) AS count FROM inventory_movements WHERE tenant_id=? AND source_type='BREAKAGE'")
+      .bind(tenantId)
+      .first<{ count: number }>();
+    expect(movements?.count).toBe(0);
+  });
+
+  it("prevents archiving a live warehouse and archives an unused warehouse safely", async () => {
+    await seedBeef(service);
+    await opening(service, "warehouse-guard-opening", QUANTITY_SCALE, 50_000);
+    await expect(service.archiveWarehouse(warehouseId, "No longer required")).rejects.toThrow(
+      "Warehouse cannot be archived",
+    );
+
+    const created = await service.createWarehouse({
+      id: "warehouse-unused",
+      branchId,
+      code: "UNUSED",
+      name: "Unused store",
+      locationType: "OTHER",
+    });
+    expect(created).toMatchObject({ id: "warehouse-unused", active: true });
+    await expect(
+      service.archiveWarehouse("warehouse-unused", "Configuration cleanup"),
+    ).resolves.toMatchObject({ status: "ARCHIVED", duplicate: false });
+    const warehouse = await db
+      .prepare("SELECT active,archived_at FROM warehouses WHERE tenant_id=? AND id=?")
+      .bind(tenantId, "warehouse-unused")
+      .first<Record<string, unknown>>();
+    expect(warehouse?.["active"]).toBe(0);
+    expect(warehouse?.["archived_at"]).toBeTruthy();
+  });
+
+  it("lists PAR shortfalls from authoritative available stock", async () => {
+    await seedBeef(service);
+    await opening(service, "par-control-opening", 4 * QUANTITY_SCALE, 50_000);
+    await service.upsertParPolicy({
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      reorderPointMicro: 5 * QUANTITY_SCALE,
+      targetQuantityMicro: 8 * QUANTITY_SCALE,
+      safetyStockMicro: QUANTITY_SCALE,
+      maximumQuantityMicro: 10 * QUANTITY_SCALE,
+    });
+    const rows = await service.listParPolicies(branchId);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        inventory_item_id: "item-beef",
+        on_hand_minor: 4 * QUANTITY_SCALE,
+        target_quantity_minor: 8 * QUANTITY_SCALE,
+        suggested_quantity_minor: 4 * QUANTITY_SCALE,
+        suggested_value_minor: 200_000,
+      }),
+    ]);
   });
 
   it("records wastage once with an evidence-backed cost", async () => {
