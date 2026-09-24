@@ -707,6 +707,74 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     ).resolves.toMatchObject({ duplicate: false });
   });
 
+  it("rejects goods receipts from a supplier that does not match the purchase order", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-receipt-supplier",
+      "PO-RECEIPT-SUPPLIER",
+      "REJECT_OVER_RECEIPT",
+    );
+    await service.createSupplier({
+      id: "supplier-receipt-wrong",
+      code: "SUP-WRONG",
+      name: "Wrong receiving supplier",
+    });
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: "supplier-receipt-wrong",
+        receiptNumber: "GR-WRONG-SUPPLIER",
+        idempotencyKey: "receipt-wrong-supplier",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "receipt-supplier-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("does not match the purchase order");
+  });
+
+  it("requires every received quantity to be accepted or rejected", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-receipt-disposition",
+      "PO-RECEIPT-DISPOSITION",
+      "REJECT_OVER_RECEIPT",
+    );
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: fixture.supplierId,
+        receiptNumber: "GR-INCOMPLETE-DISPOSITION",
+        idempotencyKey: "receipt-incomplete-disposition",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "receipt-disposition-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: 800_000,
+            rejectedPurchaseQuantityMicro: 100_000,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("fully dispositioned");
+  });
+
   it("deduplicates receipt retries and creates one stock effect", async () => {
     const fixture = await seedProcurement(service);
     const po = await createApprovedPo(
