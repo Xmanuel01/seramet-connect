@@ -210,7 +210,8 @@ export function useProcurementControlCentre(enabled = true) {
 
   const command = useCallback(
     async <T>(path: string, body: unknown): Promise<T> => {
-      if (!enabled) throw new Error("Authoritative procurement commands require the server database");
+      if (!enabled)
+        throw new Error("Authoritative procurement commands require the server database");
       const response = await fetch(path, {
         method: "POST",
         headers,
