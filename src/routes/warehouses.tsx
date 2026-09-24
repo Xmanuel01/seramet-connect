@@ -92,8 +92,14 @@ function Warehouses() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Storage locations" value={rows.length} />
-        <Metric label="Main stores" value={rows.filter((row) => row.location_type === "MAIN").length} />
-        <Metric label="Stocked locations" value={rows.filter((row) => Number(row.stocked_item_count ?? 0) > 0).length} />
+        <Metric
+          label="Main stores"
+          value={rows.filter((row) => row.location_type === "MAIN").length}
+        />
+        <Metric
+          label="Stocked locations"
+          value={rows.filter((row) => Number(row.stocked_item_count ?? 0) > 0).length}
+        />
         <Metric label="Stock value" value={totalValue / 100} money />
       </div>
 
@@ -121,8 +127,12 @@ function Warehouses() {
               <TD className="text-muted-foreground">{row.branchId}</TD>
               <TD>{row.location_type}</TD>
               <TD className="num text-right">{Number(row.stocked_item_count ?? 0)}</TD>
-              <TD className="num text-right font-semibold">{ksh(Number(row.stock_value_minor ?? 0) / 100)}</TD>
-              <TD><Status>{Number(row.active) === 1 ? "Active" : "Archived"}</Status></TD>
+              <TD className="num text-right font-semibold">
+                {ksh(Number(row.stock_value_minor ?? 0) / 100)}
+              </TD>
+              <TD>
+                <Status>{Number(row.active) === 1 ? "Active" : "Archived"}</Status>
+              </TD>
               <TD>
                 {Number(row.active) === 1 ? (
                   <button
@@ -164,11 +174,22 @@ function WarehouseForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead title="Create storage location" sub="Locations are branch-scoped and used by stock, counts and transfers" />
+      <PanelHead
+        title="Create storage location"
+        sub="Locations are branch-scoped and used by stock, counts and transfers"
+      />
       <div className="grid gap-3 p-4 md:grid-cols-4">
         <Field label="Branch">
-          <select value={branchId} onChange={(event) => setBranchId(event.target.value)} className={inputClass}>
-            {branches.map((row) => <option key={row.branchId} value={row.branchId}>{row.branchId}</option>)}
+          <select
+            value={branchId}
+            onChange={(event) => setBranchId(event.target.value)}
+            className={inputClass}
+          >
+            {branches.map((row) => (
+              <option key={row.branchId} value={row.branchId}>
+                {row.branchId}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Location name">
@@ -184,11 +205,22 @@ function WarehouseForm({
           />
         </Field>
         <Field label="Code">
-          <input className={inputClass} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="MAIN" />
+          <input
+            className={inputClass}
+            value={code}
+            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            placeholder="MAIN"
+          />
         </Field>
         <Field label="Type">
-          <select value={locationType} onChange={(event) => setLocationType(event.target.value as typeof locationType)} className={inputClass}>
-            {(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"] as const).map((type) => <option key={type}>{type}</option>)}
+          <select
+            value={locationType}
+            onChange={(event) => setLocationType(event.target.value as typeof locationType)}
+            className={inputClass}
+          >
+            {(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"] as const).map((type) => (
+              <option key={type}>{type}</option>
+            ))}
           </select>
         </Field>
       </div>
@@ -197,7 +229,14 @@ function WarehouseForm({
         <Btn
           variant="primary"
           disabled={busy || !branchId || !name.trim() || !code.trim()}
-          onClick={() => void onSubmit({ branchId, name: name.trim(), code: code.trim().toUpperCase(), locationType })}
+          onClick={() =>
+            void onSubmit({
+              branchId,
+              name: name.trim(),
+              code: code.trim().toUpperCase(),
+              locationType,
+            })
+          }
         >
           Create location
         </Btn>
@@ -207,12 +246,27 @@ function WarehouseForm({
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">{children}</div>;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+      {children}
+    </div>
+  );
 }
 function slugCode(value: string) {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
 }
-const inputClass = "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";
+const inputClass =
+  "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";

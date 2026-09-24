@@ -156,39 +156,42 @@ export function useInventoryOperations(enabled: boolean) {
     setError("");
     try {
       const next = await Promise.all(
-        branchKey.split("|").filter(Boolean).map(async (branchId): Promise<BranchOperations> => {
-          const query = `branchId=${encodeURIComponent(branchId)}&limit=200`;
-          const [adjustments, wastage, breakages, par, transfers] = await Promise.all([
-            fetchJson<{ adjustments: AdjustmentRow[] }>(
-              `/api/seramet/inventory/adjustments?${query}`,
-              control.headers,
-            ),
-            fetchJson<{ wastage: WastageRow[] }>(
-              `/api/seramet/inventory/wastage?${query}`,
-              control.headers,
-            ),
-            fetchJson<{ breakages: BreakageRow[] }>(
-              `/api/seramet/inventory/breakages?${query}`,
-              control.headers,
-            ),
-            fetchJson<{ policies: ParPolicyRow[] }>(
-              `/api/seramet/inventory/par-policies?branchId=${encodeURIComponent(branchId)}`,
-              control.headers,
-            ),
-            fetchJson<{ transfers: TransferRow[] }>(
-              `/api/seramet/inventory/transfers?${query}`,
-              control.headers,
-            ),
-          ]);
-          return {
-            branchId,
-            adjustments: adjustments.adjustments,
-            wastage: wastage.wastage,
-            breakages: breakages.breakages,
-            parPolicies: par.policies,
-            transfers: transfers.transfers,
-          };
-        }),
+        branchKey
+          .split("|")
+          .filter(Boolean)
+          .map(async (branchId): Promise<BranchOperations> => {
+            const query = `branchId=${encodeURIComponent(branchId)}&limit=200`;
+            const [adjustments, wastage, breakages, par, transfers] = await Promise.all([
+              fetchJson<{ adjustments: AdjustmentRow[] }>(
+                `/api/seramet/inventory/adjustments?${query}`,
+                control.headers,
+              ),
+              fetchJson<{ wastage: WastageRow[] }>(
+                `/api/seramet/inventory/wastage?${query}`,
+                control.headers,
+              ),
+              fetchJson<{ breakages: BreakageRow[] }>(
+                `/api/seramet/inventory/breakages?${query}`,
+                control.headers,
+              ),
+              fetchJson<{ policies: ParPolicyRow[] }>(
+                `/api/seramet/inventory/par-policies?branchId=${encodeURIComponent(branchId)}`,
+                control.headers,
+              ),
+              fetchJson<{ transfers: TransferRow[] }>(
+                `/api/seramet/inventory/transfers?${query}`,
+                control.headers,
+              ),
+            ]);
+            return {
+              branchId,
+              adjustments: adjustments.adjustments,
+              wastage: wastage.wastage,
+              breakages: breakages.breakages,
+              parPolicies: par.policies,
+              transfers: transfers.transfers,
+            };
+          }),
       );
       setData(next);
       setStatus("ready");
@@ -242,7 +245,9 @@ async function fetchJson<T>(path: string, headers: Record<string, string>) {
     error?: string;
   };
   if (!response.ok) {
-    throw new Error(payload.message ?? payload.error ?? `Inventory query failed (${response.status})`);
+    throw new Error(
+      payload.message ?? payload.error ?? `Inventory query failed (${response.status})`,
+    );
   }
   return payload;
 }

@@ -185,15 +185,24 @@ export async function handleInventoryApi(
   }
   if (url.pathname === "/api/seramet/inventory/adjustments" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
-    return json({ ok: true, adjustments: await service.listInventoryAdjustments(branchId, boundedLimit(url)) });
+    return json({
+      ok: true,
+      adjustments: await service.listInventoryAdjustments(branchId, boundedLimit(url)),
+    });
   }
   if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
-    return json({ ok: true, wastage: await service.listWastageRequests(branchId, boundedLimit(url)) });
+    return json({
+      ok: true,
+      wastage: await service.listWastageRequests(branchId, boundedLimit(url)),
+    });
   }
   if (url.pathname === "/api/seramet/inventory/breakages" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
-    return json({ ok: true, breakages: await service.listBreakageRequests(branchId, boundedLimit(url)) });
+    return json({
+      ok: true,
+      breakages: await service.listBreakageRequests(branchId, boundedLimit(url)),
+    });
   }
   if (url.pathname === "/api/seramet/inventory/par-policies" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
@@ -231,7 +240,10 @@ export async function handleInventoryApi(
     url.pathname,
   );
   if (warehouseArchiveRoute && request.method === "POST") {
-    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
     return json({
       ok: true,
       warehouse: await service.archiveWarehouse(
@@ -352,7 +364,10 @@ export async function handleInventoryApi(
   const adjustmentDecisionRoute =
     /^\/api\/seramet\/inventory\/adjustments\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
   if (adjustmentDecisionRoute && request.method === "POST") {
-    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
     const id = decodeURIComponent(adjustmentDecisionRoute[1]!);
     return json({
       ok: true,
@@ -382,7 +397,10 @@ export async function handleInventoryApi(
   const breakageDecisionRoute =
     /^\/api\/seramet\/inventory\/breakages\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
   if (breakageDecisionRoute && request.method === "POST") {
-    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
     const id = decodeURIComponent(breakageDecisionRoute[1]!);
     return json({
       ok: true,
@@ -571,13 +589,14 @@ export async function handleInventoryApi(
     );
   }
   const transferLifecycleRoute =
-    /^\/api\/seramet\/inventory\/transfers\/([^/]+)\/(approve|cancel|dispatch)$/.exec(
-      url.pathname,
-    );
+    /^\/api\/seramet\/inventory\/transfers\/([^/]+)\/(approve|cancel|dispatch)$/.exec(url.pathname);
   if (transferLifecycleRoute && request.method === "POST") {
     const id = decodeURIComponent(transferLifecycleRoute[1]!);
     if (transferLifecycleRoute[2] === "dispatch") {
-      const body = await parse<z.infer<typeof transferDispatchSchema>>(request, transferDispatchSchema);
+      const body = await parse<z.infer<typeof transferDispatchSchema>>(
+        request,
+        transferDispatchSchema,
+      );
       const detail = await service.transferDetail(id);
       const context = await branchOperationContext(
         env.SERAMET_DB,
@@ -592,7 +611,10 @@ export async function handleInventoryApi(
         }),
       });
     }
-    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
     return json({
       ok: true,
       transfer:
@@ -707,7 +729,10 @@ export async function handleInventoryApi(
   const wastageDecisionRoute =
     /^\/api\/seramet\/inventory\/wastage\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
   if (wastageDecisionRoute && request.method === "POST") {
-    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
     const id = decodeURIComponent(wastageDecisionRoute[1]!);
     return json({
       ok: true,

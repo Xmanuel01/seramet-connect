@@ -1239,7 +1239,9 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     await approver.approveBreakageRequest("breakage-controlled", "Supervisor verified damage");
     expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(2 * QUANTITY_SCALE);
     const movements = await db
-      .prepare("SELECT COUNT(*) AS count FROM inventory_movements WHERE tenant_id=? AND source_type='BREAKAGE'")
+      .prepare(
+        "SELECT COUNT(*) AS count FROM inventory_movements WHERE tenant_id=? AND source_type='BREAKAGE'",
+      )
       .bind(tenantId)
       .first<{ count: number }>();
     expect(movements?.count).toBe(0);
@@ -1307,7 +1309,16 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
            status,created_by,created_at,updated_by,updated_at)
          VALUES (?,?,?,?,NULL,NULL,'{}','KE','KES','{}','{}','ACTIVE',?,?,?,?)`,
       )
-      .run(tenantId, "legal-main", "LEGAL-MAIN", "Main legal entity", "user-test", stamp, "user-test", stamp);
+      .run(
+        tenantId,
+        "legal-main",
+        "LEGAL-MAIN",
+        "Main legal entity",
+        "user-test",
+        stamp,
+        "user-test",
+        stamp,
+      );
     for (const [nodeId, code, branch] of [
       ["node-branch-a", "NODE-A", branchId],
       ["node-branch-b", "NODE-B", secondBranchId],
@@ -1405,7 +1416,16 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
            status,created_by,created_at,updated_by,updated_at)
          VALUES (?,?,?,?,NULL,NULL,'{}','KE','KES','{}','{}','ACTIVE',?,?,?,?)`,
       )
-      .run(tenantId, "legal-transfer-guard", "LEGAL-GUARD", "Transfer legal entity", "user-test", stamp, "user-test", stamp);
+      .run(
+        tenantId,
+        "legal-transfer-guard",
+        "LEGAL-GUARD",
+        "Transfer legal entity",
+        "user-test",
+        stamp,
+        "user-test",
+        stamp,
+      );
     for (const [nodeId, code, branch] of [
       ["node-guard-a", "GUARD-A", branchId],
       ["node-guard-b", "GUARD-B", secondBranchId],

@@ -131,7 +131,9 @@ function Adjustments() {
               >
                 {formatQuantity(row.quantity_minor)} {row.unit_symbol ?? "unit"}
               </TD>
-              <TD className="num text-right">{ksh(Number(row.estimated_value_minor ?? 0) / 100)}</TD>
+              <TD className="num text-right">
+                {ksh(Number(row.estimated_value_minor ?? 0) / 100)}
+              </TD>
               <TD className="text-muted-foreground">{row.reason_code}</TD>
               <TD className="num text-muted-foreground">{row.business_date}</TD>
               <TD>
@@ -164,7 +166,9 @@ function Adjustments() {
             </tr>
           ))}
         </DataTable>
-        {!rows.length && operations.status === "ready" && <Empty>No adjustment requests yet.</Empty>}
+        {!rows.length && operations.status === "ready" && (
+          <Empty>No adjustment requests yet.</Empty>
+        )}
       </Panel>
     </AppShell>
   );
@@ -210,38 +214,79 @@ function AdjustmentForm({
       />
       <div className="grid gap-3 p-4 md:grid-cols-3">
         <Field label="Branch">
-          <select value={branchId} onChange={(event) => setBranch(event.target.value)} className={inputClass}>
+          <select
+            value={branchId}
+            onChange={(event) => setBranch(event.target.value)}
+            className={inputClass}
+          >
             {branches.map((row) => (
-              <option key={row.branchId} value={row.branchId}>{row.branchId}</option>
+              <option key={row.branchId} value={row.branchId}>
+                {row.branchId}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Warehouse">
-          <select value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)} className={inputClass}>
+          <select
+            value={warehouseId}
+            onChange={(event) => setWarehouseId(event.target.value)}
+            className={inputClass}
+          >
             {(branch?.warehouses ?? []).map((row) => (
-              <option key={row.id} value={row.id}>{row.name}</option>
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Item">
-          <select value={itemId} onChange={(event) => setItemId(event.target.value)} className={inputClass}>
+          <select
+            value={itemId}
+            onChange={(event) => setItemId(event.target.value)}
+            className={inputClass}
+          >
             {(branch?.items ?? []).map((row) => (
-              <option key={row.id} value={row.id}>{row.name} · {row.base_unit_symbol ?? "unit"}</option>
+              <option key={row.id} value={row.id}>
+                {row.name} · {row.base_unit_symbol ?? "unit"}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Signed quantity">
-          <input className={inputClass} type="number" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="-1.5 or 2" />
+          <input
+            className={inputClass}
+            type="number"
+            step="0.001"
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            placeholder="-1.5 or 2"
+          />
         </Field>
         <Field label="Unit cost (KES, optional)">
-          <input className={inputClass} type="number" min="0" step="0.01" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Uses current cost if blank" />
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.01"
+            value={unitCost}
+            onChange={(event) => setUnitCost(event.target.value)}
+            placeholder="Uses current cost if blank"
+          />
         </Field>
         <Field label="Reason code">
-          <input className={inputClass} value={reasonCode} onChange={(event) => setReasonCode(event.target.value.toUpperCase())} />
+          <input
+            className={inputClass}
+            value={reasonCode}
+            onChange={(event) => setReasonCode(event.target.value.toUpperCase())}
+          />
         </Field>
         <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground md:col-span-3">
           Notes
-          <textarea className="min-h-20 rounded-md border border-border bg-background px-3 py-2 text-[12px] text-foreground outline-none focus:border-primary" value={notes} onChange={(event) => setNotes(event.target.value)} />
+          <textarea
+            className="min-h-20 rounded-md border border-border bg-background px-3 py-2 text-[12px] text-foreground outline-none focus:border-primary"
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+          />
         </label>
       </div>
       <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
@@ -270,11 +315,20 @@ function AdjustmentForm({
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">{children}</div>;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+      {children}
+    </div>
+  );
 }
 
 function Empty({ children }: { children: ReactNode }) {

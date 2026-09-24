@@ -84,7 +84,9 @@ function Transfers() {
         error?: string;
       };
       if (!response.ok || !body.detail) {
-        throw new Error(body.message ?? body.error ?? `Transfer detail failed (${response.status})`);
+        throw new Error(
+          body.message ?? body.error ?? `Transfer detail failed (${response.status})`,
+        );
       }
       setDetail(body.detail);
     } catch (error) {
@@ -199,11 +201,17 @@ function Transfers() {
                 </TD>
                 <TD>
                   <div className="font-semibold">{row.destination_warehouse_name}</div>
-                  <div className="text-[10px] text-muted-foreground">{row.destination_branch_name}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {row.destination_branch_name}
+                  </div>
                 </TD>
                 <TD className="num text-right">{Number(row.line_count ?? 0)}</TD>
-                <TD className="num text-right font-semibold">{ksh(Number(row.sent_value_minor ?? 0) / 100)}</TD>
-                <TD><Status>{row.status}</Status></TD>
+                <TD className="num text-right font-semibold">
+                  {ksh(Number(row.sent_value_minor ?? 0) / 100)}
+                </TD>
+                <TD>
+                  <Status>{row.status}</Status>
+                </TD>
                 <TD onClick={(event) => event.stopPropagation()}>
                   <TransferActions
                     row={row}
@@ -222,14 +230,24 @@ function Transfers() {
         <Panel>
           <PanelHead
             title={selected ? selected.transfer_number : "Transfer details"}
-            sub={selected ? `${selected.source_warehouse_name} → ${selected.destination_warehouse_name}` : "Select a transfer"}
+            sub={
+              selected
+                ? `${selected.source_warehouse_name} → ${selected.destination_warehouse_name}`
+                : "Select a transfer"
+            }
           />
           {detail ? (
             <>
               <div className="grid grid-cols-2 gap-2 border-b border-border p-4 text-[11px]">
                 <Detail label="Status" value={String(detail.transfer["status"] ?? "-")} />
-                <Detail label="Shipment" value={String(detail.transfer["shipment_status"] ?? "Not dispatched")} />
-                <Detail label="Requested by" value={String(detail.transfer["requested_by"] ?? "-")} />
+                <Detail
+                  label="Shipment"
+                  value={String(detail.transfer["shipment_status"] ?? "Not dispatched")}
+                />
+                <Detail
+                  label="Requested by"
+                  value={String(detail.transfer["requested_by"] ?? "-")}
+                />
                 <Detail label="Approved by" value={String(detail.transfer["approved_by"] ?? "-")} />
               </div>
               <DataTable
@@ -250,7 +268,9 @@ function Transfers() {
                     <tr key={line.id}>
                       <TD>
                         <div className="font-semibold">{line.name}</div>
-                        <div className="num text-[10px] text-muted-foreground">{line.sku ?? line.code}</div>
+                        <div className="num text-[10px] text-muted-foreground">
+                          {line.sku ?? line.code}
+                        </div>
                       </TD>
                       <TD className="num text-right">{qty(line.requested_quantity_minor)}</TD>
                       <TD className="num text-right">{qty(line.sent_quantity_minor)}</TD>
@@ -309,21 +329,53 @@ function TransferActions({
   if (row.status === "REQUESTED") {
     return (
       <div className="flex gap-2">
-        <button type="button" onClick={() => onAction("approve")} className="text-[12px] font-semibold text-primary hover:underline">Approve</button>
-        <button type="button" onClick={() => onAction("cancel")} className="text-[12px] font-semibold text-danger hover:underline">Cancel</button>
+        <button
+          type="button"
+          onClick={() => onAction("approve")}
+          className="text-[12px] font-semibold text-primary hover:underline"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          onClick={() => onAction("cancel")}
+          className="text-[12px] font-semibold text-danger hover:underline"
+        >
+          Cancel
+        </button>
       </div>
     );
   }
   if (row.status === "APPROVED") {
     return (
       <div className="flex gap-2">
-        <button type="button" onClick={() => onAction("dispatch")} className="text-[12px] font-semibold text-primary hover:underline">Dispatch</button>
-        <button type="button" onClick={() => onAction("cancel")} className="text-[12px] font-semibold text-danger hover:underline">Cancel</button>
+        <button
+          type="button"
+          onClick={() => onAction("dispatch")}
+          className="text-[12px] font-semibold text-primary hover:underline"
+        >
+          Dispatch
+        </button>
+        <button
+          type="button"
+          onClick={() => onAction("cancel")}
+          className="text-[12px] font-semibold text-danger hover:underline"
+        >
+          Cancel
+        </button>
       </div>
     );
   }
   if (row.status === "IN_TRANSIT") {
-    return <button type="button" onClick={onReceive} className="text-[12px] font-semibold text-primary hover:underline">Receive</button>;
+    return (
+      <button
+        type="button"
+        onClick={onReceive}
+        className="text-[12px] font-semibold text-primary hover:underline"
+      >
+        Receive
+      </button>
+    );
   }
   return <span className="text-[11px] text-muted-foreground">Final</span>;
 }
@@ -376,23 +428,55 @@ function TransferRequestForm({
       <PanelHead title="Request stock transfer" sub="Creating the request does not move stock" />
       <div className="grid gap-3 p-4 md:grid-cols-4">
         <Field label="Source branch">
-          <select value={sourceBranchId} onChange={(event) => setSourceBranch(event.target.value)} className={inputClass}>
-            {branches.map((row) => <option key={row.branchId} value={row.branchId}>{row.branchId}</option>)}
+          <select
+            value={sourceBranchId}
+            onChange={(event) => setSourceBranch(event.target.value)}
+            className={inputClass}
+          >
+            {branches.map((row) => (
+              <option key={row.branchId} value={row.branchId}>
+                {row.branchId}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Source warehouse">
-          <select value={sourceWarehouseId} onChange={(event) => setSourceWarehouseId(event.target.value)} className={inputClass}>
-            {(sourceBranch?.warehouses ?? []).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          <select
+            value={sourceWarehouseId}
+            onChange={(event) => setSourceWarehouseId(event.target.value)}
+            className={inputClass}
+          >
+            {(sourceBranch?.warehouses ?? []).map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Destination branch">
-          <select value={destinationBranchId} onChange={(event) => setDestinationBranch(event.target.value)} className={inputClass}>
-            {branches.map((row) => <option key={row.branchId} value={row.branchId}>{row.branchId}</option>)}
+          <select
+            value={destinationBranchId}
+            onChange={(event) => setDestinationBranch(event.target.value)}
+            className={inputClass}
+          >
+            {branches.map((row) => (
+              <option key={row.branchId} value={row.branchId}>
+                {row.branchId}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Destination warehouse">
-          <select value={destinationWarehouseId} onChange={(event) => setDestinationWarehouseId(event.target.value)} className={inputClass}>
-            {(destinationBranch?.warehouses ?? []).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          <select
+            value={destinationWarehouseId}
+            onChange={(event) => setDestinationWarehouseId(event.target.value)}
+            className={inputClass}
+          >
+            {(destinationBranch?.warehouses ?? []).map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
           </select>
         </Field>
       </div>
@@ -418,7 +502,9 @@ function TransferRequestForm({
                 onChange={(event) =>
                   setLines((current) =>
                     current.map((value, rowIndex) =>
-                      rowIndex === index ? { ...value, inventoryItemId: event.target.value } : value,
+                      rowIndex === index
+                        ? { ...value, inventoryItemId: event.target.value }
+                        : value,
                     ),
                   )
                 }
@@ -426,7 +512,8 @@ function TransferRequestForm({
               >
                 {(sourceBranch?.items ?? []).map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.name} · {qty(item.quantity_available_minor)} {item.base_unit_symbol ?? "unit"} available
+                    {item.name} · {qty(item.quantity_available_minor)}{" "}
+                    {item.base_unit_symbol ?? "unit"} available
                   </option>
                 ))}
               </select>
@@ -447,7 +534,9 @@ function TransferRequestForm({
               />
               <Btn
                 disabled={lines.length === 1}
-                onClick={() => setLines((current) => current.filter((_, rowIndex) => rowIndex !== index))}
+                onClick={() =>
+                  setLines((current) => current.filter((_, rowIndex) => rowIndex !== index))
+                }
               >
                 Remove
               </Btn>
@@ -546,26 +635,52 @@ function ReceiptForm({
     <div className="border-t border-border p-4">
       <div className="mb-3 text-[12px] font-semibold">Receive shipment {shipmentId}</div>
       <Field label="Receipt reference">
-        <input className={inputClass} value={receiptReference} onChange={(event) => setReceiptReference(event.target.value)} />
+        <input
+          className={inputClass}
+          value={receiptReference}
+          onChange={(event) => setReceiptReference(event.target.value)}
+        />
       </Field>
       <div className="mt-3 grid gap-3">
         {values.map((row, index) => (
           <div key={row.transferLineId} className="rounded-lg border border-border p-3">
             <div className="mb-2 flex items-center justify-between text-[11px]">
               <span className="font-semibold">{row.name}</span>
-              <span className="text-muted-foreground">{qty(row.outstanding)} {row.unit} outstanding</span>
+              <span className="text-muted-foreground">
+                {qty(row.outstanding)} {row.unit} outstanding
+              </span>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <MiniField label="Received" value={row.received} onChange={(value) => update(index, "received", value)} />
-              <MiniField label="Damaged" value={row.damaged} onChange={(value) => update(index, "damaged", value)} />
-              <MiniField label="Rejected" value={row.rejected} onChange={(value) => update(index, "rejected", value)} />
-              <MiniField label="Missing" value={row.missing} onChange={(value) => update(index, "missing", value)} />
+              <MiniField
+                label="Received"
+                value={row.received}
+                onChange={(value) => update(index, "received", value)}
+              />
+              <MiniField
+                label="Damaged"
+                value={row.damaged}
+                onChange={(value) => update(index, "damaged", value)}
+              />
+              <MiniField
+                label="Rejected"
+                value={row.rejected}
+                onChange={(value) => update(index, "rejected", value)}
+              />
+              <MiniField
+                label="Missing"
+                value={row.missing}
+                onChange={(value) => update(index, "missing", value)}
+              />
             </div>
           </div>
         ))}
       </div>
       <label className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
-        <input type="checkbox" checked={final} onChange={(event) => setFinal(event.target.checked)} />
+        <input
+          type="checkbox"
+          checked={final}
+          onChange={(event) => setFinal(event.target.checked)}
+        />
         Final receipt — every dispatched quantity must be accounted for
       </label>
       <div className="mt-3 flex justify-end">
@@ -606,18 +721,39 @@ function MiniField({
   return (
     <label className="grid gap-1 text-[10px] text-muted-foreground">
       {label}
-      <input type="number" min="0" step="0.001" className={inputClass} value={value} onChange={(event) => onChange(event.target.value)} />
+      <input
+        type="number"
+        min="0"
+        step="0.001"
+        className={inputClass}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </label>
   );
 }
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-muted-foreground">{label}</div><div className="mt-1 font-semibold">{value}</div></div>;
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
+    </div>
+  );
 }
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">{children}</div>;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+      {children}
+    </div>
+  );
 }
 function Empty({ children }: { children: ReactNode }) {
   return <div className="px-4 py-12 text-center text-[12px] text-muted-foreground">{children}</div>;
@@ -628,4 +764,5 @@ function qty(value: number) {
 function micro(value: string) {
   return Math.round(Math.max(0, Number(value || 0)) * 1_000_000);
 }
-const inputClass = "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";
+const inputClass =
+  "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";

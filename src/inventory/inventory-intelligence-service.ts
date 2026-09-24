@@ -3232,14 +3232,21 @@ export class InventoryIntelligenceService {
           WHERE t.tenant_id=? AND t.id=?`,
       )
       .bind(this.actor.tenantId, id)
-      .first<Record<string, unknown> & { source_branch_id: string; destination_branch_id: string }>();
-    if (!transfer) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+      .first<
+        Record<string, unknown> & { source_branch_id: string; destination_branch_id: string }
+      >();
+    if (!transfer)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
     if (
       !this.actor.assignedBranchIds.includes(transfer.source_branch_id) &&
       !this.actor.assignedBranchIds.includes(transfer.destination_branch_id) &&
       this.actor.branchScope.type !== "ALL"
     ) {
-      throw new ServerOperationError("PERMISSION_DENIED", 403, "Transfer is outside your branch scope");
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Transfer is outside your branch scope",
+      );
     }
     const lines = await this.db
       .prepare(
@@ -3294,9 +3301,18 @@ export class InventoryIntelligenceService {
       input.sourceBranchId === input.destinationBranchId &&
       input.sourceWarehouseId === input.destinationWarehouseId
     ) {
-      throw new ServerOperationError("VALIDATION_FAILED", 400, "Transfer source and destination must differ");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Transfer source and destination must differ",
+      );
     }
-    if (!input.lines.length) throw new ServerOperationError("VALIDATION_FAILED", 400, "Transfer requires at least one item");
+    if (!input.lines.length)
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Transfer requires at least one item",
+      );
     const duplicate = await this.db
       .prepare(
         `SELECT id,status FROM stock_transfers WHERE tenant_id=?
@@ -3333,18 +3349,31 @@ export class InventoryIntelligenceService {
     const seen = new Set<string>();
     for (const line of input.lines) {
       if (seen.has(line.inventoryItemId)) {
-        throw new ServerOperationError("VALIDATION_FAILED", 400, "Transfer request contains a duplicate item");
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Transfer request contains a duplicate item",
+        );
       }
       seen.add(line.inventoryItemId);
       if (!Number.isSafeInteger(line.quantityMicro) || line.quantityMicro <= 0) {
-        throw new ServerOperationError("VALIDATION_FAILED", 400, "Transfer quantity must be positive");
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Transfer quantity must be positive",
+        );
       }
       const unitCost = await this.weightedItemCost(
         line.inventoryItemId,
         input.sourceBranchId,
         input.sourceWarehouseId,
       );
-      let lot: { id: string; lot_number: string; expiry_date: string | null; quantity_remaining_minor: number } | null = null;
+      let lot: {
+        id: string;
+        lot_number: string;
+        expiry_date: string | null;
+        quantity_remaining_minor: number;
+      } | null = null;
       if (line.sourceLotId) {
         lot = await this.db
           .prepare(
@@ -3359,9 +3388,18 @@ export class InventoryIntelligenceService {
             input.sourceWarehouseId,
             line.inventoryItemId,
           )
-          .first<{ id: string; lot_number: string; expiry_date: string | null; quantity_remaining_minor: number }>();
+          .first<{
+            id: string;
+            lot_number: string;
+            expiry_date: string | null;
+            quantity_remaining_minor: number;
+          }>();
         if (!lot || lot.quantity_remaining_minor < line.quantityMicro) {
-          throw new ServerOperationError("CONFLICT", 409, "Selected transfer lot has insufficient stock");
+          throw new ServerOperationError(
+            "CONFLICT",
+            409,
+            "Selected transfer lot has insufficient stock",
+          );
         }
       }
       statements.push(
@@ -3403,7 +3441,9 @@ export class InventoryIntelligenceService {
   async approveStockTransfer(id: string, reason: string) {
     this.requirePermission(permissions.inventoryTransfer);
     const row = await this.db
-      .prepare("SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?",
+      )
       .bind(this.actor.tenantId, id)
       .first<{ source_branch_id: string; destination_branch_id: string; status: string }>();
     if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
@@ -3420,7 +3460,14 @@ export class InventoryIntelligenceService {
           "UPDATE stock_transfers SET status='APPROVED',approved_by=?,approval_reason=?,updated_at=? WHERE tenant_id=? AND id=? AND status='REQUESTED'",
         )
         .bind(this.actor.id, reason, stamp, this.actor.tenantId, id),
-      this.auditStatement("STOCK_TRANSFER_APPROVED", "STOCK_TRANSFER", id, stamp, crypto.randomUUID(), row.source_branch_id),
+      this.auditStatement(
+        "STOCK_TRANSFER_APPROVED",
+        "STOCK_TRANSFER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.source_branch_id,
+      ),
     ]);
     return { id, duplicate: false, status: "APPROVED" as const };
   }
@@ -3428,7 +3475,9 @@ export class InventoryIntelligenceService {
   async cancelStockTransfer(id: string, reason: string) {
     this.requirePermission(permissions.inventoryTransfer);
     const row = await this.db
-      .prepare("SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?",
+      )
       .bind(this.actor.tenantId, id)
       .first<{ source_branch_id: string; destination_branch_id: string; status: string }>();
     if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
@@ -3436,7 +3485,11 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, row.destination_branch_id);
     if (row.status === "CANCELLED") return { id, duplicate: true, status: "CANCELLED" as const };
     if (!["REQUESTED", "APPROVED"].includes(row.status)) {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, "Only requested or approved transfers can be cancelled");
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Only requested or approved transfers can be cancelled",
+      );
     }
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -3446,12 +3499,22 @@ export class InventoryIntelligenceService {
                   cancellation_reason=?,updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(this.actor.id, stamp, reason, stamp, this.actor.tenantId, id),
-      this.auditStatement("STOCK_TRANSFER_CANCELLED", "STOCK_TRANSFER", id, stamp, crypto.randomUUID(), row.source_branch_id),
+      this.auditStatement(
+        "STOCK_TRANSFER_CANCELLED",
+        "STOCK_TRANSFER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.source_branch_id,
+      ),
     ]);
     return { id, duplicate: false, status: "CANCELLED" as const };
   }
 
-  async dispatchApprovedTransfer(id: string, input: { idempotencyKey: string; businessDate: string }) {
+  async dispatchApprovedTransfer(
+    id: string,
+    input: { idempotencyKey: string; businessDate: string },
+  ) {
     this.requirePermission(permissions.inventoryTransfer);
     const transfer = await this.db
       .prepare(
@@ -3466,7 +3529,8 @@ export class InventoryIntelligenceService {
         destination_warehouse_id: string;
         status: string;
       }>();
-    if (!transfer) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    if (!transfer)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, transfer.source_branch_id);
     authorizeBranchRead(this.actor, this.actor.tenantId, transfer.destination_branch_id);
     if (transfer.status === "IN_TRANSIT") {
@@ -3477,14 +3541,21 @@ export class InventoryIntelligenceService {
       return { id, shipmentId: existing?.id, duplicate: true, status: "IN_TRANSIT" as const };
     }
     if (transfer.status !== "APPROVED") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Transfer is ${transfer.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Transfer is ${transfer.status}`,
+      );
     }
     await this.assertBusinessDateOpen(transfer.source_branch_id, input.businessDate);
     const duplicate = await this.db
-      .prepare("SELECT id FROM inventory_transfer_shipments WHERE tenant_id=? AND idempotency_key=?")
+      .prepare(
+        "SELECT id FROM inventory_transfer_shipments WHERE tenant_id=? AND idempotency_key=?",
+      )
       .bind(this.actor.tenantId, input.idempotencyKey)
       .first<{ id: string }>();
-    if (duplicate) return { id, shipmentId: duplicate.id, duplicate: true, status: "IN_TRANSIT" as const };
+    if (duplicate)
+      return { id, shipmentId: duplicate.id, duplicate: true, status: "IN_TRANSIT" as const };
 
     const accounting = await this.transferAccountingConfiguration(
       transfer.source_branch_id,
@@ -3533,7 +3604,9 @@ export class InventoryIntelligenceService {
           stamp,
         ),
       this.db
-        .prepare("UPDATE stock_transfers SET status='IN_TRANSIT',updated_at=? WHERE tenant_id=? AND id=? AND status='APPROVED'")
+        .prepare(
+          "UPDATE stock_transfers SET status='IN_TRANSIT',updated_at=? WHERE tenant_id=? AND id=? AND status='APPROVED'",
+        )
         .bind(stamp, this.actor.tenantId, id),
     ];
     for (const [index, line] of (lines.results ?? []).entries()) {
@@ -3565,13 +3638,19 @@ export class InventoryIntelligenceService {
           .bind(this.actor.tenantId, line.source_lot_id)
           .first<{ quantity_remaining_minor: number }>();
         if (!lot || lot.quantity_remaining_minor < line.requested_quantity_minor) {
-          throw new ServerOperationError("CONFLICT", 409, "Transfer source lot no longer has sufficient stock");
+          throw new ServerOperationError(
+            "CONFLICT",
+            409,
+            "Transfer source lot no longer has sufficient stock",
+          );
         }
       }
       const valueMinor = quantityCostMinor(line.requested_quantity_minor, line.unit_cost_minor);
       statements.push(
         this.db
-          .prepare("UPDATE stock_transfer_lines SET sent_quantity_minor=requested_quantity_minor WHERE tenant_id=? AND id=?")
+          .prepare(
+            "UPDATE stock_transfer_lines SET sent_quantity_minor=requested_quantity_minor WHERE tenant_id=? AND id=?",
+          )
           .bind(this.actor.tenantId, line.id),
         this.movementStatement(
           {
@@ -3612,7 +3691,13 @@ export class InventoryIntelligenceService {
       ),
     );
     await this.db.batch(statements);
-    return { id, shipmentId, duplicate: false, status: "IN_TRANSIT" as const, accountingTreatment: accounting.treatment };
+    return {
+      id,
+      shipmentId,
+      duplicate: false,
+      status: "IN_TRANSIT" as const,
+      accountingTreatment: accounting.treatment,
+    };
   }
 
   async dispatchTransfer(input: StagedTransferDispatchInput) {
@@ -4149,11 +4234,17 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertWarehouseBranch(input.branchId, input.warehouseId);
     if (!Number.isSafeInteger(input.quantityMicro) || input.quantityMicro === 0) {
-      throw new ServerOperationError("VALIDATION_FAILED", 400, "Adjustment quantity must be a non-zero integer");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Adjustment quantity must be a non-zero integer",
+      );
     }
     await this.assertBusinessDateOpen(input.branchId, input.businessDate, input.reasonCode);
     const duplicate = await this.db
-      .prepare("SELECT id,status FROM inventory_adjustments WHERE tenant_id=? AND idempotency_key=?")
+      .prepare(
+        "SELECT id,status FROM inventory_adjustments WHERE tenant_id=? AND idempotency_key=?",
+      )
       .bind(this.actor.tenantId, input.idempotencyKey)
       .first<{ id: string; status: string }>();
     if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
@@ -4232,17 +4323,29 @@ export class InventoryIntelligenceService {
         business_date: string;
         posted_movement_id: string | null;
       }>();
-    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
     if (row.status === "APPROVED") {
-      return { id, duplicate: true, status: "APPROVED" as const, movementId: row.posted_movement_id };
+      return {
+        id,
+        duplicate: true,
+        status: "APPROVED" as const,
+        movementId: row.posted_movement_id,
+      };
     }
     if (row.status !== "PENDING") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Adjustment is ${row.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Adjustment is ${row.status}`,
+      );
     }
     await this.assertBusinessDateOpen(row.branch_id, row.business_date, reason);
     const unitCostMinor =
-      row.unit_cost_minor ?? (await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id)).average_unit_cost_minor;
+      row.unit_cost_minor ??
+      (await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id))
+        .average_unit_cost_minor;
     if (row.quantity_minor > 0 && unitCostMinor <= 0) {
       throw new ServerOperationError("VALIDATION_FAILED", 400, "Adjustment unit cost is required");
     }
@@ -4310,11 +4413,16 @@ export class InventoryIntelligenceService {
       .prepare("SELECT branch_id,status FROM inventory_adjustments WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, id)
       .first<{ branch_id: string; status: string }>();
-    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
     if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
     if (row.status !== "PENDING") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Adjustment is ${row.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Adjustment is ${row.status}`,
+      );
     }
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -4389,7 +4497,10 @@ export class InventoryIntelligenceService {
       .first<{ id: string; status: string }>();
     if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
     const balance = await this.balance(input.branchId, input.warehouseId, input.inventoryItemId);
-    const estimatedCostMinor = quantityCostMinor(input.quantityMicro, balance.average_unit_cost_minor);
+    const estimatedCostMinor = quantityCostMinor(
+      input.quantityMicro,
+      balance.average_unit_cost_minor,
+    );
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const payload = JSON.stringify({
@@ -4422,7 +4533,14 @@ export class InventoryIntelligenceService {
           input.businessDate,
           stamp,
         ),
-      this.auditStatement("WASTAGE_REQUESTED", "WASTAGE", id, stamp, crypto.randomUUID(), input.branchId),
+      this.auditStatement(
+        "WASTAGE_REQUESTED",
+        "WASTAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
     ]);
     return { id, duplicate: false, status: "PENDING" as const, estimatedCostMinor };
   }
@@ -4450,8 +4568,18 @@ export class InventoryIntelligenceService {
     if (row.status === "APPROVED") {
       return { id, duplicate: true, status: "APPROVED" as const, movementId: row.movement_id };
     }
-    if (row.status !== "PENDING" || !row.warehouse_id || !row.inventory_item_id || !row.quantity_minor || !row.business_date) {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, "Wastage request is not approvable");
+    if (
+      row.status !== "PENDING" ||
+      !row.warehouse_id ||
+      !row.inventory_item_id ||
+      !row.quantity_minor ||
+      !row.business_date
+    ) {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Wastage request is not approvable",
+      );
     }
     await this.assertBusinessDateOpen(row.branch_id, row.business_date, reason);
     const balance = await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id);
@@ -4504,7 +4632,13 @@ export class InventoryIntelligenceService {
     ];
     statements.push(...(await this.movementAccountingStatements(movementInput, correlationId)));
     await this.db.batch(statements);
-    return { id, duplicate: false, status: "APPROVED" as const, movementId, estimatedCostMinor: cost };
+    return {
+      id,
+      duplicate: false,
+      status: "APPROVED" as const,
+      movementId,
+      estimatedCostMinor: cost,
+    };
   }
 
   async rejectWastageRequest(id: string, reason: string) {
@@ -4517,7 +4651,11 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
     if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
     if (row.status !== "PENDING") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Wastage request is ${row.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Wastage request is ${row.status}`,
+      );
     }
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -4527,7 +4665,14 @@ export class InventoryIntelligenceService {
                   updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
         )
         .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
-      this.auditStatement("WASTAGE_REJECTED", "WASTAGE", id, stamp, crypto.randomUUID(), row.branch_id),
+      this.auditStatement(
+        "WASTAGE_REJECTED",
+        "WASTAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
     ]);
     return { id, duplicate: false, status: "REJECTED" as const };
   }
@@ -4572,7 +4717,11 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     if (input.warehouseId) await this.assertWarehouseBranch(input.branchId, input.warehouseId);
     if (input.quantityMicro <= 0 || !Number.isSafeInteger(input.quantityMicro)) {
-      throw new ServerOperationError("VALIDATION_FAILED", 400, "Breakage quantity must be positive");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Breakage quantity must be positive",
+      );
     }
     const duplicate = await this.db
       .prepare("SELECT id,status FROM breakages WHERE tenant_id=? AND idempotency_key=?")
@@ -4607,7 +4756,14 @@ export class InventoryIntelligenceService {
           input.businessDate,
           stamp,
         ),
-      this.auditStatement("BREAKAGE_REQUESTED", "BREAKAGE", id, stamp, crypto.randomUUID(), input.branchId),
+      this.auditStatement(
+        "BREAKAGE_REQUESTED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
     ]);
     return { id, duplicate: false, status: "PENDING" as const };
   }
@@ -4618,11 +4774,16 @@ export class InventoryIntelligenceService {
       .prepare("SELECT branch_id,status FROM breakages WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, id)
       .first<{ branch_id: string; status: string }>();
-    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
     if (row.status === "APPROVED") return { id, duplicate: true, status: "APPROVED" as const };
     if (row.status !== "PENDING") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Breakage request is ${row.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Breakage request is ${row.status}`,
+      );
     }
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -4632,7 +4793,14 @@ export class InventoryIntelligenceService {
                   updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
         )
         .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
-      this.auditStatement("BREAKAGE_APPROVED", "BREAKAGE", id, stamp, crypto.randomUUID(), row.branch_id),
+      this.auditStatement(
+        "BREAKAGE_APPROVED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
     ]);
     return { id, duplicate: false, status: "APPROVED" as const };
   }
@@ -4643,11 +4811,16 @@ export class InventoryIntelligenceService {
       .prepare("SELECT branch_id,status FROM breakages WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, id)
       .first<{ branch_id: string; status: string }>();
-    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
     if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
     if (row.status !== "PENDING") {
-      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Breakage request is ${row.status}`);
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Breakage request is ${row.status}`,
+      );
     }
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -4657,7 +4830,14 @@ export class InventoryIntelligenceService {
                   updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
         )
         .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
-      this.auditStatement("BREAKAGE_REJECTED", "BREAKAGE", id, stamp, crypto.randomUUID(), row.branch_id),
+      this.auditStatement(
+        "BREAKAGE_REJECTED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
     ]);
     return { id, duplicate: false, status: "REJECTED" as const };
   }

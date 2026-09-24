@@ -121,21 +121,36 @@ function Par() {
                     ? "Low"
                     : "Healthy";
             return (
-              <tr key={`${row.warehouse_id}:${row.inventory_item_id}`} className="hover:bg-secondary/50">
+              <tr
+                key={`${row.warehouse_id}:${row.inventory_item_id}`}
+                className="hover:bg-secondary/50"
+              >
                 <TD>
                   <div className="font-semibold">{row.item_name}</div>
                   <div className="num text-[10px] text-muted-foreground">{row.sku ?? row.code}</div>
                 </TD>
                 <TD className="text-muted-foreground">{row.warehouse_name}</TD>
-                <TD className="num text-right">{quantity(row.available_minor)} {row.unit_symbol ?? ""}</TD>
+                <TD className="num text-right">
+                  {quantity(row.available_minor)} {row.unit_symbol ?? ""}
+                </TD>
                 <TD className="num text-right">{quantity(row.reorder_point_minor)}</TD>
-                <TD className="num text-right font-semibold">{quantity(row.target_quantity_minor)}</TD>
-                <TD className="num text-right">{row.maximum_quantity_minor === null ? "-" : quantity(row.maximum_quantity_minor)}</TD>
-                <TD className="num text-right font-bold">{quantity(row.suggested_quantity_minor)}</TD>
-                <TD className="num text-right">{ksh(Number(row.suggested_value_minor ?? 0) / 100)}</TD>
+                <TD className="num text-right font-semibold">
+                  {quantity(row.target_quantity_minor)}
+                </TD>
+                <TD className="num text-right">
+                  {row.maximum_quantity_minor === null ? "-" : quantity(row.maximum_quantity_minor)}
+                </TD>
+                <TD className="num text-right font-bold">
+                  {quantity(row.suggested_quantity_minor)}
+                </TD>
+                <TD className="num text-right">
+                  {ksh(Number(row.suggested_value_minor ?? 0) / 100)}
+                </TD>
                 <TD className="text-muted-foreground">{row.preferred_supplier_name ?? "-"}</TD>
                 <TD className="text-muted-foreground">{row.recommendation_mode}</TD>
-                <TD><Status>{state}</Status></TD>
+                <TD>
+                  <Status>{state}</Status>
+                </TD>
               </tr>
             );
           })}
@@ -184,32 +199,105 @@ function ParForm({
       <PanelHead title="Set PAR policy" sub="All quantities are entered in the item's base unit" />
       <div className="grid gap-3 p-4 md:grid-cols-4">
         <Field label="Branch">
-          <select value={branchId} onChange={(event) => setBranch(event.target.value)} className={inputClass}>
-            {branches.map((row) => <option key={row.branchId} value={row.branchId}>{row.branchId}</option>)}
+          <select
+            value={branchId}
+            onChange={(event) => setBranch(event.target.value)}
+            className={inputClass}
+          >
+            {branches.map((row) => (
+              <option key={row.branchId} value={row.branchId}>
+                {row.branchId}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Warehouse">
-          <select value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)} className={inputClass}>
-            {(branch?.warehouses ?? []).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          <select
+            value={warehouseId}
+            onChange={(event) => setWarehouseId(event.target.value)}
+            className={inputClass}
+          >
+            {(branch?.warehouses ?? []).map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Item">
-          <select value={itemId} onChange={(event) => setItemId(event.target.value)} className={inputClass}>
-            {(branch?.items ?? []).map((row) => <option key={row.id} value={row.id}>{row.name} · {row.base_unit_symbol ?? "unit"}</option>)}
+          <select
+            value={itemId}
+            onChange={(event) => setItemId(event.target.value)}
+            className={inputClass}
+          >
+            {(branch?.items ?? []).map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name} · {row.base_unit_symbol ?? "unit"}
+              </option>
+            ))}
           </select>
         </Field>
         <Field label="Recommendation mode">
-          <select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)} className={inputClass}>
+          <select
+            value={mode}
+            onChange={(event) => setMode(event.target.value as typeof mode)}
+            className={inputClass}
+          >
             <option value="MANUAL">Manual</option>
             <option value="RECOMMEND">Recommend</option>
             <option value="AUTO_REQUISITION">Auto requisition</option>
           </select>
         </Field>
-        <Field label="Minimum"><input className={inputClass} type="number" min="0" step="0.001" value={minimum} onChange={(event) => setMinimum(event.target.value)} /></Field>
-        <Field label="Reorder point"><input className={inputClass} type="number" min="0" step="0.001" value={reorder} onChange={(event) => setReorder(event.target.value)} /></Field>
-        <Field label="PAR target"><input className={inputClass} type="number" min="0" step="0.001" value={target} onChange={(event) => setTarget(event.target.value)} /></Field>
-        <Field label="Maximum (optional)"><input className={inputClass} type="number" min="0" step="0.001" value={maximum} onChange={(event) => setMaximum(event.target.value)} /></Field>
-        <Field label="Safety stock"><input className={inputClass} type="number" min="0" step="0.001" value={safety} onChange={(event) => setSafety(event.target.value)} /></Field>
+        <Field label="Minimum">
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.001"
+            value={minimum}
+            onChange={(event) => setMinimum(event.target.value)}
+          />
+        </Field>
+        <Field label="Reorder point">
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.001"
+            value={reorder}
+            onChange={(event) => setReorder(event.target.value)}
+          />
+        </Field>
+        <Field label="PAR target">
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.001"
+            value={target}
+            onChange={(event) => setTarget(event.target.value)}
+          />
+        </Field>
+        <Field label="Maximum (optional)">
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.001"
+            value={maximum}
+            onChange={(event) => setMaximum(event.target.value)}
+          />
+        </Field>
+        <Field label="Safety stock">
+          <input
+            className={inputClass}
+            type="number"
+            min="0"
+            step="0.001"
+            value={safety}
+            onChange={(event) => setSafety(event.target.value)}
+          />
+        </Field>
       </div>
       <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
         <Btn onClick={onCancel}>Cancel</Btn>
@@ -238,10 +326,19 @@ function ParForm({
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">{children}</div>;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+      {children}
+    </div>
+  );
 }
 function quantity(value: number) {
   return (value / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 });
@@ -249,4 +346,5 @@ function quantity(value: number) {
 function micro(value: string) {
   return Math.round(Math.max(0, Number(value || 0)) * 1_000_000);
 }
-const inputClass = "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";
+const inputClass =
+  "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary";
