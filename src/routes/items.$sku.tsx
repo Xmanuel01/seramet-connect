@@ -55,7 +55,10 @@ function ItemDetail() {
       <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
         <EmptyState
           title="Inventory item not found"
-          description={detail.error || "Create or import the item before opening its stock and costing history."}
+          description={
+            detail.error ||
+            "Create or import the item before opening its stock and costing history."
+          }
         />
       </AppShell>
     );
@@ -123,7 +126,10 @@ function ItemDetail() {
             <Panel>
               {tab === "Movement" ? (
                 <>
-                  <PanelHead title="Stock movement" sub="Latest immutable inventory ledger entries" />
+                  <PanelHead
+                    title="Stock movement"
+                    sub="Latest immutable inventory ledger entries"
+                  />
                   <DataTable
                     cols={[
                       "Date",
@@ -136,17 +142,24 @@ function ItemDetail() {
                     ]}
                   >
                     {movements.map((movement) => (
-                      <tr key={`${movement.branchId}:${movement.id}`} className="hover:bg-secondary/50">
+                      <tr
+                        key={`${movement.branchId}:${movement.id}`}
+                        className="hover:bg-secondary/50"
+                      >
                         <TD className="num text-muted-foreground">
                           {movement.occurred_at ?? movement.business_date ?? "—"}
                         </TD>
-                        {isAllBranches && <TD className="num text-muted-foreground">{movement.branchId}</TD>}
+                        {isAllBranches && (
+                          <TD className="num text-muted-foreground">{movement.branchId}</TD>
+                        )}
                         <TD className="font-semibold">{movement.movement_type}</TD>
                         <TD className="num text-right font-semibold">
                           {formatQuantity(movement.quantity_minor)} {unit}
                         </TD>
                         <TD className="num text-right">
-                          {movement.total_cost_minor == null ? "—" : ksh(movement.total_cost_minor / 100)}
+                          {movement.total_cost_minor == null
+                            ? "—"
+                            : ksh(movement.total_cost_minor / 100)}
                         </TD>
                         <TD className="num text-muted-foreground">
                           {movement.source_type}:{movement.source_id}
@@ -158,17 +171,24 @@ function ItemDetail() {
                 </>
               ) : tab === "Recipes" ? (
                 <>
-                  <PanelHead title="Recipe usage" sub="Active recipe versions using this inventory item" />
-                  <DataTable cols={["Recipe", "Version", "Yield", { l: "Ingredient qty", r: true }]}>
+                  <PanelHead
+                    title="Recipe usage"
+                    sub="Active recipe versions using this inventory item"
+                  />
+                  <DataTable
+                    cols={["Recipe", "Version", "Yield", { l: "Ingredient qty", r: true }]}
+                  >
                     {recipes.map((recipe) => (
                       <tr key={`${recipe.id}:${recipe.recipe_version_id}`}>
                         <TD className="font-semibold">{recipe.name}</TD>
                         <TD className="num">v{recipe.version}</TD>
                         <TD className="num">
-                          {formatQuantity(recipe.yield_quantity_minor)} {recipe.yield_unit_symbol ?? ""}
+                          {formatQuantity(recipe.yield_quantity_minor)}{" "}
+                          {recipe.yield_unit_symbol ?? ""}
                         </TD>
                         <TD className="num text-right">
-                          {formatQuantity(recipe.quantity_minor)} {recipe.component_unit_symbol ?? unit}
+                          {formatQuantity(recipe.quantity_minor)}{" "}
+                          {recipe.component_unit_symbol ?? unit}
                         </TD>
                       </tr>
                     ))}
@@ -181,17 +201,32 @@ function ItemDetail() {
                 </>
               ) : tab === "Supplier" ? (
                 <>
-                  <PanelHead title="Supplier" sub="Preferred source and item-master configuration" />
+                  <PanelHead
+                    title="Supplier"
+                    sub="Preferred source and item-master configuration"
+                  />
                   <div className="grid gap-3 p-4 md:grid-cols-2">
-                    <Info label="Preferred supplier" value={item.preferred_supplier_name || "Not assigned"} />
-                    <Info label="Purchase unit" value={item.purchase_unit_id || "Same as base / not configured"} />
+                    <Info
+                      label="Preferred supplier"
+                      value={item.preferred_supplier_name || "Not assigned"}
+                    />
+                    <Info
+                      label="Purchase unit"
+                      value={item.purchase_unit_id || "Same as base / not configured"}
+                    />
                     <Info label="Barcode" value={item.barcode || "Not configured"} />
-                    <Info label="Expiry tracking" value={item.track_expiry ? "Enabled" : "Disabled"} />
+                    <Info
+                      label="Expiry tracking"
+                      value={item.track_expiry ? "Enabled" : "Disabled"}
+                    />
                   </div>
                 </>
               ) : (
                 <>
-                  <PanelHead title="Stock by warehouse" sub="Authoritative balance and PAR by storage location" />
+                  <PanelHead
+                    title="Stock by warehouse"
+                    sub="Authoritative balance and PAR by storage location"
+                  />
                   <DataTable
                     cols={[
                       ...(isAllBranches ? ["Branch"] : []),
@@ -216,25 +251,42 @@ function ItemDetail() {
                             : "Healthy";
                       return (
                         <tr key={`${row.branchId}:${row.warehouse_id}`}>
-                          {isAllBranches && <TD className="num text-muted-foreground">{row.branchId}</TD>}
+                          {isAllBranches && (
+                            <TD className="num text-muted-foreground">{row.branchId}</TD>
+                          )}
                           <TD className="font-semibold">{row.warehouse_name}</TD>
-                          <TD className="num text-right">{formatQuantity(row.quantity_minor)} {unit}</TD>
-                          <TD className="num text-right">{formatQuantity(row.quantity_available_minor)} {unit}</TD>
-                          <TD className="num text-right">{formatQuantity(row.quantity_reserved_minor)} {unit}</TD>
-                          <TD className="num text-right">{formatQuantity(reorder)} {unit}</TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_available_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_reserved_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(reorder)} {unit}
+                          </TD>
                           <TD className="num text-right">
                             {formatQuantity(Number(row.target_quantity_minor ?? 0))} {unit}
                           </TD>
-                          <TD className="num text-right">{ksh(row.average_unit_cost_minor / 100)}</TD>
-                          <TD className="num text-right font-semibold">{ksh(row.total_value_minor / 100)}</TD>
-                          <TD><Status>{status}</Status></TD>
+                          <TD className="num text-right">
+                            {ksh(row.average_unit_cost_minor / 100)}
+                          </TD>
+                          <TD className="num text-right font-semibold">
+                            {ksh(row.total_value_minor / 100)}
+                          </TD>
+                          <TD>
+                            <Status>{status}</Status>
+                          </TD>
                         </tr>
                       );
                     })}
                   </DataTable>
                   {!balances.length && (
                     <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
-                      This item exists in the catalogue but has no stock movement in the selected branch yet.
+                      This item exists in the catalogue but has no stock movement in the selected
+                      branch yet.
                     </div>
                   )}
                 </>
@@ -254,7 +306,9 @@ function formatQuantity(quantityMicro: number) {
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border bg-secondary/30 px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-[13px] font-semibold">{value}</div>
     </div>
   );
