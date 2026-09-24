@@ -72,6 +72,69 @@ export type ProcurementSupplierRow = {
   received_count: number;
 };
 
+export type ProcurementRequisitionRow = {
+  id: string;
+  requisition_number: string;
+  warehouse_id: string;
+  status: string;
+  source_type: string;
+  requested_by: string;
+  required_at: string | null;
+  created_at: string;
+  approved_at: string | null;
+  approval_reason: string | null;
+  lines: Array<{
+    id: string;
+    inventory_item_id: string;
+    item_name: string;
+    requested_quantity_minor: number;
+    ordered_quantity_minor: number;
+    unit_id: string;
+    unit_symbol: string | null;
+    notes: string | null;
+  }>;
+};
+
+export type ProcurementReceiptRow = {
+  id: string;
+  receipt_number: string;
+  purchase_order_id: string;
+  purchase_order_number: string;
+  supplier_id: string;
+  supplier_name: string;
+  warehouse_id: string;
+  status: string;
+  received_at: string;
+  received_quantity_minor: number;
+  accepted_quantity_minor: number;
+  rejected_quantity_minor: number;
+  total_minor: number;
+};
+
+export type ProcurementSupplierInvoiceRow = {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  purchase_order_id: string;
+  purchase_order_number: string;
+  goods_receipt_id: string;
+  receipt_number: string;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string | null;
+  currency: string;
+  subtotal_minor: number;
+  tax_minor: number;
+  total_minor: number;
+  status: string;
+  created_at: string;
+  match_status: string | null;
+  ordered_total_minor: number | null;
+  received_total_minor: number | null;
+  invoiced_total_minor: number | null;
+  variance_minor: number | null;
+};
+
 export type InventoryMovementRow = {
   id: string;
   business_date: string | null;
@@ -143,8 +206,9 @@ export type InventoryBranchPayload = {
     branchId: string;
     purchaseOrders: ProcurementOrderRow[];
     suppliers: ProcurementSupplierRow[];
-    requisitions: Array<Record<string, unknown>>;
-    receipts: Array<Record<string, unknown>>;
+    requisitions: ProcurementRequisitionRow[];
+    receipts: ProcurementReceiptRow[];
+    supplierInvoices: ProcurementSupplierInvoiceRow[];
   };
   controlCentre: FoodCostControlData;
 };
