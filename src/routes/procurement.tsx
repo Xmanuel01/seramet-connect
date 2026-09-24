@@ -155,10 +155,16 @@ function Procurement() {
         <Metric label="Awaiting approval" value={approvalCount} invert={approvalCount > 0} />
         <Metric
           label="Deliveries expected"
-          value={orders.filter((order) => ["APPROVED", "PARTIALLY_RECEIVED"].includes(order.status)).length}
+          value={
+            orders.filter((order) => ["APPROVED", "PARTIALLY_RECEIVED"].includes(order.status))
+              .length
+          }
         />
         <Metric label="Supplier commitments" value={outstandingMinor / 100} money />
-        <Metric label="Open requisitions" value={requisitions.filter((row) => row.status !== "ORDERED").length} />
+        <Metric
+          label="Open requisitions"
+          value={requisitions.filter((row) => row.status !== "ORDERED").length}
+        />
         <Metric label="Receipts recorded" value={receipts.length} />
         <Metric label="Match exceptions" value={matchExceptions} invert={matchExceptions > 0} />
       </div>
@@ -271,7 +277,9 @@ function Procurement() {
                   </Btn>
                   <Btn
                     variant="primary"
-                    disabled={!canApprove || isAllBranches || busy || selected.status !== "SUBMITTED"}
+                    disabled={
+                      !canApprove || isAllBranches || busy || selected.status !== "SUBMITTED"
+                    }
                     onClick={() => setOrderAction("approve")}
                   >
                     <ClipboardCheck className="h-4 w-4" /> Approve
