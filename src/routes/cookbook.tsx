@@ -342,6 +342,7 @@ function Cookbook() {
           open={editorOpen}
           busy={busy}
           detail={detail}
+          canPublish={canPublish}
           onOpenChange={setEditorOpen}
           onSave={(draft, publishNow) =>
             void run(async () => {
@@ -530,12 +531,14 @@ function CookbookEditor({
   open,
   busy,
   detail,
+  canPublish,
   onOpenChange,
   onSave,
 }: {
   open: boolean;
   busy: boolean;
   detail: CookbookDetail;
+  canPublish: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (
     draft: {
@@ -882,9 +885,11 @@ function CookbookEditor({
           <Btn disabled={busy} onClick={() => submit(false)}>
             Save draft
           </Btn>
-          <Btn variant="primary" disabled={busy} onClick={() => submit(true)}>
-            Save & publish
-          </Btn>
+          {canPublish && (
+            <Btn variant="primary" disabled={busy} onClick={() => submit(true)}>
+              Save & publish
+            </Btn>
+          )}
         </div>
       </DialogContent>
     </Dialog>
