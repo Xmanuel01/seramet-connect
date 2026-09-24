@@ -173,7 +173,7 @@ function Transfers() {
     return () => {
       cancelled = true;
     };
-  }, [authoritative, operations, sourceBranchId, sourceWarehouseId]);
+  }, [authoritative, operations.request, sourceBranchId, sourceWarehouseId]);
 
   const loadDetail = useCallback(
     async (id: string) => {
@@ -211,7 +211,7 @@ function Transfers() {
         setNotice(error instanceof Error ? error.message : "Transfer detail could not be loaded");
       }
     },
-    [operations],
+    [operations.request],
   );
 
   const sourceBranch = control.data.find((row) => row.branchId === sourceBranchId);
