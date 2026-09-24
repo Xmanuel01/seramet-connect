@@ -1,0 +1,36 @@
+name: Prepare prep feature branch
+
+on:
+  push:
+    branches: [feat/prep-authoritative-execution]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/prep-authoritative-execution
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Format prep implementation
+        run: |
+          npx prettier --write             src/prep/prep-service.ts             src/prep/prep-service.test.ts             src/prep/schemas.ts             src/prep/use-prep.ts             src/server/prep-api.ts             src/lib/seramet-api.ts             src/inventory/inventory-intelligence-service.ts             src/routes/prep.tsx             src/server/database/schema-version.ts             src/server/database/sqlite-test-adapter.ts
+      - name: Commit formatted files
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add             src/prep/prep-service.ts             src/prep/prep-service.test.ts             src/prep/schemas.ts             src/prep/use-prep.ts             src/server/prep-api.ts             src/lib/seramet-api.ts             src/inventory/inventory-intelligence-service.ts             src/routes/prep.tsx             src/server/database/schema-version.ts             src/server/database/sqlite-test-adapter.ts
+          git commit -m "Format authoritative Prep implementation"
+          git push origin HEAD:feat/prep-authoritative-execution
