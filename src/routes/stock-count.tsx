@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
@@ -95,36 +95,40 @@ function StockCount() {
   const [loading, setLoading] = useState(false);
 
   const branchKey = control.data.map((row) => row.branchId).join("|");
-  const currentBranchData =
-    control.data.find((row) => row.branchId === branchId) ?? control.data[0];
-  const currentWarehouses = isAllBranches ? [] : (currentBranchData?.warehouses ?? []);
+  const currentWarehouses = useMemo(() => {
+    if (isAllBranches) return [];
+    const currentBranchData =
+      control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+    return currentBranchData?.warehouses ?? [];
+  }, [branchId, control.data, isAllBranches]);
 
-  const loadSessions = async () => {
+  const loadSessions = useCallback(async () => {
     if (!authoritative || !branchKey) return;
     setLoading(true);
     try {
       const rows = await Promise.all(
-        branchKey.split("|").filter(Boolean).map(async (selectedBranchId) => {
-          const response = await fetch(
-            `/api/seramet/inventory/stock-counts?branchId=${encodeURIComponent(selectedBranchId)}&limit=100`,
-            { headers: control.headers },
-          );
-          const body = (await response.json().catch(() => ({}))) as {
-            counts?: CountSummary[];
-            message?: string;
-            error?: string;
-          };
-          if (!response.ok || !body.counts) {
-            throw new Error(
-              body.message ?? body.error ?? `Stock count query failed (${response.status})`,
+        branchKey
+          .split("|")
+          .filter(Boolean)
+          .map(async (selectedBranchId) => {
+            const response = await fetch(
+              `/api/seramet/inventory/stock-counts?branchId=${encodeURIComponent(selectedBranchId)}&limit=100`,
+              { headers: control.headers },
             );
-          }
-          return body.counts;
-        }),
+            const body = (await response.json().catch(() => ({}))) as {
+              counts?: CountSummary[];
+              message?: string;
+              error?: string;
+            };
+            if (!response.ok || !body.counts) {
+              throw new Error(
+                body.message ?? body.error ?? `Stock count query failed (${response.status})`,
+              );
+            }
+            return body.counts;
+          }),
       );
-      const flattened = rows
-        .flat()
-        .sort((a, b) => b.created_at.localeCompare(a.created_at));
+      const flattened = rows.flat().sort((a, b) => b.created_at.localeCompare(a.created_at));
       setSessions(flattened);
       setSelectedId((value) => value || flattened[0]?.id || "");
     } catch (error) {
@@ -132,11 +136,11 @@ function StockCount() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [authoritative, branchKey, control.headers]);
 
   useEffect(() => {
     void loadSessions();
-  }, [authoritative, branchKey]);
+  }, [loadSessions]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -173,9 +177,7 @@ function StockCount() {
           ),
         );
         setReasons(
-          Object.fromEntries(
-            next.lines.map((line) => [line.inventory_item_id, line.reason ?? ""]),
-          ),
+          Object.fromEntries(next.lines.map((line) => [line.inventory_item_id, line.reason ?? ""])),
         );
       })
       .catch((error) => {
@@ -238,7 +240,9 @@ function StockCount() {
         count?: { id?: string };
       };
       if (!response.ok) {
-        throw new Error(payload.message ?? payload.error ?? `Stock count action failed (${response.status})`);
+        throw new Error(
+          payload.message ?? payload.error ?? `Stock count action failed (${response.status})`,
+        );
       }
       await loadSessions();
       if (selectedId) {
@@ -259,9 +263,7 @@ function StockCount() {
 
   const saveDraft = async (announce = true) => {
     if (!detail) return false;
-    const entered = detail.lines.filter(
-      (line) => counts[line.inventory_item_id]?.trim() !== "",
-    );
+    const entered = detail.lines.filter((line) => counts[line.inventory_item_id]?.trim() !== "");
     if (!entered.length) {
       setNotice("Enter at least one physical quantity before saving.");
       return false;
@@ -334,8 +336,8 @@ function StockCount() {
       )}
       {isAllBranches && (
         <div className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-[12px]">
-          Select a single branch before starting a stock count. Existing sessions from all accessible
-          branches remain visible below.
+          Select a single branch before starting a stock count. Existing sessions from all
+          accessible branches remain visible below.
         </div>
       )}
 
@@ -462,9 +464,7 @@ function StockCount() {
                 <Metric
                   label="Variance items"
                   value={
-                    hideExpected
-                      ? "Hidden"
-                      : detail.lines.filter((line) => {
+                    hideExpected ? "Hidden" : detail.lines.filter((line) => {
                           const value = counts[line.inventory_item_id];
                           if (value === undefined || value === "") return false;
                           return (
@@ -581,7 +581,9 @@ function StockCount() {
               {(editable || submitted) && (
                 <div className="border-t border-border p-4">
                   <label className="mb-3 grid gap-1 text-[11px] font-semibold text-muted-foreground">
-                    {submitted ? "Approval / cancellation reason" : "Cancellation reason (if needed)"}
+                    {submitted
+                      ? "Approval / cancellation reason"
+                      : "Cancellation reason (if needed)"}
                     <input
                       value={decisionReason}
                       onChange={(event) => setDecisionReason(event.target.value)}
@@ -656,7 +658,9 @@ function StockCount() {
                               `/api/seramet/inventory/stock-counts/${encodeURIComponent(detail.session.id)}/approve`,
                               decisionReason.trim() ? { reason: decisionReason.trim() } : {},
                             )
-                              .then(() => setNotice("Stock count approved and posted to inventory."))
+                              .then(() =>
+                                setNotice("Stock count approved and posted to inventory."),
+                              )
                               .catch((error) =>
                                 setNotice(
                                   error instanceof Error
@@ -676,8 +680,8 @@ function StockCount() {
 
               {selectedSummary?.status === "POSTED" && (
                 <div className="border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
-                  This session is posted and immutable. Corrections must be made through a new
-                  stock count or an authorized inventory adjustment.
+                  This session is posted and immutable. Corrections must be made through a new stock
+                  count or an authorized inventory adjustment.
                 </div>
               )}
             </>
