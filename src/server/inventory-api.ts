@@ -164,6 +164,10 @@ export async function handleInventoryApi(
   if (url.pathname === "/api/seramet/inventory/units" && request.method === "GET") {
     return json({ ok: true, units: await service.listUnits() });
   }
+  if (url.pathname === "/api/seramet/inventory/warehouses" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, warehouses: await service.listWarehouses(branchId) });
+  }
   if (url.pathname === "/api/seramet/inventory/items" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     const warehouseId = url.searchParams.get("warehouseId")?.trim() || undefined;
