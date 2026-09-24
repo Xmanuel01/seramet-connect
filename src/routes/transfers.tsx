@@ -155,8 +155,7 @@ function Transfers() {
       return;
     }
     let cancelled = false;
-    void operations
-      .request<{ detail: { rows: StockPosition[] } }>(
+    void request<{ detail: { rows: StockPosition[] } }>(
         `/api/seramet/inventory/stock-detail?branchId=${encodeURIComponent(
           sourceBranchId,
         )}&warehouseId=${encodeURIComponent(sourceWarehouseId)}`,
