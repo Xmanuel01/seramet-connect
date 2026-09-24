@@ -70,23 +70,26 @@ function StockDetail() {
     setStatus("loading");
     setError("");
     void Promise.all(
-      branchKey.split("|").filter(Boolean).map(async (branchId) => {
-        const response = await fetch(
-          `/api/seramet/inventory/stock-detail?branchId=${encodeURIComponent(branchId)}`,
-          { headers: control.headers },
-        );
-        const body = (await response.json().catch(() => ({}))) as {
-          detail?: { rows: Omit<StockRow, "branchId">[] };
-          message?: string;
-          error?: string;
-        };
-        if (!response.ok || !body.detail) {
-          throw new Error(
-            body.message ?? body.error ?? `Stock detail query failed (${response.status})`,
+      branchKey
+        .split("|")
+        .filter(Boolean)
+        .map(async (branchId) => {
+          const response = await fetch(
+            `/api/seramet/inventory/stock-detail?branchId=${encodeURIComponent(branchId)}`,
+            { headers: control.headers },
           );
-        }
-        return body.detail.rows.map((row) => ({ ...row, branchId }));
-      }),
+          const body = (await response.json().catch(() => ({}))) as {
+            detail?: { rows: Omit<StockRow, "branchId">[] };
+            message?: string;
+            error?: string;
+          };
+          if (!response.ok || !body.detail) {
+            throw new Error(
+              body.message ?? body.error ?? `Stock detail query failed (${response.status})`,
+            );
+          }
+          return body.detail.rows.map((row) => ({ ...row, branchId }));
+        }),
     )
       .then((result) => {
         if (cancelled) return;
@@ -108,17 +111,18 @@ function StockDetail() {
       [...new Map(rows.map((row) => [`${row.branchId}:${row.warehouse_id}`, row])).values()]
         .map((row) => ({
           key: `${row.branchId}:${row.warehouse_id}`,
-          label: isAllBranches
-            ? `${row.warehouse_name} · ${row.branchId}`
-            : row.warehouse_name,
+          label: isAllBranches ? `${row.warehouse_name} · ${row.branchId}` : row.warehouse_name,
         }))
         .sort((a, b) => a.label.localeCompare(b.label)),
     [isAllBranches, rows],
   );
   const categories = useMemo(
     () =>
-      [...new Set(rows.map((row) => row.category_name).filter((value): value is string => Boolean(value)))]
-        .sort((a, b) => a.localeCompare(b)),
+      [
+        ...new Set(
+          rows.map((row) => row.category_name).filter((value): value is string => Boolean(value)),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
     [rows],
   );
 
@@ -245,18 +249,14 @@ function StockDetail() {
                       {row.sku ?? row.code}
                     </div>
                   </TD>
-                  <TD className="text-muted-foreground">
-                    {row.category_name || "Uncategorized"}
-                  </TD>
+                  <TD className="text-muted-foreground">{row.category_name || "Uncategorized"}</TD>
                   <TD>
                     <div className="font-semibold">{row.warehouse_name}</div>
                     <div className="num text-[10px] text-muted-foreground">
                       {row.warehouse_code}
                     </div>
                   </TD>
-                  {isAllBranches && (
-                    <TD className="num text-muted-foreground">{row.branchId}</TD>
-                  )}
+                  {isAllBranches && <TD className="num text-muted-foreground">{row.branchId}</TD>}
                   <TD className="num text-right">
                     {quantity(row.quantity_minor)} {row.unit_symbol ?? "unit"}
                   </TD>
@@ -272,9 +272,7 @@ function StockDetail() {
                   <TD className="num text-right text-muted-foreground">
                     {quantity(row.target_quantity_minor)}
                   </TD>
-                  <TD className="num text-right">
-                    {ksh(row.average_unit_cost_minor / 100)}
-                  </TD>
+                  <TD className="num text-right">{ksh(row.average_unit_cost_minor / 100)}</TD>
                   <TD className="num text-right font-semibold">
                     {ksh(row.total_value_minor / 100)}
                   </TD>
