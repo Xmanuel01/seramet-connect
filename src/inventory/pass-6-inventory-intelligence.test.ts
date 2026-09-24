@@ -746,7 +746,9 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(overview.warehouses).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: warehouseId })]),
     );
-    expect(overviewRequisition === undefined || Array.isArray(overviewRequisition.lines)).toBe(true);
+    expect(overviewRequisition === undefined || Array.isArray(overviewRequisition.lines)).toBe(
+      true,
+    );
   });
 
   it("enforces over-receipt policy and allows configured tolerance", async () => {
