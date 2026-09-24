@@ -23,7 +23,7 @@ INSERT INTO inventory_categories
 SELECT DISTINCT
   tenant_id,
   category_id,
-  UPPER(REPLACE(REPLACE(category_id,' ','-'),'_','-')),
+  category_id,
   category_id,
   'Backfilled from existing inventory item category',
   1,
