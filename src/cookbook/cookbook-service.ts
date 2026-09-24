@@ -181,9 +181,7 @@ export class CookbookService {
   async publish(input: CookbookPublishInput) {
     this.require(permissions.cookbookPublish);
     const source = await this.db
-      .prepare(
-        "SELECT * FROM cookbook_recipe_content_versions WHERE tenant_id=? AND id=?",
-      )
+      .prepare("SELECT * FROM cookbook_recipe_content_versions WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, input.contentVersionId)
       .first<ContentRow>();
     if (!source) {

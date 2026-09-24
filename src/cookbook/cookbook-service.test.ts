@@ -215,13 +215,6 @@ function seed(db: SqliteD1TestDatabase) {
       .prepare(
         "INSERT INTO recipe_version_components (tenant_id,id,recipe_version_id,inventory_item_id,sub_recipe_id,quantity_minor,unit_id,waste_factor_bps,optional,station_id) VALUES (?,?,?,?,NULL,?,?,0,0,NULL)",
       )
-      .run(
-        tenantId,
-        "component-" + version,
-        id,
-        "ingredient-item",
-        2_000_000,
-        "unit-piece",
-      );
+      .run(tenantId, "component-" + version, id, "ingredient-item", 2_000_000, "unit-piece");
   }
 }

@@ -40,8 +40,16 @@ function Cookbook() {
     const needle = search.trim().toLowerCase();
     return cookbook.recipes.filter((recipe) => {
       if (!needle) return true;
-      return [recipe.name, recipe.menu_item_name, recipe.production_item_name, recipe.menu_item_code]
-        .some((value) => String(value ?? "").toLowerCase().includes(needle));
+      return [
+        recipe.name,
+        recipe.menu_item_name,
+        recipe.production_item_name,
+        recipe.menu_item_code,
+      ].some((value) =>
+        String(value ?? "")
+          .toLowerCase()
+          .includes(needle),
+      );
     });
   }, [cookbook.recipes, search]);
 
@@ -52,7 +60,7 @@ function Cookbook() {
     null;
   const displayContent = selected
     ? canManage
-      ? selected.latestContent ?? selected.publishedContent
+      ? (selected.latestContent ?? selected.publishedContent)
       : selected.publishedContent
     : null;
 
@@ -74,7 +82,10 @@ function Cookbook() {
       title="Cookbook"
       subtitle={`Kitchen methods and standards - ${branchLabel}`}
       actions={
-        <Btn disabled={!authoritative || busy || isAllBranches} onClick={() => void cookbook.refresh()}>
+        <Btn
+          disabled={!authoritative || busy || isAllBranches}
+          onClick={() => void cookbook.refresh()}
+        >
           <RefreshCw className="h-4 w-4" /> Refresh
         </Btn>
       }
@@ -87,7 +98,9 @@ function Cookbook() {
         />
         <Metric
           label="Draft changes"
-          value={cookbook.recipes.filter((recipe) => recipe.latestContent?.status === "DRAFT").length}
+          value={
+            cookbook.recipes.filter((recipe) => recipe.latestContent?.status === "DRAFT").length
+          }
         />
         <Metric
           label="Needs method"
@@ -121,7 +134,8 @@ function Cookbook() {
           />
           <div className="max-h-[72vh] divide-y divide-border overflow-y-auto">
             {recipes.map((recipe) => {
-              const status = recipe.latestContent?.status ?? (recipe.publishedContent ? "PUBLISHED" : "MISSING");
+              const status =
+                recipe.latestContent?.status ?? (recipe.publishedContent ? "PUBLISHED" : "MISSING");
               return (
                 <button
                   key={recipe.id}
@@ -226,7 +240,9 @@ function Cookbook() {
                               {step.step}
                             </div>
                             <div className="min-w-0">
-                              {step.title ? <div className="font-semibold">{step.title}</div> : null}
+                              {step.title ? (
+                                <div className="font-semibold">{step.title}</div>
+                              ) : null}
                               <div className="mt-1 text-[13px] leading-6">{step.instruction}</div>
                               {(step.durationMinutes || step.temperature || step.checkpoint) && (
                                 <div className="mt-2 text-[11px] text-muted-foreground">
@@ -271,9 +287,18 @@ function Cookbook() {
                     </div>
                   )}
                   <Info label="Content status" value={displayContent?.status ?? "Not published"} />
-                  <Info label="Prep time" value={displayContent ? `${displayContent.prepMinutes} min` : "—"} />
-                  <Info label="Cook time" value={displayContent ? `${displayContent.cookMinutes} min` : "—"} />
-                  <Info label="Portion standard" value={displayContent?.portionLabel ?? formatYield(selected)} />
+                  <Info
+                    label="Prep time"
+                    value={displayContent ? `${displayContent.prepMinutes} min` : "—"}
+                  />
+                  <Info
+                    label="Cook time"
+                    value={displayContent ? `${displayContent.cookMinutes} min` : "—"}
+                  />
+                  <Info
+                    label="Portion standard"
+                    value={displayContent?.portionLabel ?? formatYield(selected)}
+                  />
                   <Info
                     label="Revision"
                     value={displayContent ? `r${displayContent.revision}` : "—"}
@@ -318,13 +343,10 @@ function Cookbook() {
           busy={busy}
           onClose={() => setEditing(null)}
           onSave={(body) =>
-            void run(
-              async () => {
-                await cookbook.command("/api/seramet/cookbook/drafts", body);
-                setEditing(null);
-              },
-              "Cookbook draft saved as a new revision.",
-            )
+            void run(async () => {
+              await cookbook.command("/api/seramet/cookbook/drafts", body);
+              setEditing(null);
+            }, "Cookbook draft saved as a new revision.")
           }
         />
       ) : null}
@@ -398,39 +420,92 @@ function CookbookEditor({
         <form onSubmit={submit} className="space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
             <Field label="Prep minutes">
-              <input className={inputClass} type="number" min="0" value={prepMinutes} onChange={(event) => setPrepMinutes(event.target.value)} />
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                value={prepMinutes}
+                onChange={(event) => setPrepMinutes(event.target.value)}
+              />
             </Field>
             <Field label="Cook minutes">
-              <input className={inputClass} type="number" min="0" value={cookMinutes} onChange={(event) => setCookMinutes(event.target.value)} />
+              <input
+                className={inputClass}
+                type="number"
+                min="0"
+                value={cookMinutes}
+                onChange={(event) => setCookMinutes(event.target.value)}
+              />
             </Field>
             <Field label="Portion / yield label">
-              <input className={inputClass} value={portionLabel} onChange={(event) => setPortionLabel(event.target.value)} />
+              <input
+                className={inputClass}
+                value={portionLabel}
+                onChange={(event) => setPortionLabel(event.target.value)}
+              />
             </Field>
           </div>
           <Field label="Method — one step per line">
-            <textarea className={textareaClass} rows={10} value={methodText} onChange={(event) => setMethodText(event.target.value)} placeholder={"Prepare ingredients\nHeat the pan\nCook until ready"} />
+            <textarea
+              className={textareaClass}
+              rows={10}
+              value={methodText}
+              onChange={(event) => setMethodText(event.target.value)}
+              placeholder={"Prepare ingredients\nHeat the pan\nCook until ready"}
+            />
           </Field>
           <Field label="Chef notes">
-            <textarea className={textareaClass} rows={4} value={chefNotes} onChange={(event) => setChefNotes(event.target.value)} />
+            <textarea
+              className={textareaClass}
+              rows={4}
+              value={chefNotes}
+              onChange={(event) => setChefNotes(event.target.value)}
+            />
           </Field>
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="Recipe image URL">
-              <input className={inputClass} value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://..." />
+              <input
+                className={inputClass}
+                value={imageUrl}
+                onChange={(event) => setImageUrl(event.target.value)}
+                placeholder="https://..."
+              />
             </Field>
             <Field label="Source document">
-              <input className={inputClass} value={sourceDocument} onChange={(event) => setSourceDocument(event.target.value)} placeholder="Mona Cookbook v1" />
+              <input
+                className={inputClass}
+                value={sourceDocument}
+                onChange={(event) => setSourceDocument(event.target.value)}
+                placeholder="Mona Cookbook v1"
+              />
             </Field>
           </div>
           <Field label="Source reference">
-            <input className={inputClass} value={sourceReference} onChange={(event) => setSourceReference(event.target.value)} placeholder="Page, section, document URL or reference" />
+            <input
+              className={inputClass}
+              value={sourceReference}
+              onChange={(event) => setSourceReference(event.target.value)}
+              placeholder="Page, section, document URL or reference"
+            />
           </Field>
           <Field label="Change summary">
-            <input className={inputClass} value={changeSummary} onChange={(event) => setChangeSummary(event.target.value)} placeholder="Standardized cooking steps and timing" />
+            <input
+              className={inputClass}
+              value={changeSummary}
+              onChange={(event) => setChangeSummary(event.target.value)}
+              placeholder="Standardized cooking steps and timing"
+            />
           </Field>
-          {error ? <div className="rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div> : null}
+          {error ? (
+            <div className="rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>
+          ) : null}
           <div className="flex justify-end gap-2">
-            <Btn type="button" disabled={busy} onClick={onClose}>Cancel</Btn>
-            <Btn type="submit" variant="primary" disabled={busy}>Save draft revision</Btn>
+            <Btn type="button" disabled={busy} onClick={onClose}>
+              Cancel
+            </Btn>
+            <Btn type="submit" variant="primary" disabled={busy}>
+              Save draft revision
+            </Btn>
           </div>
         </form>
       </DialogContent>
@@ -449,20 +524,33 @@ function EmptyMethod({ canManage }: { canManage: boolean }) {
 }
 
 function SectionTitle({ children, className = "" }: { children: string; className?: string }) {
-  return <h3 className={`text-[12px] font-bold uppercase tracking-[0.06em] text-muted-foreground ${className}`}>{children}</h3>;
+  return (
+    <h3
+      className={`text-[12px] font-bold uppercase tracking-[0.06em] text-muted-foreground ${className}`}
+    >
+      {children}
+    </h3>
+  );
 }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-[13px] font-semibold">{value}</div>
     </div>
   );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 
 function formatYield(recipe: CookbookRecipe) {
