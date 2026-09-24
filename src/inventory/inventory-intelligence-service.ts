@@ -2951,9 +2951,123 @@ export class InventoryIntelligenceService {
     }
   }
 
+  async listParPolicies(branchId: string) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryCostControlView,
+      permissions.inventoryCostControlManage,
+    ]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `WITH incoming AS (
+           SELECT po.warehouse_id,pol.item_id,
+                  COALESCE(SUM(pol.ordered_quantity_minor-pol.received_quantity_minor),0) AS quantity_minor
+             FROM purchase_orders po
+             JOIN purchase_order_lines pol
+               ON pol.tenant_id=po.tenant_id AND pol.purchase_order_id=po.id
+            WHERE po.tenant_id=? AND po.branch_id=?
+              AND po.status IN ('APPROVED','PARTIALLY_RECEIVED')
+            GROUP BY po.warehouse_id,pol.item_id
+         ),
+         slots AS (
+           SELECT warehouse_id,item_id
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=?
+           UNION
+           SELECT warehouse_id,inventory_item_id
+             FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND active=1 AND day_of_week IS NULL
+           UNION
+           SELECT i.default_warehouse_id,i.id
+             FROM inventory_items i
+             JOIN warehouses w
+               ON w.tenant_id=i.tenant_id AND w.id=i.default_warehouse_id
+              AND w.branch_id=? AND w.active=1
+            WHERE i.tenant_id=? AND i.active=1 AND i.default_warehouse_id IS NOT NULL
+         )
+         SELECT w.id AS warehouse_id,w.name AS warehouse_name,w.code AS warehouse_code,
+                i.id AS inventory_item_id,i.code,i.sku,i.name,u.symbol AS unit_symbol,
+                s.name AS supplier_name,i.preferred_supplier_id,
+                COALESCE(b.quantity_minor,0) AS on_hand_quantity_minor,
+                COALESCE(b.quantity_reserved_minor,0) AS reserved_quantity_minor,
+                COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0)
+                  AS available_quantity_minor,
+                COALESCE(b.average_unit_cost_minor,0) AS average_unit_cost_minor,
+                COALESCE(inc.quantity_minor,0) AS incoming_quantity_minor,
+                p.id AS policy_id,
+                COALESCE(p.reorder_point_minor,0) AS reorder_point_minor,
+                COALESCE(p.target_quantity_minor,0) AS target_quantity_minor,
+                COALESCE(p.safety_stock_minor,0) AS safety_stock_minor,
+                COALESCE(p.minimum_quantity_minor,0) AS minimum_quantity_minor,
+                p.maximum_quantity_minor,
+                COALESCE(p.recommendation_mode,'RECOMMEND') AS recommendation_mode,
+                CASE
+                  WHEN COALESCE(p.target_quantity_minor,0)
+                       > COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0)
+                         + COALESCE(inc.quantity_minor,0)
+                  THEN COALESCE(p.target_quantity_minor,0)
+                       - (COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0)
+                          + COALESCE(inc.quantity_minor,0))
+                  ELSE 0
+                END AS suggested_quantity_minor
+           FROM slots
+           JOIN warehouses w
+             ON w.tenant_id=? AND w.branch_id=? AND w.id=slots.warehouse_id AND w.active=1
+           JOIN inventory_items i
+             ON i.tenant_id=? AND i.id=slots.item_id AND i.active=1
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN suppliers s
+             ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=i.tenant_id AND b.branch_id=?
+            AND b.warehouse_id=slots.warehouse_id AND b.item_id=i.id
+           LEFT JOIN incoming inc
+             ON inc.warehouse_id=slots.warehouse_id AND inc.item_id=i.id
+           LEFT JOIN inventory_par_policies p
+             ON p.tenant_id=i.tenant_id AND p.branch_id=?
+            AND p.warehouse_id=slots.warehouse_id AND p.inventory_item_id=i.id
+            AND p.day_of_week IS NULL AND p.active=1
+          ORDER BY w.name,i.name,i.id`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        branchId,
+        this.actor.tenantId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        branchId,
+      )
+      .all<Record<string, unknown>>();
+    return (result.results ?? []).map((row) => {
+      const suggestedQuantityMicro = Number(row["suggested_quantity_minor"] ?? 0);
+      const averageUnitCostMinor = Number(row["average_unit_cost_minor"] ?? 0);
+      return {
+        ...row,
+        suggested_value_minor: quantityCostMinor(suggestedQuantityMicro, averageUnitCostMinor),
+      };
+    });
+  }
+
   async upsertParPolicy(input: InventoryParPolicyInput) {
     this.requirePermission(permissions.inventoryCostControlManage);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    const item = await this.db
+      .prepare("SELECT id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.inventoryItemId)
+      .first<{ id: string }>();
+    if (!item) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
+    }
     if (input.targetQuantityMicro < input.reorderPointMicro) {
       throw new Error("PAR target quantity cannot be below reorder point");
     }
