@@ -509,9 +509,7 @@ function StockCount() {
                         <TD className="num text-muted-foreground">{line.sku ?? line.code}</TD>
                         <TD className="text-muted-foreground">{line.unit_symbol ?? "unit"}</TD>
                         <TD className="num text-right">
-                          {hideExpected
-                            ? "Hidden"
-                            : quantity(line.expected_quantity_minor)}
+                          {hideExpected ? "Hidden" : quantity(line.expected_quantity_minor)}
                         </TD>
                         <TD className="text-right">
                           {editable ? (
