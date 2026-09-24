@@ -203,6 +203,47 @@ export async function handleInventoryApi(
     const branchId = requiredQuery(url, "branchId");
     return json({ ok: true, warehouses: await service.listWarehouses(branchId) });
   }
+  if (url.pathname === "/api/seramet/inventory/adjustments" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({
+      ok: true,
+      adjustments: await service.listAdjustments(branchId, boundedLimit(url)),
+    });
+  }
+  if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({
+      ok: true,
+      wastage: await service.listWastageRequests(branchId, boundedLimit(url)),
+    });
+  }
+  if (url.pathname === "/api/seramet/inventory/breakages" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({
+      ok: true,
+      breakages: await service.listBreakageRequests(branchId, boundedLimit(url)),
+    });
+  }
+  if (url.pathname === "/api/seramet/inventory/par-policies" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, policies: await service.listParPolicies(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/transfers" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({
+      ok: true,
+      transfers: await service.listTransfers(branchId, boundedLimit(url)),
+    });
+  }
+  const transferDetailRoute = /^\/api\/seramet\/inventory\/transfers\/([^/]+)$/.exec(
+    url.pathname,
+  );
+  if (transferDetailRoute && request.method === "GET") {
+    return json({
+      ok: true,
+      detail: await service.transferDetail(decodeURIComponent(transferDetailRoute[1]!)),
+    });
+  }
   if (url.pathname === "/api/seramet/inventory/items" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     const warehouseId = url.searchParams.get("warehouseId")?.trim() || undefined;
@@ -277,6 +318,26 @@ export async function handleInventoryApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/inventory/warehouses" && request.method === "POST") {
+    return json(
+      {
+        ok: true,
+        warehouse: await service.createWarehouse(
+          await parse<WarehouseDefinitionInput>(request, warehouseDefinitionSchema),
+        ),
+      },
+      201,
+    );
+  }
+  const warehouseArchiveRoute =
+    /^\/api\/seramet\/inventory\/warehouses\/([^/]+)\/archive$/.exec(url.pathname);
+  if (warehouseArchiveRoute && request.method === "POST") {
+    return json({
+      ok: true,
+      warehouse: await service.archiveWarehouse(decodeURIComponent(warehouseArchiveRoute[1]!)),
+    });
+  }
+
   if (url.pathname === "/api/seramet/inventory/items" && request.method === "POST") {
     return json(
       {
@@ -295,6 +356,138 @@ export async function handleInventoryApi(
       201,
     );
   }
+  if (
+    url.pathname === "/api/seramet/inventory/adjustments/requests" &&
+    request.method === "POST"
+  ) {
+    const body = await parse<InventoryAdjustmentApiRequest>(
+      request,
+      inventoryAdjustmentApiSchema,
+    );
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        adjustment: await service.requestAdjustment({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const adjustmentApproveRoute =
+    /^\/api\/seramet\/inventory\/adjustments\/([^/]+)\/approve$/.exec(url.pathname);
+  if (adjustmentApproveRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    return json({
+      ok: true,
+      adjustment: await service.approveAdjustment(
+        decodeURIComponent(adjustmentApproveRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+  const adjustmentRejectRoute =
+    /^\/api\/seramet\/inventory\/adjustments\/([^/]+)\/reject$/.exec(url.pathname);
+  if (adjustmentRejectRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    if (!body.reason) throw new SerametHttpError(400, "Rejection reason is required");
+    return json({
+      ok: true,
+      adjustment: await service.rejectAdjustment(
+        decodeURIComponent(adjustmentRejectRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+
+  if (
+    url.pathname === "/api/seramet/inventory/wastage/requests" &&
+    request.method === "POST"
+  ) {
+    const body = await parse<InventoryLossApiRequest>(request, inventoryLossApiSchema);
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        wastage: await service.requestWastageApproval({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const wastageApproveRoute =
+    /^\/api\/seramet\/inventory\/wastage\/([^/]+)\/approve$/.exec(url.pathname);
+  if (wastageApproveRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    return json({
+      ok: true,
+      wastage: await service.approveWastageRequest(
+        decodeURIComponent(wastageApproveRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+  const wastageRejectRoute =
+    /^\/api\/seramet\/inventory\/wastage\/([^/]+)\/reject$/.exec(url.pathname);
+  if (wastageRejectRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    if (!body.reason) throw new SerametHttpError(400, "Rejection reason is required");
+    return json({
+      ok: true,
+      wastage: await service.rejectWastageRequest(
+        decodeURIComponent(wastageRejectRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+
+  if (
+    url.pathname === "/api/seramet/inventory/breakages/requests" &&
+    request.method === "POST"
+  ) {
+    const body = await parse<InventoryLossApiRequest>(request, inventoryLossApiSchema);
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        breakage: await service.requestBreakageApproval({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const breakageApproveRoute =
+    /^\/api\/seramet\/inventory\/breakages\/([^/]+)\/approve$/.exec(url.pathname);
+  if (breakageApproveRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    return json({
+      ok: true,
+      breakage: await service.approveBreakageRequest(
+        decodeURIComponent(breakageApproveRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+  const breakageRejectRoute =
+    /^\/api\/seramet\/inventory\/breakages\/([^/]+)\/reject$/.exec(url.pathname);
+  if (breakageRejectRoute && request.method === "POST") {
+    const body = await parse<{ reason?: string }>(request, approvalSchema);
+    if (!body.reason) throw new SerametHttpError(400, "Rejection reason is required");
+    return json({
+      ok: true,
+      breakage: await service.rejectBreakageRequest(
+        decodeURIComponent(breakageRejectRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+
   if (url.pathname === "/api/seramet/inventory/movements" && request.method === "POST") {
     const body = await parse<MovementRequest>(request, movementRequestSchema);
     const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
