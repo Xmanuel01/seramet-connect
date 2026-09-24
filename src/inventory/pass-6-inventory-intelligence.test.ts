@@ -490,6 +490,128 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     ).rejects.toThrow("Circular recipe");
   });
 
+  it("creates and versions authoritative recipes through the recipe editor model", async () => {
+    await seedBeef(service);
+    await service.createInventoryItem({
+      id: "item-recipe-output",
+      code: "RECIPE-OUTPUT",
+      name: "Recipe output",
+      baseUnitId: "unit-piece",
+      purchaseUnitId: "unit-piece",
+    });
+    await opening(service, "opening-recipe-editor", 8 * QUANTITY_SCALE, 50_000);
+
+    const created = await service.saveRecipeDefinition({
+      productionItemId: "item-recipe-output",
+      name: "Authoritative prep",
+      yieldQuantityMicro: 4 * QUANTITY_SCALE,
+      yieldUnitId: "unit-piece",
+      packagingCostMinor: 100,
+      productionOverheadMinor: 200,
+      components: [
+        {
+          inventoryItemId: "item-beef",
+          quantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-kg",
+          wasteFactorBps: 500,
+        },
+      ],
+    });
+    expect(created).toMatchObject({ created: true, version: 1 });
+
+    const edited = await service.saveRecipeDefinition({
+      recipeId: created.recipeId,
+      productionItemId: "item-recipe-output",
+      name: "Authoritative prep updated",
+      yieldQuantityMicro: 5 * QUANTITY_SCALE,
+      yieldUnitId: "unit-piece",
+      packagingCostMinor: 100,
+      productionOverheadMinor: 300,
+      components: [
+        {
+          inventoryItemId: "item-beef",
+          quantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-kg",
+          wasteFactorBps: 250,
+        },
+      ],
+    });
+    expect(edited).toMatchObject({ created: false, version: 2 });
+
+    const overview = await service.recipeOverview(branchId);
+    const recipe = overview.recipes.find((row) => row["id"] === created.recipeId);
+    expect(recipe).toMatchObject({
+      name: "Authoritative prep updated",
+      version: 2,
+      production_item_id: "item-recipe-output",
+    });
+    expect(Number(recipe?.["cost_minor"])).toBeGreaterThan(0);
+    expect(Number(recipe?.["available_output_quantity_minor"])).toBeGreaterThan(0);
+
+    const versions = await db
+      .prepare(
+        "SELECT version,active FROM recipe_versions WHERE tenant_id=? AND recipe_id=? ORDER BY version",
+      )
+      .bind(tenantId, created.recipeId)
+      .all<{ version: number; active: number }>();
+    expect(versions.results).toEqual([
+      { version: 1, active: 0 },
+      { version: 2, active: 1 },
+    ]);
+  });
+
+  it("imports multiple authoritative recipe definitions and reports row outcomes", async () => {
+    await seedBeef(service);
+    await service.createInventoryItem({
+      id: "item-import-output-a",
+      code: "IMPORT-A",
+      name: "Imported output A",
+      baseUnitId: "unit-piece",
+      purchaseUnitId: "unit-piece",
+    });
+    await service.createInventoryItem({
+      id: "item-import-output-b",
+      code: "IMPORT-B",
+      name: "Imported output B",
+      baseUnitId: "unit-piece",
+      purchaseUnitId: "unit-piece",
+    });
+    const result = await service.importRecipeDefinitions({
+      idempotencyKey: "recipe-import-test",
+      recipes: [
+        {
+          productionItemId: "item-import-output-a",
+          name: "Imported recipe A",
+          yieldQuantityMicro: QUANTITY_SCALE,
+          yieldUnitId: "unit-piece",
+          components: [
+            {
+              inventoryItemId: "item-beef",
+              quantityMicro: QUANTITY_SCALE,
+              unitId: "unit-kg",
+            },
+          ],
+        },
+        {
+          productionItemId: "item-import-output-b",
+          name: "Imported recipe B",
+          yieldQuantityMicro: QUANTITY_SCALE,
+          yieldUnitId: "unit-piece",
+          components: [
+            {
+              inventoryItemId: "missing-item",
+              quantityMicro: QUANTITY_SCALE,
+              unitId: "unit-kg",
+            },
+          ],
+        },
+      ],
+    });
+    expect(result).toMatchObject({ imported: 1, failed: 1 });
+    expect(result.results[0]).toMatchObject({ index: 0, created: true });
+    expect(result.results[1]?.error).toMatch(/unavailable|base unit/i);
+  });
+
   it("completes a production batch once and records actual yield", async () => {
     await seedBeef(service);
     await service.createInventoryItem({
