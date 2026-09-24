@@ -5,12 +5,14 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatDate, formatNumber, ksh } from "@/lib/currency";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
+  type ProcurementBranchPayload,
   type ProcurementOrderRow,
-  useInventoryControlCentre,
-} from "@/inventory/use-inventory-control-centre";
+  type ProcurementSupplierRow,
+  useProcurementControlCentre,
+} from "@/procurement/use-procurement-control-centre";
 import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/procurement")({
   head: () => ({
@@ -18,7 +20,7 @@ export const Route = createFileRoute("/procurement")({
       { title: "Procurement - Seramet" },
       {
         name: "description",
-        content: "Purchase requisitions, orders, receiving and supplier performance.",
+        content: "Purchase requisitions, orders, receiving, supplier bills and performance.",
       },
     ],
   }),
@@ -27,6 +29,7 @@ export const Route = createFileRoute("/procurement")({
 
 type DisplayOrder = {
   id: string;
+  branchId: string;
   number: string;
   supplier: string;
   supplierId: string;
@@ -48,85 +51,63 @@ type DisplayOrder = {
 };
 
 function Procurement() {
-  const { branchId, branchLabel, currency } = useAppContext();
-  const { state, mutate, persistenceMode, backendStatus } = useTransactionEngine();
-  const authoritative = persistenceMode === "authoritative";
-  const control = useInventoryControlCentre(authoritative);
+  const { branchId, branchLabel, currency, currentUser, isAllBranches } = useAppContext();
+  const control = useProcurementControlCentre(true);
   const [selectedId, setSelectedId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [orderAction, setOrderAction] = useState<"approve" | "cancel" | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const serverData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const activeBranchData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
 
-  const orders = useMemo<DisplayOrder[]>(() => {
-    if (authoritative) return (serverData?.procurement.purchaseOrders ?? []).map(serverOrder);
-    return state.purchaseOrders
-      .filter(
-        (order) =>
-          (order.branchId ?? order.branch) === branchId ||
-          order.branch === branchLabel.replace(" Branch", ""),
-      )
-      .map((order) => ({
-        id: order.id,
-        number: order.id,
-        supplier: order.supplier,
-        supplierId: order.supplier,
-        warehouseId: "",
-        status: order.status,
-        currency,
-        totalMinor: Math.round(order.total * 100),
-        expectedAt: order.expectedAt,
-        lines: order.lines.map((line, index) => ({
-          id: `${order.id}:${index}`,
-          itemId: line.sku,
-          item: line.name,
-          unit: line.unit,
-          orderedMicro: Math.round(line.quantity * 1_000_000),
-          receivedMicro: Math.round(line.receivedQuantity * 1_000_000),
-          unitPriceMinor: Math.round(line.unitCost * 100),
-          totalMinor: Math.round(line.quantity * line.unitCost * 100),
-        })),
-      }));
-  }, [
-    authoritative,
-    branchId,
-    branchLabel,
-    serverData?.procurement.purchaseOrders,
-    state.purchaseOrders,
-    currency,
-  ]);
+  const orders = useMemo<DisplayOrder[]>(
+    () =>
+      control.data.flatMap((branch) =>
+        branch.purchaseOrders.map((order) => serverOrder(order, branch.branchId)),
+      ),
+    [control.data],
+  );
   const selected = orders.find((order) => order.id === selectedId) ?? orders[0];
-  const suppliers = authoritative
-    ? (serverData?.procurement.suppliers ?? [])
-    : Array.from(new Set(orders.map((order) => order.supplier))).map((name) => ({
-        id: name,
-        code: name,
-        name,
-        lead_time_days: 0,
-        payment_terms_days: 0,
-        currency,
-        order_count: orders.filter((order) => order.supplier === name).length,
-        ordered_minor: orders
-          .filter((order) => order.supplier === name)
-          .reduce((sum, order) => sum + order.totalMinor, 0),
-        outstanding_minor: orders
-          .filter(
-            (order) => order.supplier === name && !["RECEIVED", "CANCELLED"].includes(order.status),
-          )
-          .reduce((sum, order) => sum + order.totalMinor, 0),
-        on_time_count: 0,
-        received_count: 0,
-      }));
+
+  const suppliers = useMemo(() => {
+    const byId = new Map<string, ProcurementSupplierRow>();
+    for (const branch of control.data) {
+      for (const supplier of branch.suppliers) {
+        const existing = byId.get(supplier.id);
+        if (!existing) {
+          byId.set(supplier.id, { ...supplier });
+          continue;
+        }
+        existing.order_count += Number(supplier.order_count);
+        existing.ordered_minor += Number(supplier.ordered_minor);
+        existing.outstanding_minor += Number(supplier.outstanding_minor);
+        existing.on_time_count += Number(supplier.on_time_count);
+        existing.received_count += Number(supplier.received_count);
+      }
+    }
+    return [...byId.values()].sort(
+      (a, b) => Number(b.ordered_minor) - Number(a.ordered_minor) || a.name.localeCompare(b.name),
+    );
+  }, [control.data]);
+
+  const requisitions = control.data.flatMap((row) => row.requisitions);
+  const receipts = control.data.flatMap((row) => row.receipts);
+  const supplierInvoices = control.data.flatMap((row) => row.supplierInvoices);
   const openOrders = orders.filter((order) => !["RECEIVED", "CANCELLED"].includes(order.status));
-  const approvalCount = orders.filter((order) =>
-    ["DRAFT", "SUBMITTED", "PENDING_APPROVAL"].includes(order.status),
-  ).length;
+  const approvalCount = orders.filter((order) => order.status === "SUBMITTED").length;
   const outstandingMinor = suppliers.reduce(
     (sum, supplier) => sum + Number(supplier.outstanding_minor),
     0,
   );
+  const matchExceptions = supplierInvoices.filter(
+    (invoice) => invoice.match_status && invoice.match_status !== "MATCHED",
+  ).length;
+
+  const canCreate = currentUser.permissions.includes(permissions.procurementCreate);
+  const canApprove = currentUser.permissions.includes(permissions.procurementApprove);
+  const canCancel = currentUser.permissions.includes(permissions.procurementCancel);
+  const canReceive = currentUser.permissions.includes(permissions.procurementReceive);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -144,77 +125,61 @@ function Procurement() {
   return (
     <AppShell
       title="Procurement"
-      subtitle={`${branchLabel} purchase-to-pay control  -  ${openOrders.length} open purchase orders`}
+      subtitle={`${branchLabel} purchase-to-pay control - ${openOrders.length} open purchase orders`}
       actions={
         <>
-          <Btn disabled={!selected || busy} onClick={() => setReceiveOpen(true)}>
+          <Btn onClick={() => void control.refresh()}>
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </Btn>
+          <Btn
+            disabled={
+              !selected ||
+              !canReceive ||
+              isAllBranches ||
+              busy ||
+              !["APPROVED", "PARTIALLY_RECEIVED"].includes(selected.status)
+            }
+            onClick={() => setReceiveOpen(true)}
+          >
             <PackageCheck className="h-4 w-4" /> Receiving
           </Btn>
           <Btn
             variant="primary"
-            disabled={busy}
-            onClick={() => {
-              if (authoritative) setCreateOpen(true);
-              else
-                void run(
-                  async () =>
-                    mutate("generatePurchaseOrders", {
-                      branch: branchLabel.replace(" Branch", ""),
-                    }),
-                  "Purchase recommendations converted to draft orders.",
-                );
-            }}
+            disabled={!canCreate || isAllBranches || busy || control.status !== "ready"}
+            onClick={() => setCreateOpen(true)}
           >
             <Plus className="h-4 w-4" /> New purchase order
           </Btn>
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <Metric label="Open POs" value={openOrders.length} />
-        <Metric label="Awaiting approval" value={approvalCount} />
+        <Metric label="Awaiting approval" value={approvalCount} invert={approvalCount > 0} />
         <Metric
           label="Deliveries expected"
-          value={
-            orders.filter((order) =>
-              ["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(order.status),
-            ).length
-          }
+          value={orders.filter((order) => ["APPROVED", "PARTIALLY_RECEIVED"].includes(order.status)).length}
         />
-        <Metric label="Supplier commitments" value={Math.round(outstandingMinor / 100)} money />
-        <Metric label="Suppliers" value={suppliers.length} />
-        <Metric
-          label="Receipts recorded"
-          value={
-            serverData?.procurement.receipts.length ??
-            orders.filter((order) => order.status === "RECEIVED").length
-          }
-        />
+        <Metric label="Supplier commitments" value={outstandingMinor / 100} money />
+        <Metric label="Open requisitions" value={requisitions.filter((row) => row.status !== "ORDERED").length} />
+        <Metric label="Receipts recorded" value={receipts.length} />
+        <Metric label="Match exceptions" value={matchExceptions} invert={matchExceptions > 0} />
       </div>
 
-      {(notice || control.error) && (
+      {(notice || control.error || isAllBranches) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice || control.error}{" "}
-          {authoritative
-            ? `Server: ${control.status}.`
-            : `Development repository: ${backendStatus}.`}
+          {notice ||
+            control.error ||
+            "All-branches mode is read-only for procurement transactions. Switch to one branch to create, approve, cancel or receive."}
         </div>
       )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
         <Panel className="self-start">
-          <PanelHead
-            title="Purchase orders"
-            sub={`${orders.length} recent`}
-            right={
-              <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
-                <RefreshCw className="h-4 w-4" />
-              </Btn>
-            }
-          />
+          <PanelHead title="Purchase orders" sub={`${orders.length} recent`} />
           <ul className="divide-y divide-border">
             {orders.map((order) => (
-              <li key={order.id}>
+              <li key={`${order.branchId}:${order.id}`}>
                 <button
                   type="button"
                   onClick={() => setSelectedId(order.id)}
@@ -227,6 +192,11 @@ function Procurement() {
                   <div className="mt-1 truncate text-[12px] text-muted-foreground">
                     {order.supplier}
                   </div>
+                  {isAllBranches && (
+                    <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                      {order.branchId}
+                    </div>
+                  )}
                   <div className="num mt-1 text-[12px] font-semibold">
                     {ksh(order.totalMinor / 100)}
                   </div>
@@ -235,7 +205,7 @@ function Procurement() {
             ))}
             {!orders.length && (
               <li className="px-4 py-8 text-center text-[12px] text-muted-foreground">
-                No purchase orders in this branch.
+                No purchase orders in this branch scope.
               </li>
             )}
           </ul>
@@ -246,7 +216,7 @@ function Procurement() {
             title={selected?.number ?? "Purchase order"}
             sub={
               selected
-                ? `${selected.supplier}${selected.expectedAt ? `  -  expected ${formatDate(selected.expectedAt)}` : ""}`
+                ? `${selected.supplier}${selected.expectedAt ? ` - expected ${formatDate(selected.expectedAt)}` : ""}`
                 : "Select or create a purchase order"
             }
             right={selected ? <Status>{selected.status}</Status> : undefined}
@@ -293,9 +263,10 @@ function Procurement() {
                 <div className="flex gap-2">
                   <Btn
                     disabled={
-                      !authoritative ||
+                      !canCancel ||
+                      isAllBranches ||
                       busy ||
-                      !["DRAFT", "SUBMITTED", "APPROVED"].includes(selected.status)
+                      !["SUBMITTED", "APPROVED"].includes(selected.status)
                     }
                     onClick={() => setOrderAction("cancel")}
                   >
@@ -303,9 +274,7 @@ function Procurement() {
                   </Btn>
                   <Btn
                     variant="primary"
-                    disabled={
-                      !authoritative || busy || !["DRAFT", "SUBMITTED"].includes(selected.status)
-                    }
+                    disabled={!canApprove || isAllBranches || busy || selected.status !== "SUBMITTED"}
                     onClick={() => setOrderAction("approve")}
                   >
                     <ClipboardCheck className="h-4 w-4" /> Approve
@@ -337,7 +306,7 @@ function Procurement() {
                     <TD>
                       <div className="font-semibold">{supplier.name}</div>
                       <div className="text-[11px] text-muted-foreground">
-                        Lead {supplier.lead_time_days} days
+                        Lead {supplier.lead_time_days ?? 0} days
                       </div>
                     </TD>
                     <TD className="num text-right">{ksh(Number(supplier.ordered_minor) / 100)}</TD>
@@ -355,12 +324,12 @@ function Procurement() {
         onOpenChange={setCreateOpen}
         branchId={branchId}
         currency={currency}
-        data={serverData}
+        data={activeBranchData}
         busy={busy}
         onSubmit={(body) =>
           run(
             () => control.command("/api/seramet/procurement/purchase-orders", body),
-            "Purchase order created as a draft.",
+            "Purchase order submitted for approval.",
           ).then(() => setCreateOpen(false))
         }
       />
@@ -368,7 +337,6 @@ function Procurement() {
         open={receiveOpen}
         onOpenChange={setReceiveOpen}
         order={selected}
-        branchId={branchId}
         busy={busy}
         onSubmit={(body) =>
           run(
@@ -389,7 +357,7 @@ function Procurement() {
                 () =>
                   control.command(
                     `/api/seramet/procurement/purchase-orders/${encodeURIComponent(selected.id)}/${action}`,
-                    { ...(reason ? { reason } : {}) },
+                    reason ? { reason } : {},
                   ),
                 action === "approve"
                   ? `${selected.number} approved.`
@@ -402,9 +370,10 @@ function Procurement() {
   );
 }
 
-function serverOrder(order: ProcurementOrderRow): DisplayOrder {
+function serverOrder(order: ProcurementOrderRow, branchId: string): DisplayOrder {
   return {
     id: order.id,
+    branchId,
     number: order.purchase_order_number,
     supplier: order.supplier_name,
     supplierId: order.supplier_id,
@@ -426,8 +395,6 @@ function serverOrder(order: ProcurementOrderRow): DisplayOrder {
   };
 }
 
-type BranchData = ReturnType<typeof useInventoryControlCentre>["data"][number];
-
 function CreatePurchaseOrderDialog({
   open,
   onOpenChange,
@@ -441,20 +408,26 @@ function CreatePurchaseOrderDialog({
   onOpenChange: (open: boolean) => void;
   branchId: string;
   currency: string;
-  data: BranchData | undefined;
+  data: ProcurementBranchPayload | undefined;
   busy: boolean;
   onSubmit: (body: unknown) => Promise<void>;
 }) {
   const [supplierId, setSupplierId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [itemId, setItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [unitPrice, setUnitPrice] = useState("0");
-  const supplier =
-    data?.procurement.suppliers.find((row) => row.id === supplierId) ??
-    data?.procurement.suppliers[0];
+  const supplier = data?.suppliers.find((row) => row.id === supplierId) ?? data?.suppliers[0];
+  const warehouse =
+    data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
   const item = data?.items.find((row) => row.id === itemId) ?? data?.items[0];
   const valid =
-    supplier && item?.purchase_unit_id && Number(quantity) > 0 && Number(unitPrice) >= 0;
+    supplier &&
+    warehouse &&
+    item?.purchase_unit_id &&
+    Number(quantity) > 0 &&
+    Number(unitPrice) >= 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -468,7 +441,20 @@ function CreatePurchaseOrderDialog({
               onChange={(event) => setSupplierId(event.target.value)}
               className={inputClass}
             >
-              {data?.procurement.suppliers.map((row) => (
+              {data?.suppliers.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Warehouse">
+            <select
+              value={warehouse?.id ?? ""}
+              onChange={(event) => setWarehouseId(event.target.value)}
+              className={inputClass}
+            >
+              {data?.warehouses.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.name}
                 </option>
@@ -482,7 +468,7 @@ function CreatePurchaseOrderDialog({
               className={inputClass}
             >
               {data?.items.map((row) => (
-                <option key={`${row.warehouse_id}:${row.id}`} value={row.id}>
+                <option key={row.id} value={row.id}>
                   {row.name}
                 </option>
               ))}
@@ -519,7 +505,7 @@ function CreatePurchaseOrderDialog({
               valid &&
               void onSubmit({
                 branchId,
-                warehouseId: item.warehouse_id,
+                warehouseId: warehouse.id,
                 supplierId: supplier.id,
                 currency: supplier.currency || currency,
                 overReceiptPolicy: "REJECT_OVER_RECEIPT",
@@ -534,7 +520,7 @@ function CreatePurchaseOrderDialog({
               })
             }
           >
-            Create draft
+            Submit PO
           </Btn>
         </div>
       </DialogContent>
@@ -546,21 +532,19 @@ function ReceiveOrderDialog({
   open,
   onOpenChange,
   order,
-  branchId,
   busy,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order: DisplayOrder | undefined;
-  branchId: string;
   busy: boolean;
   onSubmit: (body: unknown) => Promise<void>;
 }) {
   const receivable = order?.lines.filter((line) => line.orderedMicro > line.receivedMicro) ?? [];
   const valid =
     order &&
-    ["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(order.status) &&
+    ["APPROVED", "PARTIALLY_RECEIVED"].includes(order.status) &&
     receivable.length > 0;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -594,7 +578,7 @@ function ReceiveOrderDialog({
             onClick={() =>
               valid &&
               void onSubmit({
-                branchId,
+                branchId: order.branchId,
                 warehouseId: order.warehouseId,
                 purchaseOrderId: order.id,
                 supplierId: order.supplierId,
@@ -608,7 +592,7 @@ function ReceiveOrderDialog({
               })
             }
           >
-            <PackageCheck className="h-4 w-4" /> Post receipt
+            <PackageCheck className="h-4 w-4" /> Post full remaining receipt
           </Btn>
         </div>
       </DialogContent>
@@ -674,8 +658,10 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   );
 }
+
 const inputClass =
   "h-9 w-full rounded-md border border-border bg-card px-3 text-[13px] outline-none focus:ring-2 focus:ring-ring/40";
+
 function formatQuantity(value: number) {
   return formatNumber(value / 1_000_000, { maximumFractionDigits: 3 });
 }
