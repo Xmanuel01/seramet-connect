@@ -4608,7 +4608,7 @@ export class InventoryIntelligenceService {
       .bind(this.actor.tenantId, input.sku, input.sku)
       .first<Record<string, unknown> & { id: string }>();
     if (!item) {
-      throw new ServerOperationError("INVENTORY_ITEM_NOT_FOUND", 404, "Inventory item not found");
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
     }
 
     const [balances, movements, recipes] = await Promise.all([
