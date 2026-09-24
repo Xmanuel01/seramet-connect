@@ -273,13 +273,10 @@ function CreatePurchaseOrderDialog({
   const [unitPrice, setUnitPrice] = useState("0");
   const [expectedAt, setExpectedAt] = useState("");
 
-  const supplier =
-    data?.suppliers.find((row) => row.id === supplierId) ??
-    data?.suppliers[0];
+  const supplier = data?.suppliers.find((row) => row.id === supplierId) ?? data?.suppliers[0];
   const requisitions =
-    data?.requisitions.filter((row) =>
-      ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status),
-    ) ?? [];
+    data?.requisitions.filter((row) => ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status)) ??
+    [];
   const requisition = requisitions.find((row) => row.id === requisitionId);
   const availableReqLines =
     requisition?.lines.filter(
@@ -291,13 +288,14 @@ function CreatePurchaseOrderDialog({
   const manualItem = data?.items.find((row) => row.id === itemId) ?? data?.items[0];
   const warehouse = requisition
     ? data?.warehouses.find((row) => row.id === requisition.warehouse_id)
-    : data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
+    : (data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0]);
   const item = requisition
     ? data?.items.find((row) => row.id === requisitionLine?.inventory_item_id)
     : manualItem;
   const purchaseUnitId = requisition ? requisitionLine?.unit_id : item?.purchase_unit_id;
   const remainingMicro = requisitionLine
-    ? Number(requisitionLine.requested_quantity_minor) - Number(requisitionLine.ordered_quantity_minor)
+    ? Number(requisitionLine.requested_quantity_minor) -
+      Number(requisitionLine.ordered_quantity_minor)
     : null;
   const requestedMicro = Math.round(Number(quantity) * 1_000_000);
   const valid = Boolean(
