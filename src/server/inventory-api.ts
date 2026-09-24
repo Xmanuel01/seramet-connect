@@ -490,6 +490,21 @@ export async function handleInventoryApi(
 
   if (url.pathname === "/api/seramet/inventory/movements" && request.method === "POST") {
     const body = await parse<MovementRequest>(request, movementRequestSchema);
+    if (
+      [
+        "MANUAL_ADJUSTMENT",
+        "STOCK_COUNT_ADJUSTMENT",
+        "WASTAGE",
+        "BREAKAGE",
+        "TRANSFER_IN",
+        "TRANSFER_OUT",
+      ].includes(body.movementType)
+    ) {
+      throw new SerametHttpError(
+        409,
+        "This inventory movement is controlled by a dedicated approval or transfer workflow",
+      );
+    }
     const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
     return json(
       {
@@ -735,9 +750,12 @@ export async function handleInventoryApi(
     return json(
       {
         ok: true,
-        wastage: await service.recordWastage({ ...body, businessDate: context.businessDate }),
+        wastage: await service.requestWastageApproval({
+          ...body,
+          businessDate: context.businessDate,
+        }),
       },
-      201,
+      202,
     );
   }
   if (url.pathname === "/api/seramet/procurement/suppliers" && request.method === "POST") {
