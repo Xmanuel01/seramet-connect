@@ -40,7 +40,7 @@ function Warehouses() {
   const { branchId: activeBranchId, branchLabel, branchRecords, isAllBranches } = useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
-  const operations = useInventoryOperations(authoritative);
+  const { branchIds, request, post } = useInventoryOperations(authoritative);
   const [rows, setRows] = useState<WarehouseRow[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [notice, setNotice] = useState("");
@@ -57,8 +57,8 @@ function Warehouses() {
     setStatus("loading");
     try {
       const result = await Promise.all(
-        operations.branchIds.map(async (selectedBranchId) => {
-          const body = await operations.request<{ warehouses: Omit<WarehouseRow, "branchId">[] }>(
+        branchIds.map(async (selectedBranchId) => {
+          const body = await request<{ warehouses: Omit<WarehouseRow, "branchId">[] }>(
             `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
           );
           return body.warehouses.map((row) => ({ ...row, branchId: selectedBranchId }));
@@ -70,7 +70,7 @@ function Warehouses() {
       setNotice(error instanceof Error ? error.message : "Warehouses could not be loaded");
       setStatus("error");
     }
-  }, [authoritative, operations.branchIds, operations.request]);
+  }, [authoritative, branchIds, request]);
 
   useEffect(() => {
     void load();
@@ -86,7 +86,7 @@ function Warehouses() {
       return;
     }
     try {
-      await operations.post("/api/seramet/inventory/warehouses", {
+      await post("/api/seramet/inventory/warehouses", {
         branchId,
         name: name.trim(),
         code: code.trim().toUpperCase(),
@@ -111,7 +111,7 @@ function Warehouses() {
       return;
     }
     try {
-      await operations.post(
+      await post(
         `/api/seramet/inventory/warehouses/${encodeURIComponent(row.id)}/archive`,
         {},
       );
@@ -158,7 +158,7 @@ function Warehouses() {
                 className={inputClass}
               >
                 {branchRecords
-                  .filter((branch) => operations.branchIds.includes(branch.id))
+                  .filter((branch) => branchIds.includes(branch.id))
                   .map((branch) => (
                     <option key={branch.id} value={branch.id}>
                       {branch.name}
@@ -233,7 +233,9 @@ function Warehouses() {
                 {ksh(Number(row.stock_value_minor ?? 0) / 100)}
               </TD>
               <TD className="text-muted-foreground">
-                {row.last_movement_at ? new Date(row.last_movement_at).toLocaleString() : "No movement"}
+                {row.last_movement_at
+                  ? new Date(row.last_movement_at).toLocaleString()
+                  : "No movement"}
               </TD>
               <TD>
                 <Status>Active</Status>
