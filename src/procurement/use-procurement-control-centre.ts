@@ -115,6 +115,7 @@ export type ProcurementCatalogItem = {
   name: string;
   base_unit_id: string;
   purchase_unit_id: string | null;
+  track_expiry: number;
   base_unit_symbol: string | null;
   purchase_unit_symbol: string | null;
   preferred_supplier_id: string | null;
