@@ -69,7 +69,11 @@ function InventoryItems() {
       actions={
         <>
           <Btn onClick={() => exportRows(filtered)}>Export</Btn>
-          <Btn variant="primary" onClick={() => setShowCreate((value) => !value)}>
+          <Btn
+            variant="primary"
+            disabled={!authoritative || control.status !== "ready"}
+            onClick={() => setShowCreate((value) => !value)}
+          >
             {showCreate ? "Close form" : "Add item"}
           </Btn>
         </>
@@ -266,17 +270,24 @@ function CreateItemPanel({
 }) {
   const units = uniqueById(data.flatMap((branch) => branch.units));
   const suppliers = uniqueById(data.flatMap((branch) => branch.procurement.suppliers));
+  const warehouses = data.flatMap((branch) =>
+    branch.warehouses.map((warehouse) => ({
+      ...warehouse,
+      branchId: branch.branchId,
+    })),
+  );
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [sku, setSku] = useState("");
   const [description, setDescription] = useState("");
   const [baseUnitId, setBaseUnitId] = useState(units[0]?.id ?? "");
   const [purchaseUnitId, setPurchaseUnitId] = useState("");
+  const [defaultWarehouseId, setDefaultWarehouseId] = useState(warehouses[0]?.id ?? "");
   const [supplierId, setSupplierId] = useState("");
   const [trackExpiry, setTrackExpiry] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const valid = name.trim() && code.trim() && baseUnitId;
+  const valid = name.trim() && code.trim() && baseUnitId && defaultWarehouseId;
 
   return (
     <Panel className="mb-4">
@@ -313,6 +324,21 @@ function CreateItemPanel({
             {units.map((unit) => (
               <option key={unit.id} value={unit.id}>
                 {unit.name} ({unit.symbol})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Default warehouse">
+          <select
+            className={inputClass}
+            value={defaultWarehouseId}
+            onChange={(event) => setDefaultWarehouseId(event.target.value)}
+          >
+            <option value="">Select warehouse</option>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse.id} value={warehouse.id}>
+                {warehouse.name} ({warehouse.code})
+                {data.length > 1 ? ` · ${warehouse.branchId}` : ""}
               </option>
             ))}
           </select>
@@ -361,9 +387,11 @@ function CreateItemPanel({
           Track expiry / lots
         </label>
       </div>
-      {!units.length && (
+      {(!units.length || !warehouses.length) && (
         <div className="px-4 pb-3 text-[12px] text-warning">
-          Create at least one unit definition before adding inventory items.
+          {!units.length
+            ? "Create at least one unit definition before adding inventory items."
+            : "Create an active warehouse for the branch before adding inventory items."}
         </div>
       )}
       <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
@@ -380,6 +408,7 @@ function CreateItemPanel({
               ...(description.trim() ? { description: description.trim() } : {}),
               baseUnitId,
               purchaseUnitId: purchaseUnitId || baseUnitId,
+              defaultWarehouseId,
               ...(supplierId ? { preferredSupplierId: supplierId } : {}),
               trackInventory: true,
               trackExpiry,
