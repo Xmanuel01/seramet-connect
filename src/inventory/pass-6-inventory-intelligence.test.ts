@@ -1379,8 +1379,8 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       4 * QUANTITY_SCALE,
     );
     expect(
-      (await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).quantity_minor,
-    ).toBe(0);
+      await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId),
+    ).toBeNull();
 
     const detail = await service.transferDetail("transfer-controlled");
     const line = detail.lines[0] as Record<string, unknown>;
