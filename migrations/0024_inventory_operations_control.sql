@@ -48,9 +48,9 @@ SET updated_at=COALESCE(updated_at,created_at),
     requested_by=COALESCE(requested_by,json_extract(payload_json,'$.employeeId')),
     warehouse_id=COALESCE(warehouse_id,json_extract(payload_json,'$.warehouseId')),
     inventory_item_id=COALESCE(inventory_item_id,json_extract(payload_json,'$.inventoryItemId')),
-    quantity_minor=COALESCE(quantity_minor,json_extract(payload_json,'$.quantityMicro')),
+    quantity_minor=COALESCE(quantity_minor,CAST(json_extract(payload_json,'$.quantityMicro') AS INTEGER)),
     reason_code=COALESCE(reason_code,json_extract(payload_json,'$.reasonCode')),
-    estimated_cost_minor=COALESCE(estimated_cost_minor,json_extract(payload_json,'$.estimatedCostMinor')),
+    estimated_cost_minor=COALESCE(estimated_cost_minor,CAST(json_extract(payload_json,'$.estimatedCostMinor') AS INTEGER)),
     movement_id=COALESCE(movement_id,json_extract(payload_json,'$.movementId')),
     business_date=COALESCE(business_date,json_extract(payload_json,'$.businessDate'));
 
@@ -86,8 +86,8 @@ ALTER TABLE warehouses ADD COLUMN archived_at TEXT;
 
 UPDATE warehouses
 SET location_type=COALESCE(NULLIF(json_extract(payload_json,'$.type'),''),'OTHER'),
-    created_at=COALESCE(created_at,CURRENT_TIMESTAMP),
-    updated_at=COALESCE(updated_at,CURRENT_TIMESTAMP);
+    created_at=COALESCE(created_at,CAST(CURRENT_TIMESTAMP AS TEXT)),
+    updated_at=COALESCE(updated_at,CAST(CURRENT_TIMESTAMP AS TEXT));
 
 ALTER TABLE stock_transfers ADD COLUMN approval_reason TEXT;
 ALTER TABLE stock_transfers ADD COLUMN cancelled_by TEXT;
