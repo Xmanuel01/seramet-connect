@@ -2030,6 +2030,7 @@ export class InventoryIntelligenceService {
       if (component.optional) continue;
       let itemId = component.inventory_item_id;
       let requestedQuantity = component.quantity_minor;
+      let requestedUnitId = component.unit_id;
       if (!itemId && component.sub_recipe_id) {
         const sub = await this.db
           .prepare(
@@ -2050,6 +2051,7 @@ export class InventoryIntelligenceService {
             component.unit_id,
             sub.yield_unit_id,
           );
+          requestedUnitId = sub.yield_unit_id;
         }
       }
       if (!itemId) continue;
@@ -2061,7 +2063,7 @@ export class InventoryIntelligenceService {
       const baseRequired = await this.convertItemQuantity(
         itemId,
         requestedQuantity,
-        component.unit_id,
+        requestedUnitId,
         item.base_unit_id,
       );
       const requiredWithWaste = multiplyDivide(
