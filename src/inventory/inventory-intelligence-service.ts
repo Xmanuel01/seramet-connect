@@ -7477,6 +7477,302 @@ export class InventoryIntelligenceService {
     return mapping;
   }
 
+  private async listInventoryLosses(
+    kind: "WASTAGE" | "BREAKAGE",
+    branchId: string,
+    limit: number,
+  ) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryWastageRecord,
+      permissions.inventoryWastageApprove,
+      permissions.wasteRecord,
+      permissions.wasteApprove,
+    ]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const table = kind === "WASTAGE" ? "wastage" : "breakages";
+    const pageSize = Math.min(200, Math.max(1, limit));
+    const result = await this.db
+      .prepare(
+        `SELECT l.id,l.branch_id,l.status,l.idempotency_key,l.payload_json,l.created_at,
+                i.name AS item_name,i.code,i.sku,u.symbol AS unit_symbol,
+                w.name AS warehouse_name
+           FROM ${table} l
+           LEFT JOIN inventory_items i
+             ON i.tenant_id=l.tenant_id
+            AND i.id=json_extract(l.payload_json,'$.inventoryItemId')
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN warehouses w
+             ON w.tenant_id=l.tenant_id
+            AND w.id=json_extract(l.payload_json,'$.warehouseId')
+          WHERE l.tenant_id=? AND l.branch_id=?
+          ORDER BY l.created_at DESC,l.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
+    return (result.results ?? []).map((row) => ({
+      ...row,
+      ...parseJsonObject(String(row["payload_json"] ?? "{}")),
+      kind,
+    }));
+  }
+
+  private async requestInventoryLoss(
+    kind: "WASTAGE" | "BREAKAGE",
+    input: InventoryLossRequestInput,
+  ) {
+    this.requireAnyPermission([permissions.inventoryWastageRecord, permissions.wasteRecord]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    await this.assertBusinessDateOpen(input.branchId, input.businessDate, input.reasonCode);
+    assertScaledInteger(input.quantityMicro, `${kind.toLowerCase()} quantity`);
+    if (input.quantityMicro <= 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        `${kind === "WASTAGE" ? "Wastage" : "Breakage"} quantity must be positive`,
+      );
+    }
+    const item = await this.db
+      .prepare("SELECT id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.inventoryItemId)
+      .first<{ id: string }>();
+    if (!item) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
+    }
+    const table = kind === "WASTAGE" ? "wastage" : "breakages";
+    const duplicate = await this.db
+      .prepare(`SELECT id,status FROM ${table} WHERE tenant_id=? AND idempotency_key=?`)
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, status: duplicate.status, duplicate: true };
+    const balance = await this.balance(input.branchId, input.warehouseId, input.inventoryItemId);
+    const estimatedCostMinor = quantityCostMinor(
+      input.quantityMicro,
+      balance.average_unit_cost_minor,
+    );
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const payload = JSON.stringify({
+      ...input,
+      requestedBy: this.actor.id,
+      requestedAt: stamp,
+      estimatedCostMinor,
+    });
+    const correlationId = crypto.randomUUID();
+    try {
+      await this.db.batch([
+        this.db
+          .prepare(
+            `INSERT INTO ${table}
+              (tenant_id,id,branch_id,status,idempotency_key,payload_json,created_at)
+             VALUES (?,?,?,'PENDING',?,?,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            id,
+            input.branchId,
+            input.idempotencyKey,
+            payload,
+            stamp,
+          ),
+        this.auditStatement(
+          `${kind}_REQUESTED`,
+          kind,
+          id,
+          stamp,
+          correlationId,
+          input.branchId,
+        ),
+      ]);
+    } catch (error) {
+      const raced = await this.db
+        .prepare(`SELECT id,status FROM ${table} WHERE tenant_id=? AND idempotency_key=?`)
+        .bind(this.actor.tenantId, input.idempotencyKey)
+        .first<{ id: string; status: string }>();
+      if (raced) return { id: raced.id, status: raced.status, duplicate: true };
+      throw error;
+    }
+    return { id, status: "PENDING" as const, estimatedCostMinor, duplicate: false };
+  }
+
+  private async decideInventoryLoss(
+    kind: "WASTAGE" | "BREAKAGE",
+    id: string,
+    decision: "APPROVE" | "REJECT",
+    reason?: string,
+  ) {
+    this.requireAnyPermission([permissions.inventoryWastageApprove, permissions.wasteApprove]);
+    const table = kind === "WASTAGE" ? "wastage" : "breakages";
+    const row = await this.db
+      .prepare(`SELECT branch_id,status,payload_json FROM ${table} WHERE tenant_id=? AND id=?`)
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string; payload_json: string }>();
+    if (!row) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        404,
+        `${kind === "WASTAGE" ? "Wastage" : "Breakage"} request not found`,
+      );
+    }
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    const targetStatus = decision === "APPROVE" ? "APPROVED" : "REJECTED";
+    if (row.status === targetStatus) {
+      return { id, status: targetStatus, duplicate: true };
+    }
+    if (row.status !== "PENDING") {
+      throw invalidTransition(kind === "WASTAGE" ? "Wastage" : "Breakage", row.status, targetStatus);
+    }
+    if (decision === "REJECT" && !reason?.trim()) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "A rejection reason is required",
+      );
+    }
+    const payload = parseJsonObject(row.payload_json);
+    const warehouseId = stringProperty(payload, "warehouseId");
+    const inventoryItemId = stringProperty(payload, "inventoryItemId");
+    const businessDate = stringProperty(payload, "businessDate");
+    const reasonCode = stringProperty(payload, "reasonCode");
+    const quantityMicro = Number(payload["quantityMicro"]);
+    if (
+      !warehouseId ||
+      !inventoryItemId ||
+      !businessDate ||
+      !reasonCode ||
+      !Number.isSafeInteger(quantityMicro) ||
+      quantityMicro <= 0
+    ) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `${kind === "WASTAGE" ? "Wastage" : "Breakage"} request payload is incomplete`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    if (decision === "REJECT") {
+      const nextPayload = JSON.stringify({
+        ...payload,
+        rejectedBy: this.actor.id,
+        rejectedAt: stamp,
+        decisionReason: reason!.trim(),
+      });
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE ${table} SET status='REJECTED',payload_json=?
+              WHERE tenant_id=? AND id=? AND status='PENDING'`,
+          )
+          .bind(nextPayload, this.actor.tenantId, id),
+        this.auditStatement(
+          `${kind}_REJECTED`,
+          kind,
+          id,
+          stamp,
+          crypto.randomUUID(),
+          row.branch_id,
+        ),
+      ]);
+      return { id, status: "REJECTED" as const, duplicate: false };
+    }
+
+    await this.assertBusinessDateOpen(row.branch_id, businessDate, reason ?? reasonCode);
+    await this.assertWarehouseBranch(row.branch_id, warehouseId);
+    const balance = await this.balance(row.branch_id, warehouseId, inventoryItemId);
+    const unitCostMinor = balance.average_unit_cost_minor;
+    const postedCostMinor = quantityCostMinor(quantityMicro, unitCostMinor);
+    const movementId = crypto.randomUUID();
+    const correlationId = crypto.randomUUID();
+    const movementInput: InventoryMovementInput & {
+      id: string;
+      occurredAt: string;
+      unitCostMinor: number;
+      totalCostMinor: number;
+    } = {
+      id: movementId,
+      branchId: row.branch_id,
+      warehouseId,
+      inventoryItemId,
+      movementType: kind,
+      quantityBaseMicro: -quantityMicro,
+      unitCostMinor,
+      totalCostMinor: -postedCostMinor,
+      sourceType: kind,
+      sourceId: id,
+      idempotencyKey: `${kind.toLowerCase()}-approval:${id}`,
+      businessDate,
+      occurredAt: stamp,
+      reason: reasonCode,
+      metadata: {
+        stationId: stringProperty(payload, "stationId"),
+        employeeId: stringProperty(payload, "employeeId"),
+        decisionReason: reason?.trim() || null,
+      },
+    };
+    const nextPayload = JSON.stringify({
+      ...payload,
+      movementId,
+      postedCostMinor,
+      approvedBy: this.actor.id,
+      approvedAt: stamp,
+      decisionReason: reason?.trim() || null,
+    });
+    const statements: D1PreparedStatement[] = [
+      this.movementStatement(movementInput, correlationId),
+      this.db
+        .prepare(
+          `UPDATE ${table} SET status='APPROVED',payload_json=?
+            WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(nextPayload, this.actor.tenantId, id),
+      this.auditStatement(
+        `${kind}_APPROVED`,
+        kind,
+        id,
+        stamp,
+        correlationId,
+        row.branch_id,
+      ),
+      this.recalculationEventStatement(
+        row.branch_id,
+        `${kind}_APPROVED`,
+        "INVENTORY_ITEM",
+        inventoryItemId,
+        `${kind.toLowerCase()}:${id}`,
+        stamp,
+        correlationId,
+      ),
+    ];
+    statements.push(...(await this.movementAccountingStatements(movementInput, correlationId)));
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      const raced = await this.db
+        .prepare(`SELECT status,payload_json FROM ${table} WHERE tenant_id=? AND id=?`)
+        .bind(this.actor.tenantId, id)
+        .first<{ status: string; payload_json: string }>();
+      if (raced?.status === "APPROVED") {
+        const racedPayload = parseJsonObject(raced.payload_json);
+        return {
+          id,
+          status: "APPROVED" as const,
+          movementId: stringProperty(racedPayload, "movementId"),
+          duplicate: true,
+        };
+      }
+      throw error;
+    }
+    return {
+      id,
+      status: "APPROVED" as const,
+      movementId,
+      postedCostMinor,
+      duplicate: false,
+    };
+  }
+
   private async movementAccountingStatements(
     input: InventoryMovementInput & { id: string; occurredAt: string },
     correlationId: string,
