@@ -150,7 +150,7 @@ function seed(db: SqliteD1TestDatabase) {
     .run(tenantId, "unit-piece", "PC", "Piece", "pc", stamp, stamp);
   db.sqlite
     .prepare(
-      "INSERT INTO inventory_items (tenant_id,id,sku,code,name,unit,base_unit_id,purchase_unit_id,active,payload_json,created_at,updated_at) VALUES (?,?,?,?,?,'pc',?,?,1,'{}',?,?)",
+      "INSERT INTO inventory_items (tenant_id,id,sku,code,name,unit,base_unit_id,purchase_unit_id,active,payload_json,updated_at) VALUES (?,?,?,?,?,'pc',?,?,1,'{}',?)",
     )
     .run(
       tenantId,
@@ -161,11 +161,10 @@ function seed(db: SqliteD1TestDatabase) {
       "unit-piece",
       "unit-piece",
       stamp,
-      stamp,
     );
   db.sqlite
     .prepare(
-      "INSERT INTO inventory_items (tenant_id,id,sku,code,name,unit,base_unit_id,purchase_unit_id,active,payload_json,created_at,updated_at) VALUES (?,?,?,?,?,'pc',?,?,1,'{}',?,?)",
+      "INSERT INTO inventory_items (tenant_id,id,sku,code,name,unit,base_unit_id,purchase_unit_id,active,payload_json,updated_at) VALUES (?,?,?,?,?,'pc',?,?,1,'{}',?)",
     )
     .run(
       tenantId,
@@ -175,7 +174,6 @@ function seed(db: SqliteD1TestDatabase) {
       "Ingredient",
       "unit-piece",
       "unit-piece",
-      stamp,
       stamp,
     );
   db.sqlite
