@@ -55,7 +55,7 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const operations = useInventoryOperations(authoritative);
+  const { branchIds, request, post } = useInventoryOperations(authoritative);
   const [rows, setRows] = useState<LossRow[]>([]);
   const [notice, setNotice] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -79,8 +79,8 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
     setStatus("loading");
     try {
       const results = await Promise.all(
-        operations.branchIds.map(async (selectedBranchId) => {
-          const body = await operations.request<Record<string, LossRow[]>>(
+        branchIds.map(async (selectedBranchId) => {
+          const body = await request<Record<string, LossRow[]>>(
             `/api/seramet/inventory/${endpoint}?branchId=${encodeURIComponent(selectedBranchId)}&limit=200`,
           );
           return (body[payloadKey] ?? []).map((row) => ({ ...row, branchId: selectedBranchId }));
@@ -89,17 +89,12 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
       setRows(results.flat());
       setStatus("ready");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : `${singular} register could not be loaded`);
+      setNotice(
+        error instanceof Error ? error.message : `${singular} register could not be loaded`,
+      );
       setStatus("error");
     }
-  }, [
-    authoritative,
-    endpoint,
-    operations.branchIds,
-    operations.request,
-    payloadKey,
-    singular,
-  ]);
+  }, [authoritative, endpoint, branchIds, request, payloadKey, singular]);
 
   useEffect(() => {
     void load();
@@ -134,11 +129,13 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
 
   async function submit() {
     if (!branchId || !warehouseId || !itemId || quantityMicro <= 0 || !reasonCode) {
-      setNotice("Branch, warehouse, inventory item, positive quantity and reason code are required.");
+      setNotice(
+        "Branch, warehouse, inventory item, positive quantity and reason code are required.",
+      );
       return;
     }
     try {
-      await operations.post(`/api/seramet/inventory/${endpoint}/requests`, {
+      await post(`/api/seramet/inventory/${endpoint}/requests`, {
         branchId,
         warehouseId,
         inventoryItemId: itemId,
@@ -161,10 +158,10 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
     const decisionReason =
       decision === "reject"
         ? window.prompt(`Reason for rejecting this ${kind} request:`)
-        : window.prompt("Approval note (optional):") ?? "";
+        : (window.prompt("Approval note (optional):") ?? "");
     if (decision === "reject" && !decisionReason?.trim()) return;
     try {
-      await operations.post(
+      await post(
         `/api/seramet/inventory/${endpoint}/${encodeURIComponent(id)}/${decision}`,
         decisionReason?.trim() ? { reason: decisionReason.trim() } : {},
       );
@@ -283,7 +280,12 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Incidents" value={rows.length} />
         <Metric label="Awaiting approval" value={pending} invert={pending > 0} />
-        <Metric label="Approved value" value={Math.round(approvedValue)} money invert={approvedValue > 0} />
+        <Metric
+          label="Approved value"
+          value={Math.round(approvedValue)}
+          money
+          invert={approvedValue > 0}
+        />
         <Metric label="Rejected" value={rejected} />
       </div>
 
@@ -308,7 +310,9 @@ export function InventoryLossPage({ kind }: { kind: LossKind }) {
             <tr key={`${row.branchId}:${row.id}`} className="hover:bg-secondary/50">
               <TD className="num font-semibold">{row.id.slice(0, 12)}</TD>
               <TD>{row.item_name ?? row.inventoryItemId ?? "Inventory item"}</TD>
-              <TD className="text-muted-foreground">{row.warehouse_name ?? row.warehouseId ?? "-"}</TD>
+              <TD className="text-muted-foreground">
+                {row.warehouse_name ?? row.warehouseId ?? "-"}
+              </TD>
               <TD className="num text-right">
                 {(Number(row.quantityMicro ?? 0) / 1_000_000).toLocaleString(undefined, {
                   maximumFractionDigits: 3,
