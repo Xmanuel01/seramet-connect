@@ -12,7 +12,8 @@ export const Route = createFileRoute("/inventory")({
       { title: "Inventory Overview - Seramet" },
       {
         name: "description",
-        content: "Authoritative inventory value, stock health, reorder exceptions and movement activity.",
+        content:
+          "Authoritative inventory value, stock health, reorder exceptions and movement activity.",
       },
     ],
   }),
@@ -46,11 +47,7 @@ function InventoryOverview() {
         target,
         value: item.total_value_minor / 100,
         status:
-          onHand <= 0
-            ? "Out of stock"
-            : reorder > 0 && onHand <= reorder
-              ? "Low stock"
-              : "Healthy",
+          onHand <= 0 ? "Out of stock" : reorder > 0 && onHand <= reorder ? "Low stock" : "Healthy",
       };
     }),
   );
@@ -61,14 +58,8 @@ function InventoryOverview() {
     0,
   );
   const lowStockCount = control.data.reduce((sum, row) => sum + row.summary.lowStockCount, 0);
-  const outOfStockCount = control.data.reduce(
-    (sum, row) => sum + row.summary.outOfStockCount,
-    0,
-  );
-  const nearExpiryCount = control.data.reduce(
-    (sum, row) => sum + row.summary.nearExpiryCount,
-    0,
-  );
+  const outOfStockCount = control.data.reduce((sum, row) => sum + row.summary.outOfStockCount, 0);
+  const nearExpiryCount = control.data.reduce((sum, row) => sum + row.summary.nearExpiryCount, 0);
   const openPoCount = control.data.reduce(
     (sum, row) => sum + row.summary.openPurchaseOrderCount,
     0,
@@ -144,7 +135,9 @@ function InventoryOverview() {
                 ? `${exceptions.length} highest-priority exceptions shown`
                 : "No low-stock or out-of-stock exceptions"
             }
-            right={<Btn onClick={() => void navigate({ to: "/inventory-items" })}>View all items</Btn>}
+            right={
+              <Btn onClick={() => void navigate({ to: "/inventory-items" })}>View all items</Btn>
+            }
           />
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px]">
