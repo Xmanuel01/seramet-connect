@@ -3421,8 +3421,34 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.inventoryTransfer);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.sourceBranchId);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.destinationBranchId);
+    await this.assertWarehouseBranch(input.sourceBranchId, input.sourceWarehouseId);
+    await this.assertWarehouseBranch(input.destinationBranchId, input.destinationWarehouseId);
     await this.assertBusinessDateOpen(input.sourceBranchId, input.businessDate);
     if (input.lines.length === 0) throw new Error("A transfer requires at least one line");
+    const requestedByItem = new Map<string, number>();
+    for (const line of input.lines) {
+      assertScaledInteger(line.quantityMicro, "transfer quantity");
+      if (line.quantityMicro <= 0) throw new Error("Transfer quantity must be positive");
+      requestedByItem.set(
+        line.inventoryItemId,
+        (requestedByItem.get(line.inventoryItemId) ?? 0) + line.quantityMicro,
+      );
+    }
+    for (const [itemId, requestedQuantity] of requestedByItem) {
+      const sourceBalance = await this.balance(
+        input.sourceBranchId,
+        input.sourceWarehouseId,
+        itemId,
+      );
+      const available = sourceBalance.quantity_minor - sourceBalance.quantity_reserved_minor;
+      if (requestedQuantity > available) {
+        throw new ServerOperationError(
+          "CONFLICT",
+          409,
+          "Transfer quantity exceeds available source stock",
+        );
+      }
+    }
     if (
       input.sourceBranchId === input.destinationBranchId &&
       input.sourceWarehouseId === input.destinationWarehouseId
@@ -3572,6 +3598,7 @@ export class InventoryIntelligenceService {
             idempotencyKey: `transfer-dispatch:${input.idempotencyKey}:${index}`,
             businessDate: input.businessDate,
             occurredAt: stamp,
+            ...(lot ? { lotId: lot.id } : {}),
             metadata: {
               destinationBranchId: input.destinationBranchId,
               accountingTreatment: accounting.treatment,
@@ -3584,6 +3611,26 @@ export class InventoryIntelligenceService {
           correlationId,
         ),
       );
+      if (lot) {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE inventory_lots
+                  SET quantity_remaining_minor=quantity_remaining_minor-?,
+                      status=CASE WHEN quantity_remaining_minor-?<=0 THEN 'DEPLETED' ELSE status END,
+                      updated_at=?
+                WHERE tenant_id=? AND id=? AND quantity_remaining_minor>=?`,
+            )
+            .bind(
+              line.quantityMicro,
+              line.quantityMicro,
+              stamp,
+              this.actor.tenantId,
+              lot.id,
+              line.quantityMicro,
+            ),
+        );
+      }
     }
     statements.push(
       this.auditStatement(
@@ -7450,6 +7497,14 @@ export class InventoryIntelligenceService {
     sourceBranchId: string,
     destinationBranchId: string,
   ) {
+    if (sourceBranchId === destinationBranchId) {
+      return {
+        treatment: "INTRA_ENTITY" as const,
+        sourceLegalEntityId: null,
+        destinationLegalEntityId: null,
+        configurationId: undefined,
+      };
+    }
     const entities = await this.db
       .prepare(
         `SELECT branch_id,legal_entity_id FROM enterprise_nodes
