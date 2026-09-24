@@ -16,6 +16,7 @@ import {
   approvalSchema,
   conversionSchema,
   goodsReceiptSchema,
+  inventoryCategorySchema,
   inventoryItemSchema,
   movementSchema,
   parPolicySchema,
@@ -32,7 +33,11 @@ import {
   recipeSchema,
   recipeVersionSchema,
   requisitionSchema,
+  stockCountCancelSchema,
+  stockCountDecisionSchema,
+  stockCountSaveSchema,
   stockCountSchema,
+  stockCountStartSchema,
   stagedTransferDispatchSchema,
   stagedTransferReceiptSchema,
   supplierInvoiceSchema,
@@ -157,6 +162,26 @@ export async function handleInventoryApi(
   }
   const service = new InventoryIntelligenceService(env.SERAMET_DB, actor);
 
+  if (url.pathname === "/api/seramet/inventory/categories" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, categories: await service.listInventoryCategories(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/stock-detail" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    const warehouseId = url.searchParams.get("warehouseId")?.trim() || undefined;
+    return json({
+      ok: true,
+      detail: await service.stockDetail({
+        branchId,
+        ...(warehouseId ? { warehouseId } : {}),
+      }),
+    });
+  }
+  if (url.pathname === "/api/seramet/inventory/stock-counts" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    const limit = boundedLimit(url);
+    return json({ ok: true, counts: await service.listStockCounts(branchId, limit) });
+  }
   if (url.pathname === "/api/seramet/inventory/summary" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     return json({ ok: true, summary: await service.summary(branchId) });
@@ -214,6 +239,31 @@ export async function handleInventoryApi(
   if (url.pathname === "/api/seramet/inventory/units" && request.method === "POST") {
     return json(
       { ok: true, unit: await service.createUnit(await parse(request, unitSchema)) },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/inventory/categories" && request.method === "POST") {
+    return json(
+      {
+        ok: true,
+        category: await service.createInventoryCategory(
+          await parse(request, inventoryCategorySchema),
+        ),
+      },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/inventory/stock-counts/start" && request.method === "POST") {
+    const body = await parse<z.infer<typeof stockCountStartSchema>>(request, stockCountStartSchema);
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        count: await service.startStockCount({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
       201,
     );
   }
@@ -312,6 +362,68 @@ export async function handleInventoryApi(
       ok: true,
       recipeVersionId: recipeCost[1],
       costMinor: await service.recipeCostMinor(decodeURIComponent(recipeCost[1]!)),
+    });
+  }
+  const stockCountDetailRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)$/.exec(
+    url.pathname,
+  );
+  if (stockCountDetailRoute && request.method === "GET") {
+    return json({
+      ok: true,
+      detail: await service.stockCountDetail(decodeURIComponent(stockCountDetailRoute[1]!)),
+    });
+  }
+  const stockCountSaveRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/save$/.exec(
+    url.pathname,
+  );
+  if (stockCountSaveRoute && request.method === "POST") {
+    return json({
+      ok: true,
+      detail: await service.saveStockCount(
+        decodeURIComponent(stockCountSaveRoute[1]!),
+        await parse(request, stockCountSaveSchema),
+      ),
+    });
+  }
+  const stockCountSubmitRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/submit$/.exec(
+    url.pathname,
+  );
+  if (stockCountSubmitRoute && request.method === "POST") {
+    return json({
+      ok: true,
+      count: await service.submitStockCount(decodeURIComponent(stockCountSubmitRoute[1]!)),
+    });
+  }
+  const stockCountApproveRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/approve$/.exec(
+    url.pathname,
+  );
+  if (stockCountApproveRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof stockCountDecisionSchema>>(
+      request,
+      stockCountDecisionSchema,
+    );
+    return json({
+      ok: true,
+      count: await service.approveStockCount(
+        decodeURIComponent(stockCountApproveRoute[1]!),
+        body.reason,
+      ),
+    });
+  }
+  const stockCountCancelRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/cancel$/.exec(
+    url.pathname,
+  );
+  if (stockCountCancelRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof stockCountCancelSchema>>(
+      request,
+      stockCountCancelSchema,
+    );
+    return json({
+      ok: true,
+      count: await service.cancelStockCount(
+        decodeURIComponent(stockCountCancelRoute[1]!),
+        body.reason,
+      ),
     });
   }
   if (url.pathname === "/api/seramet/inventory/stock-counts/post" && request.method === "POST") {

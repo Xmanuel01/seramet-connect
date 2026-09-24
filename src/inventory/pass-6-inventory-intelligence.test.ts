@@ -12,7 +12,7 @@ import {
   weightedAverageUnitCostMinor,
 } from "@/inventory/quantity";
 import type { ServerActor } from "@/lib/seramet-auth";
-import { allPermissionCodes } from "@/platform/permissions";
+import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
   createMigratedTestDatabase,
   type SqliteD1TestDatabase,
@@ -43,7 +43,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(22);
+    expect(version?.version).toBe(23);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",
@@ -53,6 +53,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       "recipe_versions",
       "production_batches",
       "stock_count_sessions",
+      "inventory_categories",
       "inventory_forecasts",
       "purchase_recommendations",
       "menu_inventory_availability",
@@ -818,6 +819,231 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       service.cancelProduction("batch-cancelled", "Demand changed before preparation"),
     ).resolves.toMatchObject({ status: "CANCELLED", duplicate: false });
     await expect(service.startProduction("batch-cancelled")).rejects.toThrow(/Cannot start/);
+  });
+
+  it("rolls category health and warehouse stock detail from authoritative balances", async () => {
+    await service.createInventoryCategory({
+      id: "category-meat",
+      code: "MEAT",
+      name: "Meat",
+      description: "Fresh and frozen meat",
+    });
+    await seedUnits(service);
+    await service.createInventoryItem({
+      id: "item-category-beef",
+      code: "CATEGORY-BEEF",
+      name: "Category Beef",
+      categoryId: "category-meat",
+      baseUnitId: "unit-kg",
+      purchaseUnitId: "unit-kg",
+      defaultWarehouseId: warehouseId,
+    });
+    await service.appendMovement({
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-category-beef",
+      movementType: "OPENING",
+      quantityBaseMicro: 5 * QUANTITY_SCALE,
+      unitCostMinor: 60_000,
+      totalCostMinor: 300_000,
+      sourceType: "OPENING",
+      sourceId: "category-opening",
+      idempotencyKey: "category-opening",
+      businessDate: "2026-08-30",
+    });
+    await service.upsertParPolicy({
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-category-beef",
+      reorderPointMicro: 6 * QUANTITY_SCALE,
+      targetQuantityMicro: 10 * QUANTITY_SCALE,
+    });
+
+    const categories = await service.listInventoryCategories(branchId);
+    expect(categories).toEqual([
+      expect.objectContaining({
+        id: "category-meat",
+        code: "MEAT",
+        name: "Meat",
+        item_count: 1,
+        stock_value_minor: 300_000,
+        low_stock_count: 1,
+        out_of_stock_count: 0,
+      }),
+    ]);
+
+    const detail = await service.stockDetail({ branchId, warehouseId });
+    expect(detail.rows).toEqual([
+      expect.objectContaining({
+        item_id: "item-category-beef",
+        category_name: "Meat",
+        warehouse_id: warehouseId,
+        quantity_minor: 5 * QUANTITY_SCALE,
+        reorder_point_minor: 6 * QUANTITY_SCALE,
+        target_quantity_minor: 10 * QUANTITY_SCALE,
+        total_value_minor: 300_000,
+      }),
+    ]);
+  });
+
+  it("runs a stock count through draft, submit and approval before posting variance", async () => {
+    await seedBeef(service);
+    await opening(service, "lifecycle-count-opening", 10 * QUANTITY_SCALE, 58_200);
+    const started = await service.startStockCount({
+      id: "count-lifecycle",
+      branchId,
+      warehouseId,
+      businessDate: "2026-08-30",
+      idempotencyKey: "count-lifecycle",
+      blindCount: true,
+    });
+    expect(started).toMatchObject({ duplicate: false, itemCount: 1 });
+
+    let detail = await service.stockCountDetail("count-lifecycle");
+    expect(detail.session).toMatchObject({ status: "DRAFT", blind_count: 1 });
+    expect(detail.lines[0]).toMatchObject({
+      inventory_item_id: "item-beef",
+      expected_quantity_minor: null,
+      variance_quantity_minor: null,
+      variance_value_minor: null,
+      unit_cost_minor: null,
+      counted: 0,
+    });
+
+    await service.saveStockCount("count-lifecycle", {
+      lines: [
+        {
+          inventoryItemId: "item-beef",
+          countedQuantityMicro: 8_500_000,
+          reason: "Independent recount",
+        },
+      ],
+    });
+    await expect(service.submitStockCount("count-lifecycle")).resolves.toMatchObject({
+      status: "SUBMITTED",
+    });
+    await expect(
+      service.approveStockCount("count-lifecycle", "Manager verified the recount"),
+    ).resolves.toMatchObject({
+      status: "POSTED",
+      duplicate: false,
+      varianceCount: 1,
+    });
+
+    detail = await service.stockCountDetail("count-lifecycle");
+    expect(detail.session).toMatchObject({
+      status: "POSTED",
+      approval_reason: "Manager verified the recount",
+    });
+    expect(detail.lines[0]).toMatchObject({
+      counted: 1,
+      counted_quantity_minor: 8_500_000,
+      variance_quantity_minor: -1_500_000,
+      variance_value_minor: -87_300,
+    });
+    expect((await inventoryBalance(db, "item-beef")).quantity_minor).toBe(8_500_000);
+    const movement = await db
+      .prepare(
+        `SELECT movement_type,source_type,source_id
+           FROM inventory_movements
+          WHERE tenant_id=? AND source_type='STOCK_COUNT' AND source_id=?`,
+      )
+      .bind(tenantId, "count-lifecycle")
+      .first<Record<string, unknown>>();
+    expect(movement).toMatchObject({
+      movement_type: "STOCK_COUNT_ADJUSTMENT",
+      source_type: "STOCK_COUNT",
+      source_id: "count-lifecycle",
+    });
+  });
+
+  it("keeps stock-count participation separate from general inventory viewing", async () => {
+    await seedBeef(service);
+    await opening(service, "permission-count-opening", 3 * QUANTITY_SCALE, 50_000);
+
+    const counter = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryCount]),
+    );
+    const started = await counter.startStockCount({
+      id: "count-permissions",
+      branchId,
+      warehouseId,
+      businessDate: "2026-08-30",
+      idempotencyKey: "count-permissions",
+      blindCount: true,
+    });
+    expect(started).toMatchObject({ duplicate: false, itemCount: 1 });
+
+    let detail = await counter.stockCountDetail("count-permissions");
+    expect(detail.lines[0]).toMatchObject({
+      expected_quantity_minor: null,
+      variance_quantity_minor: null,
+      unit_cost_minor: null,
+      counted: 0,
+    });
+
+    await counter.saveStockCount("count-permissions", {
+      lines: [{ inventoryItemId: "item-beef", countedQuantityMicro: 2_500_000 }],
+    });
+    await expect(counter.submitStockCount("count-permissions")).resolves.toMatchObject({
+      status: "SUBMITTED",
+    });
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryCountApprove]),
+    );
+    await expect(
+      approver.approveStockCount("count-permissions", "Independent approval"),
+    ).resolves.toMatchObject({
+      status: "POSTED",
+      varianceCount: 1,
+    });
+    detail = await approver.stockCountDetail("count-permissions");
+    expect(detail.lines[0]).toMatchObject({
+      expected_quantity_minor: 3 * QUANTITY_SCALE,
+      counted_quantity_minor: 2_500_000,
+      variance_quantity_minor: -500_000,
+    });
+  });
+
+  it("rejects a stale stock-count snapshot after inventory moves", async () => {
+    await seedBeef(service);
+    await opening(service, "stale-count-opening", 4 * QUANTITY_SCALE, 50_000);
+    await service.startStockCount({
+      id: "count-stale",
+      branchId,
+      warehouseId,
+      businessDate: "2026-08-30",
+      idempotencyKey: "count-stale",
+    });
+    const detail = await service.stockCountDetail("count-stale");
+    await service.saveStockCount("count-stale", {
+      lines: [{ inventoryItemId: "item-beef", countedQuantityMicro: 4 * QUANTITY_SCALE }],
+    });
+    const snapshotAt = String(detail.session["snapshot_at"]);
+    await service.appendMovement({
+      branchId,
+      warehouseId,
+      inventoryItemId: "item-beef",
+      movementType: "PURCHASE_RECEIPT",
+      quantityBaseMicro: QUANTITY_SCALE,
+      unitCostMinor: 50_000,
+      totalCostMinor: 50_000,
+      sourceType: "GOODS_RECEIPT",
+      sourceId: "stale-after-snapshot",
+      idempotencyKey: "stale-after-snapshot",
+      businessDate: "2026-08-30",
+      occurredAt: new Date(new Date(snapshotAt).getTime() + 1_000).toISOString(),
+    });
+
+    await expect(service.submitStockCount("count-stale")).rejects.toThrow(
+      "Stock changed after this count started",
+    );
+    expect((await service.stockCountDetail("count-stale")).session).toMatchObject({
+      status: "COUNTING",
+    });
   });
 
   it("posts physical count variance as an append-only adjustment", async () => {

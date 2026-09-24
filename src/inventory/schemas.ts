@@ -20,6 +20,15 @@ export const unitSchema = z
   })
   .strict();
 
+export const inventoryCategorySchema = z
+  .object({
+    id: id.optional(),
+    code,
+    name: z.string().trim().min(1).max(160),
+    description: z.string().trim().max(1000).optional(),
+  })
+  .strict();
+
 export const inventoryItemSchema = z
   .object({
     id: id.optional(),
@@ -475,6 +484,45 @@ export const productionSchema = z
     businessDate: date,
     stationId: id.optional(),
     employeeId: id.optional(),
+  })
+  .strict();
+
+export const stockCountStartSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    idempotencyKey: id,
+    blindCount: z.boolean().optional(),
+  })
+  .strict();
+
+export const stockCountSaveSchema = z
+  .object({
+    lines: z
+      .array(
+        z
+          .object({
+            inventoryItemId: id,
+            countedQuantityMicro: nonNegativeInteger,
+            reason: z.string().trim().min(1).max(500).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(2_000),
+  })
+  .strict();
+
+export const stockCountDecisionSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+export const stockCountCancelSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(500),
   })
   .strict();
 

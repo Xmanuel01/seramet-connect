@@ -10,6 +10,7 @@ export type InventoryListRow = {
   name: string;
   description: string | null;
   category_id: string | null;
+  category_name: string | null;
   base_unit_id: string;
   purchase_unit_id: string | null;
   track_inventory: number;
@@ -106,6 +107,16 @@ export type InventoryBranchPayload = {
   branchId: string;
   summary: InventorySummary;
   items: InventoryListRow[];
+  categories: Array<{
+    id: string;
+    code: string;
+    name: string;
+    description: string | null;
+    item_count: number;
+    stock_value_minor: number;
+    low_stock_count: number;
+    out_of_stock_count: number;
+  }>;
   warehouses: Array<{
     id: string;
     code: string;
@@ -171,6 +182,7 @@ export function useInventoryControlCentre(enabled: boolean) {
           const [
             summaryResponse,
             items,
+            categoriesResponse,
             warehousesResponse,
             unitsResponse,
             procurementResponse,
@@ -182,6 +194,10 @@ export function useInventoryControlCentre(enabled: boolean) {
             ),
             fetchInventoryItems(headers, selectedBranchId),
             fetch(
+              `/api/seramet/inventory/categories?branchId=${encodeURIComponent(selectedBranchId)}`,
+              { headers },
+            ),
+            fetch(
               `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
               { headers },
             ),
@@ -191,6 +207,7 @@ export function useInventoryControlCentre(enabled: boolean) {
           ]);
           for (const response of [
             summaryResponse,
+            categoriesResponse,
             warehousesResponse,
             unitsResponse,
             procurementResponse,
@@ -199,6 +216,9 @@ export function useInventoryControlCentre(enabled: boolean) {
             if (!response.ok) throw new Error(`Inventory server query failed (${response.status})`);
           }
           const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
+          const categoriesBody = (await categoriesResponse.json()) as {
+            categories: InventoryBranchPayload["categories"];
+          };
           const warehousesBody = (await warehousesResponse.json()) as {
             warehouses: InventoryBranchPayload["warehouses"];
           };
@@ -215,6 +235,7 @@ export function useInventoryControlCentre(enabled: boolean) {
             branchId: selectedBranchId,
             summary: summaryBody.summary,
             items,
+            categories: categoriesBody.categories,
             warehouses: warehousesBody.warehouses,
             units: unitsBody.units,
             procurement: procurementBody.overview,
