@@ -4718,14 +4718,16 @@ export class InventoryIntelligenceService {
       const blindActive =
         Number(row["blind_count"] ?? 0) === 1 &&
         ["DRAFT", "COUNTING"].includes(String(row["status"] ?? ""));
-      return blindActive
-        ? { ...row, variance_count: null, variance_value_minor: null }
-        : row;
+      return blindActive ? { ...row, variance_count: null, variance_value_minor: null } : row;
     });
   }
 
   async stockCountDetail(id: string) {
-    this.requirePermission(permissions.inventoryView);
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryCount,
+      permissions.inventoryCountApprove,
+    ]);
     const session = await this.db
       .prepare(
         `SELECT s.id,s.branch_id,s.warehouse_id,w.name AS warehouse_name,w.code AS warehouse_code,
@@ -4805,11 +4807,8 @@ export class InventoryIntelligenceService {
       );
     }
 
-    const stock = await this.stockDetail({
-      branchId: input.branchId,
-      warehouseId: input.warehouseId,
-    });
-    if (!stock.rows.length) {
+    const stockRows = await this.stockCountSnapshotRows(input.branchId, input.warehouseId);
+    if (!stockRows.length) {
       throw new ServerOperationError(
         "VALIDATION_FAILED",
         400,
@@ -4833,7 +4832,7 @@ export class InventoryIntelligenceService {
           input.branchId,
           input.warehouseId,
           input.businessDate,
-          JSON.stringify({ type: "WAREHOUSE", itemCount: stock.rows.length }),
+          JSON.stringify({ type: "WAREHOUSE", itemCount: stockRows.length }),
           input.blindCount ? 1 : 0,
           this.actor.id,
           null,
@@ -4844,7 +4843,7 @@ export class InventoryIntelligenceService {
           stamp,
         ),
     ];
-    for (const row of stock.rows) {
+    for (const row of stockRows) {
       const itemId = String(row["item_id"]);
       const expected = Number(row["quantity_minor"] ?? 0);
       const unitCost = Number(row["average_unit_cost_minor"] ?? 0);
@@ -4881,7 +4880,7 @@ export class InventoryIntelligenceService {
       ),
     );
     await this.db.batch(statements);
-    return { id, duplicate: false, itemCount: stock.rows.length };
+    return { id, duplicate: false, itemCount: stockRows.length };
   }
 
   async saveStockCount(
@@ -5516,6 +5515,57 @@ export class InventoryIntelligenceService {
       dataQualityIssues: issueCount,
       generatedAt: new Date().toISOString(),
     };
+  }
+
+  private async stockCountSnapshotRows(branchId: string, warehouseId: string) {
+    const result = await this.db
+      .prepare(
+        `WITH scoped_items AS (
+           SELECT item_id
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=?
+           UNION
+           SELECT inventory_item_id AS item_id
+             FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=? AND active=1
+           UNION
+           SELECT i.id AS item_id
+             FROM inventory_items i
+             JOIN warehouses w
+               ON w.tenant_id=i.tenant_id AND w.id=i.default_warehouse_id
+              AND w.branch_id=? AND w.id=? AND w.active=1
+            WHERE i.tenant_id=? AND i.active=1
+         )
+         SELECT i.id AS item_id,
+                COALESCE(b.quantity_minor,0) AS quantity_minor,
+                COALESCE(b.average_unit_cost_minor,0) AS average_unit_cost_minor
+           FROM scoped_items s
+           JOIN inventory_items i
+             ON i.tenant_id=? AND i.id=s.item_id AND i.active=1
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=i.tenant_id AND b.branch_id=? AND b.warehouse_id=? AND b.item_id=i.id
+          ORDER BY i.name,i.id`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        warehouseId,
+        this.actor.tenantId,
+        branchId,
+        warehouseId,
+        branchId,
+        warehouseId,
+        this.actor.tenantId,
+        this.actor.tenantId,
+        branchId,
+        warehouseId,
+      )
+      .all<{
+        item_id: string;
+        quantity_minor: number;
+        average_unit_cost_minor: number;
+      }>();
+    return result.results ?? [];
   }
 
   private async assertWarehouseBranch(branchId: string, warehouseId: string) {
@@ -6980,6 +7030,16 @@ export class InventoryIntelligenceService {
       409,
       "Inventory mutation is blocked for a closed business date",
     );
+  }
+
+  private requireAnyPermission(required: readonly string[]) {
+    if (!required.some((permission) => this.actor.permissions.includes(permission))) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        `${required.join(" or ")} permission is required`,
+      );
+    }
   }
 
   private requirePermission(permission: string) {
