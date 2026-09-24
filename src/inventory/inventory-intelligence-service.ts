@@ -741,7 +741,10 @@ export class InventoryIntelligenceService {
         }
         const next = (requestedOnThisPo.get(line.inventoryItemId) ?? 0) + line.quantityMicro;
         requestedOnThisPo.set(line.inventoryItemId, next);
-        if (requisitionLine.ordered_quantity_minor + next > requisitionLine.requested_quantity_minor) {
+        if (
+          requisitionLine.ordered_quantity_minor + next >
+          requisitionLine.requested_quantity_minor
+        ) {
           throw new ServerOperationError(
             "VALIDATION_FAILED",
             409,
@@ -924,14 +927,7 @@ export class InventoryIntelligenceService {
              '$.cancellationReason',?,'$.cancelledBy',?,'$.cancelledAt',?),version=version+1,
              updated_at=? WHERE tenant_id=? AND id=?`,
         )
-        .bind(
-          reason.trim(),
-          this.actor.id,
-          stamp,
-          stamp,
-          this.actor.tenantId,
-          id,
-        ),
+        .bind(reason.trim(), this.actor.id, stamp, stamp, this.actor.tenantId, id),
     ];
 
     if (purchaseOrder.requisition_id) {
@@ -1124,10 +1120,7 @@ export class InventoryIntelligenceService {
           "Received quantity must be fully dispositioned as accepted plus rejected",
         );
       }
-      if (
-        poLine.track_expiry === 1 &&
-        (!lineInput.lotNumber?.trim() || !lineInput.expiryDate)
-      ) {
+      if (poLine.track_expiry === 1 && (!lineInput.lotNumber?.trim() || !lineInput.expiryDate)) {
         throw new ServerOperationError(
           "VALIDATION_FAILED",
           409,
@@ -5426,7 +5419,8 @@ export class InventoryIntelligenceService {
         ? "MISSING_DOCUMENT"
         : (quantities?.received ?? 0) !== (quantities?.ordered ?? 0)
           ? "QUANTITY_VARIANCE"
-          : receivedTotal !== purchaseOrder.total_minor || input.totalMinor !== purchaseOrder.total_minor
+          : receivedTotal !== purchaseOrder.total_minor ||
+              input.totalMinor !== purchaseOrder.total_minor
             ? "PRICE_VARIANCE"
             : "MATCHED";
     const id = input.id ?? crypto.randomUUID();
