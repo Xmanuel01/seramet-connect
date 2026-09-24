@@ -3208,10 +3208,12 @@ export class InventoryIntelligenceService {
           WHERE t.tenant_id=? AND t.id=?`,
       )
       .bind(this.actor.tenantId, id)
-      .first<Record<string, unknown> & {
-        source_branch_id: string;
-        destination_branch_id: string;
-      }>();
+      .first<
+        Record<string, unknown> & {
+          source_branch_id: string;
+          destination_branch_id: string;
+        }
+      >();
     if (!transfer) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
     }
@@ -4108,7 +4110,11 @@ export class InventoryIntelligenceService {
     if (row.status !== "PENDING") {
       throw invalidTransition("Inventory adjustment", row.status, "APPROVED");
     }
-    await this.assertBusinessDateOpen(row.branch_id, row.business_date, decisionReason ?? row.reason);
+    await this.assertBusinessDateOpen(
+      row.branch_id,
+      row.business_date,
+      decisionReason ?? row.reason,
+    );
     const balance = await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id);
     const unitCost = row.unit_cost_minor ?? balance.average_unit_cost_minor;
     if (row.quantity_minor > 0 && unitCost <= 0) {
@@ -4184,7 +4190,9 @@ export class InventoryIntelligenceService {
       await this.db.batch(statements);
     } catch (error) {
       const raced = await this.db
-        .prepare("SELECT status,posted_movement_id FROM inventory_adjustment_requests WHERE tenant_id=? AND id=?")
+        .prepare(
+          "SELECT status,posted_movement_id FROM inventory_adjustment_requests WHERE tenant_id=? AND id=?",
+        )
         .bind(this.actor.tenantId, id)
         .first<{ status: string; posted_movement_id: string | null }>();
       if (raced?.status === "APPROVED") {
@@ -4203,7 +4211,9 @@ export class InventoryIntelligenceService {
   async rejectAdjustment(id: string, reason: string) {
     this.requirePermission(permissions.inventoryAdjustApprove);
     const row = await this.db
-      .prepare("SELECT branch_id,status FROM inventory_adjustment_requests WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT branch_id,status FROM inventory_adjustment_requests WHERE tenant_id=? AND id=?",
+      )
       .bind(this.actor.tenantId, id)
       .first<{ branch_id: string; status: string }>();
     if (!row) {
@@ -7663,11 +7673,7 @@ export class InventoryIntelligenceService {
     }
   }
 
-  private async listInventoryLosses(
-    kind: "WASTAGE" | "BREAKAGE",
-    branchId: string,
-    limit: number,
-  ) {
+  private async listInventoryLosses(kind: "WASTAGE" | "BREAKAGE", branchId: string, limit: number) {
     this.requireAnyPermission([
       permissions.inventoryView,
       permissions.inventoryWastageRecord,
@@ -7755,22 +7761,8 @@ export class InventoryIntelligenceService {
               (tenant_id,id,branch_id,status,idempotency_key,payload_json,created_at)
              VALUES (?,?,?,'PENDING',?,?,?)`,
           )
-          .bind(
-            this.actor.tenantId,
-            id,
-            input.branchId,
-            input.idempotencyKey,
-            payload,
-            stamp,
-          ),
-        this.auditStatement(
-          `${kind}_REQUESTED`,
-          kind,
-          id,
-          stamp,
-          correlationId,
-          input.branchId,
-        ),
+          .bind(this.actor.tenantId, id, input.branchId, input.idempotencyKey, payload, stamp),
+        this.auditStatement(`${kind}_REQUESTED`, kind, id, stamp, correlationId, input.branchId),
       ]);
     } catch (error) {
       const raced = await this.db
@@ -7808,14 +7800,14 @@ export class InventoryIntelligenceService {
       return { id, status: targetStatus, duplicate: true };
     }
     if (row.status !== "PENDING") {
-      throw invalidTransition(kind === "WASTAGE" ? "Wastage" : "Breakage", row.status, targetStatus);
+      throw invalidTransition(
+        kind === "WASTAGE" ? "Wastage" : "Breakage",
+        row.status,
+        targetStatus,
+      );
     }
     if (decision === "REJECT" && !reason?.trim()) {
-      throw new ServerOperationError(
-        "VALIDATION_FAILED",
-        400,
-        "A rejection reason is required",
-      );
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "A rejection reason is required");
     }
     const payload = parseJsonObject(row.payload_json);
     const warehouseId = stringProperty(payload, "warehouseId");
@@ -7913,14 +7905,7 @@ export class InventoryIntelligenceService {
             WHERE tenant_id=? AND id=? AND status='PENDING'`,
         )
         .bind(nextPayload, this.actor.tenantId, id),
-      this.auditStatement(
-        `${kind}_APPROVED`,
-        kind,
-        id,
-        stamp,
-        correlationId,
-        row.branch_id,
-      ),
+      this.auditStatement(`${kind}_APPROVED`, kind, id, stamp, correlationId, row.branch_id),
       this.recalculationEventStatement(
         row.branch_id,
         `${kind}_APPROVED`,
