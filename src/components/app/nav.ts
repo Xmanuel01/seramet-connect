@@ -168,7 +168,7 @@ export const navGroups: NavGroup[] = [
     permission: permissions.inventoryView,
     items: [
       { label: "Overview", to: "/inventory", icon: Boxes },
-      { label: "Items", to: "/inventory", icon: Boxes },
+      { label: "Items", to: "/inventory-items", icon: Boxes },
       { label: "Categories", to: "/categories", icon: Tags },
       { label: "Stock Detail", to: "/stock-detail", icon: Boxes },
       { label: "Warehouses", to: "/warehouses", icon: Warehouse },
