@@ -42,7 +42,9 @@ function Requisitions() {
       ),
     [control.data],
   );
-  const open = rows.filter((row) => ["SUBMITTED", "APPROVED", "PARTIALLY_ORDERED"].includes(row.status));
+  const open = rows.filter((row) =>
+    ["SUBMITTED", "APPROVED", "PARTIALLY_ORDERED"].includes(row.status),
+  );
   const awaitingApproval = rows.filter((row) => row.status === "SUBMITTED");
   const readyToOrder = rows.filter((row) => ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status));
   const ordered = rows.filter((row) => row.status === "ORDERED");
