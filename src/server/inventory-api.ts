@@ -2,6 +2,8 @@ import { z, type ZodTypeAny } from "zod";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import type {
   GoodsReceiptInput,
+  InventoryAdjustmentRequestInput,
+  InventoryLossRequestInput,
   InventoryMovementInput,
   ProductionCompletionInput,
   ProductionPlanInput,
@@ -11,6 +13,7 @@ import type {
   StagedTransferReceiptInput,
   StockCountInput,
   SupplierReturnInput,
+  WarehouseDefinitionInput,
 } from "@/inventory/types";
 import {
   approvalSchema,
@@ -18,6 +21,8 @@ import {
   goodsReceiptSchema,
   inventoryCategorySchema,
   inventoryItemSchema,
+  inventoryAdjustmentRequestSchema,
+  inventoryLossRequestSchema,
   movementSchema,
   parPolicySchema,
   portionCheckSchema,
@@ -47,6 +52,7 @@ import {
   supplierSchema,
   transferSchema,
   unitSchema,
+  warehouseDefinitionSchema,
   wastageSchema,
 } from "@/inventory/schemas";
 import { SerametHttpError, authenticateSerametRequest, type SerametEnv } from "@/lib/seramet-auth";
@@ -59,6 +65,8 @@ import { enqueueInventoryRecalculation } from "@/server/workers";
 const movementRequestSchema = movementSchema.extend({
   businessDate: movementSchema.shape.businessDate.optional(),
 });
+const inventoryAdjustmentApiSchema = inventoryAdjustmentRequestSchema;
+const inventoryLossApiSchema = inventoryLossRequestSchema;
 const requisitionRequestSchema = requisitionSchema.extend({
   requisitionNumber: requisitionSchema.shape.requisitionNumber.optional(),
 });
@@ -98,6 +106,8 @@ const supplierReturnRequestSchema = supplierReturnSchema.extend({
 });
 
 type MovementRequest = Omit<InventoryMovementInput, "businessDate"> & { businessDate?: string };
+type InventoryAdjustmentApiRequest = Omit<InventoryAdjustmentRequestInput, "businessDate">;
+type InventoryLossApiRequest = Omit<InventoryLossRequestInput, "businessDate">;
 type RequisitionRequest = Omit<PurchaseRequisitionInput, "requisitionNumber"> & {
   requisitionNumber?: string;
 };
