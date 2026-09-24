@@ -91,7 +91,7 @@ function Receiving() {
         }),
       ),
     );
-  }, [po?.id]);
+  }, [po]);
 
   const receivingBranch = po
     ? control.data.find((branch) => branch.branchId === po.branchId)
@@ -140,11 +140,7 @@ function Receiving() {
   const activeLines = worksheet.filter((line) => line.receivedMicro > 0);
   const expectedMinor = worksheet.reduce(
     (sum, line) =>
-      sum +
-      Math.round(
-        (line.remainingMicro * Number(line.unit_price_minor)) /
-          1_000_000,
-      ),
+      sum + Math.round((line.remainingMicro * Number(line.unit_price_minor)) / 1_000_000),
     0,
   );
   const acceptedMinor = activeLines.reduce((sum, line) => sum + line.valueMinor, 0);
@@ -214,7 +210,9 @@ function Receiving() {
   return (
     <AppShell
       title="Receiving"
-      subtitle={po ? `${po.purchase_order_number} - ${po.supplier_name} - ${branchLabel}` : branchLabel}
+      subtitle={
+        po ? `${po.purchase_order_number} - ${po.supplier_name} - ${branchLabel}` : branchLabel
+      }
       actions={
         <>
           <Btn onClick={() => void control.refresh()}>
@@ -268,7 +266,9 @@ function Receiving() {
           right={<Status>{po?.status ?? "WAITING"}</Status>}
         />
         {control.status === "loading" ? (
-          <div className="p-6 text-[13px] text-muted-foreground">Loading approved purchase orders...</div>
+          <div className="p-6 text-[13px] text-muted-foreground">
+            Loading approved purchase orders...
+          </div>
         ) : !po ? (
           <div className="p-8 text-center text-[13px] text-muted-foreground">
             No approved or partially received purchase order is awaiting receipt.
@@ -303,7 +303,9 @@ function Receiving() {
                         {line.unit_symbol ?? "unit"}
                       </TD>
                       <TD className="num text-right text-muted-foreground">
-                        {(Number(line.received_purchase_quantity_minor) / 1_000_000).toLocaleString()}{" "}
+                        {(
+                          Number(line.received_purchase_quantity_minor) / 1_000_000
+                        ).toLocaleString()}{" "}
                         {line.unit_symbol ?? "unit"}
                       </TD>
                       <TD className="num text-right">
@@ -356,14 +358,18 @@ function Receiving() {
                         <input
                           inputMode="decimal"
                           value={line.state.unitPrice}
-                          onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
+                          onChange={(event) =>
+                            updateLine(line.id, { unitPrice: event.target.value })
+                          }
                           className={numberInputClass}
                         />
                       </TD>
                       <TD>
                         <input
                           value={line.state.lotNumber}
-                          onChange={(event) => updateLine(line.id, { lotNumber: event.target.value })}
+                          onChange={(event) =>
+                            updateLine(line.id, { lotNumber: event.target.value })
+                          }
                           className={textInputClass}
                           placeholder={line.trackExpiry ? "Required" : "Optional"}
                           aria-required={line.trackExpiry}
@@ -373,7 +379,9 @@ function Receiving() {
                         <input
                           type="date"
                           value={line.state.expiryDate}
-                          onChange={(event) => updateLine(line.id, { expiryDate: event.target.value })}
+                          onChange={(event) =>
+                            updateLine(line.id, { expiryDate: event.target.value })
+                          }
                           className={textInputClass}
                           required={line.trackExpiry}
                         />
