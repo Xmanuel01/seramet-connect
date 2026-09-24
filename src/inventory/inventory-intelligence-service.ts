@@ -5285,18 +5285,139 @@ export class InventoryIntelligenceService {
   }
 
   async listWarehouses(branchId: string) {
-    this.requirePermission(permissions.inventoryView);
+    this.requireAnyPermission([permissions.inventoryView, permissions.settingsWarehouseView]);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
     const result = await this.db
       .prepare(
-        `SELECT id,code,name,branch_id
-           FROM warehouses
-          WHERE tenant_id=? AND branch_id=? AND active=1
-          ORDER BY name,id`,
+        `SELECT w.id,w.code,w.name,w.branch_id,w.active,
+                COALESCE(json_extract(w.payload_json,'$.type'),'OTHER') AS type,
+                COUNT(DISTINCT CASE
+                  WHEN COALESCE(b.quantity_minor,0)<>0 OR COALESCE(b.quantity_reserved_minor,0)<>0
+                  THEN b.item_id END) AS stocked_item_count,
+                COALESCE(SUM(b.quantity_minor),0) AS quantity_minor,
+                COALESCE(SUM(b.quantity_reserved_minor),0) AS quantity_reserved_minor,
+                COALESCE(SUM(b.total_value_minor),0) AS stock_value_minor,
+                COALESCE(MAX(b.last_movement_at),'') AS last_movement_at
+           FROM warehouses w
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=w.tenant_id AND b.branch_id=w.branch_id AND b.warehouse_id=w.id
+          WHERE w.tenant_id=? AND w.branch_id=? AND w.active=1
+          GROUP BY w.id,w.code,w.name,w.branch_id,w.active,w.payload_json
+          ORDER BY w.name,w.id`,
       )
       .bind(this.actor.tenantId, branchId)
-      .all<{ id: string; code: string; name: string; branch_id: string }>();
+      .all<Record<string, unknown>>();
     return result.results ?? [];
+  }
+
+  async createWarehouse(input: WarehouseDefinitionInput) {
+    this.requirePermission(permissions.settingsWarehouseManage);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    const id = input.id ?? crypto.randomUUID();
+    const code = requiredCode(input.code, "warehouse code");
+    const name = requiredText(input.name, "warehouse name");
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO warehouses
+            (tenant_id,id,branch_id,code,name,active,payload_json)
+           VALUES (?,?,?,?,?,1,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          code,
+          name,
+          JSON.stringify({ type: input.type }),
+        ),
+      this.auditStatement(
+        "WAREHOUSE_CREATED",
+        "WAREHOUSE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, branchId: input.branchId, code, name, type: input.type, active: true };
+  }
+
+  async archiveWarehouse(id: string) {
+    this.requirePermission(permissions.settingsWarehouseManage);
+    const warehouse = await this.db
+      .prepare(
+        `SELECT id,branch_id,name FROM warehouses
+          WHERE tenant_id=? AND id=? AND active=1`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{ id: string; branch_id: string; name: string }>();
+    if (!warehouse) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Warehouse not found");
+    }
+    authorizeBranchRead(this.actor, this.actor.tenantId, warehouse.branch_id);
+    const [balance, counts, transfers, defaults] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=?
+              AND (quantity_minor<>0 OR quantity_reserved_minor<>0)`,
+        )
+        .bind(this.actor.tenantId, warehouse.branch_id, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM stock_count_sessions
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=?
+              AND status IN ('DRAFT','COUNTING','SUBMITTED','REVIEW')`,
+        )
+        .bind(this.actor.tenantId, warehouse.branch_id, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM stock_transfers
+            WHERE tenant_id=? AND status NOT IN ('RECEIVED','CANCELLED')
+              AND (source_warehouse_id=? OR destination_warehouse_id=?)`,
+        )
+        .bind(this.actor.tenantId, id, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM inventory_items
+            WHERE tenant_id=? AND active=1 AND default_warehouse_id=?`,
+        )
+        .bind(this.actor.tenantId, id)
+        .first<{ count: number }>(),
+    ]);
+    const blockers = [
+      (balance?.count ?? 0) > 0 ? "non-zero stock or reservations" : null,
+      (counts?.count ?? 0) > 0 ? "active stock counts" : null,
+      (transfers?.count ?? 0) > 0 ? "open transfers" : null,
+      (defaults?.count ?? 0) > 0 ? "active items using this default warehouse" : null,
+    ].filter((value): value is string => Boolean(value));
+    if (blockers.length) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        `Warehouse cannot be archived while it has ${blockers.join(", ")}`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare("UPDATE warehouses SET active=0 WHERE tenant_id=? AND id=? AND active=1")
+        .bind(this.actor.tenantId, id),
+      this.auditStatement(
+        "WAREHOUSE_ARCHIVED",
+        "WAREHOUSE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        warehouse.branch_id,
+      ),
+    ]);
+    return { id, status: "ARCHIVED" as const };
   }
 
   async inventoryItemDetail(input: { branchId: string; sku: string; limit?: number }) {
