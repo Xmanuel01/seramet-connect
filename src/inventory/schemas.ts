@@ -226,6 +226,43 @@ export const movementSchema = z
   })
   .strict();
 
+export const inventoryAdjustmentRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    inventoryItemId: id,
+    quantityMicro: integer.refine((value) => value !== 0),
+    unitCostMinor: nonNegativeInteger.optional(),
+    reason: z.string().trim().min(1).max(500),
+    idempotencyKey: id,
+  })
+  .strict();
+
+export const inventoryLossRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    inventoryItemId: id,
+    quantityMicro: positiveInteger,
+    reasonCode: code,
+    idempotencyKey: id,
+    stationId: id.optional(),
+    employeeId: id.optional(),
+  })
+  .strict();
+
+export const warehouseDefinitionSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    code,
+    name: z.string().trim().min(1).max(160),
+    type: z.enum(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"]),
+  })
+  .strict();
+
 export const stagedTransferDispatchSchema = z
   .object({
     id: id.optional(),
