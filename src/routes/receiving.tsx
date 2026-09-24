@@ -93,8 +93,13 @@ function Receiving() {
     );
   }, [po?.id]);
 
+  const receivingBranch = po
+    ? control.data.find((branch) => branch.branchId === po.branchId)
+    : undefined;
   const worksheet =
     po?.lines.map((line) => {
+      const catalogItem = receivingBranch?.items.find((item) => item.id === line.inventory_item_id);
+      const trackExpiry = Number(catalogItem?.track_expiry ?? 0) === 1;
       const state = lineState[line.id] ?? {
         received: "0",
         accepted: "0",
@@ -125,7 +130,10 @@ function Receiving() {
         rejectedMicro,
         unitPriceMinor,
         valueMinor: Math.round((acceptedMicro * unitPriceMinor) / 1_000_000),
-        validQuantities,
+        trackExpiry,
+        validQuantities:
+          validQuantities &&
+          (!trackExpiry || (Boolean(state.lotNumber.trim()) && Boolean(state.expiryDate))),
       };
     }) ?? [];
 
@@ -357,7 +365,8 @@ function Receiving() {
                           value={line.state.lotNumber}
                           onChange={(event) => updateLine(line.id, { lotNumber: event.target.value })}
                           className={textInputClass}
-                          placeholder="Optional"
+                          placeholder={line.trackExpiry ? "Required" : "Optional"}
+                          aria-required={line.trackExpiry}
                         />
                       </TD>
                       <TD>
@@ -366,6 +375,7 @@ function Receiving() {
                           value={line.state.expiryDate}
                           onChange={(event) => updateLine(line.id, { expiryDate: event.target.value })}
                           className={textInputClass}
+                          required={line.trackExpiry}
                         />
                       </TD>
                       <TD className="num text-right font-semibold">{ksh(line.valueMinor / 100)}</TD>
@@ -373,11 +383,14 @@ function Receiving() {
                         <Status>
                           {line.receivedMicro === 0
                             ? "SKIP"
-                            : line.validQuantities
-                              ? line.rejectedMicro > 0
-                                ? "PARTIAL REJECTION"
-                                : "READY"
-                              : "CHECK QUANTITIES"}
+                            : line.trackExpiry &&
+                                (!line.state.lotNumber.trim() || !line.state.expiryDate)
+                              ? "LOT / EXPIRY REQUIRED"
+                              : line.validQuantities
+                                ? line.rejectedMicro > 0
+                                  ? "PARTIAL REJECTION"
+                                  : "READY"
+                                : "CHECK QUANTITIES"}
                         </Status>
                       </TD>
                     </tr>
