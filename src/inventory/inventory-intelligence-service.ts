@@ -5444,7 +5444,9 @@ export class InventoryIntelligenceService {
                prepared_available_minor=excluded.prepared_available_minor,
                safety_buffer_minor=excluded.safety_buffer_minor,
                recommended_batch_minor=excluded.recommended_batch_minor,
-               station_id=excluded.station_id,quality=excluded.quality,
+               station_id=CASE WHEN production_prep_recommendations.status='RECOMMENDED'
+                 THEN excluded.station_id ELSE production_prep_recommendations.station_id END,
+               quality=excluded.quality,
                explanation_json=excluded.explanation_json,generated_at=excluded.generated_at,
                updated_at=excluded.updated_at,
                status=CASE WHEN production_prep_recommendations.status IN ('APPROVED','ADJUSTED','STARTED','COMPLETED')
