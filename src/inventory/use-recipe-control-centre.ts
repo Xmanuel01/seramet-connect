@@ -16,6 +16,8 @@ export type RecipeComponentRow = {
   inventory_item_sku: string | null;
   inventory_item_name: string | null;
   sub_recipe_name: string | null;
+  component_cost_minor: number;
+  component_costing_error: string | null;
 };
 
 export type RecipeLibraryRow = {
