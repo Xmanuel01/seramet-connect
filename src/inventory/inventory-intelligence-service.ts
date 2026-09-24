@@ -885,7 +885,7 @@ export class InventoryIntelligenceService {
       this.db
         .prepare(
           `UPDATE purchase_orders SET status='APPROVED',approved_by=?,approval_reason=?,approved_at=?,
-           version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND status='SUBMITTED'`,
+           version=version+1,updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(this.actor.id, reason ?? null, stamp, stamp, this.actor.tenantId, id),
       this.auditStatement(
@@ -921,7 +921,7 @@ export class InventoryIntelligenceService {
         .prepare(
           `UPDATE purchase_orders SET status='CANCELLED',payload_json=json_set(payload_json,
              '$.cancellationReason',?,'$.cancelledBy',?,'$.cancelledAt',?),version=version+1,
-             updated_at=? WHERE tenant_id=? AND id=? AND status=?`,
+             updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(
           reason.trim(),
@@ -930,7 +930,6 @@ export class InventoryIntelligenceService {
           stamp,
           this.actor.tenantId,
           id,
-          purchaseOrder.status,
         ),
     ];
 
