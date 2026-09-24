@@ -27,6 +27,8 @@ import {
   productionSchema,
   purchaseQuoteSchema,
   purchaseOrderSchema,
+  recipeDefinitionSchema,
+  recipeImportSchema,
   recipeSchema,
   recipeVersionSchema,
   requisitionSchema,
@@ -232,6 +234,23 @@ export async function handleInventoryApi(
       ok: true,
       policy: await service.upsertParPolicy(await parse(request, parPolicySchema)),
     });
+  }
+  if (url.pathname === "/api/seramet/inventory/recipes" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, library: await service.recipeOverview(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/recipes/save" && request.method === "POST") {
+    return json(
+      {
+        ok: true,
+        recipe: await service.saveRecipeDefinition(await parse(request, recipeDefinitionSchema)),
+      },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/inventory/recipes/import" && request.method === "POST") {
+    const imported = await service.importRecipeDefinitions(await parse(request, recipeImportSchema));
+    return json({ ok: imported.failed === 0, import: imported }, imported.failed === 0 ? 201 : 207);
   }
   if (url.pathname === "/api/seramet/inventory/recipes" && request.method === "POST") {
     return json(
