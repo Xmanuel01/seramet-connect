@@ -957,6 +957,57 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     });
   });
 
+  it("keeps stock-count participation separate from general inventory viewing", async () => {
+    await seedBeef(service);
+    await opening(service, "permission-count-opening", 3 * QUANTITY_SCALE, 50_000);
+
+    const counter = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryCount]),
+    );
+    const started = await counter.startStockCount({
+      id: "count-permissions",
+      branchId,
+      warehouseId,
+      businessDate: "2026-08-30",
+      idempotencyKey: "count-permissions",
+      blindCount: true,
+    });
+    expect(started).toMatchObject({ duplicate: false, itemCount: 1 });
+
+    let detail = await counter.stockCountDetail("count-permissions");
+    expect(detail.lines[0]).toMatchObject({
+      expected_quantity_minor: null,
+      variance_quantity_minor: null,
+      unit_cost_minor: null,
+      counted: 0,
+    });
+
+    await counter.saveStockCount("count-permissions", {
+      lines: [{ inventoryItemId: "item-beef", countedQuantityMicro: 2_500_000 }],
+    });
+    await expect(counter.submitStockCount("count-permissions")).resolves.toMatchObject({
+      status: "SUBMITTED",
+    });
+
+    const approver = new InventoryIntelligenceService(
+      db,
+      actor(tenantId, [permissions.inventoryCountApprove]),
+    );
+    await expect(
+      approver.approveStockCount("count-permissions", "Independent approval"),
+    ).resolves.toMatchObject({
+      status: "POSTED",
+      varianceCount: 1,
+    });
+    detail = await approver.stockCountDetail("count-permissions");
+    expect(detail.lines[0]).toMatchObject({
+      expected_quantity_minor: 3 * QUANTITY_SCALE,
+      counted_quantity_minor: 2_500_000,
+      variance_quantity_minor: -500_000,
+    });
+  });
+
   it("rejects a stale stock-count snapshot after inventory moves", async () => {
     await seedBeef(service);
     await opening(service, "stale-count-opening", 4 * QUANTITY_SCALE, 50_000);
