@@ -385,16 +385,18 @@ export async function handleInventoryApi(
       ),
     });
   }
-  const stockCountSubmitRoute =
-    /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/submit$/.exec(url.pathname);
+  const stockCountSubmitRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/submit$/.exec(
+    url.pathname,
+  );
   if (stockCountSubmitRoute && request.method === "POST") {
     return json({
       ok: true,
       count: await service.submitStockCount(decodeURIComponent(stockCountSubmitRoute[1]!)),
     });
   }
-  const stockCountApproveRoute =
-    /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/approve$/.exec(url.pathname);
+  const stockCountApproveRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/approve$/.exec(
+    url.pathname,
+  );
   if (stockCountApproveRoute && request.method === "POST") {
     const body = await parse<z.infer<typeof stockCountDecisionSchema>>(
       request,
@@ -408,8 +410,9 @@ export async function handleInventoryApi(
       ),
     });
   }
-  const stockCountCancelRoute =
-    /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/cancel$/.exec(url.pathname);
+  const stockCountCancelRoute = /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/cancel$/.exec(
+    url.pathname,
+  );
   if (stockCountCancelRoute && request.method === "POST") {
     const body = await parse<z.infer<typeof stockCountCancelSchema>>(
       request,
