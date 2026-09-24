@@ -1361,9 +1361,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
       6 * QUANTITY_SCALE,
     );
-    expect(
-      await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId),
-    ).toBeNull();
+    expect(await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).toBeNull();
 
     await service.approveStockTransfer("transfer-controlled", "Supervisor approved");
     expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
@@ -1378,9 +1376,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
       4 * QUANTITY_SCALE,
     );
-    expect(
-      await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId),
-    ).toBeNull();
+    expect(await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).toBeNull();
 
     const detail = await service.transferDetail("transfer-controlled");
     const line = detail.lines[0] as Record<string, unknown>;
