@@ -4617,11 +4617,12 @@ export class InventoryIntelligenceService {
       input.branchId,
       this.actor.tenantId,
       input.branchId,
+      input.branchId,
+      this.actor.tenantId,
       this.actor.tenantId,
       input.branchId,
       this.actor.tenantId,
       input.branchId,
-      this.actor.tenantId,
       input.branchId,
       ...(input.warehouseId ? [input.warehouseId] : []),
     ];
