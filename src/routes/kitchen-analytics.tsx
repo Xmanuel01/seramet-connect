@@ -12,10 +12,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import {
-  type KitchenAnalyticsPeriod,
-  useKitchenAnalytics,
-} from "@/kitchen/use-kitchen-analytics";
+import { type KitchenAnalyticsPeriod, useKitchenAnalytics } from "@/kitchen/use-kitchen-analytics";
 import { useAppContext } from "@/lib/app-context";
 import { formatDuration } from "@/management/ui";
 
@@ -110,10 +107,7 @@ function KitchenAnalytics() {
               suffix="%"
               invert={overview.summary.lateBps > 1_000}
             />
-            <Metric
-              label="Average prep"
-              value={formatDuration(overview.summary.averagePrepMs)}
-            />
+            <Metric label="Average prep" value={formatDuration(overview.summary.averagePrepMs)} />
             <Metric
               label="Cookbook coverage"
               value={percentage(overview.cookbook.coverageBps)}
@@ -131,10 +125,7 @@ function KitchenAnalytics() {
               />
               <div className="grid grid-cols-2 gap-3 p-4">
                 <Info label="Tasks" value={overview.prep.taskCount} />
-                <Info
-                  label="Completion"
-                  value={percentage(overview.prep.completionBps) + "%"}
-                />
+                <Info label="Completion" value={percentage(overview.prep.completionBps) + "%"} />
                 <Info label="Started" value={overview.prep.startedCount} />
                 <Info label="Approved" value={overview.prep.approvedCount} />
                 <Info label="Awaiting approval" value={overview.prep.awaitingApprovalCount} />
@@ -179,10 +170,7 @@ function KitchenAnalytics() {
                   value={overview.cookbook.missingCount}
                   warning={overview.cookbook.missingCount > 0}
                 />
-                <Info
-                  label="Coverage"
-                  value={percentage(overview.cookbook.coverageBps) + "%"}
-                />
+                <Info label="Coverage" value={percentage(overview.cookbook.coverageBps) + "%"} />
               </div>
             </Panel>
           </div>
