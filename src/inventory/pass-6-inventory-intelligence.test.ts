@@ -416,6 +416,257 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(history?.count).toBe(2);
   });
 
+  it("keeps requisitions partially ordered until every requested quantity is covered", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-partial-order",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-PARTIAL",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+
+    await service.createPurchaseOrder({
+      id: "po-partial-1",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-PARTIAL-1",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-partial-line-1",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+
+    const partial = await db
+      .prepare(
+        `SELECT r.status,l.requested_quantity_minor,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{
+        status: string;
+        requested_quantity_minor: number;
+        ordered_quantity_minor: number;
+      }>();
+    expect(partial).toEqual({
+      status: "PARTIALLY_ORDERED",
+      requested_quantity_minor: 2 * QUANTITY_SCALE,
+      ordered_quantity_minor: QUANTITY_SCALE,
+    });
+
+    await service.createPurchaseOrder({
+      id: "po-partial-2",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-PARTIAL-2",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-partial-line-2",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+
+    const completed = await db
+      .prepare(
+        `SELECT r.status,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(completed).toEqual({
+      status: "ORDERED",
+      ordered_quantity_minor: 2 * QUANTITY_SCALE,
+    });
+  });
+
+  it("rejects purchase orders that exceed the outstanding requisition quantity", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-over-order",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-OVER-ORDER",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+
+    await expect(
+      service.createPurchaseOrder({
+        id: "po-over-order",
+        branchId,
+        warehouseId,
+        supplierId: fixture.supplierId,
+        requisitionId: requisition.id,
+        purchaseOrderNumber: "PO-OVER-ORDER",
+        currency: "KES",
+        lines: [
+          {
+            id: "po-over-order-line",
+            inventoryItemId: fixture.itemId,
+            purchaseUnitId: "unit-box",
+            conversionId: "conversion-box-soda",
+            quantityMicro: 2 * QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("exceeds the outstanding requisition quantity");
+  });
+
+  it("rejects supplier invoices whose supplier or receipt scope does not match the PO", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-invoice-scope",
+      "PO-INVOICE-SCOPE",
+      "REJECT_OVER_RECEIPT",
+    );
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "invoice-scope-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "invoice-scope-receipt",
+    );
+    await service.createSupplier({
+      id: "supplier-b",
+      code: "SUP-B",
+      name: "Different supplier",
+    });
+
+    await expect(
+      service.postSupplierInvoice({
+        branchId,
+        supplierId: "supplier-b",
+        purchaseOrderId: po.id,
+        goodsReceiptId: receipt.id,
+        invoiceNumber: "INV-WRONG-SUPPLIER",
+        invoiceDate: "2026-08-30",
+        currency: "KES",
+        subtotalMinor: 240_000,
+        taxMinor: 0,
+        totalMinor: 240_000,
+      }),
+    ).rejects.toThrow("scope does not match the purchase order");
+  });
+
+  it("deduplicates supplier invoice retries and exposes invoice match evidence in procurement overview", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-invoice-retry",
+      "PO-INVOICE-RETRY",
+      "REJECT_OVER_RECEIPT",
+    );
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "invoice-retry-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "invoice-retry-receipt",
+    );
+    const input = {
+      branchId,
+      supplierId: fixture.supplierId,
+      purchaseOrderId: po.id,
+      goodsReceiptId: receipt.id,
+      invoiceNumber: "INV-RETRY-001",
+      invoiceDate: "2026-08-30",
+      currency: "KES",
+      subtotalMinor: 240_000,
+      taxMinor: 0,
+      totalMinor: 240_000,
+    };
+    const first = await service.postSupplierInvoice(input);
+    const duplicate = await service.postSupplierInvoice(input);
+
+    expect(first).toMatchObject({ status: "POSTED", matchStatus: "MATCHED", duplicate: false });
+    expect(duplicate).toMatchObject({
+      id: first.id,
+      status: "POSTED",
+      matchStatus: "MATCHED",
+      duplicate: true,
+    });
+
+    const invoiceCount = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM supplier_invoices WHERE tenant_id=? AND supplier_id=? AND invoice_number=?",
+      )
+      .bind(tenantId, fixture.supplierId, input.invoiceNumber)
+      .first<{ count: number }>();
+    const journalCount = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM journal_entries WHERE tenant_id=? AND source_type='SUPPLIER_INVOICE' AND source_id=?",
+      )
+      .bind(tenantId, first.id)
+      .first<{ count: number }>();
+    expect(invoiceCount?.count).toBe(1);
+    expect(journalCount?.count).toBe(1);
+
+    const overview = await service.procurementOverview(branchId, 25);
+    const overviewRequisition = overview.requisitions[0];
+    expect(overview.purchaseOrders.find((row) => row.id === po.id)?.lines).toHaveLength(1);
+    expect(overview.supplierInvoices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: first.id,
+          invoice_number: input.invoiceNumber,
+          match_status: "MATCHED",
+          purchase_order_number: "PO-INVOICE-RETRY",
+        }),
+      ]),
+    );
+    expect(overview.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: fixture.itemId, name: "Soda" })]),
+    );
+    expect(overview.warehouses).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: warehouseId })]),
+    );
+    expect(overviewRequisition === undefined || Array.isArray(overviewRequisition.lines)).toBe(true);
+  });
+
   it("enforces over-receipt policy and allows configured tolerance", async () => {
     const fixture = await seedProcurement(service);
     const strictPo = await createApprovedPo(
