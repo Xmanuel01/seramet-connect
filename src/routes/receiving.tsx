@@ -48,7 +48,7 @@ function Receiving() {
   const available = useMemo<DisplayOrder[]>(
     () =>
       control.data.flatMap((branch) =>
-        branch.procurement.purchaseOrders
+        branch.purchaseOrders
           .filter((po) => ["APPROVED", "PARTIALLY_RECEIVED"].includes(po.status))
           .map((po) => ({ ...po, branchId: branch.branchId })),
       ),
