@@ -52,7 +52,7 @@ function Prep() {
   const [completing, setCompleting] = useState<PrepTask | null>(null);
   const [dismissing, setDismissing] = useState<PrepTask | null>(null);
 
-  const tasks = prep.data?.tasks ?? [];
+  const tasks = useMemo(() => prep.data?.tasks ?? [], [prep.data?.tasks]);
   const actionable = tasks.filter((task) => task.status !== "DISMISSED");
   const completed = actionable.filter((task) => task.status === "COMPLETED").length;
   const inProgress = actionable.filter((task) => task.status === "STARTED").length;
@@ -834,7 +834,7 @@ function printPrepSheet(data: PrepLibrary | null, branchLabel: string) {
       escapeHtml(data.businessDate) +
       "</p>" +
       rows +
-      "<script>window.onload=()=>window.print()<\/script></body></html>",
+      "<script>window.onload=()=>window.print()</script></body></html>",
   );
   popup.document.close();
 }
