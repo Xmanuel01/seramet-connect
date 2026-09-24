@@ -903,7 +903,10 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(detail.session).toMatchObject({ status: "DRAFT", blind_count: 1 });
     expect(detail.lines[0]).toMatchObject({
       inventory_item_id: "item-beef",
-      expected_quantity_minor: 10 * QUANTITY_SCALE,
+      expected_quantity_minor: null,
+      variance_quantity_minor: null,
+      variance_value_minor: null,
+      unit_cost_minor: null,
       counted: 0,
     });
 
