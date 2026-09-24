@@ -3537,6 +3537,26 @@ export class InventoryIntelligenceService {
         .bind(stamp, this.actor.tenantId, id),
     ];
     for (const [index, line] of (lines.results ?? []).entries()) {
+      const sourceBalance = await this.db
+        .prepare(
+          `SELECT quantity_minor-quantity_reserved_minor AS available
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=? AND item_id=?`,
+        )
+        .bind(
+          this.actor.tenantId,
+          transfer.source_branch_id,
+          transfer.source_warehouse_id,
+          line.inventory_item_id,
+        )
+        .first<{ available: number }>();
+      if ((sourceBalance?.available ?? 0) < line.requested_quantity_minor) {
+        throw new ServerOperationError(
+          "CONFLICT",
+          409,
+          "Transfer cannot be dispatched because source available stock is insufficient",
+        );
+      }
       if (line.source_lot_id) {
         const lot = await this.db
           .prepare(
