@@ -141,8 +141,7 @@ function Par() {
 
   const configured = rows.filter((row) => Boolean(row.policy_id)).length;
   const belowReorder = rows.filter(
-    (row) =>
-      row.reorder_point_minor > 0 && row.available_quantity_minor <= row.reorder_point_minor,
+    (row) => row.reorder_point_minor > 0 && row.available_quantity_minor <= row.reorder_point_minor,
   ).length;
   const suggestedValueMinor = rows.reduce(
     (sum, row) => sum + Number(row.suggested_value_minor ?? 0),
