@@ -553,6 +553,17 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.procurementRequisitionCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     if (input.lines.length === 0) throw new Error("A requisition requires at least one line");
+    const requisitionItemIds = new Set<string>();
+    for (const line of input.lines) {
+      if (requisitionItemIds.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "A purchase requisition cannot contain duplicate inventory items",
+        );
+      }
+      requisitionItemIds.add(line.inventoryItemId);
+    }
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
@@ -699,9 +710,17 @@ export class InventoryIntelligenceService {
           requested_quantity_minor: number;
           ordered_quantity_minor: number;
         }>();
-      requisitionLines = new Map(
-        (rows.results ?? []).map((line) => [line.inventory_item_id, line]),
-      );
+      requisitionLines = new Map();
+      for (const line of rows.results ?? []) {
+        if (requisitionLines.has(line.inventory_item_id)) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Linked requisition contains duplicate inventory items and must be corrected before ordering",
+          );
+        }
+        requisitionLines.set(line.inventory_item_id, line);
+      }
       const requestedOnThisPo = new Map<string, number>();
       for (const line of input.lines) {
         const requisitionLine = requisitionLines.get(line.inventoryItemId);
@@ -885,9 +904,11 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.procurementCancel);
     if (!reason.trim()) throw new Error("Purchase order cancellation requires a reason");
     const purchaseOrder = await this.db
-      .prepare("SELECT branch_id,status FROM purchase_orders WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT branch_id,status,requisition_id FROM purchase_orders WHERE tenant_id=? AND id=?",
+      )
       .bind(this.actor.tenantId, id)
-      .first<{ branch_id: string; status: string }>();
+      .first<{ branch_id: string; status: string; requisition_id: string | null }>();
     if (!purchaseOrder) throw new Error("Purchase order not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, purchaseOrder.branch_id);
     if (!["DRAFT", "SUBMITTED", "APPROVED"].includes(purchaseOrder.status)) {
@@ -895,7 +916,7 @@ export class InventoryIntelligenceService {
     }
     const stamp = new Date().toISOString();
     const correlationId = crypto.randomUUID();
-    await this.db.batch([
+    const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
           `UPDATE purchase_orders SET status='CANCELLED',payload_json=json_set(payload_json,
@@ -911,6 +932,59 @@ export class InventoryIntelligenceService {
           id,
           purchaseOrder.status,
         ),
+    ];
+
+    if (purchaseOrder.requisition_id) {
+      const poLines = await this.db
+        .prepare(
+          `SELECT item_id,COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor) AS ordered
+           FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        )
+        .bind(this.actor.tenantId, id)
+        .all<{ item_id: string; ordered: number }>();
+      for (const line of poLines.results ?? []) {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE purchase_requisition_lines
+               SET ordered_quantity_minor=MAX(0,ordered_quantity_minor-?)
+               WHERE tenant_id=? AND requisition_id=? AND inventory_item_id=?`,
+            )
+            .bind(
+              Number(line.ordered),
+              this.actor.tenantId,
+              purchaseOrder.requisition_id,
+              line.item_id,
+            ),
+        );
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE purchase_requisitions
+             SET status=CASE
+               WHEN NOT EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor>0
+               ) THEN 'APPROVED'
+               WHEN EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor<prl.requested_quantity_minor
+               ) THEN 'PARTIALLY_ORDERED'
+               ELSE 'ORDERED'
+             END,
+             updated_at=?
+             WHERE tenant_id=? AND id=? AND status IN ('ORDERED','PARTIALLY_ORDERED')`,
+          )
+          .bind(stamp, this.actor.tenantId, purchaseOrder.requisition_id),
+      );
+    }
+
+    statements.push(
       this.auditStatement(
         "PURCHASE_ORDER_CANCELLED",
         "PURCHASE_ORDER",
@@ -919,7 +993,8 @@ export class InventoryIntelligenceService {
         correlationId,
         purchaseOrder.branch_id,
       ),
-    ]);
+    );
+    await this.db.batch(statements);
     return { id, status: "CANCELLED" as const };
   }
 
