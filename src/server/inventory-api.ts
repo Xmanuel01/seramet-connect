@@ -164,6 +164,10 @@ export async function handleInventoryApi(
   if (url.pathname === "/api/seramet/inventory/units" && request.method === "GET") {
     return json({ ok: true, units: await service.listUnits() });
   }
+  if (url.pathname === "/api/seramet/inventory/warehouses" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, warehouses: await service.listWarehouses(branchId) });
+  }
   if (url.pathname === "/api/seramet/inventory/items" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     const warehouseId = url.searchParams.get("warehouseId")?.trim() || undefined;
@@ -178,6 +182,19 @@ export async function handleInventoryApi(
         ...(cursor ? { cursor } : {}),
         limit,
       })),
+    });
+  }
+  const itemDetailRoute = /^\/api\/seramet\/inventory\/items\/([^/]+)$/.exec(url.pathname);
+  if (itemDetailRoute && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    const limit = boundedLimit(url);
+    return json({
+      ok: true,
+      detail: await service.inventoryItemDetail({
+        branchId,
+        sku: decodeURIComponent(itemDetailRoute[1]!),
+        limit,
+      }),
     });
   }
   if (url.pathname === "/api/seramet/inventory/control-centre" && request.method === "GET") {

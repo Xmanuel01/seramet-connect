@@ -68,6 +68,76 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     }
   });
 
+  it("lists zero-stock item master records and counts them in branch stock health", async () => {
+    await seedUnits(service);
+    await service.createInventoryItem({
+      id: "item-zero",
+      code: "ZERO",
+      name: "Zero stock item",
+      baseUnitId: "unit-kg",
+      purchaseUnitId: "unit-kg",
+      defaultWarehouseId: warehouseId,
+    });
+
+    const catalogue = await service.listInventory({ branchId });
+    expect(catalogue.items).toHaveLength(1);
+    expect(catalogue.items[0]).toMatchObject({
+      id: "item-zero",
+      quantity_minor: 0,
+      quantity_reserved_minor: 0,
+      quantity_available_minor: 0,
+      total_value_minor: 0,
+      warehouse_count: 0,
+      base_unit_symbol: "kg",
+    });
+
+    const summary = await service.summary(branchId);
+    expect(summary.itemCount).toBe(1);
+    expect(summary.outOfStockCount).toBe(1);
+    expect(summary.inventoryValueMinor).toBe(0);
+  });
+
+  it("aggregates one inventory item across warehouses without duplicating the catalogue row", async () => {
+    await seedBeef(service);
+    const stamp = new Date().toISOString();
+    db.sqlite
+      .prepare(
+        `INSERT INTO warehouses (tenant_id,id,branch_id,code,name,active,payload_json)
+         VALUES (?,?,?,?,?,1,'{}')`,
+      )
+      .run(tenantId, "warehouse-a-2", branchId, "WAREHOUSE-A-2", "Second store");
+
+    await opening(service, "opening-primary", 2 * QUANTITY_SCALE, 50_000);
+    await service.appendMovement({
+      branchId,
+      warehouseId: "warehouse-a-2",
+      inventoryItemId: "item-beef",
+      movementType: "OPENING",
+      quantityBaseMicro: QUANTITY_SCALE,
+      unitCostMinor: 60_000,
+      totalCostMinor: 60_000,
+      sourceType: "OPENING",
+      sourceId: "opening-secondary",
+      idempotencyKey: "opening-secondary",
+      businessDate: "2026-08-30",
+      occurredAt: stamp,
+    });
+
+    const catalogue = await service.listInventory({ branchId });
+    expect(catalogue.items).toHaveLength(1);
+    expect(catalogue.items[0]).toMatchObject({
+      id: "item-beef",
+      quantity_minor: 3 * QUANTITY_SCALE,
+      total_value_minor: 160_000,
+      warehouse_count: 2,
+    });
+    expect(Number(catalogue.items[0]?.average_unit_cost_minor)).toBe(53_333);
+
+    const detail = await service.inventoryItemDetail({ branchId, sku: "BEEF" });
+    expect(detail.balances).toHaveLength(2);
+    expect(detail.movements).toHaveLength(2);
+  });
+
   it("uses exact integer quantity and weighted-average arithmetic", () => {
     expect(multiplyDivide(2 * QUANTITY_SCALE, 1_000, 1)).toBe(2_000 * QUANTITY_SCALE);
     expect(quantityCostMinor(2_500_000, 57_500)).toBe(143_750);

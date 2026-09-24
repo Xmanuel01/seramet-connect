@@ -8,11 +8,18 @@ export type InventoryListRow = {
   code: string;
   sku: string | null;
   name: string;
+  description: string | null;
   category_id: string | null;
   base_unit_id: string;
   purchase_unit_id: string | null;
+  track_inventory: number;
   track_expiry: number;
-  warehouse_id: string;
+  preferred_supplier_id: string | null;
+  preferred_supplier_name: string | null;
+  default_warehouse_id: string | null;
+  warehouse_id: string | null;
+  base_unit_symbol: string | null;
+  warehouse_count: number;
   quantity_minor: number;
   quantity_reserved_minor: number;
   quantity_available_minor: number;
@@ -64,9 +71,28 @@ export type ProcurementSupplierRow = {
   received_count: number;
 };
 
+export type InventoryMovementRow = {
+  id: string;
+  business_date: string | null;
+  movement_type: string;
+  quantity_minor: number;
+  unit_cost_minor: number | null;
+  total_cost_minor: number | null;
+  source_type: string;
+  source_id: string;
+  reason: string | null;
+  occurred_at: string | null;
+  warehouse_id: string;
+  inventory_item_id: string;
+  code: string;
+  sku: string | null;
+  name: string;
+  unit_symbol: string | null;
+};
+
 export type FoodCostControlData = {
   branchId: string;
-  movements: Array<Record<string, unknown>>;
+  movements: InventoryMovementRow[];
   recommendations: Array<Record<string, unknown>>;
   qualityIssues: Array<Record<string, unknown>>;
   menuProfitability: Array<Record<string, unknown>>;
@@ -76,10 +102,16 @@ export type FoodCostControlData = {
   generatedAt: string;
 };
 
-type BranchPayload = {
+export type InventoryBranchPayload = {
   branchId: string;
   summary: InventorySummary;
   items: InventoryListRow[];
+  warehouses: Array<{
+    id: string;
+    code: string;
+    name: string;
+    branch_id: string;
+  }>;
   units: Array<{
     id: string;
     code: string;
@@ -107,11 +139,11 @@ export function useInventoryControlCentre(enabled: boolean) {
     [branchId, branchRecords, isAllBranches],
   );
   const branchKey = selectedBranchIds.join("|");
-  const [data, setData] = useState<BranchPayload[]>([]);
+  const [data, setData] = useState<InventoryBranchPayload[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState("");
 
-  const headers = useMemo(() => {
+  const headers = useMemo<Record<string, string>>(() => {
     const token = getSerametAccessToken();
     return {
       "Content-Type": "application/json",
@@ -134,11 +166,12 @@ export function useInventoryControlCentre(enabled: boolean) {
     try {
       const branchIds = branchKey.split("|").filter(Boolean);
       const next = await Promise.all(
-        branchIds.map(async (selectedBranchId): Promise<BranchPayload> => {
+        branchIds.map(async (selectedBranchId): Promise<InventoryBranchPayload> => {
           const query = `branchId=${encodeURIComponent(selectedBranchId)}&limit=100`;
           const [
             summaryResponse,
-            itemsResponse,
+            items,
+            warehousesResponse,
             unitsResponse,
             procurementResponse,
             controlResponse,
@@ -147,14 +180,18 @@ export function useInventoryControlCentre(enabled: boolean) {
               `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
               { headers },
             ),
-            fetch(`/api/seramet/inventory/items?${query}`, { headers }),
+            fetchInventoryItems(headers, selectedBranchId),
+            fetch(
+              `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
+              { headers },
+            ),
             fetch("/api/seramet/inventory/units", { headers }),
             fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
             fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
           ]);
           for (const response of [
             summaryResponse,
-            itemsResponse,
+            warehousesResponse,
             unitsResponse,
             procurementResponse,
             controlResponse,
@@ -162,10 +199,14 @@ export function useInventoryControlCentre(enabled: boolean) {
             if (!response.ok) throw new Error(`Inventory server query failed (${response.status})`);
           }
           const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
-          const itemsBody = (await itemsResponse.json()) as { items: InventoryListRow[] };
-          const unitsBody = (await unitsResponse.json()) as { units: BranchPayload["units"] };
+          const warehousesBody = (await warehousesResponse.json()) as {
+            warehouses: InventoryBranchPayload["warehouses"];
+          };
+          const unitsBody = (await unitsResponse.json()) as {
+            units: InventoryBranchPayload["units"];
+          };
           const procurementBody = (await procurementResponse.json()) as {
-            overview: BranchPayload["procurement"];
+            overview: InventoryBranchPayload["procurement"];
           };
           const controlBody = (await controlResponse.json()) as {
             controlCentre: FoodCostControlData;
@@ -173,7 +214,8 @@ export function useInventoryControlCentre(enabled: boolean) {
           return {
             branchId: selectedBranchId,
             summary: summaryBody.summary,
-            items: itemsBody.items,
+            items,
+            warehouses: warehousesBody.warehouses,
             units: unitsBody.units,
             procurement: procurementBody.overview,
             controlCentre: controlBody.controlCentre,
@@ -226,5 +268,32 @@ export function useInventoryControlCentre(enabled: boolean) {
     [enabled, headers, refresh],
   );
 
-  return { data, status, error, refresh, recalculate, command };
+  return { data, status, error, refresh, recalculate, command, headers };
+}
+
+async function fetchInventoryItems(headers: Record<string, string>, branchId: string) {
+  const items: InventoryListRow[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const params = new URLSearchParams({ branchId, limit: "200" });
+    if (cursor) params.set("cursor", cursor);
+    const response = await fetch(`/api/seramet/inventory/items?${params.toString()}`, { headers });
+    if (!response.ok) {
+      throw new Error(`Inventory item query failed (${response.status})`);
+    }
+    const body = (await response.json()) as {
+      items: InventoryListRow[];
+      nextCursor: string | null;
+    };
+    items.push(...body.items);
+    cursor = body.nextCursor;
+    if (cursor) {
+      if (seenCursors.has(cursor)) {
+        throw new Error("Inventory pagination returned a repeated cursor");
+      }
+      seenCursors.add(cursor);
+    }
+  } while (cursor);
+  return items;
 }

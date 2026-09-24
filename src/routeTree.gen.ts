@@ -50,6 +50,7 @@ import { Route as GuestServiceRouteImport } from './routes/guest-service'
 import { Route as HostRouteImport } from './routes/host'
 import { Route as IntegrationsRouteImport } from './routes/integrations'
 import { Route as InventoryRouteImport } from './routes/inventory'
+import { Route as InventoryItemsRouteImport } from './routes/inventory-items'
 import { Route as InvoicesRouteImport } from './routes/invoices'
 import { Route as KitchenRouteImport } from './routes/kitchen'
 import { Route as KitchenAnalyticsRouteImport } from './routes/kitchen-analytics'
@@ -325,6 +326,11 @@ const IntegrationsRoute = IntegrationsRouteImport.update({
 const InventoryRoute = InventoryRouteImport.update({
   id: '/inventory',
   path: '/inventory',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InventoryItemsRoute = InventoryItemsRouteImport.update({
+  id: '/inventory-items',
+  path: '/inventory-items',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InvoicesRoute = InvoicesRouteImport.update({
@@ -727,6 +733,7 @@ export interface FileRoutesByFullPath {
   '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
+  '/inventory-items': typeof InventoryItemsRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
@@ -841,6 +848,7 @@ export interface FileRoutesByTo {
   '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
+  '/inventory-items': typeof InventoryItemsRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
@@ -955,6 +963,7 @@ export interface FileRoutesById {
   '/host': typeof HostRoute
   '/integrations': typeof IntegrationsRoute
   '/inventory': typeof InventoryRoute
+  '/inventory-items': typeof InventoryItemsRoute
   '/invoices': typeof InvoicesRoute
   '/kitchen': typeof KitchenRoute
   '/kitchen-analytics': typeof KitchenAnalyticsRoute
@@ -1071,6 +1080,7 @@ export interface FileRouteTypes {
     | '/host'
     | '/integrations'
     | '/inventory'
+    | '/inventory-items'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
@@ -1185,6 +1195,7 @@ export interface FileRouteTypes {
     | '/host'
     | '/integrations'
     | '/inventory'
+    | '/inventory-items'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
@@ -1298,6 +1309,7 @@ export interface FileRouteTypes {
     | '/host'
     | '/integrations'
     | '/inventory'
+    | '/inventory-items'
     | '/invoices'
     | '/kitchen'
     | '/kitchen-analytics'
@@ -1413,6 +1425,7 @@ export interface RootRouteChildren {
   HostRoute: typeof HostRoute
   IntegrationsRoute: typeof IntegrationsRoute
   InventoryRoute: typeof InventoryRoute
+  InventoryItemsRoute: typeof InventoryItemsRoute
   InvoicesRoute: typeof InvoicesRoute
   KitchenRoute: typeof KitchenRoute
   KitchenAnalyticsRoute: typeof KitchenAnalyticsRoute
@@ -1767,6 +1780,13 @@ declare module '@tanstack/react-router' {
       path: '/inventory'
       fullPath: '/inventory'
       preLoaderRoute: typeof InventoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inventory-items': {
+      id: '/inventory-items'
+      path: '/inventory-items'
+      fullPath: '/inventory-items'
+      preLoaderRoute: typeof InventoryItemsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invoices': {
@@ -2333,6 +2353,7 @@ const rootRouteChildren: RootRouteChildren = {
   HostRoute: HostRoute,
   IntegrationsRoute: IntegrationsRoute,
   InventoryRoute: InventoryRoute,
+  InventoryItemsRoute: InventoryItemsRoute,
   InvoicesRoute: InvoicesRoute,
   KitchenRoute: KitchenRoute,
   KitchenAnalyticsRoute: KitchenAnalyticsRoute,

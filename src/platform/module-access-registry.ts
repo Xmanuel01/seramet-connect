@@ -339,6 +339,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     policyCode: "MODULE_ACCESS.INVENTORY",
     routes: [
       "/inventory",
+      "/inventory-items",
       "/categories",
       "/stock-detail",
       "/stock-count",

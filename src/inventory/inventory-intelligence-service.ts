@@ -4506,62 +4506,275 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     const limit = Math.min(200, Math.max(1, input.limit ?? 50));
-    const predicates = ["b.tenant_id=?", "b.branch_id=?"];
-    const values: unknown[] = [this.actor.tenantId, input.branchId];
-    if (input.warehouseId) {
-      predicates.push("b.warehouse_id=?");
-      values.push(input.warehouseId);
-    }
-    if (input.cursor) {
-      predicates.push("i.id>?");
-      values.push(input.cursor);
-    }
-    values.push(limit + 1);
+    const balanceWarehouseClause = input.warehouseId ? " AND warehouse_id=?" : "";
+    const parWarehouseClause = input.warehouseId ? " AND warehouse_id=?" : "";
+    const cursorClause = input.cursor ? " AND i.id>?" : "";
+    const values: unknown[] = [
+      this.actor.tenantId,
+      input.branchId,
+      ...(input.warehouseId ? [input.warehouseId] : []),
+      this.actor.tenantId,
+      input.branchId,
+      ...(input.warehouseId ? [input.warehouseId] : []),
+      input.branchId,
+      this.actor.tenantId,
+      ...(input.cursor ? [input.cursor] : []),
+      limit + 1,
+    ];
     const result = await this.db
       .prepare(
-        `SELECT i.id,i.code,i.sku,i.name,i.category_id,i.base_unit_id,i.purchase_unit_id,i.track_expiry,
-                b.warehouse_id,b.quantity_minor,b.quantity_reserved_minor,
-                b.quantity_minor-b.quantity_reserved_minor AS quantity_available_minor,
-                b.average_unit_cost_minor,b.total_value_minor,b.last_movement_at,
-                p.reorder_point_minor,p.target_quantity_minor,p.safety_stock_minor
-         FROM inventory_balances b
-         JOIN inventory_items i ON i.tenant_id=b.tenant_id AND i.id=b.item_id
-         LEFT JOIN inventory_par_policies p ON p.tenant_id=b.tenant_id
-           AND p.branch_id=b.branch_id AND p.warehouse_id=b.warehouse_id
-           AND p.inventory_item_id=b.item_id AND p.day_of_week IS NULL
-         WHERE ${predicates.join(" AND ")}
-         ORDER BY i.id LIMIT ?`,
+        `WITH balance AS (
+           SELECT item_id,
+                  SUM(quantity_minor) AS quantity_minor,
+                  SUM(quantity_reserved_minor) AS quantity_reserved_minor,
+                  SUM(total_value_minor) AS total_value_minor,
+                  MAX(average_unit_cost_minor) AS last_average_unit_cost_minor,
+                  MAX(last_movement_at) AS last_movement_at,
+                  MIN(warehouse_id) AS primary_warehouse_id,
+                  COUNT(*) AS warehouse_count
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=?${balanceWarehouseClause}
+            GROUP BY item_id
+         ),
+         par AS (
+           SELECT inventory_item_id AS item_id,
+                  SUM(reorder_point_minor) AS reorder_point_minor,
+                  SUM(target_quantity_minor) AS target_quantity_minor,
+                  SUM(safety_stock_minor) AS safety_stock_minor
+             FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND day_of_week IS NULL AND active=1${parWarehouseClause}
+            GROUP BY inventory_item_id
+         )
+         SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,i.base_unit_id,
+                i.purchase_unit_id,i.track_inventory,i.track_expiry,i.preferred_supplier_id,
+                s.name AS preferred_supplier_name,i.default_warehouse_id,
+                COALESCE(dw.id,balance.primary_warehouse_id) AS warehouse_id,
+                u.symbol AS base_unit_symbol,
+                COALESCE(balance.quantity_minor,0) AS quantity_minor,
+                COALESCE(balance.quantity_reserved_minor,0) AS quantity_reserved_minor,
+                COALESCE(balance.quantity_minor,0)-COALESCE(balance.quantity_reserved_minor,0)
+                  AS quantity_available_minor,
+                COALESCE(balance.total_value_minor,0) AS total_value_minor,
+                COALESCE(balance.last_average_unit_cost_minor,0) AS last_average_unit_cost_minor,
+                balance.last_movement_at,
+                COALESCE(balance.warehouse_count,0) AS warehouse_count,
+                par.reorder_point_minor,par.target_quantity_minor,par.safety_stock_minor
+           FROM inventory_items i
+           LEFT JOIN balance ON balance.item_id=i.id
+           LEFT JOIN par ON par.item_id=i.id
+           LEFT JOIN suppliers s
+             ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN warehouses dw
+             ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+            AND dw.branch_id=? AND dw.active=1
+          WHERE i.tenant_id=? AND i.active=1
+            AND (balance.item_id IS NOT NULL OR par.item_id IS NOT NULL OR dw.id IS NOT NULL)${cursorClause}
+          ORDER BY i.id LIMIT ?`,
       )
       .bind(...values)
       .all<Record<string, unknown> & { id: string }>();
-    const rows = result.results ?? [];
+    const rows = (result.results ?? []).map((row) => {
+      const quantity = Number(row.quantity_minor ?? 0);
+      const totalValue = Number(row.total_value_minor ?? 0);
+      return {
+        ...row,
+        average_unit_cost_minor:
+          quantity > 0
+            ? Math.round((totalValue * QUANTITY_SCALE) / quantity)
+            : Number(row.last_average_unit_cost_minor ?? 0),
+      };
+    });
     return {
       items: rows.slice(0, limit),
       nextCursor: rows.length > limit ? rows[limit - 1]!.id : null,
     };
   }
 
+  async listWarehouses(branchId: string) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `SELECT id,code,name,branch_id
+           FROM warehouses
+          WHERE tenant_id=? AND branch_id=? AND active=1
+          ORDER BY name,id`,
+      )
+      .bind(this.actor.tenantId, branchId)
+      .all<{ id: string; code: string; name: string; branch_id: string }>();
+    return result.results ?? [];
+  }
+
+  async inventoryItemDetail(input: { branchId: string; sku: string; limit?: number }) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    const pageSize = Math.min(200, Math.max(1, input.limit ?? 100));
+    const item = await this.db
+      .prepare(
+        `SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,i.base_unit_id,
+                i.purchase_unit_id,i.storage_unit_id,i.issue_unit_id,i.track_inventory,
+                i.track_expiry,i.preferred_supplier_id,s.name AS preferred_supplier_name,
+                i.default_warehouse_id,i.barcode,u.symbol AS base_unit_symbol
+           FROM inventory_items i
+           LEFT JOIN suppliers s
+             ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
+           LEFT JOIN unit_definitions u
+             ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN warehouses dw
+             ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+            AND dw.branch_id=? AND dw.active=1
+          WHERE i.tenant_id=? AND i.active=1 AND (i.sku=? OR i.code=?)
+            AND (
+              dw.id IS NOT NULL
+              OR EXISTS (
+                SELECT 1 FROM inventory_balances b
+                 WHERE b.tenant_id=i.tenant_id AND b.branch_id=? AND b.item_id=i.id
+              )
+              OR EXISTS (
+                SELECT 1 FROM inventory_par_policies p
+                 WHERE p.tenant_id=i.tenant_id AND p.branch_id=? AND p.inventory_item_id=i.id
+                   AND p.active=1
+              )
+            )
+          LIMIT 1`,
+      )
+      .bind(
+        input.branchId,
+        this.actor.tenantId,
+        input.sku,
+        input.sku,
+        input.branchId,
+        input.branchId,
+      )
+      .first<Record<string, unknown> & { id: string }>();
+    if (!item) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
+    }
+
+    const [balances, movements, recipes] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT b.warehouse_id,w.name AS warehouse_name,b.quantity_minor,
+                  b.quantity_reserved_minor,
+                  b.quantity_minor-b.quantity_reserved_minor AS quantity_available_minor,
+                  b.average_unit_cost_minor,b.total_value_minor,b.last_movement_at,
+                  p.reorder_point_minor,p.target_quantity_minor,p.safety_stock_minor
+             FROM inventory_balances b
+             JOIN warehouses w
+               ON w.tenant_id=b.tenant_id AND w.id=b.warehouse_id
+             LEFT JOIN inventory_par_policies p
+               ON p.tenant_id=b.tenant_id AND p.branch_id=b.branch_id
+              AND p.warehouse_id=b.warehouse_id AND p.inventory_item_id=b.item_id
+              AND p.day_of_week IS NULL AND p.active=1
+            WHERE b.tenant_id=? AND b.branch_id=? AND b.item_id=?
+            ORDER BY w.name`,
+        )
+        .bind(this.actor.tenantId, input.branchId, item.id)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT id,business_date,movement_type,quantity_minor,unit_cost_minor,total_cost_minor,
+                  source_type,source_id,reason,occurred_at,warehouse_id,actor_id
+             FROM inventory_movements
+            WHERE tenant_id=? AND branch_id=? AND item_id=?
+            ORDER BY occurred_at DESC,id DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, input.branchId, item.id, pageSize)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT r.id,r.name,rv.id AS recipe_version_id,rv.version,
+                  rv.yield_quantity_minor,yu.symbol AS yield_unit_symbol,
+                  c.quantity_minor,cu.symbol AS component_unit_symbol
+             FROM recipes r
+             JOIN recipe_versions rv
+               ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+             JOIN recipe_version_components c
+               ON c.tenant_id=rv.tenant_id AND c.recipe_version_id=rv.id
+             LEFT JOIN unit_definitions yu
+               ON yu.tenant_id=rv.tenant_id AND yu.id=rv.yield_unit_id
+             LEFT JOIN unit_definitions cu
+               ON cu.tenant_id=c.tenant_id AND cu.id=c.unit_id
+            WHERE r.tenant_id=? AND r.active=1 AND c.inventory_item_id=?
+              AND (r.branch_override_id IS NULL OR r.branch_override_id=?)
+            ORDER BY r.name LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, item.id, input.branchId, pageSize)
+        .all<Record<string, unknown>>(),
+    ]);
+
+    return {
+      branchId: input.branchId,
+      item,
+      balances: balances.results ?? [],
+      movements: movements.results ?? [],
+      recipes: recipes.results ?? [],
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   async summary(branchId: string): Promise<InventorySummary> {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
-    const [balance, low, expiry, po, variance, quality] = await Promise.all([
+    const [catalogue, low, expiry, po, variance, quality] = await Promise.all([
       this.db
         .prepare(
-          `SELECT COUNT(*) AS item_count,COALESCE(SUM(total_value_minor),0) AS value_minor,
-                  SUM(CASE WHEN quantity_minor<=0 THEN 1 ELSE 0 END) AS out_count
-           FROM inventory_balances WHERE tenant_id=? AND branch_id=?`,
+          `WITH balance AS (
+             SELECT item_id,SUM(quantity_minor) AS quantity_minor,SUM(total_value_minor) AS value_minor
+               FROM inventory_balances
+              WHERE tenant_id=? AND branch_id=?
+              GROUP BY item_id
+           ),
+           par AS (
+             SELECT DISTINCT inventory_item_id AS item_id
+               FROM inventory_par_policies
+              WHERE tenant_id=? AND branch_id=? AND active=1
+           )
+           SELECT COUNT(*) AS item_count,
+                  COALESCE(SUM(COALESCE(balance.value_minor,0)),0) AS value_minor,
+                  COALESCE(SUM(CASE WHEN COALESCE(balance.quantity_minor,0)<=0 THEN 1 ELSE 0 END),0)
+                    AS out_count
+             FROM inventory_items i
+             LEFT JOIN balance ON balance.item_id=i.id
+             LEFT JOIN par ON par.item_id=i.id
+             LEFT JOIN warehouses dw
+               ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+              AND dw.branch_id=? AND dw.active=1
+            WHERE i.tenant_id=? AND i.active=1
+              AND (balance.item_id IS NOT NULL OR par.item_id IS NOT NULL OR dw.id IS NOT NULL)`,
         )
-        .bind(this.actor.tenantId, branchId)
+        .bind(
+          this.actor.tenantId,
+          branchId,
+          this.actor.tenantId,
+          branchId,
+          branchId,
+          this.actor.tenantId,
+        )
         .first<{ item_count: number; value_minor: number; out_count: number }>(),
       this.db
         .prepare(
-          `SELECT COUNT(*) AS count FROM inventory_balances b
-           JOIN inventory_par_policies p ON p.tenant_id=b.tenant_id AND p.branch_id=b.branch_id
-             AND p.warehouse_id=b.warehouse_id AND p.inventory_item_id=b.item_id
-           WHERE b.tenant_id=? AND b.branch_id=? AND p.day_of_week IS NULL
-             AND b.quantity_minor<=p.reorder_point_minor`,
+          `WITH balance AS (
+             SELECT item_id,SUM(quantity_minor) AS quantity_minor
+               FROM inventory_balances
+              WHERE tenant_id=? AND branch_id=?
+              GROUP BY item_id
+           ),
+           par AS (
+             SELECT inventory_item_id AS item_id,SUM(reorder_point_minor) AS reorder_point_minor
+               FROM inventory_par_policies
+              WHERE tenant_id=? AND branch_id=? AND day_of_week IS NULL AND active=1
+              GROUP BY inventory_item_id
+           )
+           SELECT COUNT(*) AS count
+             FROM par
+             LEFT JOIN balance ON balance.item_id=par.item_id
+            WHERE par.reorder_point_minor>0
+              AND COALESCE(balance.quantity_minor,0)<=par.reorder_point_minor`,
         )
-        .bind(this.actor.tenantId, branchId)
+        .bind(this.actor.tenantId, branchId, this.actor.tenantId, branchId)
         .first<{ count: number }>(),
       this.db
         .prepare(
@@ -4599,10 +4812,10 @@ export class InventoryIntelligenceService {
     const issueCount = quality?.count ?? 0;
     return {
       branchId,
-      inventoryValueMinor: balance?.value_minor ?? 0,
-      itemCount: balance?.item_count ?? 0,
+      inventoryValueMinor: catalogue?.value_minor ?? 0,
+      itemCount: catalogue?.item_count ?? 0,
       lowStockCount: low?.count ?? 0,
-      outOfStockCount: balance?.out_count ?? 0,
+      outOfStockCount: catalogue?.out_count ?? 0,
       nearExpiryCount: expiry?.count ?? 0,
       openPurchaseOrderCount: po?.count ?? 0,
       actualFoodCostBps: actual.actualFoodCostBps,
