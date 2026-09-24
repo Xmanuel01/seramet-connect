@@ -464,7 +464,9 @@ function StockCount() {
                 <Metric
                   label="Variance items"
                   value={
-                    hideExpected ? "Hidden" : detail.lines.filter((line) => {
+                    hideExpected
+                      ? "Hidden"
+                      : detail.lines.filter((line) => {
                           const value = counts[line.inventory_item_id];
                           if (value === undefined || value === "") return false;
                           return (
