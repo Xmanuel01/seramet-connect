@@ -131,6 +131,21 @@ export class InventoryIntelligenceService {
 
   async createInventoryItem(input: InventoryItemInput) {
     this.requirePermission(permissions.inventoryAdjust);
+    if (input.categoryId) {
+      const category = await this.db
+        .prepare(
+          "SELECT id FROM inventory_categories WHERE tenant_id=? AND id=? AND active=1",
+        )
+        .bind(this.actor.tenantId, input.categoryId)
+        .first<{ id: string }>();
+      if (!category) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Inventory category not found or inactive",
+        );
+      }
+    }
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     await this.db
@@ -5102,7 +5117,16 @@ export class InventoryIntelligenceService {
   }
 
   async cancelStockCount(id: string, reason: string) {
-    this.requirePermission(permissions.inventoryCount);
+    if (
+      !this.actor.permissions.includes(permissions.inventoryCount) &&
+      !this.actor.permissions.includes(permissions.inventoryCountApprove)
+    ) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Stock count cancellation permission required",
+      );
+    }
     const detail = await this.stockCountDetail(id);
     const session = detail.session as Record<string, unknown> & {
       branch_id: string;
