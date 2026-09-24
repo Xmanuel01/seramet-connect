@@ -106,6 +106,12 @@ export type InventoryBranchPayload = {
   branchId: string;
   summary: InventorySummary;
   items: InventoryListRow[];
+  warehouses: Array<{
+    id: string;
+    code: string;
+    name: string;
+    branch_id: string;
+  }>;
   units: Array<{
     id: string;
     code: string;
@@ -162,19 +168,30 @@ export function useInventoryControlCentre(enabled: boolean) {
       const next = await Promise.all(
         branchIds.map(async (selectedBranchId): Promise<InventoryBranchPayload> => {
           const query = `branchId=${encodeURIComponent(selectedBranchId)}&limit=100`;
-          const [summaryResponse, items, unitsResponse, procurementResponse, controlResponse] =
-            await Promise.all([
-              fetch(
-                `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
-                { headers },
-              ),
-              fetchInventoryItems(headers, selectedBranchId),
-              fetch("/api/seramet/inventory/units", { headers }),
-              fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
-              fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
-            ]);
+          const [
+            summaryResponse,
+            items,
+            warehousesResponse,
+            unitsResponse,
+            procurementResponse,
+            controlResponse,
+          ] = await Promise.all([
+            fetch(
+              `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
+              { headers },
+            ),
+            fetchInventoryItems(headers, selectedBranchId),
+            fetch(
+              `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
+              { headers },
+            ),
+            fetch("/api/seramet/inventory/units", { headers }),
+            fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
+            fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
+          ]);
           for (const response of [
             summaryResponse,
+            warehousesResponse,
             unitsResponse,
             procurementResponse,
             controlResponse,
@@ -182,6 +199,9 @@ export function useInventoryControlCentre(enabled: boolean) {
             if (!response.ok) throw new Error(`Inventory server query failed (${response.status})`);
           }
           const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
+          const warehousesBody = (await warehousesResponse.json()) as {
+            warehouses: InventoryBranchPayload["warehouses"];
+          };
           const unitsBody = (await unitsResponse.json()) as {
             units: InventoryBranchPayload["units"];
           };
@@ -195,6 +215,7 @@ export function useInventoryControlCentre(enabled: boolean) {
             branchId: selectedBranchId,
             summary: summaryBody.summary,
             items,
+            warehouses: warehousesBody.warehouses,
             units: unitsBody.units,
             procurement: procurementBody.overview,
             controlCentre: controlBody.controlCentre,
