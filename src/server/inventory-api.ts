@@ -54,7 +54,6 @@ import {
   transferSchema,
   unitSchema,
   warehouseSchema,
-  wastageSchema,
 } from "@/inventory/schemas";
 import { SerametHttpError, authenticateSerametRequest, type SerametEnv } from "@/lib/seramet-auth";
 import { authoritativeBusinessDate } from "@/server/business-date";
@@ -95,9 +94,6 @@ const stagedTransferReceiptRequestSchema = stagedTransferReceiptSchema.extend({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
-});
-const wastageRequestSchema = wastageSchema.extend({
-  businessDate: wastageSchema.shape.businessDate.optional(),
 });
 const supplierReturnRequestSchema = supplierReturnSchema.extend({
   returnNumber: supplierReturnSchema.shape.returnNumber.optional(),
@@ -140,8 +136,6 @@ type StagedTransferReceiptRequest = Omit<
 > & {
   businessDate?: string;
 };
-type WastageInput = Parameters<InventoryIntelligenceService["recordWastage"]>[0];
-type WastageRequest = Omit<WastageInput, "businessDate"> & { businessDate?: string };
 type SupplierReturnRequest = Omit<SupplierReturnInput, "returnNumber" | "businessDate"> & {
   returnNumber?: string;
   businessDate?: string;
