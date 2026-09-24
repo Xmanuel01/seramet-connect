@@ -76,6 +76,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       name: "Zero stock item",
       baseUnitId: "unit-kg",
       purchaseUnitId: "unit-kg",
+      defaultWarehouseId: warehouseId,
     });
 
     const catalogue = await service.listInventory({ branchId });
