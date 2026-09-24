@@ -5875,6 +5875,28 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
+    const items = await this.db
+      .prepare(
+        `SELECT i.id,i.code,i.sku,i.name,i.base_unit_id,i.purchase_unit_id,
+                bu.symbol AS base_unit_symbol,pu.symbol AS purchase_unit_symbol,
+                i.preferred_supplier_id,i.default_warehouse_id
+         FROM inventory_items i
+         LEFT JOIN unit_definitions bu ON bu.tenant_id=i.tenant_id AND bu.id=i.base_unit_id
+         LEFT JOIN unit_definitions pu ON pu.tenant_id=i.tenant_id AND pu.id=i.purchase_unit_id
+         WHERE i.tenant_id=? AND i.active=1 AND i.track_inventory=1
+         ORDER BY i.name LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, Math.min(500, pageSize * 10))
+      .all<Record<string, unknown>>();
+    const warehouses = await this.db
+      .prepare(
+        `SELECT id,code,name,branch_id,location_type
+         FROM warehouses
+         WHERE tenant_id=? AND branch_id=? AND active=1
+         ORDER BY name`,
+      )
+      .bind(this.actor.tenantId, branchId)
+      .all<Record<string, unknown>>();
     return {
       branchId,
       purchaseOrders: rows,
@@ -5882,6 +5904,8 @@ export class InventoryIntelligenceService {
       requisitions,
       receipts: receipts.results ?? [],
       supplierInvoices: supplierInvoices.results ?? [],
+      items: items.results ?? [],
+      warehouses: warehouses.results ?? [],
     };
   }
 
