@@ -1054,7 +1054,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("returns redacted diagnostics and never includes secrets or session material", async () => {
     const diagnostics = await service.diagnostics();
     expect(diagnostics).toMatchObject({
-      schema: { current: 21, required: 21, pending: 0 },
+      schema: { current: 22, required: 22, pending: 0 },
       redaction: { secrets: "EXCLUDED", tokens: "EXCLUDED", credentials: "EXCLUDED" },
     });
     expect(JSON.stringify(diagnostics)).not.toContain("sensitive-secret");
