@@ -249,7 +249,9 @@ export async function handleInventoryApi(
     );
   }
   if (url.pathname === "/api/seramet/inventory/recipes/import" && request.method === "POST") {
-    const imported = await service.importRecipeDefinitions(await parse(request, recipeImportSchema));
+    const imported = await service.importRecipeDefinitions(
+      await parse(request, recipeImportSchema),
+    );
     return json({ ok: imported.failed === 0, import: imported }, imported.failed === 0 ? 201 : 207);
   }
   if (url.pathname === "/api/seramet/inventory/recipes" && request.method === "POST") {

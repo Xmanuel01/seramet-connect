@@ -1,14 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  Download,
-  FileSpreadsheet,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { Download, FileSpreadsheet, Pencil, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
@@ -57,14 +49,8 @@ type EditorComponent = {
 };
 
 function Recipes() {
-  const {
-    branchId,
-    branchLabel,
-    branchRecords,
-    currency,
-    hasPermission,
-    isAllBranches,
-  } = useAppContext();
+  const { branchId, branchLabel, branchRecords, currency, hasPermission, isAllBranches } =
+    useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useRecipeControlCentre(authoritative);
@@ -88,7 +74,10 @@ function Recipes() {
             sourceBranchId: entry.branchId,
           })),
         )
-        .filter((recipe, index, all) => all.findIndex((candidate) => candidate.id === recipe.id) === index),
+        .filter(
+          (recipe, index, all) =>
+            all.findIndex((candidate) => candidate.id === recipe.id) === index,
+        ),
     [control.data],
   );
   const filtered = rows.filter((recipe) => {
@@ -100,26 +89,24 @@ function Recipes() {
       recipe.menu_item_code,
       recipe.production_item_name,
       recipe.production_item_code,
-    ].some((value) => String(value ?? "").toLowerCase().includes(needle));
+    ].some((value) =>
+      String(value ?? "")
+        .toLowerCase()
+        .includes(needle),
+    );
   });
   const selected =
-    rows.find((recipe) => recipe.id === selectedRecipeId) ??
-    filtered[0] ??
-    rows[0] ??
-    null;
+    rows.find((recipe) => recipe.id === selectedRecipeId) ?? filtered[0] ?? rows[0] ?? null;
   const averageFoodCost = rows.length
     ? rows.reduce((sum, recipe) => sum + foodCostPercent(recipe), 0) / rows.length
     : 0;
   const belowMargin = rows.filter((recipe) => marginPercent(recipe) < 60).length;
   const auto86Risks = rows.filter(
     (recipe) =>
-      recipe.current_version_id &&
-      recipe.available_output_quantity_minor <= 3 * QUANTITY_SCALE,
+      recipe.current_version_id && recipe.available_output_quantity_minor <= 3 * QUANTITY_SCALE,
   ).length;
   const canManage =
-    authoritative &&
-    !isAllBranches &&
-    hasPermission(permissions.inventoryCostControlManage);
+    authoritative && !isAllBranches && hasPermission(permissions.inventoryCostControlManage);
 
   const run = async (task: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -157,7 +144,10 @@ function Recipes() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Costed recipes" value={rows.filter((recipe) => !recipe.costing_error).length} />
+        <Metric
+          label="Costed recipes"
+          value={rows.filter((recipe) => !recipe.costing_error).length}
+        />
         <Metric
           label="Average food cost"
           value={averageFoodCost.toFixed(1)}
@@ -223,7 +213,9 @@ function Recipes() {
                   <TD className="num">{recipe.version ? `v${recipe.version}` : "—"}</TD>
                   <TD className="text-muted-foreground">{yieldLabel(recipe)}</TD>
                   <TD className="num text-right">
-                    {recipe.costing_error ? "Needs review" : formatMinor(recipe.cost_minor, currency)}
+                    {recipe.costing_error
+                      ? "Needs review"
+                      : formatMinor(recipe.cost_minor, currency)}
                   </TD>
                   <TD className="num text-right">
                     {recipe.selling_price_minor == null
@@ -260,7 +252,9 @@ function Recipes() {
         <Panel className="self-start">
           <PanelHead
             title={selected?.name ?? "Recipe"}
-            sub={selected ? `${yieldLabel(selected)} · v${selected.version ?? "—"}` : "Select a recipe"}
+            sub={
+              selected ? `${yieldLabel(selected)} · v${selected.version ?? "—"}` : "Select a recipe"
+            }
             right={
               selected ? (
                 <Btn
@@ -306,7 +300,9 @@ function Recipes() {
                 <SummaryLine
                   label="Ingredient + overhead cost"
                   value={
-                    selected.costing_error ? "Needs review" : formatMinor(selected.cost_minor, currency)
+                    selected.costing_error
+                      ? "Needs review"
+                      : formatMinor(selected.cost_minor, currency)
                   }
                 />
                 <SummaryLine
@@ -320,9 +316,7 @@ function Recipes() {
                 <SummaryLine
                   label="Gross margin"
                   value={
-                    selected.selling_price_minor
-                      ? `${marginPercent(selected).toFixed(1)}%`
-                      : "—"
+                    selected.selling_price_minor ? `${marginPercent(selected).toFixed(1)}%` : "—"
                   }
                   strong
                 />
@@ -390,28 +384,25 @@ function Recipes() {
           currency={currency}
           onOpenChange={setImportOpen}
           onCommit={(preview) =>
-            void run(
-              async () => {
-                const result = await control.command<{
-                  import: { imported: number; failed: number; results: Array<{ error?: string }> };
-                }>("/api/seramet/inventory/recipes/import", {
-                  idempotencyKey: `recipe-import:${crypto.randomUUID()}`,
-                  recipes: preview.definitions,
-                });
-                const failedMessages = result.import.results
-                  .flatMap((row) => (row.error ? [row.error] : []))
-                  .slice(0, 3);
-                if (result.import.failed) {
-                  throw new Error(
-                    `${result.import.imported} recipes imported; ${result.import.failed} failed. ${failedMessages.join(
-                      " · ",
-                    )}`,
-                  );
-                }
-                setImportOpen(false);
-              },
-              `${preview.recipeCount} recipes imported as authoritative recipe versions.`,
-            )
+            void run(async () => {
+              const result = await control.command<{
+                import: { imported: number; failed: number; results: Array<{ error?: string }> };
+              }>("/api/seramet/inventory/recipes/import", {
+                idempotencyKey: `recipe-import:${crypto.randomUUID()}`,
+                recipes: preview.definitions,
+              });
+              const failedMessages = result.import.results
+                .flatMap((row) => (row.error ? [row.error] : []))
+                .slice(0, 3);
+              if (result.import.failed) {
+                throw new Error(
+                  `${result.import.imported} recipes imported; ${result.import.failed} failed. ${failedMessages.join(
+                    " · ",
+                  )}`,
+                );
+              }
+              setImportOpen(false);
+            }, `${preview.recipeCount} recipes imported as authoritative recipe versions.`)
           }
         />
       )}
@@ -519,9 +510,7 @@ function RecipeEditorDialog({
     if (isEdit) return;
     setTargetType(next);
     setTargetId(
-      next === "MENU"
-        ? library.menuItems[0]?.id ?? ""
-        : library.inventoryItems[0]?.id ?? "",
+      next === "MENU" ? (library.menuItems[0]?.id ?? "") : (library.inventoryItems[0]?.id ?? ""),
     );
   };
 
@@ -538,7 +527,11 @@ function RecipeEditorDialog({
         </DialogHeader>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Recipe name">
-            <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} />
+            <input
+              className={inputClass}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
           </Field>
           <Field label="Recipe target">
             <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-2">
@@ -635,21 +628,29 @@ function RecipeEditorDialog({
                         label: candidate.name,
                       }));
               return (
-                <div key={component.key} className="grid gap-2 p-3 lg:grid-cols-[120px_1.7fr_110px_140px_95px_90px_36px]">
+                <div
+                  key={component.key}
+                  className="grid gap-2 p-3 lg:grid-cols-[120px_1.7fr_110px_140px_95px_90px_36px]"
+                >
                   <select
                     className={inputClass}
                     value={component.type}
                     onChange={(event) => {
                       const type = event.target.value as EditorComponent["type"];
                       const firstInventory = library.inventoryItems[0];
-                      const firstRecipe = library.recipes.find((candidate) => candidate.id !== recipe?.id);
+                      const firstRecipe = library.recipes.find(
+                        (candidate) => candidate.id !== recipe?.id,
+                      );
                       updateComponent(component.key, {
                         type,
-                        referenceId: type === "INVENTORY" ? firstInventory?.id ?? "" : firstRecipe?.id ?? "",
+                        referenceId:
+                          type === "INVENTORY"
+                            ? (firstInventory?.id ?? "")
+                            : (firstRecipe?.id ?? ""),
                         unitId:
                           type === "INVENTORY"
-                            ? firstInventory?.base_unit_id ?? library.units[0]?.id ?? ""
-                            : firstRecipe?.yield_unit_id ?? library.units[0]?.id ?? "",
+                            ? (firstInventory?.base_unit_id ?? library.units[0]?.id ?? "")
+                            : (firstRecipe?.yield_unit_id ?? library.units[0]?.id ?? ""),
                       });
                     }}
                   >
@@ -661,14 +662,16 @@ function RecipeEditorDialog({
                     value={component.referenceId}
                     onChange={(event) => {
                       const referenceId = event.target.value;
-                      const inventory = library.inventoryItems.find((item) => item.id === referenceId);
+                      const inventory = library.inventoryItems.find(
+                        (item) => item.id === referenceId,
+                      );
                       const subRecipe = library.recipes.find((item) => item.id === referenceId);
                       updateComponent(component.key, {
                         referenceId,
                         unitId:
                           component.type === "INVENTORY"
-                            ? inventory?.base_unit_id ?? component.unitId
-                            : subRecipe?.yield_unit_id ?? component.unitId,
+                            ? (inventory?.base_unit_id ?? component.unitId)
+                            : (subRecipe?.yield_unit_id ?? component.unitId),
                       });
                     }}
                   >
@@ -686,7 +689,9 @@ function RecipeEditorDialog({
                     min="0.000001"
                     step="0.001"
                     value={component.quantity}
-                    onChange={(event) => updateComponent(component.key, { quantity: event.target.value })}
+                    onChange={(event) =>
+                      updateComponent(component.key, { quantity: event.target.value })
+                    }
                   />
                   <UnitSelect
                     units={library.units}
@@ -817,7 +822,8 @@ function RecipeImportDialog({
             <div>
               <div className="font-semibold">Canonical recipe spreadsheet</div>
               <div className="mt-1 text-[12px] text-muted-foreground">
-                CSV or XLSX. One row per ingredient; repeat recipe-level fields for every ingredient.
+                CSV or XLSX. One row per ingredient; repeat recipe-level fields for every
+                ingredient.
               </div>
             </div>
             <Btn
@@ -870,7 +876,9 @@ function RecipeImportDialog({
                     key={`${issue.row}:${issue.field}:${index}`}
                     className="border-b border-border px-3 py-2 text-[12px] last:border-b-0"
                   >
-                    <strong>Row {issue.row || "file"} · {issue.field}</strong>
+                    <strong>
+                      Row {issue.row || "file"} · {issue.field}
+                    </strong>
                     <div className="text-muted-foreground">{issue.message}</div>
                   </div>
                 ))}
@@ -1000,21 +1008,15 @@ function formatQuantity(value: number) {
 
 function toMicro(value: string) {
   const quantity = Number(value);
-  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Quantity must be greater than zero");
+  if (!Number.isFinite(quantity) || quantity <= 0)
+    throw new Error("Quantity must be greater than zero");
   const scaled = Math.round(quantity * QUANTITY_SCALE);
-  if (!Number.isSafeInteger(scaled) || scaled <= 0) throw new Error("Quantity is outside the supported range");
+  if (!Number.isSafeInteger(scaled) || scaled <= 0)
+    throw new Error("Quantity is outside the supported range");
   return scaled;
 }
 
-function SummaryLine({
-  label,
-  value,
-  strong,
-}: {
-  label: string;
-  value: string;
-  strong?: boolean;
-}) {
+function SummaryLine({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
     <div className="flex justify-between gap-3">
       <span className="text-muted-foreground">{label}</span>

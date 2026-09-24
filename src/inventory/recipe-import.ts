@@ -140,18 +140,20 @@ function buildRecipeImportPreview(
     const branchRef = clean(row["branch"]);
     const yieldQuantity = positiveNumber(row["yieldquantity"]);
     const yieldUnit = resolveOne(row["yieldunit"], context.units, ["id", "code", "symbol", "name"]);
-    const ingredient = resolveOne(
-      row["ingredient"],
-      context.inventoryItems,
-      ["id", "code", "sku", "name"],
-    );
+    const ingredient = resolveOne(row["ingredient"], context.inventoryItems, [
+      "id",
+      "code",
+      "sku",
+      "name",
+    ]);
     const subRecipe = resolveOne(row["subrecipe"], context.recipes, ["id", "code", "name"]);
     const componentQuantity = positiveNumber(row["ingredientquantity"] || row["quantity"]);
-    const componentUnit = resolveOne(
-      row["ingredientunit"] || row["unit"],
-      context.units,
-      ["id", "code", "symbol", "name"],
-    );
+    const componentUnit = resolveOne(row["ingredientunit"] || row["unit"], context.units, [
+      "id",
+      "code",
+      "symbol",
+      "name",
+    ]);
     const wastePercent = numberOrZero(row["wastepercent"]);
     const optional = parseBoolean(row["optional"]);
     const menu = menuRef
@@ -240,7 +242,9 @@ function buildRecipeImportPreview(
 
     const targetId = menu?.id ?? production?.id ?? "";
     const branchId = branch?.id ?? "";
-    const groupKey = [name.toLowerCase(), menu ? "MENU" : "PRODUCTION", targetId, branchId].join("|");
+    const groupKey = [name.toLowerCase(), menu ? "MENU" : "PRODUCTION", targetId, branchId].join(
+      "|",
+    );
     const existingGroup = groups.get(groupKey);
     const componentKey = ingredient ? `inventory:${ingredient.id}` : `recipe:${subRecipe?.id}`;
 
@@ -262,15 +266,17 @@ function buildRecipeImportPreview(
       }
       if (existingGroup.componentKeys.has(componentKey)) {
         issues.push(
-          issue(rowNumber, "ingredient", "The same component appears more than once in this recipe"),
+          issue(
+            rowNumber,
+            "ingredient",
+            "The same component appears more than once in this recipe",
+          ),
         );
         return;
       }
       existingGroup.componentKeys.add(componentKey);
       existingGroup.components.push({
-        ...(ingredient
-          ? { inventoryItemId: ingredient.id }
-          : { subRecipeId: subRecipe!.id }),
+        ...(ingredient ? { inventoryItemId: ingredient.id } : { subRecipeId: subRecipe!.id }),
         quantityMicro: toMicro(componentQuantity),
         unitId: componentUnit.id,
         wasteFactorBps: Math.round(wastePercent * 100),
@@ -290,9 +296,7 @@ function buildRecipeImportPreview(
       productionOverheadMinor,
       components: [
         {
-          ...(ingredient
-            ? { inventoryItemId: ingredient.id }
-            : { subRecipeId: subRecipe!.id }),
+          ...(ingredient ? { inventoryItemId: ingredient.id } : { subRecipeId: subRecipe!.id }),
           quantityMicro: toMicro(componentQuantity),
           unitId: componentUnit.id,
           wasteFactorBps: Math.round(wastePercent * 100),

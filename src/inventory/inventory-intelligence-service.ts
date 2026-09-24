@@ -1544,14 +1544,7 @@ export class InventoryIntelligenceService {
              GROUP BY i.id,i.code,i.sku,i.name,i.base_unit_id,u.symbol,i.default_warehouse_id
              ORDER BY i.name LIMIT 5000`,
         )
-        .bind(
-          branchId,
-          branchId,
-          branchId,
-          branchId,
-          branchId,
-          this.actor.tenantId,
-        )
+        .bind(branchId, branchId, branchId, branchId, branchId, this.actor.tenantId)
         .all<Record<string, unknown>>(),
       this.db
         .prepare(
@@ -1716,9 +1709,7 @@ export class InventoryIntelligenceService {
 
     if (normalizedMenuItemId) {
       const menu = await this.db
-        .prepare(
-          "SELECT id FROM menu_catalog_items WHERE tenant_id=? AND id=? AND active=1",
-        )
+        .prepare("SELECT id FROM menu_catalog_items WHERE tenant_id=? AND id=? AND active=1")
         .bind(this.actor.tenantId, normalizedMenuItemId)
         .first<{ id: string }>();
       if (!menu) throw new ServerOperationError("VALIDATION_FAILED", 404, "Menu item not found");
@@ -1740,7 +1731,8 @@ export class InventoryIntelligenceService {
       .prepare("SELECT id FROM unit_definitions WHERE tenant_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, input.yieldUnitId)
       .first<{ id: string }>();
-    if (!yieldUnit) throw new ServerOperationError("VALIDATION_FAILED", 404, "Yield unit not found");
+    if (!yieldUnit)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Yield unit not found");
 
     await this.assertNoRecipeCycle(
       recipeId,
@@ -1934,14 +1926,9 @@ export class InventoryIntelligenceService {
     };
   }
 
-  private async recipeComponentCostMinor(
-    component: Record<string, unknown>,
-    branchId: string,
-  ) {
+  private async recipeComponentCostMinor(component: Record<string, unknown>, branchId: string) {
     const inventoryItemId =
-      typeof component["inventory_item_id"] === "string"
-        ? component["inventory_item_id"]
-        : null;
+      typeof component["inventory_item_id"] === "string" ? component["inventory_item_id"] : null;
     const subRecipeId =
       typeof component["sub_recipe_id"] === "string" ? component["sub_recipe_id"] : null;
     const quantityMicro = Number(component["quantity_minor"] ?? 0);
@@ -1965,10 +1952,7 @@ export class InventoryIntelligenceService {
         BASIS_POINTS_SCALE,
         "component cost waste quantity",
       );
-      return quantityCostMinor(
-        withWaste,
-        await this.weightedItemCost(inventoryItemId, branchId),
-      );
+      return quantityCostMinor(withWaste, await this.weightedItemCost(inventoryItemId, branchId));
     }
     if (!subRecipeId) return 0;
     const sub = await this.db
@@ -2007,11 +1991,7 @@ export class InventoryIntelligenceService {
       BASIS_POINTS_SCALE,
       "sub-recipe component waste quantity",
     );
-    const subCost = await this.recipeCostMinor(
-      sub.current_version_id,
-      new Set<string>(),
-      branchId,
-    );
+    const subCost = await this.recipeCostMinor(sub.current_version_id, new Set<string>(), branchId);
     return multiplyDivide(
       subCost,
       withWaste,
@@ -2034,12 +2014,14 @@ export class InventoryIntelligenceService {
         );
       }
       assertScaledInteger(component.quantityMicro, "recipe component quantity");
-      if (component.quantityMicro <= 0) throw new Error("Recipe component quantity must be positive");
+      if (component.quantityMicro <= 0)
+        throw new Error("Recipe component quantity must be positive");
       const unit = await this.db
         .prepare("SELECT id FROM unit_definitions WHERE tenant_id=? AND id=? AND active=1")
         .bind(this.actor.tenantId, component.unitId)
         .first<{ id: string }>();
-      if (!unit) throw new ServerOperationError("VALIDATION_FAILED", 404, "Component unit not found");
+      if (!unit)
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Component unit not found");
 
       if (component.inventoryItemId) {
         const item = await this.db
@@ -2113,9 +2095,7 @@ export class InventoryIntelligenceService {
 
   private async recipeAvailableOutputQuantity(recipeVersionId: string, branchId: string) {
     const version = await this.db
-      .prepare(
-        "SELECT yield_quantity_minor FROM recipe_versions WHERE tenant_id=? AND id=?",
-      )
+      .prepare("SELECT yield_quantity_minor FROM recipe_versions WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, recipeVersionId)
       .first<{ yield_quantity_minor: number }>();
     if (!version?.yield_quantity_minor) return 0;
