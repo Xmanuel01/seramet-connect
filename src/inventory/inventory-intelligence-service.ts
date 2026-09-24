@@ -27,6 +27,8 @@ import type {
   PurchaseQuoteInput,
   PurchaseOrderInput,
   PurchaseRequisitionInput,
+  RecipeDefinitionInput,
+  RecipeImportInput,
   RecipeVersionInput,
   StagedTransferDispatchInput,
   StagedTransferReceiptInput,
@@ -61,6 +63,7 @@ type RecipeComponentRow = {
   quantity_minor: number;
   unit_id: string;
   waste_factor_bps: number;
+  optional?: number;
 };
 
 type AccountMappingRow = {
@@ -1392,7 +1395,11 @@ export class InventoryIntelligenceService {
     return { id, expectedQuantityMicro: standard.expected_quantity_minor, varianceQuantityMicro };
   }
 
-  async recipeCostMinor(recipeVersionId: string, visited = new Set<string>()): Promise<number> {
+  async recipeCostMinor(
+    recipeVersionId: string,
+    visited = new Set<string>(),
+    branchId?: string,
+  ): Promise<number> {
     if (visited.has(recipeVersionId)) throw new Error("Circular recipe dependency detected");
     visited.add(recipeVersionId);
     const version = await this.db
@@ -1424,7 +1431,7 @@ export class InventoryIntelligenceService {
           component.unit_id,
           item.base_unit_id,
         );
-        const cost = await this.weightedItemCost(component.inventory_item_id);
+        const cost = await this.weightedItemCost(component.inventory_item_id, branchId);
         const withWaste = multiplyDivide(
           baseQuantity,
           BASIS_POINTS_SCALE + component.waste_factor_bps,
@@ -1468,7 +1475,11 @@ export class InventoryIntelligenceService {
           BASIS_POINTS_SCALE,
           "sub-recipe waste quantity",
         );
-        const subRecipeCost = await this.recipeCostMinor(sub.current_version_id, new Set(visited));
+        const subRecipeCost = await this.recipeCostMinor(
+          sub.current_version_id,
+          new Set(visited),
+          branchId,
+        );
         total += multiplyDivide(
           subRecipeCost,
           withWaste,
@@ -1479,6 +1490,603 @@ export class InventoryIntelligenceService {
     }
     visited.delete(recipeVersionId);
     return total;
+  }
+
+  async recipeOverview(branchId: string) {
+    this.requirePermission(permissions.productionView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const [recipes, inventoryItems, units, menuItems] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT r.id,r.name,r.menu_item_id,r.production_item_id,r.branch_override_id,
+                  r.current_version_id,rv.version,rv.yield_quantity_minor,rv.yield_unit_id,
+                  rv.packaging_cost_minor,rv.production_overhead_minor,rv.effective_from,
+                  u.symbol AS yield_unit_symbol,
+                  m.code AS menu_item_code,m.sku AS menu_item_sku,m.name AS menu_item_name,
+                  COALESCE(bs.selling_price_minor,m.selling_price_minor) AS selling_price_minor,
+                  p.code AS production_item_code,p.sku AS production_item_sku,
+                  p.name AS production_item_name
+             FROM recipes r
+             LEFT JOIN recipe_versions rv
+               ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+             LEFT JOIN unit_definitions u
+               ON u.tenant_id=rv.tenant_id AND u.id=rv.yield_unit_id
+             LEFT JOIN menu_catalog_items m
+               ON m.tenant_id=r.tenant_id AND m.id=r.menu_item_id
+             LEFT JOIN menu_item_branch_settings bs
+               ON bs.tenant_id=r.tenant_id AND bs.menu_item_id=r.menu_item_id AND bs.branch_id=?
+             LEFT JOIN inventory_items p
+               ON p.tenant_id=r.tenant_id AND p.id=r.production_item_id
+             WHERE r.tenant_id=? AND r.active=1
+               AND (r.branch_override_id IS NULL OR r.branch_override_id=?)
+             ORDER BY COALESCE(r.name,m.name,p.name),r.id`,
+        )
+        .bind(branchId, this.actor.tenantId, branchId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT i.id,i.code,i.sku,i.name,i.base_unit_id,u.symbol AS base_unit_symbol,
+                  i.default_warehouse_id,
+                  COALESCE(SUM(CASE WHEN b.branch_id=? THEN b.quantity_minor-b.quantity_reserved_minor ELSE 0 END),0)
+                    AS available_quantity_minor,
+                  CASE WHEN SUM(CASE WHEN b.branch_id=? THEN b.quantity_minor ELSE 0 END)>0
+                    THEN (
+                      SUM(CASE WHEN b.branch_id=? THEN b.total_value_minor ELSE 0 END)*1000000 +
+                      SUM(CASE WHEN b.branch_id=? THEN b.quantity_minor ELSE 0 END)/2
+                    )/SUM(CASE WHEN b.branch_id=? THEN b.quantity_minor ELSE 0 END)
+                    ELSE 0 END AS average_unit_cost_minor
+             FROM inventory_items i
+             LEFT JOIN unit_definitions u
+               ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+             LEFT JOIN inventory_balances b
+               ON b.tenant_id=i.tenant_id AND b.item_id=i.id
+             WHERE i.tenant_id=? AND i.active=1
+             GROUP BY i.id,i.code,i.sku,i.name,i.base_unit_id,u.symbol,i.default_warehouse_id
+             ORDER BY i.name LIMIT 5000`,
+        )
+        .bind(
+          branchId,
+          branchId,
+          branchId,
+          branchId,
+          branchId,
+          this.actor.tenantId,
+        )
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT id,code,name,symbol,dimension,base_scale_numerator,base_scale_denominator
+             FROM unit_definitions WHERE tenant_id=? AND active=1 ORDER BY dimension,name`,
+        )
+        .bind(this.actor.tenantId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT m.id,m.code,m.sku,m.name,m.category_code,
+                  COALESCE(bs.selling_price_minor,m.selling_price_minor) AS selling_price_minor,
+                  m.currency,COALESCE(bs.available,m.sellable) AS available
+             FROM menu_catalog_items m
+             LEFT JOIN menu_item_branch_settings bs
+               ON bs.tenant_id=m.tenant_id AND bs.menu_item_id=m.id AND bs.branch_id=?
+             WHERE m.tenant_id=? AND m.active=1
+             ORDER BY m.category_code,m.name LIMIT 5000`,
+        )
+        .bind(branchId, this.actor.tenantId)
+        .all<Record<string, unknown>>(),
+    ]);
+
+    const rows: Array<Record<string, unknown>> = [];
+    for (const recipe of recipes.results ?? []) {
+      const versionId =
+        typeof recipe["current_version_id"] === "string" ? recipe["current_version_id"] : null;
+      const components = versionId
+        ? await this.db
+            .prepare(
+              `SELECT c.id,c.inventory_item_id,c.sub_recipe_id,c.quantity_minor,c.unit_id,
+                      c.waste_factor_bps,c.optional,c.station_id,u.symbol AS unit_symbol,
+                      i.code AS inventory_item_code,i.sku AS inventory_item_sku,
+                      i.name AS inventory_item_name,s.name AS sub_recipe_name
+                 FROM recipe_version_components c
+                 LEFT JOIN unit_definitions u
+                   ON u.tenant_id=c.tenant_id AND u.id=c.unit_id
+                 LEFT JOIN inventory_items i
+                   ON i.tenant_id=c.tenant_id AND i.id=c.inventory_item_id
+                 LEFT JOIN recipes s
+                   ON s.tenant_id=c.tenant_id AND s.id=c.sub_recipe_id
+                 WHERE c.tenant_id=? AND c.recipe_version_id=?
+                 ORDER BY COALESCE(i.name,s.name),c.id`,
+            )
+            .bind(this.actor.tenantId, versionId)
+            .all<Record<string, unknown>>()
+        : { results: [] as Array<Record<string, unknown>> };
+
+      let costMinor = 0;
+      let availableOutputQuantityMicro = 0;
+      let costingError: string | null = null;
+      if (versionId) {
+        try {
+          costMinor = await this.recipeCostMinor(versionId, new Set<string>(), branchId);
+          availableOutputQuantityMicro = await this.recipeAvailableOutputQuantity(
+            versionId,
+            branchId,
+          );
+        } catch (error) {
+          costingError = error instanceof Error ? error.message : "Recipe costing failed";
+        }
+      }
+      rows.push({
+        ...recipe,
+        cost_minor: costMinor,
+        available_output_quantity_minor: availableOutputQuantityMicro,
+        costing_error: costingError,
+        components: components.results ?? [],
+      });
+    }
+
+    return {
+      branchId,
+      recipes: rows,
+      inventoryItems: inventoryItems.results ?? [],
+      units: units.results ?? [],
+      menuItems: menuItems.results ?? [],
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async saveRecipeDefinition(input: RecipeDefinitionInput) {
+    this.requirePermission(permissions.inventoryCostControlManage);
+    if (Boolean(input.menuItemId) === Boolean(input.productionItemId)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Recipe must target exactly one menu item or production inventory item",
+      );
+    }
+    assertScaledInteger(input.yieldQuantityMicro, "recipe yield");
+    if (input.yieldQuantityMicro <= 0) throw new Error("Recipe yield must be positive");
+    if (input.components.length === 0) throw new Error("Recipe requires at least one component");
+
+    const stamp = new Date().toISOString();
+    const recipeId = input.recipeId ?? crypto.randomUUID();
+    const existing = input.recipeId
+      ? await this.db
+          .prepare(
+            `SELECT id,menu_item_id,production_item_id,branch_override_id,current_version_id
+               FROM recipes WHERE tenant_id=? AND id=? AND active=1`,
+          )
+          .bind(this.actor.tenantId, input.recipeId)
+          .first<{
+            id: string;
+            menu_item_id: string;
+            production_item_id: string | null;
+            branch_override_id: string | null;
+            current_version_id: string | null;
+          }>()
+      : null;
+
+    if (input.recipeId && !existing) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Recipe not found");
+    }
+
+    const normalizedMenuItemId = input.menuItemId ?? null;
+    const normalizedProductionItemId = input.productionItemId ?? null;
+    const normalizedBranchOverrideId = input.branchOverrideId ?? null;
+
+    if (existing) {
+      const existingMenu =
+        existing.production_item_id == null && !existing.menu_item_id.startsWith("production:")
+          ? existing.menu_item_id
+          : null;
+      if (
+        existingMenu !== normalizedMenuItemId ||
+        existing.production_item_id !== normalizedProductionItemId ||
+        existing.branch_override_id !== normalizedBranchOverrideId
+      ) {
+        throw new ServerOperationError(
+          "INVALID_STATE_TRANSITION",
+          409,
+          "Recipe target and branch scope cannot be changed after creation; create a new recipe instead",
+        );
+      }
+    }
+
+    if (normalizedBranchOverrideId) {
+      authorizeBranchRead(this.actor, this.actor.tenantId, normalizedBranchOverrideId);
+      await this.assertRecipeOverrideAllowed(
+        normalizedBranchOverrideId,
+        normalizedMenuItemId ?? normalizedProductionItemId!,
+      );
+    }
+
+    if (normalizedMenuItemId) {
+      const menu = await this.db
+        .prepare(
+          "SELECT id FROM menu_catalog_items WHERE tenant_id=? AND id=? AND active=1",
+        )
+        .bind(this.actor.tenantId, normalizedMenuItemId)
+        .first<{ id: string }>();
+      if (!menu) throw new ServerOperationError("VALIDATION_FAILED", 404, "Menu item not found");
+    }
+    if (normalizedProductionItemId) {
+      const output = await this.db
+        .prepare("SELECT id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
+        .bind(this.actor.tenantId, normalizedProductionItemId)
+        .first<{ id: string }>();
+      if (!output) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          404,
+          "Production inventory item not found",
+        );
+      }
+    }
+    const yieldUnit = await this.db
+      .prepare("SELECT id FROM unit_definitions WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.yieldUnitId)
+      .first<{ id: string }>();
+    if (!yieldUnit) throw new ServerOperationError("VALIDATION_FAILED", 404, "Yield unit not found");
+
+    await this.assertNoRecipeCycle(
+      recipeId,
+      input.components.flatMap((component) =>
+        component.subRecipeId ? [component.subRecipeId] : [],
+      ),
+    );
+    await this.validateRecipeComponents(recipeId, input.components, stamp);
+
+    if (!existing) {
+      const duplicate = await this.db
+        .prepare(
+          `SELECT id FROM recipes
+             WHERE tenant_id=? AND active=1
+               AND COALESCE(branch_override_id,'')=?
+               AND (
+                 (? IS NOT NULL AND production_item_id IS NULL AND menu_item_id=?)
+                 OR (? IS NOT NULL AND production_item_id=?)
+               )
+             LIMIT 1`,
+        )
+        .bind(
+          this.actor.tenantId,
+          normalizedBranchOverrideId ?? "",
+          normalizedMenuItemId,
+          normalizedMenuItemId,
+          normalizedProductionItemId,
+          normalizedProductionItemId,
+        )
+        .first<{ id: string }>();
+      if (duplicate) {
+        throw new ServerOperationError(
+          "DUPLICATE",
+          409,
+          "A recipe already exists for this target and branch scope",
+        );
+      }
+    }
+
+    const currentVersion = existing?.current_version_id
+      ? await this.db
+          .prepare("SELECT version FROM recipe_versions WHERE tenant_id=? AND id=?")
+          .bind(this.actor.tenantId, existing.current_version_id)
+          .first<{ version: number }>()
+      : null;
+    const versionNumber = (currentVersion?.version ?? 0) + 1;
+    const versionId = crypto.randomUUID();
+    const correlationId = crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [];
+
+    if (existing) {
+      statements.push(
+        this.db
+          .prepare("UPDATE recipes SET name=?,updated_at=? WHERE tenant_id=? AND id=?")
+          .bind(requiredText(input.name, "recipe name"), stamp, this.actor.tenantId, recipeId),
+        this.db
+          .prepare(
+            `UPDATE recipe_versions SET active=0,effective_to=?
+               WHERE tenant_id=? AND recipe_id=? AND active=1`,
+          )
+          .bind(stamp, this.actor.tenantId, recipeId),
+      );
+    } else {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO recipes
+              (tenant_id,id,menu_item_id,yield_minor,active,payload_json,name,branch_override_id,
+               production_item_id,current_version_id,updated_at)
+             VALUES (?,?,?,1,1,'{}',?,?,?,NULL,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            recipeId,
+            normalizedMenuItemId ?? `production:${recipeId}`,
+            requiredText(input.name, "recipe name"),
+            normalizedBranchOverrideId,
+            normalizedProductionItemId,
+            stamp,
+          ),
+      );
+    }
+
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO recipe_versions
+            (tenant_id,id,recipe_id,version,yield_quantity_minor,yield_unit_id,effective_from,
+             active,packaging_cost_minor,production_overhead_minor,created_by,created_at)
+           VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          versionId,
+          recipeId,
+          versionNumber,
+          input.yieldQuantityMicro,
+          input.yieldUnitId,
+          stamp,
+          input.packagingCostMinor ?? 0,
+          input.productionOverheadMinor ?? 0,
+          this.actor.id,
+          stamp,
+        ),
+    );
+
+    for (const component of input.components) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO recipe_version_components
+              (tenant_id,id,recipe_version_id,inventory_item_id,sub_recipe_id,quantity_minor,
+               unit_id,waste_factor_bps,optional,station_id)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            crypto.randomUUID(),
+            versionId,
+            component.inventoryItemId ?? null,
+            component.subRecipeId ?? null,
+            component.quantityMicro,
+            component.unitId,
+            component.wasteFactorBps ?? 0,
+            component.optional ? 1 : 0,
+            component.stationId ?? null,
+          ),
+      );
+    }
+
+    statements.push(
+      this.db
+        .prepare("UPDATE recipes SET current_version_id=?,updated_at=? WHERE tenant_id=? AND id=?")
+        .bind(versionId, stamp, this.actor.tenantId, recipeId),
+      this.auditStatement(
+        existing ? "RECIPE_VERSION_CREATED" : "RECIPE_CREATED",
+        "RECIPE",
+        recipeId,
+        stamp,
+        correlationId,
+        normalizedBranchOverrideId ?? this.actor.branchId,
+      ),
+      this.recalculationEventStatement(
+        normalizedBranchOverrideId ?? undefined,
+        "RECIPE_VERSION_CHANGED",
+        "RECIPE",
+        recipeId,
+        `recipe-definition:${recipeId}:${versionNumber}`,
+        stamp,
+        correlationId,
+      ),
+    );
+    await this.db.batch(statements);
+    return {
+      id: recipeId,
+      recipeId,
+      recipeVersionId: versionId,
+      version: versionNumber,
+      created: !existing,
+    };
+  }
+
+  async importRecipeDefinitions(input: RecipeImportInput) {
+    this.requirePermission(permissions.inventoryCostControlManage);
+    const results: Array<{
+      index: number;
+      recipeId?: string;
+      recipeVersionId?: string;
+      version?: number;
+      created?: boolean;
+      error?: string;
+    }> = [];
+    for (let index = 0; index < input.recipes.length; index += 1) {
+      const definition = input.recipes[index]!;
+      try {
+        const result = await this.saveRecipeDefinition(definition);
+        results.push({ index, ...result });
+      } catch (error) {
+        results.push({
+          index,
+          error: error instanceof Error ? error.message : "Recipe import failed",
+        });
+      }
+    }
+    const failed = results.filter((row) => row.error).length;
+    return {
+      idempotencyKey: input.idempotencyKey,
+      imported: results.length - failed,
+      failed,
+      results,
+    };
+  }
+
+  private async validateRecipeComponents(
+    recipeId: string,
+    components: RecipeDefinitionInput["components"],
+    effectiveAt: string,
+  ) {
+    for (const component of components) {
+      if (Boolean(component.inventoryItemId) === Boolean(component.subRecipeId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Each recipe component must reference one inventory item or sub-recipe",
+        );
+      }
+      assertScaledInteger(component.quantityMicro, "recipe component quantity");
+      if (component.quantityMicro <= 0) throw new Error("Recipe component quantity must be positive");
+      const unit = await this.db
+        .prepare("SELECT id FROM unit_definitions WHERE tenant_id=? AND id=? AND active=1")
+        .bind(this.actor.tenantId, component.unitId)
+        .first<{ id: string }>();
+      if (!unit) throw new ServerOperationError("VALIDATION_FAILED", 404, "Component unit not found");
+
+      if (component.inventoryItemId) {
+        const item = await this.db
+          .prepare(
+            "SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1",
+          )
+          .bind(this.actor.tenantId, component.inventoryItemId)
+          .first<{ base_unit_id: string | null }>();
+        if (!item?.base_unit_id) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            404,
+            "Recipe inventory item is unavailable or missing a base unit",
+          );
+        }
+        await this.convertItemQuantity(
+          component.inventoryItemId,
+          component.quantityMicro,
+          component.unitId,
+          item.base_unit_id,
+          effectiveAt,
+        );
+      } else if (component.subRecipeId) {
+        if (component.subRecipeId === recipeId) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "A recipe cannot contain itself",
+          );
+        }
+        const sub = await this.db
+          .prepare(
+            `SELECT r.current_version_id,r.production_item_id,rv.yield_unit_id
+               FROM recipes r
+               LEFT JOIN recipe_versions rv
+                 ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+               WHERE r.tenant_id=? AND r.id=? AND r.active=1`,
+          )
+          .bind(this.actor.tenantId, component.subRecipeId)
+          .first<{
+            current_version_id: string | null;
+            production_item_id: string | null;
+            yield_unit_id: string | null;
+          }>();
+        if (!sub?.current_version_id || !sub.yield_unit_id) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            404,
+            "Sub-recipe has no active version",
+          );
+        }
+        if (component.unitId !== sub.yield_unit_id) {
+          if (!sub.production_item_id) {
+            throw new ServerOperationError(
+              "VALIDATION_FAILED",
+              409,
+              "Sub-recipe unit conversion requires a production inventory item",
+            );
+          }
+          await this.convertItemQuantity(
+            sub.production_item_id,
+            component.quantityMicro,
+            component.unitId,
+            sub.yield_unit_id,
+            effectiveAt,
+          );
+        }
+      }
+    }
+  }
+
+  private async recipeAvailableOutputQuantity(recipeVersionId: string, branchId: string) {
+    const version = await this.db
+      .prepare(
+        "SELECT yield_quantity_minor FROM recipe_versions WHERE tenant_id=? AND id=?",
+      )
+      .bind(this.actor.tenantId, recipeVersionId)
+      .first<{ yield_quantity_minor: number }>();
+    if (!version?.yield_quantity_minor) return 0;
+    const components = await this.db
+      .prepare(
+        `SELECT inventory_item_id,sub_recipe_id,quantity_minor,unit_id,waste_factor_bps,optional
+           FROM recipe_version_components WHERE tenant_id=? AND recipe_version_id=?`,
+      )
+      .bind(this.actor.tenantId, recipeVersionId)
+      .all<RecipeComponentRow>();
+
+    let availableOutput: number | null = null;
+    for (const component of components.results ?? []) {
+      if (component.optional) continue;
+      let itemId = component.inventory_item_id;
+      let requestedQuantity = component.quantity_minor;
+      if (!itemId && component.sub_recipe_id) {
+        const sub = await this.db
+          .prepare(
+            `SELECT r.production_item_id,rv.yield_unit_id
+               FROM recipes r
+               LEFT JOIN recipe_versions rv
+                 ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+               WHERE r.tenant_id=? AND r.id=?`,
+          )
+          .bind(this.actor.tenantId, component.sub_recipe_id)
+          .first<{ production_item_id: string | null; yield_unit_id: string | null }>();
+        if (!sub?.production_item_id || !sub.yield_unit_id) return 0;
+        itemId = sub.production_item_id;
+        if (component.unit_id !== sub.yield_unit_id) {
+          requestedQuantity = await this.convertItemQuantity(
+            itemId,
+            component.quantity_minor,
+            component.unit_id,
+            sub.yield_unit_id,
+          );
+        }
+      }
+      if (!itemId) continue;
+      const item = await this.db
+        .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=?")
+        .bind(this.actor.tenantId, itemId)
+        .first<{ base_unit_id: string | null }>();
+      if (!item?.base_unit_id) return 0;
+      const baseRequired = await this.convertItemQuantity(
+        itemId,
+        requestedQuantity,
+        component.unit_id,
+        item.base_unit_id,
+      );
+      const requiredWithWaste = multiplyDivide(
+        baseRequired,
+        BASIS_POINTS_SCALE + component.waste_factor_bps,
+        BASIS_POINTS_SCALE,
+        "recipe available output requirement",
+      );
+      if (requiredWithWaste <= 0) continue;
+      const balance = await this.db
+        .prepare(
+          `SELECT COALESCE(SUM(quantity_minor-quantity_reserved_minor),0) AS available
+             FROM inventory_balances WHERE tenant_id=? AND branch_id=? AND item_id=?`,
+        )
+        .bind(this.actor.tenantId, branchId, itemId)
+        .first<{ available: number }>();
+      const candidate = multiplyDivide(
+        Math.max(0, balance?.available ?? 0),
+        version.yield_quantity_minor,
+        requiredWithWaste,
+        "recipe available output",
+      );
+      availableOutput = availableOutput == null ? candidate : Math.min(availableOutput, candidate);
+    }
+    return availableOutput ?? 0;
   }
 
   async productionOverview(branchId: string, limit = 100) {
