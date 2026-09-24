@@ -254,7 +254,7 @@ export async function handleInventoryApi(
     );
   }
   if (url.pathname === "/api/seramet/inventory/stock-counts/start" && request.method === "POST") {
-    const body = await parse(request, stockCountStartSchema);
+    const body = await parse<z.infer<typeof stockCountStartSchema>>(request, stockCountStartSchema);
     const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
     return json(
       {
@@ -396,7 +396,10 @@ export async function handleInventoryApi(
   const stockCountApproveRoute =
     /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/approve$/.exec(url.pathname);
   if (stockCountApproveRoute && request.method === "POST") {
-    const body = await parse(request, stockCountDecisionSchema);
+    const body = await parse<z.infer<typeof stockCountDecisionSchema>>(
+      request,
+      stockCountDecisionSchema,
+    );
     return json({
       ok: true,
       count: await service.approveStockCount(
@@ -408,7 +411,10 @@ export async function handleInventoryApi(
   const stockCountCancelRoute =
     /^\/api\/seramet\/inventory\/stock-counts\/([^/]+)\/cancel$/.exec(url.pathname);
   if (stockCountCancelRoute && request.method === "POST") {
-    const body = await parse(request, stockCountCancelSchema);
+    const body = await parse<z.infer<typeof stockCountCancelSchema>>(
+      request,
+      stockCountCancelSchema,
+    );
     return json({
       ok: true,
       count: await service.cancelStockCount(
