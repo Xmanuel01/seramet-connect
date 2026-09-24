@@ -44,6 +44,7 @@ import { handleOfflineSyncApi } from "@/server/offline-sync-api";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { handleInventoryApi } from "@/server/inventory-api";
 import { handleCookbookApi } from "@/server/cookbook-api";
+import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
@@ -171,6 +172,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (inventoryResponse) return inventoryResponse;
     const cookbookResponse = await handleCookbookApi(request, env);
     if (cookbookResponse) return cookbookResponse;
+    const prepResponse = await handlePrepApi(request, env);
+    if (prepResponse) return prepResponse;
     const managementResponse = await handleManagementApi(request, env);
     if (managementResponse) return managementResponse;
     const onboardingResponse = await handleOnboardingApi(request, env);
