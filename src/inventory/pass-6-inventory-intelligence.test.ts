@@ -1362,8 +1362,8 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       6 * QUANTITY_SCALE,
     );
     expect(
-      (await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).quantity_minor,
-    ).toBe(0);
+      await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId),
+    ).toBeNull();
 
     await service.approveStockTransfer("transfer-controlled", "Supervisor approved");
     expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
