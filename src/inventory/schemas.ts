@@ -288,6 +288,41 @@ export const movementSchema = z
   })
   .strict();
 
+export const stockTransferRequestSchema = z
+  .object({
+    id: id.optional(),
+    sourceBranchId: id,
+    sourceWarehouseId: id,
+    destinationBranchId: id,
+    destinationWarehouseId: id,
+    idempotencyKey: id,
+    lines: z
+      .array(
+        z
+          .object({
+            inventoryItemId: id,
+            quantityMicro: positiveInteger,
+            sourceLotId: id.optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.sourceBranchId !== value.destinationBranchId ||
+      value.sourceWarehouseId !== value.destinationWarehouseId,
+    { message: "Transfer source and destination must differ" },
+  );
+
+export const transferDispatchSchema = z
+  .object({
+    idempotencyKey: id,
+  })
+  .strict();
+
 export const stagedTransferDispatchSchema = z
   .object({
     id: id.optional(),
