@@ -16,8 +16,12 @@ import {
   approvalSchema,
   conversionSchema,
   goodsReceiptSchema,
+  inventoryAdjustmentRequestSchema,
+  inventoryBreakageRequestSchema,
   inventoryCategorySchema,
+  inventoryDecisionSchema,
   inventoryItemSchema,
+  inventoryWastageRequestSchema,
   movementSchema,
   parPolicySchema,
   portionCheckSchema,
@@ -38,6 +42,7 @@ import {
   stockCountSaveSchema,
   stockCountSchema,
   stockCountStartSchema,
+  stockTransferRequestSchema,
   stagedTransferDispatchSchema,
   stagedTransferReceiptSchema,
   supplierInvoiceSchema,
@@ -45,8 +50,10 @@ import {
   supplierReturnCreditSchema,
   supplierReturnSchema,
   supplierSchema,
+  transferDispatchSchema,
   transferSchema,
   unitSchema,
+  warehouseSchema,
   wastageSchema,
 } from "@/inventory/schemas";
 import { SerametHttpError, authenticateSerametRequest, type SerametEnv } from "@/lib/seramet-auth";
@@ -182,6 +189,33 @@ export async function handleInventoryApi(
     const limit = boundedLimit(url);
     return json({ ok: true, counts: await service.listStockCounts(branchId, limit) });
   }
+  if (url.pathname === "/api/seramet/inventory/adjustments" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, adjustments: await service.listInventoryAdjustments(branchId, boundedLimit(url)) });
+  }
+  if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, wastage: await service.listWastageRequests(branchId, boundedLimit(url)) });
+  }
+  if (url.pathname === "/api/seramet/inventory/breakages" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, breakages: await service.listBreakageRequests(branchId, boundedLimit(url)) });
+  }
+  if (url.pathname === "/api/seramet/inventory/par-policies" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, policies: await service.listParPolicies(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/transfers" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, transfers: await service.listTransfers(branchId, boundedLimit(url)) });
+  }
+  const transferDetailRoute = /^\/api\/seramet\/inventory\/transfers\/([^/]+)$/.exec(url.pathname);
+  if (transferDetailRoute && request.method === "GET") {
+    return json({
+      ok: true,
+      detail: await service.transferDetail(decodeURIComponent(transferDetailRoute[1]!)),
+    });
+  }
   if (url.pathname === "/api/seramet/inventory/summary" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     return json({ ok: true, summary: await service.summary(branchId) });
@@ -192,6 +226,25 @@ export async function handleInventoryApi(
   if (url.pathname === "/api/seramet/inventory/warehouses" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     return json({ ok: true, warehouses: await service.listWarehouses(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/warehouses" && request.method === "POST") {
+    return json(
+      { ok: true, warehouse: await service.createWarehouse(await parse(request, warehouseSchema)) },
+      201,
+    );
+  }
+  const warehouseArchiveRoute = /^\/api\/seramet\/inventory\/warehouses\/([^/]+)\/archive$/.exec(
+    url.pathname,
+  );
+  if (warehouseArchiveRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    return json({
+      ok: true,
+      warehouse: await service.archiveWarehouse(
+        decodeURIComponent(warehouseArchiveRoute[1]!),
+        body.reason,
+      ),
+    });
   }
   if (url.pathname === "/api/seramet/inventory/items" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
@@ -284,6 +337,66 @@ export async function handleInventoryApi(
       },
       201,
     );
+  }
+  if (url.pathname === "/api/seramet/inventory/adjustments" && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryAdjustmentRequestSchema>>(
+      request,
+      inventoryAdjustmentRequestSchema,
+    );
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        adjustment: await service.requestInventoryAdjustment({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const adjustmentDecisionRoute =
+    /^\/api\/seramet\/inventory\/adjustments\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
+  if (adjustmentDecisionRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const id = decodeURIComponent(adjustmentDecisionRoute[1]!);
+    return json({
+      ok: true,
+      adjustment:
+        adjustmentDecisionRoute[2] === "approve"
+          ? await service.approveInventoryAdjustment(id, body.reason)
+          : await service.rejectInventoryAdjustment(id, body.reason),
+    });
+  }
+  if (url.pathname === "/api/seramet/inventory/breakages" && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryBreakageRequestSchema>>(
+      request,
+      inventoryBreakageRequestSchema,
+    );
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    return json(
+      {
+        ok: true,
+        breakage: await service.requestBreakage({
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const breakageDecisionRoute =
+    /^\/api\/seramet\/inventory\/breakages\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
+  if (breakageDecisionRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const id = decodeURIComponent(breakageDecisionRoute[1]!);
+    return json({
+      ok: true,
+      breakage:
+        breakageDecisionRoute[2] === "approve"
+          ? await service.approveBreakageRequest(id, body.reason)
+          : await service.rejectBreakageRequest(id, body.reason),
+    });
   }
   if (url.pathname === "/api/seramet/inventory/movements" && request.method === "POST") {
     const body = await parse<MovementRequest>(request, movementRequestSchema);
@@ -437,6 +550,63 @@ export async function handleInventoryApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/inventory/transfers/request" && request.method === "POST") {
+    const body = await parse<z.infer<typeof stockTransferRequestSchema>>(
+      request,
+      stockTransferRequestSchema,
+    );
+    const context = await branchOperationContext(
+      env.SERAMET_DB,
+      actor.tenantId,
+      body.sourceBranchId,
+    );
+    const transferNumber = await nextDocumentNumber(env.SERAMET_DB, {
+      tenantId: actor.tenantId,
+      branchId: body.sourceBranchId,
+      branchCode: context.branchCode,
+      businessDate: context.businessDate,
+      documentType: "STOCK_TRANSFER",
+      prefix: "TRF",
+    });
+    return json(
+      {
+        ok: true,
+        transfer: await service.requestStockTransfer({ ...body, transferNumber }),
+      },
+      201,
+    );
+  }
+  const transferLifecycleRoute =
+    /^\/api\/seramet\/inventory\/transfers\/([^/]+)\/(approve|cancel|dispatch)$/.exec(
+      url.pathname,
+    );
+  if (transferLifecycleRoute && request.method === "POST") {
+    const id = decodeURIComponent(transferLifecycleRoute[1]!);
+    if (transferLifecycleRoute[2] === "dispatch") {
+      const body = await parse<z.infer<typeof transferDispatchSchema>>(request, transferDispatchSchema);
+      const detail = await service.transferDetail(id);
+      const context = await branchOperationContext(
+        env.SERAMET_DB,
+        actor.tenantId,
+        String(detail.transfer["source_branch_id"]),
+      );
+      return json({
+        ok: true,
+        transfer: await service.dispatchApprovedTransfer(id, {
+          ...body,
+          businessDate: context.businessDate,
+        }),
+      });
+    }
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    return json({
+      ok: true,
+      transfer:
+        transferLifecycleRoute[2] === "approve"
+          ? await service.approveStockTransfer(id, body.reason)
+          : await service.cancelStockTransfer(id, body.reason),
+    });
+  }
   if (url.pathname === "/api/seramet/inventory/transfers" && request.method === "POST") {
     const body = await parse<TransferRequest>(request, transferRequestSchema);
     const context = await branchOperationContext(
@@ -527,15 +697,31 @@ export async function handleInventoryApi(
     );
   }
   if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "POST") {
-    const body = await parse<WastageRequest>(request, wastageRequestSchema);
+    const body = await parse<z.infer<typeof inventoryWastageRequestSchema>>(
+      request,
+      inventoryWastageRequestSchema,
+    );
     const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
     return json(
       {
         ok: true,
-        wastage: await service.recordWastage({ ...body, businessDate: context.businessDate }),
+        wastage: await service.requestWastage({ ...body, businessDate: context.businessDate }),
       },
       201,
     );
+  }
+  const wastageDecisionRoute =
+    /^\/api\/seramet\/inventory\/wastage\/([^/]+)\/(approve|reject)$/.exec(url.pathname);
+  if (wastageDecisionRoute && request.method === "POST") {
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(request, inventoryDecisionSchema);
+    const id = decodeURIComponent(wastageDecisionRoute[1]!);
+    return json({
+      ok: true,
+      wastage:
+        wastageDecisionRoute[2] === "approve"
+          ? await service.approveWastageRequest(id, body.reason)
+          : await service.rejectWastageRequest(id, body.reason),
+    });
   }
   if (url.pathname === "/api/seramet/procurement/suppliers" && request.method === "POST") {
     return json(
