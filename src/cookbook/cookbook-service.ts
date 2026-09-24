@@ -6,6 +6,7 @@ import type {
 } from "@/cookbook/schemas";
 import { authorizeBranchRead, type ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
+import type { PermissionCode } from "@/platform/types";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 
@@ -494,8 +495,8 @@ export class CookbookService {
       );
   }
 
-  private require(permission: string) {
-    if (!this.actor.permissions.includes(permission as never)) {
+  private require(permission: PermissionCode) {
+    if (!this.actor.permissions.includes(permission)) {
       throw new ServerOperationError(
         "PERMISSION_DENIED",
         403,
