@@ -42,16 +42,11 @@ function Requisitions() {
       ),
     [control.data],
   );
-  const open = rows.filter((row) =>
-    ["SUBMITTED", "APPROVED", "PARTIALLY_ORDERED"].includes(row.status),
-  );
+  const open = rows.filter((row) => ["SUBMITTED", "APPROVED", "PARTIALLY_ORDERED"].includes(row.status));
   const awaitingApproval = rows.filter((row) => row.status === "SUBMITTED");
-  const readyToOrder = rows.filter((row) =>
-    ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status),
-  );
+  const readyToOrder = rows.filter((row) => ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status));
   const ordered = rows.filter((row) => row.status === "ORDERED");
-  const activeBranchData =
-    control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const activeBranchData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
 
   const canCreate = currentUser.permissions.includes(permissions.procurementRequisitionCreate);
   const canApprove = currentUser.permissions.includes(permissions.procurementRequisitionApprove);
@@ -93,7 +88,11 @@ function Requisitions() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Open" value={open.length} />
-        <Metric label="Awaiting approval" value={awaitingApproval.length} invert={awaitingApproval.length > 0} />
+        <Metric
+          label="Awaiting approval"
+          value={awaitingApproval.length}
+          invert={awaitingApproval.length > 0}
+        />
         <Metric label="Approved to order" value={readyToOrder.length} />
         <Metric label="Ordered" value={ordered.length} />
       </div>
@@ -234,8 +233,7 @@ function CreateRequisitionDialog({
   );
   const [requiredAt, setRequiredAt] = useState("");
 
-  const warehouse =
-    data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
+  const warehouse = data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
   const item = data?.items.find((row) => row.id === itemId) ?? data?.items[0];
   const unitId = item?.purchase_unit_id ?? item?.base_unit_id;
   const valid = Boolean(warehouse && item && unitId && Number(quantity) > 0);
@@ -303,7 +301,8 @@ function CreateRequisitionDialog({
         </div>
         {!unitId && (
           <p className="text-[12px] text-warning">
-            The selected inventory item needs a base or purchase unit before it can be requisitioned.
+            The selected inventory item needs a base or purchase unit before it can be
+            requisitioned.
           </p>
         )}
         <div className="flex justify-end gap-2">
