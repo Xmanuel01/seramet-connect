@@ -47,7 +47,11 @@ export class KitchenAnalyticsService {
       .bind(this.actor.tenantId, branchId)
       .first<{ timezone: string; business_day_cutoff_minutes: number }>();
     if (!branch) {
-      throw new ServerOperationError("VALIDATION_FAILED", 404, "Kitchen analytics branch not found");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        404,
+        "Kitchen analytics branch not found",
+      );
     }
 
     const periodEnd = authoritativeBusinessDate({
@@ -74,10 +78,8 @@ export class KitchenAnalyticsService {
     const averagePrepMs =
       timedCompleted > 0
         ? Math.round(
-            stations.reduce(
-              (sum, row) => sum + (row.averagePrepMs ?? 0) * row.timingWeight,
-              0,
-            ) / timedCompleted,
+            stations.reduce((sum, row) => sum + (row.averagePrepMs ?? 0) * row.timingWeight, 0) /
+              timedCompleted,
           )
         : null;
 
@@ -239,7 +241,10 @@ export class KitchenAnalyticsService {
       approvedCount: Number(row?.["approved_count"] ?? 0),
       dismissedCount: Number(row?.["dismissed_count"] ?? 0),
       awaitingApprovalCount: Number(row?.["awaiting_approval_count"] ?? 0),
-      completionBps: ratioBps(completed, Math.max(0, total - Number(row?.["dismissed_count"] ?? 0))),
+      completionBps: ratioBps(
+        completed,
+        Math.max(0, total - Number(row?.["dismissed_count"] ?? 0)),
+      ),
     };
   }
 
