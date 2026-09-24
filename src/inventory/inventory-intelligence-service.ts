@@ -928,10 +928,31 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertBusinessDateOpen(input.branchId, input.businessDate);
     const duplicate = await this.db
-      .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
+      .prepare(
+        `SELECT id,branch_id,purchase_order_id,supplier_id
+         FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?`,
+      )
       .bind(this.actor.tenantId, input.idempotencyKey)
-      .first<{ id: string }>();
-    if (duplicate) return { id: duplicate.id, duplicate: true };
+      .first<{
+        id: string;
+        branch_id: string;
+        purchase_order_id: string;
+        supplier_id: string;
+      }>();
+    if (duplicate) {
+      if (
+        duplicate.branch_id !== input.branchId ||
+        duplicate.purchase_order_id !== input.purchaseOrderId ||
+        duplicate.supplier_id !== input.supplierId
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Goods receipt idempotency key is already used by a different receipt scope",
+        );
+      }
+      return { id: duplicate.id, duplicate: true };
+    }
     const purchaseOrder = await this.db
       .prepare(
         `SELECT branch_id,warehouse_id,supplier_id,status,currency,payload_json
@@ -952,12 +973,13 @@ export class InventoryIntelligenceService {
     }
     if (
       purchaseOrder.branch_id !== input.branchId ||
-      purchaseOrder.warehouse_id !== input.warehouseId
+      purchaseOrder.warehouse_id !== input.warehouseId ||
+      purchaseOrder.supplier_id !== input.supplierId
     ) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
         403,
-        "Goods receipt scope does not match the purchase order",
+        "Goods receipt branch, warehouse or supplier does not match the purchase order",
       );
     }
     const lines = await this.db
@@ -1010,8 +1032,19 @@ export class InventoryIntelligenceService {
       if (!poLine) throw new Error("Goods receipt line is not on the purchase order");
       if (!poLine.purchase_unit_id)
         throw new Error("Purchase order line is missing a purchase unit");
+      const rejectedPurchaseQuantityMicro = lineInput.rejectedPurchaseQuantityMicro ?? 0;
       if (lineInput.acceptedPurchaseQuantityMicro > lineInput.receivedPurchaseQuantityMicro) {
         throw new Error("Accepted quantity cannot exceed received quantity");
+      }
+      if (
+        lineInput.acceptedPurchaseQuantityMicro + rejectedPurchaseQuantityMicro !==
+        lineInput.receivedPurchaseQuantityMicro
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Received quantity must be fully dispositioned as accepted plus rejected",
+        );
       }
       const orderedPurchaseQuantity =
         poLine.ordered_purchase_quantity_minor ?? poLine.ordered_quantity_minor;
@@ -1090,7 +1123,7 @@ export class InventoryIntelligenceService {
             poLine.purchase_unit_id,
             lineInput.receivedPurchaseQuantityMicro,
             lineInput.acceptedPurchaseQuantityMicro,
-            lineInput.rejectedPurchaseQuantityMicro ?? 0,
+            rejectedPurchaseQuantityMicro,
             baseQuantityMicro,
             lineInput.unitPriceMinor,
             totalCostMinor,
