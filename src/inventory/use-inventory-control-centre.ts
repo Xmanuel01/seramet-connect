@@ -71,9 +71,28 @@ export type ProcurementSupplierRow = {
   received_count: number;
 };
 
+export type InventoryMovementRow = {
+  id: string;
+  business_date: string | null;
+  movement_type: string;
+  quantity_minor: number;
+  unit_cost_minor: number | null;
+  total_cost_minor: number | null;
+  source_type: string;
+  source_id: string;
+  reason: string | null;
+  occurred_at: string | null;
+  warehouse_id: string;
+  inventory_item_id: string;
+  code: string;
+  sku: string | null;
+  name: string;
+  unit_symbol: string | null;
+};
+
 export type FoodCostControlData = {
   branchId: string;
-  movements: Array<Record<string, unknown>>;
+  movements: InventoryMovementRow[];
   recommendations: Array<Record<string, unknown>>;
   qualityIssues: Array<Record<string, unknown>>;
   menuProfitability: Array<Record<string, unknown>>;
