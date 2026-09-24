@@ -1371,14 +1371,8 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       ],
     });
     expect(
-      (
-        await inventoryBalance(
-          db,
-          "item-beef",
-          branchId,
-          "warehouse-kitchen-transfer",
-        )
-      ).quantity_minor,
+      (await inventoryBalance(db, "item-beef", branchId, "warehouse-kitchen-transfer"))
+        .quantity_minor,
     ).toBe(2 * QUANTITY_SCALE);
     const afterReceipt = await service.transferDetail("transfer-staged-a");
     expect(afterReceipt.transfer).toMatchObject({ status: "RECEIVED" });
