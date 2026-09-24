@@ -5792,7 +5792,16 @@ export class InventoryIntelligenceService {
   }
 
   async procurementOverview(branchId: string, limit = 25) {
-    this.requirePermission(permissions.procurementView);
+    if (
+      !this.actor.permissions.includes(permissions.procurementView) &&
+      !this.actor.permissions.includes(permissions.inventoryView)
+    ) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Procurement or inventory view permission is required",
+      );
+    }
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
     const pageSize = Math.min(100, Math.max(1, limit));
     const purchaseOrders = await this.db
