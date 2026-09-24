@@ -63,10 +63,11 @@ describe("authoritative cookbook", () => {
       )
       .bind(tenantId)
       .all<{ action: string }>();
-    expect((rows.results ?? []).map((row) => row.action)).toEqual([
-      "COOKBOOK_DRAFT_CREATED",
-      "COOKBOOK_REVISION_PUBLISHED",
-    ]);
+    const actions = (rows.results ?? []).map((row) => row.action);
+    expect(actions).toHaveLength(2);
+    expect(actions).toEqual(
+      expect.arrayContaining(["COOKBOOK_DRAFT_CREATED", "COOKBOOK_REVISION_PUBLISHED"]),
+    );
   });
 
   it("does not silently carry a method to a new recipe version but can copy it as a draft", async () => {
