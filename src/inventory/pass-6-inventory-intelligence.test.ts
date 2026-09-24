@@ -1295,6 +1295,166 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     ]);
   });
 
+  it("moves stock only after transfer approval, dispatch and destination receipt", async () => {
+    await seedBeef(service);
+    await opening(service, "staged-transfer-opening", 6 * QUANTITY_SCALE, 50_000);
+    const stamp = "2026-08-01T00:00:00.000Z";
+    db.sqlite
+      .prepare(
+        `INSERT INTO legal_entities
+          (tenant_id,id,code,legal_name,trading_name,registration_reference,tax_identifiers_json,
+           country_code,base_currency,fiscal_configuration_json,accounting_configuration_json,
+           status,created_by,created_at,updated_by,updated_at)
+         VALUES (?,?,?,?,NULL,NULL,'{}','KE','KES','{}','{}','ACTIVE',?,?,?,?)`,
+      )
+      .run(tenantId, "legal-main", "LEGAL-MAIN", "Main legal entity", "user-test", stamp, "user-test", stamp);
+    for (const [nodeId, code, branch] of [
+      ["node-branch-a", "NODE-A", branchId],
+      ["node-branch-b", "NODE-B", secondBranchId],
+    ] as const) {
+      db.sqlite
+        .prepare(
+          `INSERT INTO enterprise_nodes
+            (tenant_id,id,node_type,code,name,parent_id,legal_entity_id,brand_id,branch_id,
+             warehouse_id,status,effective_from,effective_to,timezone,currency,metadata_json,
+             created_by,created_at,updated_by,updated_at,version)
+           VALUES (?,?,'BRANCH',?,?,NULL,?,NULL,?,NULL,'ACTIVE',?,NULL,'Africa/Nairobi','KES','{}',
+                   ?,?,?,?,1)`,
+        )
+        .run(
+          tenantId,
+          nodeId,
+          code,
+          branch,
+          "legal-main",
+          branch,
+          stamp,
+          "user-test",
+          stamp,
+          "user-test",
+          stamp,
+        );
+    }
+
+    const requested = await service.requestStockTransfer({
+      id: "transfer-controlled",
+      transferNumber: "TRF-CONTROLLED",
+      sourceBranchId: branchId,
+      sourceWarehouseId: warehouseId,
+      destinationBranchId: secondBranchId,
+      destinationWarehouseId: secondWarehouseId,
+      idempotencyKey: "transfer-controlled",
+      lines: [{ inventoryItemId: "item-beef", quantityMicro: 2 * QUANTITY_SCALE }],
+    });
+    expect(requested).toMatchObject({ status: "REQUESTED", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
+      6 * QUANTITY_SCALE,
+    );
+    expect(
+      (await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).quantity_minor,
+    ).toBe(0);
+
+    await service.approveStockTransfer("transfer-controlled", "Supervisor approved");
+    expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
+      6 * QUANTITY_SCALE,
+    );
+
+    const dispatched = await service.dispatchApprovedTransfer("transfer-controlled", {
+      idempotencyKey: "transfer-controlled-dispatch",
+      businessDate: "2026-08-30",
+    });
+    expect(dispatched).toMatchObject({ status: "IN_TRANSIT", duplicate: false });
+    expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
+      4 * QUANTITY_SCALE,
+    );
+    expect(
+      (await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).quantity_minor,
+    ).toBe(0);
+
+    const detail = await service.transferDetail("transfer-controlled");
+    const line = detail.lines[0] as Record<string, unknown>;
+    await service.receiveTransferShipment({
+      shipmentId: String(dispatched.shipmentId),
+      receiptReference: "RCV-CONTROLLED",
+      idempotencyKey: "transfer-controlled-receipt",
+      businessDate: "2026-08-30",
+      final: true,
+      lines: [
+        {
+          transferLineId: String(line["id"]),
+          receivedQuantityMicro: 2 * QUANTITY_SCALE,
+        },
+      ],
+    });
+    expect(
+      (await inventoryBalance(db, "item-beef", secondBranchId, secondWarehouseId)).quantity_minor,
+    ).toBe(2 * QUANTITY_SCALE);
+    const finalTransfer = await service.transferDetail("transfer-controlled");
+    expect(finalTransfer.transfer).toMatchObject({ status: "RECEIVED" });
+  });
+
+  it("blocks transfer dispatch when source available stock no longer covers the request", async () => {
+    await seedBeef(service);
+    await opening(service, "staged-transfer-insufficient-opening", QUANTITY_SCALE, 50_000);
+    const stamp = "2026-08-01T00:00:00.000Z";
+    db.sqlite
+      .prepare(
+        `INSERT INTO legal_entities
+          (tenant_id,id,code,legal_name,trading_name,registration_reference,tax_identifiers_json,
+           country_code,base_currency,fiscal_configuration_json,accounting_configuration_json,
+           status,created_by,created_at,updated_by,updated_at)
+         VALUES (?,?,?,?,NULL,NULL,'{}','KE','KES','{}','{}','ACTIVE',?,?,?,?)`,
+      )
+      .run(tenantId, "legal-transfer-guard", "LEGAL-GUARD", "Transfer legal entity", "user-test", stamp, "user-test", stamp);
+    for (const [nodeId, code, branch] of [
+      ["node-guard-a", "GUARD-A", branchId],
+      ["node-guard-b", "GUARD-B", secondBranchId],
+    ] as const) {
+      db.sqlite
+        .prepare(
+          `INSERT INTO enterprise_nodes
+            (tenant_id,id,node_type,code,name,parent_id,legal_entity_id,brand_id,branch_id,
+             warehouse_id,status,effective_from,effective_to,timezone,currency,metadata_json,
+             created_by,created_at,updated_by,updated_at,version)
+           VALUES (?,?,'BRANCH',?,?,NULL,?,NULL,?,NULL,'ACTIVE',?,NULL,'Africa/Nairobi','KES','{}',
+                   ?,?,?,?,1)`,
+        )
+        .run(
+          tenantId,
+          nodeId,
+          code,
+          branch,
+          "legal-transfer-guard",
+          branch,
+          stamp,
+          "user-test",
+          stamp,
+          "user-test",
+          stamp,
+        );
+    }
+    await service.requestStockTransfer({
+      id: "transfer-too-large",
+      transferNumber: "TRF-TOO-LARGE",
+      sourceBranchId: branchId,
+      sourceWarehouseId: warehouseId,
+      destinationBranchId: secondBranchId,
+      destinationWarehouseId: secondWarehouseId,
+      idempotencyKey: "transfer-too-large",
+      lines: [{ inventoryItemId: "item-beef", quantityMicro: 2 * QUANTITY_SCALE }],
+    });
+    await service.approveStockTransfer("transfer-too-large", "Approved before stock changed");
+    await expect(
+      service.dispatchApprovedTransfer("transfer-too-large", {
+        idempotencyKey: "transfer-too-large-dispatch",
+        businessDate: "2026-08-30",
+      }),
+    ).rejects.toThrow("source available stock is insufficient");
+    expect((await inventoryBalance(db, "item-beef", branchId, warehouseId)).quantity_minor).toBe(
+      QUANTITY_SCALE,
+    );
+  });
+
   it("records wastage once with an evidence-backed cost", async () => {
     await seedBeef(service);
     await opening(service, "opening-waste", 5 * QUANTITY_SCALE, 60_000);
