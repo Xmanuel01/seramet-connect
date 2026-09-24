@@ -1,174 +1,251 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
+import { useInventoryOperations } from "@/inventory/use-inventory-operations";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import type { Warehouse } from "@/platform/types";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/warehouses")({
   head: () => ({
     meta: [
       { title: "Warehouses - Seramet" },
-      { name: "description", content: "Tenant and branch-scoped warehouse configuration." },
+      {
+        name: "description",
+        content: "Authoritative branch storage locations with stock and lifecycle controls.",
+      },
     ],
   }),
   component: Warehouses,
 });
 
-type WarehouseDraft = Pick<Warehouse, "name" | "code" | "type" | "branchId">;
+type WarehouseRow = {
+  branchId: string;
+  id: string;
+  code: string;
+  name: string;
+  branch_id: string;
+  active: number;
+  type: "MAIN" | "KITCHEN" | "BAR" | "COLD" | "TRANSIT" | "OTHER";
+  stocked_item_count: number;
+  quantity_minor: number;
+  quantity_reserved_minor: number;
+  stock_value_minor: number;
+  last_movement_at: string | null;
+};
 
 function Warehouses() {
-  const {
-    activeTenantId,
-    branchId,
-    branchLabel,
-    branchRecords,
-    isAllBranches,
-    platformState,
-    refreshConfiguration,
-  } = useAppContext();
-  const repository = getConfigurationRepository();
-  const visibleBranches = branchRecords.filter((branch) => isAllBranches || branch.id === branchId);
-  const [draft, setDraft] = useState<WarehouseDraft>({
-    name: "",
-    code: "",
-    type: "MAIN",
-    branchId: visibleBranches[0]?.id ?? branchId,
-  });
-  const [notice, setNotice] = useState("Storage locations are linked to a configured branch ID.");
-  const warehouses = platformState.warehouses.filter(
-    (warehouse) =>
-      warehouse.tenantId === activeTenantId &&
-      warehouse.active &&
-      (isAllBranches || warehouse.branchId === branchId),
-  );
-  const branchNames = new Map(branchRecords.map((branch) => [branch.id, branch.name]));
+  const { branchId: activeBranchId, branchLabel, branchRecords, isAllBranches } = useAppContext();
+  const { persistenceMode } = useTransactionEngine();
+  const authoritative = persistenceMode === "authoritative";
+  const operations = useInventoryOperations(authoritative);
+  const [rows, setRows] = useState<WarehouseRow[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [notice, setNotice] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const [branchId, setBranchId] = useState(activeBranchId);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [type, setType] = useState<WarehouseRow["type"]>("MAIN");
 
-  const saveWarehouse = () => {
-    const name = draft.name.trim();
-    const code = draft.code.trim().toUpperCase();
-    if (!name || !code || !draft.branchId) {
-      setNotice("Location name, code and branch are required.");
+  useEffect(() => setBranchId(activeBranchId), [activeBranchId]);
+
+  const load = useCallback(async () => {
+    if (!authoritative) return;
+    setStatus("loading");
+    try {
+      const result = await Promise.all(
+        operations.branchIds.map(async (selectedBranchId) => {
+          const body = await operations.request<{ warehouses: Omit<WarehouseRow, "branchId">[] }>(
+            `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
+          );
+          return body.warehouses.map((row) => ({ ...row, branchId: selectedBranchId }));
+        }),
+      );
+      setRows(result.flat());
+      setStatus("ready");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Warehouses could not be loaded");
+      setStatus("error");
+    }
+  }, [authoritative, operations.branchIds, operations.request]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const branchNames = new Map(branchRecords.map((branch) => [branch.id, branch.name]));
+  const stockValue = rows.reduce((sum, row) => sum + Number(row.stock_value_minor ?? 0), 0);
+  const stocked = rows.filter((row) => Number(row.stocked_item_count ?? 0) > 0).length;
+
+  async function create() {
+    if (!branchId || !name.trim() || !code.trim()) {
+      setNotice("Branch, location name and code are required.");
       return;
     }
-    repository.upsertWarehouse(activeTenantId, {
-      id: `warehouse-${slug(code)}-${Date.now().toString(36)}`,
-      tenantId: activeTenantId,
-      branchId: draft.branchId,
-      name,
-      code,
-      type: draft.type,
-      active: true,
-    });
-    refreshConfiguration();
-    setDraft((current) => ({ ...current, name: "", code: "" }));
-    setNotice(`${name} added.`);
-  };
+    try {
+      await operations.post("/api/seramet/inventory/warehouses", {
+        branchId,
+        name: name.trim(),
+        code: code.trim().toUpperCase(),
+        type,
+      });
+      setNotice(`${name.trim()} created in the authoritative warehouse master.`);
+      setName("");
+      setCode("");
+      setShowForm(false);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Warehouse could not be created");
+    }
+  }
 
-  const archiveWarehouse = (warehouse: Warehouse) => {
-    repository.archiveWarehouse(activeTenantId, warehouse.id);
-    refreshConfiguration();
-    setNotice(`${warehouse.name} archived. Existing stock history remains linked to its ID.`);
-  };
+  async function archive(row: WarehouseRow) {
+    if (
+      !window.confirm(
+        `Archive ${row.name}? Seramet will refuse if it still has stock, reservations, active counts, open transfers or default-item assignments.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await operations.post(
+        `/api/seramet/inventory/warehouses/${encodeURIComponent(row.id)}/archive`,
+        {},
+      );
+      setNotice(`${row.name} archived. Historical inventory records remain linked to its ID.`);
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Warehouse could not be archived");
+    }
+  }
 
   return (
     <AppShell
       title="Warehouses & stores"
-      subtitle={`${warehouses.length} storage locations - ${branchLabel}`}
+      subtitle={`${branchLabel} - authoritative inventory locations and stock exposure`}
       actions={
-        <Btn variant="primary" onClick={saveWarehouse}>
-          New location
+        <Btn
+          variant="primary"
+          disabled={!authoritative}
+          onClick={() => setShowForm((value) => !value)}
+        >
+          {showForm ? "Close form" : "New location"}
         </Btn>
       }
     >
-      <Panel className="p-4">
-        <PanelHead
-          title="Location configuration"
-          sub="Create main, kitchen, bar, cold and transit stores"
-        />
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field
-            label="Location name"
-            value={draft.name}
-            onChange={(name) => setDraft((current) => ({ ...current, name }))}
-          />
-          <Field
-            label="Code"
-            value={draft.code}
-            onChange={(code) => setDraft((current) => ({ ...current, code }))}
-          />
-          <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-            Branch
-            <select
-              value={draft.branchId}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, branchId: event.target.value }))
-              }
-              className="h-9 rounded-md border border-border bg-card px-3 text-foreground"
-            >
-              {visibleBranches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-            Type
-            <select
-              value={draft.type}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  type: event.target.value as Warehouse["type"],
-                }))
-              }
-              className="h-9 rounded-md border border-border bg-card px-3 text-foreground"
-            >
-              {(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"] as const).map((type) => (
-                <option key={type}>{type}</option>
-              ))}
-            </select>
-          </label>
+      {(notice || status === "loading") && (
+        <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
+          {notice || "Loading authoritative warehouses..."}
         </div>
-        <p className="mt-3 text-[12px] text-muted-foreground">{notice}</p>
-      </Panel>
+      )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Storage locations" value={warehouses.length} />
-        <Metric
-          label="Main stores"
-          value={warehouses.filter((row) => row.type === "MAIN").length}
-        />
-        <Metric
-          label="Production stores"
-          value={warehouses.filter((row) => ["KITCHEN", "BAR"].includes(row.type)).length}
-        />
+      {showForm && (
+        <Panel className="mb-4">
+          <PanelHead
+            title="Create storage location"
+            sub="Location IDs are authoritative and shared by stock, counts, PAR, production and transfers"
+          />
+          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+              Branch
+              <select
+                value={branchId}
+                disabled={!isAllBranches}
+                onChange={(event) => setBranchId(event.target.value)}
+                className={inputClass}
+              >
+                {branchRecords
+                  .filter((branch) => operations.branchIds.includes(branch.id))
+                  .map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <Field label="Location name" value={name} onChange={setName} placeholder="Main Store" />
+            <Field
+              label="Code"
+              value={code}
+              onChange={(value) => setCode(value.toUpperCase())}
+              placeholder="MAIN"
+            />
+            <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
+              Type
+              <select
+                value={type}
+                onChange={(event) => setType(event.target.value as WarehouseRow["type"])}
+                className={inputClass}
+              >
+                {(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"] as const).map((value) => (
+                  <option key={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex justify-end border-t border-border px-4 py-3">
+            <Btn variant="primary" onClick={() => void create()}>
+              Create location
+            </Btn>
+          </div>
+        </Panel>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Active locations" value={rows.length} />
+        <Metric label="Locations with stock" value={stocked} />
         <Metric
           label="Configured branches"
-          value={new Set(warehouses.map((row) => row.branchId)).size}
+          value={new Set(rows.map((row) => row.branch_id)).size}
         />
+        <Metric label="Stock value" value={stockValue / 100} money />
       </div>
 
       <Panel className="mt-4">
         <PanelHead
-          title="Locations"
-          sub="Configuration records are used by inventory, transfers and counts"
+          title="Location master"
+          sub="Archive is blocked while operational dependencies or non-zero stock remain"
         />
-        <DataTable cols={["Location", "Code", "Branch", "Type", "Status", "Actions"]}>
-          {warehouses.map((warehouse) => (
-            <tr key={warehouse.id} className="hover:bg-secondary/50">
-              <TD className="font-semibold">{warehouse.name}</TD>
-              <TD>{warehouse.code}</TD>
-              <TD>{branchNames.get(warehouse.branchId) ?? "Unknown branch"}</TD>
-              <TD>{warehouse.type}</TD>
+        <DataTable
+          cols={[
+            "Location",
+            "Code",
+            "Branch",
+            "Type",
+            { l: "Items", r: true },
+            { l: "Stock value", r: true },
+            "Last movement",
+            "Status",
+            "Action",
+          ]}
+        >
+          {rows.map((row) => (
+            <tr key={`${row.branchId}:${row.id}`} className="hover:bg-secondary/50">
+              <TD className="font-semibold">{row.name}</TD>
+              <TD className="num">{row.code}</TD>
+              <TD>{branchNames.get(row.branch_id) ?? row.branch_id}</TD>
+              <TD>{row.type}</TD>
+              <TD className="num text-right">{Number(row.stocked_item_count ?? 0)}</TD>
+              <TD className="num text-right font-semibold">
+                {ksh(Number(row.stock_value_minor ?? 0) / 100)}
+              </TD>
+              <TD className="text-muted-foreground">
+                {row.last_movement_at ? new Date(row.last_movement_at).toLocaleString() : "No movement"}
+              </TD>
               <TD>
                 <Status>Active</Status>
               </TD>
               <TD>
-                <Btn onClick={() => archiveWarehouse(warehouse)}>Archive</Btn>
+                <button
+                  type="button"
+                  className="text-[12px] font-semibold text-danger hover:underline"
+                  onClick={() => void archive(row)}
+                >
+                  Archive
+                </button>
               </TD>
             </tr>
           ))}
@@ -182,26 +259,25 @@ function Field({
   label,
   value,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  placeholder?: string;
 }) {
   return (
-    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+    <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
       {label}
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none focus:border-primary"
+        placeholder={placeholder}
+        className={inputClass}
       />
     </label>
   );
 }
 
-function slug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+const inputClass =
+  "h-9 w-full rounded-md border border-border bg-background px-3 text-[12px] text-foreground outline-none focus:border-primary disabled:opacity-60";
