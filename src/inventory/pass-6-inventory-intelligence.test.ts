@@ -12,7 +12,7 @@ import {
   weightedAverageUnitCostMinor,
 } from "@/inventory/quantity";
 import type { ServerActor } from "@/lib/seramet-auth";
-import { allPermissionCodes } from "@/platform/permissions";
+import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
   createMigratedTestDatabase,
   type SqliteD1TestDatabase,
