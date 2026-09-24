@@ -152,6 +152,39 @@ export type InventoryMovementInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type InventoryAdjustmentRequestInput = {
+  id?: string;
+  branchId: string;
+  warehouseId: string;
+  inventoryItemId: string;
+  quantityMicro: number;
+  unitCostMinor?: number;
+  reason: string;
+  idempotencyKey: string;
+  businessDate: string;
+};
+
+export type InventoryLossRequestInput = {
+  id?: string;
+  branchId: string;
+  warehouseId: string;
+  inventoryItemId: string;
+  quantityMicro: number;
+  reasonCode: string;
+  idempotencyKey: string;
+  businessDate: string;
+  stationId?: string;
+  employeeId?: string;
+};
+
+export type WarehouseDefinitionInput = {
+  id?: string;
+  branchId: string;
+  code: string;
+  name: string;
+  type: "MAIN" | "KITCHEN" | "BAR" | "COLD" | "TRANSIT" | "OTHER";
+};
+
 export type RequisitionLineInput = {
   inventoryItemId: string;
   requestedQuantityMicro: number;
