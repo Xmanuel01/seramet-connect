@@ -34,8 +34,8 @@ type CountSummary = {
   created_at: string;
   item_count: number;
   counted_count: number;
-  variance_count: number;
-  variance_value_minor: number;
+  variance_count: number | null;
+  variance_value_minor: number | null;
 };
 
 type CountLine = {
@@ -45,13 +45,13 @@ type CountLine = {
   sku: string | null;
   name: string;
   unit_symbol: string | null;
-  expected_quantity_minor: number;
+  expected_quantity_minor: number | null;
   counted_quantity_minor: number;
-  variance_quantity_minor: number;
-  variance_value_minor: number;
+  variance_quantity_minor: number | null;
+  variance_value_minor: number | null;
   reason: string | null;
   counted: number;
-  unit_cost_minor: number;
+  unit_cost_minor: number | null;
   counted_at: string | null;
 };
 
@@ -219,7 +219,13 @@ function StockCount() {
         const raw = counts[line.inventory_item_id];
         if (raw === undefined || raw.trim() === "") return sum;
         const counted = Number(raw) * 1_000_000;
-        if (!Number.isFinite(counted)) return sum;
+        if (
+          !Number.isFinite(counted) ||
+          line.expected_quantity_minor === null ||
+          line.unit_cost_minor === null
+        ) {
+          return sum;
+        }
         const variance = counted - line.expected_quantity_minor;
         return sum + (variance / 1_000_000) * (line.unit_cost_minor / 100);
       }, 0)
@@ -434,7 +440,11 @@ function StockCount() {
                 </div>
                 <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
                   <span>{row.blind_count ? "Blind count" : "Visible expected"}</span>
-                  <span>{row.variance_count} variance(s)</span>
+                  <span>
+                    {row.variance_count === null
+                      ? "Variance hidden"
+                      : `${row.variance_count} variance(s)`}
+                  </span>
                 </div>
               </button>
             ))}
@@ -470,6 +480,7 @@ function StockCount() {
                           const value = counts[line.inventory_item_id];
                           if (value === undefined || value === "") return false;
                           return (
+                            line.expected_quantity_minor !== null &&
                             Math.round(Number(value) * 1_000_000) !== line.expected_quantity_minor
                           );
                         }).length
@@ -500,18 +511,22 @@ function StockCount() {
                     const entered = raw.trim() !== "";
                     const physical = entered ? Number(raw) : null;
                     const variance =
-                      physical === null
+                      physical === null || line.expected_quantity_minor === null
                         ? null
                         : physical - line.expected_quantity_minor / 1_000_000;
                     const valueImpact =
-                      variance === null ? null : variance * (line.unit_cost_minor / 100);
+                      variance === null || line.unit_cost_minor === null
+                        ? null
+                        : variance * (line.unit_cost_minor / 100);
                     return (
                       <tr key={line.id} className="hover:bg-secondary/50">
                         <TD className="font-semibold">{line.name}</TD>
                         <TD className="num text-muted-foreground">{line.sku ?? line.code}</TD>
                         <TD className="text-muted-foreground">{line.unit_symbol ?? "unit"}</TD>
                         <TD className="num text-right">
-                          {hideExpected ? "Hidden" : quantity(line.expected_quantity_minor)}
+                          {hideExpected || line.expected_quantity_minor === null
+                            ? "Hidden"
+                            : quantity(line.expected_quantity_minor)}
                         </TD>
                         <TD className="text-right">
                           {editable ? (
