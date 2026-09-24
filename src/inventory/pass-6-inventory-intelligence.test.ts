@@ -510,6 +510,88 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     });
   });
 
+  it("rejects duplicate inventory items on a purchase requisition", async () => {
+    const fixture = await seedProcurement(service);
+    await expect(
+      service.createPurchaseRequisition({
+        id: "req-duplicate-item",
+        branchId,
+        warehouseId,
+        requisitionNumber: "REQ-DUPLICATE-ITEM",
+        sourceType: "MANUAL_REQUEST",
+        lines: [
+          {
+            inventoryItemId: fixture.itemId,
+            requestedQuantityMicro: QUANTITY_SCALE,
+            unitId: "unit-box",
+          },
+          {
+            inventoryItemId: fixture.itemId,
+            requestedQuantityMicro: QUANTITY_SCALE,
+            unitId: "unit-box",
+          },
+        ],
+      }),
+    ).rejects.toThrow("cannot contain duplicate inventory items");
+  });
+
+  it("releases linked requisition quantities when a purchase order is cancelled", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-cancel-release",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-CANCEL-RELEASE",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+    const po = await service.createPurchaseOrder({
+      id: "po-cancel-release",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-CANCEL-RELEASE",
+      currency: "KES",
+      lines: [
+        {
+          id: "cancel-release-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+    await service.cancelPurchaseOrder(po.id, "Supplier unavailable");
+
+    const released = await db
+      .prepare(
+        `SELECT r.status,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(released).toEqual({ status: "APPROVED", ordered_quantity_minor: 0 });
+    expect(await poStatus(db, po.id)).toBe("CANCELLED");
+    expect(() =>
+      db.sqlite
+        .prepare("UPDATE purchase_orders SET status='APPROVED' WHERE tenant_id=? AND id=?")
+        .run(tenantId, po.id),
+    ).toThrow("invalid purchase order status transition");
+  });
+
   it("rejects purchase orders that exceed the outstanding requisition quantity", async () => {
     const fixture = await seedProcurement(service);
     const requisition = await service.createPurchaseRequisition({
