@@ -39,7 +39,7 @@ function PurchaseOrders() {
   const rows = useMemo<DisplayOrder[]>(
     () =>
       control.data.flatMap((branch) =>
-        branch.procurement.purchaseOrders.map((row) => ({ ...row, branchId: branch.branchId })),
+        branch.purchaseOrders.map((row) => ({ ...row, branchId: branch.branchId })),
       ),
     [control.data],
   );
