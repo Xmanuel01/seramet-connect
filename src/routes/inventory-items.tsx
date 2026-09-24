@@ -48,7 +48,7 @@ function InventoryItems() {
   );
   const filtered = rows.filter((row) => {
     const haystack =
-      `${row.name} ${row.sku ?? ""} ${row.code} ${row.preferred_supplier_name ?? ""}`.toLowerCase();
+      `${row.name} ${row.sku ?? ""} ${row.code} ${row.category_name ?? ""} ${row.preferred_supplier_name ?? ""}`.toLowerCase();
     const matchesQuery = haystack.includes(query.trim().toLowerCase());
     const matchesStatus = statusFilter === "ALL" || row.status === statusFilter;
     return matchesQuery && matchesStatus;
@@ -190,6 +190,7 @@ function InventoryItems() {
               <tr>
                 <TH>Item</TH>
                 <TH>SKU / code</TH>
+                <TH>Category</TH>
                 <TH>Supplier</TH>
                 <TH className="text-right">On hand</TH>
                 <TH className="text-right">Available</TH>
@@ -213,6 +214,7 @@ function InventoryItems() {
                     </Link>
                   </TD>
                   <TD className="num text-muted-foreground">{row.sku ?? row.code}</TD>
+                  <TD className="text-muted-foreground">{row.category_name || "Uncategorized"}</TD>
                   <TD className="text-muted-foreground">
                     {row.preferred_supplier_name || "Not assigned"}
                   </TD>
@@ -269,6 +271,7 @@ function CreateItemPanel({
   onCreate: (body: Record<string, unknown>) => Promise<void>;
 }) {
   const units = uniqueById(data.flatMap((branch) => branch.units));
+  const categories = uniqueById(data.flatMap((branch) => branch.categories));
   const suppliers = uniqueById(data.flatMap((branch) => branch.procurement.suppliers));
   const warehouses = data.flatMap((branch) =>
     branch.warehouses.map((warehouse) => ({
@@ -283,6 +286,7 @@ function CreateItemPanel({
   const [baseUnitId, setBaseUnitId] = useState(units[0]?.id ?? "");
   const [purchaseUnitId, setPurchaseUnitId] = useState("");
   const [defaultWarehouseId, setDefaultWarehouseId] = useState(warehouses[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [trackExpiry, setTrackExpiry] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -357,6 +361,20 @@ function CreateItemPanel({
             ))}
           </select>
         </Field>
+        <Field label="Category">
+          <select
+            className={inputClass}
+            value={categoryId}
+            onChange={(event) => setCategoryId(event.target.value)}
+          >
+            <option value="">Uncategorized</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Preferred supplier">
           <select
             className={inputClass}
@@ -409,6 +427,7 @@ function CreateItemPanel({
               baseUnitId,
               purchaseUnitId: purchaseUnitId || baseUnitId,
               defaultWarehouseId,
+              ...(categoryId ? { categoryId } : {}),
               ...(supplierId ? { preferredSupplierId: supplierId } : {}),
               trackInventory: true,
               trackExpiry,
