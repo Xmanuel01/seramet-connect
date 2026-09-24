@@ -3245,11 +3245,20 @@ export class InventoryIntelligenceService {
       .prepare(
         `SELECT l.id,l.inventory_item_id,i.code,i.sku,i.name,u.symbol AS unit_symbol,
                 l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
-                l.shortage_quantity_minor,l.unit_cost_minor,l.source_lot_id,l.lot_number,l.expiry_date
+                l.shortage_quantity_minor,l.unit_cost_minor,l.source_lot_id,l.lot_number,l.expiry_date,
+                COALESCE(SUM(rl.damaged_quantity_micro),0) AS damaged_quantity_micro,
+                COALESCE(SUM(rl.rejected_quantity_micro),0) AS rejected_quantity_micro,
+                COALESCE(SUM(rl.missing_quantity_micro),0) AS missing_quantity_micro
            FROM stock_transfer_lines l
            JOIN inventory_items i ON i.tenant_id=l.tenant_id AND i.id=l.inventory_item_id
            LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
-          WHERE l.tenant_id=? AND l.transfer_id=? ORDER BY i.name,i.id`,
+           LEFT JOIN inventory_transfer_receipt_lines rl
+             ON rl.tenant_id=l.tenant_id AND rl.transfer_line_id=l.id
+          WHERE l.tenant_id=? AND l.transfer_id=?
+          GROUP BY l.id,l.inventory_item_id,i.code,i.sku,i.name,u.symbol,
+                   l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
+                   l.shortage_quantity_minor,l.unit_cost_minor,l.source_lot_id,l.lot_number,l.expiry_date
+          ORDER BY i.name,i.id`,
       )
       .bind(this.actor.tenantId, id)
       .all<Record<string, unknown>>();
