@@ -92,12 +92,10 @@ describe("Kitchen Analytics control centre", () => {
   });
 
   it("requires Kitchen view permission and branch scope", async () => {
-    const noKitchen = actor(
-      allPermissionCodes.filter((code) => code !== permissions.kitchenView),
+    const noKitchen = actor(allPermissionCodes.filter((code) => code !== permissions.kitchenView));
+    await expect(new KitchenAnalyticsService(db, noKitchen).overview(branchId, 7)).rejects.toThrow(
+      "kitchen.view permission is required",
     );
-    await expect(
-      new KitchenAnalyticsService(db, noKitchen).overview(branchId, 7),
-    ).rejects.toThrow("kitchen.view permission is required");
 
     await expect(
       new KitchenAnalyticsService(db, actor()).overview(otherBranchId, 7),
@@ -108,9 +106,7 @@ describe("Kitchen Analytics control centre", () => {
     expect(parseKitchenAnalyticsPeriod("1")).toBe(1);
     expect(parseKitchenAnalyticsPeriod("7")).toBe(7);
     expect(parseKitchenAnalyticsPeriod("30")).toBe(30);
-    expect(() => parseKitchenAnalyticsPeriod("14")).toThrow(
-      "periodDays must be one of 1, 7 or 30",
-    );
+    expect(() => parseKitchenAnalyticsPeriod("14")).toThrow("periodDays must be one of 1, 7 or 30");
   });
 });
 
@@ -234,8 +230,24 @@ function seed(db: SqliteD1TestDatabase) {
     );
 
   for (const row of [
-    { date: yesterday, tickets: 10, completed: 8, late: 2, avg: 600_000, pickup: 120_000, throughput: 6_000 },
-    { date: today, tickets: 20, completed: 18, late: 4, avg: 900_000, pickup: 180_000, throughput: 8_000 },
+    {
+      date: yesterday,
+      tickets: 10,
+      completed: 8,
+      late: 2,
+      avg: 600_000,
+      pickup: 120_000,
+      throughput: 6_000,
+    },
+    {
+      date: today,
+      tickets: 20,
+      completed: 18,
+      late: 4,
+      avg: 900_000,
+      pickup: 180_000,
+      throughput: 8_000,
+    },
   ]) {
     db.sqlite
       .prepare(
