@@ -5,13 +5,7 @@ import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 
-type PrepStatus =
-  | "RECOMMENDED"
-  | "APPROVED"
-  | "ADJUSTED"
-  | "STARTED"
-  | "COMPLETED"
-  | "DISMISSED";
+type PrepStatus = "RECOMMENDED" | "APPROVED" | "ADJUSTED" | "STARTED" | "COMPLETED" | "DISMISSED";
 
 type PrepRow = {
   id: string;
@@ -294,7 +288,12 @@ export class PrepService {
             " revision=revision+1,updated_at=? WHERE tenant_id=? AND id=?" +
             " AND status='STARTED' AND production_batch_id=?",
         )
-        .bind(new Date().toISOString(), this.actor.tenantId, recommendationId, row.production_batch_id)
+        .bind(
+          new Date().toISOString(),
+          this.actor.tenantId,
+          recommendationId,
+          row.production_batch_id,
+        )
         .run();
       throw error;
     }
@@ -342,10 +341,7 @@ export class PrepService {
     return this.serializeTask(await this.recommendation(recommendationId));
   }
 
-  async dismiss(
-    recommendationId: string,
-    input: { expectedRevision: number; reason: string },
-  ) {
+  async dismiss(recommendationId: string, input: { expectedRevision: number; reason: string }) {
     this.require(permissions.productionAdjust);
     const row = await this.recommendation(recommendationId);
     this.authorizeRow(row);
@@ -589,9 +585,7 @@ export class PrepService {
 
   private async assertWarehouse(branchId: string, warehouseId: string) {
     const warehouse = await this.db
-      .prepare(
-        "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
-      )
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, branchId, warehouseId)
       .first<{ id: string }>();
     if (!warehouse) {
@@ -606,9 +600,7 @@ export class PrepService {
   private async assertStation(branchId: string, stationId: string | null) {
     if (!stationId) return;
     const station = await this.db
-      .prepare(
-        "SELECT id FROM stations WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
-      )
+      .prepare("SELECT id FROM stations WHERE tenant_id=? AND branch_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, branchId, stationId)
       .first<{ id: string }>();
     if (!station) {
@@ -679,11 +671,7 @@ export class PrepService {
 
 function assertPositiveInteger(value: number, label: string) {
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new ServerOperationError(
-      "VALIDATION_FAILED",
-      400,
-      label + " must be a positive integer",
-    );
+    throw new ServerOperationError("VALIDATION_FAILED", 400, label + " must be a positive integer");
   }
 }
 

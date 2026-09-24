@@ -186,9 +186,7 @@ export function usePrep(enabled: boolean) {
       error?: string;
     };
     if (!response.ok) {
-      throw new Error(
-        payload.message ?? payload.error ?? "Prep regeneration could not be queued",
-      );
+      throw new Error(payload.message ?? payload.error ?? "Prep regeneration could not be queued");
     }
     await new Promise((resolve) => setTimeout(resolve, 1400));
     await refresh();

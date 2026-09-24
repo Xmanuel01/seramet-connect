@@ -19,10 +19,7 @@ import type { D1Database } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 import { enqueueInventoryRecalculation } from "@/server/workers";
 
-export async function handlePrepApi(
-  request: Request,
-  env: SerametEnv,
-): Promise<Response | null> {
+export async function handlePrepApi(request: Request, env: SerametEnv): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/seramet/prep")) return null;
   const actor = await authenticateSerametRequest(request, env);

@@ -72,8 +72,7 @@ function Prep() {
   const canStart = authoritative && !isAllBranches && hasPermission(permissions.productionStart);
   const canComplete =
     authoritative && !isAllBranches && hasPermission(permissions.productionComplete);
-  const canDismiss =
-    authoritative && !isAllBranches && hasPermission(permissions.productionAdjust);
+  const canDismiss = authoritative && !isAllBranches && hasPermission(permissions.productionAdjust);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -97,7 +96,10 @@ function Prep() {
           <Btn disabled={!tasks.length} onClick={() => printPrepSheet(prep.data, branchLabel)}>
             <Printer className="h-4 w-4" /> Print
           </Btn>
-          <Btn disabled={!authoritative || busy || isAllBranches} onClick={() => void prep.refresh()}>
+          <Btn
+            disabled={!authoritative || busy || isAllBranches}
+            onClick={() => void prep.refresh()}
+          >
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
           <Btn
@@ -164,9 +166,12 @@ function Prep() {
                   onStart={() =>
                     void run(
                       () =>
-                        prep.command("/api/seramet/prep/" + encodeURIComponent(task.id) + "/start", {
-                          expectedRevision: task.revision,
-                        }),
+                        prep.command(
+                          "/api/seramet/prep/" + encodeURIComponent(task.id) + "/start",
+                          {
+                            expectedRevision: task.revision,
+                          },
+                        ),
                       task.recipeName + " prep started.",
                     )
                   }
@@ -405,7 +410,9 @@ function PrepDetail({ task, onClose }: { task: PrepTask; onClose: () => void }) 
                   <div className="text-[11px] text-muted-foreground">
                     {ingredient.optional ? "Optional" : "Required"}
                     {ingredient.wasteFactorBps > 0
-                      ? " · includes " + (ingredient.wasteFactorBps / 100).toFixed(1) + "% process allowance"
+                      ? " · includes " +
+                        (ingredient.wasteFactorBps / 100).toFixed(1) +
+                        "% process allowance"
                       : ""}
                   </div>
                 </div>
@@ -426,7 +433,10 @@ function PrepDetail({ task, onClose }: { task: PrepTask; onClose: () => void }) 
           {task.cookbook?.method.length ? (
             <ol className="space-y-3">
               {task.cookbook.method.map((step, index) => (
-                <li key={String(step.step ?? index + 1)} className="flex gap-3 rounded-lg border border-border p-3">
+                <li
+                  key={String(step.step ?? index + 1)}
+                  className="flex gap-3 rounded-lg border border-border p-3"
+                >
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-[12px] font-bold text-primary-foreground">
                     {step.step ?? index + 1}
                   </span>
@@ -519,21 +529,45 @@ function AdjustDialog({
         </DialogHeader>
         <form className="space-y-4" onSubmit={submit}>
           <Field label={"Target output (" + (task.yieldUnitSymbol ?? "units") + ")"}>
-            <input className={inputClass} type="number" min="0.000001" step="0.001" value={quantityValue} onChange={(event) => setQuantityValue(event.target.value)} />
+            <input
+              className={inputClass}
+              type="number"
+              min="0.000001"
+              step="0.001"
+              value={quantityValue}
+              onChange={(event) => setQuantityValue(event.target.value)}
+            />
           </Field>
           <Field label="Station">
-            <select className={inputClass} value={stationId} onChange={(event) => setStationId(event.target.value)}>
+            <select
+              className={inputClass}
+              value={stationId}
+              onChange={(event) => setStationId(event.target.value)}
+            >
               <option value="">Unassigned</option>
               {stations.map((station) => (
-                <option key={station.id} value={station.id}>{station.name}</option>
+                <option key={station.id} value={station.id}>
+                  {station.name}
+                </option>
               ))}
             </select>
           </Field>
           <Field label="Due time">
-            <input className={inputClass} type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} />
+            <input
+              className={inputClass}
+              type="datetime-local"
+              value={dueAt}
+              onChange={(event) => setDueAt(event.target.value)}
+            />
           </Field>
           <Field label="Reason for adjustment">
-            <textarea className={textareaClass} rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Expected covers, event demand, stock position…" />
+            <textarea
+              className={textareaClass}
+              rows={3}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Expected covers, event demand, stock position…"
+            />
           </Field>
           <div className="rounded-md bg-secondary/50 p-3 text-[12px] text-muted-foreground">
             Ingredient quantities will be rescaled automatically from the authoritative recipe.
@@ -561,7 +595,7 @@ function ApproveDialog({
   const preferred =
     task.defaultWarehouseId && warehouses.some((row) => row.id === task.defaultWarehouseId)
       ? task.defaultWarehouseId
-      : warehouses[0]?.id ?? "";
+      : (warehouses[0]?.id ?? "");
   const [warehouseId, setWarehouseId] = useState(preferred);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -572,18 +606,31 @@ function ApproveDialog({
         <div className="space-y-4">
           <Info label="Approved target" value={quantity(task.effectiveTargetMicro, task)} />
           <Field label="Production warehouse">
-            <select className={inputClass} value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)}>
+            <select
+              className={inputClass}
+              value={warehouseId}
+              onChange={(event) => setWarehouseId(event.target.value)}
+            >
               {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name}
+                </option>
               ))}
             </select>
           </Field>
           <div className="rounded-md bg-secondary/50 p-3 text-[12px] text-muted-foreground">
-            Approval creates the linked PLANNED production batch. Stock is not moved until completion.
+            Approval creates the linked PLANNED production batch. Stock is not moved until
+            completion.
           </div>
           <div className="flex justify-end gap-2">
-            <Btn disabled={busy} onClick={onClose}>Cancel</Btn>
-            <Btn variant="primary" disabled={busy || !warehouseId} onClick={() => onSubmit(warehouseId)}>
+            <Btn disabled={busy} onClick={onClose}>
+              Cancel
+            </Btn>
+            <Btn
+              variant="primary"
+              disabled={busy || !warehouseId}
+              onClick={() => onSubmit(warehouseId)}
+            >
               Approve
             </Btn>
           </div>
@@ -613,14 +660,27 @@ function CompleteDialog({
         </DialogHeader>
         <div className="space-y-4">
           <Field label={"Actual output (" + (task.yieldUnitSymbol ?? "units") + ")"}>
-            <input className={inputClass} type="number" min="0.000001" step="0.001" value={actual} onChange={(event) => setActual(event.target.value)} />
+            <input
+              className={inputClass}
+              type="number"
+              min="0.000001"
+              step="0.001"
+              value={actual}
+              onChange={(event) => setActual(event.target.value)}
+            />
           </Field>
           <div className="rounded-md bg-warning/10 p-3 text-[12px] text-warning">
             Completing posts ingredient consumption and finished prepared stock to inventory.
           </div>
           <div className="flex justify-end gap-2">
-            <Btn disabled={busy} onClick={onClose}>Cancel</Btn>
-            <Btn variant="primary" disabled={busy || toMicro(actual) <= 0} onClick={() => onSubmit(toMicro(actual))}>
+            <Btn disabled={busy} onClick={onClose}>
+              Cancel
+            </Btn>
+            <Btn
+              variant="primary"
+              disabled={busy || toMicro(actual) <= 0}
+              onClick={() => onSubmit(toMicro(actual))}
+            >
               Complete & post stock
             </Btn>
           </div>
@@ -650,7 +710,13 @@ function DismissDialog({
         </DialogHeader>
         <div className="space-y-4">
           <Field label="Reason">
-            <textarea className={textareaClass} rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Already prepared, demand changed, item unavailable…" />
+            <textarea
+              className={textareaClass}
+              rows={4}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Already prepared, demand changed, item unavailable…"
+            />
           </Field>
           {task.productionBatchId ? (
             <div className="rounded-md bg-warning/10 p-3 text-[12px] text-warning">
@@ -658,8 +724,13 @@ function DismissDialog({
             </div>
           ) : null}
           <div className="flex justify-end gap-2">
-            <Btn disabled={busy} onClick={onClose}>Cancel</Btn>
-            <Btn disabled={busy || reason.trim().length < 3} onClick={() => onSubmit(reason.trim())}>
+            <Btn disabled={busy} onClick={onClose}>
+              Cancel
+            </Btn>
+            <Btn
+              disabled={busy || reason.trim().length < 3}
+              onClick={() => onSubmit(reason.trim())}
+            >
               Dismiss task
             </Btn>
           </div>
@@ -680,8 +751,12 @@ function DialogActions({
 }) {
   return (
     <div className="flex justify-end gap-2">
-      <Btn type="button" disabled={busy} onClick={onClose}>Cancel</Btn>
-      <Btn type="submit" variant="primary" disabled={busy}>{submitLabel}</Btn>
+      <Btn type="button" disabled={busy} onClick={onClose}>
+        Cancel
+      </Btn>
+      <Btn type="submit" variant="primary" disabled={busy}>
+        {submitLabel}
+      </Btn>
     </div>
   );
 }
@@ -698,13 +773,20 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">{label}{children}</label>;
+  return (
+    <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
 }
 
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
+        {label}
+      </div>
       <div className="mt-1 text-[13px] font-semibold">{value}</div>
     </div>
   );
@@ -721,7 +803,13 @@ function Mini({ label, value }: { label: string; value: string }) {
 
 function Badge({ children, good = false }: { children: ReactNode; good?: boolean }) {
   return (
-    <span className={good ? "rounded-full bg-success/10 px-2 py-1 text-success" : "rounded-full bg-warning/10 px-2 py-1 text-warning"}>
+    <span
+      className={
+        good
+          ? "rounded-full bg-success/10 px-2 py-1 text-success"
+          : "rounded-full bg-warning/10 px-2 py-1 text-warning"
+      }
+    >
       {children}
     </span>
   );
@@ -773,7 +861,12 @@ function formatDateTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    : date.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
 }
 
 function toLocalDateTime(value: string) {

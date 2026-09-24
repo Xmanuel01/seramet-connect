@@ -146,9 +146,7 @@ describe("authoritative prep execution", () => {
     ).rejects.toThrow("Publish the Cookbook method");
     expect(
       db.sqlite
-        .prepare(
-          "SELECT COUNT(*) count FROM production_batches WHERE tenant_id=? AND branch_id=?",
-        )
+        .prepare("SELECT COUNT(*) count FROM production_batches WHERE tenant_id=? AND branch_id=?")
         .get(tenantId, branchId)?.["count"],
     ).toBe(0);
   });
