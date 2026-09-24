@@ -3,7 +3,10 @@ import { Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { useInventoryControlCentre, type InventoryListRow } from "@/inventory/use-inventory-control-centre";
+import {
+  useInventoryControlCentre,
+  type InventoryListRow,
+} from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { ksh } from "@/lib/currency";
@@ -14,7 +17,8 @@ export const Route = createFileRoute("/inventory-items")({
       { title: "Inventory Items - Seramet" },
       {
         name: "description",
-        content: "Authoritative inventory item catalogue, stock position, suppliers and item setup.",
+        content:
+          "Authoritative inventory item catalogue, stock position, suppliers and item setup.",
       },
     ],
   }),
@@ -38,9 +42,13 @@ function InventoryItems() {
   const [showCreate, setShowCreate] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const rows = useMemo(() => aggregateItems(control.data, isAllBranches), [control.data, isAllBranches]);
+  const rows = useMemo(
+    () => aggregateItems(control.data, isAllBranches),
+    [control.data, isAllBranches],
+  );
   const filtered = rows.filter((row) => {
-    const haystack = `${row.name} ${row.sku ?? ""} ${row.code} ${row.preferred_supplier_name ?? ""}`.toLowerCase();
+    const haystack =
+      `${row.name} ${row.sku ?? ""} ${row.code} ${row.preferred_supplier_name ?? ""}`.toLowerCase();
     const matchesQuery = haystack.includes(query.trim().toLowerCase());
     const matchesStatus = statusFilter === "ALL" || row.status === statusFilter;
     return matchesQuery && matchesStatus;
@@ -84,7 +92,9 @@ function InventoryItems() {
               setNotice("Inventory item created successfully.");
               setShowCreate(false);
             } catch (error) {
-              setNotice(error instanceof Error ? error.message : "Inventory item could not be created");
+              setNotice(
+                error instanceof Error ? error.message : "Inventory item could not be created",
+              );
             }
           }}
         />
@@ -133,7 +143,10 @@ function InventoryItems() {
 
         <div className="grid gap-3 p-3 md:hidden">
           {visible.map((row) => (
-            <article key={row.id} className="rounded-lg border border-border bg-card p-3 shadow-card">
+            <article
+              key={row.id}
+              className="rounded-lg border border-border bg-card p-3 shadow-card"
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <Link
@@ -151,12 +164,16 @@ function InventoryItems() {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
                 <Info label="On hand" value={formatQuantity(row.quantity_minor / 1_000_000)} />
-                <Info label="Available" value={formatQuantity(row.quantity_available_minor / 1_000_000)} />
+                <Info
+                  label="Available"
+                  value={formatQuantity(row.quantity_available_minor / 1_000_000)}
+                />
                 <Info label="Unit cost" value={ksh(row.average_unit_cost_minor / 100)} />
                 <Info label="Value" value={ksh(row.total_value_minor / 100)} />
               </div>
               <div className="mt-3 text-[11px] text-muted-foreground">
-                {row.preferred_supplier_name || "No preferred supplier"} · {row.warehouse_count} warehouse
+                {row.preferred_supplier_name || "No preferred supplier"} · {row.warehouse_count}{" "}
+                warehouse
                 {row.warehouse_count === 1 ? "" : "s"}
               </div>
             </article>
@@ -205,9 +222,13 @@ function InventoryItems() {
                     {formatQuantity((row.target_quantity_minor ?? 0) / 1_000_000)} {row.unit}
                   </TD>
                   <TD className="num text-right">{ksh(row.average_unit_cost_minor / 100)}</TD>
-                  <TD className="num text-right font-semibold">{ksh(row.total_value_minor / 100)}</TD>
+                  <TD className="num text-right font-semibold">
+                    {ksh(row.total_value_minor / 100)}
+                  </TD>
                   <TD className="num text-right">{row.warehouse_count}</TD>
-                  <TD><Status>{row.status}</Status></TD>
+                  <TD>
+                    <Status>{row.status}</Status>
+                  </TD>
                 </tr>
               ))}
             </tbody>
@@ -259,7 +280,10 @@ function CreateItemPanel({
 
   return (
     <Panel className="mb-4">
-      <PanelHead title="Add inventory item" sub="Create tenant-wide item master data before receiving stock" />
+      <PanelHead
+        title="Add inventory item"
+        sub="Create tenant-wide item master data before receiving stock"
+      />
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Item name">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
@@ -280,31 +304,53 @@ function CreateItemPanel({
           />
         </Field>
         <Field label="Base unit">
-          <select className={inputClass} value={baseUnitId} onChange={(e) => setBaseUnitId(e.target.value)}>
+          <select
+            className={inputClass}
+            value={baseUnitId}
+            onChange={(e) => setBaseUnitId(e.target.value)}
+          >
             <option value="">Select unit</option>
             {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>{unit.name} ({unit.symbol})</option>
+              <option key={unit.id} value={unit.id}>
+                {unit.name} ({unit.symbol})
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Purchase unit">
-          <select className={inputClass} value={purchaseUnitId} onChange={(e) => setPurchaseUnitId(e.target.value)}>
+          <select
+            className={inputClass}
+            value={purchaseUnitId}
+            onChange={(e) => setPurchaseUnitId(e.target.value)}
+          >
             <option value="">Same as base unit</option>
             {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>{unit.name} ({unit.symbol})</option>
+              <option key={unit.id} value={unit.id}>
+                {unit.name} ({unit.symbol})
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Preferred supplier">
-          <select className={inputClass} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <select
+            className={inputClass}
+            value={supplierId}
+            onChange={(e) => setSupplierId(e.target.value)}
+          >
             <option value="">Not assigned</option>
             {suppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
             ))}
           </select>
         </Field>
         <Field label="Description">
-          <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
+          <input
+            className={inputClass}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
         </Field>
         <label className="flex items-end gap-2 pb-2 text-[12px]">
           <input
