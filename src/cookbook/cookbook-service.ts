@@ -125,7 +125,10 @@ export class CookbookService {
 
     const byRecipe = new Map<
       string,
-      { draft: ReturnType<typeof normalizeContent> | null; published: ReturnType<typeof normalizeContent> | null }
+      {
+        draft: ReturnType<typeof normalizeContent> | null;
+        published: ReturnType<typeof normalizeContent> | null;
+      }
     >();
     for (const row of content.results ?? []) {
       const current = byRecipe.get(row.recipe_id) ?? { draft: null, published: null };
@@ -287,18 +290,11 @@ export class CookbookService {
           stamp,
           input.idempotencyKey,
         ),
-      this.auditStatement(
-        "COOKBOOK_DRAFT_SAVED",
-        id,
-        input.branchId,
-        correlationId,
-        stamp,
-        {
-          recipeId: input.recipeId,
-          recipeVersionId: input.recipeVersionId,
-          revision,
-        },
-      ),
+      this.auditStatement("COOKBOOK_DRAFT_SAVED", id, input.branchId, correlationId, stamp, {
+        recipeId: input.recipeId,
+        recipeVersionId: input.recipeVersionId,
+        revision,
+      }),
     ];
 
     try {
@@ -373,20 +369,13 @@ export class CookbookService {
           stamp,
           input.idempotencyKey,
         ),
-      this.auditStatement(
-        "COOKBOOK_REVISION_PUBLISHED",
-        id,
-        input.branchId,
-        correlationId,
-        stamp,
-        {
-          recipeId: source.recipe_id,
-          recipeVersionId: source.recipe_version_id,
-          revision,
-          sourceDraftId: source.id,
-          sourceDraftRevision: source.revision,
-        },
-      ),
+      this.auditStatement("COOKBOOK_REVISION_PUBLISHED", id, input.branchId, correlationId, stamp, {
+        recipeId: source.recipe_id,
+        recipeVersionId: source.recipe_version_id,
+        revision,
+        sourceDraftId: source.id,
+        sourceDraftRevision: source.revision,
+      }),
     ];
 
     try {

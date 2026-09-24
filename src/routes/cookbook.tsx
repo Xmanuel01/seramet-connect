@@ -134,15 +134,16 @@ function Cookbook() {
   ).length;
 
   const visibleContent = detail
-    ? canManage && detail.draft && (!detail.published || detail.draft.revision > detail.published.revision)
+    ? canManage &&
+      detail.draft &&
+      (!detail.published || detail.draft.revision > detail.published.revision)
       ? detail.draft
       : detail.published
     : null;
 
   const desiredMicro = parseDesiredYield(desiredYield);
   const standardMicro = Number(detail?.recipe.yield_quantity_minor ?? 0);
-  const scaleRatio =
-    desiredMicro && standardMicro > 0 ? desiredMicro / standardMicro : 1;
+  const scaleRatio = desiredMicro && standardMicro > 0 ? desiredMicro / standardMicro : 1;
 
   const refreshDetail = async (recipeId = selected?.id) => {
     if (!recipeId) return;
@@ -313,9 +314,7 @@ function Cookbook() {
                           <Status>{revision.status}</Status>
                         </TD>
                         <TD>{revision.createdByName ?? revision.createdBy}</TD>
-                        <TD className="text-muted-foreground">
-                          {revision.changeSummary ?? "—"}
-                        </TD>
+                        <TD className="text-muted-foreground">{revision.changeSummary ?? "—"}</TD>
                         <TD className="text-muted-foreground">
                           {new Date(revision.createdAt).toLocaleString()}
                         </TD>
@@ -345,28 +344,31 @@ function Cookbook() {
           canPublish={canPublish}
           onOpenChange={setEditorOpen}
           onSave={(draft, publishNow) =>
-            void run(async () => {
-              const result = await cookbook.command<{ draft: CookbookContent }>(
-                "/api/seramet/cookbook/drafts",
-                {
-                  branchId,
-                  recipeId: detail.recipe.id,
-                  recipeVersionId: detail.recipe.current_version_id,
-                  idempotencyKey: `cookbook-draft:${crypto.randomUUID()}`,
-                  ...draft,
-                },
-              );
-              if (publishNow) {
-                await cookbook.command("/api/seramet/cookbook/publish", {
-                  branchId,
-                  contentVersionId: result.draft.id,
-                  idempotencyKey: `cookbook-publish:${crypto.randomUUID()}`,
-                  changeSummary: draft.changeSummary || "Published kitchen standard",
-                });
-              }
-              await refreshDetail(detail.recipe.id);
-              setEditorOpen(false);
-            }, publishNow ? "Kitchen method saved and published." : "Cookbook draft saved.")
+            void run(
+              async () => {
+                const result = await cookbook.command<{ draft: CookbookContent }>(
+                  "/api/seramet/cookbook/drafts",
+                  {
+                    branchId,
+                    recipeId: detail.recipe.id,
+                    recipeVersionId: detail.recipe.current_version_id,
+                    idempotencyKey: `cookbook-draft:${crypto.randomUUID()}`,
+                    ...draft,
+                  },
+                );
+                if (publishNow) {
+                  await cookbook.command("/api/seramet/cookbook/publish", {
+                    branchId,
+                    contentVersionId: result.draft.id,
+                    idempotencyKey: `cookbook-publish:${crypto.randomUUID()}`,
+                    changeSummary: draft.changeSummary || "Published kitchen standard",
+                  });
+                }
+                await refreshDetail(detail.recipe.id);
+                setEditorOpen(false);
+              },
+              publishNow ? "Kitchen method saved and published." : "Cookbook draft saved.",
+            )
           }
         />
       )}
@@ -412,7 +414,11 @@ function CookbookCard({
         <InfoCard
           icon={<CheckCircle2 className="h-4 w-4" />}
           label="Content"
-          value={usingPrevious ? "Previous version" : `r${content.revision} ${content.status.toLowerCase()}`}
+          value={
+            usingPrevious
+              ? "Previous version"
+              : `r${content.revision} ${content.status.toLowerCase()}`
+          }
         />
       </div>
 
@@ -460,7 +466,8 @@ function CookbookCard({
                       {component.inventory_item_name ?? component.sub_recipe_name ?? "Ingredient"}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {component.inventory_item_code ?? (component.sub_recipe_id ? "Sub-recipe" : "")}
+                      {component.inventory_item_code ??
+                        (component.sub_recipe_id ? "Sub-recipe" : "")}
                       {component.optional ? " · optional" : ""}
                     </div>
                   </div>
@@ -566,13 +573,9 @@ function CookbookEditor({
   const [sourceReference, setSourceReference] = useState(source?.sourceReference ?? "");
   const [changeSummary, setChangeSummary] = useState("");
   const [method, setMethod] = useState<MethodDraft[]>(
-    source?.method.length
-      ? source.method.map(methodToDraft)
-      : [emptyMethod()],
+    source?.method.length ? source.method.map(methodToDraft) : [emptyMethod()],
   );
-  const [media, setMedia] = useState<MediaDraft[]>(
-    source?.media.map(mediaToDraft) ?? [],
-  );
+  const [media, setMedia] = useState<MediaDraft[]>(source?.media.map(mediaToDraft) ?? []);
   const [error, setError] = useState("");
 
   const submit = (publishNow: boolean) => {
@@ -581,7 +584,8 @@ function CookbookEditor({
       const prep = boundedMinutes(prepMinutes, "Prep minutes");
       const cook = boundedMinutes(cookMinutes, "Cook minutes");
       const normalizedMethod = method.map((step, index) => {
-        if (!step.instruction.trim()) throw new Error(`Method step ${index + 1} needs instructions`);
+        if (!step.instruction.trim())
+          throw new Error(`Method step ${index + 1} needs instructions`);
         const timer = optionalNumber(step.timerMinutes, `Step ${index + 1} timer`, 0, 1_440);
         const temperature = optionalNumber(
           step.temperatureC,
@@ -599,7 +603,8 @@ function CookbookEditor({
         } satisfies CookbookMethodStep;
       });
       const normalizedMedia = media.map((item, index) => {
-        if (!item.url.trim()) throw new Error(`Media item ${index + 1} needs a URL or object reference`);
+        if (!item.url.trim())
+          throw new Error(`Media item ${index + 1} needs a URL or object reference`);
         return {
           id: item.key,
           kind: item.kind,
@@ -632,9 +637,7 @@ function CookbookEditor({
       current.map((step) => (step.key === key ? { ...step, ...patch } : step)),
     );
   const updateMedia = (key: string, patch: Partial<MediaDraft>) =>
-    setMedia((current) =>
-      current.map((item) => (item.key === key ? { ...item, ...patch } : item)),
-    );
+    setMedia((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -712,7 +715,10 @@ function CookbookEditor({
           </div>
           <div className="divide-y divide-border">
             {method.map((step, index) => (
-              <div key={step.key} className="grid gap-2 p-4 lg:grid-cols-[40px_1fr_110px_110px_36px]">
+              <div
+                key={step.key}
+                className="grid gap-2 p-4 lg:grid-cols-[40px_1fr_110px_110px_36px]"
+              >
                 <div className="flex h-10 items-center justify-center rounded-md bg-secondary text-[12px] font-bold">
                   {index + 1}
                 </div>
@@ -745,9 +751,7 @@ function CookbookEditor({
                   type="number"
                   min="0"
                   value={step.timerMinutes}
-                  onChange={(event) =>
-                    updateMethod(step.key, { timerMinutes: event.target.value })
-                  }
+                  onChange={(event) => updateMethod(step.key, { timerMinutes: event.target.value })}
                   placeholder="Minutes"
                   title="Timer minutes"
                 />
@@ -755,9 +759,7 @@ function CookbookEditor({
                   className={inputClass}
                   type="number"
                   value={step.temperatureC}
-                  onChange={(event) =>
-                    updateMethod(step.key, { temperatureC: event.target.value })
-                  }
+                  onChange={(event) => updateMethod(step.key, { temperatureC: event.target.value })}
                   placeholder="°C"
                   title="Temperature Celsius"
                 />
@@ -828,7 +830,9 @@ function CookbookEditor({
                   <button
                     type="button"
                     onClick={() =>
-                      setMedia((current) => current.filter((candidate) => candidate.key !== item.key))
+                      setMedia((current) =>
+                        current.filter((candidate) => candidate.key !== item.key),
+                      )
                     }
                     className="flex h-10 items-center justify-center rounded-md text-danger hover:bg-danger/10"
                     aria-label="Remove media"
@@ -896,15 +900,7 @@ function CookbookEditor({
   );
 }
 
-function InfoCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-}) {
+function InfoCard({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
     <div className="rounded-md border border-border bg-card px-3 py-2">
       <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">

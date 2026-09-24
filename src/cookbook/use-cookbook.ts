@@ -150,7 +150,9 @@ export function useCookbook(enabled: boolean) {
         message?: string;
       };
       if (!response.ok) {
-        throw new Error(payload.message ?? payload.error ?? `Cookbook query failed (${response.status})`);
+        throw new Error(
+          payload.message ?? payload.error ?? `Cookbook query failed (${response.status})`,
+        );
       }
       setRecipes(payload.cookbook?.recipes ?? []);
       setStatus("ready");
@@ -177,7 +179,9 @@ export function useCookbook(enabled: boolean) {
         message?: string;
       };
       if (!response.ok || !payload.cookbook) {
-        throw new Error(payload.message ?? payload.error ?? `Cookbook detail failed (${response.status})`);
+        throw new Error(
+          payload.message ?? payload.error ?? `Cookbook detail failed (${response.status})`,
+        );
       }
       return payload.cookbook;
     },
@@ -197,7 +201,9 @@ export function useCookbook(enabled: boolean) {
         message?: string;
       };
       if (!response.ok) {
-        throw new Error(payload.message ?? payload.error ?? `Cookbook command failed (${response.status})`);
+        throw new Error(
+          payload.message ?? payload.error ?? `Cookbook command failed (${response.status})`,
+        );
       }
       await refresh();
       return payload;

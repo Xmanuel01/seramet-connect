@@ -66,10 +66,7 @@ async function parse<TSchema extends ZodTypeAny>(
   }
   const result = schema.safeParse(payload);
   if (!result.success) {
-    throw new SerametHttpError(
-      400,
-      result.error.issues.map((issue) => issue.message).join("; "),
-    );
+    throw new SerametHttpError(400, result.error.issues.map((issue) => issue.message).join("; "));
   }
   return result.data;
 }
