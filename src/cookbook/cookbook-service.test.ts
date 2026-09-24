@@ -63,7 +63,7 @@ describe("authoritative cookbook", () => {
       )
       .bind(tenantId)
       .all<{ action: string }>();
-    expect(rows.results.map((row) => row.action)).toEqual([
+    expect((rows.results ?? []).map((row) => row.action)).toEqual([
       "COOKBOOK_DRAFT_CREATED",
       "COOKBOOK_REVISION_PUBLISHED",
     ]);
