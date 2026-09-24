@@ -397,6 +397,31 @@ export const recipeSchema = z
   })
   .strict();
 
+export const recipeDefinitionSchema = z
+  .object({
+    recipeId: id.optional(),
+    menuItemId: id.optional(),
+    productionItemId: id.optional(),
+    branchOverrideId: id.optional(),
+    name: z.string().trim().min(1).max(160),
+    yieldQuantityMicro: positiveInteger,
+    yieldUnitId: id,
+    packagingCostMinor: nonNegativeInteger.optional(),
+    productionOverheadMinor: nonNegativeInteger.optional(),
+    components: z.array(recipeComponentSchema).min(1).max(500),
+  })
+  .strict()
+  .refine((value) => Boolean(value.menuItemId) !== Boolean(value.productionItemId), {
+    message: "Recipe must target one menu item or production inventory item",
+  });
+
+export const recipeImportSchema = z
+  .object({
+    idempotencyKey: id,
+    recipes: z.array(recipeDefinitionSchema).min(1).max(250),
+  })
+  .strict();
+
 export const recipeVersionSchema = z
   .object({
     recipeId: id,
