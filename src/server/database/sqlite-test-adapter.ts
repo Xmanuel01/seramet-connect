@@ -104,6 +104,7 @@ export const migrationFiles = [
   "0021_cookbook_shared_backend.sql",
   "0022_prep_execution_workflow.sql",
   "0023_inventory_categories_stock_count_workflow.sql",
+  "0024_inventory_operations_control.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {
