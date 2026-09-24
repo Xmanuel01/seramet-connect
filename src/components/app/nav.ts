@@ -5,6 +5,7 @@ import {
   BarChart3,
   Bike,
   Bell,
+  BookOpen,
   Boxes,
   Building2,
   Calculator,
