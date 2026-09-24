@@ -3178,6 +3178,528 @@ export class InventoryIntelligenceService {
     }
   }
 
+  async listTransfers(branchId: string, limit = 100) {
+    this.requireAnyPermission([permissions.inventoryView, permissions.inventoryTransfer]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `SELECT t.id,t.transfer_number,t.source_branch_id,sb.name AS source_branch_name,
+                t.source_warehouse_id,sw.name AS source_warehouse_name,
+                t.destination_branch_id,db.name AS destination_branch_name,
+                t.destination_warehouse_id,dw.name AS destination_warehouse_name,
+                t.status,t.requested_by,t.approved_by,t.received_by,t.approval_reason,
+                t.cancelled_by,t.cancelled_at,t.cancellation_reason,t.created_at,t.updated_at,
+                sh.id AS shipment_id,sh.status AS shipment_status,sh.dispatched_at,
+                COUNT(DISTINCT l.id) AS line_count,
+                COALESCE(SUM(l.requested_quantity_minor),0) AS requested_quantity_minor,
+                COALESCE(SUM(l.sent_quantity_minor),0) AS sent_quantity_minor,
+                COALESCE(SUM(l.received_quantity_minor),0) AS received_quantity_minor,
+                COALESCE(SUM(l.shortage_quantity_minor),0) AS shortage_quantity_minor,
+                COALESCE(SUM((l.sent_quantity_minor*l.unit_cost_minor)/1000000),0) AS sent_value_minor
+           FROM stock_transfers t
+           JOIN branches sb ON sb.tenant_id=t.tenant_id AND sb.id=t.source_branch_id
+           JOIN branches db ON db.tenant_id=t.tenant_id AND db.id=t.destination_branch_id
+           JOIN warehouses sw ON sw.tenant_id=t.tenant_id AND sw.id=t.source_warehouse_id
+           JOIN warehouses dw ON dw.tenant_id=t.tenant_id AND dw.id=t.destination_warehouse_id
+           LEFT JOIN stock_transfer_lines l ON l.tenant_id=t.tenant_id AND l.transfer_id=t.id
+           LEFT JOIN inventory_transfer_shipments sh ON sh.tenant_id=t.tenant_id AND sh.transfer_id=t.id
+          WHERE t.tenant_id=? AND (t.source_branch_id=? OR t.destination_branch_id=?)
+          GROUP BY t.id,t.transfer_number,t.source_branch_id,sb.name,t.source_warehouse_id,sw.name,
+                   t.destination_branch_id,db.name,t.destination_warehouse_id,dw.name,t.status,
+                   t.requested_by,t.approved_by,t.received_by,t.approval_reason,t.cancelled_by,
+                   t.cancelled_at,t.cancellation_reason,t.created_at,t.updated_at,
+                   sh.id,sh.status,sh.dispatched_at
+          ORDER BY t.created_at DESC,t.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, branchId, Math.min(200, Math.max(1, limit)))
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async transferDetail(id: string) {
+    this.requireAnyPermission([permissions.inventoryView, permissions.inventoryTransfer]);
+    const transfer = await this.db
+      .prepare(
+        `SELECT t.*,sb.name AS source_branch_name,db.name AS destination_branch_name,
+                sw.name AS source_warehouse_name,dw.name AS destination_warehouse_name,
+                sh.id AS shipment_id,sh.status AS shipment_status,sh.dispatched_at
+           FROM stock_transfers t
+           JOIN branches sb ON sb.tenant_id=t.tenant_id AND sb.id=t.source_branch_id
+           JOIN branches db ON db.tenant_id=t.tenant_id AND db.id=t.destination_branch_id
+           JOIN warehouses sw ON sw.tenant_id=t.tenant_id AND sw.id=t.source_warehouse_id
+           JOIN warehouses dw ON dw.tenant_id=t.tenant_id AND dw.id=t.destination_warehouse_id
+           LEFT JOIN inventory_transfer_shipments sh ON sh.tenant_id=t.tenant_id AND sh.transfer_id=t.id
+          WHERE t.tenant_id=? AND t.id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<
+        Record<string, unknown> & { source_branch_id: string; destination_branch_id: string }
+      >();
+    if (!transfer)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    if (
+      !this.actor.assignedBranchIds.includes(transfer.source_branch_id) &&
+      !this.actor.assignedBranchIds.includes(transfer.destination_branch_id) &&
+      this.actor.branchScope.type !== "ALL"
+    ) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Transfer is outside your branch scope",
+      );
+    }
+    const lines = await this.db
+      .prepare(
+        `SELECT l.id,l.inventory_item_id,i.code,i.sku,i.name,u.symbol AS unit_symbol,
+                l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
+                l.shortage_quantity_minor,l.unit_cost_minor,l.source_lot_id,l.lot_number,l.expiry_date,
+                COALESCE(SUM(rl.damaged_quantity_micro),0) AS damaged_quantity_micro,
+                COALESCE(SUM(rl.rejected_quantity_micro),0) AS rejected_quantity_micro,
+                COALESCE(SUM(rl.missing_quantity_micro),0) AS missing_quantity_micro
+           FROM stock_transfer_lines l
+           JOIN inventory_items i ON i.tenant_id=l.tenant_id AND i.id=l.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN inventory_transfer_receipt_lines rl
+             ON rl.tenant_id=l.tenant_id AND rl.transfer_line_id=l.id
+          WHERE l.tenant_id=? AND l.transfer_id=?
+          GROUP BY l.id,l.inventory_item_id,i.code,i.sku,i.name,u.symbol,
+                   l.requested_quantity_minor,l.sent_quantity_minor,l.received_quantity_minor,
+                   l.shortage_quantity_minor,l.unit_cost_minor,l.source_lot_id,l.lot_number,l.expiry_date
+          ORDER BY i.name,i.id`,
+      )
+      .bind(this.actor.tenantId, id)
+      .all<Record<string, unknown>>();
+    const receipts = transfer["shipment_id"]
+      ? await this.db
+          .prepare(
+            `SELECT id,receipt_reference,variance_json,received_by,received_at
+               FROM inventory_transfer_receipts
+              WHERE tenant_id=? AND shipment_id=? ORDER BY received_at,id`,
+          )
+          .bind(this.actor.tenantId, String(transfer["shipment_id"]))
+          .all<Record<string, unknown>>()
+      : { results: [] as Record<string, unknown>[] };
+    return { transfer, lines: lines.results ?? [], receipts: receipts.results ?? [] };
+  }
+
+  async requestStockTransfer(input: {
+    id?: string;
+    transferNumber: string;
+    sourceBranchId: string;
+    sourceWarehouseId: string;
+    destinationBranchId: string;
+    destinationWarehouseId: string;
+    idempotencyKey: string;
+    lines: Array<{ inventoryItemId: string; quantityMicro: number; sourceLotId?: string }>;
+  }) {
+    this.requirePermission(permissions.inventoryTransfer);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.sourceBranchId);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.destinationBranchId);
+    await this.assertWarehouseBranch(input.sourceBranchId, input.sourceWarehouseId);
+    await this.assertWarehouseBranch(input.destinationBranchId, input.destinationWarehouseId);
+    if (
+      input.sourceBranchId === input.destinationBranchId &&
+      input.sourceWarehouseId === input.destinationWarehouseId
+    ) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Transfer source and destination must differ",
+      );
+    }
+    if (!input.lines.length)
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Transfer requires at least one item",
+      );
+    const duplicate = await this.db
+      .prepare(
+        `SELECT id,status FROM stock_transfers WHERE tenant_id=?
+          AND json_extract(payload_json,'$.idempotencyKey')=?`,
+      )
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO stock_transfers
+            (tenant_id,id,transfer_number,source_branch_id,source_warehouse_id,
+             destination_branch_id,destination_warehouse_id,status,requested_by,approved_by,
+             received_by,payload_json,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,'REQUESTED',?,NULL,NULL,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.transferNumber,
+          input.sourceBranchId,
+          input.sourceWarehouseId,
+          input.destinationBranchId,
+          input.destinationWarehouseId,
+          this.actor.id,
+          JSON.stringify({ idempotencyKey: input.idempotencyKey, staged: true }),
+          stamp,
+          stamp,
+        ),
+    ];
+    const seen = new Set<string>();
+    for (const line of input.lines) {
+      if (seen.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Transfer request contains a duplicate item",
+        );
+      }
+      seen.add(line.inventoryItemId);
+      if (!Number.isSafeInteger(line.quantityMicro) || line.quantityMicro <= 0) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Transfer quantity must be positive",
+        );
+      }
+      const unitCost = await this.weightedItemCost(
+        line.inventoryItemId,
+        input.sourceBranchId,
+        input.sourceWarehouseId,
+      );
+      let lot: {
+        id: string;
+        lot_number: string;
+        expiry_date: string | null;
+        quantity_remaining_minor: number;
+      } | null = null;
+      if (line.sourceLotId) {
+        lot = await this.db
+          .prepare(
+            `SELECT id,lot_number,expiry_date,quantity_remaining_minor FROM inventory_lots
+              WHERE tenant_id=? AND id=? AND branch_id=? AND warehouse_id=?
+                AND inventory_item_id=? AND status='AVAILABLE'`,
+          )
+          .bind(
+            this.actor.tenantId,
+            line.sourceLotId,
+            input.sourceBranchId,
+            input.sourceWarehouseId,
+            line.inventoryItemId,
+          )
+          .first<{
+            id: string;
+            lot_number: string;
+            expiry_date: string | null;
+            quantity_remaining_minor: number;
+          }>();
+        if (!lot || lot.quantity_remaining_minor < line.quantityMicro) {
+          throw new ServerOperationError(
+            "CONFLICT",
+            409,
+            "Selected transfer lot has insufficient stock",
+          );
+        }
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO stock_transfer_lines
+              (tenant_id,id,transfer_id,inventory_item_id,requested_quantity_minor,
+               sent_quantity_minor,received_quantity_minor,shortage_quantity_minor,unit_cost_minor,
+               source_lot_id,lot_number,expiry_date)
+             VALUES (?,?,?,?,?,0,0,0,?,?,?,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            crypto.randomUUID(),
+            id,
+            line.inventoryItemId,
+            line.quantityMicro,
+            unitCost,
+            lot?.id ?? null,
+            lot?.lot_number ?? null,
+            lot?.expiry_date ?? null,
+          ),
+      );
+    }
+    statements.push(
+      this.auditStatement(
+        "STOCK_TRANSFER_REQUESTED",
+        "STOCK_TRANSFER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.sourceBranchId,
+      ),
+    );
+    await this.db.batch(statements);
+    return { id, duplicate: false, status: "REQUESTED" as const };
+  }
+
+  async approveStockTransfer(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryTransfer);
+    const row = await this.db
+      .prepare(
+        "SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?",
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{ source_branch_id: string; destination_branch_id: string; status: string }>();
+    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.source_branch_id);
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.destination_branch_id);
+    if (row.status === "APPROVED") return { id, duplicate: true, status: "APPROVED" as const };
+    if (row.status !== "REQUESTED") {
+      throw new ServerOperationError("INVALID_STATE_TRANSITION", 409, `Transfer is ${row.status}`);
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          "UPDATE stock_transfers SET status='APPROVED',approved_by=?,approval_reason=?,updated_at=? WHERE tenant_id=? AND id=? AND status='REQUESTED'",
+        )
+        .bind(this.actor.id, reason, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "STOCK_TRANSFER_APPROVED",
+        "STOCK_TRANSFER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.source_branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "APPROVED" as const };
+  }
+
+  async cancelStockTransfer(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryTransfer);
+    const row = await this.db
+      .prepare(
+        "SELECT source_branch_id,destination_branch_id,status FROM stock_transfers WHERE tenant_id=? AND id=?",
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{ source_branch_id: string; destination_branch_id: string; status: string }>();
+    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.source_branch_id);
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.destination_branch_id);
+    if (row.status === "CANCELLED") return { id, duplicate: true, status: "CANCELLED" as const };
+    if (!["REQUESTED", "APPROVED"].includes(row.status)) {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Only requested or approved transfers can be cancelled",
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE stock_transfers SET status='CANCELLED',cancelled_by=?,cancelled_at=?,
+                  cancellation_reason=?,updated_at=? WHERE tenant_id=? AND id=?`,
+        )
+        .bind(this.actor.id, stamp, reason, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "STOCK_TRANSFER_CANCELLED",
+        "STOCK_TRANSFER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.source_branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "CANCELLED" as const };
+  }
+
+  async dispatchApprovedTransfer(
+    id: string,
+    input: { idempotencyKey: string; businessDate: string },
+  ) {
+    this.requirePermission(permissions.inventoryTransfer);
+    const transfer = await this.db
+      .prepare(
+        `SELECT source_branch_id,source_warehouse_id,destination_branch_id,destination_warehouse_id,
+                status FROM stock_transfers WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{
+        source_branch_id: string;
+        source_warehouse_id: string;
+        destination_branch_id: string;
+        destination_warehouse_id: string;
+        status: string;
+      }>();
+    if (!transfer)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock transfer not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, transfer.source_branch_id);
+    authorizeBranchRead(this.actor, this.actor.tenantId, transfer.destination_branch_id);
+    if (transfer.status === "IN_TRANSIT") {
+      const existing = await this.db
+        .prepare("SELECT id FROM inventory_transfer_shipments WHERE tenant_id=? AND transfer_id=?")
+        .bind(this.actor.tenantId, id)
+        .first<{ id: string }>();
+      return { id, shipmentId: existing?.id, duplicate: true, status: "IN_TRANSIT" as const };
+    }
+    if (transfer.status !== "APPROVED") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Transfer is ${transfer.status}`,
+      );
+    }
+    await this.assertBusinessDateOpen(transfer.source_branch_id, input.businessDate);
+    const duplicate = await this.db
+      .prepare(
+        "SELECT id FROM inventory_transfer_shipments WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string }>();
+    if (duplicate)
+      return { id, shipmentId: duplicate.id, duplicate: true, status: "IN_TRANSIT" as const };
+
+    const accounting = await this.transferAccountingConfiguration(
+      transfer.source_branch_id,
+      transfer.destination_branch_id,
+    );
+    const lines = await this.db
+      .prepare(
+        `SELECT id,inventory_item_id,requested_quantity_minor,unit_cost_minor,
+                source_lot_id,lot_number,expiry_date
+           FROM stock_transfer_lines WHERE tenant_id=? AND transfer_id=? ORDER BY id`,
+      )
+      .bind(this.actor.tenantId, id)
+      .all<{
+        id: string;
+        inventory_item_id: string;
+        requested_quantity_minor: number;
+        unit_cost_minor: number;
+        source_lot_id: string | null;
+        lot_number: string | null;
+        expiry_date: string | null;
+      }>();
+    if (!(lines.results ?? []).length) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Transfer has no lines");
+    }
+    const shipmentId = crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO inventory_transfer_shipments
+            (tenant_id,id,transfer_id,source_legal_entity_id,destination_legal_entity_id,status,
+             idempotency_key,dispatched_by,dispatched_at,created_at,updated_at)
+           VALUES (?,?,?,?,?,'IN_TRANSIT',?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          shipmentId,
+          id,
+          accounting.sourceLegalEntityId,
+          accounting.destinationLegalEntityId,
+          input.idempotencyKey,
+          this.actor.id,
+          stamp,
+          stamp,
+          stamp,
+        ),
+      this.db
+        .prepare(
+          "UPDATE stock_transfers SET status='IN_TRANSIT',updated_at=? WHERE tenant_id=? AND id=? AND status='APPROVED'",
+        )
+        .bind(stamp, this.actor.tenantId, id),
+    ];
+    for (const [index, line] of (lines.results ?? []).entries()) {
+      const sourceBalance = await this.db
+        .prepare(
+          `SELECT quantity_minor-quantity_reserved_minor AS available
+             FROM inventory_balances
+            WHERE tenant_id=? AND branch_id=? AND warehouse_id=? AND item_id=?`,
+        )
+        .bind(
+          this.actor.tenantId,
+          transfer.source_branch_id,
+          transfer.source_warehouse_id,
+          line.inventory_item_id,
+        )
+        .first<{ available: number }>();
+      if ((sourceBalance?.available ?? 0) < line.requested_quantity_minor) {
+        throw new ServerOperationError(
+          "CONFLICT",
+          409,
+          "Transfer cannot be dispatched because source available stock is insufficient",
+        );
+      }
+      if (line.source_lot_id) {
+        const lot = await this.db
+          .prepare(
+            "SELECT quantity_remaining_minor FROM inventory_lots WHERE tenant_id=? AND id=? AND status='AVAILABLE'",
+          )
+          .bind(this.actor.tenantId, line.source_lot_id)
+          .first<{ quantity_remaining_minor: number }>();
+        if (!lot || lot.quantity_remaining_minor < line.requested_quantity_minor) {
+          throw new ServerOperationError(
+            "CONFLICT",
+            409,
+            "Transfer source lot no longer has sufficient stock",
+          );
+        }
+      }
+      const valueMinor = quantityCostMinor(line.requested_quantity_minor, line.unit_cost_minor);
+      statements.push(
+        this.db
+          .prepare(
+            "UPDATE stock_transfer_lines SET sent_quantity_minor=requested_quantity_minor WHERE tenant_id=? AND id=?",
+          )
+          .bind(this.actor.tenantId, line.id),
+        this.movementStatement(
+          {
+            id: crypto.randomUUID(),
+            branchId: transfer.source_branch_id,
+            warehouseId: transfer.source_warehouse_id,
+            inventoryItemId: line.inventory_item_id,
+            movementType: "TRANSFER_OUT",
+            quantityBaseMicro: -line.requested_quantity_minor,
+            unitCostMinor: line.unit_cost_minor,
+            totalCostMinor: -valueMinor,
+            sourceType: "TRANSFER_SHIPMENT",
+            sourceId: shipmentId,
+            idempotencyKey: `transfer-request-dispatch:${input.idempotencyKey}:${index}`,
+            businessDate: input.businessDate,
+            occurredAt: stamp,
+            metadata: {
+              destinationBranchId: transfer.destination_branch_id,
+              accountingTreatment: accounting.treatment,
+              intercompanyConfigurationId: accounting.configurationId,
+              sourceLotId: line.source_lot_id,
+              lotNumber: line.lot_number,
+              expiryDate: line.expiry_date,
+            },
+          },
+          correlationId,
+        ),
+      );
+    }
+    statements.push(
+      this.auditStatement(
+        "STOCK_TRANSFER_DISPATCHED",
+        "INVENTORY_TRANSFER_SHIPMENT",
+        shipmentId,
+        stamp,
+        correlationId,
+        transfer.source_branch_id,
+      ),
+    );
+    await this.db.batch(statements);
+    return {
+      id,
+      shipmentId,
+      duplicate: false,
+      status: "IN_TRANSIT" as const,
+      accountingTreatment: accounting.treatment,
+    };
+  }
+
   async dispatchTransfer(input: StagedTransferDispatchInput) {
     this.requirePermission(permissions.inventoryTransfer);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.sourceBranchId);
@@ -3667,6 +4189,725 @@ export class InventoryIntelligenceService {
         };
       throw error;
     }
+  }
+
+  async listInventoryAdjustments(branchId: string, limit = 100) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryAdjust,
+      permissions.inventoryAdjustApprove,
+    ]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const pageSize = Math.min(200, Math.max(1, limit));
+    const result = await this.db
+      .prepare(
+        `SELECT a.id,a.branch_id,a.warehouse_id,w.name AS warehouse_name,
+                a.inventory_item_id,i.code,i.sku,i.name AS item_name,u.symbol AS unit_symbol,
+                a.quantity_minor,a.unit_cost_minor,a.estimated_value_minor,a.reason_code,a.notes,
+                a.status,a.requested_by,a.approved_by,a.rejected_by,a.decision_reason,
+                a.posted_movement_id,a.business_date,a.created_at,a.updated_at,a.decided_at
+           FROM inventory_adjustments a
+           JOIN warehouses w ON w.tenant_id=a.tenant_id AND w.id=a.warehouse_id
+           JOIN inventory_items i ON i.tenant_id=a.tenant_id AND i.id=a.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+          WHERE a.tenant_id=? AND a.branch_id=?
+          ORDER BY a.created_at DESC,a.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async requestInventoryAdjustment(input: {
+    id?: string;
+    branchId: string;
+    warehouseId: string;
+    inventoryItemId: string;
+    quantityMicro: number;
+    unitCostMinor?: number;
+    reasonCode: string;
+    notes?: string;
+    idempotencyKey: string;
+    businessDate: string;
+  }) {
+    this.requirePermission(permissions.inventoryAdjust);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    if (!Number.isSafeInteger(input.quantityMicro) || input.quantityMicro === 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Adjustment quantity must be a non-zero integer",
+      );
+    }
+    await this.assertBusinessDateOpen(input.branchId, input.businessDate, input.reasonCode);
+    const duplicate = await this.db
+      .prepare(
+        "SELECT id,status FROM inventory_adjustments WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
+    const item = await this.db
+      .prepare("SELECT id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.inventoryItemId)
+      .first();
+    if (!item) throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
+    const balance = await this.balance(input.branchId, input.warehouseId, input.inventoryItemId);
+    const unitCostMinor = input.unitCostMinor ?? balance.average_unit_cost_minor;
+    if (input.quantityMicro > 0 && unitCostMinor <= 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "A positive adjustment requires a unit cost when the item has no current cost",
+      );
+    }
+    const valueMinor = quantityCostMinor(input.quantityMicro, unitCostMinor);
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO inventory_adjustments
+            (tenant_id,id,branch_id,warehouse_id,inventory_item_id,quantity_minor,unit_cost_minor,
+             estimated_value_minor,reason_code,notes,status,idempotency_key,requested_by,
+             business_date,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,'PENDING',?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.warehouseId,
+          input.inventoryItemId,
+          input.quantityMicro,
+          unitCostMinor,
+          valueMinor,
+          requiredCode(input.reasonCode, "adjustment reason"),
+          input.notes?.trim() || null,
+          input.idempotencyKey,
+          this.actor.id,
+          input.businessDate,
+          stamp,
+          stamp,
+        ),
+      this.auditStatement(
+        "INVENTORY_ADJUSTMENT_REQUESTED",
+        "INVENTORY_ADJUSTMENT",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, duplicate: false, status: "PENDING" as const, estimatedValueMinor: valueMinor };
+  }
+
+  async approveInventoryAdjustment(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryAdjustApprove);
+    const row = await this.db
+      .prepare(
+        `SELECT branch_id,warehouse_id,inventory_item_id,quantity_minor,unit_cost_minor,
+                reason_code,status,business_date,posted_movement_id
+           FROM inventory_adjustments WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{
+        branch_id: string;
+        warehouse_id: string;
+        inventory_item_id: string;
+        quantity_minor: number;
+        unit_cost_minor: number | null;
+        reason_code: string;
+        status: string;
+        business_date: string;
+        posted_movement_id: string | null;
+      }>();
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "APPROVED") {
+      return {
+        id,
+        duplicate: true,
+        status: "APPROVED" as const,
+        movementId: row.posted_movement_id,
+      };
+    }
+    if (row.status !== "PENDING") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Adjustment is ${row.status}`,
+      );
+    }
+    await this.assertBusinessDateOpen(row.branch_id, row.business_date, reason);
+    const unitCostMinor =
+      row.unit_cost_minor ??
+      (await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id))
+        .average_unit_cost_minor;
+    if (row.quantity_minor > 0 && unitCostMinor <= 0) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Adjustment unit cost is required");
+    }
+    const movementId = crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const movementInput: InventoryMovementInput & {
+      id: string;
+      occurredAt: string;
+      unitCostMinor: number;
+      totalCostMinor: number;
+    } = {
+      id: movementId,
+      branchId: row.branch_id,
+      warehouseId: row.warehouse_id,
+      inventoryItemId: row.inventory_item_id,
+      movementType: "MANUAL_ADJUSTMENT",
+      quantityBaseMicro: row.quantity_minor,
+      unitCostMinor,
+      totalCostMinor: quantityCostMinor(row.quantity_minor, unitCostMinor),
+      sourceType: "INVENTORY_ADJUSTMENT",
+      sourceId: id,
+      idempotencyKey: `inventory-adjustment:${id}`,
+      businessDate: row.business_date,
+      occurredAt: stamp,
+      reason: row.reason_code,
+      metadata: { approvalReason: reason },
+    };
+    const statements: D1PreparedStatement[] = [
+      this.movementStatement(movementInput, correlationId),
+      this.db
+        .prepare(
+          `UPDATE inventory_adjustments
+              SET status='APPROVED',approved_by=?,decision_reason=?,posted_movement_id=?,
+                  decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, movementId, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "INVENTORY_ADJUSTMENT_APPROVED",
+        "INVENTORY_ADJUSTMENT",
+        id,
+        stamp,
+        correlationId,
+        row.branch_id,
+      ),
+      this.recalculationEventStatement(
+        row.branch_id,
+        "INVENTORY_ADJUSTMENT_APPROVED",
+        "INVENTORY_ITEM",
+        row.inventory_item_id,
+        `adjustment:${id}`,
+        stamp,
+        correlationId,
+      ),
+    ];
+    statements.push(...(await this.movementAccountingStatements(movementInput, correlationId)));
+    await this.db.batch(statements);
+    return { id, duplicate: false, status: "APPROVED" as const, movementId };
+  }
+
+  async rejectInventoryAdjustment(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryAdjustApprove);
+    const row = await this.db
+      .prepare("SELECT branch_id,status FROM inventory_adjustments WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string }>();
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory adjustment not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
+    if (row.status !== "PENDING") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Adjustment is ${row.status}`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE inventory_adjustments
+              SET status='REJECTED',rejected_by=?,decision_reason=?,decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "INVENTORY_ADJUSTMENT_REJECTED",
+        "INVENTORY_ADJUSTMENT",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "REJECTED" as const };
+  }
+
+  async listWastageRequests(branchId: string, limit = 100) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryWastageRecord,
+      permissions.inventoryWastageApprove,
+    ]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `SELECT w.id,w.branch_id,w.warehouse_id,wh.name AS warehouse_name,w.inventory_item_id,
+                i.code,i.sku,i.name AS item_name,u.symbol AS unit_symbol,w.quantity_minor,
+                w.reason_code,w.estimated_cost_minor,w.status,w.requested_by,w.approved_by,
+                w.rejected_by,w.decision_reason,w.movement_id,w.business_date,w.created_at,
+                w.updated_at,w.decided_at
+           FROM wastage w
+           LEFT JOIN warehouses wh ON wh.tenant_id=w.tenant_id AND wh.id=w.warehouse_id
+           LEFT JOIN inventory_items i ON i.tenant_id=w.tenant_id AND i.id=w.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+          WHERE w.tenant_id=? AND w.branch_id=?
+          ORDER BY w.created_at DESC,w.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, Math.min(200, Math.max(1, limit)))
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async requestWastage(input: {
+    id?: string;
+    branchId: string;
+    warehouseId: string;
+    inventoryItemId: string;
+    quantityMicro: number;
+    reasonCode: string;
+    notes?: string;
+    idempotencyKey: string;
+    businessDate: string;
+    stationId?: string;
+    employeeId?: string;
+  }) {
+    this.requirePermission(permissions.inventoryWastageRecord);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    await this.assertBusinessDateOpen(input.branchId, input.businessDate, input.reasonCode);
+    if (!Number.isSafeInteger(input.quantityMicro) || input.quantityMicro <= 0) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Wastage quantity must be positive");
+    }
+    const duplicate = await this.db
+      .prepare("SELECT id,status FROM wastage WHERE tenant_id=? AND idempotency_key=?")
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
+    const balance = await this.balance(input.branchId, input.warehouseId, input.inventoryItemId);
+    const estimatedCostMinor = quantityCostMinor(
+      input.quantityMicro,
+      balance.average_unit_cost_minor,
+    );
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const payload = JSON.stringify({
+      notes: input.notes?.trim() || undefined,
+      stationId: input.stationId,
+      employeeId: input.employeeId,
+    });
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO wastage
+            (tenant_id,id,branch_id,status,idempotency_key,payload_json,created_at,warehouse_id,
+             inventory_item_id,quantity_minor,reason_code,estimated_cost_minor,requested_by,
+             business_date,updated_at)
+           VALUES (?,?,?,'PENDING',?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.idempotencyKey,
+          payload,
+          stamp,
+          input.warehouseId,
+          input.inventoryItemId,
+          input.quantityMicro,
+          requiredCode(input.reasonCode, "wastage reason"),
+          estimatedCostMinor,
+          this.actor.id,
+          input.businessDate,
+          stamp,
+        ),
+      this.auditStatement(
+        "WASTAGE_REQUESTED",
+        "WASTAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, duplicate: false, status: "PENDING" as const, estimatedCostMinor };
+  }
+
+  async approveWastageRequest(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryWastageApprove);
+    const row = await this.db
+      .prepare(
+        `SELECT branch_id,warehouse_id,inventory_item_id,quantity_minor,reason_code,status,
+                business_date,movement_id FROM wastage WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{
+        branch_id: string;
+        warehouse_id: string | null;
+        inventory_item_id: string | null;
+        quantity_minor: number | null;
+        reason_code: string | null;
+        status: string;
+        business_date: string | null;
+        movement_id: string | null;
+      }>();
+    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Wastage request not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "APPROVED") {
+      return { id, duplicate: true, status: "APPROVED" as const, movementId: row.movement_id };
+    }
+    if (
+      row.status !== "PENDING" ||
+      !row.warehouse_id ||
+      !row.inventory_item_id ||
+      !row.quantity_minor ||
+      !row.business_date
+    ) {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        "Wastage request is not approvable",
+      );
+    }
+    await this.assertBusinessDateOpen(row.branch_id, row.business_date, reason);
+    const balance = await this.balance(row.branch_id, row.warehouse_id, row.inventory_item_id);
+    const cost = quantityCostMinor(row.quantity_minor, balance.average_unit_cost_minor);
+    const movementId = crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const movementInput: InventoryMovementInput & {
+      id: string;
+      occurredAt: string;
+      unitCostMinor: number;
+      totalCostMinor: number;
+    } = {
+      id: movementId,
+      branchId: row.branch_id,
+      warehouseId: row.warehouse_id,
+      inventoryItemId: row.inventory_item_id,
+      movementType: "WASTAGE",
+      quantityBaseMicro: -row.quantity_minor,
+      unitCostMinor: balance.average_unit_cost_minor,
+      totalCostMinor: -cost,
+      sourceType: "WASTAGE",
+      sourceId: id,
+      idempotencyKey: `wastage-approved:${id}`,
+      businessDate: row.business_date,
+      occurredAt: stamp,
+      reason: row.reason_code ?? "WASTAGE",
+      metadata: { approvalReason: reason },
+    };
+    const statements: D1PreparedStatement[] = [
+      this.movementStatement(movementInput, correlationId),
+      this.db
+        .prepare(
+          `UPDATE wastage
+              SET status='APPROVED',approved_by=?,decision_reason=?,movement_id=?,
+                  estimated_cost_minor=?,decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, movementId, cost, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement("WASTAGE_APPROVED", "WASTAGE", id, stamp, correlationId, row.branch_id),
+      this.recalculationEventStatement(
+        row.branch_id,
+        "WASTAGE_APPROVED",
+        "INVENTORY_ITEM",
+        row.inventory_item_id,
+        `wastage:${id}`,
+        stamp,
+        correlationId,
+      ),
+    ];
+    statements.push(...(await this.movementAccountingStatements(movementInput, correlationId)));
+    await this.db.batch(statements);
+    return {
+      id,
+      duplicate: false,
+      status: "APPROVED" as const,
+      movementId,
+      estimatedCostMinor: cost,
+    };
+  }
+
+  async rejectWastageRequest(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryWastageApprove);
+    const row = await this.db
+      .prepare("SELECT branch_id,status FROM wastage WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string }>();
+    if (!row) throw new ServerOperationError("VALIDATION_FAILED", 404, "Wastage request not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
+    if (row.status !== "PENDING") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Wastage request is ${row.status}`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE wastage SET status='REJECTED',rejected_by=?,decision_reason=?,decided_at=?,
+                  updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "WASTAGE_REJECTED",
+        "WASTAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "REJECTED" as const };
+  }
+
+  async listBreakageRequests(branchId: string, limit = 100) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryWastageRecord,
+      permissions.inventoryWastageApprove,
+    ]);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `SELECT b.id,b.branch_id,b.warehouse_id,w.name AS warehouse_name,b.asset_name,
+                b.quantity_minor,b.unit_label,b.reason_code,b.estimated_value_minor,b.status,
+                b.requested_by,b.approved_by,b.rejected_by,b.decision_reason,b.business_date,
+                b.created_at,b.updated_at,b.decided_at
+           FROM breakages b
+           LEFT JOIN warehouses w ON w.tenant_id=b.tenant_id AND w.id=b.warehouse_id
+          WHERE b.tenant_id=? AND b.branch_id=?
+          ORDER BY b.created_at DESC,b.id DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, Math.min(200, Math.max(1, limit)))
+      .all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  async requestBreakage(input: {
+    id?: string;
+    branchId: string;
+    warehouseId?: string;
+    assetName: string;
+    quantityMicro: number;
+    unitLabel: string;
+    reasonCode: string;
+    estimatedValueMinor: number;
+    notes?: string;
+    idempotencyKey: string;
+    businessDate: string;
+  }) {
+    this.requirePermission(permissions.inventoryWastageRecord);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    if (input.warehouseId) await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    if (input.quantityMicro <= 0 || !Number.isSafeInteger(input.quantityMicro)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Breakage quantity must be positive",
+      );
+    }
+    const duplicate = await this.db
+      .prepare("SELECT id,status FROM breakages WHERE tenant_id=? AND idempotency_key=?")
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO breakages
+            (tenant_id,id,branch_id,status,idempotency_key,payload_json,created_at,warehouse_id,
+             asset_name,quantity_minor,unit_label,reason_code,estimated_value_minor,requested_by,
+             business_date,updated_at)
+           VALUES (?,?,?,'PENDING',?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.idempotencyKey,
+          JSON.stringify({ notes: input.notes?.trim() || undefined }),
+          stamp,
+          input.warehouseId ?? null,
+          requiredText(input.assetName, "breakage item"),
+          input.quantityMicro,
+          requiredText(input.unitLabel, "breakage unit"),
+          requiredCode(input.reasonCode, "breakage reason"),
+          input.estimatedValueMinor,
+          this.actor.id,
+          input.businessDate,
+          stamp,
+        ),
+      this.auditStatement(
+        "BREAKAGE_REQUESTED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, duplicate: false, status: "PENDING" as const };
+  }
+
+  async approveBreakageRequest(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryWastageApprove);
+    const row = await this.db
+      .prepare("SELECT branch_id,status FROM breakages WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string }>();
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "APPROVED") return { id, duplicate: true, status: "APPROVED" as const };
+    if (row.status !== "PENDING") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Breakage request is ${row.status}`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE breakages SET status='APPROVED',approved_by=?,decision_reason=?,decided_at=?,
+                  updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "BREAKAGE_APPROVED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "APPROVED" as const };
+  }
+
+  async rejectBreakageRequest(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryWastageApprove);
+    const row = await this.db
+      .prepare("SELECT branch_id,status FROM breakages WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; status: string }>();
+    if (!row)
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Breakage request not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, row.branch_id);
+    if (row.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
+    if (row.status !== "PENDING") {
+      throw new ServerOperationError(
+        "INVALID_STATE_TRANSITION",
+        409,
+        `Breakage request is ${row.status}`,
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE breakages SET status='REJECTED',rejected_by=?,decision_reason=?,decided_at=?,
+                  updated_at=? WHERE tenant_id=? AND id=? AND status='PENDING'`,
+        )
+        .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "BREAKAGE_REJECTED",
+        "BREAKAGE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        row.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "REJECTED" as const };
+  }
+
+  async listParPolicies(branchId: string) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `WITH slots AS (
+           SELECT warehouse_id,item_id FROM inventory_balances WHERE tenant_id=? AND branch_id=?
+           UNION
+           SELECT warehouse_id,inventory_item_id FROM inventory_par_policies
+            WHERE tenant_id=? AND branch_id=? AND active=1
+           UNION
+           SELECT i.default_warehouse_id AS warehouse_id,i.id AS item_id
+             FROM inventory_items i
+             JOIN warehouses w ON w.tenant_id=i.tenant_id AND w.id=i.default_warehouse_id
+            WHERE i.tenant_id=? AND i.active=1 AND w.branch_id=? AND w.active=1
+         )
+         SELECT s.warehouse_id,w.name AS warehouse_name,i.id AS inventory_item_id,
+                i.code,i.sku,i.name AS item_name,u.symbol AS unit_symbol,
+                COALESCE(b.quantity_minor,0) AS on_hand_minor,
+                COALESCE(b.quantity_reserved_minor,0) AS reserved_minor,
+                COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0) AS available_minor,
+                COALESCE(b.average_unit_cost_minor,0) AS average_unit_cost_minor,
+                COALESCE(p.minimum_quantity_minor,0) AS minimum_quantity_minor,
+                COALESCE(p.reorder_point_minor,0) AS reorder_point_minor,
+                COALESCE(p.target_quantity_minor,0) AS target_quantity_minor,
+                p.maximum_quantity_minor,COALESCE(p.safety_stock_minor,0) AS safety_stock_minor,
+                COALESCE(p.recommendation_mode,'RECOMMEND') AS recommendation_mode,
+                ps.name AS preferred_supplier_name,
+                CASE WHEN COALESCE(p.target_quantity_minor,0)>
+                               COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0)
+                     THEN COALESCE(p.target_quantity_minor,0)-
+                          (COALESCE(b.quantity_minor,0)-COALESCE(b.quantity_reserved_minor,0))
+                     ELSE 0 END AS suggested_quantity_minor
+           FROM slots s
+           JOIN warehouses w ON w.tenant_id=? AND w.branch_id=? AND w.id=s.warehouse_id AND w.active=1
+           JOIN inventory_items i ON i.tenant_id=? AND i.id=s.item_id AND i.active=1
+           LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=i.tenant_id AND b.branch_id=? AND b.warehouse_id=s.warehouse_id
+            AND b.item_id=i.id
+           LEFT JOIN inventory_par_policies p
+             ON p.tenant_id=i.tenant_id AND p.branch_id=? AND p.warehouse_id=s.warehouse_id
+            AND p.inventory_item_id=i.id AND p.day_of_week IS NULL AND p.active=1
+           LEFT JOIN suppliers ps
+             ON ps.tenant_id=i.tenant_id AND ps.id=i.preferred_supplier_id AND ps.active=1
+          ORDER BY w.name,i.name,i.id`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        this.actor.tenantId,
+        branchId,
+        branchId,
+      )
+      .all<Record<string, unknown>>();
+    return (result.results ?? []).map((row) => {
+      const suggested = Number(row["suggested_quantity_minor"] ?? 0);
+      const cost = Number(row["average_unit_cost_minor"] ?? 0);
+      return { ...row, suggested_value_minor: quantityCostMinor(suggested, cost) };
+    });
   }
 
   async recordWastage(input: {
@@ -5281,19 +6522,147 @@ export class InventoryIntelligenceService {
     };
   }
 
-  async listWarehouses(branchId: string) {
-    this.requirePermission(permissions.inventoryView);
+  async listWarehouses(branchId: string, includeArchived = false) {
+    this.requireAnyPermission([
+      permissions.inventoryView,
+      permissions.inventoryAdjust,
+      permissions.inventoryTransfer,
+      permissions.inventoryCount,
+    ]);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
     const result = await this.db
       .prepare(
-        `SELECT id,code,name,branch_id
-           FROM warehouses
-          WHERE tenant_id=? AND branch_id=? AND active=1
-          ORDER BY name,id`,
+        `SELECT w.id,w.code,w.name,w.branch_id,w.location_type,w.active,w.created_at,w.updated_at,
+                w.archived_at,
+                COUNT(DISTINCT CASE WHEN b.quantity_minor<>0 OR b.quantity_reserved_minor<>0
+                                    THEN b.item_id END) AS stocked_item_count,
+                COALESCE(SUM(b.total_value_minor),0) AS stock_value_minor
+           FROM warehouses w
+           LEFT JOIN inventory_balances b
+             ON b.tenant_id=w.tenant_id AND b.branch_id=w.branch_id AND b.warehouse_id=w.id
+          WHERE w.tenant_id=? AND w.branch_id=? AND (?=1 OR w.active=1)
+          GROUP BY w.id,w.code,w.name,w.branch_id,w.location_type,w.active,w.created_at,w.updated_at,
+                   w.archived_at
+          ORDER BY w.active DESC,w.name,w.id`,
       )
-      .bind(this.actor.tenantId, branchId)
-      .all<{ id: string; code: string; name: string; branch_id: string }>();
+      .bind(this.actor.tenantId, branchId, includeArchived ? 1 : 0)
+      .all<Record<string, unknown>>();
     return result.results ?? [];
+  }
+
+  async createWarehouse(input: {
+    id?: string;
+    branchId: string;
+    code: string;
+    name: string;
+    locationType: "MAIN" | "KITCHEN" | "BAR" | "COLD" | "TRANSIT" | "OTHER";
+  }) {
+    this.requirePermission(permissions.inventoryAdjust);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO warehouses
+            (tenant_id,id,branch_id,code,name,active,payload_json,location_type,created_at,updated_at)
+           VALUES (?,?,?,?,?,1,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          requiredCode(input.code, "warehouse code"),
+          requiredText(input.name, "warehouse name"),
+          JSON.stringify({ type: input.locationType }),
+          input.locationType,
+          stamp,
+          stamp,
+        ),
+      this.auditStatement(
+        "WAREHOUSE_CREATED",
+        "WAREHOUSE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        input.branchId,
+      ),
+    ]);
+    return { id, ...input, active: true };
+  }
+
+  async archiveWarehouse(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryAdjust);
+    const warehouse = await this.db
+      .prepare("SELECT branch_id,name,active FROM warehouses WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, id)
+      .first<{ branch_id: string; name: string; active: number }>();
+    if (!warehouse) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Warehouse not found");
+    }
+    authorizeBranchRead(this.actor, this.actor.tenantId, warehouse.branch_id);
+    if (!warehouse.active) return { id, duplicate: true, status: "ARCHIVED" as const };
+    const [stock, counts, transfers, defaults] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM inventory_balances
+            WHERE tenant_id=? AND warehouse_id=? AND
+                  (quantity_minor<>0 OR quantity_reserved_minor<>0)`,
+        )
+        .bind(this.actor.tenantId, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM stock_count_sessions
+            WHERE tenant_id=? AND warehouse_id=?
+              AND status IN ('DRAFT','COUNTING','SUBMITTED','REVIEW')`,
+        )
+        .bind(this.actor.tenantId, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM stock_transfers
+            WHERE tenant_id=? AND (source_warehouse_id=? OR destination_warehouse_id=?)
+              AND status IN ('REQUESTED','APPROVED','PICKED','IN_TRANSIT')`,
+        )
+        .bind(this.actor.tenantId, id, id)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM inventory_items WHERE tenant_id=? AND default_warehouse_id=? AND active=1",
+        )
+        .bind(this.actor.tenantId, id)
+        .first<{ count: number }>(),
+    ]);
+    if (
+      (stock?.count ?? 0) > 0 ||
+      (counts?.count ?? 0) > 0 ||
+      (transfers?.count ?? 0) > 0 ||
+      (defaults?.count ?? 0) > 0
+    ) {
+      throw new ServerOperationError(
+        "CONFLICT",
+        409,
+        "Warehouse cannot be archived while it has stock, active counts/transfers, or active item defaults",
+      );
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          "UPDATE warehouses SET active=0,archived_at=?,updated_at=? WHERE tenant_id=? AND id=? AND active=1",
+        )
+        .bind(stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "WAREHOUSE_ARCHIVED",
+        "WAREHOUSE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        warehouse.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "ARCHIVED" as const, reason };
   }
 
   async inventoryItemDetail(input: { branchId: string; sku: string; limit?: number }) {

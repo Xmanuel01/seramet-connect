@@ -50,6 +50,68 @@ export const inventoryItemSchema = z
   })
   .strict();
 
+export const inventoryAdjustmentRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    inventoryItemId: id,
+    quantityMicro: integer.refine((value) => value !== 0, {
+      message: "Adjustment quantity cannot be zero",
+    }),
+    unitCostMinor: nonNegativeInteger.optional(),
+    reasonCode: code,
+    notes: z.string().trim().max(500).optional(),
+    idempotencyKey: id,
+  })
+  .strict();
+
+export const inventoryDecisionSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+export const inventoryWastageRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    inventoryItemId: id,
+    quantityMicro: positiveInteger,
+    reasonCode: code,
+    notes: z.string().trim().max(500).optional(),
+    idempotencyKey: id,
+    stationId: id.optional(),
+    employeeId: id.optional(),
+  })
+  .strict();
+
+export const inventoryBreakageRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id.optional(),
+    assetName: z.string().trim().min(1).max(160),
+    quantityMicro: positiveInteger,
+    unitLabel: z.string().trim().min(1).max(40),
+    reasonCode: code,
+    estimatedValueMinor: nonNegativeInteger,
+    notes: z.string().trim().max(500).optional(),
+    idempotencyKey: id,
+  })
+  .strict();
+
+export const warehouseSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    code,
+    name: z.string().trim().min(1).max(160),
+    locationType: z.enum(["MAIN", "KITCHEN", "BAR", "COLD", "TRANSIT", "OTHER"]),
+  })
+  .strict();
+
 export const conversionSchema = z
   .object({
     id: id.optional(),
@@ -223,6 +285,41 @@ export const movementSchema = z
     lotId: id.optional(),
     negativeOverride: z.boolean().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const stockTransferRequestSchema = z
+  .object({
+    id: id.optional(),
+    sourceBranchId: id,
+    sourceWarehouseId: id,
+    destinationBranchId: id,
+    destinationWarehouseId: id,
+    idempotencyKey: id,
+    lines: z
+      .array(
+        z
+          .object({
+            inventoryItemId: id,
+            quantityMicro: positiveInteger,
+            sourceLotId: id.optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(500),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.sourceBranchId !== value.destinationBranchId ||
+      value.sourceWarehouseId !== value.destinationWarehouseId,
+    { message: "Transfer source and destination must differ" },
+  );
+
+export const transferDispatchSchema = z
+  .object({
+    idempotencyKey: id,
   })
   .strict();
 

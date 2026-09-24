@@ -122,6 +122,13 @@ export type InventoryBranchPayload = {
     code: string;
     name: string;
     branch_id: string;
+    location_type: "MAIN" | "KITCHEN" | "BAR" | "COLD" | "TRANSIT" | "OTHER";
+    active: number;
+    created_at: string | null;
+    updated_at: string | null;
+    archived_at: string | null;
+    stocked_item_count: number;
+    stock_value_minor: number;
   }>;
   units: Array<{
     id: string;
