@@ -43,7 +43,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("applies schema version 9 and the commercial onboarding tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(21);
+    ).toBe(22);
     for (const table of [
       "tenant_onboarding_profiles",
       "branch_operating_profiles",
