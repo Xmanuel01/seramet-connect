@@ -156,14 +156,15 @@ function Receiving() {
     setLineState((current) => ({
       ...current,
       [lineId]: {
-        received: "0",
-        accepted: "0",
-        rejected: "0",
-        unitPrice: "0",
-        lotNumber: "",
-        expiryDate: "",
-        notes: "",
-        ...current[lineId],
+        ...(current[lineId] ?? {
+          received: "0",
+          accepted: "0",
+          rejected: "0",
+          unitPrice: "0",
+          lotNumber: "",
+          expiryDate: "",
+          notes: "",
+        }),
         ...patch,
       },
     }));
