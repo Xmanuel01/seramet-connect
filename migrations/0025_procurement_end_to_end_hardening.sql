@@ -18,5 +18,18 @@ CREATE INDEX IF NOT EXISTS idx_supplier_invoices_branch_due
 CREATE INDEX IF NOT EXISTS idx_procurement_matches_invoice
   ON procurement_matches(tenant_id,supplier_invoice_id,status);
 
+CREATE TRIGGER IF NOT EXISTS purchase_order_status_transition_guard
+BEFORE UPDATE OF status ON purchase_orders
+WHEN NEW.status <> OLD.status
+ AND NOT (
+   (OLD.status='DRAFT' AND NEW.status IN ('SUBMITTED','CANCELLED')) OR
+   (OLD.status='SUBMITTED' AND NEW.status IN ('APPROVED','CANCELLED')) OR
+   (OLD.status='APPROVED' AND NEW.status IN ('PARTIALLY_RECEIVED','RECEIVED','CANCELLED')) OR
+   (OLD.status='PARTIALLY_RECEIVED' AND NEW.status='RECEIVED')
+ )
+BEGIN
+  SELECT RAISE(ABORT,'invalid purchase order status transition');
+END;
+
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
 VALUES (25,'procurement_end_to_end_hardening','procurement-end-to-end-hardening-0025-v1',CURRENT_TIMESTAMP);
