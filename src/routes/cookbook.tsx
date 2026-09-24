@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Copy, Pencil, RefreshCw, Send } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,7 +8,7 @@ import { QUANTITY_SCALE } from "@/inventory/quantity";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
-import { type CookbookContent, type CookbookRecipe, useCookbook } from "@/cookbook/use-cookbook";
+import { type CookbookRecipe, useCookbook } from "@/cookbook/use-cookbook";
 
 export const Route = createFileRoute("/cookbook")({
   head: () => ({
@@ -461,7 +461,7 @@ function Info({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">{label}{children}</label>;
 }
 
