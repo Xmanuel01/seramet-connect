@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChefHat,
   ClipboardList,
-  Clock3,
   Pencil,
   Play,
   Printer,
