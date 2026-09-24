@@ -77,7 +77,12 @@ function SupplierBills() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Open bill face value" value={openFaceValueMinor / 100} money />
-        <Metric label="Overdue face value" value={overdueMinor / 100} money invert={overdueMinor > 0} />
+        <Metric
+          label="Overdue face value"
+          value={overdueMinor / 100}
+          money
+          invert={overdueMinor > 0}
+        />
         <Metric label="Match exceptions" value={matchExceptions} invert={matchExceptions > 0} />
         <Metric label="Three-way matched" value={matchedRate} suffix="%" />
       </div>
@@ -142,9 +147,7 @@ function SupplierBills() {
                       {ksh(Number(bill.total_minor) / 100)}
                     </TD>
                     <TD className="num text-right">
-                      {bill.variance_minor === null
-                        ? "-"
-                        : ksh(Number(bill.variance_minor) / 100)}
+                      {bill.variance_minor === null ? "-" : ksh(Number(bill.variance_minor) / 100)}
                     </TD>
                     <TD>
                       <Status>{bill.match_status ?? "REVIEW_REQUIRED"}</Status>
