@@ -37,6 +37,7 @@ type AdjustmentRow = {
   unit_cost_minor: number | null;
   reason: string;
   status: string;
+  requested_by: string;
   requested_by_name: string | null;
   decided_by_name: string | null;
   decision_reason: string | null;
