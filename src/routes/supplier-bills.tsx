@@ -228,11 +228,11 @@ function EnterSupplierBillDialog({
   const selectedCurrency = po?.currency || supplier?.currency || fallbackCurrency;
   const valid = Boolean(
     receipt &&
-      po &&
-      supplier &&
-      invoiceNumber.trim() &&
-      /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) &&
-      totalMinor >= 0,
+    po &&
+    supplier &&
+    invoiceNumber.trim() &&
+    /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) &&
+    totalMinor >= 0,
   );
 
   const chooseReceipt = (id: string) => {
