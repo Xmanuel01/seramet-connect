@@ -133,9 +133,7 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.inventoryAdjust);
     if (input.categoryId) {
       const category = await this.db
-        .prepare(
-          "SELECT id FROM inventory_categories WHERE tenant_id=? AND id=? AND active=1",
-        )
+        .prepare("SELECT id FROM inventory_categories WHERE tenant_id=? AND id=? AND active=1")
         .bind(this.actor.tenantId, input.categoryId)
         .first<{ id: string }>();
       if (!category) {
@@ -4678,7 +4676,11 @@ export class InventoryIntelligenceService {
       )
       .bind(...values)
       .all<Record<string, unknown>>();
-    return { branchId: input.branchId, rows: result.results ?? [], generatedAt: new Date().toISOString() };
+    return {
+      branchId: input.branchId,
+      rows: result.results ?? [],
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   async listStockCounts(branchId: string, limit = 50) {
@@ -4781,7 +4783,10 @@ export class InventoryIntelligenceService {
       );
     }
 
-    const stock = await this.stockDetail({ branchId: input.branchId, warehouseId: input.warehouseId });
+    const stock = await this.stockDetail({
+      branchId: input.branchId,
+      warehouseId: input.warehouseId,
+    });
     if (!stock.rows.length) {
       throw new ServerOperationError(
         "VALIDATION_FAILED",
@@ -4859,13 +4864,13 @@ export class InventoryIntelligenceService {
 
   async saveStockCount(
     id: string,
-    input: { lines: Array<{ inventoryItemId: string; countedQuantityMicro: number; reason?: string }> },
+    input: {
+      lines: Array<{ inventoryItemId: string; countedQuantityMicro: number; reason?: string }>;
+    },
   ) {
     this.requirePermission(permissions.inventoryCount);
     const session = await this.db
-      .prepare(
-        "SELECT branch_id,status FROM stock_count_sessions WHERE tenant_id=? AND id=?",
-      )
+      .prepare("SELECT branch_id,status FROM stock_count_sessions WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, id)
       .first<{ branch_id: string; status: string }>();
     if (!session) throw new ServerOperationError("VALIDATION_FAILED", 404, "Stock count not found");
@@ -5072,12 +5077,7 @@ export class InventoryIntelligenceService {
             `UPDATE stock_count_lines SET posted_movement_id=?
               WHERE tenant_id=? AND stock_count_session_id=? AND inventory_item_id=?`,
           )
-          .bind(
-            movementId,
-            this.actor.tenantId,
-            id,
-            String(line["inventory_item_id"]),
-          ),
+          .bind(movementId, this.actor.tenantId, id, String(line["inventory_item_id"])),
       );
     }
     statements.push(
@@ -5087,13 +5087,7 @@ export class InventoryIntelligenceService {
               SET status='POSTED',approved_by=?,approval_reason=?,updated_at=?,revision=revision+1
             WHERE tenant_id=? AND id=? AND status IN ('SUBMITTED','REVIEW')`,
         )
-        .bind(
-          this.actor.id,
-          approvalReason?.trim() || null,
-          stamp,
-          this.actor.tenantId,
-          id,
-        ),
+        .bind(this.actor.id, approvalReason?.trim() || null, stamp, this.actor.tenantId, id),
       this.auditStatement(
         "STOCK_COUNT_POSTED",
         "STOCK_COUNT",
@@ -5504,9 +5498,7 @@ export class InventoryIntelligenceService {
 
   private async assertWarehouseBranch(branchId: string, warehouseId: string) {
     const row = await this.db
-      .prepare(
-        "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
-      )
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, branchId, warehouseId)
       .first<{ id: string }>();
     if (!row) {
