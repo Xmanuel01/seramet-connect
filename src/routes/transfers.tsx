@@ -156,10 +156,10 @@ function Transfers() {
     }
     let cancelled = false;
     void request<{ detail: { rows: StockPosition[] } }>(
-        `/api/seramet/inventory/stock-detail?branchId=${encodeURIComponent(
-          sourceBranchId,
-        )}&warehouseId=${encodeURIComponent(sourceWarehouseId)}`,
-      )
+      `/api/seramet/inventory/stock-detail?branchId=${encodeURIComponent(
+        sourceBranchId,
+      )}&warehouseId=${encodeURIComponent(sourceWarehouseId)}`,
+    )
       .then((body) => {
         if (!cancelled) setSourceItems(body.detail.rows);
       })
