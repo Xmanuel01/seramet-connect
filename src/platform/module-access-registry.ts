@@ -290,7 +290,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: stockScopes,
     policyCode: "MODULE_ACCESS.PRODUCTION",
-    routes: ["/production", "/recipes", "/prep"],
+    routes: ["/production", "/recipes", "/cookbook", "/prep"],
   },
   {
     key: "cost-control",
