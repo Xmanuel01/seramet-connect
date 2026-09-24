@@ -278,7 +278,7 @@ function CreateRequisitionDialog({
               className={inputClass}
             >
               {data?.items.map((row) => (
-                <option key={`${row.warehouse_id ?? "all"}:${row.id}`} value={row.id}>
+                <option key={`${row.default_warehouse_id ?? "all"}:${row.id}`} value={row.id}>
                   {row.name}
                 </option>
               ))}
