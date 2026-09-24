@@ -259,6 +259,24 @@ export type RecipeComponentInput = {
   stationId?: string;
 };
 
+export type RecipeDefinitionInput = {
+  recipeId?: string;
+  menuItemId?: string;
+  productionItemId?: string;
+  branchOverrideId?: string;
+  name: string;
+  yieldQuantityMicro: number;
+  yieldUnitId: string;
+  packagingCostMinor?: number;
+  productionOverheadMinor?: number;
+  components: RecipeComponentInput[];
+};
+
+export type RecipeImportInput = {
+  idempotencyKey: string;
+  recipes: RecipeDefinitionInput[];
+};
+
 export type RecipeVersionInput = {
   recipeId: string;
   version: number;
