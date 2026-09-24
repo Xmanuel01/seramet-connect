@@ -300,12 +300,12 @@ function CreatePurchaseOrderDialog({
   const requestedMicro = Math.round(Number(quantity) * 1_000_000);
   const valid = Boolean(
     supplier &&
-      warehouse &&
-      item &&
-      purchaseUnitId &&
-      requestedMicro > 0 &&
-      Number(unitPrice) >= 0 &&
-      (remainingMicro === null || requestedMicro <= remainingMicro),
+    warehouse &&
+    item &&
+    purchaseUnitId &&
+    requestedMicro > 0 &&
+    Number(unitPrice) >= 0 &&
+    (remainingMicro === null || requestedMicro <= remainingMicro),
   );
 
   return (
