@@ -648,6 +648,89 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertSupplierAllowedByEnterprisePolicy(input.branchId, input.supplierId);
     if (input.lines.length === 0) throw new Error("A purchase order requires at least one line");
+
+    let requisitionLines:
+      | Map<
+          string,
+          {
+            id: string;
+            inventory_item_id: string;
+            unit_id: string;
+            requested_quantity_minor: number;
+            ordered_quantity_minor: number;
+          }
+        >
+      | undefined;
+    if (input.requisitionId) {
+      const requisition = await this.db
+        .prepare(
+          `SELECT branch_id,warehouse_id,status
+           FROM purchase_requisitions WHERE tenant_id=? AND id=?`,
+        )
+        .bind(this.actor.tenantId, input.requisitionId)
+        .first<{ branch_id: string; warehouse_id: string; status: string }>();
+      if (!requisition) {
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase requisition not found");
+      }
+      if (
+        requisition.branch_id !== input.branchId ||
+        requisition.warehouse_id !== input.warehouseId
+      ) {
+        throw new ServerOperationError(
+          "TENANT_SCOPE_VIOLATION",
+          403,
+          "Purchase order scope does not match the requisition",
+        );
+      }
+      if (!["APPROVED", "PARTIALLY_ORDERED"].includes(requisition.status)) {
+        throw invalidTransition("Purchase requisition", requisition.status, "PARTIALLY_ORDERED");
+      }
+      const rows = await this.db
+        .prepare(
+          `SELECT id,inventory_item_id,unit_id,requested_quantity_minor,ordered_quantity_minor
+           FROM purchase_requisition_lines
+           WHERE tenant_id=? AND requisition_id=?`,
+        )
+        .bind(this.actor.tenantId, input.requisitionId)
+        .all<{
+          id: string;
+          inventory_item_id: string;
+          unit_id: string;
+          requested_quantity_minor: number;
+          ordered_quantity_minor: number;
+        }>();
+      requisitionLines = new Map(
+        (rows.results ?? []).map((line) => [line.inventory_item_id, line]),
+      );
+      const requestedOnThisPo = new Map<string, number>();
+      for (const line of input.lines) {
+        const requisitionLine = requisitionLines.get(line.inventoryItemId);
+        if (!requisitionLine) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order contains an item not present on the requisition",
+          );
+        }
+        if (requisitionLine.unit_id !== line.purchaseUnitId) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order unit must match the requisition unit",
+          );
+        }
+        const next = (requestedOnThisPo.get(line.inventoryItemId) ?? 0) + line.quantityMicro;
+        requestedOnThisPo.set(line.inventoryItemId, next);
+        if (requisitionLine.ordered_quantity_minor + next > requisitionLine.requested_quantity_minor) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order quantity exceeds the outstanding requisition quantity",
+          );
+        }
+      }
+    }
+
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     let totalMinor = 0;
@@ -721,12 +804,34 @@ export class InventoryIntelligenceService {
             line.discountMinor ?? 0,
           ),
       );
+      if (input.requisitionId && requisitionLines) {
+        const requisitionLine = requisitionLines.get(line.inventoryItemId)!;
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE purchase_requisition_lines
+               SET ordered_quantity_minor=ordered_quantity_minor+?
+               WHERE tenant_id=? AND id=?`,
+            )
+            .bind(line.quantityMicro, this.actor.tenantId, requisitionLine.id),
+        );
+      }
     }
     if (input.requisitionId) {
       statements.push(
         this.db
           .prepare(
-            `UPDATE purchase_requisitions SET status='ORDERED',updated_at=?
+            `UPDATE purchase_requisitions
+             SET status=CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor < prl.requested_quantity_minor
+               ) THEN 'PARTIALLY_ORDERED'
+               ELSE 'ORDERED'
+             END,
+             updated_at=?
              WHERE tenant_id=? AND id=? AND status IN ('APPROVED','PARTIALLY_ORDERED')`,
           )
           .bind(stamp, this.actor.tenantId, input.requisitionId),
