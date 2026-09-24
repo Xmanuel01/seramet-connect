@@ -857,6 +857,37 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     ).rejects.toThrow("fully dispositioned");
   });
 
+  it("requires lot and expiry evidence for expiry-tracked items", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-expiry-evidence",
+      "PO-EXPIRY-EVIDENCE",
+      "REJECT_OVER_RECEIPT",
+    );
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: fixture.supplierId,
+        receiptNumber: "GR-NO-EXPIRY-EVIDENCE",
+        idempotencyKey: "receipt-no-expiry-evidence",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "expiry-evidence-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("require both a lot number and expiry date");
+  });
+
   it("deduplicates receipt retries and creates one stock effect", async () => {
     const fixture = await seedProcurement(service);
     const po = await createApprovedPo(
@@ -3095,6 +3126,8 @@ async function receiveQuantity(
         receivedPurchaseQuantityMicro: quantityMicro,
         acceptedPurchaseQuantityMicro: quantityMicro,
         unitPriceMinor,
+        lotNumber: `LOT-${idempotencyKey}`,
+        expiryDate: "2026-09-30",
       },
     ],
   });
