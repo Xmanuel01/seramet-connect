@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
 import { ClipboardCheck, PackageCheck, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -6,7 +6,6 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatDate, formatNumber, ksh } from "@/lib/currency";
 import {
-  type ProcurementBranchPayload,
   type ProcurementOrderRow,
   type ProcurementSupplierRow,
   useProcurementControlCentre,
@@ -51,15 +50,13 @@ type DisplayOrder = {
 };
 
 function Procurement() {
-  const { branchId, branchLabel, currency, currentUser, isAllBranches } = useAppContext();
+  const { branchLabel, currentUser, isAllBranches } = useAppContext();
+  const navigate = useNavigate();
   const control = useProcurementControlCentre(true);
   const [selectedId, setSelectedId] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [receiveOpen, setReceiveOpen] = useState(false);
   const [orderAction, setOrderAction] = useState<"approve" | "cancel" | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const activeBranchData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
 
   const orders = useMemo<DisplayOrder[]>(
     () =>
@@ -139,14 +136,14 @@ function Procurement() {
               busy ||
               !["APPROVED", "PARTIALLY_RECEIVED"].includes(selected.status)
             }
-            onClick={() => setReceiveOpen(true)}
+            onClick={() => void navigate({ to: "/receiving" })}
           >
             <PackageCheck className="h-4 w-4" /> Receiving
           </Btn>
           <Btn
             variant="primary"
             disabled={!canCreate || isAllBranches || busy || control.status !== "ready"}
-            onClick={() => setCreateOpen(true)}
+            onClick={() => void navigate({ to: "/purchase-orders" })}
           >
             <Plus className="h-4 w-4" /> New purchase order
           </Btn>
@@ -319,32 +316,6 @@ function Procurement() {
         </Panel>
       </div>
 
-      <CreatePurchaseOrderDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        branchId={branchId}
-        currency={currency}
-        data={activeBranchData}
-        busy={busy}
-        onSubmit={(body) =>
-          run(
-            () => control.command("/api/seramet/procurement/purchase-orders", body),
-            "Purchase order submitted for approval.",
-          ).then(() => setCreateOpen(false))
-        }
-      />
-      <ReceiveOrderDialog
-        open={receiveOpen}
-        onOpenChange={setReceiveOpen}
-        order={selected}
-        busy={busy}
-        onSubmit={(body) =>
-          run(
-            () => control.command("/api/seramet/procurement/goods-receipts", body),
-            "Goods receipt posted and inventory updated.",
-          ).then(() => setReceiveOpen(false))
-        }
-      />
       <OrderActionDialog
         open={orderAction !== null}
         action={orderAction}
@@ -393,211 +364,6 @@ function serverOrder(order: ProcurementOrderRow, branchId: string): DisplayOrder
       totalMinor: Number(line.line_total_minor),
     })),
   };
-}
-
-function CreatePurchaseOrderDialog({
-  open,
-  onOpenChange,
-  branchId,
-  currency,
-  data,
-  busy,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  branchId: string;
-  currency: string;
-  data: ProcurementBranchPayload | undefined;
-  busy: boolean;
-  onSubmit: (body: unknown) => Promise<void>;
-}) {
-  const [supplierId, setSupplierId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
-  const [itemId, setItemId] = useState("");
-  const [quantity, setQuantity] = useState("1");
-  const [unitPrice, setUnitPrice] = useState("0");
-  const supplier = data?.suppliers.find((row) => row.id === supplierId) ?? data?.suppliers[0];
-  const warehouse =
-    data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
-  const item = data?.items.find((row) => row.id === itemId) ?? data?.items[0];
-  const valid =
-    supplier &&
-    warehouse &&
-    item?.purchase_unit_id &&
-    Number(quantity) > 0 &&
-    Number(unitPrice) >= 0;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>New purchase order</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Supplier">
-            <select
-              value={supplier?.id ?? ""}
-              onChange={(event) => setSupplierId(event.target.value)}
-              className={inputClass}
-            >
-              {data?.suppliers.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Warehouse">
-            <select
-              value={warehouse?.id ?? ""}
-              onChange={(event) => setWarehouseId(event.target.value)}
-              className={inputClass}
-            >
-              {data?.warehouses.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Inventory item">
-            <select
-              value={item?.id ?? ""}
-              onChange={(event) => setItemId(event.target.value)}
-              className={inputClass}
-            >
-              {data?.items.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Purchase quantity">
-            <input
-              value={quantity}
-              onChange={(event) => setQuantity(event.target.value)}
-              inputMode="decimal"
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Unit price">
-            <input
-              value={unitPrice}
-              onChange={(event) => setUnitPrice(event.target.value)}
-              inputMode="decimal"
-              className={inputClass}
-            />
-          </Field>
-        </div>
-        {!item?.purchase_unit_id && (
-          <p className="text-[12px] text-warning">
-            The selected item needs a purchase unit and conversion before ordering.
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Btn onClick={() => onOpenChange(false)}>Close</Btn>
-          <Btn
-            variant="primary"
-            disabled={!valid || busy}
-            onClick={() =>
-              valid &&
-              void onSubmit({
-                branchId,
-                warehouseId: warehouse.id,
-                supplierId: supplier.id,
-                currency: supplier.currency || currency,
-                overReceiptPolicy: "REJECT_OVER_RECEIPT",
-                lines: [
-                  {
-                    inventoryItemId: item.id,
-                    purchaseUnitId: item.purchase_unit_id,
-                    quantityMicro: Math.round(Number(quantity) * 1_000_000),
-                    unitPriceMinor: Math.round(Number(unitPrice) * 100),
-                  },
-                ],
-              })
-            }
-          >
-            Submit PO
-          </Btn>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ReceiveOrderDialog({
-  open,
-  onOpenChange,
-  order,
-  busy,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  order: DisplayOrder | undefined;
-  busy: boolean;
-  onSubmit: (body: unknown) => Promise<void>;
-}) {
-  const receivable = order?.lines.filter((line) => line.orderedMicro > line.receivedMicro) ?? [];
-  const valid =
-    order &&
-    ["APPROVED", "PARTIALLY_RECEIVED"].includes(order.status) &&
-    receivable.length > 0;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Receive {order?.number ?? "purchase order"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-2">
-          {receivable.map((line) => (
-            <div
-              key={line.id}
-              className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-[13px]"
-            >
-              <span>{line.item}</span>
-              <span className="num font-semibold">
-                {formatQuantity(line.orderedMicro - line.receivedMicro)} {line.unit}
-              </span>
-            </div>
-          ))}
-        </div>
-        {!valid && (
-          <p className="text-[12px] text-warning">
-            Only approved orders with outstanding quantities can be received.
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Btn onClick={() => onOpenChange(false)}>Close</Btn>
-          <Btn
-            variant="primary"
-            disabled={!valid || busy}
-            onClick={() =>
-              valid &&
-              void onSubmit({
-                branchId: order.branchId,
-                warehouseId: order.warehouseId,
-                purchaseOrderId: order.id,
-                supplierId: order.supplierId,
-                idempotencyKey: crypto.randomUUID(),
-                lines: receivable.map((line) => ({
-                  purchaseOrderLineId: line.id,
-                  receivedPurchaseQuantityMicro: line.orderedMicro - line.receivedMicro,
-                  acceptedPurchaseQuantityMicro: line.orderedMicro - line.receivedMicro,
-                  unitPriceMinor: line.unitPriceMinor,
-                })),
-              })
-            }
-          >
-            <PackageCheck className="h-4 w-4" /> Post full remaining receipt
-          </Btn>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 function OrderActionDialog({
