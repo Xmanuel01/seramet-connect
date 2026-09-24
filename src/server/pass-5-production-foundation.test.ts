@@ -44,7 +44,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(24);
+    expect(version?.version).toBe(25);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();

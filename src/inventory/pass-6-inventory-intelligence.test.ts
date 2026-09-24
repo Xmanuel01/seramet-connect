@@ -43,7 +43,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(24);
+    expect(version?.version).toBe(25);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",
@@ -416,6 +416,341 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(history?.count).toBe(2);
   });
 
+  it("keeps requisitions partially ordered until every requested quantity is covered", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-partial-order",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-PARTIAL",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+
+    await service.createPurchaseOrder({
+      id: "po-partial-1",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-PARTIAL-1",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-partial-line-1",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+
+    const partial = await db
+      .prepare(
+        `SELECT r.status,l.requested_quantity_minor,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{
+        status: string;
+        requested_quantity_minor: number;
+        ordered_quantity_minor: number;
+      }>();
+    expect(partial).toEqual({
+      status: "PARTIALLY_ORDERED",
+      requested_quantity_minor: 2 * QUANTITY_SCALE,
+      ordered_quantity_minor: QUANTITY_SCALE,
+    });
+
+    await service.createPurchaseOrder({
+      id: "po-partial-2",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-PARTIAL-2",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-partial-line-2",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+
+    const completed = await db
+      .prepare(
+        `SELECT r.status,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(completed).toEqual({
+      status: "ORDERED",
+      ordered_quantity_minor: 2 * QUANTITY_SCALE,
+    });
+  });
+
+  it("rejects duplicate inventory items on a purchase requisition", async () => {
+    const fixture = await seedProcurement(service);
+    await expect(
+      service.createPurchaseRequisition({
+        id: "req-duplicate-item",
+        branchId,
+        warehouseId,
+        requisitionNumber: "REQ-DUPLICATE-ITEM",
+        sourceType: "MANUAL_REQUEST",
+        lines: [
+          {
+            inventoryItemId: fixture.itemId,
+            requestedQuantityMicro: QUANTITY_SCALE,
+            unitId: "unit-box",
+          },
+          {
+            inventoryItemId: fixture.itemId,
+            requestedQuantityMicro: QUANTITY_SCALE,
+            unitId: "unit-box",
+          },
+        ],
+      }),
+    ).rejects.toThrow("cannot contain duplicate inventory items");
+  });
+
+  it("releases linked requisition quantities when a purchase order is cancelled", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-cancel-release",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-CANCEL-RELEASE",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+    const po = await service.createPurchaseOrder({
+      id: "po-cancel-release",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-CANCEL-RELEASE",
+      currency: "KES",
+      lines: [
+        {
+          id: "cancel-release-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+    await service.cancelPurchaseOrder(po.id, "Supplier unavailable");
+
+    const released = await db
+      .prepare(
+        `SELECT r.status,l.ordered_quantity_minor
+         FROM purchase_requisitions r
+         JOIN purchase_requisition_lines l
+           ON l.tenant_id=r.tenant_id AND l.requisition_id=r.id
+         WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(released).toEqual({ status: "APPROVED", ordered_quantity_minor: 0 });
+    expect(await poStatus(db, po.id)).toBe("CANCELLED");
+    expect(() =>
+      db.sqlite
+        .prepare("UPDATE purchase_orders SET status='APPROVED' WHERE tenant_id=? AND id=?")
+        .run(tenantId, po.id),
+    ).toThrow("invalid purchase order status transition");
+  });
+
+  it("rejects purchase orders that exceed the outstanding requisition quantity", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-over-order",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-OVER-ORDER",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved");
+
+    await expect(
+      service.createPurchaseOrder({
+        id: "po-over-order",
+        branchId,
+        warehouseId,
+        supplierId: fixture.supplierId,
+        requisitionId: requisition.id,
+        purchaseOrderNumber: "PO-OVER-ORDER",
+        currency: "KES",
+        lines: [
+          {
+            id: "po-over-order-line",
+            inventoryItemId: fixture.itemId,
+            purchaseUnitId: "unit-box",
+            conversionId: "conversion-box-soda",
+            quantityMicro: 2 * QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("exceeds the outstanding requisition quantity");
+  });
+
+  it("rejects supplier invoices whose supplier or receipt scope does not match the PO", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-invoice-scope",
+      "PO-INVOICE-SCOPE",
+      "REJECT_OVER_RECEIPT",
+    );
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "invoice-scope-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "invoice-scope-receipt",
+    );
+    await service.createSupplier({
+      id: "supplier-b",
+      code: "SUP-B",
+      name: "Different supplier",
+    });
+
+    await expect(
+      service.postSupplierInvoice({
+        branchId,
+        supplierId: "supplier-b",
+        purchaseOrderId: po.id,
+        goodsReceiptId: receipt.id,
+        invoiceNumber: "INV-WRONG-SUPPLIER",
+        invoiceDate: "2026-08-30",
+        currency: "KES",
+        subtotalMinor: 240_000,
+        taxMinor: 0,
+        totalMinor: 240_000,
+      }),
+    ).rejects.toThrow("scope does not match the purchase order");
+  });
+
+  it("deduplicates supplier invoice retries and exposes invoice match evidence in procurement overview", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-invoice-retry",
+      "PO-INVOICE-RETRY",
+      "REJECT_OVER_RECEIPT",
+    );
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "invoice-retry-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "invoice-retry-receipt",
+    );
+    const input = {
+      branchId,
+      supplierId: fixture.supplierId,
+      purchaseOrderId: po.id,
+      goodsReceiptId: receipt.id,
+      invoiceNumber: "INV-RETRY-001",
+      invoiceDate: "2026-08-30",
+      currency: "KES",
+      subtotalMinor: 240_000,
+      taxMinor: 0,
+      totalMinor: 240_000,
+    };
+    const first = await service.postSupplierInvoice(input);
+    const duplicate = await service.postSupplierInvoice(input);
+
+    expect(first).toMatchObject({ status: "POSTED", matchStatus: "MATCHED", duplicate: false });
+    expect(duplicate).toMatchObject({
+      id: first.id,
+      status: "POSTED",
+      matchStatus: "MATCHED",
+      duplicate: true,
+    });
+
+    const invoiceCount = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM supplier_invoices WHERE tenant_id=? AND supplier_id=? AND invoice_number=?",
+      )
+      .bind(tenantId, fixture.supplierId, input.invoiceNumber)
+      .first<{ count: number }>();
+    const journalCount = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM journal_entries WHERE tenant_id=? AND source_type='SUPPLIER_INVOICE' AND source_id=?",
+      )
+      .bind(tenantId, first.id)
+      .first<{ count: number }>();
+    expect(invoiceCount?.count).toBe(1);
+    expect(journalCount?.count).toBe(1);
+
+    const overview = await service.procurementOverview(branchId, 25);
+    const overviewRequisition = overview.requisitions[0];
+    expect(overview.purchaseOrders.find((row) => row.id === po.id)?.lines).toHaveLength(1);
+    expect(overview.supplierInvoices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: first.id,
+          invoice_number: input.invoiceNumber,
+          match_status: "MATCHED",
+          purchase_order_number: "PO-INVOICE-RETRY",
+        }),
+      ]),
+    );
+    expect(overview.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: fixture.itemId, name: "Soda" })]),
+    );
+    expect(overview.warehouses).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: warehouseId })]),
+    );
+    expect(overviewRequisition === undefined || Array.isArray(overviewRequisition.lines)).toBe(
+      true,
+    );
+  });
+
   it("enforces over-receipt policy and allows configured tolerance", async () => {
     const fixture = await seedProcurement(service);
     const strictPo = await createApprovedPo(
@@ -454,6 +789,105 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
         "within-tolerance",
       ),
     ).resolves.toMatchObject({ duplicate: false });
+  });
+
+  it("rejects goods receipts from a supplier that does not match the purchase order", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-receipt-supplier",
+      "PO-RECEIPT-SUPPLIER",
+      "REJECT_OVER_RECEIPT",
+    );
+    await service.createSupplier({
+      id: "supplier-receipt-wrong",
+      code: "SUP-WRONG",
+      name: "Wrong receiving supplier",
+    });
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: "supplier-receipt-wrong",
+        receiptNumber: "GR-WRONG-SUPPLIER",
+        idempotencyKey: "receipt-wrong-supplier",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "receipt-supplier-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("does not match the purchase order");
+  });
+
+  it("requires every received quantity to be accepted or rejected", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-receipt-disposition",
+      "PO-RECEIPT-DISPOSITION",
+      "REJECT_OVER_RECEIPT",
+    );
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: fixture.supplierId,
+        receiptNumber: "GR-INCOMPLETE-DISPOSITION",
+        idempotencyKey: "receipt-incomplete-disposition",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "receipt-disposition-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: 800_000,
+            rejectedPurchaseQuantityMicro: 100_000,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("fully dispositioned");
+  });
+
+  it("requires lot and expiry evidence for expiry-tracked items", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-expiry-evidence",
+      "PO-EXPIRY-EVIDENCE",
+      "REJECT_OVER_RECEIPT",
+    );
+
+    await expect(
+      service.receiveGoods({
+        branchId,
+        warehouseId,
+        purchaseOrderId: po.id,
+        supplierId: fixture.supplierId,
+        receiptNumber: "GR-NO-EXPIRY-EVIDENCE",
+        idempotencyKey: "receipt-no-expiry-evidence",
+        businessDate: "2026-08-30",
+        lines: [
+          {
+            purchaseOrderLineId: "expiry-evidence-line",
+            receivedPurchaseQuantityMicro: QUANTITY_SCALE,
+            acceptedPurchaseQuantityMicro: QUANTITY_SCALE,
+            unitPriceMinor: 240_000,
+          },
+        ],
+      }),
+    ).rejects.toThrow("require both a lot number and expiry date");
   });
 
   it("deduplicates receipt retries and creates one stock effect", async () => {
@@ -2694,6 +3128,8 @@ async function receiveQuantity(
         receivedPurchaseQuantityMicro: quantityMicro,
         acceptedPurchaseQuantityMicro: quantityMicro,
         unitPriceMinor,
+        lotNumber: `LOT-${idempotencyKey}`,
+        expiryDate: "2026-09-30",
       },
     ],
   });

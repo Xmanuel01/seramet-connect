@@ -105,6 +105,7 @@ export const migrationFiles = [
   "0022_prep_execution_workflow.sql",
   "0023_inventory_categories_stock_count_workflow.sql",
   "0024_inventory_operations_control.sql",
+  "0025_procurement_end_to_end_hardening.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

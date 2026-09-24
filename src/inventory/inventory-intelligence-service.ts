@@ -54,6 +54,7 @@ type PurchaseOrderLineRow = {
   ordered_purchase_quantity_minor: number | null;
   received_purchase_quantity_minor: number;
   unit_cost_minor: number;
+  track_expiry: number;
 };
 
 type RecipeComponentRow = {
@@ -553,6 +554,17 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.procurementRequisitionCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     if (input.lines.length === 0) throw new Error("A requisition requires at least one line");
+    const requisitionItemIds = new Set<string>();
+    for (const line of input.lines) {
+      if (requisitionItemIds.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "A purchase requisition cannot contain duplicate inventory items",
+        );
+      }
+      requisitionItemIds.add(line.inventoryItemId);
+    }
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
@@ -648,6 +660,100 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertSupplierAllowedByEnterprisePolicy(input.branchId, input.supplierId);
     if (input.lines.length === 0) throw new Error("A purchase order requires at least one line");
+
+    let requisitionLines:
+      | Map<
+          string,
+          {
+            id: string;
+            inventory_item_id: string;
+            unit_id: string;
+            requested_quantity_minor: number;
+            ordered_quantity_minor: number;
+          }
+        >
+      | undefined;
+    if (input.requisitionId) {
+      const requisition = await this.db
+        .prepare(
+          `SELECT branch_id,warehouse_id,status
+           FROM purchase_requisitions WHERE tenant_id=? AND id=?`,
+        )
+        .bind(this.actor.tenantId, input.requisitionId)
+        .first<{ branch_id: string; warehouse_id: string; status: string }>();
+      if (!requisition) {
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase requisition not found");
+      }
+      if (
+        requisition.branch_id !== input.branchId ||
+        requisition.warehouse_id !== input.warehouseId
+      ) {
+        throw new ServerOperationError(
+          "TENANT_SCOPE_VIOLATION",
+          403,
+          "Purchase order scope does not match the requisition",
+        );
+      }
+      if (!["APPROVED", "PARTIALLY_ORDERED"].includes(requisition.status)) {
+        throw invalidTransition("Purchase requisition", requisition.status, "PARTIALLY_ORDERED");
+      }
+      const rows = await this.db
+        .prepare(
+          `SELECT id,inventory_item_id,unit_id,requested_quantity_minor,ordered_quantity_minor
+           FROM purchase_requisition_lines
+           WHERE tenant_id=? AND requisition_id=?`,
+        )
+        .bind(this.actor.tenantId, input.requisitionId)
+        .all<{
+          id: string;
+          inventory_item_id: string;
+          unit_id: string;
+          requested_quantity_minor: number;
+          ordered_quantity_minor: number;
+        }>();
+      requisitionLines = new Map();
+      for (const line of rows.results ?? []) {
+        if (requisitionLines.has(line.inventory_item_id)) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Linked requisition contains duplicate inventory items and must be corrected before ordering",
+          );
+        }
+        requisitionLines.set(line.inventory_item_id, line);
+      }
+      const requestedOnThisPo = new Map<string, number>();
+      for (const line of input.lines) {
+        const requisitionLine = requisitionLines.get(line.inventoryItemId);
+        if (!requisitionLine) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order contains an item not present on the requisition",
+          );
+        }
+        if (requisitionLine.unit_id !== line.purchaseUnitId) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order unit must match the requisition unit",
+          );
+        }
+        const next = (requestedOnThisPo.get(line.inventoryItemId) ?? 0) + line.quantityMicro;
+        requestedOnThisPo.set(line.inventoryItemId, next);
+        if (
+          requisitionLine.ordered_quantity_minor + next >
+          requisitionLine.requested_quantity_minor
+        ) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Purchase order quantity exceeds the outstanding requisition quantity",
+          );
+        }
+      }
+    }
+
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     let totalMinor = 0;
@@ -721,12 +827,34 @@ export class InventoryIntelligenceService {
             line.discountMinor ?? 0,
           ),
       );
+      if (input.requisitionId && requisitionLines) {
+        const requisitionLine = requisitionLines.get(line.inventoryItemId)!;
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE purchase_requisition_lines
+               SET ordered_quantity_minor=ordered_quantity_minor+?
+               WHERE tenant_id=? AND id=?`,
+            )
+            .bind(line.quantityMicro, this.actor.tenantId, requisitionLine.id),
+        );
+      }
     }
     if (input.requisitionId) {
       statements.push(
         this.db
           .prepare(
-            `UPDATE purchase_requisitions SET status='ORDERED',updated_at=?
+            `UPDATE purchase_requisitions
+             SET status=CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor < prl.requested_quantity_minor
+               ) THEN 'PARTIALLY_ORDERED'
+               ELSE 'ORDERED'
+             END,
+             updated_at=?
              WHERE tenant_id=? AND id=? AND status IN ('APPROVED','PARTIALLY_ORDERED')`,
           )
           .bind(stamp, this.actor.tenantId, input.requisitionId),
@@ -761,7 +889,7 @@ export class InventoryIntelligenceService {
       this.db
         .prepare(
           `UPDATE purchase_orders SET status='APPROVED',approved_by=?,approval_reason=?,approved_at=?,
-           version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND status='SUBMITTED'`,
+           version=version+1,updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(this.actor.id, reason ?? null, stamp, stamp, this.actor.tenantId, id),
       this.auditStatement(
@@ -780,9 +908,11 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.procurementCancel);
     if (!reason.trim()) throw new Error("Purchase order cancellation requires a reason");
     const purchaseOrder = await this.db
-      .prepare("SELECT branch_id,status FROM purchase_orders WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT branch_id,status,requisition_id FROM purchase_orders WHERE tenant_id=? AND id=?",
+      )
       .bind(this.actor.tenantId, id)
-      .first<{ branch_id: string; status: string }>();
+      .first<{ branch_id: string; status: string; requisition_id: string | null }>();
     if (!purchaseOrder) throw new Error("Purchase order not found");
     authorizeBranchRead(this.actor, this.actor.tenantId, purchaseOrder.branch_id);
     if (!["DRAFT", "SUBMITTED", "APPROVED"].includes(purchaseOrder.status)) {
@@ -790,22 +920,67 @@ export class InventoryIntelligenceService {
     }
     const stamp = new Date().toISOString();
     const correlationId = crypto.randomUUID();
-    await this.db.batch([
+    const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
           `UPDATE purchase_orders SET status='CANCELLED',payload_json=json_set(payload_json,
              '$.cancellationReason',?,'$.cancelledBy',?,'$.cancelledAt',?),version=version+1,
-             updated_at=? WHERE tenant_id=? AND id=? AND status=?`,
+             updated_at=? WHERE tenant_id=? AND id=?`,
         )
-        .bind(
-          reason.trim(),
-          this.actor.id,
-          stamp,
-          stamp,
-          this.actor.tenantId,
-          id,
-          purchaseOrder.status,
-        ),
+        .bind(reason.trim(), this.actor.id, stamp, stamp, this.actor.tenantId, id),
+    ];
+
+    if (purchaseOrder.requisition_id) {
+      const poLines = await this.db
+        .prepare(
+          `SELECT item_id,COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor) AS ordered
+           FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        )
+        .bind(this.actor.tenantId, id)
+        .all<{ item_id: string; ordered: number }>();
+      for (const line of poLines.results ?? []) {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE purchase_requisition_lines
+               SET ordered_quantity_minor=MAX(0,ordered_quantity_minor-?)
+               WHERE tenant_id=? AND requisition_id=? AND inventory_item_id=?`,
+            )
+            .bind(
+              Number(line.ordered),
+              this.actor.tenantId,
+              purchaseOrder.requisition_id,
+              line.item_id,
+            ),
+        );
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE purchase_requisitions
+             SET status=CASE
+               WHEN NOT EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor>0
+               ) THEN 'APPROVED'
+               WHEN EXISTS (
+                 SELECT 1 FROM purchase_requisition_lines prl
+                 WHERE prl.tenant_id=purchase_requisitions.tenant_id
+                   AND prl.requisition_id=purchase_requisitions.id
+                   AND prl.ordered_quantity_minor<prl.requested_quantity_minor
+               ) THEN 'PARTIALLY_ORDERED'
+               ELSE 'ORDERED'
+             END,
+             updated_at=?
+             WHERE tenant_id=? AND id=? AND status IN ('ORDERED','PARTIALLY_ORDERED')`,
+          )
+          .bind(stamp, this.actor.tenantId, purchaseOrder.requisition_id),
+      );
+    }
+
+    statements.push(
       this.auditStatement(
         "PURCHASE_ORDER_CANCELLED",
         "PURCHASE_ORDER",
@@ -814,7 +989,8 @@ export class InventoryIntelligenceService {
         correlationId,
         purchaseOrder.branch_id,
       ),
-    ]);
+    );
+    await this.db.batch(statements);
     return { id, status: "CANCELLED" as const };
   }
 
@@ -823,10 +999,31 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertBusinessDateOpen(input.branchId, input.businessDate);
     const duplicate = await this.db
-      .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
+      .prepare(
+        `SELECT id,branch_id,purchase_order_id,supplier_id
+         FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?`,
+      )
       .bind(this.actor.tenantId, input.idempotencyKey)
-      .first<{ id: string }>();
-    if (duplicate) return { id: duplicate.id, duplicate: true };
+      .first<{
+        id: string;
+        branch_id: string;
+        purchase_order_id: string;
+        supplier_id: string;
+      }>();
+    if (duplicate) {
+      if (
+        duplicate.branch_id !== input.branchId ||
+        duplicate.purchase_order_id !== input.purchaseOrderId ||
+        duplicate.supplier_id !== input.supplierId
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Goods receipt idempotency key is already used by a different receipt scope",
+        );
+      }
+      return { id: duplicate.id, duplicate: true };
+    }
     const purchaseOrder = await this.db
       .prepare(
         `SELECT branch_id,warehouse_id,supplier_id,status,currency,payload_json
@@ -847,19 +1044,23 @@ export class InventoryIntelligenceService {
     }
     if (
       purchaseOrder.branch_id !== input.branchId ||
-      purchaseOrder.warehouse_id !== input.warehouseId
+      purchaseOrder.warehouse_id !== input.warehouseId ||
+      purchaseOrder.supplier_id !== input.supplierId
     ) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
         403,
-        "Goods receipt scope does not match the purchase order",
+        "Goods receipt branch, warehouse or supplier does not match the purchase order",
       );
     }
     const lines = await this.db
       .prepare(
-        `SELECT id,item_id,purchase_unit_id,conversion_id,ordered_quantity_minor,
-                ordered_purchase_quantity_minor,received_purchase_quantity_minor,unit_cost_minor
-         FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        `SELECT pol.id,pol.item_id,pol.purchase_unit_id,pol.conversion_id,
+                pol.ordered_quantity_minor,pol.ordered_purchase_quantity_minor,
+                pol.received_purchase_quantity_minor,pol.unit_cost_minor,i.track_expiry
+         FROM purchase_order_lines pol
+         JOIN inventory_items i ON i.tenant_id=pol.tenant_id AND i.id=pol.item_id
+         WHERE pol.tenant_id=? AND pol.purchase_order_id=?`,
       )
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .all<PurchaseOrderLineRow>();
@@ -905,8 +1106,26 @@ export class InventoryIntelligenceService {
       if (!poLine) throw new Error("Goods receipt line is not on the purchase order");
       if (!poLine.purchase_unit_id)
         throw new Error("Purchase order line is missing a purchase unit");
+      const rejectedPurchaseQuantityMicro = lineInput.rejectedPurchaseQuantityMicro ?? 0;
       if (lineInput.acceptedPurchaseQuantityMicro > lineInput.receivedPurchaseQuantityMicro) {
         throw new Error("Accepted quantity cannot exceed received quantity");
+      }
+      if (
+        lineInput.acceptedPurchaseQuantityMicro + rejectedPurchaseQuantityMicro !==
+        lineInput.receivedPurchaseQuantityMicro
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Received quantity must be fully dispositioned as accepted plus rejected",
+        );
+      }
+      if (poLine.track_expiry === 1 && (!lineInput.lotNumber?.trim() || !lineInput.expiryDate)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Expiry-tracked items require both a lot number and expiry date when receiving",
+        );
       }
       const orderedPurchaseQuantity =
         poLine.ordered_purchase_quantity_minor ?? poLine.ordered_quantity_minor;
@@ -985,13 +1204,18 @@ export class InventoryIntelligenceService {
             poLine.purchase_unit_id,
             lineInput.receivedPurchaseQuantityMicro,
             lineInput.acceptedPurchaseQuantityMicro,
-            lineInput.rejectedPurchaseQuantityMicro ?? 0,
+            rejectedPurchaseQuantityMicro,
             baseQuantityMicro,
             lineInput.unitPriceMinor,
             totalCostMinor,
             lineInput.lotNumber ?? null,
             lineInput.expiryDate ?? null,
-            lineInput.qualityStatus ?? "ACCEPTED",
+            lineInput.qualityStatus ??
+              (rejectedPurchaseQuantityMicro > 0
+                ? lineInput.acceptedPurchaseQuantityMicro > 0
+                  ? "PARTIAL_REJECTION"
+                  : "REJECTED"
+                : "ACCEPTED"),
             priceVarianceMinor,
             priceVarianceBps,
             lineInput.notes ?? null,
@@ -1148,10 +1372,31 @@ export class InventoryIntelligenceService {
       return { id, duplicate: false, lines: receiptLines, correlationId };
     } catch (error) {
       const raced = await this.db
-        .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
+        .prepare(
+          `SELECT id,branch_id,purchase_order_id,supplier_id
+           FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?`,
+        )
         .bind(this.actor.tenantId, input.idempotencyKey)
-        .first<{ id: string }>();
-      if (raced) return { id: raced.id, duplicate: true, lines: [], correlationId };
+        .first<{
+          id: string;
+          branch_id: string;
+          purchase_order_id: string;
+          supplier_id: string;
+        }>();
+      if (raced) {
+        if (
+          raced.branch_id !== input.branchId ||
+          raced.purchase_order_id !== input.purchaseOrderId ||
+          raced.supplier_id !== input.supplierId
+        ) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Goods receipt idempotency key is already used by a different receipt scope",
+          );
+        }
+        return { id: raced.id, duplicate: true, lines: [], correlationId };
+      }
       throw error;
     }
   }
@@ -5038,19 +5283,127 @@ export class InventoryIntelligenceService {
   }) {
     this.requirePermission(permissions.procurementInvoiceApprove);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertBusinessDateOpen(input.branchId, input.invoiceDate);
     if (input.subtotalMinor + input.taxMinor !== input.totalMinor) {
-      throw new Error("Supplier invoice total does not equal subtotal plus tax");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Supplier invoice total does not equal subtotal plus tax",
+      );
     }
-    const po = await this.db
-      .prepare("SELECT total_minor FROM purchase_orders WHERE tenant_id=? AND id=?")
+    const purchaseOrder = await this.db
+      .prepare(
+        `SELECT branch_id,supplier_id,currency,total_minor,status
+         FROM purchase_orders WHERE tenant_id=? AND id=?`,
+      )
       .bind(this.actor.tenantId, input.purchaseOrderId)
-      .first<{ total_minor: number }>();
+      .first<{
+        branch_id: string;
+        supplier_id: string | null;
+        currency: string;
+        total_minor: number;
+        status: string;
+      }>();
+    if (!purchaseOrder) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase order not found");
+    }
+    if (
+      purchaseOrder.branch_id !== input.branchId ||
+      purchaseOrder.supplier_id !== input.supplierId
+    ) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Supplier invoice scope does not match the purchase order",
+      );
+    }
+    if (!["PARTIALLY_RECEIVED", "RECEIVED"].includes(purchaseOrder.status)) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Supplier invoice requires a posted goods receipt",
+      );
+    }
+    if (purchaseOrder.currency !== input.currency) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Supplier invoice currency must match the purchase order currency",
+      );
+    }
+
     const receipt = await this.db
       .prepare(
-        "SELECT COALESCE(SUM(total_cost_minor),0) AS total FROM goods_receipt_lines WHERE tenant_id=? AND goods_receipt_id=?",
+        `SELECT gr.branch_id,gr.purchase_order_id,gr.supplier_id,gr.status,
+                COALESCE(SUM(grl.total_cost_minor),0) AS total
+         FROM goods_receipts gr
+         LEFT JOIN goods_receipt_lines grl
+           ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
+         WHERE gr.tenant_id=? AND gr.id=?
+         GROUP BY gr.id`,
       )
       .bind(this.actor.tenantId, input.goodsReceiptId)
-      .first<{ total: number }>();
+      .first<{
+        branch_id: string;
+        purchase_order_id: string;
+        supplier_id: string;
+        status: string;
+        total: number;
+      }>();
+    if (
+      !receipt ||
+      receipt.branch_id !== input.branchId ||
+      receipt.purchase_order_id !== input.purchaseOrderId ||
+      receipt.supplier_id !== input.supplierId ||
+      receipt.status !== "POSTED"
+    ) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Supplier invoice goods receipt does not match the purchase order scope",
+      );
+    }
+
+    const duplicate = await this.db
+      .prepare(
+        `SELECT id,purchase_order_id,goods_receipt_id,total_minor,status
+         FROM supplier_invoices
+         WHERE tenant_id=? AND supplier_id=? AND invoice_number=?`,
+      )
+      .bind(this.actor.tenantId, input.supplierId, input.invoiceNumber)
+      .first<{
+        id: string;
+        purchase_order_id: string;
+        goods_receipt_id: string;
+        total_minor: number;
+        status: string;
+      }>();
+    if (duplicate) {
+      if (
+        duplicate.purchase_order_id !== input.purchaseOrderId ||
+        duplicate.goods_receipt_id !== input.goodsReceiptId ||
+        duplicate.total_minor !== input.totalMinor
+      ) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Supplier invoice number already exists for this supplier with different details",
+        );
+      }
+      const match = await this.db
+        .prepare(
+          "SELECT status FROM procurement_matches WHERE tenant_id=? AND supplier_invoice_id=?",
+        )
+        .bind(this.actor.tenantId, duplicate.id)
+        .first<{ status: string }>();
+      return {
+        id: duplicate.id,
+        status: duplicate.status,
+        matchStatus: match?.status ?? "REVIEW_REQUIRED",
+        duplicate: true,
+      };
+    }
+
     const quantities = await this.db
       .prepare(
         `SELECT COALESCE(SUM(COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)),0) AS ordered,
@@ -5059,15 +5412,15 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .first<{ ordered: number; received: number }>();
-    if (!po) throw new Error("Purchase order not found");
     const mapping = await this.accountMapping(input.branchId);
-    const receivedTotal = receipt?.total ?? 0;
+    const receivedTotal = receipt.total;
     const matchStatus =
       receivedTotal === 0
         ? "MISSING_DOCUMENT"
         : (quantities?.received ?? 0) !== (quantities?.ordered ?? 0)
           ? "QUANTITY_VARIANCE"
-          : receivedTotal !== po.total_minor || input.totalMinor !== po.total_minor
+          : receivedTotal !== purchaseOrder.total_minor ||
+              input.totalMinor !== purchaseOrder.total_minor
             ? "PRICE_VARIANCE"
             : "MATCHED";
     const id = input.id ?? crypto.randomUUID();
@@ -5134,10 +5487,10 @@ export class InventoryIntelligenceService {
         input.goodsReceiptId,
         id,
         matchStatus,
-        po.total_minor,
+        purchaseOrder.total_minor,
         receivedTotal,
         input.totalMinor,
-        input.totalMinor - po.total_minor,
+        input.totalMinor - purchaseOrder.total_minor,
         stamp,
         stamp,
       );
@@ -5159,7 +5512,11 @@ export class InventoryIntelligenceService {
     let lineNumber = 2;
     if (input.taxMinor > 0) {
       if (!mapping.recoverable_tax_account_id) {
-        throw new Error("Recoverable tax account mapping is required for supplier invoice tax");
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Recoverable tax account mapping is required for supplier invoice tax",
+        );
       }
       statements.push(
         journalLine(
@@ -5200,7 +5557,7 @@ export class InventoryIntelligenceService {
       ),
     );
     await this.db.batch(statements);
-    return { id, status: "POSTED" as const, matchStatus, journalId };
+    return { id, status: "POSTED" as const, matchStatus, journalId, duplicate: false };
   }
 
   async returnToSupplier(input: SupplierReturnInput) {
@@ -5543,13 +5900,22 @@ export class InventoryIntelligenceService {
   }
 
   async procurementOverview(branchId: string, limit = 25) {
-    this.requirePermission(permissions.inventoryView);
+    if (
+      !this.actor.permissions.includes(permissions.procurementView) &&
+      !this.actor.permissions.includes(permissions.inventoryView)
+    ) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Procurement or inventory view permission is required",
+      );
+    }
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
     const pageSize = Math.min(100, Math.max(1, limit));
     const purchaseOrders = await this.db
       .prepare(
         `SELECT po.id,po.purchase_order_number,po.supplier_id,s.name AS supplier_name,
-                po.warehouse_id,
+                po.warehouse_id,po.requisition_id,
                 po.status,po.currency,po.total_minor,po.expected_at,po.created_at,
                 po.approved_at,po.received_at
          FROM purchase_orders po
@@ -5567,6 +5933,7 @@ export class InventoryIntelligenceService {
                   pol.purchase_unit_id,u.symbol AS unit_symbol,
                   COALESCE(pol.ordered_purchase_quantity_minor,pol.ordered_quantity_minor) AS ordered_quantity_minor,
                   pol.received_purchase_quantity_minor,pol.unit_cost_minor AS unit_price_minor,
+                  pol.tax_minor,pol.discount_minor,
                   ((COALESCE(pol.ordered_purchase_quantity_minor,pol.ordered_quantity_minor)
                     * pol.unit_cost_minor) / 1000000) + pol.tax_minor - pol.discount_minor AS line_total_minor
            FROM purchase_order_lines pol
@@ -5596,31 +5963,99 @@ export class InventoryIntelligenceService {
       )
       .bind(branchId, this.actor.tenantId, pageSize)
       .all<Record<string, unknown>>();
-    const requisitions = await this.db
+    const requisitionHeaders = await this.db
       .prepare(
-        `SELECT id,requisition_number,status,source_type,required_at,created_at,approved_at
+        `SELECT id,requisition_number,warehouse_id,status,source_type,requested_by,
+                required_at,created_at,approved_at,approval_reason
          FROM purchase_requisitions WHERE tenant_id=? AND branch_id=?
          ORDER BY created_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown>>();
+      .all<Record<string, unknown> & { id: string }>();
+    const requisitions = [];
+    for (const requisition of requisitionHeaders.results ?? []) {
+      const lines = await this.db
+        .prepare(
+          `SELECT prl.id,prl.inventory_item_id,i.name AS item_name,
+                  prl.requested_quantity_minor,prl.ordered_quantity_minor,
+                  prl.unit_id,u.symbol AS unit_symbol,prl.notes
+           FROM purchase_requisition_lines prl
+           JOIN inventory_items i ON i.tenant_id=prl.tenant_id AND i.id=prl.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=prl.tenant_id AND u.id=prl.unit_id
+           WHERE prl.tenant_id=? AND prl.requisition_id=? ORDER BY prl.id`,
+        )
+        .bind(this.actor.tenantId, requisition.id)
+        .all<Record<string, unknown>>();
+      requisitions.push({ ...requisition, lines: lines.results ?? [] });
+    }
     const receipts = await this.db
       .prepare(
-        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
+        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,po.purchase_order_number,
+                gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.received_at,
+                COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
+                COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
+                COALESCE(SUM(grl.rejected_purchase_quantity_minor),0) AS rejected_quantity_minor,
                 COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
          FROM goods_receipts gr
+         JOIN purchase_orders po ON po.tenant_id=gr.tenant_id AND po.id=gr.purchase_order_id
+         JOIN suppliers s ON s.tenant_id=gr.tenant_id AND s.id=gr.supplier_id
          LEFT JOIN goods_receipt_lines grl ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
          WHERE gr.tenant_id=? AND gr.branch_id=?
          GROUP BY gr.id ORDER BY gr.received_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
+    const supplierInvoices = await this.db
+      .prepare(
+        `SELECT si.id,si.supplier_id,s.name AS supplier_name,
+                si.purchase_order_id,po.purchase_order_number,
+                si.goods_receipt_id,gr.receipt_number,
+                si.invoice_number,si.invoice_date,si.due_date,si.currency,
+                si.subtotal_minor,si.tax_minor,si.total_minor,si.status,si.created_at,
+                pm.status AS match_status,pm.ordered_total_minor,pm.received_total_minor,
+                pm.invoiced_total_minor,pm.variance_minor
+         FROM supplier_invoices si
+         JOIN suppliers s ON s.tenant_id=si.tenant_id AND s.id=si.supplier_id
+         JOIN purchase_orders po ON po.tenant_id=si.tenant_id AND po.id=si.purchase_order_id
+         JOIN goods_receipts gr ON gr.tenant_id=si.tenant_id AND gr.id=si.goods_receipt_id
+         LEFT JOIN procurement_matches pm
+           ON pm.tenant_id=si.tenant_id AND pm.supplier_invoice_id=si.id
+         WHERE si.tenant_id=? AND si.branch_id=?
+         ORDER BY si.invoice_date DESC,si.created_at DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
+    const items = await this.db
+      .prepare(
+        `SELECT i.id,i.code,i.sku,i.name,i.base_unit_id,i.purchase_unit_id,i.track_expiry,
+                bu.symbol AS base_unit_symbol,pu.symbol AS purchase_unit_symbol,
+                i.preferred_supplier_id,i.default_warehouse_id
+         FROM inventory_items i
+         LEFT JOIN unit_definitions bu ON bu.tenant_id=i.tenant_id AND bu.id=i.base_unit_id
+         LEFT JOIN unit_definitions pu ON pu.tenant_id=i.tenant_id AND pu.id=i.purchase_unit_id
+         WHERE i.tenant_id=? AND i.active=1 AND i.track_inventory=1
+         ORDER BY i.name LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, Math.min(500, pageSize * 10))
+      .all<Record<string, unknown>>();
+    const warehouses = await this.db
+      .prepare(
+        `SELECT id,code,name,branch_id,location_type
+         FROM warehouses
+         WHERE tenant_id=? AND branch_id=? AND active=1
+         ORDER BY name`,
+      )
+      .bind(this.actor.tenantId, branchId)
+      .all<Record<string, unknown>>();
     return {
       branchId,
       purchaseOrders: rows,
       suppliers: suppliers.results ?? [],
-      requisitions: requisitions.results ?? [],
+      requisitions,
       receipts: receipts.results ?? [],
+      supplierInvoices: supplierInvoices.results ?? [],
+      items: items.results ?? [],
+      warehouses: warehouses.results ?? [],
     };
   }
 
