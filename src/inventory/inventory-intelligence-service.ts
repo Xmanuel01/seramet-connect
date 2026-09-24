@@ -15,7 +15,9 @@ import {
 } from "@/inventory/quantity";
 import type {
   GoodsReceiptInput,
+  InventoryAdjustmentRequestInput,
   InventoryItemInput,
+  InventoryLossRequestInput,
   InventoryMovementInput,
   InventoryParPolicyInput,
   InventorySummary,
@@ -36,6 +38,7 @@ import type {
   SupplierInput,
   SupplierReturnInput,
   UnitDefinitionInput,
+  WarehouseDefinitionInput,
 } from "@/inventory/types";
 
 type InventoryBalanceRow = {
