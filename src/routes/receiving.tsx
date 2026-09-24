@@ -5,8 +5,8 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import {
   type ProcurementOrderRow,
-  useInventoryControlCentre,
-} from "@/inventory/use-inventory-control-centre";
+  useProcurementControlCentre,
+} from "@/procurement/use-procurement-control-centre";
 import { useAppContext } from "@/lib/app-context";
 import { ksh } from "@/lib/currency";
 import { permissions } from "@/platform/permissions";
@@ -39,7 +39,7 @@ type DisplayOrder = ProcurementOrderRow & { branchId: string };
 
 function Receiving() {
   const { branchId, branchLabel, currentUser, isAllBranches } = useAppContext();
-  const control = useInventoryControlCentre(true);
+  const control = useProcurementControlCentre(true);
   const [selectedId, setSelectedId] = useState("");
   const [lineState, setLineState] = useState<Record<string, ReceiveLineState>>({});
   const [notice, setNotice] = useState("");
