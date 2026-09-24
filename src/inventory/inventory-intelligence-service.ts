@@ -4516,6 +4516,7 @@ export class InventoryIntelligenceService {
       this.actor.tenantId,
       input.branchId,
       ...(input.warehouseId ? [input.warehouseId] : []),
+      input.branchId,
       this.actor.tenantId,
       ...(input.cursor ? [input.cursor] : []),
       limit + 1,
@@ -4547,7 +4548,7 @@ export class InventoryIntelligenceService {
          SELECT i.id,i.code,i.sku,i.name,i.description,i.category_id,i.base_unit_id,
                 i.purchase_unit_id,i.track_inventory,i.track_expiry,i.preferred_supplier_id,
                 s.name AS preferred_supplier_name,i.default_warehouse_id,
-                COALESCE(i.default_warehouse_id,balance.primary_warehouse_id) AS warehouse_id,
+                COALESCE(dw.id,balance.primary_warehouse_id) AS warehouse_id,
                 u.symbol AS base_unit_symbol,
                 COALESCE(balance.quantity_minor,0) AS quantity_minor,
                 COALESCE(balance.quantity_reserved_minor,0) AS quantity_reserved_minor,
@@ -4565,7 +4566,11 @@ export class InventoryIntelligenceService {
              ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
            LEFT JOIN unit_definitions u
              ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
-          WHERE i.tenant_id=? AND i.active=1${cursorClause}
+           LEFT JOIN warehouses dw
+             ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+            AND dw.branch_id=? AND dw.active=1
+          WHERE i.tenant_id=? AND i.active=1
+            AND (balance.item_id IS NOT NULL OR par.item_id IS NOT NULL OR dw.id IS NOT NULL)${cursorClause}
           ORDER BY i.id LIMIT ?`,
       )
       .bind(...values)
@@ -4587,6 +4592,21 @@ export class InventoryIntelligenceService {
     };
   }
 
+  async listWarehouses(branchId: string) {
+    this.requirePermission(permissions.inventoryView);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const result = await this.db
+      .prepare(
+        `SELECT id,code,name,branch_id
+           FROM warehouses
+          WHERE tenant_id=? AND branch_id=? AND active=1
+          ORDER BY name,id`,
+      )
+      .bind(this.actor.tenantId, branchId)
+      .all<{ id: string; code: string; name: string; branch_id: string }>();
+    return result.results ?? [];
+  }
+
   async inventoryItemDetail(input: { branchId: string; sku: string; limit?: number }) {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
@@ -4602,10 +4622,32 @@ export class InventoryIntelligenceService {
              ON s.tenant_id=i.tenant_id AND s.id=i.preferred_supplier_id AND s.active=1
            LEFT JOIN unit_definitions u
              ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+           LEFT JOIN warehouses dw
+             ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+            AND dw.branch_id=? AND dw.active=1
           WHERE i.tenant_id=? AND i.active=1 AND (i.sku=? OR i.code=?)
+            AND (
+              dw.id IS NOT NULL
+              OR EXISTS (
+                SELECT 1 FROM inventory_balances b
+                 WHERE b.tenant_id=i.tenant_id AND b.branch_id=? AND b.item_id=i.id
+              )
+              OR EXISTS (
+                SELECT 1 FROM inventory_par_policies p
+                 WHERE p.tenant_id=i.tenant_id AND p.branch_id=? AND p.inventory_item_id=i.id
+                   AND p.active=1
+              )
+            )
           LIMIT 1`,
       )
-      .bind(this.actor.tenantId, input.sku, input.sku)
+      .bind(
+        input.branchId,
+        this.actor.tenantId,
+        input.sku,
+        input.sku,
+        input.branchId,
+        input.branchId,
+      )
       .first<Record<string, unknown> & { id: string }>();
     if (!item) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Inventory item not found");
@@ -4684,6 +4726,11 @@ export class InventoryIntelligenceService {
                FROM inventory_balances
               WHERE tenant_id=? AND branch_id=?
               GROUP BY item_id
+           ),
+           par AS (
+             SELECT DISTINCT inventory_item_id AS item_id
+               FROM inventory_par_policies
+              WHERE tenant_id=? AND branch_id=? AND active=1
            )
            SELECT COUNT(*) AS item_count,
                   COALESCE(SUM(COALESCE(balance.value_minor,0)),0) AS value_minor,
@@ -4691,9 +4738,21 @@ export class InventoryIntelligenceService {
                     AS out_count
              FROM inventory_items i
              LEFT JOIN balance ON balance.item_id=i.id
-            WHERE i.tenant_id=? AND i.active=1`,
+             LEFT JOIN par ON par.item_id=i.id
+             LEFT JOIN warehouses dw
+               ON dw.tenant_id=i.tenant_id AND dw.id=i.default_warehouse_id
+              AND dw.branch_id=? AND dw.active=1
+            WHERE i.tenant_id=? AND i.active=1
+              AND (balance.item_id IS NOT NULL OR par.item_id IS NOT NULL OR dw.id IS NOT NULL)`,
         )
-        .bind(this.actor.tenantId, branchId, this.actor.tenantId)
+        .bind(
+          this.actor.tenantId,
+          branchId,
+          this.actor.tenantId,
+          branchId,
+          branchId,
+          this.actor.tenantId,
+        )
         .first<{ item_count: number; value_minor: number; out_count: number }>(),
       this.db
         .prepare(
