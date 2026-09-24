@@ -146,7 +146,9 @@ function Suppliers() {
                       <TD className="num text-right">{supplier.lead_time_days ?? 0} days</TD>
                       <TD className="num text-right">{supplier.payment_terms_days ?? 0} days</TD>
                       <TD className="num text-right">{supplier.order_count}</TD>
-                      <TD className="num text-right">{ksh(Number(supplier.ordered_minor) / 100)}</TD>
+                      <TD className="num text-right">
+                        {ksh(Number(supplier.ordered_minor) / 100)}
+                      </TD>
                       <TD className="num text-right">
                         {ksh(Number(supplier.outstanding_minor) / 100)}
                       </TD>
@@ -224,34 +226,80 @@ function CreateSupplierDialog({
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Supplier code">
-            <input value={code} onChange={(event) => setCode(event.target.value)} className={inputClass} />
+            <input
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Supplier name">
-            <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Legal name">
-            <input value={legalName} onChange={(event) => setLegalName(event.target.value)} className={inputClass} />
+            <input
+              value={legalName}
+              onChange={(event) => setLegalName(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Phone">
-            <input value={phone} onChange={(event) => setPhone(event.target.value)} className={inputClass} />
+            <input
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Email">
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} />
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Tax / KRA PIN">
-            <input value={taxNumber} onChange={(event) => setTaxNumber(event.target.value)} className={inputClass} />
+            <input
+              value={taxNumber}
+              onChange={(event) => setTaxNumber(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Payment terms (days)">
-            <input type="number" min={0} value={terms} onChange={(event) => setTerms(event.target.value)} className={inputClass} />
+            <input
+              type="number"
+              min={0}
+              value={terms}
+              onChange={(event) => setTerms(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Lead time (days)">
-            <input type="number" min={0} value={leadTime} onChange={(event) => setLeadTime(event.target.value)} className={inputClass} />
+            <input
+              type="number"
+              min={0}
+              value={leadTime}
+              onChange={(event) => setLeadTime(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label={`Minimum order (${currency})`}>
-            <input inputMode="decimal" value={minimumOrder} onChange={(event) => setMinimumOrder(event.target.value)} className={inputClass} />
+            <input
+              inputMode="decimal"
+              value={minimumOrder}
+              onChange={(event) => setMinimumOrder(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Address">
-            <input value={address} onChange={(event) => setAddress(event.target.value)} className={inputClass} />
+            <input
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+              className={inputClass}
+            />
           </Field>
         </div>
         <div className="flex justify-end gap-2">
