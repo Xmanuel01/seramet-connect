@@ -111,10 +111,7 @@ function Warehouses() {
       return;
     }
     try {
-      await post(
-        `/api/seramet/inventory/warehouses/${encodeURIComponent(row.id)}/archive`,
-        {},
-      );
+      await post(`/api/seramet/inventory/warehouses/${encodeURIComponent(row.id)}/archive`, {});
       setNotice(`${row.name} archived. Historical inventory records remain linked to its ID.`);
       await load();
     } catch (error) {
