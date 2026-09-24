@@ -114,7 +114,7 @@ function Receiving() {
       const unitPriceMinor = Math.max(0, Math.round(Number(state.unitPrice || 0) * 100));
       const validQuantities =
         receivedMicro > 0 &&
-        acceptedMicro + rejectedMicro <= receivedMicro &&
+        acceptedMicro + rejectedMicro === receivedMicro &&
         acceptedMicro <= receivedMicro;
       return {
         ...line,
@@ -307,9 +307,11 @@ function Receiving() {
                           max={remaining}
                           onChange={(value) => {
                             const next = Math.max(0, Number(value || 0));
+                            const rejected = Math.min(next, Number(line.state.rejected || 0));
                             updateLine(line.id, {
                               received: value,
-                              accepted: String(Math.min(next, Number(line.state.accepted || 0))),
+                              rejected: String(rejected),
+                              accepted: String(Math.max(0, next - rejected)),
                             });
                           }}
                         />
@@ -318,14 +320,28 @@ function Receiving() {
                         <QuantityInput
                           value={line.state.accepted}
                           max={Number(line.state.received || 0)}
-                          onChange={(value) => updateLine(line.id, { accepted: value })}
+                          onChange={(value) => {
+                            const received = Math.max(0, Number(line.state.received || 0));
+                            const accepted = Math.min(received, Math.max(0, Number(value || 0)));
+                            updateLine(line.id, {
+                              accepted: value,
+                              rejected: String(Math.max(0, received - accepted)),
+                            });
+                          }}
                         />
                       </TD>
                       <TD className="text-right">
                         <QuantityInput
                           value={line.state.rejected}
                           max={Number(line.state.received || 0)}
-                          onChange={(value) => updateLine(line.id, { rejected: value })}
+                          onChange={(value) => {
+                            const received = Math.max(0, Number(line.state.received || 0));
+                            const rejected = Math.min(received, Math.max(0, Number(value || 0)));
+                            updateLine(line.id, {
+                              rejected: value,
+                              accepted: String(Math.max(0, received - rejected)),
+                            });
+                          }}
                         />
                       </TD>
                       <TD className="text-right">
