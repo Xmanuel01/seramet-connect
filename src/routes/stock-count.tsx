@@ -257,29 +257,40 @@ function StockCount() {
     }
   };
 
-  const saveDraft = async () => {
-    if (!detail) return;
-    const lines = detail.lines
-      .filter((line) => counts[line.inventory_item_id]?.trim() !== "")
-      .map((line) => ({
-        inventoryItemId: line.inventory_item_id,
-        countedQuantityMicro: Math.round(Number(counts[line.inventory_item_id]) * 1_000_000),
-        ...(reasons[line.inventory_item_id]?.trim()
-          ? { reason: reasons[line.inventory_item_id].trim() }
-          : {}),
-      }));
-    if (!lines.length) {
+  const saveDraft = async (announce = true) => {
+    if (!detail) return false;
+    const entered = detail.lines.filter(
+      (line) => counts[line.inventory_item_id]?.trim() !== "",
+    );
+    if (!entered.length) {
       setNotice("Enter at least one physical quantity before saving.");
-      return;
+      return false;
     }
+    const invalid = entered.find((line) => {
+      const value = Number(counts[line.inventory_item_id]);
+      return !Number.isFinite(value) || value < 0;
+    });
+    if (invalid) {
+      setNotice(`Enter a valid non-negative quantity for ${invalid.name}.`);
+      return false;
+    }
+    const lines = entered.map((line) => ({
+      inventoryItemId: line.inventory_item_id,
+      countedQuantityMicro: Math.round(Number(counts[line.inventory_item_id]) * 1_000_000),
+      ...(reasons[line.inventory_item_id]?.trim()
+        ? { reason: reasons[line.inventory_item_id].trim() }
+        : {}),
+    }));
     try {
       await post(
         `/api/seramet/inventory/stock-counts/${encodeURIComponent(detail.session.id)}/save`,
         { lines },
       );
-      setNotice("Stock count draft saved.");
+      if (announce) setNotice("Stock count draft saved.");
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Stock count draft could not be saved");
+      return false;
     }
   };
 
@@ -289,8 +300,9 @@ function StockCount() {
       setNotice("Count every item in the sheet before submitting for approval.");
       return;
     }
+    const saved = await saveDraft(false);
+    if (!saved) return;
     try {
-      await saveDraft();
       await post(
         `/api/seramet/inventory/stock-counts/${encodeURIComponent(detail.session.id)}/submit`,
         {},
@@ -568,17 +580,19 @@ function StockCount() {
 
               {(editable || submitted) && (
                 <div className="border-t border-border p-4">
-                  {submitted && (
-                    <label className="mb-3 grid gap-1 text-[11px] font-semibold text-muted-foreground">
-                      Approval / cancellation reason
-                      <input
-                        value={decisionReason}
-                        onChange={(event) => setDecisionReason(event.target.value)}
-                        className={inputClass}
-                        placeholder="Example: Independent recount verified the variance"
-                      />
-                    </label>
-                  )}
+                  <label className="mb-3 grid gap-1 text-[11px] font-semibold text-muted-foreground">
+                    {submitted ? "Approval / cancellation reason" : "Cancellation reason (if needed)"}
+                    <input
+                      value={decisionReason}
+                      onChange={(event) => setDecisionReason(event.target.value)}
+                      className={inputClass}
+                      placeholder={
+                        submitted
+                          ? "Example: Independent recount verified the variance"
+                          : "Required only when cancelling this count"
+                      }
+                    />
+                  </label>
                   <div className="flex flex-wrap justify-end gap-2">
                     {editable && (
                       <>
