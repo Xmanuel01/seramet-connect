@@ -274,10 +274,10 @@ function CreatePurchaseOrderDialog({
   const [expectedAt, setExpectedAt] = useState("");
 
   const supplier =
-    data?.procurement.suppliers.find((row) => row.id === supplierId) ??
-    data?.procurement.suppliers[0];
+    data?.suppliers.find((row) => row.id === supplierId) ??
+    data?.suppliers[0];
   const requisitions =
-    data?.procurement.requisitions.filter((row) =>
+    data?.requisitions.filter((row) =>
       ["APPROVED", "PARTIALLY_ORDERED"].includes(row.status),
     ) ?? [];
   const requisition = requisitions.find((row) => row.id === requisitionId);
@@ -323,7 +323,7 @@ function CreatePurchaseOrderDialog({
               onChange={(event) => setSupplierId(event.target.value)}
               className={inputClass}
             >
-              {data?.procurement.suppliers.map((row) => (
+              {data?.suppliers.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.name}
                 </option>
