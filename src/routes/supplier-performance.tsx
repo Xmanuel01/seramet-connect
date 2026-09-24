@@ -73,10 +73,7 @@ function SupplierPerformance() {
   }, [control.data]);
 
   const orderedMinor = suppliers.reduce((sum, row) => sum + Number(row.ordered_minor), 0);
-  const outstandingMinor = suppliers.reduce(
-    (sum, row) => sum + Number(row.outstanding_minor),
-    0,
-  );
+  const outstandingMinor = suppliers.reduce((sum, row) => sum + Number(row.outstanding_minor), 0);
   const matchExceptions = suppliers.reduce((sum, row) => sum + row.matchExceptions, 0);
   const received = suppliers.reduce((sum, row) => sum + Number(row.received_count), 0);
   const onTime = suppliers.reduce((sum, row) => sum + Number(row.on_time_count), 0);
