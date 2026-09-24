@@ -1614,12 +1614,28 @@ export class InventoryIntelligenceService {
           costingError = error instanceof Error ? error.message : "Recipe costing failed";
         }
       }
+      const componentRows: Array<Record<string, unknown>> = [];
+      for (const component of components.results ?? []) {
+        let componentCostMinor = 0;
+        let componentCostingError: string | null = null;
+        try {
+          componentCostMinor = await this.recipeComponentCostMinor(component, branchId);
+        } catch (error) {
+          componentCostingError =
+            error instanceof Error ? error.message : "Component costing failed";
+        }
+        componentRows.push({
+          ...component,
+          component_cost_minor: componentCostMinor,
+          component_costing_error: componentCostingError,
+        });
+      }
       rows.push({
         ...recipe,
         cost_minor: costMinor,
         available_output_quantity_minor: availableOutputQuantityMicro,
         costing_error: costingError,
-        components: components.results ?? [],
+        components: componentRows,
       });
     }
 
@@ -1916,6 +1932,92 @@ export class InventoryIntelligenceService {
       failed,
       results,
     };
+  }
+
+  private async recipeComponentCostMinor(
+    component: Record<string, unknown>,
+    branchId: string,
+  ) {
+    const inventoryItemId =
+      typeof component["inventory_item_id"] === "string"
+        ? component["inventory_item_id"]
+        : null;
+    const subRecipeId =
+      typeof component["sub_recipe_id"] === "string" ? component["sub_recipe_id"] : null;
+    const quantityMicro = Number(component["quantity_minor"] ?? 0);
+    const unitId = String(component["unit_id"] ?? "");
+    const wasteFactorBps = Number(component["waste_factor_bps"] ?? 0);
+    if (inventoryItemId) {
+      const item = await this.db
+        .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=?")
+        .bind(this.actor.tenantId, inventoryItemId)
+        .first<{ base_unit_id: string | null }>();
+      if (!item?.base_unit_id) throw new Error("Recipe item is missing its base unit");
+      const baseQuantity = await this.convertItemQuantity(
+        inventoryItemId,
+        quantityMicro,
+        unitId,
+        item.base_unit_id,
+      );
+      const withWaste = multiplyDivide(
+        baseQuantity,
+        BASIS_POINTS_SCALE + wasteFactorBps,
+        BASIS_POINTS_SCALE,
+        "component cost waste quantity",
+      );
+      return quantityCostMinor(
+        withWaste,
+        await this.weightedItemCost(inventoryItemId, branchId),
+      );
+    }
+    if (!subRecipeId) return 0;
+    const sub = await this.db
+      .prepare(
+        `SELECT r.current_version_id,r.production_item_id,rv.yield_quantity_minor,rv.yield_unit_id
+           FROM recipes r
+           LEFT JOIN recipe_versions rv
+             ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+           WHERE r.tenant_id=? AND r.id=?`,
+      )
+      .bind(this.actor.tenantId, subRecipeId)
+      .first<{
+        current_version_id: string | null;
+        production_item_id: string | null;
+        yield_quantity_minor: number | null;
+        yield_unit_id: string | null;
+      }>();
+    if (!sub?.current_version_id || !sub.yield_quantity_minor || !sub.yield_unit_id) {
+      throw new Error("Sub-recipe has no active version");
+    }
+    let requestedQuantity = quantityMicro;
+    if (unitId !== sub.yield_unit_id) {
+      if (!sub.production_item_id) {
+        throw new Error("Sub-recipe unit conversion requires a production inventory item");
+      }
+      requestedQuantity = await this.convertItemQuantity(
+        sub.production_item_id,
+        quantityMicro,
+        unitId,
+        sub.yield_unit_id,
+      );
+    }
+    const withWaste = multiplyDivide(
+      requestedQuantity,
+      BASIS_POINTS_SCALE + wasteFactorBps,
+      BASIS_POINTS_SCALE,
+      "sub-recipe component waste quantity",
+    );
+    const subCost = await this.recipeCostMinor(
+      sub.current_version_id,
+      new Set<string>(),
+      branchId,
+    );
+    return multiplyDivide(
+      subCost,
+      withWaste,
+      sub.yield_quantity_minor,
+      "sub-recipe component cost",
+    );
   }
 
   private async validateRecipeComponents(
