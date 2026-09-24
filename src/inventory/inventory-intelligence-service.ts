@@ -6033,7 +6033,7 @@ export class InventoryIntelligenceService {
       .all<Record<string, unknown>>();
     const items = await this.db
       .prepare(
-        `SELECT i.id,i.code,i.sku,i.name,i.base_unit_id,i.purchase_unit_id,
+        `SELECT i.id,i.code,i.sku,i.name,i.base_unit_id,i.purchase_unit_id,i.track_expiry,
                 bu.symbol AS base_unit_symbol,pu.symbol AS purchase_unit_symbol,
                 i.preferred_supplier_id,i.default_warehouse_id
          FROM inventory_items i
