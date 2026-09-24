@@ -1129,7 +1129,12 @@ export class InventoryIntelligenceService {
             totalCostMinor,
             lineInput.lotNumber ?? null,
             lineInput.expiryDate ?? null,
-            lineInput.qualityStatus ?? "ACCEPTED",
+            lineInput.qualityStatus ??
+              (rejectedPurchaseQuantityMicro > 0
+                ? lineInput.acceptedPurchaseQuantityMicro > 0
+                  ? "PARTIAL_REJECTION"
+                  : "REJECTED"
+                : "ACCEPTED"),
             priceVarianceMinor,
             priceVarianceBps,
             lineInput.notes ?? null,
@@ -1286,10 +1291,31 @@ export class InventoryIntelligenceService {
       return { id, duplicate: false, lines: receiptLines, correlationId };
     } catch (error) {
       const raced = await this.db
-        .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
+        .prepare(
+          `SELECT id,branch_id,purchase_order_id,supplier_id
+           FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?`,
+        )
         .bind(this.actor.tenantId, input.idempotencyKey)
-        .first<{ id: string }>();
-      if (raced) return { id: raced.id, duplicate: true, lines: [], correlationId };
+        .first<{
+          id: string;
+          branch_id: string;
+          purchase_order_id: string;
+          supplier_id: string;
+        }>();
+      if (raced) {
+        if (
+          raced.branch_id !== input.branchId ||
+          raced.purchase_order_id !== input.purchaseOrderId ||
+          raced.supplier_id !== input.supplierId
+        ) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            409,
+            "Goods receipt idempotency key is already used by a different receipt scope",
+          );
+        }
+        return { id: raced.id, duplicate: true, lines: [], correlationId };
+      }
       throw error;
     }
   }
