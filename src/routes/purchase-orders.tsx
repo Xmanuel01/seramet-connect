@@ -5,10 +5,10 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  type InventoryBranchPayload,
+  type ProcurementBranchPayload,
   type ProcurementOrderRow,
-  useInventoryControlCentre,
-} from "@/inventory/use-inventory-control-centre";
+  useProcurementControlCentre,
+} from "@/procurement/use-procurement-control-centre";
 import { useAppContext } from "@/lib/app-context";
 import { formatDate, ksh } from "@/lib/currency";
 import { permissions } from "@/platform/permissions";
@@ -31,7 +31,7 @@ type DisplayOrder = ProcurementOrderRow & { branchId: string };
 
 function PurchaseOrders() {
   const { branchId, branchLabel, currentUser, currency, isAllBranches } = useAppContext();
-  const control = useInventoryControlCentre(true);
+  const control = useProcurementControlCentre(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -260,7 +260,7 @@ function CreatePurchaseOrderDialog({
   onOpenChange: (open: boolean) => void;
   branchId: string;
   currency: string;
-  data: InventoryBranchPayload | undefined;
+  data: ProcurementBranchPayload | undefined;
   busy: boolean;
   onSubmit: (body: unknown) => Promise<void>;
 }) {
@@ -390,7 +390,7 @@ function CreatePurchaseOrderDialog({
                   className={inputClass}
                 >
                   {data?.items.map((row) => (
-                    <option key={`${row.warehouse_id ?? "all"}:${row.id}`} value={row.id}>
+                    <option key={`${row.default_warehouse_id ?? "all"}:${row.id}`} value={row.id}>
                       {row.name}
                     </option>
                   ))}
