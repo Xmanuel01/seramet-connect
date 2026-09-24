@@ -4714,7 +4714,14 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
-    return result.results ?? [];
+    return (result.results ?? []).map((row) => {
+      const blindActive =
+        Number(row["blind_count"] ?? 0) === 1 &&
+        ["DRAFT", "COUNTING"].includes(String(row["status"] ?? ""));
+      return blindActive
+        ? { ...row, variance_count: null, variance_value_minor: null }
+        : row;
+    });
   }
 
   async stockCountDetail(id: string) {
@@ -4748,7 +4755,21 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, id)
       .all<Record<string, unknown>>();
-    return { session, lines: lines.results ?? [] };
+    const blindActive =
+      Number(session["blind_count"] ?? 0) === 1 &&
+      ["DRAFT", "COUNTING"].includes(String(session["status"] ?? ""));
+    const visibleLines = (lines.results ?? []).map((line) =>
+      blindActive
+        ? {
+            ...line,
+            expected_quantity_minor: null,
+            variance_quantity_minor: null,
+            variance_value_minor: null,
+            unit_cost_minor: null,
+          }
+        : line,
+    );
+    return { session, lines: visibleLines };
   }
 
   async startStockCount(input: {
