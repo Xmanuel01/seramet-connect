@@ -180,6 +180,19 @@ export async function handleInventoryApi(
       })),
     });
   }
+  const itemDetailRoute = /^\/api\/seramet\/inventory\/items\/([^/]+)$/.exec(url.pathname);
+  if (itemDetailRoute && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    const limit = boundedLimit(url);
+    return json({
+      ok: true,
+      detail: await service.inventoryItemDetail({
+        branchId,
+        sku: decodeURIComponent(itemDetailRoute[1]!),
+        limit,
+      }),
+    });
+  }
   if (url.pathname === "/api/seramet/inventory/control-centre" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
     const limit = boundedLimit(url);
