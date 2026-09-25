@@ -1,11 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { formatDate, ksh } from "@/lib/currency";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useAppContext } from "@/lib/app-context";
-import { TransactionEngine, type PurchaseOrderRecord } from "@/lib/transaction-engine";
+import { formatDate, ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/purchase-orders")({
   head: () => ({
@@ -14,192 +14,168 @@ export const Route = createFileRoute("/purchase-orders")({
       {
         name: "description",
         content:
-          "Purchase order list, approval state, receiving progress and supplier commitment tracking.",
+          "Authoritative purchase order register with approvals, receiving progress and supplier commitments.",
       },
     ],
   }),
   component: PurchaseOrders,
 });
 
-function shortDate(iso: string) {
-  return formatDate(iso, {
-    day: "2-digit",
-    month: "short",
-  });
-}
-
-function displayStatus(status: PurchaseOrderRecord["status"]) {
-  return status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
 function PurchaseOrders() {
+  const { branchId, branchLabel } = useAppContext();
+  const control = useInventoryControlCentre(true);
+  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const rows = data?.procurement.purchaseOrders ?? [];
   const [notice, setNotice] = useState("");
-  const { branch, branchLabel, currentUser, matchesBranch } = useAppContext();
-  const { state, mutate, backendStatus } = useTransactionEngine();
-  const rows = state.purchaseOrders
-    .filter((row) => matchesBranch(row.branchId ?? row.branch))
-    .map((po) => {
-      const received = po.lines.reduce(
-        (sum, line) => sum + line.receivedQuantity * line.unitCost,
-        0,
+  const [busyId, setBusyId] = useState("");
+
+  const metrics = useMemo(() => {
+    const open = rows.filter((row) => !["RECEIVED", "CANCELLED"].includes(row.status));
+    return {
+      visible: rows.length,
+      openMinor: open.reduce((sum, row) => sum + Number(row.total_minor), 0),
+      pending: rows.filter((row) => ["DRAFT", "SUBMITTED", "PENDING_APPROVAL"].includes(row.status))
+        .length,
+      received: rows.filter((row) => row.status === "RECEIVED").length,
+    };
+  }, [rows]);
+
+  const command = async (rowId: string, action: "approve" | "cancel") => {
+    setBusyId(rowId);
+    setNotice("");
+    try {
+      await control.command(
+        `/api/seramet/procurement/purchase-orders/${encodeURIComponent(rowId)}/${action}`,
+        action === "cancel"
+          ? { reason: "Cancelled from purchase order register" }
+          : { reason: "Approved from purchase order register" },
       );
-      return {
-        ...po,
-        created: shortDate(po.createdAt),
-        expected: shortDate(po.expectedAt),
-        amount: po.total,
-        received,
-        displayStatus: displayStatus(po.status),
-      };
-    });
-  const openValue = rows
-    .filter((row) => row.status !== "RECEIVED")
-    .reduce((sum, row) => sum + row.amount - row.received, 0);
-  const pending = rows.filter((row) => row.status === "PENDING_APPROVAL").length;
-
-  const generate = () => {
-    const result = TransactionEngine.generatePurchaseOrders(state, branch, currentUser.name);
-    void mutate("generatePurchaseOrders", { branch });
-    setNotice(
-      result.created.length
-        ? `Created ${result.created.join(", ")} from live PAR shortfalls.`
-        : "No PO created. Existing open POs already cover the current shortfalls.",
-    );
-  };
-
-  const approve = (id: string) => {
-    void mutate("approvePurchaseOrder", { purchaseOrderId: id });
-    setNotice(`${id} approved and is now available for receiving.`);
+      setNotice(action === "approve" ? "Purchase order approved for receiving." : "Purchase order cancelled.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Purchase order action failed");
+    } finally {
+      setBusyId("");
+    }
   };
 
   return (
     <AppShell
       title="Purchase orders"
-      subtitle={`PO approvals, receiving progress and supplier commitments - ${branchLabel}`}
+      subtitle={`Approval, receiving progress and supplier commitments - ${branchLabel}`}
       actions={
         <>
-          <Btn>Saved views</Btn>
-          <Btn>Export</Btn>
-          <Btn variant="primary" onClick={generate}>
-            New purchase order
+          <Btn disabled={control.status === "loading"} onClick={() => void control.refresh()}>
+            <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
+          <Link to="/procurement">
+            <Btn variant="primary">New purchase order</Btn>
+          </Link>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Visible POs" value={rows.length} />
-        <Metric label="Open value" value={openValue} money invert />
-        <Metric label="Pending approval" value={pending} invert />
-        <Metric label="Received" value={rows.filter((row) => row.status === "RECEIVED").length} />
+        <Metric label="Visible POs" value={metrics.visible} />
+        <Metric label="Open commitment" value={metrics.openMinor / 100} money />
+        <Metric label="Pending approval" value={metrics.pending} invert={metrics.pending > 0} />
+        <Metric label="Received" value={metrics.received} />
       </div>
-      {notice && (
-        <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice} Backend: {backendStatus}.
+
+      {(notice || control.error) && (
+        <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
+          {notice || control.error}
         </div>
       )}
+
       <Panel className="mt-4">
         <PanelHead
           title="Purchase order register"
-          sub="Approval, receiving and supplier bill conversion stay in one procurement flow"
-          right={<Btn>Columns</Btn>}
+          sub="Server-authorized approvals and receipt progress from the procurement ledger"
         />
-        <div className="border-b border-border px-4 py-3">
-          <Chips items={[`Branch: ${branch}`, "Status: All", "Expected: Next 7 days"]} />
-        </div>
-        {rows.length === 0 && (
-          <div className="p-6 text-center text-[13px] text-muted-foreground">
-            No purchase orders yet. Generate one from current PAR shortfalls.
+        {!rows.length ? (
+          <div className="p-8 text-center text-[13px] text-muted-foreground">
+            No purchase orders exist for this branch.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1120px]">
+              <thead>
+                <tr>
+                  <TH>PO</TH>
+                  <TH>Supplier</TH>
+                  <TH>Created</TH>
+                  <TH>Expected</TH>
+                  <TH className="text-right">Amount</TH>
+                  <TH className="text-right">Received lines</TH>
+                  <TH className="text-right">Progress</TH>
+                  <TH>Status</TH>
+                  <TH>Action</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((po) => {
+                  const ordered = po.lines.reduce(
+                    (sum, line) => sum + Number(line.ordered_quantity_minor),
+                    0,
+                  );
+                  const received = po.lines.reduce(
+                    (sum, line) => sum + Number(line.received_purchase_quantity_minor),
+                    0,
+                  );
+                  const progress = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
+                  return (
+                    <tr key={po.id} className="hover:bg-secondary/50">
+                      <TD className="num font-semibold">{po.purchase_order_number}</TD>
+                      <TD>{po.supplier_name}</TD>
+                      <TD className="text-muted-foreground">{formatDate(po.created_at)}</TD>
+                      <TD className="text-muted-foreground">
+                        {po.expected_at ? formatDate(po.expected_at) : "—"}
+                      </TD>
+                      <TD className="num text-right font-semibold">{ksh(Number(po.total_minor) / 100)}</TD>
+                      <TD className="num text-right text-muted-foreground">
+                        {po.lines.filter((line) => Number(line.received_purchase_quantity_minor) > 0).length}/
+                        {po.lines.length}
+                      </TD>
+                      <TD className="num text-right">{progress}%</TD>
+                      <TD><Status>{po.status}</Status></TD>
+                      <TD>
+                        <div className="flex gap-2">
+                          {["DRAFT", "SUBMITTED"].includes(po.status) && (
+                            <button
+                              type="button"
+                              disabled={busyId === po.id}
+                              onClick={() => void command(po.id, "approve")}
+                              className="text-[12px] font-semibold text-primary hover:underline disabled:opacity-50"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {["DRAFT", "SUBMITTED", "APPROVED"].includes(po.status) && (
+                            <button
+                              type="button"
+                              disabled={busyId === po.id}
+                              onClick={() => void command(po.id, "cancel")}
+                              className="text-[12px] font-semibold text-destructive hover:underline disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          )}
+                          {["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(po.status) && (
+                            <Link to="/receiving" className="text-[12px] font-semibold text-success hover:underline">
+                              Receive
+                            </Link>
+                          )}
+                          {["RECEIVED", "CANCELLED"].includes(po.status) && (
+                            <span className="text-[12px] text-muted-foreground">Complete</span>
+                          )}
+                        </div>
+                      </TD>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
-        <div className="grid gap-3 p-3 md:hidden">
-          {rows.map((po) => (
-            <article
-              key={po.id}
-              className="rounded-lg border border-border bg-card p-3 shadow-card"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="num text-[13px] font-bold">{po.id}</div>
-                  <div className="truncate text-[12px] text-muted-foreground">
-                    {po.supplier} - {po.branch}
-                  </div>
-                </div>
-                <Status>{po.displayStatus}</Status>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
-                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                  <span className="block text-muted-foreground">Amount</span>
-                  <span className="num font-semibold">{ksh(po.amount)}</span>
-                </div>
-                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                  <span className="block text-muted-foreground">Received</span>
-                  <span className="num font-semibold">{ksh(po.received)}</span>
-                </div>
-                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                  <span className="block text-muted-foreground">Expected</span>
-                  <span className="font-semibold">{po.expected}</span>
-                </div>
-              </div>
-              {po.status === "PENDING_APPROVAL" && (
-                <Btn className="mt-3 w-full" variant="primary" onClick={() => approve(po.id)}>
-                  Approve PO
-                </Btn>
-              )}
-            </article>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[960px]">
-            <thead>
-              <tr>
-                <TH>PO</TH>
-                <TH>Supplier</TH>
-                <TH>Branch</TH>
-                <TH>Created</TH>
-                <TH>Expected</TH>
-                <TH className="text-right">Amount</TH>
-                <TH className="text-right">Received</TH>
-                <TH className="text-right">Open</TH>
-                <TH>Status</TH>
-                <TH>Action</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((po) => (
-                <tr key={po.id} className="hover:bg-secondary/50">
-                  <TD className="num font-semibold">{po.id}</TD>
-                  <TD>{po.supplier}</TD>
-                  <TD className="text-muted-foreground">{po.branch}</TD>
-                  <TD className="text-muted-foreground">{po.created}</TD>
-                  <TD className="text-muted-foreground">{po.expected}</TD>
-                  <TD className="num text-right">{ksh(po.amount)}</TD>
-                  <TD className="num text-right text-muted-foreground">{ksh(po.received)}</TD>
-                  <TD className="num text-right font-semibold">{ksh(po.amount - po.received)}</TD>
-                  <TD>
-                    <Status>{po.displayStatus}</Status>
-                  </TD>
-                  <TD>
-                    {po.status === "PENDING_APPROVAL" ? (
-                      <button
-                        type="button"
-                        onClick={() => approve(po.id)}
-                        className="text-[12px] font-semibold text-primary hover:underline"
-                      >
-                        Approve
-                      </button>
-                    ) : po.status === "APPROVED" || po.status === "PARTIAL" ? (
-                      <span className="text-[12px] font-semibold text-success">
-                        Ready to receive
-                      </span>
-                    ) : (
-                      <span className="text-[12px] text-muted-foreground">Complete</span>
-                    )}
-                  </TD>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </Panel>
     </AppShell>
   );
