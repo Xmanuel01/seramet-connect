@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { OnboardingService } from "@/onboarding/onboarding-service";
+import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
   createMigratedTestDatabase,
@@ -150,6 +151,53 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       }),
     );
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
+  });
+
+  it("follows the manual-item popup contract through preview, verified commit and real POS visibility", async () => {
+    const bytes = new TextEncoder().encode(
+      createManualMenuCsv({
+        code: "PILAU-001",
+        name: "Beef Pilau",
+        categoryCode: "MAIN",
+        basePrice: "450.00",
+        currency: "KES",
+        stationCode: "MAIN",
+      }),
+    );
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "manual-beef-pilau.csv",
+      mimeType: "text/csv",
+      bytes,
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "manual-item-pilau-001",
+    });
+    expect(preview).toMatchObject({ rowCount: 1, validCount: 1, errorCount: 0, canCommit: true });
+    expect(await service.listMenuCatalog(branchId)).toHaveLength(0);
+    const saved = await service.commitImport(preview.id, preview.commitKey);
+    expect(saved).toMatchObject({
+      status: "COMMITTED",
+      queued: false,
+      verification: { status: "VERIFIED", catalogueVerified: true, branchSettings: 1 },
+    });
+    const branchCatalog = await service.listMenuCatalog(branchId);
+    expect(branchCatalog).toContainEqual(
+      expect.objectContaining({
+        code: "PILAU-001",
+        category_code: "MAIN",
+        name: "Beef Pilau",
+        selling_price_minor: 45_000,
+        station_id: "station-main",
+        branch_activated: 1,
+      }),
+    );
+    const pos = await createMenuCatalogReader(db)(tenantId, branchId);
+    expect(pos).toContainEqual(
+      expect.objectContaining({ itemCode: "PILAU-001", price: 450, productionStation: "MAIN" }),
+    );
+    expect(await service.listMenuCatalog(secondBranchId)).toHaveLength(0);
   });
 
   it("imports an actual Excel workbook into the authoritative branch catalogue", async () => {
