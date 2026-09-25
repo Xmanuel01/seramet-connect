@@ -64,6 +64,8 @@ function MenuImport() {
   );
   const [targetBranchIds, setTargetBranchIds] = useState<string[]>(isAllBranches ? [] : [branchId]);
   const [stationMap, setStationMap] = useState<Record<string, string>>({});
+  const [columnMap, setColumnMap] = useState<Record<string, string>>({});
+  const [mappingOpen, setMappingOpen] = useState(false);
   const [stationReferences, setStationReferences] = useState<string[]>([]);
   const [previewPage, setPreviewPage] = useState(1);
   const [catalogPage, setCatalogPage] = useState(1);
@@ -147,6 +149,7 @@ function MenuImport() {
     const result = await centre.previewImport(file, "MENU", strategy, {
       targetMode,
       targetBranchIds: targetMode === "SELECTED_BRANCHES" ? targetBranchIds : [],
+      columnMap: Object.fromEntries(Object.entries(columnMap).filter(([, source]) => source.trim())),
       referenceMap: { stations: stationMap },
     });
     setPreview(result);
@@ -630,7 +633,51 @@ function MenuImport() {
                 appear in POS until explicitly activated for a branch. Station, recipe, tax and
                 channel references are validated against authoritative configuration.
               </div>
-              {stationReferences.length > 0 && (
+              <div className="rounded-md border border-border p-3">
+              <Btn
+                onClick={() => setMappingOpen((previous) => !previous)}
+                title="Map another POS export to Seramet menu fields"
+              >
+                {mappingOpen ? "Hide column mapping" : "Match file columns"}
+              </Btn>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                For exports from another POS, enter their exact spreadsheet headings. Seramet
+                already recognizes common names such as Name, Category and Price.
+              </p>
+              {mappingOpen && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["itemCode", "Item code / SKU"],
+                    ["name", "Item name"],
+                    ["categoryCode", "Category"],
+                    ["basePrice", "Selling price"],
+                    ["stationCode", "Kitchen / bar station"],
+                    ["branchCode", "Location / branch"],
+                    ["onlinePrice", "Online price"],
+                    ["description", "Description"],
+                  ].map(([field, label]) => (
+                    <label key={field} className="grid gap-1 text-[12px] font-semibold">
+                      {label}
+                      <input
+                        value={columnMap[field] ?? ""}
+                        placeholder="Heading in source file"
+                        onChange={(event) => {
+                          setColumnMap((previous) => ({
+                            ...previous,
+                            [field]: event.target.value,
+                          }));
+                          invalidatePreview(
+                            "Column mappings changed. Revalidate the original file before committing.",
+                          );
+                        }}
+                        className="h-9 rounded-md border border-border bg-card px-2"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            {stationReferences.length > 0 && (
                 <div className="grid gap-3 rounded-md border border-warning/30 bg-warning-soft p-3">
                   <div className="text-[12px] font-semibold text-warning">Map unknown stations</div>
                   {stationReferences.map((source) => (
