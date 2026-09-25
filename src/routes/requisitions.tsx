@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -23,18 +23,14 @@ function Requisitions() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  const requestedUnits = useMemo(
-    () =>
-      rows.reduce(
-        (sum, row) =>
-          sum +
-          row.lines.reduce(
-            (lineSum, line) => lineSum + Number(line.requested_quantity_minor),
-            0,
-          ),
+  const requestedUnits = rows.reduce(
+    (sum, row) =>
+      sum +
+      row.lines.reduce(
+        (lineSum, line) => lineSum + Number(line.requested_quantity_minor),
         0,
       ),
-    [rows],
+    0,
   );
 
   async function approve(id: string) {
@@ -70,8 +66,7 @@ function Requisitions() {
         <Metric
           label="Open"
           value={
-            rows.filter((row) => !["ORDERED", "REJECTED", "CANCELLED"].includes(row.status))
-              .length
+            rows.filter((row) => !["ORDERED", "REJECTED", "CANCELLED"].includes(row.status)).length
           }
         />
         <Metric
@@ -132,11 +127,7 @@ function Requisitions() {
                   </TD>
                   <TD>
                     {row.status === "SUBMITTED" ? (
-                      <Btn
-                        disabled={busy}
-                        variant="primary"
-                        onClick={() => void approve(row.id)}
-                      >
+                      <Btn disabled={busy} variant="primary" onClick={() => void approve(row.id)}>
                         Approve
                       </Btn>
                     ) : row.status === "APPROVED" || row.status === "PARTIALLY_ORDERED" ? (
@@ -205,14 +196,13 @@ function CreateRequisitionDialog({
   const [itemId, setItemId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
   const [quantity, setQuantity] = useState("1");
-  const [sourceType, setSourceType] = useState<
-    "MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST"
-  >("MANUAL_REQUEST");
+  const [sourceType, setSourceType] = useState<"MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST">(
+    "MANUAL_REQUEST",
+  );
 
   const item = items.find((row) => row.id === itemId);
   const unitId = item?.base_unit_id ?? units[0]?.id ?? "";
-  const effectiveWarehouseId =
-    warehouseId || item?.default_warehouse_id || warehouses[0]?.id || "";
+  const effectiveWarehouseId = warehouseId || item?.default_warehouse_id || warehouses[0]?.id || "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -257,9 +247,7 @@ function CreateRequisitionDialog({
             <select
               className="mt-1 h-9 w-full rounded-md border border-border bg-card px-2"
               value={sourceType}
-              onChange={(event) =>
-                setSourceType(event.target.value as typeof sourceType)
-              }
+              onChange={(event) => setSourceType(event.target.value as typeof sourceType)}
             >
               <option value="MANUAL_REQUEST">Manual request</option>
               <option value="LOW_STOCK">Low stock</option>
@@ -281,13 +269,7 @@ function CreateRequisitionDialog({
 
           <Btn
             variant="primary"
-            disabled={
-              busy ||
-              !itemId ||
-              !effectiveWarehouseId ||
-              !unitId ||
-              Number(quantity) <= 0
-            }
+            disabled={busy || !itemId || !effectiveWarehouseId || !unitId || Number(quantity) <= 0}
             onClick={() =>
               void onSubmit({
                 branchId,
