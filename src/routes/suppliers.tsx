@@ -26,10 +26,7 @@ function Suppliers() {
     (total, supplier) => total + Number(supplier.outstanding_minor),
     0,
   );
-  const orders = suppliers.reduce(
-    (total, supplier) => total + Number(supplier.order_count),
-    0,
-  );
+  const orders = suppliers.reduce((total, supplier) => total + Number(supplier.order_count), 0);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -84,21 +81,14 @@ function Suppliers() {
           ]}
         >
           {suppliers.map((supplier) => (
-            <tr
-              key={supplier.branchId + ":" + supplier.id}
-              className="hover:bg-secondary/50"
-            >
+            <tr key={supplier.branchId + ":" + supplier.id} className="hover:bg-secondary/50">
               <TD className="font-semibold">{supplier.name}</TD>
               <TD className="num text-muted-foreground">{supplier.code}</TD>
               <TD className="num text-muted-foreground">{supplier.branchId}</TD>
               <TD className="num">{supplier.lead_time_days} days</TD>
               <TD className="num">{supplier.payment_terms_days} days</TD>
-              <TD className="num text-right">
-                {ksh(Number(supplier.ordered_minor) / 100)}
-              </TD>
-              <TD className="num text-right">
-                {ksh(Number(supplier.outstanding_minor) / 100)}
-              </TD>
+              <TD className="num text-right">{ksh(Number(supplier.ordered_minor) / 100)}</TD>
+              <TD className="num text-right">{ksh(Number(supplier.outstanding_minor) / 100)}</TD>
               <TD>
                 <Status>{supplier.received_count > 0 ? "Active" : "New"}</Status>
               </TD>
