@@ -7,20 +7,22 @@ import {
   Download,
   FileSpreadsheet,
   History,
-  Loader2,
+  Plus,
   RefreshCcw,
   Search,
   Upload,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { MenuCatalogDialog } from "@/components/app/MenuCatalogDialog";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import type { DuplicateStrategy, ImportPreview, ImportTargetMode } from "@/onboarding/types";
+import type { ImportPreview } from "@/onboarding/types";
 import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
 import { createHistoricalSalesTemplate } from "@/onboarding/historical-sales-import-schema";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
 import { SetupStatus } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
 import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 import { cn } from "@/lib/utils";
 import { formatMinor } from "@/payments/money";
 
@@ -41,16 +43,10 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { branchId, isAllBranches } = useAppContext();
+  const { activeTenantId, branchId, isAllBranches, hasPermission } = useAppContext();
+  const canManageMenu = hasPermission(permissions.setupImport);
+  const [dialogMode, setDialogMode] = useState<"manual" | "import" | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  const [sourceFile, setSourceFile] = useState<File | null>(null);
-  const [strategy, setStrategy] = useState<DuplicateStrategy>("ERROR");
-  const [targetMode, setTargetMode] = useState<ImportTargetMode>(
-    isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES",
-  );
-  const [targetBranchIds, setTargetBranchIds] = useState<string[]>(isAllBranches ? [] : [branchId]);
-  const [stationMap, setStationMap] = useState<Record<string, string>>({});
-  const [stationReferences, setStationReferences] = useState<string[]>([]);
   const [previewPage, setPreviewPage] = useState(1);
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogQuery, setCatalogQuery] = useState("");
@@ -67,9 +63,7 @@ function MenuImport() {
     if (!query) return centre.menuCatalog;
     return centre.menuCatalog.filter((item) =>
       [item.code, item.sku, item.name, item.category_code].some((value) =>
-        String(value ?? "")
-          .toLowerCase()
-          .includes(query),
+        String(value ?? "").toLowerCase().includes(query),
       ),
     );
   }, [catalogQuery, centre.menuCatalog]);
@@ -81,29 +75,13 @@ function MenuImport() {
     (previewPage - 1) * PAGE_SIZE,
     previewPage * PAGE_SIZE,
   );
-  const stationOptions = useMemo(() => {
-    const selected = new Set(targetBranchIds);
-    const values = centre.options.stations.filter((station) => {
-      const stationBranch = stringValue(station["branch_id"]);
-      return targetMode === "ROW_BRANCHES" || !selected.size || selected.has(stationBranch);
-    });
-    return [...new Map(values.map((station) => [stringValue(station["code"]), station])).values()];
-  }, [centre.options.stations, targetBranchIds, targetMode]);
 
   useEffect(() => {
-    setTargetMode(isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES");
-    setTargetBranchIds(isAllBranches ? [] : [branchId]);
-    setPreview(null);
-  }, [branchId, isAllBranches]);
-
-  const invalidatePreview = (
-    message = "Import settings changed. Run preview again before commit.",
-  ) => {
-    if (preview) setNotice(message);
-    setNoticeTone("warning");
     setPreview(null);
     setPreviewPage(1);
-  };
+    setCatalogPage(1);
+    setDialogMode(null);
+  }, [activeTenantId, branchId, isAllBranches]);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -118,67 +96,6 @@ function MenuImport() {
     } finally {
       setBusy(false);
     }
-  };
-
-  const runPreview = async (file: File) => {
-    if (targetMode === "SELECTED_BRANCHES" && !targetBranchIds.length) {
-      throw new Error("Select at least one branch or choose Tenant master only.");
-    }
-    const result = await centre.previewImport(file, "MENU", strategy, {
-      targetMode,
-      targetBranchIds: targetMode === "SELECTED_BRANCHES" ? targetBranchIds : [],
-      referenceMap: { stations: stationMap },
-    });
-    setPreview(result);
-    setPreviewPage(1);
-    setStationReferences(
-      [
-        ...new Set(
-          result.rows.flatMap((row) =>
-            row.errors.some((issue) => issue.code === "UNKNOWN_STATION")
-              ? [stringValue(row.normalized["stationCode"])]
-              : [],
-          ),
-        ),
-      ].filter(Boolean),
-    );
-  };
-
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setSourceFile(file);
-    setBusy(true);
-    setNotice("");
-    try {
-      await runPreview(file);
-    } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : "The menu file could not be validated");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const commit = () => {
-    if (!preview) return;
-    void run(async () => {
-      const response = await centre.commitImport(preview);
-      if (response.result.queued) {
-        setPreview({ ...preview, status: "COMMITTING", canCommit: false });
-        setNoticeTone("warning");
-        throw new QueuedImportNotice(
-          `Import queued as ${response.result.jobId ?? "a durable worker job"}. It is not committed until verification completes.`,
-        );
-      }
-      setPreview({
-        ...preview,
-        status: "COMMITTED",
-        canCommit: false,
-        ...(response.result.verification ? { verification: response.result.verification } : {}),
-      });
-      return response;
-    }, "Menu import committed and verified in the authoritative catalogue.");
   };
 
   const uploadHistoricalSales = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -205,38 +122,59 @@ function MenuImport() {
 
   return (
     <AppShell
-      title="Menu import"
-      subtitle="Secure preview, validation and explicit server commit"
+      title="Menu catalog"
+      subtitle="Manage real POS items with manual creation or a verified spreadsheet import"
       actions={
         <>
+          <Btn variant="primary" disabled={!canManageMenu || busy} onClick={() => setDialogMode("manual")}>
+            <Plus className="h-4 w-4" />
+            Add item
+          </Btn>
+          <Btn disabled={!canManageMenu || busy} onClick={() => setDialogMode("import")}>
+            <Upload className="h-4 w-4" />
+            Import menu
+          </Btn>
           <Btn
-            onClick={() => download("seramet-menu-template-v2.csv", createCanonicalMenuTemplate())}
+            onClick={() => download("seramet-menu-template-v3.csv", createCanonicalMenuTemplate())}
           >
             <Download className="h-4 w-4" />
             Template
           </Btn>
-          <Btn onClick={() => void centre.refresh()} disabled={busy} title="Refresh catalog">
-            <RefreshCcw className={cn("h-4 w-4", busy && "animate-spin")} />
+          <Btn onClick={() => void centre.refreshCatalog()} disabled={busy} title="Refresh catalog">
+            <RefreshCcw className="h-4 w-4" />
             Refresh
-          </Btn>
-          <Btn variant="primary" onClick={commit} disabled={!preview?.canCommit || busy}>
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Commit import
           </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Metric label="Catalog items" value={committedCount} />
+        <Metric label="Catalog items" value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"} />
         <Metric label="Rows read" value={preview?.rowCount ?? 0} />
         <Metric label="Valid" value={preview?.validCount ?? 0} />
         <Metric label="Warnings" value={preview?.warningCount ?? 0} />
         <Metric label="Errors" value={preview?.errorCount ?? 0} />
       </div>
+
+      {dialogMode && (
+        <MenuCatalogDialog
+          key={activeTenantId + ":" + branchId + ":" + dialogMode}
+          mode={dialogMode}
+          centre={centre}
+          onClose={() => setDialogMode(null)}
+          onPreview={(next) => {
+            setPreview(next);
+            setPreviewPage(1);
+          }}
+          onCommitted={(kind) => {
+            setNotice(
+              kind === "manual"
+                ? "Item creation confirmed by the server. Verify its branch visibility and kitchen routing."
+                : "Import verified by the server. Check its branch availability before live service.",
+            );
+            setNoticeTone("success");
+          }}
+        />
+      )}
 
       {notice && (
         <div
@@ -251,152 +189,26 @@ function MenuImport() {
         </div>
       )}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <Panel className="h-fit">
+      <div className="mt-4 grid gap-4">
+        <Panel>
           <PanelHead
-            title="Import source"
-            sub="CSV or XLSX; files are validated before any data changes"
+            title="Catalog management"
+            sub="Manual creation and spreadsheet configuration now open in a focused dialog."
             right={<FileSpreadsheet className="h-4 w-4 text-primary" />}
           />
-          <div className="space-y-4 p-4">
-            <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
-              Existing-code policy
-              <select
-                value={strategy}
-                onChange={(event) => {
-                  setStrategy(event.target.value as DuplicateStrategy);
-                  invalidatePreview();
-                }}
-                className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
-              >
-                <option value="ERROR">Stop on duplicate</option>
-                <option value="UPDATE">Update existing only</option>
-                <option value="SKIP">Skip existing</option>
-                <option value="CREATE">Create new</option>
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
-              Import target
-              <select
-                value={targetMode}
-                onChange={(event) => {
-                  setTargetMode(event.target.value as ImportTargetMode);
-                  invalidatePreview();
-                }}
-                className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
-              >
-                <option value="TENANT_MASTER">Tenant master only</option>
-                <option value="SELECTED_BRANCHES">Selected branches</option>
-                <option value="ROW_BRANCHES">Branch code in each row</option>
-              </select>
-            </label>
-            {targetMode === "SELECTED_BRANCHES" && (
-              <fieldset className="grid gap-2 rounded-md border border-border p-3">
-                <legend className="px-1 text-[12px] font-semibold text-muted-foreground">
-                  Activate for branches
-                </legend>
-                {centre.structure.branches.map((branch) => (
-                  <label
-                    key={branch.id}
-                    className="flex items-center gap-2 text-[12px] font-medium"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={targetBranchIds.includes(branch.id)}
-                      onChange={(event) => {
-                        setTargetBranchIds((current) =>
-                          event.target.checked
-                            ? [...new Set([...current, branch.id])]
-                            : current.filter((id) => id !== branch.id),
-                        );
-                        invalidatePreview();
-                      }}
-                      className="h-4 w-4 accent-primary"
-                    />
-                    {branch.name}
-                    <span className="text-muted-foreground">({branch.code})</span>
-                  </label>
-                ))}
-              </fieldset>
-            )}
-            <label
-              className={cn(
-                "flex min-h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-6 text-center text-[13px] font-semibold hover:bg-secondary/60",
-                busy && "pointer-events-none opacity-60",
-              )}
-            >
-              {busy ? (
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              ) : (
-                <Upload className="h-5 w-5 text-primary" />
-              )}
-              {busy ? "Validating on server..." : "Choose menu file"}
-              <span className="text-[11px] font-normal text-muted-foreground">
-                File size, type, workbook shape and row limits are enforced.
+          <div className="flex flex-wrap items-center gap-2 p-4">
+            <Btn variant="primary" disabled={!canManageMenu || busy} onClick={() => setDialogMode("manual")}>
+              <Plus className="h-4 w-4" />
+              Add menu item
+            </Btn>
+            <Btn disabled={!canManageMenu || busy} onClick={() => setDialogMode("import")}>
+              <Upload className="h-4 w-4" />
+              Import CSV / Excel
+            </Btn>
+            {!canManageMenu && (
+              <span className="text-[12px] text-muted-foreground">
+                Your role needs setup import permission to modify the menu.
               </span>
-              <input
-                type="file"
-                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={upload}
-                className="hidden"
-              />
-            </label>
-            <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] leading-5 text-muted-foreground">
-              Required: item code, name, category and base price. Tenant-master items do not appear
-              in POS until explicitly activated for a branch. Station, recipe, tax and channel
-              references are validated against authoritative configuration.
-            </div>
-            {stationReferences.length > 0 && (
-              <div className="grid gap-3 rounded-md border border-warning/30 bg-warning-soft p-3">
-                <div className="text-[12px] font-semibold text-warning">Map unknown stations</div>
-                {stationReferences.map((source) => (
-                  <label key={source} className="grid gap-1 text-[11px] text-muted-foreground">
-                    {source}
-                    <select
-                      value={stationMap[source] ?? ""}
-                      onChange={(event) => {
-                        setStationMap((current) => ({ ...current, [source]: event.target.value }));
-                        invalidatePreview(
-                          "Station mapping changed. Run preview again to validate it.",
-                        );
-                      }}
-                      className="h-9 rounded-md border border-border bg-card px-2 text-[12px] text-foreground"
-                    >
-                      <option value="">Choose configured station</option>
-                      {stationOptions.map((station) => (
-                        <option
-                          key={stringValue(station["id"])}
-                          value={stringValue(station["code"])}
-                        >
-                          {stringValue(station["name"])} ({stringValue(station["code"])})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
-                <Btn
-                  onClick={() =>
-                    sourceFile && void run(async () => runPreview(sourceFile), "Preview refreshed.")
-                  }
-                  disabled={!sourceFile || busy}
-                >
-                  <RefreshCcw className="h-4 w-4" />
-                  Run preview again
-                </Btn>
-              </div>
-            )}
-            {preview && (
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
-                <div className="min-w-0">
-                  <div className="truncate text-[12px] font-semibold">{preview.originalName}</div>
-                  <div className="text-[11px] text-muted-foreground">Preview {preview.id}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Template v{preview.templateVersion ?? 1} |{" "}
-                    {preview.targetMode ?? "TENANT_MASTER"}
-                  </div>
-                </div>
-                <SetupStatus value={preview.status} />
-              </div>
             )}
           </div>
         </Panel>
@@ -494,6 +306,9 @@ function MenuImport() {
             {centre.menuCatalogStatus === "error" && (
               <div className="border-b border-danger/30 bg-danger-soft px-4 py-3 text-[12px] font-medium text-danger">
                 Catalogue could not be loaded: {centre.menuCatalogError}
+                <Btn className="ml-3" onClick={() => void centre.refreshCatalog()}>
+                  Retry catalog
+                </Btn>
               </div>
             )}
             <div className="overflow-x-auto">
@@ -732,7 +547,7 @@ function Pagination({
   );
 }
 
-class QueuedImportNotice extends Error {}
+
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
