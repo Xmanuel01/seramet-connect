@@ -337,6 +337,53 @@ export class InventoryIntelligenceService {
     return { id, ...input };
   }
 
+  async updateSupplier(id: string, input: SupplierInput) {
+    this.requirePermission(permissions.procurementCreate);
+    const existing = await this.db
+      .prepare("SELECT id FROM suppliers WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, id)
+      .first<{ id: string }>();
+    if (!existing) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active supplier not found");
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE suppliers SET
+             code=?,name=?,legal_name=?,phone=?,email=?,tax_number=?,address=?,
+             payment_terms_days=?,currency=?,lead_time_days=?,minimum_order_minor=?,
+             payload_json=?,updated_at=?
+           WHERE tenant_id=? AND id=? AND active=1`,
+        )
+        .bind(
+          requiredCode(input.code, "supplier code"),
+          requiredText(input.name, "supplier name"),
+          input.legalName ?? null,
+          input.phone ?? null,
+          input.email ?? null,
+          input.taxNumber ?? null,
+          input.address ?? null,
+          input.paymentTermsDays ?? null,
+          input.currency ?? null,
+          input.leadTimeDays ?? null,
+          input.minimumOrderMinor ?? null,
+          JSON.stringify(input.metadata ?? {}),
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "SUPPLIER_UPDATED",
+        "SUPPLIER",
+        id,
+        stamp,
+        crypto.randomUUID(),
+      ),
+    ]);
+    return { id, ...input };
+  }
+
   async linkSupplierItem(input: {
     id?: string;
     supplierId: string;
