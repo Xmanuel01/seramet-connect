@@ -327,8 +327,8 @@ function NewBillDialog({
           <Btn
             variant="primary"
             disabled={!valid || busy}
-            onClick={() =>
-              valid &&
+            onClick={() => {
+              if (!valid || !supplier || !po || !receipt) return;
               void onSubmit({
                 branchId,
                 supplierId: supplier.id,
@@ -341,8 +341,8 @@ function NewBillDialog({
                 subtotalMinor,
                 taxMinor,
                 totalMinor,
-              })
-            }
+              });
+            }}
           >
             Post supplier bill
           </Btn>
