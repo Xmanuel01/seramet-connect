@@ -906,9 +906,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(attempts).toBe(1);
     expect(
       db.sqlite
-        .prepare(
-          "SELECT status,last_error_code FROM campaign_deliveries WHERE campaign_id=?",
-        )
+        .prepare("SELECT status,last_error_code FROM campaign_deliveries WHERE campaign_id=?")
         .get(campaign.id),
     ).toMatchObject({
       status: "UNKNOWN",
@@ -916,8 +914,9 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     });
     await campaigns.processCampaign(campaign.id);
     expect(attempts).toBe(1);
-    expect((await campaigns.listCampaigns(branchId)).find((row) => row.id === campaign.id))
-      .toMatchObject({ unknown: 1, status: "ACTIVE" });
+    expect(
+      (await campaigns.listCampaigns(branchId)).find((row) => row.id === campaign.id),
+    ).toMatchObject({ unknown: 1, status: "ACTIVE" });
   });
 
   it("moves permanent campaign failures to dead letter without duplicate delivery rows", async () => {

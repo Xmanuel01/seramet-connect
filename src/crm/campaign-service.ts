@@ -696,15 +696,15 @@ export class CampaignService extends CrmServiceBase {
       let result;
       try {
         result = await adapter.send({
-        tenantId: this.actor.tenantId,
-        deliveryId: delivery.id,
-        channel: delivery.channel,
-        destination: confirmed.contact,
-        ...(campaign.template_subject
-          ? { subject: renderTemplate(campaign.template_subject, variables) }
-          : {}),
-        body: renderTemplate(campaign.template_body, variables),
-        idempotencyKey: delivery.idempotency_key,
+          tenantId: this.actor.tenantId,
+          deliveryId: delivery.id,
+          channel: delivery.channel,
+          destination: confirmed.contact,
+          ...(campaign.template_subject
+            ? { subject: renderTemplate(campaign.template_subject, variables) }
+            : {}),
+          body: renderTemplate(campaign.template_body, variables),
+          idempotencyKey: delivery.idempotency_key,
         });
       } catch {
         // A network exception can occur AFTER the provider accepts the message.
