@@ -9,8 +9,8 @@ type Station = { id: string; code: string; name: string; branch_id: string };
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  branchId: string;
-  branchName: string;
+  initialBranchId: string;
+  branches: Array<{ id: string; name: string }>;
   currency: string;
   categoryCodes: string[];
   stations: Station[];
@@ -28,8 +28,8 @@ type Props = {
 export function ManualMenuItemDialog({
   open,
   onOpenChange,
-  branchId,
-  branchName,
+  initialBranchId,
+  branches,
   currency,
   categoryCodes,
   stations,
@@ -37,6 +37,9 @@ export function ManualMenuItemDialog({
   commitImport,
   onCommitted,
 }: Props) {
+  const [selectedBranchId, setSelectedBranchId] = useState(initialBranchId);
+  const availableStations = stations.filter((station) => station.branch_id === selectedBranchId);
+  const branchName = branches.find((branch) => branch.id === selectedBranchId)?.name ?? "";
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [categoryCode, setCategoryCode] = useState("");
@@ -52,11 +55,12 @@ export function ManualMenuItemDialog({
   const [previewRevision, setPreviewRevision] = useState(-1);
 
   useEffect(() => {
+    setSelectedBranchId(initialBranchId);
     setPreview(null);
     setError("");
     setNotice("");
     setPreviewRevision(-1);
-  }, [branchId, currency, open]);
+  }, [initialBranchId, currency, open]);
 
   function edit(change: () => void) {
     change();
@@ -73,7 +77,7 @@ export function ManualMenuItemDialog({
     setError("");
     setNotice("");
     try {
-      if (!branchId) throw new Error("Choose a branch before adding a sellable item.");
+      if (!selectedBranchId) throw new Error("Choose a branch before adding a sellable item.");
       const csv = createManualMenuCsv({
         code,
         name,
@@ -88,7 +92,7 @@ export function ManualMenuItemDialog({
         type: "text/csv",
         lastModified: Date.now(),
       });
-      const checked = await previewImport(file, branchId);
+      const checked = await previewImport(file, selectedBranchId);
       setPreview(checked);
       setPreviewRevision(draftRevision);
       if (!checked.canCommit) {
@@ -146,6 +150,27 @@ export function ManualMenuItemDialog({
           </DialogDescription>
         </DialogHeader>
         <form id="manual-menu-item-form" onSubmit={(event) => void validate(event)} className="grid gap-3">
+          <label className="grid gap-1 text-[12px] font-semibold">
+            Activate at branch *
+            <select
+              required
+              value={selectedBranchId}
+              onChange={(event) =>
+                edit(() => {
+                  setSelectedBranchId(event.target.value);
+                  setStationCode("");
+                })
+              }
+              className="h-10 rounded-md border border-border bg-background px-3 text-[13px]"
+            >
+              <option value="">Select a branch</option>
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1 text-[12px] font-semibold">
               Item code *
@@ -217,14 +242,14 @@ export function ManualMenuItemDialog({
               className={inputClass}
             >
               <option value="">No station assigned</option>
-              {stations.map((station) => (
+              {availableStations.map((station) => (
                 <option key={station.id} value={station.code}>
                   {station.name} ({station.code})
                 </option>
               ))}
             </select>
           </label>
-          {stations.length === 0 && (
+          {selectedBranchId && availableStations.length === 0 && (
             <p className="rounded-md border border-warning/30 p-3 text-[12px] text-warning">
               No kitchen/bar station is configured for this branch. Create it in Setup before
               activating an item that needs kitchen routing.
@@ -257,7 +282,7 @@ export function ManualMenuItemDialog({
         </form>
         <DialogFooter className="gap-2">
           <Btn disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Btn>
-          <Btn type="submit" form="manual-menu-item-form" disabled={busy || !currency || !branchId}>
+          <Btn type="submit" form="manual-menu-item-form" disabled={busy || !currency || !selectedBranchId}>
             {busy ? "Validating..." : preview ? "Revalidate" : "Validate item"}
           </Btn>
           <Btn
