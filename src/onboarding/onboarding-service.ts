@@ -611,21 +611,26 @@ export class OnboardingService {
   async listMenuCatalog(branchId?: string) {
     this.require(permissions.setupView);
     if (branchId) await this.assertBranch(branchId);
-    const rows = await this.db
-      .prepare(
-        `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
+    const sql = branchId
+      ? `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
                 m.currency,COALESCE(bs.station_id,m.station_id) station_id,
                 m.recipe_reference,m.sellable,m.active,
                 bs.selling_price_minor branch_price_minor,bs.available,
-                CASE WHEN bs.menu_item_id IS NULL THEN 0 ELSE 1 END branch_activated
+                1 branch_activated
          FROM menu_catalog_items m
-         LEFT JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id AND bs.menu_item_id=m.id
-           AND bs.branch_id=?
-         WHERE m.tenant_id=? AND m.active=1 AND (? IS NULL OR bs.menu_item_id IS NOT NULL)
-         ORDER BY m.category_code,m.name LIMIT 5000`,
-      )
-      .bind(branchId ?? null, this.actor.tenantId, branchId ?? null)
-      .all<{
+         INNER JOIN menu_item_branch_settings bs
+           ON bs.tenant_id=m.tenant_id AND bs.menu_item_id=m.id AND bs.branch_id=?
+         WHERE m.tenant_id=? AND m.active=1
+         ORDER BY m.category_code,m.name LIMIT 5000`
+      : `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
+                m.currency,m.station_id,m.recipe_reference,m.sellable,m.active,
+                NULL branch_price_minor,NULL available,0 branch_activated
+         FROM menu_catalog_items m
+         WHERE m.tenant_id=? AND m.active=1
+         ORDER BY m.category_code,m.name LIMIT 5000`;
+    const query = this.db.prepare(sql);
+    const rows = branchId
+      ? await query.bind(branchId, this.actor.tenantId).all<{
         id: string;
         code: string;
         sku: string | null;
@@ -641,7 +646,24 @@ export class OnboardingService {
         branch_price_minor: number | null;
         available: number | null;
         branch_activated: number;
-      }>();
+      }>()
+      : await query.bind(this.actor.tenantId).all<{
+          id: string;
+          code: string;
+          sku: string | null;
+          name: string;
+          category_code: string;
+          description: string | null;
+          selling_price_minor: number;
+          currency: string;
+          station_id: string | null;
+          recipe_reference: string | null;
+          sellable: number;
+          active: number;
+          branch_price_minor: number | null;
+          available: number | null;
+          branch_activated: number;
+        }>();
     return rows.results ?? [];
   }
 
