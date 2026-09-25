@@ -360,7 +360,7 @@ export class CrmService extends CrmServiceBase {
     const consentRows = await this.db
       .prepare(
         `SELECT channel,status,effective_at FROM customer_consents
-         WHERE tenant_id=? AND customer_id IN (${params}) ORDER BY effective_at DESC,created_at DESC,id DESC`,
+         WHERE tenant_id=? AND customer_id IN (${params}) ORDER BY effective_at DESC,CASE WHEN status IN ('WITHDRAWN','DENIED') THEN 1 ELSE 0 END DESC,created_at DESC,id DESC`,
       )
       .bind(this.actor.tenantId, ...customerIds)
       .all<{ channel: ConsentChannel; status: ConsentStatus; effective_at: string }>();
@@ -826,7 +826,19 @@ export class CrmService extends CrmServiceBase {
     this.require(permissions.crmCustomerManage);
     const customerId = await this.resolveCanonicalId(input.customerId);
     await this.assertCustomerVisible(customerId);
-    const stamp = input.effectiveAt ?? new Date().toISOString();
+    // Two sequential actions can share the same millisecond; consent precedence
+    // must not depend on a random UUID when a customer withdraws consent.
+    const latest = await this.db
+      .prepare(
+        `SELECT effective_at FROM customer_consents
+         WHERE tenant_id=? AND customer_id=? AND channel=?
+         ORDER BY effective_at DESC,created_at DESC,id DESC LIMIT 1`,
+      )
+      .bind(this.actor.tenantId, customerId, input.channel)
+      .first<{ effective_at: string }>();
+    const stamp =
+      input.effectiveAt ??
+      new Date(Math.max(Date.now(), latest ? Date.parse(latest.effective_at) + 1 : 0)).toISOString();
     const id = crypto.randomUUID();
     const correlationId = crypto.randomUUID();
     const statements = [
