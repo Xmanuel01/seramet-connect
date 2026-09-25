@@ -5549,7 +5549,7 @@ export class InventoryIntelligenceService {
     const purchaseOrders = await this.db
       .prepare(
         `SELECT po.id,po.purchase_order_number,po.supplier_id,s.name AS supplier_name,
-                po.warehouse_id,
+                po.warehouse_id,po.requisition_id,po.submitted_by,po.approved_by,po.approval_reason,
                 po.status,po.currency,po.total_minor,po.expected_at,po.created_at,
                 po.approved_at,po.received_at
          FROM purchase_orders po
