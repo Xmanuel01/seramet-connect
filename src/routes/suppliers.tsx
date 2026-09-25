@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link2, Plus, RefreshCw } from "lucide-react";
+import { Link2, Pencil, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -38,6 +38,7 @@ function Suppliers() {
   const control = useInventoryControlCentre(authoritative);
   const [selectedId, setSelectedId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -205,9 +206,14 @@ function Suppliers() {
             }
             right={
               selected ? (
-                <Btn disabled={!authoritative || busy} onClick={() => setLinkOpen(true)}>
-                  <Link2 className="h-4 w-4" /> Link item
-                </Btn>
+                <div className="flex gap-2">
+                  <Btn disabled={!authoritative || busy} onClick={() => setEditOpen(true)}>
+                    <Pencil className="h-4 w-4" /> Edit
+                  </Btn>
+                  <Btn disabled={!authoritative || busy} onClick={() => setLinkOpen(true)}>
+                    <Link2 className="h-4 w-4" /> Link item
+                  </Btn>
+                </div>
               ) : undefined
             }
           />
@@ -336,6 +342,26 @@ function Suppliers() {
         }
       />
 
+      <CreateSupplierDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        currency={currency}
+        supplier={selected}
+        busy={busy}
+        onSubmit={(body) =>
+          selected
+            ? run(
+                () =>
+                  control.command(
+                    `/api/seramet/procurement/suppliers/${encodeURIComponent(selected.id)}/update`,
+                    body,
+                  ),
+                "Supplier details updated.",
+              ).then(() => setEditOpen(false))
+            : Promise.resolve()
+        }
+      />
+
       <LinkSupplierItemDialog
         open={linkOpen}
         onOpenChange={setLinkOpen}
@@ -361,12 +387,14 @@ function CreateSupplierDialog({
   open,
   onOpenChange,
   currency,
+  supplier,
   busy,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currency: string;
+  supplier?: SupplierView;
   busy: boolean;
   onSubmit: (body: unknown) => Promise<void>;
 }) {
@@ -383,8 +411,19 @@ function CreateSupplierDialog({
   const [minimumOrder, setMinimumOrder] = useState("0");
 
   useEffect(() => {
-    if (open) setSupplierCurrency((current) => current || currency);
-  }, [currency, open]);
+    if (!open) return;
+    setCode(supplier?.code ?? "");
+    setName(supplier?.name ?? "");
+    setLegalName(supplier?.legal_name ?? "");
+    setPhone(supplier?.phone ?? "");
+    setEmail(supplier?.email ?? "");
+    setTaxNumber(supplier?.tax_number ?? "");
+    setAddress(supplier?.address ?? "");
+    setSupplierCurrency(supplier?.currency || currency);
+    setPaymentTerms(String(Number(supplier?.payment_terms_days ?? 0)));
+    setLeadTime(String(Number(supplier?.lead_time_days ?? 0)));
+    setMinimumOrder(String(Number(supplier?.minimum_order_minor ?? 0) / 100));
+  }, [currency, open, supplier]);
 
   const valid =
     code.trim().length > 0 &&
@@ -415,7 +454,7 @@ function CreateSupplierDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>New supplier</DialogTitle>
+          <DialogTitle>{supplier ? `Edit ${supplier.name}` : "New supplier"}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Supplier code">
