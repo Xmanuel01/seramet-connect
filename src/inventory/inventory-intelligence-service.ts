@@ -954,7 +954,10 @@ export class InventoryIntelligenceService {
         )
         .bind(this.actor.tenantId, purchaseOrder.requisition_id)
         .all<{ id: string; inventory_item_id: string; unit_id: string }>();
-      const requisitionLineByItem = new Map<string, (typeof requisitionLines.results)[number]>();
+      const requisitionLineByItem = new Map<
+        string,
+        { id: string; inventory_item_id: string; unit_id: string }
+      >();
       for (const line of requisitionLines.results ?? []) {
         if (requisitionLineByItem.has(line.inventory_item_id)) {
           throw new ServerOperationError(
