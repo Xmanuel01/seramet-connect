@@ -362,8 +362,8 @@ function Suppliers() {
                   ),
                 "Supplier details updated.",
               ).then((succeeded) => {
-            if (succeeded) setEditOpen(false);
-          })
+                if (succeeded) setEditOpen(false);
+              })
             : Promise.resolve()
         }
       />
