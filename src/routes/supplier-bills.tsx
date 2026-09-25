@@ -28,7 +28,7 @@ function SupplierBills() {
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
   const invoices = useMemo(
     () => data?.procurement.supplierInvoices ?? [],
     [data?.procurement.supplierInvoices],
