@@ -85,13 +85,14 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         "Item Code,Product Name,Category,Price\nPL-001,Beef pilau,MAINS,450",
       ),
     });
-    expect(inspection.sourceHeaders).toEqual(["Item Code", "Product Name", "Category", "Price"]);
+    expect(inspection.sourceHeaders).toEqual(["itemCode", "productName", "category", "price"]);
     expect(inspection.suggestedMap).toMatchObject({
-      itemCode: "Item Code",
-      categoryCode: "Category",
-      basePrice: "Price",
+      itemCode: "itemCode",
+      name: "productName",
+      categoryCode: "category",
+      basePrice: "price",
     });
-    expect(inspection.samples[0]).toMatchObject({ Price: "450" });
+    expect(inspection.samples[0]).toMatchObject({ price: "450" });
   });
 
   it("updates the authoritative business profile and keeps an audit event", async () => {
@@ -1029,7 +1030,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("requires authentication before any setup API route is dispatched", async () => {
     await expect(
       handleOnboardingApi(new Request("https://seramet.test/api/seramet/setup/centre"), env),
-    ).rejects.toMatchObject({ status: 401, message: "*** required" });
+    ).rejects.toMatchObject({ status: 401, message: "Bearer authentication required" });
   });
 
   it("enforces tenant isolation for configuration, imports and exports", async () => {

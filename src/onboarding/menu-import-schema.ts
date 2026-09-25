@@ -38,6 +38,7 @@ const legacyAliases: Record<string, MenuImportHeader> = {
   code: "itemCode",
   itemcode: "itemCode",
   itemname: "name",
+  productname: "name",
   category: "categoryCode",
   price: "basePrice",
   sellingprice: "basePrice",

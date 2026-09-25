@@ -13,6 +13,12 @@ describe("menu import online pricing contract", () => {
     expect(template).toContain("channels,onlinePriceChannels,prepMinutes");
   });
 
+  it("maps common external POS headers to canonical menu fields", () => {
+    expect(resolveMenuImportHeader("Product Name")).toBe("name");
+    expect(resolveMenuImportHeader("Item Code")).toBe("itemCode");
+    expect(resolveMenuImportHeader("Selling Price")).toBe("basePrice");
+  });
+
   it("accepts friendly aliases for online price imports", () => {
     expect(resolveMenuImportHeader("online price")).toBe("onlinePrice");
     expect(resolveMenuImportHeader("digital price")).toBe("onlinePrice");
