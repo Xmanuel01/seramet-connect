@@ -45,7 +45,10 @@ function Loyalty() {
   const canManage = hasPermission(permissions.loyaltyManage);
   const canAdjust = hasPermission(permissions.loyaltyAdjust);
   const { command } = useCrmApi();
-  const programs = useCrmScreenQuery<ProgramsResponse>("/api/seramet/crm/loyalty/programs", canView);
+  const programs = useCrmScreenQuery<ProgramsResponse>(
+    "/api/seramet/crm/loyalty/programs",
+    canView,
+  );
   const tiers = useCrmScreenQuery<TiersResponse>("/api/seramet/crm/loyalty/tiers", canView);
   const rewards = useCrmScreenQuery<RewardsResponse>("/api/seramet/crm/loyalty/rewards", canView);
   const [form, setForm] = useState<LoyaltyForm>("none");
@@ -155,7 +158,10 @@ function Loyalty() {
   }
 
   return (
-    <AppShell title="Loyalty" subtitle={"Real loyalty programs, tiers and rewards - " + branchLabel}>
+    <AppShell
+      title="Loyalty"
+      subtitle={"Real loyalty programs, tiers and rewards - " + branchLabel}
+    >
       {!canView ? (
         <Panel className="p-5">
           <CrmEmpty title="Access restricted" body="Loyalty viewing permission is required." />
@@ -174,11 +180,22 @@ function Loyalty() {
             )}
             {canAdjust && <Btn onClick={() => switchForm("adjust")}>Adjust points</Btn>}
           </div>
-          {notice && <p role="status" className="mb-3 text-[12px] text-success">{notice}</p>}
-          {error && <p role="alert" className="mb-3 text-[12px] text-danger">{error}</p>}
+          {notice && (
+            <p role="status" className="mb-3 text-[12px] text-success">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mb-3 text-[12px] text-danger">
+              {error}
+            </p>
+          )}
           {form !== "none" && (
             <Panel className="mb-4">
-              <PanelHead title={readableStatus(form)} sub="All changes are saved to the authoritative loyalty service." />
+              <PanelHead
+                title={readableStatus(form)}
+                sub="All changes are saved to the authoritative loyalty service."
+              />
               <form onSubmit={submit} className="grid gap-3 p-4 md:grid-cols-2">
                 {!["program"].includes(form) && (
                   <label className="grid gap-1 text-[12px]">
@@ -190,7 +207,9 @@ function Loyalty() {
                       required
                     >
                       {programs.data?.programs.map((row) => (
-                        <option key={row.id} value={row.id}>{row.name}</option>
+                        <option key={row.id} value={row.id}>
+                          {row.name}
+                        </option>
                       ))}
                     </select>
                   </label>
@@ -199,29 +218,65 @@ function Loyalty() {
                   <>
                     <label className="grid gap-1 text-[12px]">
                       Code
-                      <input required maxLength={40} className={crmFieldClass} value={code} onChange={(event) => setCode(event.target.value)} />
+                      <input
+                        required
+                        maxLength={40}
+                        className={crmFieldClass}
+                        value={code}
+                        onChange={(event) => setCode(event.target.value)}
+                      />
                     </label>
                     <label className="grid gap-1 text-[12px]">
                       Name
-                      <input required maxLength={120} className={crmFieldClass} value={name} onChange={(event) => setName(event.target.value)} />
+                      <input
+                        required
+                        maxLength={120}
+                        className={crmFieldClass}
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                      />
                     </label>
                   </>
                 )}
                 {form === "program" && (
                   <label className="grid gap-1 text-[12px]">
                     Spend per point ({currency})
-                    <input type="number" min={0.01} step={0.01} required className={crmFieldClass} value={cost} onChange={(event) => setCost(Number(event.target.value))} />
+                    <input
+                      type="number"
+                      min={0.01}
+                      step={0.01}
+                      required
+                      className={crmFieldClass}
+                      value={cost}
+                      onChange={(event) => setCost(Number(event.target.value))}
+                    />
                   </label>
                 )}
                 {form === "tier" && (
                   <>
                     <label className="grid gap-1 text-[12px]">
                       Tier rank
-                      <input type="number" min={0} step={1} required className={crmFieldClass} value={cost} onChange={(event) => setCost(Number(event.target.value))} />
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        required
+                        className={crmFieldClass}
+                        value={cost}
+                        onChange={(event) => setCost(Number(event.target.value))}
+                      />
                     </label>
                     <label className="grid gap-1 text-[12px]">
                       Minimum earned points
-                      <input type="number" min={0} step={1} required className={crmFieldClass} value={points} onChange={(event) => setPoints(Number(event.target.value))} />
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        required
+                        className={crmFieldClass}
+                        value={points}
+                        onChange={(event) => setPoints(Number(event.target.value))}
+                      />
                     </label>
                   </>
                 )}
@@ -229,11 +284,27 @@ function Loyalty() {
                   <>
                     <label className="grid gap-1 text-[12px]">
                       Points cost
-                      <input type="number" min={1} step={1} required className={crmFieldClass} value={points} onChange={(event) => setPoints(Number(event.target.value))} />
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        required
+                        className={crmFieldClass}
+                        value={points}
+                        onChange={(event) => setPoints(Number(event.target.value))}
+                      />
                     </label>
                     <label className="grid gap-1 text-[12px]">
                       Fixed discount ({currency})
-                      <input type="number" min={0.01} step={0.01} required className={crmFieldClass} value={cost} onChange={(event) => setCost(Number(event.target.value))} />
+                      <input
+                        type="number"
+                        min={0.01}
+                        step={0.01}
+                        required
+                        className={crmFieldClass}
+                        value={cost}
+                        onChange={(event) => setCost(Number(event.target.value))}
+                      />
                     </label>
                   </>
                 )}
@@ -246,24 +317,48 @@ function Loyalty() {
                   <>
                     <label className="grid gap-1 text-[12px]">
                       Points (+/-)
-                      <input type="number" step={1} required className={crmFieldClass} value={points} onChange={(event) => setPoints(Number(event.target.value))} />
+                      <input
+                        type="number"
+                        step={1}
+                        required
+                        className={crmFieldClass}
+                        value={points}
+                        onChange={(event) => setPoints(Number(event.target.value))}
+                      />
                     </label>
                     <label className="grid gap-1 text-[12px]">
                       Reason (required audit)
-                      <input required minLength={4} maxLength={500} className={crmFieldClass} value={reason} onChange={(event) => setReason(event.target.value)} />
+                      <input
+                        required
+                        minLength={4}
+                        maxLength={500}
+                        className={crmFieldClass}
+                        value={reason}
+                        onChange={(event) => setReason(event.target.value)}
+                      />
                     </label>
                   </>
                 )}
                 <div className="flex gap-2 md:col-span-2">
-                  <Btn type="submit" variant="primary" disabled={busy}>{busy ? "Submitting..." : "Save"}</Btn>
-                  <Btn type="button" onClick={() => switchForm("none")}>Cancel</Btn>
+                  <Btn type="submit" variant="primary" disabled={busy}>
+                    {busy ? "Submitting..." : "Save"}
+                  </Btn>
+                  <Btn type="button" onClick={() => switchForm("none")}>
+                    Cancel
+                  </Btn>
                 </div>
               </form>
             </Panel>
           )}
-          {programs.status === "loading" || tiers.status === "loading" || rewards.status === "loading" ? (
-            <Panel><CrmLoading label="Loading loyalty records" /></Panel>
-          ) : programs.status === "error" || tiers.status === "error" || rewards.status === "error" ? (
+          {programs.status === "loading" ||
+          tiers.status === "loading" ||
+          rewards.status === "loading" ? (
+            <Panel>
+              <CrmLoading label="Loading loyalty records" />
+            </Panel>
+          ) : programs.status === "error" ||
+            tiers.status === "error" ||
+            rewards.status === "error" ? (
             <Panel>
               <CrmError message={programs.error || tiers.error || rewards.error} retry={refresh} />
             </Panel>
@@ -271,28 +366,53 @@ function Loyalty() {
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <Metric label="Configured programs" value={programs.data?.programs.length ?? 0} />
-                <Metric label="Memberships per program (combined)" value={(programs.data?.programs ?? []).reduce((sum, row) => sum + row.members, 0)} />
-                <Metric label="Outstanding points (combined)" value={(programs.data?.programs ?? []).reduce((sum, row) => sum + row.outstanding_points, 0)} />
+                <Metric
+                  label="Memberships per program (combined)"
+                  value={(programs.data?.programs ?? []).reduce((sum, row) => sum + row.members, 0)}
+                />
+                <Metric
+                  label="Outstanding points (combined)"
+                  value={(programs.data?.programs ?? []).reduce(
+                    (sum, row) => sum + row.outstanding_points,
+                    0,
+                  )}
+                />
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <Panel>
-                  <PanelHead title="Configured programs" sub="Branch access is enforced by the server." />
+                  <PanelHead
+                    title="Configured programs"
+                    sub="Branch access is enforced by the server."
+                  />
                   {(programs.data?.programs.length ?? 0) === 0 ? (
-                    <CrmEmpty title="No loyalty program configured" body="Create a program before enrolling members or issuing rewards." />
+                    <CrmEmpty
+                      title="No loyalty program configured"
+                      body="Create a program before enrolling members or issuing rewards."
+                    />
                   ) : (
                     <div className="divide-y divide-border">
                       {programs.data?.programs.map((row) => (
                         <div key={row.id} className="space-y-1 p-4 text-[13px]">
-                          <div className="flex justify-between gap-2"><strong>{row.name}</strong><Status>{readableStatus(row.status)}</Status></div>
-                          <p>{readableStatus(row.earning_type)} · {row.members} memberships</p>
-                          <p className="text-[12px] text-muted-foreground">{row.outstanding_points} outstanding points</p>
+                          <div className="flex justify-between gap-2">
+                            <strong>{row.name}</strong>
+                            <Status>{readableStatus(row.status)}</Status>
+                          </div>
+                          <p>
+                            {readableStatus(row.earning_type)} · {row.members} memberships
+                          </p>
+                          <p className="text-[12px] text-muted-foreground">
+                            {row.outstanding_points} outstanding points
+                          </p>
                         </div>
                       ))}
                     </div>
                   )}
                 </Panel>
                 <Panel>
-                  <PanelHead title="Tiers and rewards" sub="Reward redemption occurs only through authoritative POS checkout." />
+                  <PanelHead
+                    title="Tiers and rewards"
+                    sub="Reward redemption occurs only through authoritative POS checkout."
+                  />
                   <div className="divide-y divide-border">
                     {tiers.data?.tiers.map((row) => (
                       <div className="p-3 text-[12px]" key={row.id}>
@@ -305,11 +425,17 @@ function Loyalty() {
                       </div>
                     ))}
                     {!tiers.data?.tiers.length && !rewards.data?.rewards.length && (
-                      <CrmEmpty title="No tiers or rewards" body="Configure tiers and rewards to enable member redemption." />
+                      <CrmEmpty
+                        title="No tiers or rewards"
+                        body="Configure tiers and rewards to enable member redemption."
+                      />
                     )}
                   </div>
                   <p className="border-t border-border p-3 text-[12px] text-muted-foreground">
-                    <Link to="/customers" className="font-semibold underline">Customer 360</Link> shows each member's individual balance.
+                    <Link to="/customers" className="font-semibold underline">
+                      Customer 360
+                    </Link>{" "}
+                    shows each member's individual balance.
                   </p>
                 </Panel>
               </div>
