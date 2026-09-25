@@ -63,12 +63,15 @@ function SupplierBills() {
       !invoicedReceiptIds.has(receipt.id),
   );
 
-  const run = async (operation: () => Promise<unknown>, success: string) => {
+  const run = async (
+    operation: () => Promise<unknown>,
+    success: string | ((result: unknown) => string),
+  ) => {
     setBusy(true);
     setNotice("");
     try {
-      await operation();
-      setNotice(success);
+      const result = await operation();
+      setNotice(typeof success === "function" ? success(result) : success);
       return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Supplier bill operation failed");
@@ -125,8 +128,8 @@ function SupplierBills() {
 
       {authoritative && availableReceipts.length === 0 && receipts.length > 0 && (
         <div className="mt-3 rounded-md border border-border bg-secondary/30 px-3 py-2 text-[12px] text-muted-foreground">
-          Every posted goods receipt currently visible in this branch is already linked to a
-          supplier invoice.
+          No unbilled posted receipt is visible for this branch. Refresh to retrieve the latest
+          receipt history.
         </div>
       )}
 
@@ -234,7 +237,13 @@ function SupplierBills() {
         onSubmit={(body) =>
           run(
             () => control.command("/api/seramet/procurement/supplier-invoices", body),
-            "Supplier bill posted, matched and journalled to accounts payable.",
+            (result) => {
+              const response = result as { supplierInvoice?: { matchStatus?: string } };
+              const status = response.supplierInvoice?.matchStatus;
+              return status === "MATCHED"
+                ? "Supplier bill matched and posted to accounts payable."
+                : `Supplier bill posted with ${status ?? "unconfirmed"} matching status. Review the exception before payment.`;
+            },
           ).then((succeeded) => {
             if (succeeded) setEntryOpen(false);
           })
@@ -335,7 +344,13 @@ function EnterSupplierBillDialog({
             >
               {receipts.map((row) => (
                 <option key={row.id} value={row.id}>
-                  {row.receipt_number} - {row.supplier_name} - {ksh(Number(row.total_minor) / 100, invoiceCurrency)}
+                  {row.receipt_number} - {row.supplier_name} -{" "}
+                  {ksh(
+                    Number(row.total_minor) / 100,
+                    data?.procurement.purchaseOrders.find(
+                      (order) => order.id === row.purchase_order_id,
+                    )?.currency || fallbackCurrency,
+                  )}
                 </option>
               ))}
             </select>
