@@ -353,7 +353,7 @@ export class InventoryIntelligenceService {
           `UPDATE suppliers SET
              code=?,name=?,legal_name=?,phone=?,email=?,tax_number=?,address=?,
              payment_terms_days=?,currency=?,lead_time_days=?,minimum_order_minor=?,
-             payload_json=?,updated_at=?
+             payload_json=COALESCE(?,payload_json),updated_at=?
            WHERE tenant_id=? AND id=? AND active=1`,
         )
         .bind(
@@ -368,7 +368,7 @@ export class InventoryIntelligenceService {
           input.currency ?? null,
           input.leadTimeDays ?? null,
           input.minimumOrderMinor ?? null,
-          JSON.stringify(input.metadata ?? {}),
+          input.metadata ? JSON.stringify(input.metadata) : null,
           stamp,
           this.actor.tenantId,
           id,
@@ -419,7 +419,14 @@ export class InventoryIntelligenceService {
       );
     }
 
-    const id = input.id ?? crypto.randomUUID();
+    const existingLink = await this.db
+      .prepare(
+        `SELECT id,preferred FROM supplier_items
+         WHERE tenant_id=? AND supplier_id=? AND inventory_item_id=? AND purchase_unit_id=?`,
+      )
+      .bind(this.actor.tenantId, input.supplierId, input.inventoryItemId, input.purchaseUnitId)
+      .first<{ id: string; preferred: number }>();
+    const id = existingLink?.id ?? input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [];
 
@@ -477,6 +484,27 @@ export class InventoryIntelligenceService {
             "UPDATE inventory_items SET preferred_supplier_id=?,updated_at=? WHERE tenant_id=? AND id=?",
           )
           .bind(input.supplierId, stamp, this.actor.tenantId, input.inventoryItemId),
+      );
+    } else if (existingLink?.preferred) {
+      // Removing the preferred flag also reconciles the replenishment source of truth.
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE inventory_items SET preferred_supplier_id=(
+               SELECT supplier_id FROM supplier_items
+               WHERE tenant_id=? AND inventory_item_id=? AND preferred=1 AND active=1
+               ORDER BY updated_at DESC,id LIMIT 1
+             ),updated_at=?
+             WHERE tenant_id=? AND id=? AND preferred_supplier_id=?`,
+          )
+          .bind(
+            this.actor.tenantId,
+            input.inventoryItemId,
+            stamp,
+            this.actor.tenantId,
+            input.inventoryItemId,
+            input.supplierId,
+          ),
       );
     }
 
