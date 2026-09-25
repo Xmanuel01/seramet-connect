@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
@@ -12,7 +12,16 @@ import {
 import { useManagementIntelligence } from "@/management/use-management-intelligence";
 
 export const Route = createFileRoute("/supplier-performance")({
-  head: () => ({ meta: [{ title: "Supplier Performance - Seramet" }] }),
+  head: () => ({
+    meta: [
+      { title: "Supplier Performance - Seramet" },
+      {
+        name: "description",
+        content:
+          "Authoritative supplier delivery, quality, variance, returns, invoice-match and payable evidence.",
+      },
+    ],
+  }),
   component: SupplierPerformance,
 });
 
@@ -23,11 +32,33 @@ function SupplierPerformance() {
   const currency =
     management.control?.latest?.currency ??
     configuredTenantCurrency(platformState.tenants, activeTenantId);
+  const businessDate = management.control?.periodEnd ?? "";
+  const purchaseValueMinor = suppliers.reduce((sum, row) => sum + row.purchaseValueMinor, 0);
+  const outstandingPayableMinor = suppliers.reduce(
+    (sum, row) => sum + row.outstandingPayableMinor,
+    0,
+  );
+  const returnValueMinor = suppliers.reduce((sum, row) => sum + row.returnValueMinor, 0);
+  const matchExceptions = suppliers.reduce((sum, row) => sum + row.invoiceMatchExceptions, 0);
+  const orderCount = suppliers.reduce((sum, row) => sum + row.orderCount, 0);
+
   return (
     <AppShell
       title="Supplier performance"
-      subtitle={`Receipt, variance and payable evidence - ${branchLabel}`}
-      actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
+      subtitle={`Receipt, quality, variance and payable evidence - ${branchLabel}${
+        businessDate ? ` - ${businessDate}` : ""
+      }`}
+      actions={
+        <>
+          <Link to="/suppliers">
+            <Btn>Suppliers</Btn>
+          </Link>
+          <Link to="/supplier-bills">
+            <Btn>Supplier bills</Btn>
+          </Link>
+          <Btn onClick={() => void management.refresh()}>Refresh</Btn>
+        </>
+      }
     >
       <ManagementReadModelState
         status={management.status}
@@ -36,42 +67,40 @@ function SupplierPerformance() {
       />
       {management.status === "ready" && suppliers.length > 0 && (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Metric label="Suppliers" value={suppliers.length} />
+            <Metric label="Orders" value={orderCount} />
+            <Metric label="Purchase value" value={formatMinor(purchaseValueMinor, currency)} />
             <Metric
-              label="Purchase value"
-              value={formatMinor(
-                suppliers.reduce((sum, row) => sum + row.purchaseValueMinor, 0),
-                currency,
-              )}
+              label="Supplier returns"
+              value={formatMinor(returnValueMinor, currency)}
+              invert={returnValueMinor > 0}
             />
             <Metric
               label="Outstanding payable"
-              value={formatMinor(
-                suppliers.reduce((sum, row) => sum + row.outstandingPayableMinor, 0),
-                currency,
-              )}
+              value={formatMinor(outstandingPayableMinor, currency)}
             />
-            <Metric
-              label="Match exceptions"
-              value={suppliers.reduce((sum, row) => sum + row.invoiceMatchExceptions, 0)}
-            />
+            <Metric label="Match exceptions" value={matchExceptions} invert={matchExceptions > 0} />
           </div>
+
           <Panel className="mt-4 overflow-x-auto">
             <PanelHead
               title="Supplier evidence"
-              sub="No automatic supplier replacement recommendation"
+              sub="Operational evidence only; Seramet does not auto-select or auto-replace suppliers"
             />
-            <table className="w-full min-w-[980px]">
+            <table className="w-full min-w-[1220px]">
               <thead>
                 <tr>
                   <TH>Supplier</TH>
+                  <TH className="text-right">Orders</TH>
                   <TH className="text-right">Purchases</TH>
                   <TH className="text-right">Lead time</TH>
                   <TH className="text-right">On time</TH>
                   <TH className="text-right">Fill rate</TH>
                   <TH className="text-right">Rejected qty</TH>
                   <TH className="text-right">Price variance</TH>
+                  <TH className="text-right">Returns</TH>
+                  <TH className="text-right">Match exceptions</TH>
                   <TH className="text-right">Payable</TH>
                   <TH>Quality</TH>
                 </tr>
@@ -79,7 +108,11 @@ function SupplierPerformance() {
               <tbody>
                 {suppliers.map((row) => (
                   <tr key={row.supplierId}>
-                    <TD className="font-semibold">{row.supplierName}</TD>
+                    <TD>
+                      <div className="font-semibold">{row.supplierName}</div>
+                      <div className="text-[11px] text-muted-foreground">{row.businessDate}</div>
+                    </TD>
+                    <TD className="num text-right">{row.orderCount}</TD>
                     <TD className="num text-right">
                       {formatMinor(row.purchaseValueMinor, row.currency)}
                     </TD>
@@ -101,6 +134,10 @@ function SupplierPerformance() {
                       {formatMinor(row.priceVarianceMinor, row.currency)}
                     </TD>
                     <TD className="num text-right">
+                      {formatMinor(row.returnValueMinor, row.currency)}
+                    </TD>
+                    <TD className="num text-right">{row.invoiceMatchExceptions}</TD>
+                    <TD className="num text-right">
                       {formatMinor(row.outstandingPayableMinor, row.currency)}
                     </TD>
                     <TD>
@@ -111,8 +148,38 @@ function SupplierPerformance() {
               </tbody>
             </table>
           </Panel>
+
+          <Panel className="mt-4">
+            <PanelHead
+              title="Metric scope"
+              sub="How to interpret the supplier evidence shown above"
+            />
+            <div className="grid gap-3 p-4 md:grid-cols-3">
+              <ScopeNote
+                title="Daily operational metrics"
+                text="Purchase value, order count, rejected quantity, price variance and returns use the selected management business date."
+              />
+              <ScopeNote
+                title="Delivery evidence"
+                text="Lead time and on-time delivery use authoritative purchase-order and goods-receipt timestamps for the branch."
+              />
+              <ScopeNote
+                title="Payables and matching"
+                text="Outstanding payables and invoice-match exceptions are derived from posted supplier invoices and procurement match records."
+              />
+            </div>
+          </Panel>
         </>
       )}
     </AppShell>
+  );
+}
+
+function ScopeNote({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-secondary/20 p-3">
+      <div className="text-[12px] font-semibold">{title}</div>
+      <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{text}</div>
+    </div>
   );
 }
