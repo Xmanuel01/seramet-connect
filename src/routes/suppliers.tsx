@@ -109,10 +109,7 @@ function Suppliers() {
     (sum, supplier) => sum + Number(supplier.outstanding_minor),
     0,
   );
-  const purchaseOrders = suppliers.reduce(
-    (sum, supplier) => sum + Number(supplier.order_count),
-    0,
-  );
+  const purchaseOrders = suppliers.reduce((sum, supplier) => sum + Number(supplier.order_count), 0);
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -208,10 +205,7 @@ function Suppliers() {
             }
             right={
               selected ? (
-                <Btn
-                  disabled={!authoritative || busy}
-                  onClick={() => setLinkOpen(true)}
-                >
+                <Btn disabled={!authoritative || busy} onClick={() => setLinkOpen(true)}>
                   <Link2 className="h-4 w-4" /> Link item
                 </Btn>
               ) : undefined
@@ -223,10 +217,7 @@ function Suppliers() {
               <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-2 lg:grid-cols-4">
                 <Info label="Phone" value={selected.phone || "Not recorded"} />
                 <Info label="Email" value={selected.email || "Not recorded"} />
-                <Info
-                  label="Payment terms"
-                  value={`${Number(selected.payment_terms_days)} days`}
-                />
+                <Info label="Payment terms" value={`${Number(selected.payment_terms_days)} days`} />
                 <Info label="Lead time" value={`${Number(selected.lead_time_days)} days`} />
                 <Info label="Tax number" value={selected.tax_number || "Not recorded"} />
                 <Info
@@ -237,10 +228,7 @@ function Suppliers() {
                       : "Not set"
                   }
                 />
-                <Info
-                  label="On-time receipts"
-                  value={onTimeLabel(selected)}
-                />
+                <Info label="On-time receipts" value={onTimeLabel(selected)} />
                 <Info
                   label="Branch evidence"
                   value={`${selected.branchIds.length} branch${selected.branchIds.length === 1 ? "" : "es"}`}
@@ -249,8 +237,7 @@ function Suppliers() {
 
               {selected.address && (
                 <div className="border-b border-border px-4 py-3 text-[12px] text-muted-foreground">
-                  <span className="font-semibold text-foreground">Address:</span>{" "}
-                  {selected.address}
+                  <span className="font-semibold text-foreground">Address:</span> {selected.address}
                 </div>
               )}
 
@@ -300,9 +287,7 @@ function Suppliers() {
                               {row.sku ?? "No SKU"}
                             </div>
                           </TD>
-                          <TD className="num text-muted-foreground">
-                            {row.supplier_sku || "—"}
-                          </TD>
+                          <TD className="num text-muted-foreground">{row.supplier_sku || "—"}</TD>
                           <TD>{row.purchase_unit_symbol ?? "Unit"}</TD>
                           <TD className="num text-right">
                             {row.contract_price_minor === null
@@ -369,8 +354,8 @@ function Suppliers() {
   );
 }
 
-type InventoryItem = (ReturnType<typeof useInventoryControlCentre>["data"][number]["items"])[number];
-type UnitRow = (ReturnType<typeof useInventoryControlCentre>["data"][number]["units"])[number];
+type InventoryItem = ReturnType<typeof useInventoryControlCentre>["data"][number]["items"][number];
+type UnitRow = ReturnType<typeof useInventoryControlCentre>["data"][number]["units"][number];
 
 function CreateSupplierDialog({
   open,
@@ -434,22 +419,47 @@ function CreateSupplierDialog({
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Supplier code">
-            <input value={code} onChange={(event) => setCode(event.target.value)} className={inputClass} />
+            <input
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Supplier name">
-            <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} />
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Legal name">
-            <input value={legalName} onChange={(event) => setLegalName(event.target.value)} className={inputClass} />
+            <input
+              value={legalName}
+              onChange={(event) => setLegalName(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Phone">
-            <input value={phone} onChange={(event) => setPhone(event.target.value)} className={inputClass} />
+            <input
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Email">
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} />
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Tax number">
-            <input value={taxNumber} onChange={(event) => setTaxNumber(event.target.value)} className={inputClass} />
+            <input
+              value={taxNumber}
+              onChange={(event) => setTaxNumber(event.target.value)}
+              className={inputClass}
+            />
           </Field>
           <Field label="Currency">
             <input
@@ -564,7 +574,9 @@ function LinkSupplierItemDialog({
           </Field>
           <InfoField
             label="Purchase unit"
-            value={unit?.symbol ?? (item?.purchase_unit_id ? item.purchase_unit_id : "Not configured")}
+            value={
+              unit?.symbol ?? (item?.purchase_unit_id ? item.purchase_unit_id : "Not configured")
+            }
           />
           <Field label="Supplier SKU">
             <input
@@ -627,9 +639,7 @@ function LinkSupplierItemDialog({
                 ...(supplierSku.trim() ? { supplierSku: supplierSku.trim() } : {}),
                 contractPriceMinor: Math.round(Number(contractPrice) * 100),
                 minimumQuantityMicro: Math.round(Number(minimumQuantity) * 1_000_000),
-                ...(leadTimeDays.trim()
-                  ? { leadTimeDays: Math.round(Number(leadTimeDays)) }
-                  : {}),
+                ...(leadTimeDays.trim() ? { leadTimeDays: Math.round(Number(leadTimeDays)) } : {}),
                 preferred,
               })
             }
