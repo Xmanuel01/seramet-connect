@@ -48,6 +48,7 @@ type LeadRow = {
   due_at: string | null;
   version: number;
   request_key: string;
+  create_payload_json: string;
   last_mutation_key: string;
   created_at: string;
   updated_at: string;
@@ -77,6 +78,31 @@ function safeCursor(raw: string) {
     throw new CrmDomainError("VALIDATION_FAILED", "Invalid lead pagination cursor");
   }
   return data as [string, string];
+}
+
+function canonicalCreatePayload(input: LeadCreate) {
+  return JSON.stringify({
+    branchId: input.branchId,
+    customerId: input.customerId ?? null,
+    contactName: input.contactName.trim(),
+    companyName: input.companyName?.trim() || null,
+    contactPhone: input.contactPhone?.trim() || null,
+    contactEmail: input.contactEmail?.trim().toLowerCase() || null,
+    source: input.source,
+    estimatedValueMinor: input.estimatedValueMinor,
+    nextAction: input.nextAction?.trim() || null,
+    dueAt: input.dueAt ?? null,
+  });
+}
+
+function canonicalUpdatePayload(input: LeadUpdate) {
+  return JSON.stringify({
+    stage: input.stage,
+    expectedVersion: input.expectedVersion,
+    nextAction: input.nextAction === undefined ? "__UNCHANGED__" : input.nextAction.trim(),
+    dueAt: input.dueAt === undefined ? "__UNCHANGED__" : input.dueAt,
+    reason: input.reason?.trim() || null,
+  });
 }
 
 export class CrmLeadService extends CrmServiceBase {
@@ -208,6 +234,11 @@ export class CrmLeadService extends CrmServiceBase {
     if (!Number.isSafeInteger(input.estimatedValueMinor) || input.estimatedValueMinor < 0) {
       throw new CrmDomainError("VALIDATION_FAILED", "Lead value must be an integer minor amount");
     }
+    const existing = await this.db
+      .prepare("SELECT * FROM crm_leads WHERE tenant_id=? AND request_key=?")
+      .bind(this.actor.tenantId, input.requestKey)
+      .first<LeadRow>();
+    if (existing) return this.replay(input, existing);
     if (input.customerId) {
       const customer = await this.db
         .prepare(
@@ -228,11 +259,6 @@ export class CrmLeadService extends CrmServiceBase {
       .bind(this.actor.tenantId)
       .first<{ default_currency: string }>();
     if (!tenant) throw new CrmDomainError("NOT_FOUND", "Tenant not found");
-    const existing = await this.db
-      .prepare("SELECT * FROM crm_leads WHERE tenant_id=? AND request_key=?")
-      .bind(this.actor.tenantId, input.requestKey)
-      .first<LeadRow>();
-    if (existing) return this.replay(input, existing);
 
     const stamp = new Date().toISOString();
     const id = crypto.randomUUID();
@@ -242,8 +268,8 @@ export class CrmLeadService extends CrmServiceBase {
           `INSERT INTO crm_leads
            (tenant_id,id,branch_id,customer_id,contact_name,company_name,contact_phone,contact_email,
             source,owner_actor_id,owner_display_name,estimated_value_minor,currency,stage,
-            next_action,due_at,version,request_key,last_mutation_key,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'NEW',?,?,1,?,?,?,?)
+            next_action,due_at,version,request_key,create_payload_json,last_mutation_key,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'NEW',?,?,1,?,?,?,?,?)
            ON CONFLICT(tenant_id,request_key) DO NOTHING`,
         )
         .bind(
@@ -263,6 +289,7 @@ export class CrmLeadService extends CrmServiceBase {
           input.nextAction?.trim() || null,
           input.dueAt ?? null,
           input.requestKey,
+          canonicalCreatePayload(input),
           input.requestKey,
           stamp,
           stamp,
@@ -316,18 +343,7 @@ export class CrmLeadService extends CrmServiceBase {
   }
 
   private replay(input: LeadCreate, row: LeadRow) {
-    if (
-      row.branch_id !== input.branchId ||
-      row.contact_name !== input.contactName.trim() ||
-      row.company_name !== (input.companyName?.trim() || null) ||
-      row.customer_id !== (input.customerId ?? null) ||
-      row.estimated_value_minor !== input.estimatedValueMinor ||
-      row.source !== input.source ||
-      row.contact_email !== (input.contactEmail?.trim().toLowerCase() || null) ||
-      row.contact_phone !== (input.contactPhone?.trim() || null) ||
-      row.next_action !== (input.nextAction?.trim() || null) ||
-      row.due_at !== (input.dueAt ?? null)
-    ) {
+    if (row.create_payload_json !== canonicalCreatePayload(input)) {
       throw new CrmDomainError("CONFLICT", "Lead creation key was reused with different data");
     }
     this.branch(row.branch_id);
@@ -339,13 +355,13 @@ export class CrmLeadService extends CrmServiceBase {
     const row = await this.scopedLead(id);
     const previous = await this.db
       .prepare(
-        "SELECT id,to_stage FROM crm_lead_events WHERE tenant_id=? AND lead_id=? AND request_key=?",
+        "SELECT id,request_payload_json FROM crm_lead_events WHERE tenant_id=? AND lead_id=? AND request_key=?",
       )
       .bind(this.actor.tenantId, id, input.requestKey)
-      .first<{ id: string; to_stage: string }>();
+      .first<{ id: string; request_payload_json: string }>();
     if (previous) {
-      if (previous.to_stage !== input.stage) {
-        throw new CrmDomainError("CONFLICT", "Lead change key was reused for another stage");
+      if (previous.request_payload_json !== canonicalUpdatePayload(input)) {
+        throw new CrmDomainError("CONFLICT", "Lead change key was reused for a different change");
       }
       return { lead: this.publicRow(row), duplicate: true };
     }
@@ -391,8 +407,8 @@ export class CrmLeadService extends CrmServiceBase {
       this.db
         .prepare(
           `INSERT INTO crm_lead_events
-           (tenant_id,id,lead_id,request_key,from_stage,to_stage,note,action_by,created_at)
-           SELECT ?,?,?,?,?,?,?,?,? FROM crm_leads
+           (tenant_id,id,lead_id,request_key,request_payload_json,from_stage,to_stage,note,action_by,created_at)
+           SELECT ?,?,?,?,?,?,?,?,?,? FROM crm_leads
            WHERE tenant_id=? AND id=? AND last_mutation_key=? AND version=?`,
         )
         .bind(
@@ -400,6 +416,7 @@ export class CrmLeadService extends CrmServiceBase {
           crypto.randomUUID(),
           id,
           input.requestKey,
+          canonicalUpdatePayload(input),
           row.stage,
           input.stage,
           input.reason?.trim() || null,
