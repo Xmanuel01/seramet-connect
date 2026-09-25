@@ -118,8 +118,10 @@ function Suppliers() {
     try {
       await operation();
       setNotice(success);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Supplier operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -338,7 +340,9 @@ function Suppliers() {
           run(
             () => control.command("/api/seramet/procurement/suppliers", body),
             "Supplier created.",
-          ).then(() => setCreateOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setCreateOpen(false);
+          })
         }
       />
 
@@ -357,7 +361,9 @@ function Suppliers() {
                     body,
                   ),
                 "Supplier details updated.",
-              ).then(() => setEditOpen(false))
+              ).then((succeeded) => {
+            if (succeeded) setEditOpen(false);
+          })
             : Promise.resolve()
         }
       />
@@ -373,7 +379,9 @@ function Suppliers() {
           run(
             () => control.command("/api/seramet/procurement/supplier-items", body),
             "Supplier item terms linked.",
-          ).then(() => setLinkOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setLinkOpen(false);
+          })
         }
       />
     </AppShell>
