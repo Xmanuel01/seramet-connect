@@ -3,7 +3,8 @@ name: Deploy staging
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # Temporary isolated menu+Customers staging test. Remove immediately after deployment.
+    branches: [main, staging/go-live-menu-customers-20260925]
 
 concurrency:
   group: seramet-staging
