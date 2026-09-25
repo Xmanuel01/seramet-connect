@@ -21,6 +21,7 @@ CREATE TABLE crm_leads (
   due_at TEXT,
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   request_key TEXT NOT NULL,
+  last_mutation_key TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (tenant_id,id),
