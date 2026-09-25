@@ -112,7 +112,9 @@ export function ManualMenuItemDialog({
     try {
       if (!selectedBranchId) throw new Error("Choose a branch before adding a sellable item.");
       if (!stationCode && !counterOnly) {
-        throw new Error("Select the kitchen/bar station, or explicitly confirm this is a counter-only item.");
+        throw new Error(
+          "Select the kitchen/bar station, or explicitly confirm this is a counter-only item.",
+        );
       }
       const csv = createManualMenuCsv({
         code,
