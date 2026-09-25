@@ -135,7 +135,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       originalName: "previous-pos.csv",
       mimeType: "text/csv",
       bytes: new TextEncoder().encode(
-        "Stock Identifier,Dish Label,Sales Group,Sale Amount,currency\\nCUTE-001,Fish Pilau,MAIN,470,KES",
+        "Stock Identifier,Dish Label,Sales Group,Sale Amount,currency\nCUTE-001,Fish Pilau,MAIN,470,KES",
       ),
       duplicateStrategy: "ERROR",
       columnMap: {
