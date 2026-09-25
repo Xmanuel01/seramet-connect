@@ -195,7 +195,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
     const pos = await createMenuCatalogReader(db)(tenantId, branchId);
     expect(pos).toContainEqual(
-      expect.objectContaining({ itemCode: "PILAU-001", sellingPriceMinor: 45_000 }),
+      expect.objectContaining({ itemCode: "PILAU-001", price: 450, productionStation: "MAIN" }),
     );
     expect(await service.listMenuCatalog(secondBranchId)).toHaveLength(0);
   });
