@@ -53,11 +53,15 @@ describe("POS customer selection lifecycle", () => {
       resolvePosCustomer(scope, { id: "another-order", customer: "Walk-in" }, selection),
     ).toBeNull();
     expect(
-      resolvePosCustomer(scope, { id: "another-order", customer: "Walk-in" }, {
-        ...scope,
-        orderId: "another-order",
-        customer: null,
-      }),
+      resolvePosCustomer(
+        scope,
+        { id: "another-order", customer: "Walk-in" },
+        {
+          ...scope,
+          orderId: "another-order",
+          customer: null,
+        },
+      ),
     ).toBeNull();
     expect(linkedOrderCustomer(null, "Walk-in")).toEqual({ customer: "Walk-in" });
   });
