@@ -41,7 +41,9 @@ type RewardsResponse = { ok: boolean; rewards: Reward[] };
 type LoyaltyForm = "none" | "program" | "tier" | "reward" | "enrol" | "adjust";
 
 function Loyalty() {
-  const { branchId, branchLabel, hasPermission, currency } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, hasPermission, platformState } = useAppContext();
+  const currency =
+    platformState.tenants.find((tenant) => tenant.id === activeTenantId)?.defaultCurrency ?? "";
   const canView = hasPermission(permissions.loyaltyView);
   const canManage = hasPermission(permissions.loyaltyManage);
   const canAdjust = hasPermission(permissions.loyaltyAdjust);

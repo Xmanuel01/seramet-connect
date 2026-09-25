@@ -70,7 +70,9 @@ const allowedTransitions: Record<Stage, Stage[]> = {
 function CrmPipeline() {
   const { activeTenantId, branchId, branchLabel, hasPermission, locale, platformState } =
     useAppContext();
-  const baseCurrency = platformState.tenants.find((tenant) => tenant.id === activeTenantId)?.defaultCurrency;
+  const baseCurrency = platformState.tenants.find(
+    (tenant) => tenant.id === activeTenantId,
+  )?.defaultCurrency;
   const canView = hasPermission(permissions.crmView);
   const canManage = hasPermission(permissions.crmCustomerManage);
   const { command } = useCrmApi();
