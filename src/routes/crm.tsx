@@ -100,7 +100,10 @@ function CrmOverview() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="CRM access unavailable" body="Your role does not permit viewing this overview." />
+          <CrmEmpty
+            title="CRM access unavailable"
+            body="Your role does not permit viewing this overview."
+          />
         </Panel>
       ) : !current || current.status === "loading" ? (
         <Panel>
@@ -145,12 +148,16 @@ function CrmOverview() {
                   <Status>{readableStatus(dashboard.quality)}</Status>
                 </div>
                 <p className="text-[12px] text-muted-foreground">
-                  When transaction evidence is incomplete, CRM trends and segments may not be representative.
+                  When transaction evidence is incomplete, CRM trends and segments may not be
+                  representative.
                 </p>
               </div>
             </Panel>
             <Panel>
-              <PanelHead title="Loyalty and service" sub="Activity from the authoritative CRM ledger" />
+              <PanelHead
+                title="Loyalty and service"
+                sub="Activity from the authoritative CRM ledger"
+              />
               <div className="space-y-3 p-4 text-[13px]">
                 <div className="flex items-center justify-between">
                   <span>Points issued</span>
@@ -176,15 +183,27 @@ function CrmOverview() {
             </Panel>
           </div>
           <Panel className="mt-4">
-            <PanelHead title="Customer workflows" sub="Open the existing customer directory or related CRM modules" />
+            <PanelHead
+              title="Customer workflows"
+              sub="Open the existing customer directory or related CRM modules"
+            />
             <div className="flex flex-wrap gap-2 p-4 text-[13px]">
-              <Link className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary" to="/customers">
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/customers"
+              >
                 Customer 360
               </Link>
-              <Link className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary" to="/loyalty">
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/loyalty"
+              >
                 Loyalty
               </Link>
-              <Link className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary" to="/complaints">
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/complaints"
+              >
                 Complaints
               </Link>
             </div>
@@ -192,7 +211,10 @@ function CrmOverview() {
         </>
       ) : (
         <Panel className="p-5">
-          <CrmEmpty title="CRM metrics unavailable" body="No authoritative dashboard data was returned." />
+          <CrmEmpty
+            title="CRM metrics unavailable"
+            body="No authoritative dashboard data was returned."
+          />
         </Panel>
       )}
     </AppShell>
