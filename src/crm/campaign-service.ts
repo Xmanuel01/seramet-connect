@@ -48,7 +48,8 @@ export class CampaignService extends CrmServiceBase {
 
   async listSegments(branchId?: string) {
     this.require(permissions.crmView);
-    const scope = branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    const scope =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
     if (scope) this.branch(scope);
     const rows = await this.db
       .prepare(
