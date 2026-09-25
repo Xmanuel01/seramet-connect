@@ -17,7 +17,8 @@ export const Route = createFileRoute("/supplier-bills")({
       { title: "Supplier Bills - Seramet" },
       {
         name: "description",
-        content: "Authoritative supplier invoice register with PO, receipt and three-way match evidence.",
+        content:
+          "Authoritative supplier invoice register with PO, receipt and three-way match evidence.",
       },
     ],
   }),
@@ -28,7 +29,7 @@ function SupplierBills() {
   const { branchId, branchLabel, currency } = useAppContext();
   const control = useInventoryControlCentre(true);
   const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
-  const rows = data?.procurement.supplierInvoices ?? [];
+  const rows = useMemo(() => data?.procurement.supplierInvoices ?? [], [data]);
   const [createOpen, setCreateOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,11 +79,7 @@ function SupplierBills() {
           <Btn disabled={control.status === "loading"} onClick={() => void control.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
-          <Btn
-            variant="primary"
-            disabled={!data || busy}
-            onClick={() => setCreateOpen(true)}
-          >
+          <Btn variant="primary" disabled={!data || busy} onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" /> Enter bill
           </Btn>
         </>
@@ -199,14 +196,19 @@ function NewBillDialog({
   const [subtotal, setSubtotal] = useState("");
   const [tax, setTax] = useState("0");
 
-  const supplier = data?.procurement.suppliers.find((row) => row.id === supplierId)
-    ?? data?.procurement.suppliers[0];
+  const supplier =
+    data?.procurement.suppliers.find((row) => row.id === supplierId) ??
+    data?.procurement.suppliers[0];
   const purchaseOrders =
-    data?.procurement.purchaseOrders.filter((row) => !supplier || row.supplier_id === supplier.id) ?? [];
+    data?.procurement.purchaseOrders.filter(
+      (row) => !supplier || row.supplier_id === supplier.id,
+    ) ?? [];
   const po = purchaseOrders.find((row) => row.id === poId) ?? purchaseOrders[0];
   const receipts =
     data?.procurement.receipts.filter(
-      (row) => (!po || row.purchase_order_id === po.id) && (!supplier || row.supplier_id === supplier.id),
+      (row) =>
+        (!po || row.purchase_order_id === po.id) &&
+        (!supplier || row.supplier_id === supplier.id),
     ) ?? [];
   const receipt = receipts.find((row) => row.id === receiptId) ?? receipts[0];
   const subtotalMinor = Math.round(Number(subtotal) * 100);
@@ -242,7 +244,9 @@ function NewBillDialog({
               }}
             >
               {data?.procurement.suppliers.map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
+                <option key={row.id} value={row.id}>
+                  {row.name}
+                </option>
               ))}
             </select>
           </Field>
@@ -256,7 +260,9 @@ function NewBillDialog({
               }}
             >
               {purchaseOrders.map((row) => (
-                <option key={row.id} value={row.id}>{row.purchase_order_number}</option>
+                <option key={row.id} value={row.id}>
+                  {row.purchase_order_number}
+                </option>
               ))}
             </select>
           </Field>
@@ -267,7 +273,9 @@ function NewBillDialog({
               onChange={(event) => setReceiptId(event.target.value)}
             >
               {receipts.map((row) => (
-                <option key={row.id} value={row.id}>{row.receipt_number}</option>
+                <option key={row.id} value={row.id}>
+                  {row.receipt_number}
+                </option>
               ))}
             </select>
           </Field>
@@ -314,8 +322,10 @@ function NewBillDialog({
           </Field>
         </div>
         <div className="rounded-md border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          Invoice total: <span className="num font-semibold text-foreground">{ksh(totalMinor / 100)}</span>.
-          Posting creates the supplier payable and three-way match evidence; it does not record a cash payment.
+          Invoice total:{" "}
+          <span className="num font-semibold text-foreground">{ksh(totalMinor / 100)}</span>.
+          Posting creates the supplier payable and three-way match evidence; it does not record a
+          cash payment.
         </div>
         {!receipts.length && (
           <div className="text-[12px] text-warning">
