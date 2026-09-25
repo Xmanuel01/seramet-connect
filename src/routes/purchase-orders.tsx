@@ -32,7 +32,7 @@ function PurchaseOrders() {
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
   const rows = data?.procurement.purchaseOrders ?? [];
 
   const [selectedId, setSelectedId] = useState("");
