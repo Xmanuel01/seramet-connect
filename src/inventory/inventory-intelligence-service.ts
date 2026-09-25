@@ -6143,7 +6143,11 @@ export class InventoryIntelligenceService {
                 COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
                 COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
                 COALESCE(SUM(grl.rejected_purchase_quantity_minor),0) AS rejected_quantity_minor,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
+                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor,
+                EXISTS(
+                  SELECT 1 FROM supplier_invoices si
+                  WHERE si.tenant_id=gr.tenant_id AND si.goods_receipt_id=gr.id
+                ) AS invoice_linked
          FROM goods_receipts gr
          JOIN purchase_orders po ON po.tenant_id=gr.tenant_id AND po.id=gr.purchase_order_id
          JOIN suppliers s ON s.tenant_id=gr.tenant_id AND s.id=gr.supplier_id
