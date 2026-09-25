@@ -131,6 +131,9 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
   const leads = new CrmLeadService(env.SERAMET_DB, actor);
 
   try {
+    if (url.pathname === "/api/seramet/crm/leads/summary" && request.method === "GET") {
+      return json({ ok: true, summary: await leads.summary(optionalQuery(url, "branchId")) });
+    }
     if (url.pathname === "/api/seramet/crm/leads" && request.method === "GET") {
       const stage = optionalQuery(url, "stage");
       if (stage && !leadStages.some((item) => item === stage)) {
