@@ -57,3 +57,5 @@ jobs:
         run: npm run migrate:postgres
       - name: Assert the CRM schema, JSON compatibility and immutable audit triggers
         run: node scripts/verify-crm-postgres.mjs
+      - name: Execute authoritative CRM pipeline and campaign queries on PostgreSQL
+        run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
