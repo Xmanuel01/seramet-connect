@@ -13,10 +13,10 @@ await client.connect();
 try {
   const migrations = await client.query("SELECT MAX(version) AS version FROM schema_migrations");
   assert.equal(Number(migrations.rows[0].version), 26, "All 26 migrations must apply");
-  const json = await client.query(
-    "SELECT value FROM json_each($1::text) WHERE value=$2::text",
-    [JSON.stringify(["westlands", "ngong"]), "ngong"],
-  );
+  const json = await client.query("SELECT value FROM json_each($1::text) WHERE value=$2::text", [
+    JSON.stringify(["westlands", "ngong"]),
+    "ngong",
+  ]);
   assert.deepEqual(json.rows, [{ value: "ngong" }], "CRM JSON scope iterator must work");
 
   const schema = await client.query(
