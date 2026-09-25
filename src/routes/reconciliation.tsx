@@ -9,6 +9,7 @@ import { TransactionEngine, transactionMetrics } from "@/lib/transaction-engine"
 import { useAppContext } from "@/lib/app-context";
 import { getProviderRegistry } from "@/integrations/provider-registry";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { CashDrawerCloseForm } from "@/components/app/CashDrawerCloseForm";
 
 export const Route = createFileRoute("/reconciliation")({
   head: () => ({
@@ -83,15 +84,6 @@ function Reconciliation() {
       }),
     );
     setProviderNotice(results.join("; "));
-  };
-
-  const closeDrawer = () => {
-    const drawer = drawers.find((item) => item.status === "OPEN");
-    if (!drawer) return;
-    void mutate("closeCashDrawer", {
-      drawerId: drawer.id,
-      physicalCount: drawer.expectedDrawer - 200,
-    });
   };
 
   const manualMatch = () => {
@@ -232,11 +224,7 @@ function Reconciliation() {
           </Panel>
 
           <Panel>
-            <PanelHead
-              title="Cash drawer close"
-              sub="Expected drawer vs physical count"
-              right={<Btn onClick={closeDrawer}>Close drawer</Btn>}
-            />
+            <PanelHead title="Cash drawer close" sub="Expected drawer vs physical count" />
             <div className="divide-y divide-border">
               {drawers.map((drawer) => (
                 <div key={drawer.id} className="px-4 py-3 text-[13px]">
@@ -246,6 +234,15 @@ function Reconciliation() {
                     </div>
                     <Status>{drawer.status}</Status>
                   </div>
+                  {drawer.status === "OPEN" && (
+                    <CashDrawerCloseForm
+                      expected={drawer.expectedDrawer}
+                      currency={configuration.getTenant(activeTenantId).defaultCurrency}
+                      onClose={async (physicalCount) => {
+                        await mutate("closeCashDrawer", { drawerId: drawer.id, physicalCount });
+                      }}
+                    />
+                  )}
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
                     <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                       Expected <span className="num font-bold">{ksh(drawer.expectedDrawer)}</span>

@@ -236,6 +236,13 @@ export function useTransactionEngine() {
         return next;
       };
       if (persistenceMode === "development") {
+        if (action === "closeCashDrawer") {
+          const next = applyServerMutation(state, action, payload, localActor);
+          await persistDevelopmentSnapshot(next, headers);
+          TransactionEngine.save(next);
+          setState(next);
+          return { state: next, revision };
+        }
         const next = applyOptimistic();
         TransactionEngine.save(next);
         await persistDevelopmentSnapshot(next, headers);
