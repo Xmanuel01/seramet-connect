@@ -12,6 +12,8 @@ const paths = [
   "src/routes/crm-pipeline.tsx",
   "src/crm/crm-lead-service.ts",
   "src/crm/crm-lead-service.test.ts",
+  "src/crm/loyalty-value-service.ts",
+  "src/crm/pass-10-crm-loyalty.test.ts",
   "src/crm/schemas.ts",
   "src/crm/campaign-service.ts",
   "src/server/crm-api.ts",
