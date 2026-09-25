@@ -290,9 +290,9 @@ function CreateRequisitionDialog({
 }) {
   const [warehouseId, setWarehouseId] = useState("");
   const [requiredAt, setRequiredAt] = useState("");
-  const [sourceType, setSourceType] = useState<
-    "MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST"
-  >("MANUAL_REQUEST");
+  const [sourceType, setSourceType] = useState<"MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST">(
+    "MANUAL_REQUEST",
+  );
   const [lines, setLines] = useState<DraftLine[]>([
     { key: crypto.randomUUID(), itemId: "", unitId: "", quantity: "1", notes: "" },
   ]);
