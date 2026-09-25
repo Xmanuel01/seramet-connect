@@ -545,7 +545,7 @@ function CreateSupplierDialog({
         <div className="flex justify-end gap-2">
           <Btn onClick={() => onOpenChange(false)}>Close</Btn>
           <Btn variant="primary" disabled={!valid || busy} onClick={submit}>
-            Create supplier
+            {supplier ? "Save changes" : "Create supplier"}
           </Btn>
         </div>
       </DialogContent>
