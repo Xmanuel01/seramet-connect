@@ -203,7 +203,9 @@ function MenuImport() {
       }
       if (response.result.verification?.status !== "VERIFIED") {
         setPreview({ ...preview, canCommit: false });
-        throw new Error("Server accepted the import but verification did not pass. Refresh the authoritative catalogue before further changes.");
+        throw new Error(
+          "Server accepted the import but verification did not pass. Refresh the authoritative catalogue before further changes.",
+        );
       }
       setPreview({
         ...preview,
@@ -276,7 +278,10 @@ function MenuImport() {
       </div>
 
       {!canImport && (
-        <p role="alert" className="mt-3 rounded-md border border-warning/30 p-3 text-[12px] text-warning">
+        <p
+          role="alert"
+          className="mt-3 rounded-md border border-warning/30 p-3 text-[12px] text-warning"
+        >
           Your current role cannot create or import menu items. An authorized account owner must
           grant the menu import permission; do not use a different employee login to bypass it.
         </p>
