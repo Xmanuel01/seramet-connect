@@ -112,14 +112,42 @@ export type ProcurementSupplierRow = {
   id: string;
   code: string;
   name: string;
+  legal_name: string | null;
+  phone: string | null;
+  email: string | null;
+  tax_number: string | null;
+  address: string | null;
   lead_time_days: number;
   payment_terms_days: number;
-  currency: string;
+  currency: string | null;
+  minimum_order_minor: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
   order_count: number;
   ordered_minor: number;
   outstanding_minor: number;
   on_time_count: number;
   received_count: number;
+};
+
+export type ProcurementSupplierItemRow = {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  inventory_item_id: string;
+  item_name: string;
+  sku: string | null;
+  supplier_sku: string | null;
+  purchase_unit_id: string;
+  purchase_unit_symbol: string | null;
+  contract_price_minor: number | null;
+  minimum_quantity_minor: number | null;
+  lead_time_days: number | null;
+  preferred: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type InventoryMovementRow = {
@@ -193,6 +221,7 @@ export type InventoryBranchPayload = {
     branchId: string;
     purchaseOrders: ProcurementOrderRow[];
     suppliers: ProcurementSupplierRow[];
+    supplierItems: ProcurementSupplierItemRow[];
     requisitions: ProcurementRequisitionRow[];
     receipts: ProcurementReceiptRow[];
   };
