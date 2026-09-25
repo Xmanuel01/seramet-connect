@@ -373,13 +373,7 @@ export class InventoryIntelligenceService {
           this.actor.tenantId,
           id,
         ),
-      this.auditStatement(
-        "SUPPLIER_UPDATED",
-        "SUPPLIER",
-        id,
-        stamp,
-        crypto.randomUUID(),
-      ),
+      this.auditStatement("SUPPLIER_UPDATED", "SUPPLIER", id, stamp, crypto.randomUUID()),
     ]);
     return { id, ...input };
   }
@@ -413,7 +407,11 @@ export class InventoryIntelligenceService {
     if (!item) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Active inventory item not found");
     }
-    if (item.purchase_unit_id && item.purchase_unit_id !== input.purchaseUnitId && !input.conversionId) {
+    if (
+      item.purchase_unit_id &&
+      item.purchase_unit_id !== input.purchaseUnitId &&
+      !input.conversionId
+    ) {
       throw new ServerOperationError(
         "VALIDATION_FAILED",
         400,
