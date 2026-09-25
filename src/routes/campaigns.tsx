@@ -1,101 +1,360 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, type FormEvent } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
-import { emptyRecords } from "@/lib/empty-records";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
-
-type Campaign = {
-  id: string;
-  name: string;
-  channel: string;
-  segment: string;
-  branch: string;
-  sent: number;
-  redeemed: number;
-  revenue: number;
-  status: string;
-};
+import { CrmEmpty, CrmError, CrmLoading, readableStatus, shortDate } from "@/crm/crm-ui";
+import { crmErrorMessage, crmFieldClass, crmTextAreaClass, useCrmScreenQuery } from "@/crm/use-crm-screen";
+import { useCrmApi } from "@/crm/use-crm";
+import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/campaigns")({
-  head: () => ({
-    meta: [
-      { title: "Campaigns - Seramet" },
-      {
-        name: "description",
-        content:
-          "Customer campaigns across WhatsApp, SMS and email with segment targeting and revenue attribution.",
-      },
-      { property: "og:title", content: "Campaigns - Seramet" },
-      {
-        property: "og:description",
-        content: "Plan, send and measure customer campaigns per branch and segment.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Customer campaigns - Seramet" }] }),
   component: Campaigns,
 });
 
-const rows = emptyRecords<Campaign>();
-
-const columns: EnterpriseColumn<Campaign>[] = [
-  { key: "name", label: "Campaign", sortable: true },
-  { key: "channel", label: "Channel", sortable: true },
-  { key: "segment", label: "Segment", sortable: true },
-  { key: "branch", label: "Branch", sortable: true },
-  { key: "sent", label: "Sent", align: "right", sortable: true },
-  { key: "redeemed", label: "Redeemed", align: "right", sortable: true },
-  {
-    key: "revenue",
-    label: "Attributed revenue",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num font-semibold">{ksh(row.revenue)}</span>,
-  },
-  { key: "status", label: "Status", render: (row) => <Status>{row.status}</Status> },
-];
+type CampaignRow = {
+  id: string;
+  name: string;
+  status: string;
+  objective: string;
+  channels_json: string;
+  segment_name: string;
+  provider_name: string | null;
+  provider_status: string | null;
+  schedule_at: string | null;
+  eligible: number;
+  sent: number;
+  delivered: number;
+};
+type Provider = {
+  id: string;
+  displayName: string;
+  capabilities: string[];
+  liveStatus: string;
+  configuredStatus: string;
+  secretConfigured: boolean;
+};
+type Segment = { id: string; name: string; status: string; latest_count: number | null };
+type CampaignsResponse = { ok: boolean; campaigns: CampaignRow[] };
+type ProvidersResponse = { ok: boolean; providers: Provider[] };
+type SegmentsResponse = { ok: boolean; segments: Segment[] };
+type Preview = {
+  eligible: number;
+  noConsent: number;
+  providerReadiness: string;
+  segment: { customerCount: number; quality: string };
+};
+type PreviewResponse = { ok: boolean; preview: Preview };
 
 function Campaigns() {
-  const { branch, branchLabel } = useAppContext();
-  const scopedRows = useBranchRows(rows);
-  const sent = scopedRows.reduce((sum, row) => sum + row.sent, 0);
-  const redeemed = scopedRows.reduce((sum, row) => sum + row.redeemed, 0);
+  const { branchId, branchLabel, hasPermission } = useAppContext();
+  const canView = hasPermission(permissions.campaignView);
+  const canManage = hasPermission(permissions.campaignManage);
+  const canApprove = hasPermission(permissions.campaignApprove);
+  const canSend = hasPermission(permissions.campaignSend);
+  const { command } = useCrmApi();
+  const rows = useCrmScreenQuery<CampaignsResponse>(
+    "/api/seramet/crm/campaigns?branchId=" + encodeURIComponent(branchId),
+    canView,
+  );
+  const providers = useCrmScreenQuery<ProvidersResponse>(
+    "/api/seramet/crm/campaigns/providers",
+    canView,
+  );
+  const segments = useCrmScreenQuery<SegmentsResponse>(
+    "/api/seramet/crm/segments?branchId=" + encodeURIComponent(branchId),
+    canView,
+  );
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [objective, setObjective] = useState("");
+  const [segmentId, setSegmentId] = useState("");
+  const [providerId, setProviderId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [templateBody, setTemplateBody] = useState("");
+  const [selected, setSelected] = useState("");
+  const [preview, setPreview] = useState<{ id: string; data: Preview } | null>(null);
+  const [approvalReason, setApprovalReason] = useState("");
+  const [sendConfirmation, setSendConfirmation] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const availableProviders = (providers.data?.providers ?? []).filter(
+    (row) => row.capabilities.includes("SEND_EMAIL") && row.liveStatus === "CONFIGURED",
+  );
+  const campaignRows = rows.data?.campaigns ?? [];
+  const selectedRow = campaignRows.find((row) => row.id === selected) ?? null;
+  const currentPreview = preview?.id === selected ? preview.data : null;
+
+  function refresh() {
+    rows.refresh();
+    providers.refresh();
+    segments.refresh();
+  }
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canManage || busy) return;
+    setBusy("create");
+    setError("");
+    try {
+      const provider = providerId || availableProviders[0]?.id;
+      const segment = segmentId || segments.data?.segments[0]?.id;
+      if (!provider || !segment) {
+        throw new Error("An active segment and healthy email provider are required.");
+      }
+      await command("/api/seramet/crm/campaigns", {
+        name: name.trim(),
+        objective: objective.trim(),
+        segmentId: segment,
+        providerConfigId: provider,
+        channels: ["EMAIL"],
+        templateSubject: subject.trim(),
+        templateBody: templateBody.trim(),
+        branchIds: [branchId],
+        brandIds: [],
+        approvalRequired: true,
+      });
+      setCreating(false);
+      setNotice("Draft campaign created. Preview and seek approval before delivery.");
+      setName("");
+      setObjective("");
+      setSubject("");
+      setTemplateBody("");
+      refresh();
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function previewCampaign(id: string) {
+    if (!canView || busy) return;
+    setBusy("preview");
+    setError("");
+    setPreview(null);
+    try {
+      const result = await command<PreviewResponse>(
+        "/api/seramet/crm/campaigns/" + encodeURIComponent(id) + "/preview",
+        {},
+      );
+      setSelected(id);
+      setPreview({ id, data: result.preview });
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approve() {
+    if (!canApprove || !selectedRow || !currentPreview || busy) return;
+    if (currentPreview.providerReadiness !== "CONFIGURED") {
+      setError("Provider readiness is not confirmed. Do not approve for delivery.");
+      return;
+    }
+    setBusy("approve");
+    setError("");
+    try {
+      await command("/api/seramet/crm/campaigns/" + encodeURIComponent(selectedRow.id) + "/approve", {
+        campaignId: selectedRow.id,
+        reason: approvalReason.trim(),
+      });
+      setNotice("Approval recorded. Delivery is a separate action.");
+      setApprovalReason("");
+      setPreview(null);
+      rows.refresh();
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function queue() {
+    if (!canSend || !selectedRow || !currentPreview || busy || sendConfirmation !== "SEND") return;
+    if (currentPreview.providerReadiness !== "CONFIGURED" || currentPreview.eligible === 0) {
+      setError("Campaign lacks verified provider readiness or an eligible audience.");
+      return;
+    }
+    setBusy("queue");
+    setError("");
+    try {
+      const result = await command<{ ok: boolean; campaign: { queued: number; scheduled: boolean } }>(
+        "/api/seramet/crm/campaigns/" + encodeURIComponent(selectedRow.id) + "/queue",
+        {},
+      );
+      setNotice(
+        result.campaign.scheduled
+          ? "Campaign remains scheduled; no messages have been sent yet."
+          : result.campaign.queued + " eligible deliveries queued. Provider confirmation is asynchronous.",
+      );
+      setPreview(null);
+      setSendConfirmation("");
+      rows.refresh();
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <AppShell
       title="Campaigns"
-      subtitle={`Targeted customer messaging and revenue attribution  -  ${branchLabel}`}
+      subtitle={"Consent-gated, auditable campaign delivery - " + branchLabel}
       actions={
-        <>
-          <Btn>Message templates</Btn>
-          <Btn variant="primary">New campaign</Btn>
-        </>
+        canManage ? (
+          <Btn variant="primary" onClick={() => setCreating((value) => !value)}>
+            {creating ? "Cancel draft" : "New email campaign"}
+          </Btn>
+        ) : undefined
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Messages sent" value={sent} />
-        <Metric label="Redemptions" value={redeemed} />
-        <Metric
-          label="Redemption rate"
-          value={sent ? Math.round((redeemed / sent) * 100) : 0}
-          suffix="%"
-        />
-        <Metric
-          label="Attributed revenue"
-          value={scopedRows.reduce((sum, row) => sum + row.revenue, 0)}
-          money
-        />
-      </div>
-      <Panel className="mt-4">
-        <PanelHead title="Campaign register" sub="Every send is written to the notification log" />
-        <EnterpriseTable
-          rows={scopedRows}
-          columns={columns}
-          filters={[`Branch: ${branch}`, "Period: This quarter"]}
-        />
-      </Panel>
+      {!canView ? (
+        <Panel className="p-5">
+          <CrmEmpty title="Access restricted" body="Campaign viewing permission is required." />
+        </Panel>
+      ) : (
+        <>
+          {notice && <p role="status" className="mb-3 text-[12px] text-success">{notice}</p>}
+          {error && <p role="alert" className="mb-3 text-[12px] text-danger">{error}</p>}
+          {creating && canManage && (
+            <Panel className="mb-4">
+              <PanelHead title="Create draft" sub="No dispatch until separate approval and explicit queue confirmation." />
+              <form onSubmit={create} className="grid gap-3 p-4 md:grid-cols-2">
+                <label className="grid gap-1 text-[12px]">
+                  Campaign name
+                  <input required maxLength={160} className={crmFieldClass} value={name} onChange={(event) => setName(event.target.value)} />
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Purpose
+                  <input required maxLength={500} className={crmFieldClass} value={objective} onChange={(event) => setObjective(event.target.value)} />
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Segment
+                  <select className={crmFieldClass} required value={segmentId || segments.data?.segments[0]?.id || ""} onChange={(event) => setSegmentId(event.target.value)}>
+                    {(segments.data?.segments ?? []).filter((row) => row.status === "ACTIVE").map((row) => (
+                      <option key={row.id} value={row.id}>{row.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Healthy email provider
+                  <select className={crmFieldClass} required value={providerId || availableProviders[0]?.id || ""} onChange={(event) => setProviderId(event.target.value)}>
+                    {availableProviders.map((row) => (
+                      <option key={row.id} value={row.id}>{row.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-[12px] md:col-span-2">
+                  Email subject
+                  <input className={crmFieldClass} required maxLength={200} value={subject} onChange={(event) => setSubject(event.target.value)} />
+                </label>
+                <label className="grid gap-1 text-[12px] md:col-span-2">
+                  Email template (approved variables only)
+                  <textarea className={crmTextAreaClass} required maxLength={4000} rows={4} value={templateBody} onChange={(event) => setTemplateBody(event.target.value)} />
+                </label>
+                <div className="md:col-span-2">
+                  {availableProviders.length === 0 && (
+                    <p className="mb-2 text-[12px] text-warning">No healthy email provider is configured. Creation is unavailable.</p>
+                  )}
+                  <Btn type="submit" variant="primary" disabled={busy !== null || availableProviders.length === 0 || !segments.data?.segments.length}>
+                    {busy === "create" ? "Saving..." : "Save draft"}
+                  </Btn>
+                </div>
+              </form>
+            </Panel>
+          )}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Metric label="Campaigns in current scope" value={campaignRows.length} />
+            <Metric label="Recorded sent/delivered" value={campaignRows.reduce((sum, row) => sum + row.sent, 0)} />
+            <Metric label="Confirmed deliveries" value={campaignRows.reduce((sum, row) => sum + row.delivered, 0)} />
+          </div>
+          <Panel className="mt-4">
+            <PanelHead
+              title="Campaign register"
+              sub="Provider outcomes and audiences are obtained from the authoritative database."
+              right={<Btn onClick={refresh}>Refresh</Btn>}
+            />
+            {rows.status === "loading" || providers.status === "loading" || segments.status === "loading" ? (
+              <CrmLoading />
+            ) : rows.status === "error" || providers.status === "error" || segments.status === "error" ? (
+              <CrmError message={rows.error || providers.error || segments.error} retry={refresh} />
+            ) : campaignRows.length === 0 ? (
+              <CrmEmpty title="No campaigns recorded" body="Create a segment and configure a healthy provider before making a draft." />
+            ) : (
+              <div className="divide-y divide-border">
+                {campaignRows.map((row) => (
+                  <article key={row.id} className="space-y-2 p-4 text-[13px]">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <strong>{row.name}</strong>
+                      <Status>{readableStatus(row.status)}</Status>
+                    </div>
+                    <p>{row.objective}</p>
+                    <p className="text-[12px] text-muted-foreground">
+                      Segment: {row.segment_name} · Provider: {row.provider_name || "Not configured"}
+                      {" · "}Scheduled: {shortDate(row.schedule_at)}
+                    </p>
+                    <p className="text-[12px]">
+                      Eligible: {row.eligible} · Recorded sent: {row.sent} · Delivered: {row.delivered}
+                    </p>
+                    <Btn onClick={() => void previewCampaign(row.id)} disabled={busy !== null}>
+                      {busy === "preview" ? "Checking..." : "Preview current audience"}
+                    </Btn>
+                  </article>
+                ))}
+              </div>
+            )}
+          </Panel>
+          {selectedRow && currentPreview && (
+            <Panel className="mt-4">
+              <PanelHead
+                title={"Audience preview: " + selectedRow.name}
+                sub="Fresh snapshot; final sending eligibility is re-evaluated server-side."
+              />
+              <div className="space-y-3 p-4 text-[13px]">
+                <p>Eligible: {currentPreview.eligible} · Without consent: {currentPreview.noConsent}</p>
+                <p>Evidence: {readableStatus(currentPreview.segment.quality)}</p>
+                <p>Provider: <Status>{readableStatus(currentPreview.providerReadiness)}</Status></p>
+                {canApprove && selectedRow.status === "DRAFT" && (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <label className="grid gap-1 text-[12px]">
+                      Approval reason
+                      <input className={crmFieldClass} minLength={4} maxLength={500} value={approvalReason} onChange={(event) => setApprovalReason(event.target.value)} />
+                    </label>
+                    <Btn onClick={() => void approve()} disabled={busy !== null || approvalReason.trim().length < 4 || currentPreview.providerReadiness !== "CONFIGURED"}>
+                      Approve campaign
+                    </Btn>
+                  </div>
+                )}
+                {canSend && ["ACTIVE", "SCHEDULED"].includes(selectedRow.status) && (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <p>Delivery can contact real customers. Review recipients and type SEND to confirm.</p>
+                    <label className="grid gap-1 text-[12px]">
+                      Confirm delivery
+                      <input className={crmFieldClass} value={sendConfirmation} onChange={(event) => setSendConfirmation(event.target.value)} placeholder="SEND" />
+                    </label>
+                    <Btn
+                      variant="primary"
+                      onClick={() => void queue()}
+                      disabled={busy !== null || sendConfirmation !== "SEND" || currentPreview.eligible === 0 || currentPreview.providerReadiness !== "CONFIGURED"}
+                    >
+                      Queue eligible deliveries
+                    </Btn>
+                  </div>
+                )}
+              </div>
+            </Panel>
+          )}
+          <p className="mt-3 text-[12px] text-muted-foreground">
+            <Link className="font-semibold underline" to="/segments">Manage segments</Link>
+            {" "}before targeting. Unapproved, nonconsenting and unsupported channel audiences must never be sent.
+          </p>
+        </>
+      )}
     </AppShell>
   );
 }
