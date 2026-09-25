@@ -14,7 +14,8 @@ export const Route = createFileRoute("/suppliers")({
       { title: "Suppliers - Seramet" },
       {
         name: "description",
-        content: "Authoritative supplier master with purchasing terms and branch procurement evidence.",
+        content:
+          "Authoritative supplier master with purchasing terms and branch procurement evidence.",
       },
     ],
   }),
@@ -160,7 +161,9 @@ function Suppliers() {
                       <TD className="num text-right">
                         {supplier.received_count ? `${supplierOnTime}%` : "—"}
                       </TD>
-                      <TD><Status>{supplier.received_count > 0 ? "ACTIVE" : "NEW"}</Status></TD>
+                      <TD>
+                        <Status>{supplier.received_count > 0 ? "ACTIVE" : "NEW"}</Status>
+                      </TD>
                     </tr>
                   );
                 })}
@@ -225,22 +228,48 @@ function NewSupplierDialog({
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="Legal name">
-            <input className={inputClass} value={legalName} onChange={(e) => setLegalName(e.target.value)} />
+            <input
+              className={inputClass}
+              value={legalName}
+              onChange={(e) => setLegalName(e.target.value)}
+            />
           </Field>
           <Field label="Phone">
-            <input className={inputClass} value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <input
+              className={inputClass}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
           </Field>
           <Field label="Email">
-            <input className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input
+              className={inputClass}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </Field>
           <Field label="Tax number">
-            <input className={inputClass} value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} />
+            <input
+              className={inputClass}
+              value={taxNumber}
+              onChange={(e) => setTaxNumber(e.target.value)}
+            />
           </Field>
           <Field label="Payment terms (days)">
-            <input className={inputClass} inputMode="numeric" value={terms} onChange={(e) => setTerms(e.target.value)} />
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              value={terms}
+              onChange={(e) => setTerms(e.target.value)}
+            />
           </Field>
           <Field label="Lead time (days)">
-            <input className={inputClass} inputMode="numeric" value={leadTime} onChange={(e) => setLeadTime(e.target.value)} />
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              value={leadTime}
+              onChange={(e) => setLeadTime(e.target.value)}
+            />
           </Field>
         </div>
         <div className="flex justify-end gap-2">
@@ -248,8 +277,8 @@ function NewSupplierDialog({
           <Btn
             variant="primary"
             disabled={!valid || busy}
-            onClick={() =>
-              valid &&
+            onClick={() => {
+              if (!valid) return;
               void onSubmit({
                 code: code.trim().toUpperCase(),
                 name: name.trim(),
@@ -260,8 +289,8 @@ function NewSupplierDialog({
                 paymentTermsDays: Number(terms),
                 leadTimeDays: Number(leadTime),
                 currency: tenantCurrency,
-              })
-            }
+              });
+            }}
           >
             Create supplier
           </Btn>
