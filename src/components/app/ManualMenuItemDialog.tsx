@@ -54,6 +54,7 @@ export function ManualMenuItemDialog({
   const [description, setDescription] = useState("");
   const [sku, setSku] = useState("");
   const [stationCode, setStationCode] = useState("");
+  const [counterOnly, setCounterOnly] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [branchPrice, setBranchPrice] = useState("");
   const [onlinePrice, setOnlinePrice] = useState("");
@@ -78,6 +79,7 @@ export function ManualMenuItemDialog({
       setDescription("");
       setSku("");
       setStationCode("");
+      setCounterOnly(false);
       setBranchPrice("");
       setOnlinePrice("");
       setTaxCode("");
@@ -109,6 +111,9 @@ export function ManualMenuItemDialog({
     setNotice("");
     try {
       if (!selectedBranchId) throw new Error("Choose a branch before adding a sellable item.");
+      if (!stationCode && !counterOnly) {
+        throw new Error("Select the kitchen/bar station, or explicitly confirm this is a counter-only item.");
+      }
       const csv = createManualMenuCsv({
         code,
         name,
@@ -200,6 +205,7 @@ export function ManualMenuItemDialog({
                 edit(() => {
                   setSelectedBranchId(event.target.value);
                   setStationCode("");
+                  setCounterOnly(false);
                 })
               }
               className="h-10 rounded-md border border-border bg-background px-3 text-[13px]"
@@ -281,7 +287,12 @@ export function ManualMenuItemDialog({
             Production station
             <select
               value={stationCode}
-              onChange={(event) => edit(() => setStationCode(event.target.value))}
+              onChange={(event) =>
+                edit(() => {
+                  setStationCode(event.target.value);
+                  if (event.target.value) setCounterOnly(false);
+                })
+              }
               className={inputClass}
             >
               <option value="">No station assigned</option>
@@ -292,6 +303,20 @@ export function ManualMenuItemDialog({
               ))}
             </select>
           </label>
+          {!stationCode && (
+            <label className="flex items-start gap-2 rounded-md border border-warning/30 p-3 text-[12px]">
+              <input
+                type="checkbox"
+                checked={counterOnly}
+                onChange={(event) => edit(() => setCounterOnly(event.target.checked))}
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <span>
+                Counter-only item: I confirm no kitchen or bar KOT is required. Items needing
+                preparation must be linked to a station before saving.
+              </span>
+            </label>
+          )}
           {selectedBranchId && availableStations.length === 0 && (
             <p className="rounded-md border border-warning/30 p-3 text-[12px] text-warning">
               No kitchen/bar station is configured for this branch. Create it in Setup before
