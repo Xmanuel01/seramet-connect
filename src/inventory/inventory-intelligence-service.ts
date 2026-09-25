@@ -100,6 +100,22 @@ export class InventoryIntelligenceService {
     private readonly actor: ServerActor,
   ) {}
 
+  private async assertActiveProcurementWarehouse(branchId: string, warehouseId: string) {
+    const warehouse = await this.db
+      .prepare(
+        "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
+      )
+      .bind(this.actor.tenantId, branchId, warehouseId)
+      .first<{ id: string }>();
+    if (!warehouse) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Procurement warehouse must be active and belong to the selected branch",
+      );
+    }
+  }
+
   async createUnit(input: UnitDefinitionInput) {
     this.requirePermission(permissions.inventoryAdjust);
     const id = input.id ?? crypto.randomUUID();
@@ -695,6 +711,7 @@ export class InventoryIntelligenceService {
   async createPurchaseRequisition(input: PurchaseRequisitionInput) {
     this.requirePermission(permissions.procurementRequisitionCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
     if (input.lines.length === 0) throw new Error("A requisition requires at least one line");
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
@@ -789,6 +806,14 @@ export class InventoryIntelligenceService {
   async createPurchaseOrder(input: PurchaseOrderInput) {
     this.requirePermission(permissions.procurementCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
+    const supplier = await this.db
+      .prepare("SELECT id FROM suppliers WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.supplierId)
+      .first<{ id: string }>();
+    if (!supplier) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active supplier not found");
+    }
     await this.assertSupplierAllowedByEnterprisePolicy(input.branchId, input.supplierId);
     if (input.lines.length === 0) throw new Error("A purchase order requires at least one line");
     const id = input.id ?? crypto.randomUUID();
@@ -1201,6 +1226,7 @@ export class InventoryIntelligenceService {
   async receiveGoods(input: GoodsReceiptInput) {
     this.requirePermission(permissions.procurementReceive);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
     await this.assertBusinessDateOpen(input.branchId, input.businessDate);
     const duplicate = await this.db
       .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
@@ -1227,12 +1253,13 @@ export class InventoryIntelligenceService {
     }
     if (
       purchaseOrder.branch_id !== input.branchId ||
-      purchaseOrder.warehouse_id !== input.warehouseId
+      purchaseOrder.warehouse_id !== input.warehouseId ||
+      purchaseOrder.supplier_id !== input.supplierId
     ) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
         403,
-        "Goods receipt scope does not match the purchase order",
+        "Goods receipt branch, warehouse or supplier does not match the purchase order",
       );
     }
     const lines = await this.db
@@ -1244,6 +1271,7 @@ export class InventoryIntelligenceService {
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .all<PurchaseOrderLineRow>();
     const byId = new Map((lines.results ?? []).map((line) => [line.id, line]));
+    const seenReceiptLines = new Set<string>();
     const receivingPolicy = JSON.parse(purchaseOrder.payload_json || "{}") as {
       overReceiptPolicy?: "REJECT_OVER_RECEIPT" | "ALLOW_WITH_APPROVAL" | "ALLOW_WITH_TOLERANCE";
       overReceiptToleranceBps?: number;
@@ -1285,8 +1313,23 @@ export class InventoryIntelligenceService {
       if (!poLine) throw new Error("Goods receipt line is not on the purchase order");
       if (!poLine.purchase_unit_id)
         throw new Error("Purchase order line is missing a purchase unit");
-      if (lineInput.acceptedPurchaseQuantityMicro > lineInput.receivedPurchaseQuantityMicro) {
-        throw new Error("Accepted quantity cannot exceed received quantity");
+      if (seenReceiptLines.has(poLine.id)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "A goods receipt cannot contain the same purchase-order line more than once",
+        );
+      }
+      seenReceiptLines.add(poLine.id);
+      const received = lineInput.receivedPurchaseQuantityMicro;
+      const accepted = lineInput.acceptedPurchaseQuantityMicro;
+      const rejected = lineInput.rejectedPurchaseQuantityMicro ?? 0;
+      if (received <= 0 || accepted < 0 || rejected < 0 || accepted + rejected !== received) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Received quantity must equal accepted plus rejected quantity",
+        );
       }
       const orderedPurchaseQuantity =
         poLine.ordered_purchase_quantity_minor ?? poLine.ordered_quantity_minor;
@@ -1342,8 +1385,15 @@ export class InventoryIntelligenceService {
               "normalized unit price",
             )
           : 0;
-      const priceVarianceMinor = lineInput.unitPriceMinor - poLine.unit_cost_minor;
-      const priceVarianceBps = ratioBasisPoints(priceVarianceMinor, poLine.unit_cost_minor || 1);
+      const unitPriceVarianceMinor = lineInput.unitPriceMinor - poLine.unit_cost_minor;
+      // Monetary variance must reflect accepted quantity, not merely the difference per unit.
+      const priceVarianceMinor = Math.round(
+        (lineInput.acceptedPurchaseQuantityMicro * unitPriceVarianceMinor) / QUANTITY_SCALE,
+      );
+      const priceVarianceBps = ratioBasisPoints(
+        unitPriceVarianceMinor,
+        poLine.unit_cost_minor || 1,
+      );
       const receiptLineId = crypto.randomUUID();
       statements.push(
         this.db
@@ -1393,7 +1443,7 @@ export class InventoryIntelligenceService {
             poLine.id,
           ),
       );
-      statements.push(
+      if (baseQuantityMicro > 0) statements.push(
         this.db
           .prepare(
             `INSERT INTO supplier_item_price_history
@@ -1418,7 +1468,7 @@ export class InventoryIntelligenceService {
           ),
       );
       const movementId = crypto.randomUUID();
-      statements.push(
+      if (baseQuantityMicro > 0) statements.push(
         this.movementStatement(
           {
             id: movementId,
@@ -1442,7 +1492,7 @@ export class InventoryIntelligenceService {
           correlationId,
         ),
       );
-      if (lineInput.lotNumber) {
+      if (lineInput.lotNumber && baseQuantityMicro > 0) {
         statements.push(
           this.db
             .prepare(
@@ -1469,7 +1519,7 @@ export class InventoryIntelligenceService {
             ),
         );
       }
-      statements.push(
+      if (baseQuantityMicro > 0) statements.push(
         this.recalculationEventStatement(
           input.branchId,
           "PURCHASE_RECEIPT",
@@ -1496,7 +1546,13 @@ export class InventoryIntelligenceService {
                SELECT 1 FROM purchase_order_lines
                WHERE tenant_id=? AND purchase_order_id=?
                  AND received_purchase_quantity_minor < COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)
-             ) THEN 'RECEIVED' ELSE 'PARTIALLY_RECEIVED' END,
+             ) THEN 'RECEIVED'
+             WHEN EXISTS (
+               SELECT 1 FROM purchase_order_lines
+               WHERE tenant_id=? AND purchase_order_id=?
+                 AND received_purchase_quantity_minor>0
+             ) THEN 'PARTIALLY_RECEIVED'
+             ELSE 'APPROVED' END,
            received_at=CASE WHEN NOT EXISTS (
              SELECT 1 FROM purchase_order_lines
              WHERE tenant_id=? AND purchase_order_id=?
@@ -1505,6 +1561,8 @@ export class InventoryIntelligenceService {
            version=version+1,updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(
+          this.actor.tenantId,
+          input.purchaseOrderId,
           this.actor.tenantId,
           input.purchaseOrderId,
           this.actor.tenantId,
