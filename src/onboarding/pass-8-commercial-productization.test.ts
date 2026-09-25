@@ -77,6 +77,28 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     }
   });
 
+  it("inspects a real CSV for source columns and mapped canonical menu names", async () => {
+    const inspection = await service.inspectMenuColumns({
+      originalName: "existing-pos-menu.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "Item Code,Product Name,Category,Price\\nPL-001,Beef pilau,MAINS,450",
+      ),
+    });
+    expect(inspection.sourceHeaders).toEqual([
+      "Item Code",
+      "Product Name",
+      "Category",
+      "Price",
+    ]);
+    expect(inspection.suggestedMap).toMatchObject({
+      itemCode: "Item Code",
+      categoryCode: "Category",
+      basePrice: "Price",
+    });
+    expect(inspection.samples[0]).toMatchObject({ Price: "450" });
+  });
+
   it("updates the authoritative business profile and keeps an audit event", async () => {
     await service.updateBusinessProfile({
       legalName: "Configured Legal Entity",
