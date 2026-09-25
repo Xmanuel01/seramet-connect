@@ -33,18 +33,10 @@ function SupplierBills() {
     .filter((row) => row.status !== "PAID")
     .reduce((sum, row) => sum + Number(row.total_minor), 0);
   const overdue = rows
-    .filter(
-      (row) =>
-        row.due_date &&
-        new Date(row.due_date) < new Date() &&
-        row.status !== "PAID",
-    )
+    .filter((row) => row.due_date && new Date(row.due_date) < new Date() && row.status !== "PAID")
     .reduce((sum, row) => sum + Number(row.total_minor), 0);
   const matched = rows.length
-    ? Math.round(
-        (rows.filter((row) => row.match_status === "MATCHED").length / rows.length) *
-          100,
-      )
+    ? Math.round((rows.filter((row) => row.match_status === "MATCHED").length / rows.length) * 100)
     : 0;
 
   return (
@@ -196,9 +188,7 @@ function BillDialog({
   const [due, setDue] = useState("");
 
   const receipt = receipts.find((row) => row.id === receiptId);
-  const purchaseOrder = orders.find(
-    (row) => row.id === receipt?.purchase_order_id,
-  );
+  const purchaseOrder = orders.find((row) => row.id === receipt?.purchase_order_id);
   const supplier = suppliers.find((row) => row.id === receipt?.supplier_id);
   const totalMinor = Math.round(Number(amount || 0) * 100);
   const taxMinor = Math.round(Number(tax || 0) * 100);
@@ -217,9 +207,7 @@ function BillDialog({
               value={receiptId}
               onChange={(event) => {
                 setReceiptId(event.target.value);
-                const selected = receipts.find(
-                  (row) => row.id === event.target.value,
-                );
+                const selected = receipts.find((row) => row.id === event.target.value);
                 if (selected) {
                   setAmount((Number(selected.total_minor) / 100).toFixed(2));
                 }
