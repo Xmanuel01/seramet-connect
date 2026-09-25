@@ -2287,6 +2287,65 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     });
   });
 
+  it("keeps preferred supplier item terms synchronized with inventory replenishment", async () => {
+    const fixture = await seedProcurement(service);
+    await service.createSupplier({
+      id: "supplier-preferred-b",
+      code: "SUP-PREF-B",
+      name: "Preferred supplier B",
+      leadTimeDays: 1,
+    });
+
+    await service.linkSupplierItem({
+      supplierId: "supplier-preferred-b",
+      inventoryItemId: fixture.itemId,
+      purchaseUnitId: "unit-box",
+      conversionId: "conversion-box-soda",
+      contractPriceMinor: 230_000,
+      preferred: true,
+    });
+
+    const item = await db
+      .prepare(
+        "SELECT preferred_supplier_id FROM inventory_items WHERE tenant_id=? AND id=?",
+      )
+      .bind(tenantId, fixture.itemId)
+      .first<{ preferred_supplier_id: string | null }>();
+    expect(item?.preferred_supplier_id).toBe("supplier-preferred-b");
+
+    const links = await db
+      .prepare(
+        `SELECT supplier_id,preferred,contract_price_minor
+         FROM supplier_items
+         WHERE tenant_id=? AND inventory_item_id=? AND active=1
+         ORDER BY supplier_id`,
+      )
+      .bind(tenantId, fixture.itemId)
+      .all<{ supplier_id: string; preferred: number; contract_price_minor: number | null }>();
+    expect(
+      links.results?.filter((row) => row.preferred === 1).map((row) => row.supplier_id),
+    ).toEqual(["supplier-preferred-b"]);
+
+    await service.linkSupplierItem({
+      supplierId: "supplier-preferred-b",
+      inventoryItemId: fixture.itemId,
+      purchaseUnitId: "unit-box",
+      conversionId: "conversion-box-soda",
+      contractPriceMinor: 225_000,
+      preferred: true,
+    });
+
+    const updated = await db
+      .prepare(
+        `SELECT COUNT(*) AS count,MAX(contract_price_minor) AS contract_price_minor
+         FROM supplier_items
+         WHERE tenant_id=? AND supplier_id=? AND inventory_item_id=? AND purchase_unit_id=?`,
+      )
+      .bind(tenantId, "supplier-preferred-b", fixture.itemId, "unit-box")
+      .first<{ count: number; contract_price_minor: number }>();
+    expect(updated).toEqual({ count: 1, contract_price_minor: 225_000 });
+  });
+
   it("compares supplier quotes without auto-selecting and records optional portion checks", async () => {
     const fixture = await seedProcurement(service);
     await service.createSupplier({
