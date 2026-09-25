@@ -722,9 +722,7 @@ export class InventoryIntelligenceService {
       }
       requisitionItems.add(line.inventoryItemId);
       const item = await this.db
-        .prepare(
-          "SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1",
-        )
+        .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
         .bind(this.actor.tenantId, line.inventoryItemId)
         .first<{ base_unit_id: string | null }>();
       if (!item?.base_unit_id) {
