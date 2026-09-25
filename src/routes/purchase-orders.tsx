@@ -31,7 +31,8 @@ function PurchaseOrders() {
       await control.command(
         "/api/seramet/procurement/purchase-orders/" + encodeURIComponent(id) + "/" + actionName,
         {
-          reason: actionName === "approve" ? "Approved from PO register" : "Cancelled from PO register",
+          reason:
+            actionName === "approve" ? "Approved from PO register" : "Cancelled from PO register",
         },
       );
       setNotice(
