@@ -7,6 +7,33 @@ const currency = z
   .trim()
   .regex(/^[A-Z]{3}$/);
 
+export const crmLeadCreateSchema = z
+  .object({
+    branchId: id,
+    customerId: optionalId,
+    contactName: z.string().trim().min(1).max(160),
+    companyName: z.string().trim().max(160).optional(),
+    contactPhone: z.string().trim().max(64).optional(),
+    contactEmail: z.string().trim().email().max(254).optional(),
+    source: z.string().trim().min(1).max(80),
+    estimatedValueMinor: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    nextAction: z.string().trim().max(500).optional(),
+    dueAt: z.string().datetime().optional(),
+    requestKey: id,
+  })
+  .strict();
+
+export const crmLeadUpdateSchema = z
+  .object({
+    stage: z.enum(["NEW", "CONTACTED", "QUALIFIED", "PROPOSAL", "WON", "LOST"]),
+    expectedVersion: z.number().int().positive(),
+    requestKey: id,
+    nextAction: z.string().trim().max(500).optional(),
+    dueAt: z.string().datetime().nullable().optional(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
 export const customerCreateSchema = z
   .object({
     displayName: z.string().trim().min(1).max(160),
