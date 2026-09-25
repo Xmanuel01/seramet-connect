@@ -34,7 +34,12 @@ type CustomerForm = {
   phone: string;
   email: string;
 };
-type ListState = { path: string; status: "loading" | "ready" | "error"; page: CustomerPage | null; error: string };
+type ListState = {
+  path: string;
+  status: "loading" | "ready" | "error";
+  page: CustomerPage | null;
+  error: string;
+};
 type ProfileState = {
   key: string;
   status: "loading" | "ready" | "error";
@@ -126,10 +131,9 @@ function Customers() {
     if (!canView || !selectedId) return;
     const controller = new AbortController();
     setProfile({ key: profileKey, status: "loading", customer: null, error: "" });
-    void request<ProfileResponse>(
-      "/api/seramet/crm/customers/" + encodeURIComponent(selectedId),
-      { signal: controller.signal },
-    )
+    void request<ProfileResponse>("/api/seramet/crm/customers/" + encodeURIComponent(selectedId), {
+      signal: controller.signal,
+    })
       .then((response) => {
         if (!controller.signal.aborted) {
           setProfile({ key: profileKey, status: "ready", customer: response.customer, error: "" });
@@ -149,7 +153,8 @@ function Customers() {
   }, [canView, profileKey, profileRevision, request, selectedId]);
 
   const visibleList = listPath && list.path === listPath ? list : null;
-  const customer = profile.key === profileKey && profile.status === "ready" ? profile.customer : null;
+  const customer =
+    profile.key === profileKey && profile.status === "ready" ? profile.customer : null;
 
   const money = (amountMinor: number, rowCurrency?: string) =>
     formatMinor(amountMinor, rowCurrency ?? currency, locale);
@@ -221,7 +226,10 @@ function Customers() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Customer access unavailable" body="Your role does not permit viewing customer profiles." />
+          <CrmEmpty
+            title="Customer access unavailable"
+            body="Your role does not permit viewing customer profiles."
+          />
         </Panel>
       ) : (
         <>
@@ -313,7 +321,10 @@ function Customers() {
           )}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
             <Panel className="min-w-0">
-              <PanelHead title="Customer directory" sub="Authoritative, permission-filtered customer records" />
+              <PanelHead
+                title="Customer directory"
+                sub="Authoritative, permission-filtered customer records"
+              />
               <form onSubmit={search} className="flex flex-wrap gap-2 border-b border-border p-4">
                 <label className="min-w-[200px] flex-1 text-[12px] font-medium">
                   <span className="sr-only">Search customer name, code, phone or email</span>
@@ -436,11 +447,15 @@ function Customers() {
                   <div className="grid grid-cols-2 gap-2">
                     <div className="rounded-lg bg-secondary/60 p-3">
                       <p className="text-[11px] text-muted-foreground">Completed orders</p>
-                      <p className="text-lg font-semibold">{customer.orderCount.toLocaleString()}</p>
+                      <p className="text-lg font-semibold">
+                        {customer.orderCount.toLocaleString()}
+                      </p>
                     </div>
                     <div className="rounded-lg bg-secondary/60 p-3">
                       <p className="text-[11px] text-muted-foreground">Loyalty points</p>
-                      <p className="text-lg font-semibold">{customer.loyaltyPoints.toLocaleString()}</p>
+                      <p className="text-lg font-semibold">
+                        {customer.loyaltyPoints.toLocaleString()}
+                      </p>
                     </div>
                     {canViewValue && !isAllBranches && customer.currency && (
                       <div className="col-span-2 rounded-lg bg-secondary/60 p-3">
@@ -453,7 +468,8 @@ function Customers() {
                   </div>
                   {isAllBranches && (
                     <p className="text-[12px] text-muted-foreground">
-                      Cross-branch spend totals are withheld here until their currencies are verified.
+                      Cross-branch spend totals are withheld here until their currencies are
+                      verified.
                     </p>
                   )}
                   <section>
@@ -462,9 +478,11 @@ function Customers() {
                     <p>Last visit: {shortDate(customer.visits.lastVisitAt)}</p>
                     {customer.visits.favoriteItems.length > 0 && (
                       <p>
-                        Frequent items: {customer.visits.favoriteItems.slice(0, 4).map((item) =>
-                          item.name + " (" + item.quantity + ")",
-                        ).join(", ")}
+                        Frequent items:{" "}
+                        {customer.visits.favoriteItems
+                          .slice(0, 4)
+                          .map((item) => item.name + " (" + item.quantity + ")")
+                          .join(", ")}
                       </p>
                     )}
                   </section>
@@ -474,7 +492,10 @@ function Customers() {
                       <ul className="mt-2 space-y-2">
                         {customer.loyalty.map((item) => (
                           <li key={item.programId} className="rounded-md border border-border p-2">
-                            <p>{item.programName}{item.tierName ? " · " + item.tierName : ""}</p>
+                            <p>
+                              {item.programName}
+                              {item.tierName ? " · " + item.tierName : ""}
+                            </p>
                             <p className="text-muted-foreground">
                               Balance: {item.pointsBalance.toLocaleString()} points
                             </p>
@@ -502,7 +523,11 @@ function Customers() {
                       <ul className="mt-2 space-y-2">
                         {customer.feedback.slice(0, 5).map((item) => (
                           <li key={item.id}>
-                            {item.category} · {readableStatus(item.status)} · {shortDate(item.submittedAt)}
+                            <span>{item.category}</span>
+                            <span aria-hidden="true"> · </span>
+                            <span>{readableStatus(item.status)}</span>
+                            <span aria-hidden="true"> · </span>
+                            <span>{shortDate(item.submittedAt)}</span>
                           </li>
                         ))}
                       </ul>
@@ -551,7 +576,11 @@ function Customers() {
                             className="w-full rounded-md border border-border bg-background p-2 text-[13px]"
                           />
                         </label>
-                        {noteError && <p role="alert" className="text-danger">{noteError}</p>}
+                        {noteError && (
+                          <p role="alert" className="text-danger">
+                            {noteError}
+                          </p>
+                        )}
                         <Btn type="submit" disabled={!note.trim() || savingNote}>
                           {savingNote ? "Saving..." : "Save note"}
                         </Btn>
