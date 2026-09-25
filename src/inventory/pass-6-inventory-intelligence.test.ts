@@ -2306,9 +2306,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     });
 
     const item = await db
-      .prepare(
-        "SELECT preferred_supplier_id FROM inventory_items WHERE tenant_id=? AND id=?",
-      )
+      .prepare("SELECT preferred_supplier_id FROM inventory_items WHERE tenant_id=? AND id=?")
       .bind(tenantId, fixture.itemId)
       .first<{ preferred_supplier_id: string | null }>();
     expect(item?.preferred_supplier_id).toBe("supplier-preferred-b");
