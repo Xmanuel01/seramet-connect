@@ -748,6 +748,18 @@ export async function handleInventoryApi(
       201,
     );
   }
+  const supplierUpdateRoute = /^\/api\/seramet\/procurement\/suppliers\/([^/]+)\/update$/.exec(
+    url.pathname,
+  );
+  if (supplierUpdateRoute && request.method === "POST") {
+    return json({
+      ok: true,
+      supplier: await service.updateSupplier(
+        decodeURIComponent(supplierUpdateRoute[1]!),
+        await parse(request, supplierSchema),
+      ),
+    });
+  }
   if (url.pathname === "/api/seramet/procurement/supplier-items" && request.method === "POST") {
     return json(
       {
