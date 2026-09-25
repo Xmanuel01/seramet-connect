@@ -243,7 +243,7 @@ export class CrmLeadService extends CrmServiceBase {
       const customer = await this.db
         .prepare(
           `SELECT id FROM customers c WHERE c.tenant_id=? AND c.id=? AND
-           (c.preferred_branch_id IS NULL OR c.preferred_branch_id=? OR EXISTS(
+           (c.preferred_branch_id=? OR EXISTS(
              SELECT 1 FROM customer_transaction_links l WHERE l.tenant_id=c.tenant_id
                AND l.customer_id=c.id AND l.branch_id=?
            )) AND c.status='ACTIVE'`,

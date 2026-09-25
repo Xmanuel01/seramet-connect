@@ -527,6 +527,13 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
           campaign: await campaigns.approveCampaign(campaignId, body.reason),
         });
       }
+      if (!env.SERAMET_WORK_QUEUE) {
+        throw new ServerOperationError(
+          "QUEUE_UNAVAILABLE",
+          503,
+          "Durable campaign worker queue is unavailable; campaign was not queued",
+        );
+      }
       const campaign = await campaigns.queueCampaign(campaignId);
       const worker = await requireDurableCrmWork(env, {
         tenantId: actor.tenantId,

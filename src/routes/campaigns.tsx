@@ -31,6 +31,7 @@ type CampaignRow = {
   eligible: number;
   sent: number;
   delivered: number;
+  unknown: number;
 };
 type Provider = {
   id: string;
@@ -346,7 +347,7 @@ function Campaigns() {
               campaign records remain viewable.
             </p>
           )}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Metric label="Campaigns in current scope" value={campaignRows.length} />
             <Metric
               label="Recorded sent/delivered"
@@ -355,6 +356,10 @@ function Campaigns() {
             <Metric
               label="Confirmed deliveries"
               value={campaignRows.reduce((sum, row) => sum + row.delivered, 0)}
+            />
+            <Metric
+              label="Requires provider reconciliation"
+              value={campaignRows.reduce((sum, row) => sum + row.unknown, 0)}
             />
           </div>
           <Panel className="mt-4">
@@ -393,6 +398,7 @@ function Campaigns() {
                     <p className="text-[12px]">
                       Eligible: {row.eligible} · Recorded sent: {row.sent} · Delivered:{" "}
                       {row.delivered}
+                      {row.unknown > 0 ? " · Unconfirmed outcomes: " + row.unknown : ""}
                     </p>
                     <Btn
                       onClick={() => void previewCampaign(row.id)}

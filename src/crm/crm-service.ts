@@ -360,7 +360,7 @@ export class CrmService extends CrmServiceBase {
     const consentRows = await this.db
       .prepare(
         `SELECT channel,status,effective_at FROM customer_consents
-         WHERE tenant_id=? AND customer_id IN (${params}) ORDER BY effective_at DESC,rowid DESC`,
+         WHERE tenant_id=? AND customer_id IN (${params}) ORDER BY effective_at DESC,created_at DESC,id DESC`,
       )
       .bind(this.actor.tenantId, ...customerIds)
       .all<{ channel: ConsentChannel; status: ConsentStatus; effective_at: string }>();
@@ -825,6 +825,7 @@ export class CrmService extends CrmServiceBase {
   }) {
     this.require(permissions.crmCustomerManage);
     const customerId = await this.resolveCanonicalId(input.customerId);
+    await this.assertCustomerVisible(customerId);
     const stamp = input.effectiveAt ?? new Date().toISOString();
     const id = crypto.randomUUID();
     const correlationId = crypto.randomUUID();
