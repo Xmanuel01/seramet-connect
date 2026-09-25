@@ -54,6 +54,13 @@ export function ManualMenuItemDialog({
   const [description, setDescription] = useState("");
   const [sku, setSku] = useState("");
   const [stationCode, setStationCode] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [branchPrice, setBranchPrice] = useState("");
+  const [onlinePrice, setOnlinePrice] = useState("");
+  const [taxCode, setTaxCode] = useState("");
+  const [unitOfMeasure, setUnitOfMeasure] = useState("");
+  const [recipeCode, setRecipeCode] = useState("");
+  const [serviceChargeApplicable, setServiceChargeApplicable] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -94,6 +101,12 @@ export function ManualMenuItemDialog({
         description,
         sku,
         stationCode,
+        branchPrice,
+        onlinePrice,
+        taxCode,
+        unitOfMeasure,
+        recipeCode,
+        serviceChargeApplicable,
       });
       const file = new File([csv], "seramet-manual-" + code.trim() + ".csv", {
         type: "text/csv",
@@ -268,6 +281,82 @@ export function ManualMenuItemDialog({
               activating an item that needs kitchen routing.
             </p>
           )}
+          <details
+            open={advancedOpen}
+            onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+            className="rounded-md border border-border bg-secondary/20 p-3"
+          >
+            <summary className="cursor-pointer text-[13px] font-semibold">
+              More item details (optional)
+            </summary>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Only enter values already configured for your business. Unrecognized tax, unit or
+              recipe codes must be resolved before they can be used.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1 text-[12px] font-semibold">
+                Branch-specific selling price
+                <input
+                  inputMode="decimal"
+                  value={branchPrice}
+                  placeholder="Leave empty to use base price"
+                  onChange={(event) => edit(() => setBranchPrice(event.target.value))}
+                  className={inputClass}
+                />
+              </label>
+              <label className="grid gap-1 text-[12px] font-semibold">
+                Online selling price
+                <input
+                  inputMode="decimal"
+                  value={onlinePrice}
+                  placeholder="Optional"
+                  onChange={(event) => edit(() => setOnlinePrice(event.target.value))}
+                  className={inputClass}
+                />
+              </label>
+              <label className="grid gap-1 text-[12px] font-semibold">
+                Tax rule code
+                <input
+                  value={taxCode}
+                  maxLength={80}
+                  placeholder="Existing configured rule"
+                  onChange={(event) => edit(() => setTaxCode(event.target.value))}
+                  className={inputClass}
+                />
+              </label>
+              <label className="grid gap-1 text-[12px] font-semibold">
+                Unit of measure
+                <input
+                  value={unitOfMeasure}
+                  maxLength={80}
+                  placeholder="e.g. PCS, if configured"
+                  onChange={(event) => edit(() => setUnitOfMeasure(event.target.value))}
+                  className={inputClass}
+                />
+              </label>
+              <label className="grid gap-1 text-[12px] font-semibold sm:col-span-2">
+                Linked recipe code
+                <input
+                  value={recipeCode}
+                  maxLength={120}
+                  placeholder="Leave empty until your recipe exists"
+                  onChange={(event) => edit(() => setRecipeCode(event.target.value))}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-[12px] font-semibold sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={serviceChargeApplicable}
+                  onChange={(event) =>
+                    edit(() => setServiceChargeApplicable(event.target.checked))
+                  }
+                  className="h-4 w-4 accent-primary"
+                />
+                Apply configured service charge
+              </label>
+            </div>
+          </details>
           <label className="grid gap-1 text-[12px] font-semibold">
             Description (optional)
             <textarea
