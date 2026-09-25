@@ -46,10 +46,12 @@ type DashboardState = {
 };
 
 function CrmOverview() {
-  const { branchLabel, hasPermission } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, isAllBranches, hasPermission } = useAppContext();
   const { scopedPath, request } = useCrmApi();
   const canView = hasPermission(permissions.crmView);
   const dashboardPath = canView ? scopedPath("/api/seramet/crm/dashboard") : null;
+  const dashboardKey =
+    activeTenantId + ":" + (isAllBranches ? "ALL" : branchId) + ":" + (dashboardPath ?? "");
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<DashboardState>({
     path: "",
@@ -61,11 +63,11 @@ function CrmOverview() {
   useEffect(() => {
     if (!dashboardPath) return;
     const controller = new AbortController();
-    setState({ path: dashboardPath, status: "loading", dashboard: null, error: "" });
+    setState({ path: dashboardKey, status: "loading", dashboard: null, error: "" });
     void request<DashboardResponse>(dashboardPath, { signal: controller.signal })
       .then(({ dashboard }) => {
         if (!controller.signal.aborted) {
-          setState({ path: dashboardPath, status: "ready", dashboard, error: "" });
+          setState({ path: dashboardKey, status: "ready", dashboard, error: "" });
         }
       })
       .catch((cause) => {
@@ -79,9 +81,9 @@ function CrmOverview() {
         }
       });
     return () => controller.abort();
-  }, [dashboardPath, request, revision]);
+  }, [dashboardKey, dashboardPath, request, revision]);
 
-  const current = state.path === dashboardPath ? state : null;
+  const current = state.path === dashboardKey ? state : null;
   const dashboard = current?.status === "ready" ? current.dashboard : null;
   return (
     <AppShell
