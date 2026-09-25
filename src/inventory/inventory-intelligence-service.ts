@@ -1387,9 +1387,9 @@ export class InventoryIntelligenceService {
           : 0;
       const unitPriceVarianceMinor = lineInput.unitPriceMinor - poLine.unit_cost_minor;
       // Monetary variance must reflect accepted quantity, not merely the difference per unit.
-      const priceVarianceMinor = Math.round(
-        (lineInput.acceptedPurchaseQuantityMicro * unitPriceVarianceMinor) / QUANTITY_SCALE,
-      );
+      const priceVarianceMinor =
+        quantityCostMinor(lineInput.acceptedPurchaseQuantityMicro, lineInput.unitPriceMinor) -
+        quantityCostMinor(lineInput.acceptedPurchaseQuantityMicro, poLine.unit_cost_minor);
       const priceVarianceBps = ratioBasisPoints(
         unitPriceVarianceMinor,
         poLine.unit_cost_minor || 1,
@@ -5551,7 +5551,8 @@ export class InventoryIntelligenceService {
     const receipt = await this.db
       .prepare(
         `SELECT gr.branch_id,gr.purchase_order_id,gr.supplier_id,gr.status,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total
+                COALESCE(SUM(grl.total_cost_minor),0) AS total,
+                COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity
          FROM goods_receipts gr
          LEFT JOIN goods_receipt_lines grl
            ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
@@ -5565,6 +5566,7 @@ export class InventoryIntelligenceService {
         supplier_id: string;
         status: string;
         total: number;
+        accepted_quantity: number;
       }>();
     if (!receipt) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Goods receipt not found");
@@ -5585,6 +5587,13 @@ export class InventoryIntelligenceService {
         "VALIDATION_FAILED",
         409,
         "Supplier invoice requires a posted goods receipt",
+      );
+    }
+    if (receipt.accepted_quantity <= 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "A fully rejected goods receipt cannot create a supplier payable",
       );
     }
     const existingReceiptInvoice = await this.db
