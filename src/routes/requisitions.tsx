@@ -63,8 +63,10 @@ function Requisitions() {
     try {
       await operation();
       setNotice(success);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Requisition operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -244,7 +246,9 @@ function Requisitions() {
           run(
             () => control.command("/api/seramet/procurement/requisitions", body),
             "Requisition submitted for approval.",
-          ).then(() => setCreateOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setCreateOpen(false);
+          })
         }
       />
 
@@ -262,7 +266,9 @@ function Requisitions() {
                     reason.trim() ? { reason: reason.trim() } : {},
                   ),
                 `${selected.requisition_number} approved and ready for purchase ordering.`,
-              ).then(() => setApproveOpen(false))
+              ).then((succeeded) => {
+                if (succeeded) setApproveOpen(false);
+              })
             : Promise.resolve()
         }
       />

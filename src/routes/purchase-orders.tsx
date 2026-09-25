@@ -59,8 +59,10 @@ function PurchaseOrders() {
     try {
       await operation();
       setNotice(success);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Purchase order operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -324,7 +326,9 @@ function PurchaseOrders() {
           run(
             () => control.command("/api/seramet/procurement/purchase-orders", body),
             "Purchase order submitted for approval.",
-          ).then(() => setCreateOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setCreateOpen(false);
+          })
         }
       />
 
@@ -345,7 +349,9 @@ function PurchaseOrders() {
             action === "approve"
               ? `${selected.purchase_order_number} approved and ready for receiving.`
               : `${selected.purchase_order_number} cancelled.`,
-          ).then(() => setAction(null));
+          ).then((succeeded) => {
+            if (succeeded) setAction(null);
+          });
         }}
       />
     </AppShell>

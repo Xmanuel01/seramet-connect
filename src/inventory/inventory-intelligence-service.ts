@@ -353,7 +353,7 @@ export class InventoryIntelligenceService {
           `UPDATE suppliers SET
              code=?,name=?,legal_name=?,phone=?,email=?,tax_number=?,address=?,
              payment_terms_days=?,currency=?,lead_time_days=?,minimum_order_minor=?,
-             payload_json=?,updated_at=?
+             payload_json=COALESCE(?,payload_json),updated_at=?
            WHERE tenant_id=? AND id=? AND active=1`,
         )
         .bind(
@@ -368,7 +368,7 @@ export class InventoryIntelligenceService {
           input.currency ?? null,
           input.leadTimeDays ?? null,
           input.minimumOrderMinor ?? null,
-          JSON.stringify(input.metadata ?? {}),
+          input.metadata ? JSON.stringify(input.metadata) : null,
           stamp,
           this.actor.tenantId,
           id,
@@ -419,7 +419,14 @@ export class InventoryIntelligenceService {
       );
     }
 
-    const id = input.id ?? crypto.randomUUID();
+    const existingLink = await this.db
+      .prepare(
+        `SELECT id,preferred FROM supplier_items
+         WHERE tenant_id=? AND supplier_id=? AND inventory_item_id=? AND purchase_unit_id=?`,
+      )
+      .bind(this.actor.tenantId, input.supplierId, input.inventoryItemId, input.purchaseUnitId)
+      .first<{ id: string; preferred: number }>();
+    const id = existingLink?.id ?? input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [];
 
@@ -477,6 +484,27 @@ export class InventoryIntelligenceService {
             "UPDATE inventory_items SET preferred_supplier_id=?,updated_at=? WHERE tenant_id=? AND id=?",
           )
           .bind(input.supplierId, stamp, this.actor.tenantId, input.inventoryItemId),
+      );
+    } else if (existingLink?.preferred) {
+      // Removing the preferred flag also reconciles the replenishment source of truth.
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE inventory_items SET preferred_supplier_id=(
+               SELECT supplier_id FROM supplier_items
+               WHERE tenant_id=? AND inventory_item_id=? AND preferred=1 AND active=1
+               ORDER BY updated_at DESC,id LIMIT 1
+             ),updated_at=?
+             WHERE tenant_id=? AND id=? AND preferred_supplier_id=?`,
+          )
+          .bind(
+            this.actor.tenantId,
+            input.inventoryItemId,
+            stamp,
+            this.actor.tenantId,
+            input.inventoryItemId,
+            input.supplierId,
+          ),
       );
     }
 
@@ -5502,9 +5530,7 @@ export class InventoryIntelligenceService {
       );
     }
     const existingReceiptInvoice = await this.db
-      .prepare(
-        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=? AND status!='DISPUTED'",
-      )
+      .prepare("SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=?")
       .bind(this.actor.tenantId, input.goodsReceiptId)
       .first<{ id: string }>();
     if (existingReceiptInvoice) {
@@ -5514,28 +5540,51 @@ export class InventoryIntelligenceService {
         "This goods receipt is already linked to a supplier invoice",
       );
     }
-    const quantities = await this.db
+    // Compare this invoice against its own accepted receipt lines, not all deliveries on the PO.
+    // Otherwise an accurate invoice for a legitimate partial delivery is incorrectly flagged.
+    const receiptEvidence = await this.db
       .prepare(
-        `SELECT COALESCE(SUM(COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)),0) AS ordered,
-                COALESCE(SUM(received_purchase_quantity_minor),0) AS received
-         FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        `SELECT grl.accepted_purchase_quantity_minor AS accepted_quantity_minor,
+                COALESCE(pol.ordered_purchase_quantity_minor,pol.ordered_quantity_minor)
+                  AS ordered_quantity_minor,
+                pol.unit_cost_minor,pol.discount_minor,pol.tax_minor
+         FROM goods_receipt_lines grl
+         JOIN purchase_order_lines pol
+           ON pol.tenant_id=grl.tenant_id AND pol.id=grl.purchase_order_line_id
+         WHERE grl.tenant_id=? AND grl.goods_receipt_id=?`,
       )
-      .bind(this.actor.tenantId, input.purchaseOrderId)
-      .first<{ ordered: number; received: number }>();
+      .bind(this.actor.tenantId, input.goodsReceiptId)
+      .all<{
+        accepted_quantity_minor: number;
+        ordered_quantity_minor: number;
+        unit_cost_minor: number;
+        discount_minor: number;
+        tax_minor: number;
+      }>();
+    let expectedReceiptSubtotalMinor = 0;
+    let expectedReceiptTaxMinor = 0;
+    for (const line of receiptEvidence.results ?? []) {
+      if (line.accepted_quantity_minor <= 0) continue;
+      const ordered = Math.max(1, Number(line.ordered_quantity_minor));
+      const share = Number(line.accepted_quantity_minor) / ordered;
+      expectedReceiptSubtotalMinor +=
+        quantityCostMinor(line.accepted_quantity_minor, line.unit_cost_minor) -
+        Math.round(line.discount_minor * share);
+      expectedReceiptTaxMinor += Math.round(line.tax_minor * share);
+    }
+    const expectedReceiptTotalMinor = expectedReceiptSubtotalMinor + expectedReceiptTaxMinor;
     const mapping = await this.accountMapping(input.branchId);
     const receivedTotal = receipt.total;
     const matchStatus =
       receivedTotal === 0
         ? "MISSING_DOCUMENT"
-        : (quantities?.received ?? 0) !== (quantities?.ordered ?? 0)
-          ? "QUANTITY_VARIANCE"
-          : receivedTotal !== po.subtotal_minor || input.subtotalMinor !== receivedTotal
-            ? "PRICE_VARIANCE"
-            : input.taxMinor !== po.tax_minor
-              ? "TAX_VARIANCE"
-              : input.totalMinor !== po.total_minor
-                ? "REVIEW_REQUIRED"
-                : "MATCHED";
+        : receivedTotal !== expectedReceiptSubtotalMinor || input.subtotalMinor !== receivedTotal
+          ? "PRICE_VARIANCE"
+          : input.taxMinor !== expectedReceiptTaxMinor
+            ? "TAX_VARIANCE"
+            : input.totalMinor !== expectedReceiptTotalMinor
+              ? "REVIEW_REQUIRED"
+              : "MATCHED";
     const id = input.id ?? crypto.randomUUID();
     const journalId = crypto.randomUUID();
     const matchId = crypto.randomUUID();
@@ -5600,10 +5649,10 @@ export class InventoryIntelligenceService {
         input.goodsReceiptId,
         id,
         matchStatus,
-        po.total_minor,
+        expectedReceiptTotalMinor,
         receivedTotal,
         input.totalMinor,
-        input.totalMinor - po.total_minor,
+        input.totalMinor - expectedReceiptTotalMinor,
         stamp,
         stamp,
       );
@@ -6120,7 +6169,11 @@ export class InventoryIntelligenceService {
                 COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
                 COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
                 COALESCE(SUM(grl.rejected_purchase_quantity_minor),0) AS rejected_quantity_minor,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
+                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor,
+                EXISTS(
+                  SELECT 1 FROM supplier_invoices si
+                  WHERE si.tenant_id=gr.tenant_id AND si.goods_receipt_id=gr.id
+                ) AS invoice_linked
          FROM goods_receipts gr
          JOIN purchase_orders po ON po.tenant_id=gr.tenant_id AND po.id=gr.purchase_order_id
          JOIN suppliers s ON s.tenant_id=gr.tenant_id AND s.id=gr.supplier_id

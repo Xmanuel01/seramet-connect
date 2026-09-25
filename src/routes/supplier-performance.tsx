@@ -33,12 +33,21 @@ function SupplierPerformance() {
     management.control?.latest?.currency ??
     configuredTenantCurrency(platformState.tenants, activeTenantId);
   const businessDate = management.control?.periodEnd ?? "";
-  const purchaseValueMinor = suppliers.reduce((sum, row) => sum + row.purchaseValueMinor, 0);
-  const outstandingPayableMinor = suppliers.reduce(
-    (sum, row) => sum + row.outstandingPayableMinor,
-    0,
-  );
-  const returnValueMinor = suppliers.reduce((sum, row) => sum + row.returnValueMinor, 0);
+  const currencies = Array.from(new Set(suppliers.map((row) => row.currency)));
+  const mixedCurrencies = currencies.length > 1;
+  const totalsByCurrency = currencies.map((code) => {
+    const rows = suppliers.filter((row) => row.currency === code);
+    return {
+      currency: code,
+      purchaseMinor: rows.reduce((sum, row) => sum + row.purchaseValueMinor, 0),
+      payableMinor: rows.reduce((sum, row) => sum + row.outstandingPayableMinor, 0),
+      returnMinor: rows.reduce((sum, row) => sum + row.returnValueMinor, 0),
+    };
+  });
+  const purchaseValueMinor = totalsByCurrency[0]?.purchaseMinor ?? 0;
+  const outstandingPayableMinor = totalsByCurrency[0]?.payableMinor ?? 0;
+  const returnValueMinor = totalsByCurrency[0]?.returnMinor ?? 0;
+  const displayedCurrency = totalsByCurrency[0]?.currency ?? currency;
   const matchExceptions = suppliers.reduce((sum, row) => sum + row.invoiceMatchExceptions, 0);
   const orderCount = suppliers.reduce((sum, row) => sum + row.orderCount, 0);
 
@@ -70,18 +79,70 @@ function SupplierPerformance() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Metric label="Suppliers" value={suppliers.length} />
             <Metric label="Orders" value={orderCount} />
-            <Metric label="Purchase value" value={formatMinor(purchaseValueMinor, currency)} />
+            <Metric
+              label="Purchase value"
+              value={
+                mixedCurrencies
+                  ? "See currency totals"
+                  : formatMinor(purchaseValueMinor, displayedCurrency)
+              }
+            />
             <Metric
               label="Supplier returns"
-              value={formatMinor(returnValueMinor, currency)}
-              invert={returnValueMinor > 0}
+              value={
+                mixedCurrencies
+                  ? "See currency totals"
+                  : formatMinor(returnValueMinor, displayedCurrency)
+              }
+              invert={suppliers.some((row) => row.returnValueMinor > 0)}
             />
             <Metric
               label="Outstanding payable"
-              value={formatMinor(outstandingPayableMinor, currency)}
+              value={
+                mixedCurrencies
+                  ? "See currency totals"
+                  : formatMinor(outstandingPayableMinor, displayedCurrency)
+              }
             />
             <Metric label="Match exceptions" value={matchExceptions} invert={matchExceptions > 0} />
           </div>
+
+          {mixedCurrencies && (
+            <Panel className="mt-4">
+              <PanelHead
+                title="Totals by currency"
+                sub="Amounts in different currencies are not added together without conversion"
+              />
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <TH>Currency</TH>
+                      <TH className="text-right">Purchases</TH>
+                      <TH className="text-right">Returns</TH>
+                      <TH className="text-right">Outstanding payable</TH>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {totalsByCurrency.map((row) => (
+                      <tr key={row.currency}>
+                        <TD className="font-semibold">{row.currency}</TD>
+                        <TD className="num text-right">
+                          {formatMinor(row.purchaseMinor, row.currency)}
+                        </TD>
+                        <TD className="num text-right">
+                          {formatMinor(row.returnMinor, row.currency)}
+                        </TD>
+                        <TD className="num text-right">
+                          {formatMinor(row.payableMinor, row.currency)}
+                        </TD>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          )}
 
           <Panel className="mt-4 overflow-x-auto">
             <PanelHead
@@ -102,7 +163,7 @@ function SupplierPerformance() {
                   <TH className="text-right">Returns</TH>
                   <TH className="text-right">Match exceptions</TH>
                   <TH className="text-right">Payable</TH>
-                  <TH>Quality</TH>
+                  <TH>Data quality</TH>
                 </tr>
               </thead>
               <tbody>

@@ -43,7 +43,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(24);
+    expect(version?.version).toBe(25);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",
@@ -1640,6 +1640,122 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(totals).toEqual({ debit: 250_000, credit: 250_000 });
   });
 
+  it("matches an invoice to its actual partial delivery rather than the full PO", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await service.createPurchaseOrder({
+      id: "po-partial-invoice",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      purchaseOrderNumber: "PO-PARTIAL-INVOICE",
+      currency: "KES",
+      lines: [
+        {
+          id: "partial-invoice-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: 2 * QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+    await service.approvePurchaseOrder(po.id, "Partial invoice test");
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "partial-invoice-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "partial-invoice-receipt",
+    );
+    const invoice = await service.postSupplierInvoice({
+      branchId,
+      supplierId: fixture.supplierId,
+      purchaseOrderId: po.id,
+      goodsReceiptId: receipt.id,
+      invoiceNumber: "SUP-INV-PARTIAL",
+      invoiceDate: "2026-08-30",
+      currency: "KES",
+      subtotalMinor: 240_000,
+      taxMinor: 0,
+      totalMinor: 240_000,
+    });
+    expect(invoice.matchStatus).toBe("MATCHED");
+    const match = await db
+      .prepare(
+        `SELECT ordered_total_minor,received_total_minor,invoiced_total_minor,variance_minor
+         FROM procurement_matches WHERE tenant_id=? AND supplier_invoice_id=?`,
+      )
+      .bind(tenantId, invoice.id)
+      .first<{
+        ordered_total_minor: number;
+        received_total_minor: number;
+        invoiced_total_minor: number;
+        variance_minor: number;
+      }>();
+    expect(match).toEqual({
+      ordered_total_minor: 240_000,
+      received_total_minor: 240_000,
+      invoiced_total_minor: 240_000,
+      variance_minor: 0,
+    });
+  });
+
+  it("blocks rebilling a disputed receipt to avoid duplicated supplier payables", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await createApprovedPo(
+      service,
+      fixture,
+      "po-disputed-invoice",
+      "PO-DISPUTED-INVOICE",
+      "REJECT_OVER_RECEIPT",
+    );
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "disputed-invoice-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "disputed-invoice-receipt",
+    );
+    const stamp = "2026-08-30T00:00:00.000Z";
+    await db
+      .prepare(
+        `INSERT INTO supplier_invoices
+         (tenant_id,id,branch_id,supplier_id,purchase_order_id,goods_receipt_id,
+          invoice_number,invoice_date,currency,subtotal_minor,tax_minor,total_minor,status,
+          created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,'2026-08-30','KES',240000,0,240000,'DISPUTED',?,?)`,
+      )
+      .bind(
+        tenantId,
+        "invoice-disputed-existing",
+        branchId,
+        fixture.supplierId,
+        po.id,
+        receipt.id,
+        "SUP-INV-DISPUTED-EXISTING",
+        stamp,
+        stamp,
+      )
+      .run();
+    await expect(
+      service.postSupplierInvoice({
+        branchId,
+        supplierId: fixture.supplierId,
+        purchaseOrderId: po.id,
+        goodsReceiptId: receipt.id,
+        invoiceNumber: "SUP-INV-DISPUTED-SECOND",
+        invoiceDate: "2026-08-30",
+        currency: "KES",
+        subtotalMinor: 240_000,
+        taxMinor: 0,
+        totalMinor: 240_000,
+      }),
+    ).rejects.toThrow("already linked");
+  });
+
   it("matches supplier invoice subtotal and tax independently", async () => {
     const fixture = await seedProcurement(service);
     const po = await service.createPurchaseOrder({
@@ -2324,7 +2440,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       links.results?.filter((row) => row.preferred === 1).map((row) => row.supplier_id),
     ).toEqual(["supplier-preferred-b"]);
 
-    await service.linkSupplierItem({
+    const relinked = await service.linkSupplierItem({
       supplierId: "supplier-preferred-b",
       inventoryItemId: fixture.itemId,
       purchaseUnitId: "unit-box",
@@ -2332,6 +2448,14 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       contractPriceMinor: 225_000,
       preferred: true,
     });
+    const original = await db
+      .prepare(
+        `SELECT id FROM supplier_items
+         WHERE tenant_id=? AND supplier_id=? AND inventory_item_id=? AND purchase_unit_id=?`,
+      )
+      .bind(tenantId, "supplier-preferred-b", fixture.itemId, "unit-box")
+      .first<{ id: string }>();
+    expect(relinked.id).toBe(original?.id);
 
     const updated = await db
       .prepare(
@@ -2342,6 +2466,20 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       .bind(tenantId, "supplier-preferred-b", fixture.itemId, "unit-box")
       .first<{ count: number; contract_price_minor: number }>();
     expect(updated).toEqual({ count: 1, contract_price_minor: 225_000 });
+
+    await service.linkSupplierItem({
+      supplierId: "supplier-preferred-b",
+      inventoryItemId: fixture.itemId,
+      purchaseUnitId: "unit-box",
+      conversionId: "conversion-box-soda",
+      contractPriceMinor: 225_000,
+      preferred: false,
+    });
+    const unpreferred = await db
+      .prepare("SELECT preferred_supplier_id FROM inventory_items WHERE tenant_id=? AND id=?")
+      .bind(tenantId, fixture.itemId)
+      .first<{ preferred_supplier_id: string | null }>();
+    expect(unpreferred?.preferred_supplier_id).toBeNull();
   });
 
   it("compares supplier quotes without auto-selecting and records optional portion checks", async () => {
