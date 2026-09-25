@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { permissions } from "@/platform/permissions";
+import { createDefaultDemoPlatformState } from "@/platform/demo/default-demo-data";
 import { linkedOrderCustomer, resolvePosCustomer } from "./pos-customer-link";
 
 const scope = { tenantId: "tenant-a", branchId: "branch-a" };
 const person = { id: "customer-1", customerCode: "CUS-1", displayName: "Customer One" };
 
 describe("POS customer selection lifecycle", () => {
+  it("grants pilot cashiers masked lookup without exposing contact or spend permissions", () => {
+    const cashier = createDefaultDemoPlatformState().roles.find((role) => role.code === "CASHIER");
+    expect(cashier?.permissions).toContain(permissions.crmCustomerView);
+    expect(cashier?.permissions).not.toContain(permissions.crmCustomerContactView);
+    expect(cashier?.permissions).not.toContain(permissions.crmCustomerValueView);
+  });
+
   it("links a verified choice to a fresh transaction draft", () => {
     const selected = resolvePosCustomer(scope, null, {
       ...scope,
