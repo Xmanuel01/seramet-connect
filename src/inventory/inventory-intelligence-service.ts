@@ -5134,6 +5134,19 @@ export class InventoryIntelligenceService {
         "Supplier invoice requires a posted goods receipt",
       );
     }
+    const existingReceiptInvoice = await this.db
+      .prepare(
+        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=? AND status!='DISPUTED'",
+      )
+      .bind(this.actor.tenantId, input.goodsReceiptId)
+      .first<{ id: string }>();
+    if (existingReceiptInvoice) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "This goods receipt is already linked to a supplier invoice",
+      );
+    }
     const quantities = await this.db
       .prepare(
         `SELECT COALESCE(SUM(COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)),0) AS ordered,
@@ -5747,6 +5760,28 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
+    const supplierInvoices = await this.db
+      .prepare(
+        `SELECT si.id,si.supplier_id,s.name AS supplier_name,si.purchase_order_id,
+                po.purchase_order_number,si.goods_receipt_id,gr.receipt_number,
+                si.invoice_number,si.invoice_date,si.due_date,si.currency,
+                si.subtotal_minor,si.tax_minor,si.total_minor,si.status,si.journal_entry_id,
+                si.created_at,si.updated_at,pm.status AS match_status,
+                pm.ordered_total_minor,pm.received_total_minor,pm.invoiced_total_minor,
+                pm.variance_minor
+         FROM supplier_invoices si
+         JOIN suppliers s ON s.tenant_id=si.tenant_id AND s.id=si.supplier_id
+         LEFT JOIN purchase_orders po
+           ON po.tenant_id=si.tenant_id AND po.id=si.purchase_order_id
+         LEFT JOIN goods_receipts gr
+           ON gr.tenant_id=si.tenant_id AND gr.id=si.goods_receipt_id
+         LEFT JOIN procurement_matches pm
+           ON pm.tenant_id=si.tenant_id AND pm.supplier_invoice_id=si.id
+         WHERE si.tenant_id=? AND si.branch_id=?
+         ORDER BY si.invoice_date DESC,si.created_at DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
     return {
       branchId,
       purchaseOrders: rows,
@@ -5754,6 +5789,7 @@ export class InventoryIntelligenceService {
       supplierItems: supplierItems.results ?? [],
       requisitions,
       receipts: receipts.results ?? [],
+      supplierInvoices: supplierInvoices.results ?? [],
     };
   }
 
