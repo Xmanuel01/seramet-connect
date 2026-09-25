@@ -5551,7 +5551,11 @@ export class InventoryIntelligenceService {
         `SELECT po.id,po.purchase_order_number,po.supplier_id,s.name AS supplier_name,
                 po.warehouse_id,po.requisition_id,po.submitted_by,po.approved_by,po.approval_reason,
                 po.status,po.currency,po.total_minor,po.expected_at,po.created_at,
-                po.approved_at,po.received_at
+                po.approved_at,po.received_at,
+                COALESCE(json_extract(po.payload_json,'$.overReceiptPolicy'),'REJECT_OVER_RECEIPT')
+                  AS over_receipt_policy,
+                COALESCE(json_extract(po.payload_json,'$.overReceiptToleranceBps'),0)
+                  AS over_receipt_tolerance_bps
          FROM purchase_orders po
          JOIN suppliers s ON s.tenant_id=po.tenant_id AND s.id=po.supplier_id
          WHERE po.tenant_id=? AND po.branch_id=?
@@ -5623,10 +5627,18 @@ export class InventoryIntelligenceService {
     }
     const receipts = await this.db
       .prepare(
-        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
+        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,po.purchase_order_number,
+                gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.business_date,
+                gr.received_by,gr.received_at,COUNT(grl.id) AS line_count,
+                COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
+                COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
+                COALESCE(SUM(grl.rejected_purchase_quantity_minor),0) AS rejected_quantity_minor,
                 COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
          FROM goods_receipts gr
-         LEFT JOIN goods_receipt_lines grl ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
+         JOIN purchase_orders po ON po.tenant_id=gr.tenant_id AND po.id=gr.purchase_order_id
+         JOIN suppliers s ON s.tenant_id=gr.tenant_id AND s.id=gr.supplier_id
+         LEFT JOIN goods_receipt_lines grl
+           ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
          WHERE gr.tenant_id=? AND gr.branch_id=?
          GROUP BY gr.id ORDER BY gr.received_at DESC LIMIT ?`,
       )
