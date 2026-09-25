@@ -3,14 +3,7 @@ import type { ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import type { D1Database } from "@/server/database/d1";
 
-export const leadStages = [
-  "NEW",
-  "CONTACTED",
-  "QUALIFIED",
-  "PROPOSAL",
-  "WON",
-  "LOST",
-] as const;
+export const leadStages = ["NEW", "CONTACTED", "QUALIFIED", "PROPOSAL", "WON", "LOST"] as const;
 export type LeadStage = (typeof leadStages)[number];
 
 export type LeadCreate = {
@@ -168,7 +161,12 @@ export class CrmLeadService extends CrmServiceBase {
            GROUP BY currency,stage ORDER BY currency,stage`,
         )
         .bind(this.actor.tenantId, selectedBranch)
-        .all<{ currency: string; stage: LeadStage; lead_count: number; estimated_value_minor: number }>(),
+        .all<{
+          currency: string;
+          stage: LeadStage;
+          lead_count: number;
+          estimated_value_minor: number;
+        }>(),
       this.db
         .prepare(
           `SELECT COUNT(*) AS due_count FROM crm_leads
@@ -360,14 +358,13 @@ export class CrmLeadService extends CrmServiceBase {
     if (input.stage !== row.stage && !transitions[row.stage].includes(input.stage)) {
       throw new CrmDomainError("INVALID_STATE", "Invalid pipeline stage transition");
     }
-    if (["WON", "LOST"].includes(input.stage) && (!input.reason || input.reason.trim().length < 4)) {
+    if (
+      ["WON", "LOST"].includes(input.stage) &&
+      (!input.reason || input.reason.trim().length < 4)
+    ) {
       throw new CrmDomainError("VALIDATION_FAILED", "A recorded closure reason is required");
     }
-    if (
-      input.stage === row.stage &&
-      input.nextAction === undefined &&
-      input.dueAt === undefined
-    ) {
+    if (input.stage === row.stage && input.nextAction === undefined && input.dueAt === undefined) {
       throw new CrmDomainError("VALIDATION_FAILED", "Nothing to update");
     }
     const stamp = new Date().toISOString();
