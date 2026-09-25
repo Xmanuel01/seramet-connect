@@ -25,11 +25,7 @@ function Requisitions() {
 
   const requestedUnits = rows.reduce(
     (sum, row) =>
-      sum +
-      row.lines.reduce(
-        (lineSum, line) => lineSum + Number(line.requested_quantity_minor),
-        0,
-      ),
+      sum + row.lines.reduce((lineSum, line) => lineSum + Number(line.requested_quantity_minor), 0),
     0,
   );
 
