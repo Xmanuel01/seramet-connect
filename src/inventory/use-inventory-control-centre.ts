@@ -58,6 +58,31 @@ export type ProcurementOrderRow = {
   }>;
 };
 
+export type ProcurementRequisitionRow = {
+  id: string;
+  warehouse_id: string;
+  requisition_number: string;
+  status: string;
+  source_type: string;
+  requested_by: string;
+  required_at: string | null;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  approval_reason: string | null;
+  lines: Array<{
+    id: string;
+    inventory_item_id: string;
+    item_name: string;
+    sku: string | null;
+    requested_quantity_minor: number;
+    ordered_quantity_minor: number;
+    unit_id: string;
+    unit_symbol: string | null;
+    notes: string | null;
+  }>;
+};
+
 export type ProcurementSupplierRow = {
   id: string;
   code: string;
@@ -143,7 +168,7 @@ export type InventoryBranchPayload = {
     branchId: string;
     purchaseOrders: ProcurementOrderRow[];
     suppliers: ProcurementSupplierRow[];
-    requisitions: Array<Record<string, unknown>>;
+    requisitions: ProcurementRequisitionRow[];
     receipts: Array<Record<string, unknown>>;
   };
   controlCentre: FoodCostControlData;
