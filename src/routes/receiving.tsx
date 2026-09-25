@@ -2,31 +2,39 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useAppContext } from "@/lib/app-context";
-import { TransactionEngine } from "@/lib/transaction-engine";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/receiving")({
-  head: () => ({ meta: [{ title: "Receiving - Seramet" }] }),
+  head: () => ({
+    meta: [
+      { title: "Receiving - Seramet" },
+      {
+        name: "description",
+        content: "Authoritative goods receiving with accepted, rejected and variance quantities.",
+      },
+    ],
+  }),
   component: Receiving,
 });
 
 function Receiving() {
-  const { branch, currentUser, matchesBranch } = useAppContext();
-  const { state, mutate, backendStatus } = useTransactionEngine();
+  const { branchId, branchLabel } = useAppContext();
+  const control = useInventoryControlCentre(true);
+  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
   const available = useMemo(
     () =>
-      state.purchaseOrders.filter(
-        (po) =>
-          matchesBranch(po.branchId ?? po.branch) &&
-          (po.status === "APPROVED" || po.status === "PARTIAL"),
+      (data?.procurement.purchaseOrders ?? []).filter((po) =>
+        ["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(po.status),
       ),
-    [matchesBranch, state.purchaseOrders],
+    [data?.procurement.purchaseOrders],
   );
   const [selectedId, setSelectedId] = useState("");
   const [received, setReceived] = useState<Record<string, number>>({});
+  const [rejected, setRejected] = useState<Record<string, number>>({});
   const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!available.some((po) => po.id === selectedId)) setSelectedId(available[0]?.id ?? "");
@@ -37,37 +45,89 @@ function Receiving() {
   useEffect(() => {
     if (!po) {
       setReceived({});
+      setRejected({});
       return;
     }
     setReceived(
       Object.fromEntries(
-        po.lines.map((line) => [line.sku, Math.max(0, line.quantity - line.receivedQuantity)]),
+        po.lines.map((line) => [
+          line.id,
+          Math.max(
+            0,
+            (Number(line.ordered_quantity_minor) - Number(line.received_purchase_quantity_minor)) /
+              1_000_000,
+          ),
+        ]),
       ),
     );
+    setRejected(Object.fromEntries(po.lines.map((line) => [line.id, 0])));
   }, [po]);
 
   const worksheet =
     po?.lines.map((line) => {
-      const remaining = Math.max(0, line.quantity - line.receivedQuantity);
-      const quantity = Math.max(0, Math.min(received[line.sku] ?? 0, remaining));
-      const variance = quantity - remaining;
+      const remainingMicro = Math.max(
+        0,
+        Number(line.ordered_quantity_minor) - Number(line.received_purchase_quantity_minor),
+      );
+      const receiveMicro = Math.max(0, Math.round((received[line.id] ?? 0) * 1_000_000));
+      const rejectedMicro = Math.max(
+        0,
+        Math.min(receiveMicro, Math.round((rejected[line.id] ?? 0) * 1_000_000)),
+      );
+      const acceptedMicro = Math.max(0, receiveMicro - rejectedMicro);
       return {
         ...line,
-        remaining,
-        quantity,
-        variance,
-        value: Math.round(quantity * line.unitCost),
-        status: Math.abs(variance) > 0.001 ? "Attention" : "Healthy",
+        remainingMicro,
+        receiveMicro,
+        rejectedMicro,
+        acceptedMicro,
+        valueMinor: Math.round((acceptedMicro * Number(line.unit_price_minor)) / 1_000_000),
+        over: Math.max(0, receiveMicro - remainingMicro),
       };
     }) ?? [];
-  const expectedValue = worksheet.reduce((sum, line) => sum + line.remaining * line.unitCost, 0);
-  const receivedValue = worksheet.reduce((sum, line) => sum + line.value, 0);
-  const varianceValue = Math.abs(expectedValue - receivedValue);
 
-  const postReceipt = () => {
+  const expectedMinor = worksheet.reduce(
+    (sum, line) =>
+      sum + Math.round((line.remainingMicro * Number(line.unit_price_minor)) / 1_000_000),
+    0,
+  );
+  const acceptedMinor = worksheet.reduce((sum, line) => sum + line.valueMinor, 0);
+  const rejectedCount = worksheet.filter((line) => line.rejectedMicro > 0).length;
+  const overCount = worksheet.filter((line) => line.over > 0).length;
+
+  const postReceipt = async () => {
     if (!po) return;
-    void mutate("receivePurchaseOrder", { purchaseOrderId: po.id, quantities: received });
-    setNotice(`${po.id} goods receipt posted. Inventory and PO receiving progress were updated.`);
+    const lines = worksheet
+      .filter((line) => line.receiveMicro > 0)
+      .map((line) => ({
+        purchaseOrderLineId: line.id,
+        receivedPurchaseQuantityMicro: line.receiveMicro,
+        acceptedPurchaseQuantityMicro: line.acceptedMicro,
+        ...(line.rejectedMicro > 0 ? { rejectedPurchaseQuantityMicro: line.rejectedMicro } : {}),
+        unitPriceMinor: Number(line.unit_price_minor),
+        qualityStatus: line.rejectedMicro > 0 ? "PARTIAL_REJECTION" : "ACCEPTED",
+      }));
+    if (!lines.length) {
+      setNotice("Enter at least one received quantity before posting.");
+      return;
+    }
+    setBusy(true);
+    setNotice("");
+    try {
+      await control.command("/api/seramet/procurement/goods-receipts", {
+        branchId,
+        warehouseId: po.warehouse_id,
+        purchaseOrderId: po.id,
+        supplierId: po.supplier_id,
+        idempotencyKey: crypto.randomUUID(),
+        lines,
+      });
+      setNotice(`${po.purchase_order_number} receipt posted. Inventory and PO progress were updated.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Goods receipt could not be posted");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -75,8 +135,8 @@ function Receiving() {
       title="Receiving"
       subtitle={
         po
-          ? `${po.id} - ${po.supplier} - ${po.branch}`
-          : "No approved purchase order awaiting receipt"
+          ? `${po.purchase_order_number} - ${po.supplier_name} - ${branchLabel}`
+          : `No approved purchase order awaiting receipt - ${branchLabel}`
       }
       actions={
         <>
@@ -88,89 +148,107 @@ function Receiving() {
             >
               {available.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.id} - {item.supplier}
+                  {item.purchase_order_number} - {item.supplier_name}
                 </option>
               ))}
             </select>
           )}
-          <Btn disabled={!po}>Save draft</Btn>
-          <Btn variant="primary" disabled={!po} onClick={postReceipt}>
+          <Btn disabled={control.status === "loading"} onClick={() => void control.refresh()}>
+            Refresh
+          </Btn>
+          <Btn variant="primary" disabled={!po || busy || overCount > 0} onClick={() => void postReceipt()}>
             Post receipt
           </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Expected value" value={Math.round(expectedValue)} money />
-        <Metric label="Received value" value={Math.round(receivedValue)} money />
-        <Metric
-          label="Variance"
-          value={Math.round(varianceValue)}
-          money
-          invert={varianceValue > 0}
-        />
-        <Metric label="Lines checked" value={`${worksheet.length}/${worksheet.length}`} />
+        <Metric label="Expected value" value={expectedMinor / 100} money />
+        <Metric label="Accepted value" value={acceptedMinor / 100} money />
+        <Metric label="Rejected lines" value={rejectedCount} invert={rejectedCount > 0} />
+        <Metric label="Over-receipt lines" value={overCount} invert={overCount > 0} />
       </div>
-      {notice && (
+
+      {(notice || control.error) && (
         <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice} Backend: {backendStatus}.
+          {notice || control.error}
         </div>
       )}
+
       <Panel className="mt-4">
         <PanelHead
           title="Receiving worksheet"
-          sub="Compare ordered, previously received and this delivery before posting"
-          right={
-            <Status>{po ? (po.status === "PARTIAL" ? "Partial" : "Draft") : "Waiting"}</Status>
-          }
+          sub="Record actual delivered quantity and separate accepted from rejected stock before posting."
+          right={<Status>{po?.status ?? "WAITING"}</Status>}
         />
         {!po ? (
           <div className="p-8 text-center text-[13px] text-muted-foreground">
-            Approve a purchase order first. It will appear here automatically for receiving.
+            Approve a purchase order first. It will appear here automatically.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px]">
+            <table className="w-full min-w-[980px]">
               <thead>
                 <tr>
                   <TH>Item</TH>
                   <TH className="text-right">Remaining</TH>
                   <TH className="text-right">Receive now</TH>
-                  <TH className="text-right">Variance</TH>
-                  <TH className="text-right">Value</TH>
+                  <TH className="text-right">Reject</TH>
+                  <TH className="text-right">Accept</TH>
+                  <TH className="text-right">Accepted value</TH>
                   <TH>Status</TH>
                 </tr>
               </thead>
               <tbody>
                 {worksheet.map((line) => (
-                  <tr key={line.sku}>
-                    <TD className="font-semibold">{line.name}</TD>
+                  <tr key={line.id}>
+                    <TD className="font-semibold">{line.item_name}</TD>
                     <TD className="num text-right">
-                      {line.remaining} {line.unit}
+                      {quantity(line.remainingMicro)} {line.unit_symbol ?? ""}
                     </TD>
                     <TD className="text-right">
                       <input
                         type="number"
                         min={0}
-                        max={line.remaining}
-                        step="0.01"
-                        value={received[line.sku] ?? 0}
+                        step="0.001"
+                        value={received[line.id] ?? 0}
                         onChange={(event) =>
                           setReceived((current) => ({
                             ...current,
-                            [line.sku]: Number(event.target.value),
+                            [line.id]: Number(event.target.value),
                           }))
                         }
                         className="num h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-[12px] outline-none focus:border-primary"
                       />
-                      <span className="ml-1 text-[11px] text-muted-foreground">{line.unit}</span>
+                    </TD>
+                    <TD className="text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        max={received[line.id] ?? 0}
+                        step="0.001"
+                        value={rejected[line.id] ?? 0}
+                        onChange={(event) =>
+                          setRejected((current) => ({
+                            ...current,
+                            [line.id]: Number(event.target.value),
+                          }))
+                        }
+                        className="num h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-[12px] outline-none focus:border-primary"
+                      />
                     </TD>
                     <TD className="num text-right">
-                      {line.variance === 0 ? "0" : `${line.variance.toFixed(2)} ${line.unit}`}
+                      {quantity(line.acceptedMicro)} {line.unit_symbol ?? ""}
                     </TD>
-                    <TD className="num text-right font-semibold">{ksh(line.value)}</TD>
+                    <TD className="num text-right font-semibold">{ksh(line.valueMinor / 100)}</TD>
                     <TD>
-                      <Status>{line.status}</Status>
+                      <Status>
+                        {line.over > 0
+                          ? "OVER RECEIPT"
+                          : line.rejectedMicro > 0
+                            ? "PARTIAL REJECTION"
+                            : "READY"}
+                      </Status>
                     </TD>
                   </tr>
                 ))}
@@ -179,6 +257,15 @@ function Receiving() {
           </div>
         )}
       </Panel>
+      {overCount > 0 && (
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
+          One or more lines exceed the remaining ordered quantity. The receipt is blocked here instead of silently bypassing the PO over-receipt policy.
+        </div>
+      )}
     </AppShell>
   );
+}
+
+function quantity(value: number) {
+  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 3 }).format(value / 1_000_000);
 }
