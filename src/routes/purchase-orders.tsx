@@ -280,7 +280,9 @@ function PurchaseOrders() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Btn
-                    disabled={!authoritative || busy || !["SUBMITTED", "APPROVED"].includes(selected.status)}
+                    disabled={
+                      !authoritative || busy || !["SUBMITTED", "APPROVED"].includes(selected.status)
+                    }
                     onClick={() => setAction("cancel")}
                   >
                     Cancel PO
