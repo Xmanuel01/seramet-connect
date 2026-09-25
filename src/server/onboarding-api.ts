@@ -190,6 +190,40 @@ export async function handleOnboardingApi(
       ),
     });
   }
+  if (url.pathname === "/api/seramet/setup/imports/inspect" && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `setup-import-inspect:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.fileImport,
+    );
+    const body = await parse<{
+      branchId?: string;
+      targetMode?: "TENANT_MASTER" | "SELECTED_BRANCHES" | "ROW_BRANCHES";
+      targetBranchIds?: string[];
+      kind: "MENU" | "INVENTORY" | "SUPPLIER" | "STAFF" | "OPENING_STOCK" | "CONFIGURATION";
+      originalName: string;
+      mimeType: string;
+      base64: string;
+      duplicateStrategy: "CREATE" | "UPDATE" | "SKIP" | "ERROR";
+      idempotencyKey: string;
+      columnMap?: Record<string, string>;
+      referenceMap?: { stations?: Record<string, string> };
+    }>(request, importPreviewRequestSchema, 30 * 1024 * 1024);
+    if (body.kind !== "MENU") {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Only menu files support column inspection",
+      );
+    }
+    return json({
+      ok: true,
+      inspection: await service.inspectMenuColumns({
+        originalName: body.originalName,
+        mimeType: body.mimeType,
+        bytes: decodeBase64(body.base64),
+      }),
+    });
+  }
   if (url.pathname === "/api/seramet/setup/imports/preview" && request.method === "POST") {
     await new DatabaseRateLimiter(env.SERAMET_DB).consume(
       `setup-import-preview:${actor.tenantId}:${actor.id}`,

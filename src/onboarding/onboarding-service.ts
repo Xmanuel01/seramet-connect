@@ -621,10 +621,11 @@ export class OnboardingService {
          FROM menu_catalog_items m
          LEFT JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id AND bs.menu_item_id=m.id
            AND bs.branch_id=?
-         WHERE m.tenant_id=? AND m.active=1 AND (? IS NULL OR bs.menu_item_id IS NOT NULL)
+         WHERE m.tenant_id=? AND m.active=1
+           ${branchId ? "AND bs.menu_item_id IS NOT NULL" : ""}
          ORDER BY m.category_code,m.name LIMIT 5000`,
       )
-      .bind(branchId ?? null, this.actor.tenantId, branchId ?? null)
+      .bind(branchId ?? null, this.actor.tenantId)
       .all<{
         id: string;
         code: string;
@@ -1138,6 +1139,50 @@ export class OnboardingService {
       payments: Number(row?.["payments_count"] ?? 0),
       inventoryMovements: Number(row?.["inventory_count"] ?? 0),
       devices: Number(row?.["devices_count"] ?? 0),
+    };
+  }
+
+  async inspectMenuColumns(input: {
+    originalName: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  }): Promise<{
+    sourceHeaders: string[];
+    suggestedMap: Record<string, string>;
+    samples: Record<string, string>[];
+  }> {
+    this.require(permissions.setupImport);
+    const file = await validateImportFile({
+      kind: "MENU",
+      filename: input.originalName,
+      contentType: input.mimeType,
+      bytes: input.bytes,
+    });
+    let rows: Array<Record<string, string>>;
+    try {
+      rows = await parseRows(input.bytes, file.extension);
+    } catch {
+      throw validation("Menu file could not be parsed within safe workbook limits");
+    }
+    if (!rows.length) throw validation("The selected file has no menu item rows");
+    if (rows.length > file.maxRows) throw validation("Import row limit exceeded");
+    assertSafeParsedRows(rows);
+    const sourceHeaders = Object.keys(rows[0] ?? {}).slice(0, 100);
+    const suggestedMap: Record<string, string> = {};
+    for (const header of sourceHeaders) {
+      const canonical = resolveMenuImportHeader(header);
+      if (canonical && !suggestedMap[canonical]) suggestedMap[canonical] = header;
+    }
+    return {
+      sourceHeaders,
+      suggestedMap,
+      samples: rows
+        .slice(0, 3)
+        .map((row) =>
+          Object.fromEntries(
+            sourceHeaders.map((header) => [header, String(row[header] ?? "").slice(0, 240)]),
+          ),
+        ),
     };
   }
 
