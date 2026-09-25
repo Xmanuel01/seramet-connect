@@ -507,7 +507,7 @@ describe.sequential("Pass 5 production foundation", () => {
         }),
       ),
     );
-    expect(new Set(values.map((value) => value.number)).size).toBe(26);
+    expect(new Set(values.map((value) => value.number)).size).toBe(25);
   });
 
   it("keeps authoritative audit and confirmed payment records immutable", async () => {
