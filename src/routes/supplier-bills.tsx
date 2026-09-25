@@ -29,7 +29,10 @@ function SupplierBills() {
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
   const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
-  const invoices = data?.procurement.supplierInvoices ?? [];
+  const invoices = useMemo(
+    () => data?.procurement.supplierInvoices ?? [],
+    [data?.procurement.supplierInvoices],
+  );
   const receipts = data?.procurement.receipts ?? [];
 
   const [entryOpen, setEntryOpen] = useState(false);
@@ -39,10 +42,7 @@ function SupplierBills() {
   const today = currentDateKey();
   const visibleCurrencies = Array.from(new Set(invoices.map((row) => row.currency)));
   const overdueBills = invoices.filter(
-    (row) =>
-      Boolean(row.due_date) &&
-      row.due_date! < today &&
-      !["PAID", "DISPUTED"].includes(row.status),
+    (row) => row.due_date && row.due_date < today && !["PAID", "DISPUTED"].includes(row.status),
   );
   const overdueMinor = overdueBills.reduce((sum, row) => sum + Number(row.total_minor), 0);
   const visibleCurrency = visibleCurrencies[0] ?? currency;
@@ -58,9 +58,7 @@ function SupplierBills() {
   );
   const availableReceipts = receipts.filter(
     (receipt) =>
-      receipt.status === "POSTED" &&
-      !receipt.invoice_linked &&
-      !invoicedReceiptIds.has(receipt.id),
+      receipt.status === "POSTED" && !receipt.invoice_linked && !invoicedReceiptIds.has(receipt.id),
   );
 
   const run = async (
@@ -181,8 +179,12 @@ function SupplierBills() {
                     >
                       {row.due_date ? formatDate(row.due_date) : "Not set"}
                     </TD>
-                    <TD className="num text-right">{ksh(Number(row.subtotal_minor) / 100, row.currency)}</TD>
-                    <TD className="num text-right">{ksh(Number(row.tax_minor) / 100, row.currency)}</TD>
+                    <TD className="num text-right">
+                      {ksh(Number(row.subtotal_minor) / 100, row.currency)}
+                    </TD>
+                    <TD className="num text-right">
+                      {ksh(Number(row.tax_minor) / 100, row.currency)}
+                    </TD>
                     <TD className="num text-right font-semibold">
                       {ksh(Number(row.total_minor) / 100, row.currency)}
                     </TD>
@@ -412,7 +414,9 @@ function EnterSupplierBillDialog({
         <div className="grid gap-3 rounded-lg border border-border bg-secondary/30 p-3 sm:grid-cols-3">
           <Evidence
             label="PO total"
-            value={purchaseOrder ? ksh(Number(purchaseOrder.total_minor) / 100, invoiceCurrency) : "—"}
+            value={
+              purchaseOrder ? ksh(Number(purchaseOrder.total_minor) / 100, invoiceCurrency) : "—"
+            }
           />
           <Evidence
             label="Accepted receipt"
