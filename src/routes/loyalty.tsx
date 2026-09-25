@@ -22,8 +22,8 @@ type Program = {
   status: string;
   earning_type: string;
   spend_minor_per_point: number | null;
-  members: number;
-  outstanding_points: number;
+  members: number | null;
+  outstanding_points: number | null;
 };
 type Tier = { id: string; program_id: string; name: string; rank: number; active: number };
 type Reward = {
@@ -367,15 +367,26 @@ function Loyalty() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 <Metric label="Configured programs" value={programs.data?.programs.length ?? 0} />
                 <Metric
-                  label="Memberships per program (combined)"
-                  value={(programs.data?.programs ?? []).reduce((sum, row) => sum + row.members, 0)}
+                  label="Memberships across programs"
+                  value={
+                    programs.data?.programs.some((row) => row.members === null)
+                      ? "Restricted"
+                      : (programs.data?.programs ?? []).reduce(
+                          (sum, row) => sum + (row.members ?? 0),
+                          0,
+                        )
+                  }
                 />
                 <Metric
-                  label="Outstanding points (combined)"
-                  value={(programs.data?.programs ?? []).reduce(
-                    (sum, row) => sum + row.outstanding_points,
-                    0,
-                  )}
+                  label="Program-wide outstanding points"
+                  value={
+                    programs.data?.programs.some((row) => row.outstanding_points === null)
+                      ? "Restricted"
+                      : (programs.data?.programs ?? []).reduce(
+                          (sum, row) => sum + (row.outstanding_points ?? 0),
+                          0,
+                        )
+                  }
                 />
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -398,10 +409,13 @@ function Loyalty() {
                             <Status>{readableStatus(row.status)}</Status>
                           </div>
                           <p>
-                            {readableStatus(row.earning_type)} · {row.members} memberships
+                            {readableStatus(row.earning_type)} · {" "}
+                            {row.members === null ? "Membership totals restricted" : row.members + " memberships"}
                           </p>
                           <p className="text-[12px] text-muted-foreground">
-                            {row.outstanding_points} outstanding points
+                            {row.outstanding_points === null
+                              ? "Program-wide balance restricted"
+                              : row.outstanding_points + " outstanding points"}
                           </p>
                         </div>
                       ))}
