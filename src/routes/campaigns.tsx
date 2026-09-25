@@ -55,6 +55,7 @@ type PreviewResponse = { ok: boolean; preview: Preview };
 function Campaigns() {
   const { branchId, branchLabel, hasPermission } = useAppContext();
   const canView = hasPermission(permissions.campaignView);
+  const canViewSegments = hasPermission(permissions.crmView);
   const canManage = hasPermission(permissions.campaignManage);
   const canApprove = hasPermission(permissions.campaignApprove);
   const canSend = hasPermission(permissions.campaignSend);
@@ -69,7 +70,7 @@ function Campaigns() {
   );
   const segments = useCrmScreenQuery<SegmentsResponse>(
     "/api/seramet/crm/segments?branchId=" + encodeURIComponent(branchId),
-    canView,
+    canViewSegments,
   );
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -100,7 +101,7 @@ function Campaigns() {
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canManage || busy) return;
+    if (!canManage || !canViewSegments || busy) return;
     setBusy("create");
     setError("");
     try {
@@ -136,7 +137,7 @@ function Campaigns() {
   }
 
   async function previewCampaign(id: string) {
-    if (!canView || busy) return;
+    if (!canView || !canViewSegments || busy) return;
     setBusy("preview");
     setError("");
     setPreview(null);
@@ -215,7 +216,7 @@ function Campaigns() {
       title="Campaigns"
       subtitle={"Consent-gated, auditable campaign delivery - " + branchLabel}
       actions={
-        canManage ? (
+        canManage && canViewSegments ? (
           <Btn variant="primary" onClick={() => setCreating((value) => !value)}>
             {creating ? "Cancel draft" : "New email campaign"}
           </Btn>
@@ -238,7 +239,7 @@ function Campaigns() {
               {error}
             </p>
           )}
-          {creating && canManage && (
+          {creating && canManage && canViewSegments && (
             <Panel className="mb-4">
               <PanelHead
                 title="Create draft"
@@ -339,6 +340,12 @@ function Campaigns() {
               </form>
             </Panel>
           )}
+          {!canViewSegments && (
+            <p className="mb-3 rounded-md border border-border p-3 text-[12px] text-muted-foreground">
+              CRM overview permission is required to inspect audiences or send campaigns.
+              Existing campaign records remain viewable.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Metric label="Campaigns in current scope" value={campaignRows.length} />
             <Metric
@@ -358,11 +365,11 @@ function Campaigns() {
             />
             {rows.status === "loading" ||
             providers.status === "loading" ||
-            segments.status === "loading" ? (
+            (canViewSegments && segments.status === "loading") ? (
               <CrmLoading />
             ) : rows.status === "error" ||
               providers.status === "error" ||
-              segments.status === "error" ? (
+              (canViewSegments && segments.status === "error") ? (
               <CrmError message={rows.error || providers.error || segments.error} retry={refresh} />
             ) : campaignRows.length === 0 ? (
               <CrmEmpty
@@ -387,7 +394,10 @@ function Campaigns() {
                       Eligible: {row.eligible} · Recorded sent: {row.sent} · Delivered:{" "}
                       {row.delivered}
                     </p>
-                    <Btn onClick={() => void previewCampaign(row.id)} disabled={busy !== null}>
+                    <Btn
+                      onClick={() => void previewCampaign(row.id)}
+                      disabled={busy !== null || !canViewSegments}
+                    >
                       {busy === "preview" ? "Checking..." : "Preview current audience"}
                     </Btn>
                   </article>
