@@ -62,9 +62,9 @@ function Receiving() {
   }, [available, selectedId]);
 
   const po = available.find((row) => row.id === selectedId) ?? available[0];
-  const poRevision =
-    po?.lines.map((line) => `${line.id}:${line.received_purchase_quantity_minor}`).join("|") ??
-    "";
+  const poRevision = po?.lines
+    .map((line) => `${line.id}:${line.received_purchase_quantity_minor}`)
+    .join("|");
 
   const resetDraft = () => {
     if (!po) {
@@ -231,8 +231,7 @@ function Receiving() {
             variant="primary"
             disabled={
               !authoritative ||
-              !po || busy || postingLines.length === 0 ||
-              invalidLines.length > 0
+              !po || busy || postingLines.length === 0 || invalidLines.length > 0
             }
             onClick={() => void postReceipt()}
           >
