@@ -37,7 +37,7 @@ function Requisitions() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
   const rows = data?.procurement.requisitions ?? [];
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0];
 

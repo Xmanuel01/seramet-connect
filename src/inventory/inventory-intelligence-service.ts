@@ -100,6 +100,20 @@ export class InventoryIntelligenceService {
     private readonly actor: ServerActor,
   ) {}
 
+  private async assertActiveProcurementWarehouse(branchId: string, warehouseId: string) {
+    const warehouse = await this.db
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, branchId, warehouseId)
+      .first<{ id: string }>();
+    if (!warehouse) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Procurement warehouse must be active and belong to the selected branch",
+      );
+    }
+  }
+
   async createUnit(input: UnitDefinitionInput) {
     this.requirePermission(permissions.inventoryAdjust);
     const id = input.id ?? crypto.randomUUID();
@@ -695,7 +709,32 @@ export class InventoryIntelligenceService {
   async createPurchaseRequisition(input: PurchaseRequisitionInput) {
     this.requirePermission(permissions.procurementRequisitionCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
     if (input.lines.length === 0) throw new Error("A requisition requires at least one line");
+    const requisitionItems = new Set<string>();
+    for (const line of input.lines) {
+      if (requisitionItems.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Combine duplicate inventory items into a single requisition line",
+        );
+      }
+      requisitionItems.add(line.inventoryItemId);
+      const item = await this.db
+        .prepare("SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1")
+        .bind(this.actor.tenantId, line.inventoryItemId)
+        .first<{ base_unit_id: string | null }>();
+      if (!item?.base_unit_id) {
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Active inventory item not found");
+      }
+      await this.convertItemQuantity(
+        line.inventoryItemId,
+        line.requestedQuantityMicro,
+        line.unitId,
+        item.base_unit_id,
+      );
+    }
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
@@ -789,6 +828,14 @@ export class InventoryIntelligenceService {
   async createPurchaseOrder(input: PurchaseOrderInput) {
     this.requirePermission(permissions.procurementCreate);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
+    const supplier = await this.db
+      .prepare("SELECT id FROM suppliers WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.supplierId)
+      .first<{ id: string }>();
+    if (!supplier) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active supplier not found");
+    }
     await this.assertSupplierAllowedByEnterprisePolicy(input.branchId, input.supplierId);
     if (input.lines.length === 0) throw new Error("A purchase order requires at least one line");
     const id = input.id ?? crypto.randomUUID();
@@ -1201,6 +1248,7 @@ export class InventoryIntelligenceService {
   async receiveGoods(input: GoodsReceiptInput) {
     this.requirePermission(permissions.procurementReceive);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
     await this.assertBusinessDateOpen(input.branchId, input.businessDate);
     const duplicate = await this.db
       .prepare("SELECT id FROM goods_receipts WHERE tenant_id=? AND idempotency_key=?")
@@ -1227,12 +1275,13 @@ export class InventoryIntelligenceService {
     }
     if (
       purchaseOrder.branch_id !== input.branchId ||
-      purchaseOrder.warehouse_id !== input.warehouseId
+      purchaseOrder.warehouse_id !== input.warehouseId ||
+      purchaseOrder.supplier_id !== input.supplierId
     ) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
         403,
-        "Goods receipt scope does not match the purchase order",
+        "Goods receipt branch, warehouse or supplier does not match the purchase order",
       );
     }
     const lines = await this.db
@@ -1244,6 +1293,7 @@ export class InventoryIntelligenceService {
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .all<PurchaseOrderLineRow>();
     const byId = new Map((lines.results ?? []).map((line) => [line.id, line]));
+    const seenReceiptLines = new Set<string>();
     const receivingPolicy = JSON.parse(purchaseOrder.payload_json || "{}") as {
       overReceiptPolicy?: "REJECT_OVER_RECEIPT" | "ALLOW_WITH_APPROVAL" | "ALLOW_WITH_TOLERANCE";
       overReceiptToleranceBps?: number;
@@ -1285,8 +1335,23 @@ export class InventoryIntelligenceService {
       if (!poLine) throw new Error("Goods receipt line is not on the purchase order");
       if (!poLine.purchase_unit_id)
         throw new Error("Purchase order line is missing a purchase unit");
-      if (lineInput.acceptedPurchaseQuantityMicro > lineInput.receivedPurchaseQuantityMicro) {
-        throw new Error("Accepted quantity cannot exceed received quantity");
+      if (seenReceiptLines.has(poLine.id)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "A goods receipt cannot contain the same purchase-order line more than once",
+        );
+      }
+      seenReceiptLines.add(poLine.id);
+      const received = lineInput.receivedPurchaseQuantityMicro;
+      const accepted = lineInput.acceptedPurchaseQuantityMicro;
+      const rejected = lineInput.rejectedPurchaseQuantityMicro ?? 0;
+      if (received <= 0 || accepted < 0 || rejected < 0 || accepted + rejected !== received) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Received quantity must equal accepted plus rejected quantity",
+        );
       }
       const orderedPurchaseQuantity =
         poLine.ordered_purchase_quantity_minor ?? poLine.ordered_quantity_minor;
@@ -1342,8 +1407,15 @@ export class InventoryIntelligenceService {
               "normalized unit price",
             )
           : 0;
-      const priceVarianceMinor = lineInput.unitPriceMinor - poLine.unit_cost_minor;
-      const priceVarianceBps = ratioBasisPoints(priceVarianceMinor, poLine.unit_cost_minor || 1);
+      const unitPriceVarianceMinor = lineInput.unitPriceMinor - poLine.unit_cost_minor;
+      // Monetary variance must reflect accepted quantity, not merely the difference per unit.
+      const priceVarianceMinor =
+        quantityCostMinor(lineInput.acceptedPurchaseQuantityMicro, lineInput.unitPriceMinor) -
+        quantityCostMinor(lineInput.acceptedPurchaseQuantityMicro, poLine.unit_cost_minor);
+      const priceVarianceBps = ratioBasisPoints(
+        unitPriceVarianceMinor,
+        poLine.unit_cost_minor || 1,
+      );
       const receiptLineId = crypto.randomUUID();
       statements.push(
         this.db
@@ -1393,93 +1465,95 @@ export class InventoryIntelligenceService {
             poLine.id,
           ),
       );
-      statements.push(
-        this.db
-          .prepare(
-            `INSERT INTO supplier_item_price_history
-              (tenant_id,id,supplier_id,inventory_item_id,branch_id,unit_price_minor,unit_id,
-               normalized_base_unit_price_minor,effective_at,source_purchase_order_id,
-               source_goods_receipt_id,created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          )
-          .bind(
-            this.actor.tenantId,
-            crypto.randomUUID(),
-            input.supplierId,
-            poLine.item_id,
-            input.branchId,
-            lineInput.unitPriceMinor,
-            poLine.purchase_unit_id,
-            normalizedUnitCostMinor,
-            stamp,
-            input.purchaseOrderId,
-            id,
-            stamp,
-          ),
-      );
-      const movementId = crypto.randomUUID();
-      statements.push(
-        this.movementStatement(
-          {
-            id: movementId,
-            branchId: input.branchId,
-            warehouseId: input.warehouseId,
-            inventoryItemId: poLine.item_id,
-            movementType: "PURCHASE_RECEIPT",
-            quantityBaseMicro: baseQuantityMicro,
-            unitCostMinor: normalizedUnitCostMinor,
-            totalCostMinor,
-            sourceType: "GOODS_RECEIPT",
-            sourceId: id,
-            idempotencyKey: `goods-receipt:${input.idempotencyKey}:${poLine.id}`,
-            businessDate: input.businessDate,
-            occurredAt: stamp,
-            ...(lineInput.lotNumber
-              ? { lotId: `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}` }
-              : {}),
-            metadata: { receiptLineId, priceVarianceMinor, priceVarianceBps },
-          },
-          correlationId,
-        ),
-      );
-      if (lineInput.lotNumber) {
+      if (baseQuantityMicro > 0) {
         statements.push(
           this.db
             .prepare(
-              `INSERT INTO inventory_lots
-                (tenant_id,id,branch_id,warehouse_id,inventory_item_id,lot_number,
-                 goods_receipt_line_id,received_at,expiry_date,quantity_received_minor,
-                 quantity_remaining_minor,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,'AVAILABLE',?,?)`,
+              `INSERT INTO supplier_item_price_history
+                (tenant_id,id,supplier_id,inventory_item_id,branch_id,unit_price_minor,unit_id,
+                 normalized_base_unit_price_minor,effective_at,source_purchase_order_id,
+                 source_goods_receipt_id,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .bind(
               this.actor.tenantId,
-              `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}`,
-              input.branchId,
-              input.warehouseId,
+              crypto.randomUUID(),
+              input.supplierId,
               poLine.item_id,
-              lineInput.lotNumber,
-              receiptLineId,
+              input.branchId,
+              lineInput.unitPriceMinor,
+              poLine.purchase_unit_id,
+              normalizedUnitCostMinor,
               stamp,
-              lineInput.expiryDate ?? null,
-              baseQuantityMicro,
-              baseQuantityMicro,
-              stamp,
+              input.purchaseOrderId,
+              id,
               stamp,
             ),
         );
+        const movementId = crypto.randomUUID();
+        statements.push(
+          this.movementStatement(
+            {
+              id: movementId,
+              branchId: input.branchId,
+              warehouseId: input.warehouseId,
+              inventoryItemId: poLine.item_id,
+              movementType: "PURCHASE_RECEIPT",
+              quantityBaseMicro: baseQuantityMicro,
+              unitCostMinor: normalizedUnitCostMinor,
+              totalCostMinor,
+              sourceType: "GOODS_RECEIPT",
+              sourceId: id,
+              idempotencyKey: `goods-receipt:${input.idempotencyKey}:${poLine.id}`,
+              businessDate: input.businessDate,
+              occurredAt: stamp,
+              ...(lineInput.lotNumber
+                ? { lotId: `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}` }
+                : {}),
+              metadata: { receiptLineId, priceVarianceMinor, priceVarianceBps },
+            },
+            correlationId,
+          ),
+        );
+        if (lineInput.lotNumber) {
+          statements.push(
+            this.db
+              .prepare(
+                `INSERT INTO inventory_lots
+                  (tenant_id,id,branch_id,warehouse_id,inventory_item_id,lot_number,
+                   goods_receipt_line_id,received_at,expiry_date,quantity_received_minor,
+                   quantity_remaining_minor,status,created_at,updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,'AVAILABLE',?,?)`,
+              )
+              .bind(
+                this.actor.tenantId,
+                `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}`,
+                input.branchId,
+                input.warehouseId,
+                poLine.item_id,
+                lineInput.lotNumber,
+                receiptLineId,
+                stamp,
+                lineInput.expiryDate ?? null,
+                baseQuantityMicro,
+                baseQuantityMicro,
+                stamp,
+                stamp,
+              ),
+          );
+        }
+        statements.push(
+          this.recalculationEventStatement(
+            input.branchId,
+            "PURCHASE_RECEIPT",
+            "INVENTORY_ITEM",
+            poLine.item_id,
+            `${input.idempotencyKey}:${poLine.id}`,
+            stamp,
+            correlationId,
+          ),
+        );
       }
-      statements.push(
-        this.recalculationEventStatement(
-          input.branchId,
-          "PURCHASE_RECEIPT",
-          "INVENTORY_ITEM",
-          poLine.item_id,
-          `${input.idempotencyKey}:${poLine.id}`,
-          stamp,
-          correlationId,
-        ),
-      );
       receiptLines.push({
         itemId: poLine.item_id,
         baseQuantityMicro,
@@ -1496,7 +1570,13 @@ export class InventoryIntelligenceService {
                SELECT 1 FROM purchase_order_lines
                WHERE tenant_id=? AND purchase_order_id=?
                  AND received_purchase_quantity_minor < COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)
-             ) THEN 'RECEIVED' ELSE 'PARTIALLY_RECEIVED' END,
+             ) THEN 'RECEIVED'
+             WHEN EXISTS (
+               SELECT 1 FROM purchase_order_lines
+               WHERE tenant_id=? AND purchase_order_id=?
+                 AND received_purchase_quantity_minor>0
+             ) THEN 'PARTIALLY_RECEIVED'
+             ELSE 'APPROVED' END,
            received_at=CASE WHEN NOT EXISTS (
              SELECT 1 FROM purchase_order_lines
              WHERE tenant_id=? AND purchase_order_id=?
@@ -1505,6 +1585,8 @@ export class InventoryIntelligenceService {
            version=version+1,updated_at=? WHERE tenant_id=? AND id=?`,
         )
         .bind(
+          this.actor.tenantId,
+          input.purchaseOrderId,
           this.actor.tenantId,
           input.purchaseOrderId,
           this.actor.tenantId,
@@ -5493,7 +5575,8 @@ export class InventoryIntelligenceService {
     const receipt = await this.db
       .prepare(
         `SELECT gr.branch_id,gr.purchase_order_id,gr.supplier_id,gr.status,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total
+                COALESCE(SUM(grl.total_cost_minor),0) AS total,
+                COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity
          FROM goods_receipts gr
          LEFT JOIN goods_receipt_lines grl
            ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
@@ -5507,6 +5590,7 @@ export class InventoryIntelligenceService {
         supplier_id: string;
         status: string;
         total: number;
+        accepted_quantity: number;
       }>();
     if (!receipt) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Goods receipt not found");
@@ -5527,6 +5611,13 @@ export class InventoryIntelligenceService {
         "VALIDATION_FAILED",
         409,
         "Supplier invoice requires a posted goods receipt",
+      );
+    }
+    if (receipt.accepted_quantity <= 0) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "A fully rejected goods receipt cannot create a supplier payable",
       );
     }
     const existingReceiptInvoice = await this.db
@@ -6164,7 +6255,7 @@ export class InventoryIntelligenceService {
     const receipts = await this.db
       .prepare(
         `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,po.purchase_order_number,
-                gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.business_date,
+                po.currency,gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.business_date,
                 gr.received_by,gr.received_at,COUNT(grl.id) AS line_count,
                 COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
                 COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,

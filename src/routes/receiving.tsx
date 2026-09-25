@@ -39,7 +39,7 @@ function Receiving() {
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
 
   const available = useMemo(
     () =>
@@ -240,8 +240,8 @@ function Receiving() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Expected remaining" value={Math.round(expectedMinor / 100)} money />
-        <Metric label="Accepted now" value={Math.round(acceptedMinor / 100)} money />
+        <Metric label="Expected remaining" value={ksh(expectedMinor / 100, po?.currency)} />
+        <Metric label="Accepted now" value={ksh(acceptedMinor / 100, po?.currency)} />
         <Metric label="Rejected lines" value={rejectedLines} invert={rejectedLines > 0} />
         <Metric
           label="Lines ready"
@@ -373,7 +373,7 @@ function Receiving() {
                           {Math.abs(line.priceVariance) > 0.001 && (
                             <div className="mt-1 text-[10px] text-warning">
                               {line.priceVariance > 0 ? "+" : ""}
-                              {ksh(line.priceVariance)}
+                              {ksh(line.priceVariance, po.currency)}
                             </div>
                           )}
                         </TD>
@@ -428,7 +428,9 @@ function Receiving() {
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                   Accepted value
                 </div>
-                <div className="num text-[18px] font-bold">{ksh(acceptedMinor / 100)}</div>
+                <div className="num text-[18px] font-bold">
+                  {ksh(acceptedMinor / 100, po.currency)}
+                </div>
               </div>
             </div>
           </>
@@ -464,7 +466,7 @@ function Receiving() {
                     <TD className="text-muted-foreground">{formatDate(receipt.business_date)}</TD>
                     <TD className="num text-right">{Number(receipt.line_count)}</TD>
                     <TD className="num text-right font-semibold">
-                      {ksh(Number(receipt.total_minor) / 100)}
+                      {ksh(Number(receipt.total_minor) / 100, receipt.currency)}
                     </TD>
                     <TD>
                       <Status>{displayStatus(receipt.status)}</Status>

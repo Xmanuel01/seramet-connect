@@ -32,7 +32,7 @@ function PurchaseOrders() {
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
   const rows = data?.procurement.purchaseOrders ?? [];
 
   const [selectedId, setSelectedId] = useState("");
@@ -51,7 +51,14 @@ function PurchaseOrders() {
   const expected = rows.filter((row) =>
     ["APPROVED", "PARTIALLY_RECEIVED"].includes(row.status),
   ).length;
-  const commitmentsMinor = openRows.reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const commitmentCurrencies = Array.from(new Set(openRows.map((row) => row.currency)));
+  const commitmentValue =
+    commitmentCurrencies.length > 1
+      ? "Multiple currencies"
+      : ksh(
+          openRows.reduce((sum, row) => sum + Number(row.total_minor), 0) / 100,
+          commitmentCurrencies[0] ?? currency,
+        );
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -130,7 +137,7 @@ function PurchaseOrders() {
         <Metric label="Open POs" value={openRows.length} />
         <Metric label="Awaiting approval" value={submitted} invert={submitted > 0} />
         <Metric label="Deliveries expected" value={expected} />
-        <Metric label="Supplier commitments" value={Math.round(commitmentsMinor / 100)} money />
+        <Metric label="Open commitments (recent)" value={commitmentValue} />
       </div>
 
       {(!authoritative || notice || control.error) && (
@@ -163,7 +170,7 @@ function PurchaseOrders() {
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <span className="num text-[12px] font-semibold">
-                    {ksh(Number(row.total_minor) / 100)}
+                    {ksh(Number(row.total_minor) / 100, row.currency)}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     {receivedPercent(row).toFixed(0)}% received
@@ -254,10 +261,10 @@ function PurchaseOrders() {
                           </TD>
                           <TD className="num text-right">{progress.toFixed(0)}%</TD>
                           <TD className="num text-right">
-                            {ksh(Number(line.unit_price_minor) / 100)}
+                            {ksh(Number(line.unit_price_minor) / 100, selected.currency)}
                           </TD>
                           <TD className="num text-right font-semibold">
-                            {ksh(Number(line.line_total_minor) / 100)}
+                            {ksh(Number(line.line_total_minor) / 100, selected.currency)}
                           </TD>
                         </tr>
                       );
@@ -272,7 +279,7 @@ function PurchaseOrders() {
                     Order total
                   </div>
                   <div className="num text-[18px] font-bold">
-                    {ksh(Number(selected.total_minor) / 100)}
+                    {ksh(Number(selected.total_minor) / 100, selected.currency)}
                   </div>
                   {selected.approval_reason && (
                     <div className="mt-1 text-[11px] text-muted-foreground">

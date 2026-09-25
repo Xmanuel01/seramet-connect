@@ -28,7 +28,7 @@ function SupplierBills() {
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
-  const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const data = control.data.find((row) => row.branchId === branchId);
   const invoices = useMemo(
     () => data?.procurement.supplierInvoices ?? [],
     [data?.procurement.supplierInvoices],
@@ -58,7 +58,10 @@ function SupplierBills() {
   );
   const availableReceipts = receipts.filter(
     (receipt) =>
-      receipt.status === "POSTED" && !receipt.invoice_linked && !invoicedReceiptIds.has(receipt.id),
+      receipt.status === "POSTED" &&
+      Number(receipt.accepted_quantity_minor) > 0 &&
+      !receipt.invoice_linked &&
+      !invoicedReceiptIds.has(receipt.id),
   );
 
   const run = async (
