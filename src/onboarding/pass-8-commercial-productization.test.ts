@@ -127,6 +127,39 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "BRANCH_CREATED")).toBe(1);
   });
 
+  it("maps nonstandard columns from another POS without incorrect unsupported warnings", async () => {
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "previous-pos.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "Stock Identifier,Dish Label,Sales Group,Sale Amount,currency\\nCUTE-001,Fish Pilau,MAIN,470,KES",
+      ),
+      duplicateStrategy: "ERROR",
+      columnMap: {
+        itemCode: "Stock Identifier",
+        name: "Dish Label",
+        categoryCode: "Sales Group",
+        basePrice: "Sale Amount",
+      },
+      idempotencyKey: "mapped-previous-pos",
+    });
+    expect(preview).toMatchObject({
+      rowCount: 1,
+      errorCount: 0,
+      canCommit: true,
+    });
+    expect(preview.rows[0]?.warnings.some((issue) => issue.code === "UNSUPPORTED_COLUMN")).toBe(
+      false,
+    );
+    await service.commitImport(preview.id, preview.commitKey);
+    expect(await service.listMenuCatalog(branchId)).toContainEqual(
+      expect.objectContaining({ code: "CUTE-001", selling_price_minor: 47000 }),
+    );
+  });
+
   it("previews menu files without mutation, commits explicitly and deduplicates commit retries", async () => {
     const preview = await previewCsv(
       service,
