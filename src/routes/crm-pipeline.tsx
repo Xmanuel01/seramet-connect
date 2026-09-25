@@ -278,7 +278,7 @@ function CrmPipeline() {
                   </select>
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Estimated deal value (branch currency)
+                  Estimated deal value (tenant base currency)
                   <input
                     className={crmFieldClass}
                     type="number"
