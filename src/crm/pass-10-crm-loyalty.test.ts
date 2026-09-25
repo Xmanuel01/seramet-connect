@@ -255,6 +255,53 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(result.customers[0]?.email).toContain("***@");
   });
 
+  it("protects finance and service notes from unauthorized CRM roles", async () => {
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "CRM-visible service history",
+      visibility: "CRM",
+    });
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "Finance-only confidential note",
+      visibility: "FINANCE",
+    });
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "Service-only confidential note",
+      visibility: "SERVICE",
+    });
+    const restricted = new CrmService(
+      db,
+      testActor(tenantId, branchId, [
+        permissions.crmCustomerView,
+        permissions.crmCustomerManage,
+      ]),
+    );
+    const profile = await restricted.customerProfile("customer-demo-001");
+    const notes = profile.notes.map((item) => item.note);
+    expect(notes).toContain("CRM-visible service history");
+    expect(notes).not.toContain("Finance-only confidential note");
+    expect(notes).not.toContain("Service-only confidential note");
+  });
+
+  it("rejects feedback linked to a customer outside the staff member's branch", async () => {
+    const restricted = new CrmService(db, {
+      ...branchActor("branch-demo-ngong-road"),
+      permissions: [permissions.feedbackManage, permissions.crmCustomerView],
+    });
+    await expect(
+      restricted.createFeedback({
+        branchId: "branch-demo-ngong-road",
+        customerId: "customer-demo-001",
+        categoryId: "feedback-category-service",
+        surveyType: "GENERAL",
+        rating: 0,
+        source: "STAFF_ENTRY",
+      }),
+    ).rejects.toThrow(/branch scope/i);
+  });
+
   it("creates data-driven loyalty programs, tiers and rewards", async () => {
     const program = await value.createProgram({
       code: "CUSTOM",
