@@ -89,9 +89,7 @@ function PurchaseOrders() {
       (Number(row.total_minor) / 100).toFixed(2),
       receivedPercent(row).toFixed(1),
     ]);
-    const csv = [header, ...lines]
-      .map((line) => line.map(csvCell).join(","))
-      .join("\n");
+    const csv = [header, ...lines].map((line) => line.map(csvCell).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -197,10 +195,7 @@ function PurchaseOrders() {
                   label="Requisition"
                   value={requisitionNumber(data, selected.requisition_id) || "Direct purchase"}
                 />
-                <Info
-                  label="Warehouse"
-                  value={warehouseName(data, selected.warehouse_id)}
-                />
+                <Info label="Warehouse" value={warehouseName(data, selected.warehouse_id)} />
                 <Info
                   label="Expected"
                   value={selected.expected_at ? formatDate(selected.expected_at) : "Not specified"}
@@ -252,7 +247,8 @@ function PurchaseOrders() {
                             {quantity(line.ordered_quantity_minor)} {line.unit_symbol ?? ""}
                           </TD>
                           <TD className="num text-right">
-                            {quantity(line.received_purchase_quantity_minor)} {line.unit_symbol ?? ""}
+                            {quantity(line.received_purchase_quantity_minor)}{" "}
+                            {line.unit_symbol ?? ""}
                           </TD>
                           <TD className="num text-right">{progress.toFixed(0)}%</TD>
                           <TD className="num text-right">
@@ -284,11 +280,7 @@ function PurchaseOrders() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Btn
-                    disabled={
-                      !authoritative ||
-                      busy ||
-                      !["SUBMITTED", "APPROVED"].includes(selected.status)
-                    }
+                    disabled={!authoritative || busy || !["SUBMITTED", "APPROVED"].includes(selected.status)}
                     onClick={() => setAction("cancel")}
                   >
                     Cancel PO
@@ -398,7 +390,14 @@ function CreatePurchaseOrderDialog({
   >("REJECT_OVER_RECEIPT");
   const [tolerancePercent, setTolerancePercent] = useState("0");
   const [lines, setLines] = useState<DraftLine[]>([
-    { key: crypto.randomUUID(), itemId: "", quantity: "1", unitPrice: "0", tax: "0", discount: "0" },
+    {
+      key: crypto.randomUUID(),
+      itemId: "",
+      quantity: "1",
+      unitPrice: "0",
+      tax: "0",
+      discount: "0",
+    },
   ]);
 
   useEffect(() => {
@@ -629,8 +628,8 @@ function CreatePurchaseOrderDialog({
               </div>
               {!line.item?.purchase_unit_id && (
                 <div className="md:col-span-6 text-[11px] text-warning">
-                  {line.item?.name ?? "This item"} has no purchase unit configured. Fix the inventory
-                  item before ordering it.
+                  {line.item?.name ?? "This item"} has no purchase unit configured. Fix the
+                  inventory item before ordering it.
                 </div>
               )}
               {selectedRequisition &&
@@ -782,10 +781,7 @@ function quantity(value: number) {
 }
 
 function receivedPercent(order: ProcurementOrderRow) {
-  const ordered = order.lines.reduce(
-    (sum, line) => sum + Number(line.ordered_quantity_minor),
-    0,
-  );
+  const ordered = order.lines.reduce((sum, line) => sum + Number(line.ordered_quantity_minor), 0);
   const received = order.lines.reduce(
     (sum, line) => sum + Number(line.received_purchase_quantity_minor),
     0,
