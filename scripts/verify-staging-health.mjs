@@ -47,7 +47,9 @@ export async function verifyStagingEndpoint({
         }
         status = check.issues.join(", ") || "HEALTH_NOT_READY";
         if (check.issues.includes("MALWARE_SCANNER_REQUIRED")) {
-          throw new Error("MALWARE_SCANNER_REQUIRED: configure the real Cloudflare scanner service binding");
+          throw new Error(
+            "MALWARE_SCANNER_REQUIRED: configure the real Cloudflare scanner service binding",
+          );
         }
       } else {
         status = "HTTP_" + response.status;
