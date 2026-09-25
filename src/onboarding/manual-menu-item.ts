@@ -14,6 +14,12 @@ export type ManualMenuItemInput = {
   description?: string;
   sku?: string;
   stationCode?: string;
+  branchPrice?: string;
+  onlinePrice?: string;
+  taxCode?: string;
+  unitOfMeasure?: string;
+  recipeCode?: string;
+  serviceChargeApplicable?: boolean;
 };
 
 export function createManualMenuCsv(input: ManualMenuItemInput) {
@@ -33,6 +39,14 @@ export function createManualMenuCsv(input: ManualMenuItemInput) {
     throw new Error("Enter a valid non-negative selling price.");
   }
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error("Choose a valid currency.");
+  for (const [label, amount] of [
+    ["Branch price", input.branchPrice],
+    ["Online price", input.onlinePrice],
+  ] as const) {
+    if (amount?.trim() && (!/^\d+(?:\.\d{1,3})?$/.test(amount.trim()) || !Number.isFinite(Number(amount)))) {
+      throw new Error(label + " must be valid non-negative money.");
+    }
+  }
   const row: Record<MenuImportHeader, string> = Object.fromEntries(
     menuImportHeaders.map((header) => [header, ""]),
   ) as Record<MenuImportHeader, string>;
@@ -47,6 +61,12 @@ export function createManualMenuCsv(input: ManualMenuItemInput) {
     currency,
     serviceChargeApplicable: "false",
     stationCode: input.stationCode?.trim() ?? "",
+    branchPrice: input.branchPrice?.trim() ?? "",
+    onlinePrice: input.onlinePrice?.trim() ?? "",
+    taxCode: input.taxCode?.trim() ?? "",
+    unitOfMeasure: input.unitOfMeasure?.trim() ?? "",
+    recipeCode: input.recipeCode?.trim() ?? "",
+    serviceChargeApplicable: input.serviceChargeApplicable ? "true" : "false",
     sku: input.sku?.trim() || code,
     sellable: "true",
     available: "true",
