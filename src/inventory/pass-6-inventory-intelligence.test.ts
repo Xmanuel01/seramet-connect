@@ -416,6 +416,40 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(history?.count).toBe(2);
   });
 
+  it("rejects duplicate requisition items and unusable request units before submission", async () => {
+    const fixture = await seedProcurement(service);
+    const line = {
+      inventoryItemId: fixture.itemId,
+      requestedQuantityMicro: QUANTITY_SCALE,
+      unitId: "unit-box",
+    };
+    await expect(
+      service.createPurchaseRequisition({
+        branchId,
+        warehouseId,
+        requisitionNumber: "REQ-DUPLICATE-ITEM",
+        sourceType: "MANUAL_REQUEST",
+        lines: [line, line],
+      }),
+    ).rejects.toThrow("Combine duplicate inventory items");
+
+    await expect(
+      service.createPurchaseRequisition({
+        branchId,
+        warehouseId,
+        requisitionNumber: "REQ-INCOMPATIBLE-UNIT",
+        sourceType: "MANUAL_REQUEST",
+        lines: [{ ...line, unitId: "unit-kg" }],
+      }),
+    ).rejects.toThrow("item-specific conversion");
+
+    const count = await db
+      .prepare("SELECT COUNT(*) AS count FROM purchase_requisitions WHERE tenant_id=?")
+      .bind(tenantId)
+      .first<{ count: number }>();
+    expect(count?.count).toBe(0);
+  });
+
   it("rejects cross-branch procurement warehouses and a mismatched receiving supplier", async () => {
     const fixture = await seedProcurement(service);
     await expect(
