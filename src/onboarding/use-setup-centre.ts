@@ -178,6 +178,23 @@ export function useSetupCentre() {
     [headers],
   );
 
+  const refreshCatalog = useCallback(async () => {
+    setMenuCatalogStatus("loading");
+    setMenuCatalogError("");
+    setMenuCatalog([]);
+    const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
+    try {
+      const response = await get<{ items: SetupMenuCatalogItem[] }>(
+        `/api/seramet/setup/menu-catalog${query}`,
+      );
+      setMenuCatalog(response.items);
+      setMenuCatalogStatus("ready");
+    } catch (cause) {
+      setMenuCatalogError(failureMessage(cause, "Authoritative menu catalogue is unavailable"));
+      setMenuCatalogStatus("error");
+    }
+  }, [branchId, get, isAllBranches]);
+
   const refresh = useCallback(async () => {
     setStatus("loading");
     setError("");
@@ -279,7 +296,7 @@ export function useSetupCentre() {
   }, [refresh]);
 
   const command = useCallback(
-    async <T>(path: string, body: unknown) => {
+    async <T>(path: string, body: unknown, refreshAfter = true) => {
       const response = await authenticatedFetch(path, {
         method: "POST",
         headers,
@@ -293,7 +310,7 @@ export function useSetupCentre() {
         throw new Error(
           payload.message ?? payload.error ?? `Setup command failed (${response.status})`,
         );
-      await refresh();
+      if (refreshAfter) await refresh();
       return payload;
     },
     [headers, refresh],
@@ -325,10 +342,37 @@ export function useSetupCentre() {
           duplicateStrategy,
           idempotencyKey: `setup-import:${kind}:${activeTenantId}:${file.name}:${file.size}:${file.lastModified}`,
         },
+        false,
       );
       return result.preview;
     },
     [activeTenantId, branchId, command, isAllBranches],
+  );
+
+  const inspectMenuColumns = useCallback(
+    async (file: File) => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await command<{
+        inspection: {
+          sourceHeaders: string[];
+          suggestedMap: Record<string, string>;
+          samples: Array<Record<string, string>>;
+        };
+      }>(
+        "/api/seramet/setup/imports/inspect",
+        {
+          kind: "MENU",
+          originalName: file.name,
+          mimeType: file.type || "application/octet-stream",
+          base64: bytesToBase64(bytes),
+          duplicateStrategy: "ERROR",
+          idempotencyKey: `menu-inspect:${activeTenantId}:${file.name}:${file.size}`,
+        },
+        false,
+      );
+      return result.inspection;
+    },
+    [activeTenantId, command],
   );
 
   const commitImport = useCallback(
@@ -410,6 +454,8 @@ export function useSetupCentre() {
     mappings,
     openingStock,
     menuCatalog,
+    refreshCatalog,
+    inspectMenuColumns,
     menuCatalogStatus,
     menuCatalogError,
     diagnostics,
