@@ -416,6 +416,107 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     expect(history?.count).toBe(2);
   });
 
+  it("tracks partial requisition ordering and reverses quantities when a PO is cancelled", async () => {
+    const fixture = await seedProcurement(service);
+    const requisition = await service.createPurchaseRequisition({
+      id: "req-partial-ordering",
+      branchId,
+      warehouseId,
+      requisitionNumber: "REQ-PARTIAL-ORDERING",
+      sourceType: "MANUAL_REQUEST",
+      lines: [
+        {
+          inventoryItemId: fixture.itemId,
+          requestedQuantityMicro: 2 * QUANTITY_SCALE,
+          unitId: "unit-box",
+        },
+      ],
+    });
+    await service.approvePurchaseRequisition(requisition.id, "Approved for partial sourcing");
+
+    const partialPo = await service.createPurchaseOrder({
+      id: "po-partial-requisition",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-PARTIAL-REQUISITION",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-partial-requisition-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+
+    const partial = await db
+      .prepare(
+        `SELECT pr.status,prl.ordered_quantity_minor
+         FROM purchase_requisitions pr
+         JOIN purchase_requisition_lines prl
+           ON prl.tenant_id=pr.tenant_id AND prl.requisition_id=pr.id
+         WHERE pr.tenant_id=? AND pr.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(partial).toEqual({
+      status: "PARTIALLY_ORDERED",
+      ordered_quantity_minor: QUANTITY_SCALE,
+    });
+
+    await service.cancelPurchaseOrder(partialPo.id, "Supplier could not fulfil");
+    const reopened = await db
+      .prepare(
+        `SELECT pr.status,prl.ordered_quantity_minor
+         FROM purchase_requisitions pr
+         JOIN purchase_requisition_lines prl
+           ON prl.tenant_id=pr.tenant_id AND prl.requisition_id=pr.id
+         WHERE pr.tenant_id=? AND pr.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(reopened).toEqual({ status: "APPROVED", ordered_quantity_minor: 0 });
+
+    await service.createPurchaseOrder({
+      id: "po-full-requisition",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      requisitionId: requisition.id,
+      purchaseOrderNumber: "PO-FULL-REQUISITION",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-full-requisition-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: 2 * QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+        },
+      ],
+    });
+    const completed = await db
+      .prepare(
+        `SELECT pr.status,prl.ordered_quantity_minor
+         FROM purchase_requisitions pr
+         JOIN purchase_requisition_lines prl
+           ON prl.tenant_id=pr.tenant_id AND prl.requisition_id=pr.id
+         WHERE pr.tenant_id=? AND pr.id=?`,
+      )
+      .bind(tenantId, requisition.id)
+      .first<{ status: string; ordered_quantity_minor: number }>();
+    expect(completed).toEqual({
+      status: "ORDERED",
+      ordered_quantity_minor: 2 * QUANTITY_SCALE,
+    });
+  });
+
   it("enforces over-receipt policy and allows configured tolerance", async () => {
     const fixture = await seedProcurement(service);
     const strictPo = await createApprovedPo(
@@ -1537,6 +1638,67 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       .bind(tenantId, result.journalId)
       .first<{ debit: number; credit: number }>();
     expect(totals).toEqual({ debit: 250_000, credit: 250_000 });
+  });
+
+  it("matches supplier invoice subtotal and tax independently", async () => {
+    const fixture = await seedProcurement(service);
+    const po = await service.createPurchaseOrder({
+      id: "po-tax-match",
+      branchId,
+      warehouseId,
+      supplierId: fixture.supplierId,
+      purchaseOrderNumber: "PO-TAX-MATCH",
+      currency: "KES",
+      lines: [
+        {
+          id: "po-tax-match-line",
+          inventoryItemId: fixture.itemId,
+          purchaseUnitId: "unit-box",
+          conversionId: "conversion-box-soda",
+          quantityMicro: QUANTITY_SCALE,
+          unitPriceMinor: 240_000,
+          taxMinor: 38_400,
+        },
+      ],
+    });
+    await service.approvePurchaseOrder(po.id, "Tax match test");
+    const receipt = await receiveQuantity(
+      service,
+      po.id,
+      "po-tax-match-line",
+      fixture.supplierId,
+      QUANTITY_SCALE,
+      "tax-match-receipt",
+      240_000,
+    );
+
+    const result = await service.postSupplierInvoice({
+      id: "supplier-invoice-tax-match",
+      branchId,
+      supplierId: fixture.supplierId,
+      purchaseOrderId: po.id,
+      goodsReceiptId: receipt.id,
+      invoiceNumber: "SUP-INV-TAX-MATCH",
+      invoiceDate: "2026-08-30",
+      currency: "KES",
+      subtotalMinor: 240_000,
+      taxMinor: 38_400,
+      totalMinor: 278_400,
+    });
+
+    expect(result.matchStatus).toBe("MATCHED");
+    const journalLines = await db
+      .prepare(
+        `SELECT account_id,debit_minor,credit_minor
+         FROM journal_lines WHERE tenant_id=? AND journal_entry_id=? ORDER BY line_number`,
+      )
+      .bind(tenantId, result.journalId)
+      .all<{ account_id: string; debit_minor: number; credit_minor: number }>();
+    expect(journalLines.results).toEqual([
+      { account_id: "account-inventory", debit_minor: 240_000, credit_minor: 0 },
+      { account_id: "account-tax", debit_minor: 38_400, credit_minor: 0 },
+      { account_id: "account-payable", debit_minor: 0, credit_minor: 278_400 },
+    ]);
   });
 
   it("produces deterministic forecasts and explained purchase recommendations", () => {
