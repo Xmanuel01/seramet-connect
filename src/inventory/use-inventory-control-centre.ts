@@ -49,10 +49,7 @@ export type ProcurementOrderRow = {
   created_at: string;
   approved_at: string | null;
   received_at: string | null;
-  over_receipt_policy:
-    | "REJECT_OVER_RECEIPT"
-    | "ALLOW_WITH_APPROVAL"
-    | "ALLOW_WITH_TOLERANCE";
+  over_receipt_policy: "REJECT_OVER_RECEIPT" | "ALLOW_WITH_APPROVAL" | "ALLOW_WITH_TOLERANCE";
   over_receipt_tolerance_bps: number;
   lines: Array<{
     id: string;
