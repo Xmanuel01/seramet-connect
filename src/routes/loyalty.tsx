@@ -8,6 +8,7 @@ import { crmErrorMessage, crmFieldClass, useCrmScreenQuery } from "@/crm/use-crm
 import { useCrmApi } from "@/crm/use-crm";
 import type { PosCustomerIdentity } from "@/crm/pos-customer-link";
 import { useAppContext } from "@/lib/app-context";
+import { parseMajorAmount } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/loyalty")({
@@ -98,7 +99,7 @@ function Loyalty() {
           branchId,
           effectiveFrom: new Date().toISOString(),
           earningType: "SPEND",
-          spendMinorPerPoint: Math.round(cost * 100),
+          spendMinorPerPoint: parseMajorAmount(cost, currency),
           minimumSpendMinor: 0,
           roundingPolicy: "FLOOR",
           expiryType: "NONE",
@@ -125,7 +126,7 @@ function Loyalty() {
           name: name.trim(),
           rewardType: "FIXED_DISCOUNT",
           pointsCost: Math.max(1, Math.floor(points)),
-          valueMinor: Math.round(cost * 100),
+          valueMinor: parseMajorAmount(cost, currency),
           validFrom: new Date().toISOString(),
         });
       } else if (form === "enrol" && canManage) {

@@ -8,7 +8,7 @@ import { crmErrorMessage, crmFieldClass, useCrmScreenQuery } from "@/crm/use-crm
 import { useCrmApi } from "@/crm/use-crm";
 import type { PosCustomerIdentity } from "@/crm/pos-customer-link";
 import { useAppContext } from "@/lib/app-context";
-import { formatMinor } from "@/payments/money";
+import { formatMinor, parseMajorAmount } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/crm-pipeline")({
@@ -68,7 +68,9 @@ const allowedTransitions: Record<Stage, Stage[]> = {
 };
 
 function CrmPipeline() {
-  const { branchId, branchLabel, hasPermission, locale } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, hasPermission, locale, platformState } =
+    useAppContext();
+  const baseCurrency = platformState.tenants.find((tenant) => tenant.id === activeTenantId)?.defaultCurrency;
   const canView = hasPermission(permissions.crmView);
   const canManage = hasPermission(permissions.crmCustomerManage);
   const { command } = useCrmApi();
@@ -137,7 +139,8 @@ function CrmPipeline() {
     setBusy(true);
     setError("");
     try {
-      const amount = Math.round(value * 100);
+      if (!baseCurrency) throw new Error("Tenant base currency is not configured.");
+      const amount = parseMajorAmount(value, baseCurrency);
       if (!Number.isSafeInteger(amount) || amount < 0) {
         throw new Error("Estimated value must be a valid nonnegative amount.");
       }
