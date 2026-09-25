@@ -5584,7 +5584,11 @@ export class InventoryIntelligenceService {
     }
     const suppliers = await this.db
       .prepare(
-        `SELECT s.id,s.code,s.name,s.lead_time_days,s.payment_terms_days,s.currency,
+        `SELECT s.id,s.code,s.name,s.legal_name,s.phone,s.email,s.tax_number,s.address,
+                COALESCE(s.lead_time_days,0) AS lead_time_days,
+                COALESCE(s.payment_terms_days,0) AS payment_terms_days,s.currency,
+                COALESCE(s.minimum_order_minor,0) AS minimum_order_minor,s.active,
+                s.created_at,s.updated_at,
                 COUNT(DISTINCT po.id) AS order_count,
                 COALESCE(SUM(po.total_minor),0) AS ordered_minor,
                 COALESCE(SUM(CASE WHEN po.status IN ('SUBMITTED','APPROVED','PARTIALLY_RECEIVED')
@@ -5599,6 +5603,23 @@ export class InventoryIntelligenceService {
          GROUP BY s.id ORDER BY ordered_minor DESC,s.name LIMIT ?`,
       )
       .bind(branchId, this.actor.tenantId, pageSize)
+      .all<Record<string, unknown>>();
+    const supplierItems = await this.db
+      .prepare(
+        `SELECT si.id,si.supplier_id,s.name AS supplier_name,si.inventory_item_id,
+                i.name AS item_name,i.sku,si.supplier_sku,si.purchase_unit_id,
+                u.symbol AS purchase_unit_symbol,si.contract_price_minor,
+                si.minimum_quantity_minor,si.lead_time_days,si.preferred,si.active,
+                si.created_at,si.updated_at
+         FROM supplier_items si
+         JOIN suppliers s ON s.tenant_id=si.tenant_id AND s.id=si.supplier_id
+         JOIN inventory_items i ON i.tenant_id=si.tenant_id AND i.id=si.inventory_item_id
+         LEFT JOIN unit_definitions u
+           ON u.tenant_id=si.tenant_id AND u.id=si.purchase_unit_id
+         WHERE si.tenant_id=? AND si.active=1 AND s.active=1
+         ORDER BY s.name,i.name LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, Math.min(1000, pageSize * 10))
       .all<Record<string, unknown>>();
     const requisitionHeaders = await this.db
       .prepare(
@@ -5648,6 +5669,7 @@ export class InventoryIntelligenceService {
       branchId,
       purchaseOrders: rows,
       suppliers: suppliers.results ?? [],
+      supplierItems: supplierItems.results ?? [],
       requisitions,
       receipts: receipts.results ?? [],
     };
