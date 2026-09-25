@@ -324,7 +324,7 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/loyalty/programs" && request.method === "GET") {
-      return json({ ok: true, programs: await loyalty.listPrograms() });
+      return json({ ok: true, programs: await loyalty.listPrograms(optionalQuery(url, "branchId")) });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/programs" && request.method === "POST") {
       return json(
@@ -336,7 +336,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
       );
     }
     if (url.pathname === "/api/seramet/crm/loyalty/tiers" && request.method === "GET") {
-      return json({ ok: true, tiers: await loyalty.listTiers(optionalQuery(url, "programId")) });
+      return json({ ok: true, tiers: await loyalty.listTiers(
+          optionalQuery(url, "programId"),
+          optionalQuery(url, "branchId"),
+        ) });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/tiers" && request.method === "POST") {
       return json(
@@ -347,7 +350,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     if (url.pathname === "/api/seramet/crm/loyalty/rewards" && request.method === "GET") {
       return json({
         ok: true,
-        rewards: await loyalty.listRewards(optionalQuery(url, "programId")),
+        rewards: await loyalty.listRewards(
+          optionalQuery(url, "programId"),
+          optionalQuery(url, "branchId"),
+        ),
       });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/rewards" && request.method === "POST") {
