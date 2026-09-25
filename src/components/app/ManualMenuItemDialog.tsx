@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Btn } from "@/components/app/ui";
 import { SetupStatus } from "@/onboarding/ui";
 import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
@@ -149,7 +156,11 @@ export function ManualMenuItemDialog({
             making it available at the POS; kitchen routing must use a configured station.
           </DialogDescription>
         </DialogHeader>
-        <form id="manual-menu-item-form" onSubmit={(event) => void validate(event)} className="grid gap-3">
+        <form
+          id="manual-menu-item-form"
+          onSubmit={(event) => void validate(event)}
+          className="grid gap-3"
+        >
           <label className="grid gap-1 text-[12px] font-semibold">
             Activate at branch *
             <select
@@ -195,7 +206,9 @@ export function ManualMenuItemDialog({
                 className={inputClass}
               />
               <datalist id="seramet-menu-categories">
-                {categoryCodes.map((value) => <option key={value} value={value} />)}
+                {categoryCodes.map((value) => (
+                  <option key={value} value={value} />
+                ))}
               </datalist>
             </label>
           </div>
@@ -271,18 +284,39 @@ export function ManualMenuItemDialog({
                 <strong>Server validation</strong>
                 <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
               </div>
-              <p>{preview.validCount} valid · {preview.warningCount} warnings · {preview.errorCount} errors</p>
-              {preview.rows.flatMap((row) => row.warnings).map((issue, index) => (
-                <p className="mt-1 text-warning" key={issue.code + index}>{issue.message}</p>
-              ))}
+              <p>
+                {preview.validCount} valid · {preview.warningCount} warnings · {preview.errorCount}{" "}
+                errors
+              </p>
+              {preview.rows
+                .flatMap((row) => row.warnings)
+                .map((issue, index) => (
+                  <p className="mt-1 text-warning" key={issue.code + index}>
+                    {issue.message}
+                  </p>
+                ))}
             </div>
           )}
-          {notice && <p role="status" className="text-[12px] text-warning">{notice}</p>}
-          {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
+          {notice && (
+            <p role="status" className="text-[12px] text-warning">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="text-[12px] text-danger">
+              {error}
+            </p>
+          )}
         </form>
         <DialogFooter className="gap-2">
-          <Btn disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Btn>
-          <Btn type="submit" form="manual-menu-item-form" disabled={busy || !currency || !selectedBranchId}>
+          <Btn disabled={busy} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Btn>
+          <Btn
+            type="submit"
+            form="manual-menu-item-form"
+            disabled={busy || !currency || !selectedBranchId}
+          >
             {busy ? "Validating..." : preview ? "Revalidate" : "Validate item"}
           </Btn>
           <Btn

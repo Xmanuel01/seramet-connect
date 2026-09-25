@@ -15,7 +15,14 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { ManualMenuItemDialog } from "@/components/app/ManualMenuItemDialog";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import type { DuplicateStrategy, ImportPreview, ImportTargetMode } from "@/onboarding/types";
 import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
@@ -242,7 +249,10 @@ function MenuImport() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Metric label="Catalog items" value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"} />
+        <Metric
+          label="Catalog items"
+          value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"}
+        />
         <Metric label="Rows read" value={preview?.rowCount ?? 0} />
         <Metric label="Valid" value={preview?.validCount ?? 0} />
         <Metric label="Warnings" value={preview?.warningCount ?? 0} />
@@ -640,9 +650,9 @@ function MenuImport() {
                 />
               </label>
               <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] leading-5 text-muted-foreground">
-                Required: item code, name, category and base price. Tenant-master items do not appear
-                in POS until explicitly activated for a branch. Station, recipe, tax and channel
-                references are validated against authoritative configuration.
+                Required: item code, name, category and base price. Tenant-master items do not
+                appear in POS until explicitly activated for a branch. Station, recipe, tax and
+                channel references are validated against authoritative configuration.
               </div>
               {stationReferences.length > 0 && (
                 <div className="grid gap-3 rounded-md border border-warning/30 bg-warning-soft p-3">
@@ -653,7 +663,10 @@ function MenuImport() {
                       <select
                         value={stationMap[source] ?? ""}
                         onChange={(event) => {
-                          setStationMap((current) => ({ ...current, [source]: event.target.value }));
+                          setStationMap((current) => ({
+                            ...current,
+                            [source]: event.target.value,
+                          }));
                           invalidatePreview(
                             "Station mapping changed. Run preview again to validate it.",
                           );
@@ -674,7 +687,8 @@ function MenuImport() {
                   ))}
                   <Btn
                     onClick={() =>
-                      sourceFile && void run(async () => runPreview(sourceFile), "Preview refreshed.")
+                      sourceFile &&
+                      void run(async () => runPreview(sourceFile), "Preview refreshed.")
                     }
                     disabled={!sourceFile || busy}
                   >
@@ -705,8 +719,10 @@ function MenuImport() {
                 <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
               </div>
               <p className="mt-2">
-                {preview.rowCount} rows · {preview.validCount} valid · {preview.warningCount} warnings
-                {" · "}{preview.errorCount} errors
+                {preview.rowCount} rows · {preview.validCount} valid · {preview.warningCount}{" "}
+                warnings
+                {" · "}
+                {preview.errorCount} errors
               </p>
               {preview.rows.slice(0, 5).map((row) => (
                 <p key={row.rowKey} className="mt-1">
@@ -724,12 +740,20 @@ function MenuImport() {
             </div>
           )}
           {notice && (
-            <p role="status" className={cn("text-[12px]", noticeTone === "success" ? "text-success" : "text-warning")}>
+            <p
+              role="status"
+              className={cn(
+                "text-[12px]",
+                noticeTone === "success" ? "text-success" : "text-warning",
+              )}
+            >
               {notice}
             </p>
           )}
           <DialogFooter className="gap-2">
-            <Btn disabled={busy} onClick={() => setImportOpen(false)}>Close</Btn>
+            <Btn disabled={busy} onClick={() => setImportOpen(false)}>
+              Close
+            </Btn>
             <Btn
               disabled={!sourceFile || busy}
               onClick={() =>
@@ -743,7 +767,11 @@ function MenuImport() {
               onClick={commit}
               disabled={!preview?.canCommit || !canImport || busy}
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
               Commit import
             </Btn>
           </DialogFooter>
@@ -753,10 +781,12 @@ function MenuImport() {
         open={manualOpen}
         onOpenChange={setManualOpen}
         initialBranchId={isAllBranches ? "" : branchId}
-        branches={centre.structure.branches.filter((branch) => branch.active).map((branch) => ({
-          id: branch.id,
-          name: branch.name,
-        }))}
+        branches={centre.structure.branches
+          .filter((branch) => branch.active)
+          .map((branch) => ({
+            id: branch.id,
+            name: branch.name,
+          }))}
         currency={centre.profile?.defaultCurrency || currency}
         categoryCodes={categoryCodes}
         stations={centre.options.stations.map((station) => ({
