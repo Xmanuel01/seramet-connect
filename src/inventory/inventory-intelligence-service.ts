@@ -711,6 +711,32 @@ export class InventoryIntelligenceService {
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
     await this.assertActiveProcurementWarehouse(input.branchId, input.warehouseId);
     if (input.lines.length === 0) throw new Error("A requisition requires at least one line");
+    const requisitionItems = new Set<string>();
+    for (const line of input.lines) {
+      if (requisitionItems.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Combine duplicate inventory items into a single requisition line",
+        );
+      }
+      requisitionItems.add(line.inventoryItemId);
+      const item = await this.db
+        .prepare(
+          "SELECT base_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1",
+        )
+        .bind(this.actor.tenantId, line.inventoryItemId)
+        .first<{ base_unit_id: string | null }>();
+      if (!item?.base_unit_id) {
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Active inventory item not found");
+      }
+      await this.convertItemQuantity(
+        line.inventoryItemId,
+        line.requestedQuantityMicro,
+        line.unitId,
+        item.base_unit_id,
+      );
+    }
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
