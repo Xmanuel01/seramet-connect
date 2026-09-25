@@ -112,8 +112,8 @@ function SupplierBills() {
 
       {authoritative && availableReceipts.length === 0 && receipts.length > 0 && (
         <div className="mt-3 rounded-md border border-border bg-secondary/30 px-3 py-2 text-[12px] text-muted-foreground">
-          Every posted goods receipt currently visible in this branch is already linked to a supplier
-          invoice.
+          Every posted goods receipt currently visible in this branch is already linked to a
+          supplier invoice.
         </div>
       )}
 
@@ -124,8 +124,8 @@ function SupplierBills() {
         />
         {!invoices.length ? (
           <div className="p-8 text-center text-[13px] text-muted-foreground">
-            No supplier invoices have been posted in this branch yet. Post receiving first, then enter
-            the supplier bill against that goods receipt.
+            No supplier invoices have been posted in this branch yet. Post receiving first, then
+            enter the supplier bill against that goods receipt.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -156,20 +156,22 @@ function SupplierBills() {
                     </TD>
                     <TD className="num text-muted-foreground">{row.receipt_number ?? "—"}</TD>
                     <TD className="text-muted-foreground">{formatDate(row.invoice_date)}</TD>
-                    <TD className={isOverdue(row.due_date, row.status, today) ? "text-destructive" : "text-muted-foreground"}>
+                    <TD
+                      className={
+                        isOverdue(row.due_date, row.status, today)
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                      }
+                    >
                       {row.due_date ? formatDate(row.due_date) : "Not set"}
                     </TD>
-                    <TD className="num text-right">
-                      {ksh(Number(row.subtotal_minor) / 100)}
-                    </TD>
+                    <TD className="num text-right">{ksh(Number(row.subtotal_minor) / 100)}</TD>
                     <TD className="num text-right">{ksh(Number(row.tax_minor) / 100)}</TD>
                     <TD className="num text-right font-semibold">
                       {ksh(Number(row.total_minor) / 100)}
                     </TD>
                     <TD className="num text-right">
-                      {row.variance_minor === null
-                        ? "—"
-                        : ksh(Number(row.variance_minor) / 100)}
+                      {row.variance_minor === null ? "—" : ksh(Number(row.variance_minor) / 100)}
                     </TD>
                     <TD>
                       <Status>{displayStatus(row.match_status ?? "Pending")}</Status>
@@ -258,9 +260,7 @@ function EnterSupplierBillDialog({
   const purchaseOrder = data?.procurement.purchaseOrders.find(
     (row) => row.id === receipt?.purchase_order_id,
   );
-  const supplier = data?.procurement.suppliers.find(
-    (row) => row.id === receipt?.supplier_id,
-  );
+  const supplier = data?.procurement.suppliers.find((row) => row.id === receipt?.supplier_id);
   const invoiceCurrency = purchaseOrder?.currency || supplier?.currency || fallbackCurrency;
 
   useEffect(() => {
@@ -293,8 +293,7 @@ function EnterSupplierBillDialog({
 
   const subtotalNumber = nonNegative(subtotal);
   const taxNumber = nonNegative(tax);
-  const total =
-    subtotalNumber === null || taxNumber === null ? null : subtotalNumber + taxNumber;
+  const total = subtotalNumber === null || taxNumber === null ? null : subtotalNumber + taxNumber;
   const valid =
     Boolean(receipt && purchaseOrder && supplier && invoiceNumber.trim()) &&
     Boolean(invoiceDate) &&
@@ -324,7 +323,10 @@ function EnterSupplierBillDialog({
               ))}
             </select>
           </Field>
-          <ReadOnlyField label="Purchase order" value={purchaseOrder?.purchase_order_number ?? "—"} />
+          <ReadOnlyField
+            label="Purchase order"
+            value={purchaseOrder?.purchase_order_number ?? "—"}
+          />
           <ReadOnlyField label="Supplier" value={supplier?.name ?? receipt?.supplier_name ?? "—"} />
           <ReadOnlyField label="Currency" value={invoiceCurrency} />
           <Field label="Supplier invoice number">
