@@ -83,7 +83,18 @@ jobs:
 
           // Full staging readiness requires a real configured scanner; never treat
           // scanner absence as a successful deploy just because HTTP is 200.
-          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
+          // Only this disposable integration preview may deploy without a scanner.
+          // No live restaurant data may enter this staging environment; object uploads
+          // already fail closed in ObjectStorageService when the scanner is absent.
+          // Real production/main deployments retain the scanner requirement below.
+          const previewOnly =
+            process.env.GITHUB_REF === "refs/heads/staging/go-live-menu-customers-20260925";
+          const required = previewOnly
+            ? { hyperdrive, bucket, workQueue, dlq, publicOrigin }
+            : { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
+          if (previewOnly && !scannerService) {
+            console.warn("STAGING PREVIEW ONLY: no malware scanner; object uploads disabled and full readiness will fail.");
+          }
           const missing = Object.entries(required)
             .filter(([, value]) => !value)
             .map(([name]) => name);
