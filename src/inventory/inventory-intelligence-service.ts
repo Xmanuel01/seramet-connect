@@ -5546,20 +5546,90 @@ export class InventoryIntelligenceService {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
     const pageSize = Math.min(100, Math.max(1, limit));
-    const purchaseOrders = await this.db
-      .prepare(
-        `SELECT po.id,po.purchase_order_number,po.supplier_id,s.name AS supplier_name,
-                po.warehouse_id,
-                po.status,po.currency,po.total_minor,po.expected_at,po.created_at,
-                po.approved_at,po.received_at
-         FROM purchase_orders po
-         JOIN suppliers s ON s.tenant_id=po.tenant_id AND s.id=po.supplier_id
-         WHERE po.tenant_id=? AND po.branch_id=?
-         ORDER BY po.created_at DESC LIMIT ?`,
-      )
-      .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown> & { id: string }>();
-    const rows = [];
+
+    const [purchaseOrders, suppliers, requisitions, receipts, supplierInvoices] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT po.id,po.purchase_order_number,po.supplier_id,s.name AS supplier_name,
+                  po.warehouse_id,po.status,po.currency,po.total_minor,po.expected_at,po.created_at,
+                  po.approved_at,po.received_at
+           FROM purchase_orders po
+           JOIN suppliers s ON s.tenant_id=po.tenant_id AND s.id=po.supplier_id
+           WHERE po.tenant_id=? AND po.branch_id=?
+           ORDER BY po.created_at DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, branchId, pageSize)
+        .all<Record<string, unknown> & { id: string }>(),
+      this.db
+        .prepare(
+          `SELECT s.id,s.code,s.name,s.lead_time_days,s.payment_terms_days,s.currency,
+                  COUNT(DISTINCT po.id) AS order_count,
+                  COALESCE(SUM(po.total_minor),0) AS ordered_minor,
+                  COALESCE(SUM(CASE WHEN po.status IN ('SUBMITTED','APPROVED','PARTIALLY_RECEIVED')
+                    THEN po.total_minor ELSE 0 END),0) AS outstanding_minor,
+                  SUM(CASE WHEN po.received_at IS NOT NULL AND po.expected_at IS NOT NULL
+                    AND po.received_at<=po.expected_at THEN 1 ELSE 0 END) AS on_time_count,
+                  SUM(CASE WHEN po.received_at IS NOT NULL THEN 1 ELSE 0 END) AS received_count
+           FROM suppliers s
+           LEFT JOIN purchase_orders po ON po.tenant_id=s.tenant_id AND po.supplier_id=s.id
+             AND po.branch_id=?
+           WHERE s.tenant_id=? AND s.active=1
+           GROUP BY s.id ORDER BY ordered_minor DESC,s.name LIMIT ?`,
+        )
+        .bind(branchId, this.actor.tenantId, pageSize)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT r.id,r.requisition_number,r.warehouse_id,r.status,r.source_type,r.requested_by,
+                  r.required_at,r.created_at,r.approved_at,r.approved_by,r.approval_reason,
+                  COUNT(rl.id) AS line_count,
+                  COALESCE(SUM(rl.requested_quantity_minor),0) AS requested_quantity_minor,
+                  COALESCE(SUM(rl.ordered_quantity_minor),0) AS ordered_quantity_minor
+           FROM purchase_requisitions r
+           LEFT JOIN purchase_requisition_lines rl
+             ON rl.tenant_id=r.tenant_id AND rl.requisition_id=r.id
+           WHERE r.tenant_id=? AND r.branch_id=?
+           GROUP BY r.id
+           ORDER BY r.created_at DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, branchId, pageSize)
+        .all<Record<string, unknown> & { id: string }>(),
+      this.db
+        .prepare(
+          `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
+                  gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.business_date,
+                  COALESCE(SUM(grl.total_cost_minor),0) AS total_minor,
+                  COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
+                  COALESCE(SUM(grl.rejected_purchase_quantity_minor),0) AS rejected_quantity_minor
+           FROM goods_receipts gr
+           LEFT JOIN suppliers s ON s.tenant_id=gr.tenant_id AND s.id=gr.supplier_id
+           LEFT JOIN goods_receipt_lines grl
+             ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
+           WHERE gr.tenant_id=? AND gr.branch_id=?
+           GROUP BY gr.id ORDER BY gr.received_at DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, branchId, pageSize)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT si.id,si.invoice_number,si.invoice_date,si.due_date,si.status,si.currency,
+                  si.subtotal_minor,si.tax_minor,si.total_minor,si.supplier_id,s.name AS supplier_name,
+                  si.purchase_order_id,po.purchase_order_number,si.goods_receipt_id,
+                  pm.status AS match_status,si.created_at,si.updated_at
+           FROM supplier_invoices si
+           JOIN suppliers s ON s.tenant_id=si.tenant_id AND s.id=si.supplier_id
+           LEFT JOIN purchase_orders po
+             ON po.tenant_id=si.tenant_id AND po.id=si.purchase_order_id
+           LEFT JOIN procurement_matches pm
+             ON pm.tenant_id=si.tenant_id AND pm.supplier_invoice_id=si.id
+           WHERE si.tenant_id=? AND si.branch_id=?
+           ORDER BY si.invoice_date DESC,si.created_at DESC LIMIT ?`,
+        )
+        .bind(this.actor.tenantId, branchId, pageSize)
+        .all<Record<string, unknown>>(),
+    ]);
+
+    const purchaseOrderRows = [];
     for (const purchaseOrder of purchaseOrders.results ?? []) {
       const lines = await this.db
         .prepare(
@@ -5576,51 +5646,33 @@ export class InventoryIntelligenceService {
         )
         .bind(this.actor.tenantId, purchaseOrder.id)
         .all<Record<string, unknown>>();
-      rows.push({ ...purchaseOrder, lines: lines.results ?? [] });
+      purchaseOrderRows.push({ ...purchaseOrder, lines: lines.results ?? [] });
     }
-    const suppliers = await this.db
-      .prepare(
-        `SELECT s.id,s.code,s.name,s.lead_time_days,s.payment_terms_days,s.currency,
-                COUNT(DISTINCT po.id) AS order_count,
-                COALESCE(SUM(po.total_minor),0) AS ordered_minor,
-                COALESCE(SUM(CASE WHEN po.status IN ('SUBMITTED','APPROVED','PARTIALLY_RECEIVED')
-                  THEN po.total_minor ELSE 0 END),0) AS outstanding_minor,
-                SUM(CASE WHEN po.received_at IS NOT NULL AND po.expected_at IS NOT NULL
-                  AND po.received_at<=po.expected_at THEN 1 ELSE 0 END) AS on_time_count,
-                SUM(CASE WHEN po.received_at IS NOT NULL THEN 1 ELSE 0 END) AS received_count
-         FROM suppliers s
-         LEFT JOIN purchase_orders po ON po.tenant_id=s.tenant_id AND po.supplier_id=s.id
-           AND po.branch_id=?
-         WHERE s.tenant_id=? AND s.active=1
-         GROUP BY s.id ORDER BY ordered_minor DESC,s.name LIMIT ?`,
-      )
-      .bind(branchId, this.actor.tenantId, pageSize)
-      .all<Record<string, unknown>>();
-    const requisitions = await this.db
-      .prepare(
-        `SELECT id,requisition_number,status,source_type,required_at,created_at,approved_at
-         FROM purchase_requisitions WHERE tenant_id=? AND branch_id=?
-         ORDER BY created_at DESC LIMIT ?`,
-      )
-      .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown>>();
-    const receipts = await this.db
-      .prepare(
-        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
-         FROM goods_receipts gr
-         LEFT JOIN goods_receipt_lines grl ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
-         WHERE gr.tenant_id=? AND gr.branch_id=?
-         GROUP BY gr.id ORDER BY gr.received_at DESC LIMIT ?`,
-      )
-      .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown>>();
+
+    const requisitionRows = [];
+    for (const requisition of requisitions.results ?? []) {
+      const lines = await this.db
+        .prepare(
+          `SELECT rl.id,rl.inventory_item_id,i.name AS item_name,i.sku,rl.requested_quantity_minor,
+                  rl.ordered_quantity_minor,rl.unit_id,u.symbol AS unit_symbol,rl.notes
+           FROM purchase_requisition_lines rl
+           JOIN inventory_items i
+             ON i.tenant_id=rl.tenant_id AND i.id=rl.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=rl.tenant_id AND u.id=rl.unit_id
+           WHERE rl.tenant_id=? AND rl.requisition_id=? ORDER BY rl.id`,
+        )
+        .bind(this.actor.tenantId, requisition.id)
+        .all<Record<string, unknown>>();
+      requisitionRows.push({ ...requisition, lines: lines.results ?? [] });
+    }
+
     return {
       branchId,
-      purchaseOrders: rows,
+      purchaseOrders: purchaseOrderRows,
       suppliers: suppliers.results ?? [],
-      requisitions: requisitions.results ?? [],
+      requisitions: requisitionRows,
       receipts: receipts.results ?? [],
+      supplierInvoices: supplierInvoices.results ?? [],
     };
   }
 
