@@ -28,7 +28,7 @@ function Requisitions() {
   const { branchId, branchLabel } = useAppContext();
   const control = useInventoryControlCentre(true);
   const branchData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
-  const rows = branchData?.procurement.requisitions ?? [];
+  const rows = useMemo(() => branchData?.procurement.requisitions ?? [], [branchData]);
   const [selectedId, setSelectedId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -252,14 +252,17 @@ function NewRequisitionDialog({
   const [requiredDate, setRequiredDate] = useState("");
   const [notes, setNotes] = useState("");
 
-  const warehouse =
-    data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
+  const warehouse = data?.warehouses.find((row) => row.id === warehouseId) ?? data?.warehouses[0];
   const item =
-    data?.items.find((row) => row.id === itemId && (!warehouse || row.warehouse_id === warehouse.id)) ??
+    data?.items.find(
+      (row) => row.id === itemId && (!warehouse || row.warehouse_id === warehouse.id),
+    ) ??
     data?.items.find((row) => !warehouse || row.warehouse_id === warehouse.id) ??
     data?.items[0];
   const quantityMicro = Math.round(Number(quantityValue) * 1_000_000);
-  const valid = Boolean(warehouse && item && Number.isSafeInteger(quantityMicro) && quantityMicro > 0);
+  const valid = Boolean(
+    warehouse && item && Number.isSafeInteger(quantityMicro) && quantityMicro > 0,
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -360,7 +363,9 @@ function NewRequisitionDialog({
 }
 
 function quantity(value: number) {
-  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 3 }).format(value / 1_000_000);
+  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 3 }).format(
+    value / 1_000_000,
+  );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
