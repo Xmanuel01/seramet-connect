@@ -25,7 +25,7 @@ function PurchaseOrders() {
   const { branchId, branchLabel } = useAppContext();
   const control = useInventoryControlCentre(true);
   const data = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
-  const rows = data?.procurement.purchaseOrders ?? [];
+  const rows = useMemo(() => data?.procurement.purchaseOrders ?? [], [data]);
   const [notice, setNotice] = useState("");
   const [busyId, setBusyId] = useState("");
 
@@ -34,8 +34,9 @@ function PurchaseOrders() {
     return {
       visible: rows.length,
       openMinor: open.reduce((sum, row) => sum + Number(row.total_minor), 0),
-      pending: rows.filter((row) => ["DRAFT", "SUBMITTED", "PENDING_APPROVAL"].includes(row.status))
-        .length,
+      pending: rows.filter((row) =>
+        ["DRAFT", "SUBMITTED", "PENDING_APPROVAL"].includes(row.status),
+      ).length,
       received: rows.filter((row) => row.status === "RECEIVED").length,
     };
   }, [rows]);
@@ -50,7 +51,11 @@ function PurchaseOrders() {
           ? { reason: "Cancelled from purchase order register" }
           : { reason: "Approved from purchase order register" },
       );
-      setNotice(action === "approve" ? "Purchase order approved for receiving." : "Purchase order cancelled.");
+      setNotice(
+        action === "approve"
+          ? "Purchase order approved for receiving."
+          : "Purchase order cancelled.",
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Purchase order action failed");
     } finally {
@@ -76,7 +81,11 @@ function PurchaseOrders() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Visible POs" value={metrics.visible} />
         <Metric label="Open commitment" value={metrics.openMinor / 100} money />
-        <Metric label="Pending approval" value={metrics.pending} invert={metrics.pending > 0} />
+        <Metric
+          label="Pending approval"
+          value={metrics.pending}
+          invert={metrics.pending > 0}
+        />
         <Metric label="Received" value={metrics.received} />
       </div>
 
@@ -121,7 +130,12 @@ function PurchaseOrders() {
                     (sum, line) => sum + Number(line.received_purchase_quantity_minor),
                     0,
                   );
-                  const progress = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
+                  const progress =
+                    ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0;
+                  const receivedLines = po.lines.filter(
+                    (line) => Number(line.received_purchase_quantity_minor) > 0,
+                  ).length;
+
                   return (
                     <tr key={po.id} className="hover:bg-secondary/50">
                       <TD className="num font-semibold">{po.purchase_order_number}</TD>
@@ -130,13 +144,16 @@ function PurchaseOrders() {
                       <TD className="text-muted-foreground">
                         {po.expected_at ? formatDate(po.expected_at) : "—"}
                       </TD>
-                      <TD className="num text-right font-semibold">{ksh(Number(po.total_minor) / 100)}</TD>
+                      <TD className="num text-right font-semibold">
+                        {ksh(Number(po.total_minor) / 100)}
+                      </TD>
                       <TD className="num text-right text-muted-foreground">
-                        {po.lines.filter((line) => Number(line.received_purchase_quantity_minor) > 0).length}/
-                        {po.lines.length}
+                        {receivedLines}/{po.lines.length}
                       </TD>
                       <TD className="num text-right">{progress}%</TD>
-                      <TD><Status>{po.status}</Status></TD>
+                      <TD>
+                        <Status>{po.status}</Status>
+                      </TD>
                       <TD>
                         <div className="flex gap-2">
                           {["DRAFT", "SUBMITTED"].includes(po.status) && (
@@ -159,13 +176,20 @@ function PurchaseOrders() {
                               Cancel
                             </button>
                           )}
-                          {["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(po.status) && (
-                            <Link to="/receiving" className="text-[12px] font-semibold text-success hover:underline">
+                          {["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(
+                            po.status,
+                          ) && (
+                            <Link
+                              to="/receiving"
+                              className="text-[12px] font-semibold text-success hover:underline"
+                            >
                               Receive
                             </Link>
                           )}
                           {["RECEIVED", "CANCELLED"].includes(po.status) && (
-                            <span className="text-[12px] text-muted-foreground">Complete</span>
+                            <span className="text-[12px] text-muted-foreground">
+                              Complete
+                            </span>
                           )}
                         </div>
                       </TD>
