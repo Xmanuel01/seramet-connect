@@ -5530,9 +5530,7 @@ export class InventoryIntelligenceService {
       );
     }
     const existingReceiptInvoice = await this.db
-      .prepare(
-        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=?",
-      )
+      .prepare("SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=?")
       .bind(this.actor.tenantId, input.goodsReceiptId)
       .first<{ id: string }>();
     if (existingReceiptInvoice) {
