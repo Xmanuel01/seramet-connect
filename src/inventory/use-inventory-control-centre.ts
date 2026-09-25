@@ -106,6 +106,7 @@ export type ProcurementReceiptRow = {
   accepted_quantity_minor: number;
   rejected_quantity_minor: number;
   total_minor: number;
+  invoice_linked: number;
 };
 
 export type ProcurementSupplierInvoiceRow = {
