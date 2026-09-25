@@ -5,7 +5,15 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 
 const url = process.env.SERAMET_POSTGRES_URL;
-if (!url || !url.includes("seramet_test@127.0.0.1:5432/seramet_test")) {
+const target = url ? new URL(url) : null;
+if (
+  process.env.CI !== "true" ||
+  !target ||
+  target.hostname !== "127.0.0.1" ||
+  target.port !== "5432" ||
+  target.username !== "seramet_test" ||
+  target.pathname !== "/seramet_test"
+) {
   throw new Error("CRM PostgreSQL smoke test requires the isolated CI database");
 }
 const client = new pg.Client({ connectionString: url });
