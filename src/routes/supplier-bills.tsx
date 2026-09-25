@@ -6,7 +6,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { formatDate, ksh } from "@/lib/currency";
+import { currentDateKey, formatDate, ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/supplier-bills")({
@@ -36,16 +36,16 @@ function SupplierBills() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const today = localDate();
-  const postedMinor = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
-  const overdueMinor = invoices
-    .filter(
-      (row) =>
-        Boolean(row.due_date) &&
-        row.due_date! < today &&
-        !["PAID", "DISPUTED"].includes(row.status),
-    )
-    .reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const today = currentDateKey();
+  const visibleCurrencies = Array.from(new Set(invoices.map((row) => row.currency)));
+  const overdueBills = invoices.filter(
+    (row) =>
+      Boolean(row.due_date) &&
+      row.due_date! < today &&
+      !["PAID", "DISPUTED"].includes(row.status),
+  );
+  const overdueMinor = overdueBills.reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const visibleCurrency = visibleCurrencies[0] ?? currency;
   const exceptions = invoices.filter(
     (row) => row.match_status && row.match_status !== "MATCHED",
   ).length;
@@ -57,7 +57,10 @@ function SupplierBills() {
     [invoices],
   );
   const availableReceipts = receipts.filter(
-    (receipt) => receipt.status === "POSTED" && !invoicedReceiptIds.has(receipt.id),
+    (receipt) =>
+      receipt.status === "POSTED" &&
+      !receipt.invoice_linked &&
+      !invoicedReceiptIds.has(receipt.id),
   );
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
@@ -66,8 +69,10 @@ function SupplierBills() {
     try {
       await operation();
       setNotice(success);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Supplier bill operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -96,8 +101,16 @@ function SupplierBills() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Posted bills" value={Math.round(postedMinor / 100)} money />
-        <Metric label="Overdue value" value={Math.round(overdueMinor / 100)} money invert />
+        <Metric label="Recent bills" value={invoices.length} />
+        <Metric
+          label={visibleCurrencies.length > 1 ? "Overdue bills" : "Overdue value"}
+          value={
+            visibleCurrencies.length > 1
+              ? overdueBills.length
+              : ksh(overdueMinor / 100, visibleCurrency)
+          }
+          invert={overdueBills.length > 0}
+        />
         <Metric label="Match exceptions" value={exceptions} invert={exceptions > 0} />
         <Metric label="Matched bills" value={matchedPercent} suffix="%" />
       </div>
@@ -165,13 +178,15 @@ function SupplierBills() {
                     >
                       {row.due_date ? formatDate(row.due_date) : "Not set"}
                     </TD>
-                    <TD className="num text-right">{ksh(Number(row.subtotal_minor) / 100)}</TD>
-                    <TD className="num text-right">{ksh(Number(row.tax_minor) / 100)}</TD>
+                    <TD className="num text-right">{ksh(Number(row.subtotal_minor) / 100, row.currency)}</TD>
+                    <TD className="num text-right">{ksh(Number(row.tax_minor) / 100, row.currency)}</TD>
                     <TD className="num text-right font-semibold">
-                      {ksh(Number(row.total_minor) / 100)}
+                      {ksh(Number(row.total_minor) / 100, row.currency)}
                     </TD>
                     <TD className="num text-right">
-                      {row.variance_minor === null ? "—" : ksh(Number(row.variance_minor) / 100)}
+                      {row.variance_minor === null
+                        ? "—"
+                        : ksh(Number(row.variance_minor) / 100, row.currency)}
                     </TD>
                     <TD>
                       <Status>{displayStatus(row.match_status ?? "Pending")}</Status>
@@ -220,7 +235,9 @@ function SupplierBills() {
           run(
             () => control.command("/api/seramet/procurement/supplier-invoices", body),
             "Supplier bill posted, matched and journalled to accounts payable.",
-          ).then(() => setEntryOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setEntryOpen(false);
+          })
         }
       />
     </AppShell>
@@ -251,7 +268,7 @@ function EnterSupplierBillDialog({
 }) {
   const [receiptId, setReceiptId] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(localDate());
+  const [invoiceDate, setInvoiceDate] = useState(currentDateKey());
   const [dueDate, setDueDate] = useState("");
   const [subtotal, setSubtotal] = useState("0");
   const [tax, setTax] = useState("0");
@@ -283,7 +300,7 @@ function EnterSupplierBillDialog({
   useEffect(() => {
     if (!open) {
       setInvoiceNumber("");
-      setInvoiceDate(localDate());
+      setInvoiceDate(currentDateKey());
       setDueDate("");
       setSubtotal("0");
       setTax("0");
@@ -318,7 +335,7 @@ function EnterSupplierBillDialog({
             >
               {receipts.map((row) => (
                 <option key={row.id} value={row.id}>
-                  {row.receipt_number} - {row.supplier_name} - {ksh(Number(row.total_minor) / 100)}
+                  {row.receipt_number} - {row.supplier_name} - {ksh(Number(row.total_minor) / 100, invoiceCurrency)}
                 </option>
               ))}
             </select>
@@ -357,7 +374,7 @@ function EnterSupplierBillDialog({
           </Field>
           <ReadOnlyField
             label="Receipt value"
-            value={receipt ? ksh(Number(receipt.total_minor) / 100) : "—"}
+            value={receipt ? ksh(Number(receipt.total_minor) / 100, invoiceCurrency) : "—"}
           />
           <Field label="Invoice subtotal">
             <input
@@ -380,13 +397,16 @@ function EnterSupplierBillDialog({
         <div className="grid gap-3 rounded-lg border border-border bg-secondary/30 p-3 sm:grid-cols-3">
           <Evidence
             label="PO total"
-            value={purchaseOrder ? ksh(Number(purchaseOrder.total_minor) / 100) : "—"}
+            value={purchaseOrder ? ksh(Number(purchaseOrder.total_minor) / 100, invoiceCurrency) : "—"}
           />
           <Evidence
             label="Accepted receipt"
-            value={receipt ? ksh(Number(receipt.total_minor) / 100) : "—"}
+            value={receipt ? ksh(Number(receipt.total_minor) / 100, invoiceCurrency) : "—"}
           />
-          <Evidence label="Invoice total" value={total === null ? "Invalid" : ksh(total)} />
+          <Evidence
+            label="Invoice total"
+            value={total === null ? "Invalid" : ksh(total, invoiceCurrency)}
+          />
         </div>
 
         {!receipts.length && (
@@ -475,14 +495,6 @@ function displayStatus(value: string) {
 function nonNegative(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function localDate() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function addDays(date: string, days: number) {
