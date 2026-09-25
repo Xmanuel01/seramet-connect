@@ -107,24 +107,25 @@ function Customers() {
         : null,
     [appliedQuery, branchId, canView, cursor, isAllBranches],
   );
+  const listKey = scopeKey + "|" + (listPath ?? "");
 
   useEffect(() => {
     if (!listPath) return;
     const controller = new AbortController();
-    setList({ path: listPath, status: "loading", page: null, error: "" });
+    setList({ path: listKey, status: "loading", page: null, error: "" });
     void request<CustomerPage>(listPath, { signal: controller.signal })
       .then((page) => {
         if (!controller.signal.aborted) {
-          setList({ path: listPath, status: "ready", page, error: "" });
+          setList({ path: listKey, status: "ready", page, error: "" });
         }
       })
       .catch((cause) => {
         if (!controller.signal.aborted) {
-          setList({ path: listPath, status: "error", page: null, error: errorMessage(cause) });
+          setList({ path: listKey, status: "error", page: null, error: errorMessage(cause) });
         }
       });
     return () => controller.abort();
-  }, [listPath, request, revision]);
+  }, [listKey, listPath, request, revision]);
 
   const profileKey = scopeKey + ":" + (selectedId ?? "");
   useEffect(() => {
@@ -152,7 +153,7 @@ function Customers() {
     return () => controller.abort();
   }, [canView, profileKey, profileRevision, request, selectedId]);
 
-  const visibleList = listPath && list.path === listPath ? list : null;
+  const visibleList = listPath && list.path === listKey ? list : null;
   const customer =
     profile.key === profileKey && profile.status === "ready" ? profile.customer : null;
 
