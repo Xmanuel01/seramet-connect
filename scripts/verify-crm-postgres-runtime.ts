@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { CampaignService } from "@/crm/campaign-service";
 import { CrmLeadService } from "@/crm/crm-lead-service";
+import { OnboardingService } from "@/onboarding/onboarding-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import { PostgresD1Database } from "@/server/database/postgres-database";
@@ -66,7 +67,12 @@ try {
   assert.equal((await service.history(created.lead.id)).length, 2);
   const campaignRows = await new CampaignService(db, actor).listCampaigns(seeded.id);
   assert.deepEqual(campaignRows, []);
-  console.log("Authoritative CRM pipeline read/write and scoped campaign SQL on PostgreSQL: PASS");
+  const setup = new OnboardingService(db, actor, {});
+  assert.deepEqual(await setup.listMenuCatalog(seeded.id), []);
+  assert.deepEqual(await setup.listMenuCatalog(), []);
+  console.log(
+    "Authoritative CRM pipeline, scoped campaign and menu catalogue SQL on PostgreSQL: PASS",
+  );
 } finally {
   await db.close();
 }
