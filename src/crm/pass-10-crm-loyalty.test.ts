@@ -273,10 +273,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     });
     const restricted = new CrmService(
       db,
-      testActor(tenantId, branchId, [
-        permissions.crmCustomerView,
-        permissions.crmCustomerManage,
-      ]),
+      testActor(tenantId, branchId, [permissions.crmCustomerView, permissions.crmCustomerManage]),
     );
     const profile = await restricted.customerProfile("customer-demo-001");
     const notes = profile.notes.map((item) => item.note);
