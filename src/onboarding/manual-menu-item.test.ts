@@ -40,6 +40,29 @@ describe("Manual menu creation reuses the authoritative import contract", () => 
     expect(() => createManualMenuCsv({ ...item, basePrice: "450;DROP" })).toThrow(/price/);
   });
 
+  it("serializes real branch price, online price, tax and recipe settings", () => {
+    const csv = createManualMenuCsv({
+      ...item,
+      branchPrice: "475.00",
+      onlinePrice: "520.00",
+      taxCode: "VAT",
+      unitOfMeasure: "PCS",
+      recipeCode: "RCP-PILAU",
+      serviceChargeApplicable: true,
+    });
+    const values = csv.split("\\n")[1]!.split(",");
+    const row = Object.fromEntries(menuImportHeaders.map((header, i) => [header, values[i]]));
+    expect(row).toMatchObject({
+      branchPrice: "475.00",
+      onlinePrice: "520.00",
+      taxCode: "VAT",
+      unitOfMeasure: "PCS",
+      recipeCode: "RCP-PILAU",
+      serviceChargeApplicable: "true",
+    });
+    expect(() => createManualMenuCsv({ ...item, onlinePrice: "-100" })).toThrow(/Online price/);
+  });
+
   it("escapes spreadsheet formula-looking values before serialization", () => {
     const csv = createManualMenuCsv({ ...item, name: "=HYPERLINK()", description: "+command" });
     expect(csv).toContain("'=HYPERLINK()");
