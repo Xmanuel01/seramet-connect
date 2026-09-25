@@ -108,6 +108,32 @@ export type ProcurementReceiptRow = {
   total_minor: number;
 };
 
+export type ProcurementSupplierInvoiceRow = {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  purchase_order_id: string | null;
+  purchase_order_number: string | null;
+  goods_receipt_id: string | null;
+  receipt_number: string | null;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string | null;
+  currency: string;
+  subtotal_minor: number;
+  tax_minor: number;
+  total_minor: number;
+  status: string;
+  journal_entry_id: string | null;
+  created_at: string;
+  updated_at: string;
+  match_status: string | null;
+  ordered_total_minor: number | null;
+  received_total_minor: number | null;
+  invoiced_total_minor: number | null;
+  variance_minor: number | null;
+};
+
 export type ProcurementSupplierRow = {
   id: string;
   code: string;
@@ -224,6 +250,7 @@ export type InventoryBranchPayload = {
     supplierItems: ProcurementSupplierItemRow[];
     requisitions: ProcurementRequisitionRow[];
     receipts: ProcurementReceiptRow[];
+    supplierInvoices: ProcurementSupplierInvoiceRow[];
   };
   controlCentre: FoodCostControlData;
 };
