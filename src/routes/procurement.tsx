@@ -401,8 +401,8 @@ function Procurement() {
                   ? `${selected.number} approved.`
                   : `${selected.number} cancelled with audit history.`,
               ).then((succeeded) => {
-            if (succeeded) setOrderAction(null);
-          })
+                if (succeeded) setOrderAction(null);
+              })
             : Promise.resolve()
         }
       />
