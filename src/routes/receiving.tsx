@@ -428,7 +428,9 @@ function Receiving() {
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                   Accepted value
                 </div>
-                <div className="num text-[18px] font-bold">{ksh(acceptedMinor / 100, po.currency)}</div>
+                <div className="num text-[18px] font-bold">
+                  {ksh(acceptedMinor / 100, po.currency)}
+                </div>
               </div>
             </div>
           </>
