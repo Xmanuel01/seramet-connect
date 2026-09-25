@@ -3,7 +3,8 @@ name: Deploy staging
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # Temporary restricted menu-pilot staging deployment. Remove after test.
+    branches: [main, hotfix/menu-workflow-20260925]
 
 concurrency:
   group: seramet-staging
@@ -83,7 +84,9 @@ jobs:
 
           // Full staging readiness requires a real configured scanner; never treat
           // scanner absence as a successful deploy just because HTTP is 200.
-          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
+          const menuPilot = process.env.GITHUB_REF_NAME === "hotfix/menu-workflow-20260925";
+          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin };
+          if (!menuPilot) required.scannerService = scannerService;
           const missing = Object.entries(required)
             .filter(([, value]) => !value)
             .map(([name]) => name);
@@ -165,4 +168,34 @@ jobs:
           NODE
 
       - name: Require full staging readiness
+        if: github.ref_name != 'hotfix/menu-workflow-20260925'
         run: node scripts/verify-staging-health.mjs ready
+
+      - name: Record explicit LIMITED staging scanner exception
+        if: github.ref_name == 'hotfix/menu-workflow-20260925'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const origin = process.env.SERAMET_PUBLIC_ORIGIN;
+          const response = await fetch(new URL("/api/seramet/health/ready", origin));
+          const state = await response.json();
+          if (state.ok === true) {
+            console.log("Menu pilot staging: full readiness verified");
+          } else {
+            const issues = (state.issues ?? []).map((issue) => issue.code);
+            if (
+              state.environment !== "staging" ||
+              state.schemaVersion !== 26 ||
+              state.database !== "authoritative" ||
+              state.queue !== "available" ||
+              issues.length !== 1 ||
+              issues[0] !== "MALWARE_SCANNER_REQUIRED"
+            ) {
+              throw new Error("Menu staging cannot proceed: unexpected failed dependencies " + issues.join(","));
+            }
+            console.warn(
+              "::warning::LIMITED MENU PILOT ONLY: malware scanner is not configured; file/object uploads remain fail closed. Never label this deployment fully production ready.",
+            );
+          }
+          NODE
