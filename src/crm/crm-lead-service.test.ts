@@ -97,8 +97,17 @@ describe("CRM lead pipeline real workflow", () => {
         stage: "CONTACTED",
         expectedVersion: created.lead.version,
         requestKey: "lead-contacted",
+        nextAction: "Schedule tasting",
       }),
     ).resolves.toMatchObject({ duplicate: true });
+    await expect(
+      service.update(created.lead.id, {
+        stage: "CONTACTED",
+        expectedVersion: created.lead.version,
+        requestKey: "lead-contacted",
+        nextAction: "Different payload using the same key",
+      }),
+    ).rejects.toThrow(/different change/);
     const qualified = await service.update(created.lead.id, {
       stage: "QUALIFIED",
       expectedVersion: contacted.lead.version,
@@ -123,6 +132,7 @@ describe("CRM lead pipeline real workflow", () => {
       reason: "Agreement signed",
     });
     expect(won.lead.stage).toBe("WON");
+    expect((await service.create(input)).duplicate).toBe(true);
     await expect(
       service.update(created.lead.id, {
         stage: "LOST",
