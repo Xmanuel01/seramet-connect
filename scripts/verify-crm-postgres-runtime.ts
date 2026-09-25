@@ -36,6 +36,7 @@ try {
       permissions.crmCustomerManage,
       permissions.crmCustomerContactView,
       permissions.campaignView,
+      permissions.setupView,
     ],
     assignedBranchIds: [seeded.id],
     assignedBranches: [{ id: seeded.id, name: "CI Branch" }],
