@@ -681,11 +681,7 @@ export class InventoryIntelligenceService {
         .bind(this.actor.tenantId, input.requisitionId)
         .first<{ branch_id: string; warehouse_id: string; status: string }>();
       if (!requisition) {
-        throw new ServerOperationError(
-          "VALIDATION_FAILED",
-          404,
-          "Purchase requisition not found",
-        );
+        throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase requisition not found");
       }
       if (
         requisition.branch_id !== input.branchId ||
@@ -722,10 +718,7 @@ export class InventoryIntelligenceService {
           );
         }
         requisitionLinesByItem.set(requisitionLine.inventory_item_id, requisitionLine);
-        projectedRequisitionOrdered.set(
-          requisitionLine.id,
-          requisitionLine.ordered_quantity_minor,
-        );
+        projectedRequisitionOrdered.set(requisitionLine.id, requisitionLine.ordered_quantity_minor);
       }
     }
     statements.push(
