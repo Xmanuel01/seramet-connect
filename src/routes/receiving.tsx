@@ -35,8 +35,7 @@ function Receiving() {
     }
   }, [available, selectedId]);
 
-  const purchaseOrder =
-    available.find((row) => row.id === selectedId) ?? available[0];
+  const purchaseOrder = available.find((row) => row.id === selectedId) ?? available[0];
 
   useEffect(() => {
     if (!purchaseOrder) {
@@ -50,8 +49,7 @@ function Receiving() {
           line.id,
           Math.max(
             0,
-            (Number(line.ordered_quantity_minor) -
-              Number(line.received_purchase_quantity_minor)) /
+            (Number(line.ordered_quantity_minor) - Number(line.received_purchase_quantity_minor)) /
               1_000_000,
           ),
         ]),
@@ -62,8 +60,7 @@ function Receiving() {
   const worksheet = (purchaseOrder?.lines ?? []).map((line) => {
     const remaining = Math.max(
       0,
-      (Number(line.ordered_quantity_minor) -
-        Number(line.received_purchase_quantity_minor)) /
+      (Number(line.ordered_quantity_minor) - Number(line.received_purchase_quantity_minor)) /
         1_000_000,
     );
     const receiveNow = Math.max(0, Number(quantities[line.id] ?? 0));
@@ -80,10 +77,7 @@ function Receiving() {
     (sum, line) => sum + line.remaining * Number(line.unit_price_minor),
     0,
   );
-  const receivingValueMinor = worksheet.reduce(
-    (sum, line) => sum + line.valueMinor,
-    0,
-  );
+  const receivingValueMinor = worksheet.reduce((sum, line) => sum + line.valueMinor, 0);
 
   async function postReceipt() {
     if (!purchaseOrder) return;
@@ -112,8 +106,7 @@ function Receiving() {
         warehouseId: purchaseOrder.warehouse_id,
         purchaseOrderId: purchaseOrder.id,
         supplierId: purchaseOrder.supplier_id,
-        idempotencyKey:
-          "receipt:" + purchaseOrder.id + ":" + crypto.randomUUID(),
+        idempotencyKey: "receipt:" + purchaseOrder.id + ":" + crypto.randomUUID(),
         lines,
       });
       setNotice(
@@ -166,11 +159,7 @@ function Receiving() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Expected value" value={Math.round(expectedValueMinor) / 100} money />
-        <Metric
-          label="Receive now"
-          value={Math.round(receivingValueMinor) / 100}
-          money
-        />
+        <Metric label="Receive now" value={Math.round(receivingValueMinor) / 100} money />
         <Metric label="Open POs" value={available.length} />
         <Metric label="Lines checked" value={worksheet.length} />
       </div>
@@ -188,11 +177,7 @@ function Receiving() {
             control.error ||
             "Partial receipt, over-receipt policy and idempotency are enforced by the server"
           }
-          right={
-            <Status>
-              {purchaseOrder?.status?.replaceAll("_", " ") ?? "WAITING"}
-            </Status>
-          }
+          right={<Status>{purchaseOrder?.status?.replaceAll("_", " ") ?? "WAITING"}</Status>}
         />
         {!purchaseOrder ? (
           <div className="p-8 text-center text-[13px] text-muted-foreground">
@@ -237,9 +222,7 @@ function Receiving() {
                       className="num h-8 w-28 rounded-md border border-border bg-card px-2 text-right"
                     />
                   </TD>
-                  <TD className="num text-right font-semibold">
-                    {ksh(line.valueMinor / 100)}
-                  </TD>
+                  <TD className="num text-right font-semibold">{ksh(line.valueMinor / 100)}</TD>
                 </tr>
               ))}
             </tbody>
