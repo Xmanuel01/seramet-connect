@@ -44,7 +44,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(25);
+    expect(version?.version).toBe(26);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();
@@ -507,7 +507,7 @@ describe.sequential("Pass 5 production foundation", () => {
         }),
       ),
     );
-    expect(new Set(values.map((value) => value.number)).size).toBe(25);
+    expect(new Set(values.map((value) => value.number)).size).toBe(26);
   });
 
   it("keeps authoritative audit and confirmed payment records immutable", async () => {
