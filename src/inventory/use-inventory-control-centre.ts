@@ -94,6 +94,7 @@ export type ProcurementReceiptRow = {
   receipt_number: string;
   purchase_order_id: string;
   purchase_order_number: string;
+  currency: string;
   supplier_id: string;
   supplier_name: string;
   warehouse_id: string;
