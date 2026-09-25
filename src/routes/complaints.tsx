@@ -4,7 +4,12 @@ import { AppShell } from "@/components/app/AppShell";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
 import { CrmEmpty, CrmError, CrmLoading, readableStatus, shortDate } from "@/crm/crm-ui";
-import { crmErrorMessage, crmFieldClass, crmTextAreaClass, useCrmScreenQuery } from "@/crm/use-crm-screen";
+import {
+  crmErrorMessage,
+  crmFieldClass,
+  crmTextAreaClass,
+  useCrmScreenQuery,
+} from "@/crm/use-crm-screen";
 import { useCrmApi } from "@/crm/use-crm";
 import type { PosCustomerIdentity } from "@/crm/pos-customer-link";
 import { useAppContext } from "@/lib/app-context";
@@ -145,7 +150,10 @@ function Complaints() {
           )}
           {openForm && canManage && (
             <Panel className="mb-4">
-              <PanelHead title="Record a real feedback case" sub="Do not invent customer or order associations." />
+              <PanelHead
+                title="Record a real feedback case"
+                sub="Do not invent customer or order associations."
+              />
               <form onSubmit={submit} className="grid gap-3 p-4 md:grid-cols-2">
                 <label className="grid gap-1 text-[12px] font-medium">
                   Feedback category
@@ -155,9 +163,13 @@ function Complaints() {
                     value={categoryId || activeCategories[0]?.id || ""}
                     onChange={(event) => setCategoryId(event.target.value)}
                   >
-                    {activeCategories.length === 0 && <option value="">No categories configured</option>}
+                    {activeCategories.length === 0 && (
+                      <option value="">No categories configured</option>
+                    )}
                     {activeCategories.map((row) => (
-                      <option key={row.id} value={row.id}>{row.name}</option>
+                      <option key={row.id} value={row.id}>
+                        {row.name}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -198,7 +210,11 @@ function Complaints() {
                     rows={3}
                   />
                 </label>
-                <Btn variant="primary" type="submit" disabled={busy || activeCategories.length === 0}>
+                <Btn
+                  variant="primary"
+                  type="submit"
+                  disabled={busy || activeCategories.length === 0}
+                >
                   {busy ? "Recording..." : "Record feedback"}
                 </Btn>
               </form>
@@ -207,15 +223,16 @@ function Complaints() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Metric label="Visible feedback" value={visible.length} />
             <Metric label="Awaiting resolution" value={pending.length} />
-            <Metric label="Resolved" value={visible.filter((row) => row.status === "RESOLVED").length} />
+            <Metric
+              label="Resolved"
+              value={visible.filter((row) => row.status === "RESOLVED").length}
+            />
           </div>
           <Panel className="mt-4">
             <PanelHead
               title="Service cases"
               sub="Case status changes are audited; no synthetic severity or recovery metrics."
-              right={
-                <Btn onClick={feedback.refresh}>Refresh</Btn>
-              }
+              right={<Btn onClick={feedback.refresh}>Refresh</Btn>}
             />
             <div className="flex flex-wrap gap-3 border-b border-border p-4">
               <label className="text-[12px]">
@@ -234,7 +251,10 @@ function Complaints() {
             ) : feedback.status === "error" ? (
               <CrmError message={feedback.error} retry={feedback.refresh} />
             ) : visible.length === 0 ? (
-              <CrmEmpty title="No recorded cases" body="No feedback matches this branch and date." />
+              <CrmEmpty
+                title="No recorded cases"
+                body="No feedback matches this branch and date."
+              />
             ) : (
               <div className="divide-y divide-border">
                 {visible.map((row) => (
@@ -246,7 +266,8 @@ function Complaints() {
                     <p>{row.comment || "No written feedback supplied."}</p>
                     <p className="text-[12px] text-muted-foreground">
                       {row.display_name || "Anonymous customer"} · {row.survey_type} {row.rating}/10
-                      {" · "}{shortDate(row.submitted_at)}
+                      {" · "}
+                      {shortDate(row.submitted_at)}
                     </p>
                     {canManage && (
                       <Btn
@@ -268,7 +289,9 @@ function Complaints() {
                           <select
                             className={crmFieldClass}
                             value={resolutionStatus}
-                            onChange={(event) => setResolutionStatus(event.target.value as Resolution)}
+                            onChange={(event) =>
+                              setResolutionStatus(event.target.value as Resolution)
+                            }
                           >
                             <option value="IN_REVIEW">In review</option>
                             <option value="FOLLOW_UP">Follow up</option>
@@ -295,8 +318,12 @@ function Complaints() {
                           />
                         </label>
                         <div className="flex gap-2">
-                          <Btn variant="primary" type="submit" disabled={busy}>{busy ? "Saving..." : "Save status"}</Btn>
-                          <Btn type="button" onClick={() => setResolveId(null)}>Cancel</Btn>
+                          <Btn variant="primary" type="submit" disabled={busy}>
+                            {busy ? "Saving..." : "Save status"}
+                          </Btn>
+                          <Btn type="button" onClick={() => setResolveId(null)}>
+                            Cancel
+                          </Btn>
                         </div>
                       </form>
                     )}
