@@ -5309,8 +5309,21 @@ export class InventoryIntelligenceService {
     }
     const po = await this.db
       .prepare(
-        `SELECT branch_id,supplier_id,currency,total_minor
-         FROM purchase_orders WHERE tenant_id=? AND id=?`,
+        `SELECT po.branch_id,po.supplier_id,po.currency,po.total_minor,
+                COALESCE((
+                  SELECT SUM(
+                    ((COALESCE(pol.ordered_purchase_quantity_minor,pol.ordered_quantity_minor)
+                      * pol.unit_cost_minor) / 1000000) - pol.discount_minor
+                  )
+                  FROM purchase_order_lines pol
+                  WHERE pol.tenant_id=po.tenant_id AND pol.purchase_order_id=po.id
+                ),0) AS subtotal_minor,
+                COALESCE((
+                  SELECT SUM(pol.tax_minor)
+                  FROM purchase_order_lines pol
+                  WHERE pol.tenant_id=po.tenant_id AND pol.purchase_order_id=po.id
+                ),0) AS tax_minor
+         FROM purchase_orders po WHERE po.tenant_id=? AND po.id=?`,
       )
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .first<{
@@ -5318,6 +5331,8 @@ export class InventoryIntelligenceService {
         supplier_id: string | null;
         currency: string;
         total_minor: number;
+        subtotal_minor: number;
+        tax_minor: number;
       }>();
     if (!po) {
       throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase order not found");
@@ -5403,9 +5418,13 @@ export class InventoryIntelligenceService {
         ? "MISSING_DOCUMENT"
         : (quantities?.received ?? 0) !== (quantities?.ordered ?? 0)
           ? "QUANTITY_VARIANCE"
-          : receivedTotal !== po.total_minor || input.totalMinor !== po.total_minor
+          : receivedTotal !== po.subtotal_minor || input.subtotalMinor !== receivedTotal
             ? "PRICE_VARIANCE"
-            : "MATCHED";
+            : input.taxMinor !== po.tax_minor
+              ? "TAX_VARIANCE"
+              : input.totalMinor !== po.total_minor
+                ? "REVIEW_REQUIRED"
+                : "MATCHED";
     const id = input.id ?? crypto.randomUUID();
     const journalId = crypto.randomUUID();
     const matchId = crypto.randomUUID();
