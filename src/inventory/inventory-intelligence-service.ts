@@ -5596,14 +5596,31 @@ export class InventoryIntelligenceService {
       )
       .bind(branchId, this.actor.tenantId, pageSize)
       .all<Record<string, unknown>>();
-    const requisitions = await this.db
+    const requisitionHeaders = await this.db
       .prepare(
-        `SELECT id,requisition_number,status,source_type,required_at,created_at,approved_at
+        `SELECT id,warehouse_id,requisition_number,status,source_type,requested_by,required_at,
+                created_at,approved_by,approved_at,approval_reason
          FROM purchase_requisitions WHERE tenant_id=? AND branch_id=?
          ORDER BY created_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown>>();
+      .all<Record<string, unknown> & { id: string }>();
+    const requisitions = [];
+    for (const requisition of requisitionHeaders.results ?? []) {
+      const lines = await this.db
+        .prepare(
+          `SELECT prl.id,prl.inventory_item_id,i.name AS item_name,i.sku,
+                  prl.requested_quantity_minor,prl.ordered_quantity_minor,prl.unit_id,
+                  u.symbol AS unit_symbol,prl.notes
+           FROM purchase_requisition_lines prl
+           JOIN inventory_items i ON i.tenant_id=prl.tenant_id AND i.id=prl.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=prl.tenant_id AND u.id=prl.unit_id
+           WHERE prl.tenant_id=? AND prl.requisition_id=? ORDER BY prl.id`,
+        )
+        .bind(this.actor.tenantId, requisition.id)
+        .all<Record<string, unknown>>();
+      requisitions.push({ ...requisition, lines: lines.results ?? [] });
+    }
     const receipts = await this.db
       .prepare(
         `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
@@ -5619,7 +5636,7 @@ export class InventoryIntelligenceService {
       branchId,
       purchaseOrders: rows,
       suppliers: suppliers.results ?? [],
-      requisitions: requisitions.results ?? [],
+      requisitions,
       receipts: receipts.results ?? [],
     };
   }
