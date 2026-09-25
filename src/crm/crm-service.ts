@@ -838,7 +838,9 @@ export class CrmService extends CrmServiceBase {
       .first<{ effective_at: string }>();
     const stamp =
       input.effectiveAt ??
-      new Date(Math.max(Date.now(), latest ? Date.parse(latest.effective_at) + 1 : 0)).toISOString();
+      new Date(
+        Math.max(Date.now(), latest ? Date.parse(latest.effective_at) + 1 : 0),
+      ).toISOString();
     const id = crypto.randomUUID();
     const correlationId = crypto.randomUUID();
     const statements = [
