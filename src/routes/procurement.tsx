@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, type ReactNode } from "react";
 import { ClipboardCheck, PackageCheck, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -49,84 +49,37 @@ type DisplayOrder = {
 
 function Procurement() {
   const { branchId, branchLabel, currency } = useAppContext();
-  const { state, mutate, persistenceMode, backendStatus } = useTransactionEngine();
+  const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
   const [selectedId, setSelectedId] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [receiveOpen, setReceiveOpen] = useState(false);
+
   const [orderAction, setOrderAction] = useState<"approve" | "cancel" | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const serverData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
 
-  const orders = useMemo<DisplayOrder[]>(() => {
-    if (authoritative) return (serverData?.procurement.purchaseOrders ?? []).map(serverOrder);
-    return state.purchaseOrders
-      .filter(
-        (order) =>
-          (order.branchId ?? order.branch) === branchId ||
-          order.branch === branchLabel.replace(" Branch", ""),
-      )
-      .map((order) => ({
-        id: order.id,
-        number: order.id,
-        supplier: order.supplier,
-        supplierId: order.supplier,
-        warehouseId: "",
-        status: order.status,
-        currency,
-        totalMinor: Math.round(order.total * 100),
-        expectedAt: order.expectedAt,
-        lines: order.lines.map((line, index) => ({
-          id: `${order.id}:${index}`,
-          itemId: line.sku,
-          item: line.name,
-          unit: line.unit,
-          orderedMicro: Math.round(line.quantity * 1_000_000),
-          receivedMicro: Math.round(line.receivedQuantity * 1_000_000),
-          unitPriceMinor: Math.round(line.unitCost * 100),
-          totalMinor: Math.round(line.quantity * line.unitCost * 100),
-        })),
-      }));
-  }, [
-    authoritative,
-    branchId,
-    branchLabel,
-    serverData?.procurement.purchaseOrders,
-    state.purchaseOrders,
-    currency,
-  ]);
+  const orders: DisplayOrder[] = (serverData?.procurement.purchaseOrders ?? []).map(serverOrder);
   const selected = orders.find((order) => order.id === selectedId) ?? orders[0];
-  const suppliers = authoritative
-    ? (serverData?.procurement.suppliers ?? [])
-    : Array.from(new Set(orders.map((order) => order.supplier))).map((name) => ({
-        id: name,
-        code: name,
-        name,
-        lead_time_days: 0,
-        payment_terms_days: 0,
-        currency,
-        order_count: orders.filter((order) => order.supplier === name).length,
-        ordered_minor: orders
-          .filter((order) => order.supplier === name)
-          .reduce((sum, order) => sum + order.totalMinor, 0),
-        outstanding_minor: orders
-          .filter(
-            (order) => order.supplier === name && !["RECEIVED", "CANCELLED"].includes(order.status),
-          )
-          .reduce((sum, order) => sum + order.totalMinor, 0),
-        on_time_count: 0,
-        received_count: 0,
-      }));
+  const suppliers = serverData?.procurement.suppliers ?? [];
   const openOrders = orders.filter((order) => !["RECEIVED", "CANCELLED"].includes(order.status));
   const approvalCount = orders.filter((order) =>
     ["DRAFT", "SUBMITTED", "PENDING_APPROVAL"].includes(order.status),
   ).length;
-  const outstandingMinor = suppliers.reduce(
-    (sum, supplier) => sum + Number(supplier.outstanding_minor),
-    0,
-  );
+  const commitmentsByCurrency = new Map<string, number>();
+  for (const order of openOrders) {
+    commitmentsByCurrency.set(
+      order.currency,
+      (commitmentsByCurrency.get(order.currency) ?? 0) + order.totalMinor,
+    );
+  }
+  const commitmentAmount =
+    commitmentsByCurrency.size > 1
+      ? "Multiple currencies"
+      : ksh(
+          [...commitmentsByCurrency.values()][0] ?? 0,
+          [...commitmentsByCurrency.keys()][0] ?? currency,
+        );
 
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
@@ -149,26 +102,12 @@ function Procurement() {
       subtitle={`${branchLabel} purchase-to-pay control  -  ${openOrders.length} open purchase orders`}
       actions={
         <>
-          <Btn disabled={!selected || busy} onClick={() => setReceiveOpen(true)}>
-            <PackageCheck className="h-4 w-4" /> Receiving
-          </Btn>
-          <Btn
-            variant="primary"
-            disabled={busy}
-            onClick={() => {
-              if (authoritative) setCreateOpen(true);
-              else
-                void run(
-                  async () =>
-                    mutate("generatePurchaseOrders", {
-                      branch: branchLabel.replace(" Branch", ""),
-                    }),
-                  "Purchase recommendations converted to draft orders.",
-                );
-            }}
-          >
-            <Plus className="h-4 w-4" /> New purchase order
-          </Btn>
+          <Link to="/receiving">
+            <Btn><PackageCheck className="h-4 w-4" /> Receiving</Btn>
+          </Link>
+          <Link to="/purchase-orders">
+            <Btn variant="primary"><Plus className="h-4 w-4" /> Purchase orders</Btn>
+          </Link>
         </>
       }
     >
@@ -183,23 +122,21 @@ function Procurement() {
             ).length
           }
         />
-        <Metric label="Supplier commitments" value={Math.round(outstandingMinor / 100)} money />
+        <Metric label="Open commitments (recent)" value={commitmentAmount} />
         <Metric label="Suppliers" value={suppliers.length} />
         <Metric
-          label="Receipts recorded"
+          label="Recent receipts"
           value={
-            serverData?.procurement.receipts.length ??
-            orders.filter((order) => order.status === "RECEIVED").length
+            serverData?.procurement.receipts.length ?? 0
           }
         />
       </div>
 
-      {(notice || control.error) && (
+      {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice || control.error}{" "}
-          {authoritative
-            ? `Server: ${control.status}.`
-            : `Development repository: ${backendStatus}.`}
+          {!authoritative
+            ? `Procurement requires the authoritative server database. Backend: ${backendStatus}.`
+            : notice || control.error}
         </div>
       )}
 
@@ -230,7 +167,7 @@ function Procurement() {
                     {order.supplier}
                   </div>
                   <div className="num mt-1 text-[12px] font-semibold">
-                    {ksh(order.totalMinor / 100)}
+                    {ksh(order.totalMinor / 100, order.currency)}
                   </div>
                 </button>
               </li>
@@ -276,9 +213,9 @@ function Procurement() {
                         <TD className="num text-right">
                           {formatQuantity(line.receivedMicro)} {line.unit}
                         </TD>
-                        <TD className="num text-right">{ksh(line.unitPriceMinor / 100)}</TD>
+                        <TD className="num text-right">{ksh(line.unitPriceMinor / 100, selected.currency)}</TD>
                         <TD className="num text-right font-semibold">
-                          {ksh(line.totalMinor / 100)}
+                          {ksh(line.totalMinor / 100, selected.currency)}
                         </TD>
                       </tr>
                     ))}
@@ -289,7 +226,7 @@ function Procurement() {
                 <div className="text-[13px] text-muted-foreground">
                   Total{" "}
                   <span className="num text-[16px] font-bold text-foreground">
-                    {ksh(selected.totalMinor / 100)}
+                    {ksh(selected.totalMinor / 100, selected.currency)}
                   </span>
                 </div>
                 <div className="flex gap-2">
@@ -324,7 +261,7 @@ function Procurement() {
             <thead>
               <tr>
                 <TH>Supplier</TH>
-                <TH className="text-right">Spend</TH>
+                <TH className="text-right">POs</TH>
                 <TH className="text-right">On-time</TH>
               </tr>
             </thead>
@@ -342,7 +279,7 @@ function Procurement() {
                         Lead {supplier.lead_time_days} days
                       </div>
                     </TD>
-                    <TD className="num text-right">{ksh(Number(supplier.ordered_minor) / 100)}</TD>
+                    <TD className="num text-right">{supplier.order_count}</TD>
                     <TD className="num text-right">{received ? `${onTime}%` : "-"}</TD>
                   </tr>
                 );
@@ -352,37 +289,6 @@ function Procurement() {
         </Panel>
       </div>
 
-      <CreatePurchaseOrderDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        branchId={branchId}
-        currency={currency}
-        data={serverData}
-        busy={busy}
-        onSubmit={(body) =>
-          run(
-            () => control.command("/api/seramet/procurement/purchase-orders", body),
-            "Purchase order created as a draft.",
-          ).then((succeeded) => {
-            if (succeeded) setCreateOpen(false);
-          })
-        }
-      />
-      <ReceiveOrderDialog
-        open={receiveOpen}
-        onOpenChange={setReceiveOpen}
-        order={selected}
-        branchId={branchId}
-        busy={busy}
-        onSubmit={(body) =>
-          run(
-            () => control.command("/api/seramet/procurement/goods-receipts", body),
-            "Goods receipt posted and inventory updated.",
-          ).then((succeeded) => {
-            if (succeeded) setReceiveOpen(false);
-          })
-        }
-      />
       <OrderActionDialog
         open={orderAction !== null}
         action={orderAction}
@@ -432,196 +338,6 @@ function serverOrder(order: ProcurementOrderRow): DisplayOrder {
       totalMinor: Number(line.line_total_minor),
     })),
   };
-}
-
-type BranchData = ReturnType<typeof useInventoryControlCentre>["data"][number];
-
-function CreatePurchaseOrderDialog({
-  open,
-  onOpenChange,
-  branchId,
-  currency,
-  data,
-  busy,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  branchId: string;
-  currency: string;
-  data: BranchData | undefined;
-  busy: boolean;
-  onSubmit: (body: unknown) => Promise<void>;
-}) {
-  const [supplierId, setSupplierId] = useState("");
-  const [itemId, setItemId] = useState("");
-  const [quantity, setQuantity] = useState("1");
-  const [unitPrice, setUnitPrice] = useState("0");
-  const supplier =
-    data?.procurement.suppliers.find((row) => row.id === supplierId) ??
-    data?.procurement.suppliers[0];
-  const item = data?.items.find((row) => row.id === itemId) ?? data?.items[0];
-  const valid =
-    supplier && item?.purchase_unit_id && Number(quantity) > 0 && Number(unitPrice) >= 0;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>New purchase order</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Supplier">
-            <select
-              value={supplier?.id ?? ""}
-              onChange={(event) => setSupplierId(event.target.value)}
-              className={inputClass}
-            >
-              {data?.procurement.suppliers.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Inventory item">
-            <select
-              value={item?.id ?? ""}
-              onChange={(event) => setItemId(event.target.value)}
-              className={inputClass}
-            >
-              {data?.items.map((row) => (
-                <option key={`${row.warehouse_id}:${row.id}`} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Purchase quantity">
-            <input
-              value={quantity}
-              onChange={(event) => setQuantity(event.target.value)}
-              inputMode="decimal"
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Unit price">
-            <input
-              value={unitPrice}
-              onChange={(event) => setUnitPrice(event.target.value)}
-              inputMode="decimal"
-              className={inputClass}
-            />
-          </Field>
-        </div>
-        {!item?.purchase_unit_id && (
-          <p className="text-[12px] text-warning">
-            The selected item needs a purchase unit and conversion before ordering.
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Btn onClick={() => onOpenChange(false)}>Close</Btn>
-          <Btn
-            variant="primary"
-            disabled={!valid || busy}
-            onClick={() =>
-              valid &&
-              void onSubmit({
-                branchId,
-                warehouseId: item.warehouse_id,
-                supplierId: supplier.id,
-                currency: supplier.currency || currency,
-                overReceiptPolicy: "REJECT_OVER_RECEIPT",
-                lines: [
-                  {
-                    inventoryItemId: item.id,
-                    purchaseUnitId: item.purchase_unit_id,
-                    quantityMicro: Math.round(Number(quantity) * 1_000_000),
-                    unitPriceMinor: Math.round(Number(unitPrice) * 100),
-                  },
-                ],
-              })
-            }
-          >
-            Create draft
-          </Btn>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ReceiveOrderDialog({
-  open,
-  onOpenChange,
-  order,
-  branchId,
-  busy,
-  onSubmit,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  order: DisplayOrder | undefined;
-  branchId: string;
-  busy: boolean;
-  onSubmit: (body: unknown) => Promise<void>;
-}) {
-  const receivable = order?.lines.filter((line) => line.orderedMicro > line.receivedMicro) ?? [];
-  const valid =
-    order &&
-    ["APPROVED", "PARTIALLY_RECEIVED", "PARTIAL"].includes(order.status) &&
-    receivable.length > 0;
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Receive {order?.number ?? "purchase order"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-2">
-          {receivable.map((line) => (
-            <div
-              key={line.id}
-              className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-[13px]"
-            >
-              <span>{line.item}</span>
-              <span className="num font-semibold">
-                {formatQuantity(line.orderedMicro - line.receivedMicro)} {line.unit}
-              </span>
-            </div>
-          ))}
-        </div>
-        {!valid && (
-          <p className="text-[12px] text-warning">
-            Only approved orders with outstanding quantities can be received.
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <Btn onClick={() => onOpenChange(false)}>Close</Btn>
-          <Btn
-            variant="primary"
-            disabled={!valid || busy}
-            onClick={() =>
-              valid &&
-              void onSubmit({
-                branchId,
-                warehouseId: order.warehouseId,
-                purchaseOrderId: order.id,
-                supplierId: order.supplierId,
-                idempotencyKey: crypto.randomUUID(),
-                lines: receivable.map((line) => ({
-                  purchaseOrderLineId: line.id,
-                  receivedPurchaseQuantityMicro: line.orderedMicro - line.receivedMicro,
-                  acceptedPurchaseQuantityMicro: line.orderedMicro - line.receivedMicro,
-                  unitPriceMinor: line.unitPriceMinor,
-                })),
-              })
-            }
-          >
-            <PackageCheck className="h-4 w-4" /> Post receipt
-          </Btn>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 function OrderActionDialog({
