@@ -82,15 +82,10 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       originalName: "existing-pos-menu.csv",
       mimeType: "text/csv",
       bytes: new TextEncoder().encode(
-        "Item Code,Product Name,Category,Price\\nPL-001,Beef pilau,MAINS,450",
+        "Item Code,Product Name,Category,Price\nPL-001,Beef pilau,MAINS,450",
       ),
     });
-    expect(inspection.sourceHeaders).toEqual([
-      "Item Code",
-      "Product Name",
-      "Category",
-      "Price",
-    ]);
+    expect(inspection.sourceHeaders).toEqual(["Item Code", "Product Name", "Category", "Price"]);
     expect(inspection.suggestedMap).toMatchObject({
       itemCode: "Item Code",
       categoryCode: "Category",
@@ -1034,7 +1029,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("requires authentication before any setup API route is dispatched", async () => {
     await expect(
       handleOnboardingApi(new Request("https://seramet.test/api/seramet/setup/centre"), env),
-    ).rejects.toMatchObject({ status: 401, message: "Bearer authentication required" });
+    ).rejects.toMatchObject({ status: 401, message: "*** required" });
   });
 
   it("enforces tenant isolation for configuration, imports and exports", async () => {

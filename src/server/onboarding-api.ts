@@ -209,7 +209,11 @@ export async function handleOnboardingApi(
       referenceMap?: { stations?: Record<string, string> };
     }>(request, importPreviewRequestSchema, 30 * 1024 * 1024);
     if (body.kind !== "MENU") {
-      throw new ServerOperationError("VALIDATION_FAILED", 400, "Only menu files support column inspection");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Only menu files support column inspection",
+      );
     }
     return json({
       ok: true,

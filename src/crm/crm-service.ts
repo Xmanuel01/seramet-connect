@@ -826,7 +826,22 @@ export class CrmService extends CrmServiceBase {
     this.require(permissions.crmCustomerManage);
     const customerId = await this.resolveCanonicalId(input.customerId);
     await this.assertCustomerVisible(customerId);
-    const stamp = input.effectiveAt ?? new Date().toISOString();
+    // Distinct sequential events may arrive within the same millisecond. Ensure
+    // a later automatic event strictly supersedes the preceding consent entry
+    // instead of arbitrarily sorting equal timestamps by random UUID.
+    const latest = await this.db
+      .prepare(
+        `SELECT effective_at FROM customer_consents
+         WHERE tenant_id=? AND customer_id=? AND channel=?
+         ORDER BY effective_at DESC,created_at DESC,id DESC LIMIT 1`,
+      )
+      .bind(this.actor.tenantId, customerId, input.channel)
+      .first<{ effective_at: string }>();
+    const clock = Date.now();
+    const latestMs = latest ? Date.parse(latest.effective_at) : Number.NEGATIVE_INFINITY;
+    const stamp =
+      input.effectiveAt ??
+      new Date(Math.max(clock, Number.isFinite(latestMs) ? latestMs + 1 : clock)).toISOString();
     const id = crypto.randomUUID();
     const correlationId = crypto.randomUUID();
     const statements = [

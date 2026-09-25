@@ -1176,11 +1176,13 @@ export class OnboardingService {
     return {
       sourceHeaders,
       suggestedMap,
-      samples: rows.slice(0, 3).map((row) =>
-        Object.fromEntries(
-          sourceHeaders.map((header) => [header, String(row[header] ?? "").slice(0, 240)]),
+      samples: rows
+        .slice(0, 3)
+        .map((row) =>
+          Object.fromEntries(
+            sourceHeaders.map((header) => [header, String(row[header] ?? "").slice(0, 240)]),
+          ),
         ),
-      ),
     };
   }
 

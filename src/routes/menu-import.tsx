@@ -63,7 +63,9 @@ function MenuImport() {
     if (!query) return centre.menuCatalog;
     return centre.menuCatalog.filter((item) =>
       [item.code, item.sku, item.name, item.category_code].some((value) =>
-        String(value ?? "").toLowerCase().includes(query),
+        String(value ?? "")
+          .toLowerCase()
+          .includes(query),
       ),
     );
   }, [catalogQuery, centre.menuCatalog]);
@@ -126,7 +128,11 @@ function MenuImport() {
       subtitle="Manage real POS items with manual creation or a verified spreadsheet import"
       actions={
         <>
-          <Btn variant="primary" disabled={!canManageMenu || busy} onClick={() => setDialogMode("manual")}>
+          <Btn
+            variant="primary"
+            disabled={!canManageMenu || busy}
+            onClick={() => setDialogMode("manual")}
+          >
             <Plus className="h-4 w-4" />
             Add item
           </Btn>
@@ -148,7 +154,10 @@ function MenuImport() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Metric label="Catalog items" value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"} />
+        <Metric
+          label="Catalog items"
+          value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"}
+        />
         <Metric label="Rows read" value={preview?.rowCount ?? 0} />
         <Metric label="Valid" value={preview?.validCount ?? 0} />
         <Metric label="Warnings" value={preview?.warningCount ?? 0} />
@@ -197,7 +206,11 @@ function MenuImport() {
             right={<FileSpreadsheet className="h-4 w-4 text-primary" />}
           />
           <div className="flex flex-wrap items-center gap-2 p-4">
-            <Btn variant="primary" disabled={!canManageMenu || busy} onClick={() => setDialogMode("manual")}>
+            <Btn
+              variant="primary"
+              disabled={!canManageMenu || busy}
+              onClick={() => setDialogMode("manual")}
+            >
               <Plus className="h-4 w-4" />
               Add menu item
             </Btn>
@@ -546,8 +559,6 @@ function Pagination({
     </div>
   );
 }
-
-
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
