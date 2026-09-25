@@ -134,8 +134,10 @@ function Procurement() {
     try {
       await operation();
       setNotice(success);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Procurement operation failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -361,7 +363,9 @@ function Procurement() {
           run(
             () => control.command("/api/seramet/procurement/purchase-orders", body),
             "Purchase order created as a draft.",
-          ).then(() => setCreateOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setCreateOpen(false);
+          })
         }
       />
       <ReceiveOrderDialog
@@ -374,7 +378,9 @@ function Procurement() {
           run(
             () => control.command("/api/seramet/procurement/goods-receipts", body),
             "Goods receipt posted and inventory updated.",
-          ).then(() => setReceiveOpen(false))
+          ).then((succeeded) => {
+            if (succeeded) setReceiveOpen(false);
+          })
         }
       />
       <OrderActionDialog
@@ -394,7 +400,9 @@ function Procurement() {
                 action === "approve"
                   ? `${selected.number} approved.`
                   : `${selected.number} cancelled with audit history.`,
-              ).then(() => setOrderAction(null))
+              ).then((succeeded) => {
+            if (succeeded) setOrderAction(null);
+          })
             : Promise.resolve()
         }
       />
