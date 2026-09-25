@@ -251,6 +251,10 @@ export class LoyaltyValueService extends CrmServiceBase {
     effectiveTo?: string;
   }) {
     this.require(permissions.loyaltyManage);
+    if (!this.actor.branchId) {
+      throw new CrmDomainError("VALIDATION_FAILED", "Select a branch before changing loyalty");
+    }
+    await this.programForBranch(input.programId, this.actor.branchId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -315,6 +319,10 @@ export class LoyaltyValueService extends CrmServiceBase {
     validTo?: string;
   }) {
     this.require(permissions.loyaltyManage);
+    if (!this.actor.branchId) {
+      throw new CrmDomainError("VALIDATION_FAILED", "Select a branch before changing loyalty");
+    }
+    await this.programForBranch(input.programId, this.actor.branchId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
     await this.db.batch([
