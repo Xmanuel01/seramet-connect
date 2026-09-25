@@ -6255,7 +6255,7 @@ export class InventoryIntelligenceService {
     const receipts = await this.db
       .prepare(
         `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,po.purchase_order_number,
-                gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.business_date,
+                po.currency,gr.supplier_id,s.name AS supplier_name,gr.warehouse_id,gr.status,gr.business_date,
                 gr.received_by,gr.received_at,COUNT(grl.id) AS line_count,
                 COALESCE(SUM(grl.received_purchase_quantity_minor),0) AS received_quantity_minor,
                 COALESCE(SUM(grl.accepted_purchase_quantity_minor),0) AS accepted_quantity_minor,
