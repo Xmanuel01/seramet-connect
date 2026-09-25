@@ -67,7 +67,9 @@ describe("CRM lead pipeline real workflow", () => {
       version: 26,
     });
     const tables = db.sqlite
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('crm_leads','crm_lead_events')")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('crm_leads','crm_lead_events')",
+      )
       .all();
     expect(tables).toHaveLength(2);
   });
