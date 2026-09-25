@@ -102,9 +102,7 @@ export class InventoryIntelligenceService {
 
   private async assertActiveProcurementWarehouse(branchId: string, warehouseId: string) {
     const warehouse = await this.db
-      .prepare(
-        "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1",
-      )
+      .prepare("SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, branchId, warehouseId)
       .first<{ id: string }>();
     if (!warehouse) {
@@ -1443,93 +1441,95 @@ export class InventoryIntelligenceService {
             poLine.id,
           ),
       );
-      if (baseQuantityMicro > 0) statements.push(
-        this.db
-          .prepare(
-            `INSERT INTO supplier_item_price_history
-              (tenant_id,id,supplier_id,inventory_item_id,branch_id,unit_price_minor,unit_id,
-               normalized_base_unit_price_minor,effective_at,source_purchase_order_id,
-               source_goods_receipt_id,created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-          )
-          .bind(
-            this.actor.tenantId,
-            crypto.randomUUID(),
-            input.supplierId,
-            poLine.item_id,
-            input.branchId,
-            lineInput.unitPriceMinor,
-            poLine.purchase_unit_id,
-            normalizedUnitCostMinor,
-            stamp,
-            input.purchaseOrderId,
-            id,
-            stamp,
-          ),
-      );
-      const movementId = crypto.randomUUID();
-      if (baseQuantityMicro > 0) statements.push(
-        this.movementStatement(
-          {
-            id: movementId,
-            branchId: input.branchId,
-            warehouseId: input.warehouseId,
-            inventoryItemId: poLine.item_id,
-            movementType: "PURCHASE_RECEIPT",
-            quantityBaseMicro: baseQuantityMicro,
-            unitCostMinor: normalizedUnitCostMinor,
-            totalCostMinor,
-            sourceType: "GOODS_RECEIPT",
-            sourceId: id,
-            idempotencyKey: `goods-receipt:${input.idempotencyKey}:${poLine.id}`,
-            businessDate: input.businessDate,
-            occurredAt: stamp,
-            ...(lineInput.lotNumber
-              ? { lotId: `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}` }
-              : {}),
-            metadata: { receiptLineId, priceVarianceMinor, priceVarianceBps },
-          },
-          correlationId,
-        ),
-      );
-      if (lineInput.lotNumber && baseQuantityMicro > 0) {
+      if (baseQuantityMicro > 0) {
         statements.push(
           this.db
             .prepare(
-              `INSERT INTO inventory_lots
-                (tenant_id,id,branch_id,warehouse_id,inventory_item_id,lot_number,
-                 goods_receipt_line_id,received_at,expiry_date,quantity_received_minor,
-                 quantity_remaining_minor,status,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,'AVAILABLE',?,?)`,
+              `INSERT INTO supplier_item_price_history
+                (tenant_id,id,supplier_id,inventory_item_id,branch_id,unit_price_minor,unit_id,
+                 normalized_base_unit_price_minor,effective_at,source_purchase_order_id,
+                 source_goods_receipt_id,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
             .bind(
               this.actor.tenantId,
-              `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}`,
-              input.branchId,
-              input.warehouseId,
+              crypto.randomUUID(),
+              input.supplierId,
               poLine.item_id,
-              lineInput.lotNumber,
-              receiptLineId,
+              input.branchId,
+              lineInput.unitPriceMinor,
+              poLine.purchase_unit_id,
+              normalizedUnitCostMinor,
               stamp,
-              lineInput.expiryDate ?? null,
-              baseQuantityMicro,
-              baseQuantityMicro,
-              stamp,
+              input.purchaseOrderId,
+              id,
               stamp,
             ),
         );
+        const movementId = crypto.randomUUID();
+        statements.push(
+          this.movementStatement(
+            {
+              id: movementId,
+              branchId: input.branchId,
+              warehouseId: input.warehouseId,
+              inventoryItemId: poLine.item_id,
+              movementType: "PURCHASE_RECEIPT",
+              quantityBaseMicro: baseQuantityMicro,
+              unitCostMinor: normalizedUnitCostMinor,
+              totalCostMinor,
+              sourceType: "GOODS_RECEIPT",
+              sourceId: id,
+              idempotencyKey: `goods-receipt:${input.idempotencyKey}:${poLine.id}`,
+              businessDate: input.businessDate,
+              occurredAt: stamp,
+              ...(lineInput.lotNumber
+                ? { lotId: `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}` }
+                : {}),
+              metadata: { receiptLineId, priceVarianceMinor, priceVarianceBps },
+            },
+            correlationId,
+          ),
+        );
+        if (lineInput.lotNumber) {
+          statements.push(
+            this.db
+              .prepare(
+                `INSERT INTO inventory_lots
+                  (tenant_id,id,branch_id,warehouse_id,inventory_item_id,lot_number,
+                   goods_receipt_line_id,received_at,expiry_date,quantity_received_minor,
+                   quantity_remaining_minor,status,created_at,updated_at)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,'AVAILABLE',?,?)`,
+              )
+              .bind(
+                this.actor.tenantId,
+                `${input.warehouseId}:${poLine.item_id}:${lineInput.lotNumber}`,
+                input.branchId,
+                input.warehouseId,
+                poLine.item_id,
+                lineInput.lotNumber,
+                receiptLineId,
+                stamp,
+                lineInput.expiryDate ?? null,
+                baseQuantityMicro,
+                baseQuantityMicro,
+                stamp,
+                stamp,
+              ),
+          );
+        }
+        statements.push(
+          this.recalculationEventStatement(
+            input.branchId,
+            "PURCHASE_RECEIPT",
+            "INVENTORY_ITEM",
+            poLine.item_id,
+            `${input.idempotencyKey}:${poLine.id}`,
+            stamp,
+            correlationId,
+          ),
+        );
       }
-      if (baseQuantityMicro > 0) statements.push(
-        this.recalculationEventStatement(
-          input.branchId,
-          "PURCHASE_RECEIPT",
-          "INVENTORY_ITEM",
-          poLine.item_id,
-          `${input.idempotencyKey}:${poLine.id}`,
-          stamp,
-          correlationId,
-        ),
-      );
       receiptLines.push({
         itemId: poLine.item_id,
         baseQuantityMicro,
