@@ -337,6 +337,34 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     ).rejects.toThrow(/branch/);
   });
 
+  it("rejects altered manual point adjustment replays without posting duplicate points", async () => {
+    const request = {
+      customerId: "customer-demo-001",
+      programId: "loyalty-demo-program",
+      branchId,
+      points: 3,
+      reason: "Documented service recovery",
+      businessDate: "2026-09-25",
+      idempotencyKey: "manual-adjust-regression",
+    };
+    const posted = await value.adjustPoints(request);
+    expect(posted.duplicate).toBe(false);
+    await expect(value.adjustPoints(request)).resolves.toMatchObject({
+      id: posted.id,
+      duplicate: true,
+    });
+    await expect(
+      value.adjustPoints({ ...request, points: 30 }),
+    ).rejects.toThrow(/different data/);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM loyalty_ledger WHERE tenant_id=? AND idempotency_key=?",
+        )
+        .get(tenantId, request.idempotencyKey),
+    ).toMatchObject({ count: 1 });
+  });
+
   it("creates data-driven loyalty programs, tiers and rewards", async () => {
     const program = await value.createProgram({
       code: "CUSTOM",
