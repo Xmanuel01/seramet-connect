@@ -103,10 +103,7 @@ function CrmPipeline() {
   const params = new URLSearchParams({ branchId, limit: "30" });
   if (filter !== "ALL") params.set("stage", filter);
   if (cursor) params.set("cursor", cursor);
-  const leads = useCrmScreenQuery<LeadPage>(
-    "/api/seramet/crm/leads?" + params.toString(),
-    canView,
-  );
+  const leads = useCrmScreenQuery<LeadPage>("/api/seramet/crm/leads?" + params.toString(), canView);
   const summary = useCrmScreenQuery<LeadSummary>(
     "/api/seramet/crm/leads/summary?branchId=" + encodeURIComponent(branchId),
     canView,
@@ -225,8 +222,16 @@ function CrmPipeline() {
         </Panel>
       ) : (
         <>
-          {notice && <p role="status" className="mb-3 text-[12px] text-success">{notice}</p>}
-          {error && <p role="alert" className="mb-3 text-[12px] text-danger">{error}</p>}
+          {notice && (
+            <p role="status" className="mb-3 text-[12px] text-success">
+              {notice}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mb-3 text-[12px] text-danger">
+              {error}
+            </p>
+          )}
           {showCreate && canManage && (
             <Panel className="mb-4">
               <PanelHead
@@ -311,7 +316,10 @@ function CrmPipeline() {
           )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Metric label="Open leads (all pages)" value={open} />
-            <Metric label="Overdue actions" value={summary.data?.summary.overdueCount ?? "Loading"} />
+            <Metric
+              label="Overdue actions"
+              value={summary.data?.summary.overdueCount ?? "Loading"}
+            />
             <Metric
               label="Open estimated pipeline"
               value={
@@ -351,7 +359,10 @@ function CrmPipeline() {
             ) : leads.status === "error" || summary.status === "error" ? (
               <CrmError message={leads.error || summary.error} retry={refresh} />
             ) : leads.data?.leads.length === 0 ? (
-              <CrmEmpty title="No opportunities found" body="No leads match the selected branch and stage." />
+              <CrmEmpty
+                title="No opportunities found"
+                body="No leads match the selected branch and stage."
+              />
             ) : (
               <>
                 <div className="divide-y divide-border">
@@ -361,7 +372,10 @@ function CrmPipeline() {
                         <strong>{row.contactName}</strong>
                         <Status>{readableStatus(row.stage)}</Status>
                       </div>
-                      <p>{row.companyName || "Individual"} · {money(row.estimatedValueMinor, row.currency)}</p>
+                      <p>
+                        {row.companyName || "Individual"} ·{" "}
+                        {money(row.estimatedValueMinor, row.currency)}
+                      </p>
                       <p className="text-[12px] text-muted-foreground">
                         Owner: {row.ownerName} · Source: {readableStatus(row.source)}
                       </p>
@@ -417,9 +431,13 @@ function CrmPipeline() {
                           setUpdateKey(crypto.randomUUID());
                         }}
                       >
-                        <option value={selected.stage}>Remain in {readableStatus(selected.stage)}</option>
+                        <option value={selected.stage}>
+                          Remain in {readableStatus(selected.stage)}
+                        </option>
                         {allowedTransitions[selected.stage].map((stage) => (
-                          <option key={stage} value={stage}>{readableStatus(stage)}</option>
+                          <option key={stage} value={stage}>
+                            {readableStatus(stage)}
+                          </option>
                         ))}
                       </select>
                     </label>
@@ -480,7 +498,10 @@ function CrmPipeline() {
                   ) : (
                     <ol className="mt-2 space-y-2">
                       {leadHistory.data?.history.map((row) => (
-                        <li key={row.id} className="rounded-md border border-border p-3 text-[12px]">
+                        <li
+                          key={row.id}
+                          className="rounded-md border border-border p-3 text-[12px]"
+                        >
                           {readableStatus(row.from_stage)} → {readableStatus(row.to_stage)}
                           <p>{row.note || "No closure note"}</p>
                           <p className="text-muted-foreground">{shortDate(row.created_at)}</p>
