@@ -624,6 +624,37 @@ export class LoyaltyValueService extends CrmServiceBase {
     if (!Number.isSafeInteger(input.points) || input.points === 0) {
       throw new CrmDomainError("VALIDATION_FAILED", "Adjustment points must be a non-zero integer");
     }
+    const existingAdjustment = await this.db
+      .prepare(
+        `SELECT id,customer_id,program_id,branch_id,entry_type,points,business_date,reason
+         FROM loyalty_ledger WHERE tenant_id=? AND idempotency_key=?`,
+      )
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{
+        id: string;
+        customer_id: string;
+        program_id: string;
+        branch_id: string | null;
+        entry_type: string;
+        points: number;
+        business_date: string;
+        reason: string | null;
+      }>();
+    const exactReplay = (row: NonNullable<typeof existingAdjustment>) => {
+      if (
+        row.customer_id !== input.customerId ||
+        row.program_id !== input.programId ||
+        row.branch_id !== branchId ||
+        row.entry_type !== "ADJUSTMENT" ||
+        row.points !== input.points ||
+        row.business_date !== input.businessDate ||
+        row.reason !== input.reason.trim()
+      ) {
+        throw new CrmDomainError("CONFLICT", "Adjustment key was reused with different data");
+      }
+      return { id: row.id, duplicate: true };
+    };
+    if (existingAdjustment) return exactReplay(existingAdjustment);
     const program = await this.programForBranch(input.programId, branchId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
@@ -660,10 +691,13 @@ export class LoyaltyValueService extends CrmServiceBase {
       .run();
     if ((result.meta?.changes ?? 0) === 0) {
       const replay = await this.db
-        .prepare("SELECT id FROM loyalty_ledger WHERE tenant_id=? AND idempotency_key=?")
+        .prepare(
+          `SELECT id,customer_id,program_id,branch_id,entry_type,points,business_date,reason
+           FROM loyalty_ledger WHERE tenant_id=? AND idempotency_key=?`,
+        )
         .bind(this.actor.tenantId, input.idempotencyKey)
-        .first<{ id: string }>();
-      if (replay) return { id: replay.id, duplicate: true };
+        .first<NonNullable<typeof existingAdjustment>>();
+      if (replay) return exactReplay(replay);
       throw new CrmDomainError(
         "INSUFFICIENT_BALANCE",
         "Adjustment would create a negative balance",
@@ -674,7 +708,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         action: "LOYALTY_POINTS_ADJUSTED",
         entityType: "LOYALTY_LEDGER",
         entityId: id,
-        ...(input.branchId ? { branchId: input.branchId } : {}),
+        branchId,
         reason: input.reason,
         metadata: { points: input.points },
       }),
