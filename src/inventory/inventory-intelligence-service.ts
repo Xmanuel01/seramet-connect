@@ -350,32 +350,102 @@ export class InventoryIntelligenceService {
     preferred?: boolean;
   }) {
     this.requirePermission(permissions.procurementCreate);
+    const supplier = await this.db
+      .prepare("SELECT id FROM suppliers WHERE tenant_id=? AND id=? AND active=1")
+      .bind(this.actor.tenantId, input.supplierId)
+      .first<{ id: string }>();
+    if (!supplier) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active supplier not found");
+    }
+    const item = await this.db
+      .prepare(
+        "SELECT id,purchase_unit_id FROM inventory_items WHERE tenant_id=? AND id=? AND active=1",
+      )
+      .bind(this.actor.tenantId, input.inventoryItemId)
+      .first<{ id: string; purchase_unit_id: string | null }>();
+    if (!item) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Active inventory item not found");
+    }
+    if (item.purchase_unit_id && item.purchase_unit_id !== input.purchaseUnitId && !input.conversionId) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "A conversion is required when supplier purchase unit differs from the inventory purchase unit",
+      );
+    }
+
     const id = input.id ?? crypto.randomUUID();
     const stamp = new Date().toISOString();
-    await this.db
-      .prepare(
-        `INSERT INTO supplier_items
-          (tenant_id,id,supplier_id,inventory_item_id,supplier_sku,purchase_unit_id,
-           conversion_id,contract_price_minor,minimum_quantity_minor,lead_time_days,
-           preferred,active,created_at,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?)`,
-      )
-      .bind(
-        this.actor.tenantId,
+    const statements: D1PreparedStatement[] = [];
+
+    if (input.preferred) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE supplier_items
+             SET preferred=0,updated_at=?
+             WHERE tenant_id=? AND inventory_item_id=? AND active=1`,
+          )
+          .bind(stamp, this.actor.tenantId, input.inventoryItemId),
+      );
+    }
+
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO supplier_items
+            (tenant_id,id,supplier_id,inventory_item_id,supplier_sku,purchase_unit_id,
+             conversion_id,contract_price_minor,minimum_quantity_minor,lead_time_days,
+             preferred,active,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+           ON CONFLICT(tenant_id,supplier_id,inventory_item_id,purchase_unit_id) DO UPDATE SET
+             supplier_sku=excluded.supplier_sku,
+             conversion_id=excluded.conversion_id,
+             contract_price_minor=excluded.contract_price_minor,
+             minimum_quantity_minor=excluded.minimum_quantity_minor,
+             lead_time_days=excluded.lead_time_days,
+             preferred=excluded.preferred,
+             active=1,
+             updated_at=excluded.updated_at`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.supplierId,
+          input.inventoryItemId,
+          input.supplierSku ?? null,
+          input.purchaseUnitId,
+          input.conversionId ?? null,
+          input.contractPriceMinor ?? null,
+          input.minimumQuantityMicro ?? null,
+          input.leadTimeDays ?? null,
+          input.preferred ? 1 : 0,
+          stamp,
+          stamp,
+        ),
+    );
+
+    if (input.preferred) {
+      statements.push(
+        this.db
+          .prepare(
+            "UPDATE inventory_items SET preferred_supplier_id=?,updated_at=? WHERE tenant_id=? AND id=?",
+          )
+          .bind(input.supplierId, stamp, this.actor.tenantId, input.inventoryItemId),
+      );
+    }
+
+    statements.push(
+      this.auditStatement(
+        input.preferred ? "SUPPLIER_ITEM_PREFERRED" : "SUPPLIER_ITEM_LINKED",
+        "SUPPLIER_ITEM",
         id,
-        input.supplierId,
-        input.inventoryItemId,
-        input.supplierSku ?? null,
-        input.purchaseUnitId,
-        input.conversionId ?? null,
-        input.contractPriceMinor ?? null,
-        input.minimumQuantityMicro ?? null,
-        input.leadTimeDays ?? null,
-        input.preferred ? 1 : 0,
         stamp,
-        stamp,
-      )
-      .run();
+        crypto.randomUUID(),
+      ),
+    );
+
+    await this.db.batch(statements);
     return { id, ...input };
   }
 
