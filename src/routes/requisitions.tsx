@@ -267,8 +267,8 @@ function Requisitions() {
                   ),
                 `${selected.requisition_number} approved and ready for purchase ordering.`,
               ).then((succeeded) => {
-            if (succeeded) setApproveOpen(false);
-          })
+                if (succeeded) setApproveOpen(false);
+              })
             : Promise.resolve()
         }
       />
