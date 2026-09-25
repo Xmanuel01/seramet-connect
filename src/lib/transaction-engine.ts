@@ -7,6 +7,7 @@ import {
 import { normalizePaymentOperations, emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { PaymentOperationsState } from "@/payments/types";
 import type { CostControlSnapshot } from "@/cost-control/types";
+import { cashCount } from "@/payments/cash-count";
 
 export type OrderStatus =
   | "DRAFT"
@@ -3286,14 +3287,18 @@ export const TransactionEngine = {
   closeCashDrawer(
     state: TransactionState,
     drawerId: string,
-    physicalCount: number,
+    physicalCount: unknown,
     supervisor: string,
   ) {
     const next = clone(state);
     const drawer = next.cashDrawers.find((item) => item.id === drawerId);
-    if (!drawer) return next;
-    drawer.physicalCount = physicalCount;
-    drawer.variance = money(physicalCount - drawer.expectedDrawer);
+    if (!drawer) throw new Error("Cash drawer not found");
+    if (drawer.status !== "OPEN") throw new Error("Cash drawer is already closed");
+    const scope = resolveScope(drawer.branchId ?? drawer.branch, drawer.tenantId);
+    const currency = configurationRepository.getTenant(scope.tenantId).defaultCurrency;
+    const counted = cashCount(physicalCount, drawer.expectedDrawer, currency);
+    drawer.physicalCount = counted.physicalCount;
+    drawer.variance = counted.variance;
     drawer.closedAt = now();
     drawer.supervisor = supervisor;
     drawer.status = drawer.variance === 0 ? "APPROVED" : "VARIANCE_REVIEW";

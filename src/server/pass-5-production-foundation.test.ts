@@ -50,6 +50,70 @@ describe.sequential("Pass 5 production foundation", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("persists the entered physical cash count exactly and rejects invalid counts without closing", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const initial = await repository.loadState(tenantA);
+    initial.cashDrawers.push({
+      id: "count-drawer",
+      tenantId: tenantA,
+      branchId: branchA,
+      branch: branchA,
+      cashier: userA,
+      openedAt: new Date().toISOString(),
+      openingCash: 100,
+      cashSales: 0,
+      cashIn: 0,
+      cashRefunds: 0,
+      cashOut: 0,
+      expectedDrawer: 100.1,
+      status: "OPEN",
+    });
+    await repository.saveState(initial, actor(), "Test drawer opening");
+    const before = await repository.loadState(tenantA);
+    for (const physicalCount of [
+      undefined,
+      null,
+      "",
+      " ",
+      "NaN",
+      "1e2",
+      "1,000",
+      "-1",
+      "1.001",
+      true,
+    ]) {
+      await expect(
+        mutation(repository, `bad-count-${String(physicalCount)}`, "bad-count", "closeCashDrawer", {
+          drawerId: "count-drawer",
+          physicalCount,
+        }),
+      ).rejects.toThrow();
+      expect(await repository.loadState(tenantA)).toEqual(before);
+    }
+    const payload = { drawerId: "count-drawer", physicalCount: "100.09" };
+    await expect(
+      repository.commitMutation({
+        actor: actor(),
+        action: "closeCashDrawer",
+        payload,
+        idempotencyKey: "stale-count",
+        requestHash: "stale-count",
+        correlationId: "stale-count",
+        expectedRevision: 0,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await repository.loadState(tenantA)).toEqual(before);
+    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    const stored = await repository.loadState(tenantA);
+    expect(stored.cashDrawers[0]).toMatchObject({
+      physicalCount: 100.09,
+      variance: -0.01,
+      status: "VARIANCE_REVIEW",
+    });
+    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    expect(await repository.loadState(tenantA)).toEqual(stored);
+  });
+
   it("enforces tenant scope and cross-tenant foreign keys in the database", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     await expect(repository.loadState("tenant-missing")).rejects.toThrow(/Tenant is not active/);

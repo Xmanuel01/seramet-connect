@@ -507,7 +507,7 @@ export function applyServerMutation(
       return TransactionEngine.closeCashDrawer(
         state,
         String(input["drawerId"]),
-        Number(input["physicalCount"]),
+        input["physicalCount"],
         actor.name,
       );
     case "markBillPending": {
