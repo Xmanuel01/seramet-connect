@@ -58,6 +58,61 @@ export type ProcurementOrderRow = {
   }>;
 };
 
+export type ProcurementRequisitionLineRow = {
+  id: string;
+  inventory_item_id: string;
+  item_name: string;
+  sku: string | null;
+  requested_quantity_minor: number;
+  ordered_quantity_minor: number;
+  unit_id: string;
+  unit_symbol: string | null;
+  notes: string | null;
+};
+
+export type ProcurementRequisitionRow = {
+  id: string;
+  warehouse_id: string;
+  requisition_number: string;
+  status: string;
+  source_type: string;
+  requested_by: string;
+  required_at: string | null;
+  created_at: string;
+  approved_at: string | null;
+  lines: ProcurementRequisitionLineRow[];
+};
+
+export type ProcurementReceiptRow = {
+  id: string;
+  receipt_number: string;
+  purchase_order_id: string;
+  supplier_id: string;
+  warehouse_id: string;
+  status: string;
+  received_at: string;
+  total_minor: number;
+};
+
+export type ProcurementSupplierInvoiceRow = {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  purchase_order_id: string | null;
+  goods_receipt_id: string | null;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string | null;
+  currency: string;
+  subtotal_minor: number;
+  tax_minor: number;
+  total_minor: number;
+  status: string;
+  match_status: string | null;
+  variance_minor: number | null;
+  created_at: string;
+};
+
 export type ProcurementSupplierRow = {
   id: string;
   code: string;
@@ -143,8 +198,9 @@ export type InventoryBranchPayload = {
     branchId: string;
     purchaseOrders: ProcurementOrderRow[];
     suppliers: ProcurementSupplierRow[];
-    requisitions: Array<Record<string, unknown>>;
-    receipts: Array<Record<string, unknown>>;
+    requisitions: ProcurementRequisitionRow[];
+    receipts: ProcurementReceiptRow[];
+    supplierInvoices: ProcurementSupplierInvoiceRow[];
   };
   controlCentre: FoodCostControlData;
 };
