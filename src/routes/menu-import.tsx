@@ -85,9 +85,18 @@ function MenuImport() {
     const query = catalogQuery.trim().toLowerCase();
     return centre.menuCatalog.filter((item) => {
       if (catalogCategory !== "ALL" && item.category_code !== catalogCategory) return false;
-      if (!isAllBranches && catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0))
+      if (
+        !isAllBranches &&
+        catalogAvailability === "AVAILABLE" &&
+        (item.available === 0 || item.sellable === 0)
+      )
         return false;
-      if (!isAllBranches && catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0)
+      if (
+        !isAllBranches &&
+        catalogAvailability === "UNAVAILABLE" &&
+        item.available !== 0 &&
+        item.sellable !== 0
+      )
         return false;
       if (!query) return true;
       return [item.code, item.sku, item.name, item.category_code].some((value) =>
