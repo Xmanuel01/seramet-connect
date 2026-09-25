@@ -29,15 +29,9 @@ function PurchaseOrders() {
     setNotice("");
     try {
       await control.command(
-        "/api/seramet/procurement/purchase-orders/" +
-          encodeURIComponent(id) +
-          "/" +
-          actionName,
+        "/api/seramet/procurement/purchase-orders/" + encodeURIComponent(id) + "/" + actionName,
         {
-          reason:
-            actionName === "approve"
-              ? "Approved from PO register"
-              : "Cancelled from PO register",
+          reason: actionName === "approve" ? "Approved from PO register" : "Cancelled from PO register",
         },
       );
       setNotice(
@@ -55,7 +49,9 @@ function PurchaseOrders() {
   return (
     <AppShell
       title="Purchase orders"
-      subtitle={"Authoritative approvals, receipt progress and supplier commitments - " + branchLabel}
+      subtitle={
+        "Authoritative approvals, receipt progress and supplier commitments - " + branchLabel
+      }
       actions={
         <>
           <Btn onClick={() => void control.refresh()}>Refresh</Btn>
@@ -73,10 +69,7 @@ function PurchaseOrders() {
           value={rows.filter((row) => row.status === "SUBMITTED").length}
           invert
         />
-        <Metric
-          label="Received"
-          value={rows.filter((row) => row.status === "RECEIVED").length}
-        />
+        <Metric label="Received" value={rows.filter((row) => row.status === "RECEIVED").length} />
       </div>
 
       {notice && (
@@ -120,9 +113,7 @@ function PurchaseOrders() {
                     <TD className="num font-semibold">{row.purchase_order_number}</TD>
                     <TD>{row.supplier_name}</TD>
                     <TD>
-                      {row.expected_at
-                        ? new Date(row.expected_at).toLocaleDateString()
-                        : "Not set"}
+                      {row.expected_at ? new Date(row.expected_at).toLocaleDateString() : "Not set"}
                     </TD>
                     <TD className="num text-right">{ksh(Number(row.total_minor) / 100)}</TD>
                     <TD className="num text-right">
