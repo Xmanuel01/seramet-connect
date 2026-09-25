@@ -68,6 +68,8 @@ function MenuImport() {
   const [previewPage, setPreviewPage] = useState(1);
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("ALL");
+  const [catalogAvailability, setCatalogAvailability] = useState("ALL");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [noticeTone, setNoticeTone] = useState<"success" | "warning">("warning");
@@ -79,15 +81,16 @@ function MenuImport() {
   const categoryCodes = [...new Set(centre.menuCatalog.map((item) => item.category_code))].sort();
   const filteredCatalog = useMemo(() => {
     const query = catalogQuery.trim().toLowerCase();
-    if (!query) return centre.menuCatalog;
-    return centre.menuCatalog.filter((item) =>
-      [item.code, item.sku, item.name, item.category_code].some((value) =>
-        String(value ?? "")
-          .toLowerCase()
-          .includes(query),
-      ),
-    );
-  }, [catalogQuery, centre.menuCatalog]);
+    return centre.menuCatalog.filter((item) => {
+      if (catalogCategory !== "ALL" && item.category_code !== catalogCategory) return false;
+      if (catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0)) return false;
+      if (catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0) return false;
+      if (!query) return true;
+      return [item.code, item.sku, item.name, item.category_code].some((value) =>
+        String(value ?? "").toLowerCase().includes(query),
+      );
+    });
+  }, [catalogQuery, catalogCategory, catalogAvailability, centre.menuCatalog]);
   const visibleCatalog = filteredCatalog.slice(
     (catalogPage - 1) * PAGE_SIZE,
     catalogPage * PAGE_SIZE,
@@ -274,70 +277,7 @@ function MenuImport() {
 
       <div className="mt-4 grid gap-4">
         <div className="grid min-w-0 gap-4">
-          <Panel>
-            <PanelHead
-              title="Import preview"
-              sub="Nothing is persisted until Commit import is selected"
-              right={
-                preview ? (
-                  <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
-                ) : (
-                  <Status>Pending</Status>
-                )
-              }
-            />
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px]">
-                <thead>
-                  <tr>
-                    <TH>Row</TH>
-                    <TH>Code</TH>
-                    <TH>Name</TH>
-                    <TH>Category</TH>
-                    <TH className="text-right">Price</TH>
-                    <TH>Action</TH>
-                    <TH>Status</TH>
-                    <TH>Validation</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visiblePreviewRows.map((row) => (
-                    <tr key={`${row.rowNumber}-${row.rowKey}`} className="hover:bg-secondary/40">
-                      <TD className="num">{row.rowNumber}</TD>
-                      <TD className="font-semibold">{stringValue(row.normalized["code"])}</TD>
-                      <TD>{stringValue(row.normalized["name"])}</TD>
-                      <TD>{stringValue(row.normalized["categoryCode"])}</TD>
-                      <TD className="num text-right">
-                        {formatMoney(
-                          numberValue(row.normalized["sellingPriceMinor"]),
-                          stringValue(row.normalized["currency"]),
-                        )}
-                      </TD>
-                      <TD>
-                        <Status>{row.action ?? "Review"}</Status>
-                      </TD>
-                      <TD>
-                        <SetupStatus value={row.status} />
-                      </TD>
-                      <TD className="max-w-80 text-[11px] text-muted-foreground">
-                        {[...row.errors, ...row.warnings]
-                          .map((issue) => issue.message)
-                          .join("; ") || "Validated"}
-                      </TD>
-                    </tr>
-                  ))}
-                  {!previewRows.length && (
-                    <tr>
-                      <TD colSpan={8} className="py-10 text-center text-muted-foreground">
-                        Upload a file to create a server-side preview.
-                      </TD>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <Pagination page={previewPage} total={previewRows.length} onPage={setPreviewPage} />
-          </Panel>
+
 
           <Panel>
             <PanelHead
@@ -349,8 +289,13 @@ function MenuImport() {
               }
               right={<Status>{centre.menuCatalogStatus}</Status>}
             />
-            <div className="border-b border-border p-3">
-              <label className="relative block max-w-sm">
+            <p className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
+              {centre.menuCatalogStatus === "ready"
+                ? filteredCatalog.length + " authorized catalog items match the selected filters."
+                : "The catalogue is not yet available; no item total can be verified."}
+            </p>
+            <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
+              <label className="relative block min-w-48 flex-1 sm:max-w-sm">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <input
                   value={catalogQuery}
@@ -361,6 +306,37 @@ function MenuImport() {
                   placeholder="Search code, SKU, item or category"
                   className="h-9 w-full rounded-md border border-border bg-card pl-9 pr-3 text-[12px] text-foreground"
                 />
+              </label>
+              <label className="grid gap-1 text-[12px]">
+                Category
+                <select
+                  value={catalogCategory}
+                  onChange={(event) => {
+                    setCatalogCategory(event.target.value);
+                    setCatalogPage(1);
+                  }}
+                  className="h-9 min-w-36 rounded-md border border-border bg-card px-3"
+                >
+                  <option value="ALL">All categories</option>
+                  {categoryCodes.map((code) => (
+                    <option key={code} value={code}>{code}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1 text-[12px]">
+                POS availability
+                <select
+                  value={catalogAvailability}
+                  onChange={(event) => {
+                    setCatalogAvailability(event.target.value);
+                    setCatalogPage(1);
+                  }}
+                  className="h-9 min-w-36 rounded-md border border-border bg-card px-3"
+                >
+                  <option value="ALL">All</option>
+                  <option value="AVAILABLE">Available</option>
+                  <option value="UNAVAILABLE">Unavailable</option>
+                </select>
               </label>
             </div>
             {centre.menuCatalogStatus === "error" && (
@@ -713,32 +689,72 @@ function MenuImport() {
             </div>
           </Panel>
           {preview && (
-            <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px]">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <strong>Preview results for {preview.originalName}</strong>
-                <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
-              </div>
-              <p className="mt-2">
-                {preview.rowCount} rows · {preview.validCount} valid · {preview.warningCount}{" "}
-                warnings
-                {" · "}
-                {preview.errorCount} errors
-              </p>
-              {preview.rows.slice(0, 5).map((row) => (
-                <p key={row.rowKey} className="mt-1">
-                  Row {row.rowNumber}: {stringValue(row.normalized["name"])} — {row.status}
-                  {row.errors.length > 0
-                    ? ": " + row.errors.map((issue) => issue.message).join("; ")
-                    : ""}
-                </p>
-              ))}
-              {preview.rows.length > 5 && (
-                <p className="mt-1 text-muted-foreground">
-                  Review all {preview.rowCount} rows in the preview table behind this window.
-                </p>
-              )}
+          <Panel>
+            <PanelHead
+              title="Import preview"
+              sub="Nothing is persisted until Commit import is selected"
+              right={
+                preview ? (
+                  <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
+                ) : (
+                  <Status>Pending</Status>
+                )
+              }
+            />
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px]">
+                <thead>
+                  <tr>
+                    <TH>Row</TH>
+                    <TH>Code</TH>
+                    <TH>Name</TH>
+                    <TH>Category</TH>
+                    <TH className="text-right">Price</TH>
+                    <TH>Action</TH>
+                    <TH>Status</TH>
+                    <TH>Validation</TH>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiblePreviewRows.map((row) => (
+                    <tr key={`${row.rowNumber}-${row.rowKey}`} className="hover:bg-secondary/40">
+                      <TD className="num">{row.rowNumber}</TD>
+                      <TD className="font-semibold">{stringValue(row.normalized["code"])}</TD>
+                      <TD>{stringValue(row.normalized["name"])}</TD>
+                      <TD>{stringValue(row.normalized["categoryCode"])}</TD>
+                      <TD className="num text-right">
+                        {formatMoney(
+                          numberValue(row.normalized["sellingPriceMinor"]),
+                          stringValue(row.normalized["currency"]),
+                        )}
+                      </TD>
+                      <TD>
+                        <Status>{row.action ?? "Review"}</Status>
+                      </TD>
+                      <TD>
+                        <SetupStatus value={row.status} />
+                      </TD>
+                      <TD className="max-w-80 text-[11px] text-muted-foreground">
+                        {[...row.errors, ...row.warnings]
+                          .map((issue) => issue.message)
+                          .join("; ") || "Validated"}
+                      </TD>
+                    </tr>
+                  ))}
+                  {!previewRows.length && (
+                    <tr>
+                      <TD colSpan={8} className="py-10 text-center text-muted-foreground">
+                        Upload a file to create a server-side preview.
+                      </TD>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
+            <Pagination page={previewPage} total={previewRows.length} onPage={setPreviewPage} />
+          </Panel>
           )}
+
           {notice && (
             <p
               role="status"
