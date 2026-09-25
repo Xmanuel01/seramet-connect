@@ -436,7 +436,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "GET") {
-      return json({ ok: true, segments: await campaigns.listSegments(optionalQuery(url, "branchId")) });
+      return json({
+        ok: true,
+        segments: await campaigns.listSegments(optionalQuery(url, "branchId")),
+      });
     }
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "POST") {
       return json(
@@ -475,7 +478,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/campaigns" && request.method === "GET") {
-      return json({ ok: true, campaigns: await campaigns.listCampaigns(optionalQuery(url, "branchId")) });
+      return json({
+        ok: true,
+        campaigns: await campaigns.listCampaigns(optionalQuery(url, "branchId")),
+      });
     }
     if (url.pathname === "/api/seramet/crm/campaigns" && request.method === "POST") {
       return json(
