@@ -76,7 +76,12 @@ export class LoyaltyValueService extends CrmServiceBase {
       )
       .bind(this.actor.tenantId, scopedBranch, scopedBranch, scopedBranch)
       .all<Record<string, unknown>>();
-    return rows.results ?? [];
+    const canViewTenantTotals =
+      this.actor.branchScope.type === "ALL" &&
+      this.actor.permissions.includes(permissions.crmCustomerValueView);
+    return (rows.results ?? []).map((row) =>
+      canViewTenantTotals ? row : { ...row, members: null, outstanding_points: null },
+    );
   }
 
   async listTiers(programId?: string, branchId?: string) {
