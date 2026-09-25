@@ -331,8 +331,8 @@ function NewRequisitionDialog({
           <Btn
             variant="primary"
             disabled={!valid || busy}
-            onClick={() =>
-              valid &&
+            onClick={() => {
+              if (!valid || !warehouse || !item) return;
               void onSubmit({
                 branchId,
                 warehouseId: warehouse.id,
@@ -348,8 +348,8 @@ function NewRequisitionDialog({
                     ...(notes.trim() ? { notes: notes.trim() } : {}),
                   },
                 ],
-              })
-            }
+              });
+            }}
           >
             Submit requisition
           </Btn>
