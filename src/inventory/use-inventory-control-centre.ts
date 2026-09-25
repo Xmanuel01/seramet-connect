@@ -38,6 +38,10 @@ export type ProcurementOrderRow = {
   supplier_id: string;
   supplier_name: string;
   warehouse_id: string;
+  requisition_id: string | null;
+  submitted_by: string | null;
+  approved_by: string | null;
+  approval_reason: string | null;
   status: string;
   currency: string;
   total_minor: number;
