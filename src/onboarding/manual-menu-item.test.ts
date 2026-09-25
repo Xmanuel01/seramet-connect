@@ -50,7 +50,7 @@ describe("Manual menu creation reuses the authoritative import contract", () => 
       recipeCode: "RCP-PILAU",
       serviceChargeApplicable: true,
     });
-    const values = csv.split("\\n")[1]!.split(",");
+    const values = csv.split("\n")[1]!.split(",");
     const row = Object.fromEntries(menuImportHeaders.map((header, i) => [header, values[i]]));
     expect(row).toMatchObject({
       branchPrice: "475.00",
