@@ -46,11 +46,11 @@ function Loyalty() {
   const canAdjust = hasPermission(permissions.loyaltyAdjust);
   const { command } = useCrmApi();
   const programs = useCrmScreenQuery<ProgramsResponse>(
-    "/api/seramet/crm/loyalty/programs",
+    "/api/seramet/crm/loyalty/programs?branchId=" + encodeURIComponent(branchId),
     canView,
   );
-  const tiers = useCrmScreenQuery<TiersResponse>("/api/seramet/crm/loyalty/tiers", canView);
-  const rewards = useCrmScreenQuery<RewardsResponse>("/api/seramet/crm/loyalty/rewards", canView);
+  const tiers = useCrmScreenQuery<TiersResponse>("/api/seramet/crm/loyalty/tiers?branchId=" + encodeURIComponent(branchId), canView);
+  const rewards = useCrmScreenQuery<RewardsResponse>("/api/seramet/crm/loyalty/rewards?branchId=" + encodeURIComponent(branchId), canView);
   const [form, setForm] = useState<LoyaltyForm>("none");
   const [selectedProgram, setSelectedProgram] = useState("");
   const [customer, setCustomer] = useState<PosCustomerIdentity | null>(null);
