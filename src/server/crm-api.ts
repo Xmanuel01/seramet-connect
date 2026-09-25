@@ -389,7 +389,7 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "GET") {
-      return json({ ok: true, segments: await campaigns.listSegments() });
+      return json({ ok: true, segments: await campaigns.listSegments(optionalQuery(url, "branchId")) });
     }
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "POST") {
       return json(
