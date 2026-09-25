@@ -5596,18 +5596,35 @@ export class InventoryIntelligenceService {
       )
       .bind(branchId, this.actor.tenantId, pageSize)
       .all<Record<string, unknown>>();
-    const requisitions = await this.db
+    const requisitionRows = await this.db
       .prepare(
-        `SELECT id,requisition_number,status,source_type,required_at,created_at,approved_at
+        `SELECT id,warehouse_id,requisition_number,status,source_type,requested_by,required_at,
+                created_at,approved_at
          FROM purchase_requisitions WHERE tenant_id=? AND branch_id=?
          ORDER BY created_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, branchId, pageSize)
-      .all<Record<string, unknown>>();
+      .all<Record<string, unknown> & { id: string }>();
+    const requisitions = [];
+    for (const requisition of requisitionRows.results ?? []) {
+      const lines = await this.db
+        .prepare(
+          `SELECT prl.id,prl.inventory_item_id,i.name AS item_name,i.sku,
+                  prl.requested_quantity_minor,prl.ordered_quantity_minor,
+                  prl.unit_id,u.symbol AS unit_symbol,prl.notes
+           FROM purchase_requisition_lines prl
+           JOIN inventory_items i ON i.tenant_id=prl.tenant_id AND i.id=prl.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=prl.tenant_id AND u.id=prl.unit_id
+           WHERE prl.tenant_id=? AND prl.requisition_id=? ORDER BY prl.id`,
+        )
+        .bind(this.actor.tenantId, requisition.id)
+        .all<Record<string, unknown>>();
+      requisitions.push({ ...requisition, lines: lines.results ?? [] });
+    }
     const receipts = await this.db
       .prepare(
-        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.status,gr.received_at,
-                COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
+        `SELECT gr.id,gr.receipt_number,gr.purchase_order_id,gr.supplier_id,gr.warehouse_id,
+                gr.status,gr.received_at,COALESCE(SUM(grl.total_cost_minor),0) AS total_minor
          FROM goods_receipts gr
          LEFT JOIN goods_receipt_lines grl ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
          WHERE gr.tenant_id=? AND gr.branch_id=?
@@ -5615,12 +5632,28 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
+    const supplierInvoices = await this.db
+      .prepare(
+        `SELECT si.id,si.supplier_id,s.name AS supplier_name,si.purchase_order_id,
+                si.goods_receipt_id,si.invoice_number,si.invoice_date,si.due_date,si.currency,
+                si.subtotal_minor,si.tax_minor,si.total_minor,si.status,si.created_at,
+                pm.status AS match_status,pm.variance_minor
+         FROM supplier_invoices si
+         JOIN suppliers s ON s.tenant_id=si.tenant_id AND s.id=si.supplier_id
+         LEFT JOIN procurement_matches pm ON pm.tenant_id=si.tenant_id
+           AND pm.supplier_invoice_id=si.id
+         WHERE si.tenant_id=? AND si.branch_id=?
+         ORDER BY si.invoice_date DESC,si.created_at DESC LIMIT ?`,
+      )
+      .bind(this.actor.tenantId, branchId, pageSize)
+      .all<Record<string, unknown>>();
     return {
       branchId,
       purchaseOrders: rows,
       suppliers: suppliers.results ?? [],
-      requisitions: requisitions.results ?? [],
+      requisitions,
       receipts: receipts.results ?? [],
+      supplierInvoices: supplierInvoices.results ?? [],
     };
   }
 
