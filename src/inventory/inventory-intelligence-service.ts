@@ -5503,7 +5503,7 @@ export class InventoryIntelligenceService {
     }
     const existingReceiptInvoice = await this.db
       .prepare(
-        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=? AND status!='DISPUTED'",
+        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND goods_receipt_id=?",
       )
       .bind(this.actor.tenantId, input.goodsReceiptId)
       .first<{ id: string }>();
@@ -5514,28 +5514,51 @@ export class InventoryIntelligenceService {
         "This goods receipt is already linked to a supplier invoice",
       );
     }
-    const quantities = await this.db
+    // Compare this invoice against its own accepted receipt lines, not all deliveries on the PO.
+    // Otherwise an accurate invoice for a legitimate partial delivery is incorrectly flagged.
+    const receiptEvidence = await this.db
       .prepare(
-        `SELECT COALESCE(SUM(COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)),0) AS ordered,
-                COALESCE(SUM(received_purchase_quantity_minor),0) AS received
-         FROM purchase_order_lines WHERE tenant_id=? AND purchase_order_id=?`,
+        `SELECT grl.accepted_purchase_quantity_minor AS accepted_quantity_minor,
+                COALESCE(pol.ordered_purchase_quantity_minor,pol.ordered_quantity_minor)
+                  AS ordered_quantity_minor,
+                pol.unit_cost_minor,pol.discount_minor,pol.tax_minor
+         FROM goods_receipt_lines grl
+         JOIN purchase_order_lines pol
+           ON pol.tenant_id=grl.tenant_id AND pol.id=grl.purchase_order_line_id
+         WHERE grl.tenant_id=? AND grl.goods_receipt_id=?`,
       )
-      .bind(this.actor.tenantId, input.purchaseOrderId)
-      .first<{ ordered: number; received: number }>();
+      .bind(this.actor.tenantId, input.goodsReceiptId)
+      .all<{
+        accepted_quantity_minor: number;
+        ordered_quantity_minor: number;
+        unit_cost_minor: number;
+        discount_minor: number;
+        tax_minor: number;
+      }>();
+    let expectedReceiptSubtotalMinor = 0;
+    let expectedReceiptTaxMinor = 0;
+    for (const line of receiptEvidence.results ?? []) {
+      if (line.accepted_quantity_minor <= 0) continue;
+      const ordered = Math.max(1, Number(line.ordered_quantity_minor));
+      const share = Number(line.accepted_quantity_minor) / ordered;
+      expectedReceiptSubtotalMinor +=
+        quantityCostMinor(line.accepted_quantity_minor, line.unit_cost_minor) -
+        Math.round(line.discount_minor * share);
+      expectedReceiptTaxMinor += Math.round(line.tax_minor * share);
+    }
+    const expectedReceiptTotalMinor = expectedReceiptSubtotalMinor + expectedReceiptTaxMinor;
     const mapping = await this.accountMapping(input.branchId);
     const receivedTotal = receipt.total;
     const matchStatus =
       receivedTotal === 0
         ? "MISSING_DOCUMENT"
-        : (quantities?.received ?? 0) !== (quantities?.ordered ?? 0)
-          ? "QUANTITY_VARIANCE"
-          : receivedTotal !== po.subtotal_minor || input.subtotalMinor !== receivedTotal
-            ? "PRICE_VARIANCE"
-            : input.taxMinor !== po.tax_minor
-              ? "TAX_VARIANCE"
-              : input.totalMinor !== po.total_minor
-                ? "REVIEW_REQUIRED"
-                : "MATCHED";
+        : receivedTotal !== expectedReceiptSubtotalMinor || input.subtotalMinor !== receivedTotal
+          ? "PRICE_VARIANCE"
+          : input.taxMinor !== expectedReceiptTaxMinor
+            ? "TAX_VARIANCE"
+            : input.totalMinor !== expectedReceiptTotalMinor
+              ? "REVIEW_REQUIRED"
+              : "MATCHED";
     const id = input.id ?? crypto.randomUUID();
     const journalId = crypto.randomUUID();
     const matchId = crypto.randomUUID();
@@ -5600,10 +5623,10 @@ export class InventoryIntelligenceService {
         input.goodsReceiptId,
         id,
         matchStatus,
-        po.total_minor,
+        expectedReceiptTotalMinor,
         receivedTotal,
         input.totalMinor,
-        input.totalMinor - po.total_minor,
+        input.totalMinor - expectedReceiptTotalMinor,
         stamp,
         stamp,
       );
