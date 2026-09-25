@@ -620,10 +620,7 @@ export class LoyaltyValueService extends CrmServiceBase {
     this.require(permissions.loyaltyAdjust);
     const branchId = input.branchId ?? this.actor.branchId;
     if (!branchId) throw new CrmDomainError("VALIDATION_FAILED", "Select a branch");
-    await Promise.all([
-      this.eligibleCustomerForBranch(input.customerId, branchId),
-      this.programForBranch(input.programId, branchId),
-    ]);
+    await this.eligibleCustomerForBranch(input.customerId, branchId);
     if (!Number.isSafeInteger(input.points) || input.points === 0) {
       throw new CrmDomainError("VALIDATION_FAILED", "Adjustment points must be a non-zero integer");
     }
@@ -1829,7 +1826,8 @@ export class LoyaltyValueService extends CrmServiceBase {
     if (
       (program.scope_type === "BRANCH" && program.branch_id !== branchId) ||
       (program.scope_type === "BRAND" && program.brand_id !== branch.brand_id) ||
-      !eligible(program, branchId, "")
+      !(safeJson<string[]>(program.eligible_branches_json, []).length === 0 ||
+        safeJson<string[]>(program.eligible_branches_json, []).includes(branchId))
     ) {
       throw new CrmDomainError("PERMISSION_DENIED", "Loyalty program is not eligible for this branch");
     }
