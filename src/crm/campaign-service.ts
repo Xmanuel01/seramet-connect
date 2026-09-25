@@ -227,9 +227,11 @@ export class CampaignService extends CrmServiceBase {
     return { id, segmentId, branchId: scopedBranch, customerCount: members.length, quality };
   }
 
-  async listCampaigns() {
+  async listCampaigns(branchId?: string) {
     this.require(permissions.campaignView);
-    const scopedBranch = this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null;
+    const scopedBranch =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scopedBranch) this.branch(scopedBranch);
     const rows = await this.db
       .prepare(
         `SELECT c.id,c.name,c.status,c.objective,c.schedule_at,c.starts_at,c.ends_at,
