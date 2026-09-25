@@ -5038,19 +5038,102 @@ export class InventoryIntelligenceService {
   }) {
     this.requirePermission(permissions.procurementInvoiceApprove);
     authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    await this.assertBusinessDateOpen(input.branchId, input.invoiceDate);
+    if (input.dueDate && input.dueDate < input.invoiceDate) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Supplier invoice due date cannot be earlier than the invoice date",
+      );
+    }
     if (input.subtotalMinor + input.taxMinor !== input.totalMinor) {
-      throw new Error("Supplier invoice total does not equal subtotal plus tax");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Supplier invoice total does not equal subtotal plus tax",
+      );
+    }
+    const duplicateInvoice = await this.db
+      .prepare(
+        "SELECT id FROM supplier_invoices WHERE tenant_id=? AND supplier_id=? AND invoice_number=?",
+      )
+      .bind(this.actor.tenantId, input.supplierId, input.invoiceNumber)
+      .first<{ id: string }>();
+    if (duplicateInvoice) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "This supplier invoice number has already been posted",
+      );
     }
     const po = await this.db
-      .prepare("SELECT total_minor FROM purchase_orders WHERE tenant_id=? AND id=?")
+      .prepare(
+        `SELECT branch_id,supplier_id,currency,total_minor
+         FROM purchase_orders WHERE tenant_id=? AND id=?`,
+      )
       .bind(this.actor.tenantId, input.purchaseOrderId)
-      .first<{ total_minor: number }>();
+      .first<{
+        branch_id: string;
+        supplier_id: string | null;
+        currency: string;
+        total_minor: number;
+      }>();
+    if (!po) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Purchase order not found");
+    }
+    if (po.branch_id !== input.branchId || po.supplier_id !== input.supplierId) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Supplier invoice branch or supplier does not match the purchase order",
+      );
+    }
+    if (po.currency.toUpperCase() !== input.currency.toUpperCase()) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Supplier invoice currency does not match the purchase order",
+      );
+    }
     const receipt = await this.db
       .prepare(
-        "SELECT COALESCE(SUM(total_cost_minor),0) AS total FROM goods_receipt_lines WHERE tenant_id=? AND goods_receipt_id=?",
+        `SELECT gr.branch_id,gr.purchase_order_id,gr.supplier_id,gr.status,
+                COALESCE(SUM(grl.total_cost_minor),0) AS total
+         FROM goods_receipts gr
+         LEFT JOIN goods_receipt_lines grl
+           ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
+         WHERE gr.tenant_id=? AND gr.id=?
+         GROUP BY gr.id`,
       )
       .bind(this.actor.tenantId, input.goodsReceiptId)
-      .first<{ total: number }>();
+      .first<{
+        branch_id: string;
+        purchase_order_id: string;
+        supplier_id: string;
+        status: string;
+        total: number;
+      }>();
+    if (!receipt) {
+      throw new ServerOperationError("VALIDATION_FAILED", 404, "Goods receipt not found");
+    }
+    if (
+      receipt.branch_id !== input.branchId ||
+      receipt.purchase_order_id !== input.purchaseOrderId ||
+      receipt.supplier_id !== input.supplierId
+    ) {
+      throw new ServerOperationError(
+        "TENANT_SCOPE_VIOLATION",
+        403,
+        "Supplier invoice receipt does not match the selected purchase order and supplier",
+      );
+    }
+    if (receipt.status !== "POSTED") {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        409,
+        "Supplier invoice requires a posted goods receipt",
+      );
+    }
     const quantities = await this.db
       .prepare(
         `SELECT COALESCE(SUM(COALESCE(ordered_purchase_quantity_minor,ordered_quantity_minor)),0) AS ordered,
@@ -5059,9 +5142,8 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, input.purchaseOrderId)
       .first<{ ordered: number; received: number }>();
-    if (!po) throw new Error("Purchase order not found");
     const mapping = await this.accountMapping(input.branchId);
-    const receivedTotal = receipt?.total ?? 0;
+    const receivedTotal = receipt.total;
     const matchStatus =
       receivedTotal === 0
         ? "MISSING_DOCUMENT"
