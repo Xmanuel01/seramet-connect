@@ -299,6 +299,39 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     ).rejects.toThrow(/branch scope/i);
   });
 
+  it("enrols a customer exactly once, audits once and rejects another branch", async () => {
+    const first = await value.joinProgram("customer-demo-001", "loyalty-demo-program");
+    const replay = await value.joinProgram("customer-demo-001", "loyalty-demo-program");
+    expect(first.duplicate).toBe(false);
+    expect(replay).toMatchObject({
+      id: first.id,
+      duplicate: true,
+      memberNumberLastFour: first.memberNumberLastFour,
+    });
+    expect(replay).not.toHaveProperty("memberToken");
+    const audit = db.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action='LOYALTY_MEMBERSHIP_CREATED' AND entity_id=?",
+      )
+      .get(tenantId, first.id);
+    expect(audit).toMatchObject({ count: 1 });
+    const scoped = new LoyaltyValueService(db, branchActor("branch-demo-ngong-road"));
+    await expect(scoped.joinProgram("customer-demo-001", "loyalty-demo-program")).rejects.toThrow(
+      /branch/,
+    );
+    await expect(
+      scoped.adjustPoints({
+        customerId: "customer-demo-001",
+        programId: "loyalty-demo-program",
+        branchId: "branch-demo-ngong-road",
+        points: 20,
+        reason: "Incorrect branch attempted manual award",
+        businessDate: "2026-09-25",
+        idempotencyKey: "wrong-branch-award",
+      }),
+    ).rejects.toThrow(/branch/);
+  });
+
   it("creates data-driven loyalty programs, tiers and rewards", async () => {
     const program = await value.createProgram({
       code: "CUSTOM",
