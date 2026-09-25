@@ -3,8 +3,7 @@ name: Deploy staging
 on:
   workflow_dispatch:
   push:
-    # Temporary staging-only PR validation; remove before merging.
-    branches: [main, hardening/customers-20260925]
+    branches: [main]
 
 concurrency:
   group: seramet-staging
@@ -74,7 +73,9 @@ jobs:
             .map((row) => row.queue_name ?? row.name)
             .find((name) => name === expectedDlq || name === "seramet-staging-dlq");
 
-          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin };
+          // Full staging readiness requires a real configured scanner; never treat
+          // scanner absence as a successful deploy just because HTTP is 200.
+          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
           const missing = Object.entries(required)
             .filter(([, value]) => !value)
             .map(([name]) => name);
@@ -124,8 +125,8 @@ jobs:
       - name: Verify liveness
         run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/live"
 
-      - name: Verify operational readiness
-        run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/operational"
+      - name: Verify operational readiness and schema version
+        run: node scripts/verify-staging-health.mjs operational
 
       - name: Verify public authentication bootstrap
         shell: bash
@@ -155,6 +156,5 @@ jobs:
           console.log(JSON.stringify(payload));
           NODE
 
-      - name: Report full readiness
-        continue-on-error: true
-        run: curl --fail-with-body "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/ready"
+      - name: Require full staging readiness
+        run: node scripts/verify-staging-health.mjs ready

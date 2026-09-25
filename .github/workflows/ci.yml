@@ -23,6 +23,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: node --test scripts/verify-staging-health.test.mjs
       - run: npm run build
       - name: Verify production bundle has no source secrets
         run: npm run audit:bundle
