@@ -57,7 +57,7 @@ function SupplierBills() {
         )}
       </Panel>
       <BillDialog open={open} onOpenChange={setOpen} branchId={branchId} currency={currency} receipts={receipts} orders={orders} suppliers={suppliers} busy={busy}
-        onSubmit={async (body) => {
+        onSubmit={async (body: unknown) => {
           setBusy(true); setNotice("");
           try { await control.command("/api/seramet/procurement/supplier-invoices", body); setOpen(false); setNotice("Supplier invoice posted and three-way match recalculated."); }
           catch (error) { setNotice(error instanceof Error ? error.message : "Could not post supplier bill"); }
