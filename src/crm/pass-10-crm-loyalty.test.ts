@@ -1153,9 +1153,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       completed: number;
     }>;
     expect(linkedOrders).toHaveLength(2);
-    expect(linkedOrders.every((row) => row.net_minor === 10_000 && row.completed === 1)).toBe(
-      true,
-    );
+    expect(linkedOrders.every((row) => row.net_minor === 10_000 && row.completed === 1)).toBe(true);
     const earned = db.sqlite
       .prepare(
         "SELECT COALESCE(SUM(points),0) AS points,COUNT(*) AS count FROM loyalty_ledger WHERE tenant_id=? AND customer_id=? AND entry_type='EARN'",
