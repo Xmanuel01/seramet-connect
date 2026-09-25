@@ -85,11 +85,15 @@ function MenuImport() {
     const query = catalogQuery.trim().toLowerCase();
     return centre.menuCatalog.filter((item) => {
       if (catalogCategory !== "ALL" && item.category_code !== catalogCategory) return false;
-      if (catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0)) return false;
-      if (catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0) return false;
+      if (catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0))
+        return false;
+      if (catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0)
+        return false;
       if (!query) return true;
       return [item.code, item.sku, item.name, item.category_code].some((value) =>
-        String(value ?? "").toLowerCase().includes(query),
+        String(value ?? "")
+          .toLowerCase()
+          .includes(query),
       );
     });
   }, [catalogQuery, catalogCategory, catalogAvailability, centre.menuCatalog]);
@@ -149,7 +153,9 @@ function MenuImport() {
     const result = await centre.previewImport(file, "MENU", strategy, {
       targetMode,
       targetBranchIds: targetMode === "SELECTED_BRANCHES" ? targetBranchIds : [],
-      columnMap: Object.fromEntries(Object.entries(columnMap).filter(([, source]) => source.trim())),
+      columnMap: Object.fromEntries(
+        Object.entries(columnMap).filter(([, source]) => source.trim()),
+      ),
       referenceMap: { stations: stationMap },
     });
     setPreview(result);
@@ -280,8 +286,6 @@ function MenuImport() {
 
       <div className="mt-4 grid gap-4">
         <div className="grid min-w-0 gap-4">
-
-
           <Panel>
             <PanelHead
               title="Authoritative catalog"
@@ -322,7 +326,9 @@ function MenuImport() {
                 >
                   <option value="ALL">All categories</option>
                   {categoryCodes.map((code) => (
-                    <option key={code} value={code}>{code}</option>
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -634,50 +640,50 @@ function MenuImport() {
                 channel references are validated against authoritative configuration.
               </div>
               <div className="rounded-md border border-border p-3">
-              <Btn
-                onClick={() => setMappingOpen((previous) => !previous)}
-                title="Map another POS export to Seramet menu fields"
-              >
-                {mappingOpen ? "Hide column mapping" : "Match file columns"}
-              </Btn>
-              <p className="mt-2 text-[11px] text-muted-foreground">
-                For exports from another POS, enter their exact spreadsheet headings. Seramet
-                already recognizes common names such as Name, Category and Price.
-              </p>
-              {mappingOpen && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {[
-                    ["itemCode", "Item code / SKU"],
-                    ["name", "Item name"],
-                    ["categoryCode", "Category"],
-                    ["basePrice", "Selling price"],
-                    ["stationCode", "Kitchen / bar station"],
-                    ["branchCode", "Location / branch"],
-                    ["onlinePrice", "Online price"],
-                    ["description", "Description"],
-                  ].map(([field, label]) => (
-                    <label key={field} className="grid gap-1 text-[12px] font-semibold">
-                      {label}
-                      <input
-                        value={columnMap[field] ?? ""}
-                        placeholder="Heading in source file"
-                        onChange={(event) => {
-                          setColumnMap((previous) => ({
-                            ...previous,
-                            [field]: event.target.value,
-                          }));
-                          invalidatePreview(
-                            "Column mappings changed. Revalidate the original file before committing.",
-                          );
-                        }}
-                        className="h-9 rounded-md border border-border bg-card px-2"
-                      />
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            {stationReferences.length > 0 && (
+                <Btn
+                  onClick={() => setMappingOpen((previous) => !previous)}
+                  title="Map another POS export to Seramet menu fields"
+                >
+                  {mappingOpen ? "Hide column mapping" : "Match file columns"}
+                </Btn>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  For exports from another POS, enter their exact spreadsheet headings. Seramet
+                  already recognizes common names such as Name, Category and Price.
+                </p>
+                {mappingOpen && (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {[
+                      ["itemCode", "Item code / SKU"],
+                      ["name", "Item name"],
+                      ["categoryCode", "Category"],
+                      ["basePrice", "Selling price"],
+                      ["stationCode", "Kitchen / bar station"],
+                      ["branchCode", "Location / branch"],
+                      ["onlinePrice", "Online price"],
+                      ["description", "Description"],
+                    ].map(([field, label]) => (
+                      <label key={field} className="grid gap-1 text-[12px] font-semibold">
+                        {label}
+                        <input
+                          value={columnMap[field] ?? ""}
+                          placeholder="Heading in source file"
+                          onChange={(event) => {
+                            setColumnMap((previous) => ({
+                              ...previous,
+                              [field]: event.target.value,
+                            }));
+                            invalidatePreview(
+                              "Column mappings changed. Revalidate the original file before committing.",
+                            );
+                          }}
+                          className="h-9 rounded-md border border-border bg-card px-2"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {stationReferences.length > 0 && (
                 <div className="grid gap-3 rounded-md border border-warning/30 bg-warning-soft p-3">
                   <div className="text-[12px] font-semibold text-warning">Map unknown stations</div>
                   {stationReferences.map((source) => (
@@ -736,70 +742,70 @@ function MenuImport() {
             </div>
           </Panel>
           {preview && (
-          <Panel>
-            <PanelHead
-              title="Import preview"
-              sub="Nothing is persisted until Commit import is selected"
-              right={
-                preview ? (
-                  <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
-                ) : (
-                  <Status>Pending</Status>
-                )
-              }
-            />
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px]">
-                <thead>
-                  <tr>
-                    <TH>Row</TH>
-                    <TH>Code</TH>
-                    <TH>Name</TH>
-                    <TH>Category</TH>
-                    <TH className="text-right">Price</TH>
-                    <TH>Action</TH>
-                    <TH>Status</TH>
-                    <TH>Validation</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visiblePreviewRows.map((row) => (
-                    <tr key={`${row.rowNumber}-${row.rowKey}`} className="hover:bg-secondary/40">
-                      <TD className="num">{row.rowNumber}</TD>
-                      <TD className="font-semibold">{stringValue(row.normalized["code"])}</TD>
-                      <TD>{stringValue(row.normalized["name"])}</TD>
-                      <TD>{stringValue(row.normalized["categoryCode"])}</TD>
-                      <TD className="num text-right">
-                        {formatMoney(
-                          numberValue(row.normalized["sellingPriceMinor"]),
-                          stringValue(row.normalized["currency"]),
-                        )}
-                      </TD>
-                      <TD>
-                        <Status>{row.action ?? "Review"}</Status>
-                      </TD>
-                      <TD>
-                        <SetupStatus value={row.status} />
-                      </TD>
-                      <TD className="max-w-80 text-[11px] text-muted-foreground">
-                        {[...row.errors, ...row.warnings]
-                          .map((issue) => issue.message)
-                          .join("; ") || "Validated"}
-                      </TD>
-                    </tr>
-                  ))}
-                  {!previewRows.length && (
+            <Panel>
+              <PanelHead
+                title="Import preview"
+                sub="Nothing is persisted until Commit import is selected"
+                right={
+                  preview ? (
+                    <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
+                  ) : (
+                    <Status>Pending</Status>
+                  )
+                }
+              />
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px]">
+                  <thead>
                     <tr>
-                      <TD colSpan={8} className="py-10 text-center text-muted-foreground">
-                        Upload a file to create a server-side preview.
-                      </TD>
+                      <TH>Row</TH>
+                      <TH>Code</TH>
+                      <TH>Name</TH>
+                      <TH>Category</TH>
+                      <TH className="text-right">Price</TH>
+                      <TH>Action</TH>
+                      <TH>Status</TH>
+                      <TH>Validation</TH>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <Pagination page={previewPage} total={previewRows.length} onPage={setPreviewPage} />
-          </Panel>
+                  </thead>
+                  <tbody>
+                    {visiblePreviewRows.map((row) => (
+                      <tr key={`${row.rowNumber}-${row.rowKey}`} className="hover:bg-secondary/40">
+                        <TD className="num">{row.rowNumber}</TD>
+                        <TD className="font-semibold">{stringValue(row.normalized["code"])}</TD>
+                        <TD>{stringValue(row.normalized["name"])}</TD>
+                        <TD>{stringValue(row.normalized["categoryCode"])}</TD>
+                        <TD className="num text-right">
+                          {formatMoney(
+                            numberValue(row.normalized["sellingPriceMinor"]),
+                            stringValue(row.normalized["currency"]),
+                          )}
+                        </TD>
+                        <TD>
+                          <Status>{row.action ?? "Review"}</Status>
+                        </TD>
+                        <TD>
+                          <SetupStatus value={row.status} />
+                        </TD>
+                        <TD className="max-w-80 text-[11px] text-muted-foreground">
+                          {[...row.errors, ...row.warnings]
+                            .map((issue) => issue.message)
+                            .join("; ") || "Validated"}
+                        </TD>
+                      </tr>
+                    ))}
+                    {!previewRows.length && (
+                      <tr>
+                        <TD colSpan={8} className="py-10 text-center text-muted-foreground">
+                          Upload a file to create a server-side preview.
+                        </TD>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination page={previewPage} total={previewRows.length} onPage={setPreviewPage} />
+            </Panel>
           )}
 
           {notice && (

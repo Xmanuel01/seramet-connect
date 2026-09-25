@@ -348,9 +348,7 @@ export function ManualMenuItemDialog({
                 <input
                   type="checkbox"
                   checked={serviceChargeApplicable}
-                  onChange={(event) =>
-                    edit(() => setServiceChargeApplicable(event.target.checked))
-                  }
+                  onChange={(event) => edit(() => setServiceChargeApplicable(event.target.checked))}
                   className="h-4 w-4 accent-primary"
                 />
                 Apply configured service charge

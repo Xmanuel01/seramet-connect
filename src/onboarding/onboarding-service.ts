@@ -1206,7 +1206,8 @@ export class OnboardingService {
           ? unsupportedPopulatedMenuColumns(rawRows).filter(
               (header) =>
                 !Object.values(input.columnMap ?? {}).some(
-                  (mapped) => normalizeMenuImportHeader(mapped) === normalizeMenuImportHeader(header),
+                  (mapped) =>
+                    normalizeMenuImportHeader(mapped) === normalizeMenuImportHeader(header),
                 ),
             )
           : [],
