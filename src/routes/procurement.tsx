@@ -57,7 +57,7 @@ function Procurement() {
   const [orderAction, setOrderAction] = useState<"approve" | "cancel" | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const serverData = control.data.find((row) => row.branchId === branchId) ?? control.data[0];
+  const serverData = control.data.find((row) => row.branchId === branchId);
 
   const orders: DisplayOrder[] = (serverData?.procurement.purchaseOrders ?? []).map(serverOrder);
   const selected = orders.find((order) => order.id === selectedId) ?? orders[0];
