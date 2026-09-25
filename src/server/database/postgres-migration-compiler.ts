@@ -14,7 +14,7 @@ AS $$
     document::jsonb,
     VARIADIC string_to_array(trim(leading '$.' from path), '.')
   )
-$;
+$$;
 
 -- The SQLite CRM query layer stores branch scopes as JSON TEXT and queries
 -- json_each(text). PostgreSQL's built-in json_each accepts JSON objects,
@@ -24,11 +24,11 @@ RETURNS TABLE(key TEXT, value TEXT)
 LANGUAGE SQL
 IMMUTABLE
 STRICT
-AS $
+AS $$
   SELECT (ordinality - 1)::TEXT, element
   FROM jsonb_array_elements_text(document::jsonb)
        WITH ORDINALITY AS members(element, ordinality)
-$;
+$$;
 `;
 
 export function compileSqliteMigrationForPostgres(source: string): CompiledPostgresMigration {
