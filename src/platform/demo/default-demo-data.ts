@@ -1004,6 +1004,7 @@ export function createDefaultDemoPlatformState(): PlatformState {
       role("role-demo-general-manager", "GENERAL_MANAGER", "General Manager", allPermissionCodes),
       role("role-demo-branch-manager", "BRANCH_MANAGER", "Branch Manager", managerPermissions),
       role("role-demo-cashier", "CASHIER", "Cashier", [
+        permissions.crmCustomerView,
         permissions.posAccess,
         permissions.ordersView,
         permissions.ordersCreate,
