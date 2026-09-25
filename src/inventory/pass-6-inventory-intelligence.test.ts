@@ -2440,7 +2440,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       links.results?.filter((row) => row.preferred === 1).map((row) => row.supplier_id),
     ).toEqual(["supplier-preferred-b"]);
 
-    await service.linkSupplierItem({
+    const relinked = await service.linkSupplierItem({
       supplierId: "supplier-preferred-b",
       inventoryItemId: fixture.itemId,
       purchaseUnitId: "unit-box",
@@ -2448,6 +2448,14 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       contractPriceMinor: 225_000,
       preferred: true,
     });
+    const original = await db
+      .prepare(
+        `SELECT id FROM supplier_items
+         WHERE tenant_id=? AND supplier_id=? AND inventory_item_id=? AND purchase_unit_id=?`,
+      )
+      .bind(tenantId, "supplier-preferred-b", fixture.itemId, "unit-box")
+      .first<{ id: string }>();
+    expect(relinked.id).toBe(original?.id);
 
     const updated = await db
       .prepare(
@@ -2458,6 +2466,20 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
       .bind(tenantId, "supplier-preferred-b", fixture.itemId, "unit-box")
       .first<{ count: number; contract_price_minor: number }>();
     expect(updated).toEqual({ count: 1, contract_price_minor: 225_000 });
+
+    await service.linkSupplierItem({
+      supplierId: "supplier-preferred-b",
+      inventoryItemId: fixture.itemId,
+      purchaseUnitId: "unit-box",
+      conversionId: "conversion-box-soda",
+      contractPriceMinor: 225_000,
+      preferred: false,
+    });
+    const unpreferred = await db
+      .prepare("SELECT preferred_supplier_id FROM inventory_items WHERE tenant_id=? AND id=?")
+      .bind(tenantId, fixture.itemId)
+      .first<{ preferred_supplier_id: string | null }>();
+    expect(unpreferred?.preferred_supplier_id).toBeNull();
   });
 
   it("compares supplier quotes without auto-selecting and records optional portion checks", async () => {
