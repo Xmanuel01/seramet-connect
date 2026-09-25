@@ -154,6 +154,33 @@ export class CrmLeadService extends CrmServiceBase {
     };
   }
 
+  async summary(branchId?: string) {
+    this.require(permissions.crmView);
+    const selectedBranch = branchId || this.actor.branchId;
+    if (!selectedBranch) throw new CrmDomainError("VALIDATION_FAILED", "Select a branch");
+    this.branch(selectedBranch);
+    const [stages, overdue] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT currency,stage,COUNT(*) AS lead_count,
+                  COALESCE(SUM(estimated_value_minor),0) AS estimated_value_minor
+           FROM crm_leads WHERE tenant_id=? AND branch_id=?
+           GROUP BY currency,stage ORDER BY currency,stage`,
+        )
+        .bind(this.actor.tenantId, selectedBranch)
+        .all<{ currency: string; stage: LeadStage; lead_count: number; estimated_value_minor: number }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS due_count FROM crm_leads
+           WHERE tenant_id=? AND branch_id=? AND stage NOT IN ('WON','LOST')
+             AND due_at IS NOT NULL AND due_at<?`,
+        )
+        .bind(this.actor.tenantId, selectedBranch, new Date().toISOString())
+        .first<{ due_count: number }>(),
+    ]);
+    return { stages: stages.results ?? [], overdueCount: overdue?.due_count ?? 0 };
+  }
+
   private async scopedLead(id: string) {
     const row = await this.db
       .prepare("SELECT * FROM crm_leads WHERE tenant_id=? AND id=?")
