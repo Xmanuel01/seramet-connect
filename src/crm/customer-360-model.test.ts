@@ -17,32 +17,38 @@ describe("Customer 360 request model", () => {
       cursor: "customer/01+2",
       branchId: "branch-west",
     });
-    expect(customerSearchPath({
-      query: "",
-      branchId: "branch-west",
-      isAllBranches: true,
-    })).not.toContain("branchId");
+    expect(
+      customerSearchPath({
+        query: "",
+        branchId: "branch-west",
+        isAllBranches: true,
+      }),
+    ).not.toContain("branchId");
   });
 
   it("requires explicit corporate identity and never invents marketing consent", () => {
-    expect(() => customerCreatePayload({
-      displayName: " ",
-      phone: "",
-      email: "",
-      accountType: "INDIVIDUAL",
-      companyName: "",
-      branchId: "branch-a",
-      isAllBranches: false,
-    })).toThrow("customer name");
-    expect(() => customerCreatePayload({
-      displayName: "Corp",
-      phone: "",
-      email: "",
-      accountType: "CORPORATE",
-      companyName: "",
-      branchId: "branch-a",
-      isAllBranches: false,
-    })).toThrow("company's name");
+    expect(() =>
+      customerCreatePayload({
+        displayName: " ",
+        phone: "",
+        email: "",
+        accountType: "INDIVIDUAL",
+        companyName: "",
+        branchId: "branch-a",
+        isAllBranches: false,
+      }),
+    ).toThrow("customer name");
+    expect(() =>
+      customerCreatePayload({
+        displayName: "Corp",
+        phone: "",
+        email: "",
+        accountType: "CORPORATE",
+        companyName: "",
+        branchId: "branch-a",
+        isAllBranches: false,
+      }),
+    ).toThrow("company's name");
     const payload = customerCreatePayload({
       displayName: " Ana ",
       phone: " 0712345678 ",
