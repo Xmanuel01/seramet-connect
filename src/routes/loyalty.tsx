@@ -49,8 +49,14 @@ function Loyalty() {
     "/api/seramet/crm/loyalty/programs?branchId=" + encodeURIComponent(branchId),
     canView,
   );
-  const tiers = useCrmScreenQuery<TiersResponse>("/api/seramet/crm/loyalty/tiers?branchId=" + encodeURIComponent(branchId), canView);
-  const rewards = useCrmScreenQuery<RewardsResponse>("/api/seramet/crm/loyalty/rewards?branchId=" + encodeURIComponent(branchId), canView);
+  const tiers = useCrmScreenQuery<TiersResponse>(
+    "/api/seramet/crm/loyalty/tiers?branchId=" + encodeURIComponent(branchId),
+    canView,
+  );
+  const rewards = useCrmScreenQuery<RewardsResponse>(
+    "/api/seramet/crm/loyalty/rewards?branchId=" + encodeURIComponent(branchId),
+    canView,
+  );
   const [form, setForm] = useState<LoyaltyForm>("none");
   const [selectedProgram, setSelectedProgram] = useState("");
   const [customer, setCustomer] = useState<PosCustomerIdentity | null>(null);
@@ -409,8 +415,10 @@ function Loyalty() {
                             <Status>{readableStatus(row.status)}</Status>
                           </div>
                           <p>
-                            {readableStatus(row.earning_type)} · {" "}
-                            {row.members === null ? "Membership totals restricted" : row.members + " memberships"}
+                            {readableStatus(row.earning_type)} ·{" "}
+                            {row.members === null
+                              ? "Membership totals restricted"
+                              : row.members + " memberships"}
                           </p>
                           <p className="text-[12px] text-muted-foreground">
                             {row.outstanding_points === null

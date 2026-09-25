@@ -353,9 +353,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       id: posted.id,
       duplicate: true,
     });
-    await expect(
-      value.adjustPoints({ ...request, points: 30 }),
-    ).rejects.toThrow(/different data/);
+    await expect(value.adjustPoints({ ...request, points: 30 })).rejects.toThrow(/different data/);
     expect(
       db.sqlite
         .prepare(
@@ -400,10 +398,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       minimumTierId: tier.id,
       validFrom: "2026-01-01T00:00:00.000Z",
     });
-    const otherBranchManager = new LoyaltyValueService(
-      db,
-      branchActor("branch-demo-ngong-road"),
-    );
+    const otherBranchManager = new LoyaltyValueService(db, branchActor("branch-demo-ngong-road"));
     await expect(
       otherBranchManager.createTier({
         programId: program.id,

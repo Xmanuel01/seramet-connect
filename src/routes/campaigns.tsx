@@ -342,8 +342,8 @@ function Campaigns() {
           )}
           {!canViewSegments && (
             <p className="mb-3 rounded-md border border-border p-3 text-[12px] text-muted-foreground">
-              CRM overview permission is required to inspect audiences or send campaigns.
-              Existing campaign records remain viewable.
+              CRM overview permission is required to inspect audiences or send campaigns. Existing
+              campaign records remain viewable.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">

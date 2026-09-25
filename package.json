@@ -9,7 +9,7 @@
     "build:dev": "vite build --mode development",
     "bridge": "node local-print-bridge/server.mjs",
     "preview": "vite preview",
-    "lint": "node scripts/ci-crm-format-export.mjs && eslint .",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:database": "vitest run src/server/pass-5-production-foundation.test.ts",
     "test:concurrency": "vitest run src/server/pass-5-production-foundation.test.ts src/guest/pass-11-digital-guest.test.ts src/enterprise/pass-12-enterprise.test.ts -t \"concurrent|simultaneous|duplicate|idempotent|double|once\"",

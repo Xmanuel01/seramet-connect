@@ -673,35 +673,35 @@ export class LoyaltyValueService extends CrmServiceBase {
     const stamp = new Date().toISOString();
     const statements = [
       this.db
-      .prepare(
-        `INSERT INTO loyalty_ledger
+        .prepare(
+          `INSERT INTO loyalty_ledger
           (tenant_id,id,customer_id,program_id,branch_id,entry_type,points,source_type,source_id,
            business_date,reason,actor_id,correlation_id,idempotency_key,created_at)
          SELECT ?,?,?,?,?,'ADJUSTMENT',?,'MANUAL_ADJUSTMENT',?,?,?, ?,?,?,?
          WHERE ?=1 OR (SELECT COALESCE(SUM(points),0) FROM loyalty_ledger
            WHERE tenant_id=? AND customer_id=? AND program_id=?) + ? >= 0
          ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,
-      )
-      .bind(
-        this.actor.tenantId,
-        id,
-        input.customerId,
-        input.programId,
-        branchId,
-        input.points,
-        id,
-        input.businessDate,
-        input.reason,
-        this.actor.id,
-        crypto.randomUUID(),
-        input.idempotencyKey,
-        stamp,
-        program.negative_balance_allowed,
-        this.actor.tenantId,
-        input.customerId,
-        input.programId,
-        input.points,
-      ),
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.customerId,
+          input.programId,
+          branchId,
+          input.points,
+          id,
+          input.businessDate,
+          input.reason,
+          this.actor.id,
+          crypto.randomUUID(),
+          input.idempotencyKey,
+          stamp,
+          program.negative_balance_allowed,
+          this.actor.tenantId,
+          input.customerId,
+          input.programId,
+          input.points,
+        ),
       this.db
         .prepare(
           `INSERT INTO audit_events
@@ -726,7 +726,8 @@ export class LoyaltyValueService extends CrmServiceBase {
           id,
         ),
     ];
-    const results = await this.db.batch(statements);    if ((results[0]?.meta?.changes ?? 0) === 0) {
+    const results = await this.db.batch(statements);
+    if ((results[0]?.meta?.changes ?? 0) === 0) {
       const replay = await this.db
         .prepare(
           `SELECT id,customer_id,program_id,branch_id,entry_type,points,business_date,reason
@@ -1887,10 +1888,15 @@ export class LoyaltyValueService extends CrmServiceBase {
     if (
       (program.scope_type === "BRANCH" && program.branch_id !== branchId) ||
       (program.scope_type === "BRAND" && program.brand_id !== branch.brand_id) ||
-      !(safeJson<string[]>(program.eligible_branches_json, []).length === 0 ||
-        safeJson<string[]>(program.eligible_branches_json, []).includes(branchId))
+      !(
+        safeJson<string[]>(program.eligible_branches_json, []).length === 0 ||
+        safeJson<string[]>(program.eligible_branches_json, []).includes(branchId)
+      )
     ) {
-      throw new CrmDomainError("PERMISSION_DENIED", "Loyalty program is not eligible for this branch");
+      throw new CrmDomainError(
+        "PERMISSION_DENIED",
+        "Loyalty program is not eligible for this branch",
+      );
     }
     return program;
   }
