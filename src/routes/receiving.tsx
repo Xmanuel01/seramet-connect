@@ -122,7 +122,9 @@ function Receiving() {
         idempotencyKey: crypto.randomUUID(),
         lines,
       });
-      setNotice(`${po.purchase_order_number} receipt posted. Inventory and PO progress were updated.`);
+      setNotice(
+        `${po.purchase_order_number} receipt posted. Inventory and PO progress were updated.`,
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Goods receipt could not be posted");
     } finally {
@@ -156,7 +158,11 @@ function Receiving() {
           <Btn disabled={control.status === "loading"} onClick={() => void control.refresh()}>
             Refresh
           </Btn>
-          <Btn variant="primary" disabled={!po || busy || overCount > 0} onClick={() => void postReceipt()}>
+          <Btn
+            variant="primary"
+            disabled={!po || busy || overCount > 0}
+            onClick={() => void postReceipt()}
+          >
             Post receipt
           </Btn>
         </>
@@ -267,5 +273,7 @@ function Receiving() {
 }
 
 function quantity(value: number) {
-  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 3 }).format(value / 1_000_000);
+  return new Intl.NumberFormat("en-KE", { maximumFractionDigits: 3 }).format(
+    value / 1_000_000,
+  );
 }
