@@ -230,8 +230,7 @@ function Receiving() {
           <Btn
             variant="primary"
             disabled={
-              !authoritative ||
-              !po || busy || postingLines.length === 0 || invalidLines.length > 0
+              !authoritative || !po || busy || postingLines.length === 0 || invalidLines.length > 0
             }
             onClick={() => void postReceipt()}
           >
