@@ -18,7 +18,8 @@ export const Route = createFileRoute("/requisitions")({
       { title: "Requisitions - Seramet" },
       {
         name: "description",
-        content: "Create, approve and track internal purchase requisitions before purchase ordering.",
+        content:
+          "Create, approve and track internal purchase requisitions before purchase ordering.",
       },
     ],
   }),
@@ -81,7 +82,11 @@ function Requisitions() {
           <Link to="/purchase-orders">
             <Btn>Purchase orders</Btn>
           </Link>
-          <Btn variant="primary" disabled={!authoritative || busy} onClick={() => setCreateOpen(true)}>
+          <Btn
+            variant="primary"
+            disabled={!authoritative || busy}
+            onClick={() => setCreateOpen(true)}
+          >
             <Plus className="h-4 w-4" /> New requisition
           </Btn>
         </>
@@ -124,7 +129,9 @@ function Requisitions() {
                   {row.lines.length === 1 ? "" : "s"}
                 </div>
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  {row.required_at ? `Required ${formatDate(row.required_at)}` : `Created ${formatDate(row.created_at)}`}
+                  {row.required_at
+                    ? `Required ${formatDate(row.required_at)}`
+                    : `Created ${formatDate(row.created_at)}`}
                 </div>
               </button>
             ))}
@@ -180,7 +187,9 @@ function Requisitions() {
                       <tr key={line.id}>
                         <TD>
                           <div className="font-semibold">{line.item_name}</div>
-                          <div className="text-[11px] text-muted-foreground">{line.sku ?? "No SKU"}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {line.sku ?? "No SKU"}
+                          </div>
                         </TD>
                         <TD className="num text-right">
                           {quantity(line.requested_quantity_minor)} {line.unit_symbol ?? ""}
@@ -196,7 +205,8 @@ function Requisitions() {
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3">
                 <div className="text-[12px] text-muted-foreground">
-                  Requested by <span className="font-semibold text-foreground">{selected.requested_by}</span>
+                  Requested by{" "}
+                  <span className="font-semibold text-foreground">{selected.requested_by}</span>
                   {selected.approval_reason ? ` · ${selected.approval_reason}` : ""}
                 </div>
                 <div className="flex gap-2">
@@ -217,7 +227,8 @@ function Requisitions() {
             </>
           ) : (
             <div className="p-8 text-center text-[13px] text-muted-foreground">
-              Requisitions created here will enter the approval queue before a purchase order is raised.
+              Requisitions created here will enter the approval queue before a purchase order is
+              raised.
             </div>
           )}
         </Panel>
@@ -279,7 +290,9 @@ function CreateRequisitionDialog({
 }) {
   const [warehouseId, setWarehouseId] = useState("");
   const [requiredAt, setRequiredAt] = useState("");
-  const [sourceType, setSourceType] = useState<"MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST">("MANUAL_REQUEST");
+  const [sourceType, setSourceType] = useState<
+    "MANUAL_REQUEST" | "LOW_STOCK" | "FORECAST"
+  >("MANUAL_REQUEST");
   const [lines, setLines] = useState<DraftLine[]>([
     { key: crypto.randomUUID(), itemId: "", unitId: "", quantity: "1", notes: "" },
   ]);
@@ -329,52 +342,102 @@ function CreateRequisitionDialog({
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Warehouse">
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className={inputClass}>
-              {data?.warehouses.filter((row) => row.active).map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
-              ))}
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              className={inputClass}
+            >
+              {data?.warehouses
+                .filter((row) => row.active)
+                .map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.name}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Source">
-            <select value={sourceType} onChange={(e) => setSourceType(e.target.value as typeof sourceType)} className={inputClass}>
+            <select
+              value={sourceType}
+              onChange={(e) => setSourceType(e.target.value as typeof sourceType)}
+              className={inputClass}
+            >
               <option value="MANUAL_REQUEST">Manual request</option>
               <option value="LOW_STOCK">Low stock</option>
               <option value="FORECAST">Forecast</option>
             </select>
           </Field>
           <Field label="Required at">
-            <input type="datetime-local" value={requiredAt} onChange={(e) => setRequiredAt(e.target.value)} className={inputClass} />
+            <input
+              type="datetime-local"
+              value={requiredAt}
+              onChange={(e) => setRequiredAt(e.target.value)}
+              className={inputClass}
+            />
           </Field>
         </div>
 
         <div className="mt-2 space-y-3">
           {normalized.map((line, index) => (
-            <div key={line.key} className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-[1.5fr_110px_140px_1fr_auto]">
+            <div
+              key={line.key}
+              className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-[1.5fr_110px_140px_1fr_auto]"
+            >
               <Field label={`Item ${index + 1}`}>
                 <select
                   value={line.itemId}
                   onChange={(e) => {
                     const item = data?.items.find((row) => row.id === e.target.value);
-                    updateLine(line.key, { itemId: e.target.value, unitId: item?.base_unit_id ?? "" });
+                    updateLine(line.key, {
+                      itemId: e.target.value,
+                      unitId: item?.base_unit_id ?? "",
+                    });
                   }}
                   className={inputClass}
                 >
-                  {data?.items.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+                  {data?.items.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.name}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field label="Quantity">
-                <input inputMode="decimal" value={line.quantity} onChange={(e) => updateLine(line.key, { quantity: e.target.value })} className={inputClass} />
+                <input
+                  inputMode="decimal"
+                  value={line.quantity}
+                  onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                  className={inputClass}
+                />
               </Field>
               <Field label="Unit">
-                <select value={line.unitId} onChange={(e) => updateLine(line.key, { unitId: e.target.value })} className={inputClass}>
-                  {data?.units.map((row) => <option key={row.id} value={row.id}>{row.symbol}</option>)}
+                <select
+                  value={line.unitId}
+                  onChange={(e) => updateLine(line.key, { unitId: e.target.value })}
+                  className={inputClass}
+                >
+                  {data?.units.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.symbol}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field label="Notes">
-                <input value={line.notes} onChange={(e) => updateLine(line.key, { notes: e.target.value })} className={inputClass} placeholder="Optional" />
+                <input
+                  value={line.notes}
+                  onChange={(e) => updateLine(line.key, { notes: e.target.value })}
+                  className={inputClass}
+                  placeholder="Optional"
+                />
               </Field>
               <div className="flex items-end">
-                <Btn disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((row) => row.key !== line.key))}>
+                <Btn
+                  disabled={lines.length === 1}
+                  onClick={() =>
+                    setLines((current) => current.filter((row) => row.key !== line.key))
+                  }
+                >
                   <Trash2 className="h-4 w-4" />
                 </Btn>
               </div>
@@ -387,7 +450,13 @@ function CreateRequisitionDialog({
             onClick={() =>
               setLines((current) => [
                 ...current,
-                { key: crypto.randomUUID(), itemId: data?.items[0]?.id ?? "", unitId: data?.items[0]?.base_unit_id ?? "", quantity: "1", notes: "" },
+                {
+                  key: crypto.randomUUID(),
+                  itemId: data?.items[0]?.id ?? "",
+                  unitId: data?.items[0]?.base_unit_id ?? "",
+                  quantity: "1",
+                  notes: "",
+                },
               ])
             }
           >
@@ -457,7 +526,11 @@ function ApproveRequisitionDialog({
         </Field>
         <div className="flex justify-end gap-2">
           <Btn onClick={() => onOpenChange(false)}>Cancel</Btn>
-          <Btn variant="primary" disabled={!requisition || busy} onClick={() => void onSubmit(reason)}>
+          <Btn
+            variant="primary"
+            disabled={!requisition || busy}
+            onClick={() => void onSubmit(reason)}
+          >
             Approve requisition
           </Btn>
         </div>
