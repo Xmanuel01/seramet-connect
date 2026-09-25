@@ -96,6 +96,33 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     });
   });
 
+  it("refuses consent changes outside a manager's assigned branch", async () => {
+    const westlandsCustomer = await crm.createCustomer({
+      displayName: "Consent scope regression",
+      preferredBranchId: branchId,
+      createdSource: "CRM_TEST",
+    });
+    const ngongManager = new CrmService(db, branchActor("branch-demo-ngong-road"), {
+      defaultCallingCode: "254",
+      nationalPrefix: "0",
+    });
+    await expect(
+      ngongManager.appendConsent({
+        customerId: westlandsCustomer.id,
+        channel: "EMAIL_MARKETING",
+        status: "GRANTED",
+        source: "SIGNED_FORM",
+        policyVersion: "test-v1",
+        proofReference: "untrusted-cross-branch-evidence",
+      }),
+    ).rejects.toThrow(/outside the assigned branch/);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM customer_consents WHERE customer_id=?")
+        .get(westlandsCustomer.id),
+    ).toMatchObject({ count: 0 });
+  });
+
   it("does not auto-merge similar names", async () => {
     const first = await crm.createCustomer({ displayName: "Alex Sample", createdSource: "POS" });
     const second = await crm.createCustomer({ displayName: "Alex Samples", createdSource: "POS" });
@@ -834,6 +861,63 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     ).toMatchObject({
       count: 1,
     });
+  });
+
+  it("quarantines ambiguous provider outcomes rather than sending twice", async () => {
+    let attempts = 0;
+    const ambiguousProvider = {
+      key: "AMBIGUOUS_TEST",
+      displayName: "Ambiguous network fixture",
+      capabilities: new Set(["SEND_EMAIL"] as const),
+      async health() {
+        return "CONFIGURED" as const;
+      },
+      async send() {
+        attempts += 1;
+        throw new Error("Provider accepted the request, then connection dropped");
+      },
+    };
+    const campaigns = new CampaignService(
+      db,
+      actor,
+      new CampaignProviderRegistry().register(ambiguousProvider),
+    );
+    await campaigns.upsertProviderConfig({
+      id: "provider-ambiguous",
+      providerKey: "AMBIGUOUS_TEST",
+      displayName: "Ambiguous test provider",
+      capabilities: ["SEND_EMAIL"],
+      maxAttempts: 3,
+    });
+    const campaign = await campaigns.createCampaign({
+      name: "Ambiguous provider test",
+      objective: "Never blindly retry an uncertain external delivery",
+      segmentId: "segment-demo-repeat",
+      channels: ["EMAIL"],
+      templateBody: "Hello {{customer.firstName}}",
+      branchIds: [branchId],
+      brandIds: [],
+      providerConfigId: "provider-ambiguous",
+      approvalRequired: true,
+    });
+    await campaigns.approveCampaign(campaign.id, "Controlled regression test");
+    const first = await campaigns.processCampaign(campaign.id);
+    expect(first.sent).toBe(0);
+    expect(attempts).toBe(1);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT status,last_error_code FROM campaign_deliveries WHERE campaign_id=?",
+        )
+        .get(campaign.id),
+    ).toMatchObject({
+      status: "UNKNOWN",
+      last_error_code: "PROVIDER_OUTCOME_UNKNOWN",
+    });
+    await campaigns.processCampaign(campaign.id);
+    expect(attempts).toBe(1);
+    expect((await campaigns.listCampaigns(branchId)).find((row) => row.id === campaign.id))
+      .toMatchObject({ unknown: 1, status: "ACTIVE" });
   });
 
   it("moves permanent campaign failures to dead letter without duplicate delivery rows", async () => {

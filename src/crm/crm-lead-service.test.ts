@@ -186,6 +186,14 @@ describe("CRM lead pipeline real workflow", () => {
     ).rejects.toThrow(/branch/);
     expect((await scoped.list({ branchId: otherBranch })).leads).toHaveLength(0);
     await expect(scoped.list({ branchId })).rejects.toThrow(/branch/);
+    await expect(
+      scoped.create({
+        ...input,
+        branchId: otherBranch,
+        customerId: "customer-demo-001",
+        requestKey: "cross-branch-customer-link",
+      }),
+    ).rejects.toThrow(/unavailable to this branch/);
     const readOnly = new CrmLeadService(db, {
       ...actor(),
       permissions: [permissions.crmView],
