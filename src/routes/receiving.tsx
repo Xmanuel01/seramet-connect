@@ -63,9 +63,8 @@ function Receiving() {
 
   const po = available.find((row) => row.id === selectedId) ?? available[0];
   const poRevision =
-    po?.lines
-      .map((line) => `${line.id}:${line.received_purchase_quantity_minor}`)
-      .join("|") ?? "";
+    po?.lines.map((line) => `${line.id}:${line.received_purchase_quantity_minor}`).join("|") ??
+    "";
 
   const resetDraft = () => {
     if (!po) {
@@ -77,8 +76,7 @@ function Receiving() {
         po.lines.map((line) => {
           const remainingMicro = Math.max(
             0,
-            Number(line.ordered_quantity_minor) -
-              Number(line.received_purchase_quantity_minor),
+            Number(line.ordered_quantity_minor) - Number(line.received_purchase_quantity_minor),
           );
           return [
             line.id,
@@ -117,9 +115,9 @@ function Receiving() {
       const maxAcceptedMicro = receiptAcceptedLimitMicro(po, line);
       const item = data?.items.find((row) => row.id === line.inventory_item_id);
       const expiryRequired = Boolean(item?.track_expiry && acceptedMicro > 0);
-      const hasTraceability = !expiryRequired || Boolean(entry.lotNumber.trim() && entry.expiryDate);
-      const withinPolicy =
-        !Number.isFinite(maxAcceptedMicro) || acceptedMicro <= maxAcceptedMicro;
+      const hasTraceability =
+        !expiryRequired || Boolean(entry.lotNumber.trim() && entry.expiryDate);
+      const withinPolicy = !Number.isFinite(maxAcceptedMicro) || acceptedMicro <= maxAcceptedMicro;
       const valid =
         receivedMicro > 0 &&
         rejectedMicro <= receivedMicro &&
@@ -152,10 +150,7 @@ function Receiving() {
 
   const expectedMinor = worksheet.reduce(
     (sum, line) =>
-      sum +
-      Math.round(
-        (line.remainingMicro * Number(line.unit_price_minor)) / 1_000_000,
-      ),
+      sum + Math.round((line.remainingMicro * Number(line.unit_price_minor)) / 1_000_000),
     0,
   );
   const acceptedMinor = worksheet.reduce((sum, line) => sum + line.valueMinor, 0);
@@ -191,9 +186,7 @@ function Receiving() {
           acceptedPurchaseQuantityMicro: line.acceptedMicro,
           rejectedPurchaseQuantityMicro: line.rejectedMicro,
           unitPriceMinor: Math.round(line.unitPrice * 100),
-          ...(line.entry.lotNumber.trim()
-            ? { lotNumber: line.entry.lotNumber.trim() }
-            : {}),
+          ...(line.entry.lotNumber.trim() ? { lotNumber: line.entry.lotNumber.trim() } : {}),
           ...(line.entry.expiryDate ? { expiryDate: line.entry.expiryDate } : {}),
           qualityStatus:
             line.rejectedMicro > 0
@@ -238,9 +231,7 @@ function Receiving() {
             variant="primary"
             disabled={
               !authoritative ||
-              !po ||
-              busy ||
-              postingLines.length === 0 ||
+              !po || busy || postingLines.length === 0 ||
               invalidLines.length > 0
             }
             onClick={() => void postReceipt()}
@@ -306,10 +297,7 @@ function Receiving() {
                 label="Expected"
                 value={po.expected_at ? formatDate(po.expected_at) : "Not specified"}
               />
-              <Info
-                label="Over-receipt"
-                value={overReceiptLabel(po)}
-              />
+              <Info label="Over-receipt" value={overReceiptLabel(po)} />
             </div>
 
             <div className="overflow-x-auto">
@@ -414,9 +402,7 @@ function Receiving() {
                         <TD>
                           <input
                             value={line.entry.notes}
-                            onChange={(event) =>
-                              patchLine(line.id, { notes: event.target.value })
-                            }
+                            onChange={(event) => patchLine(line.id, { notes: event.target.value })}
                             className={inputClass}
                             placeholder="Optional"
                           />
@@ -477,9 +463,7 @@ function Receiving() {
                     <TD className="num font-semibold">{receipt.receipt_number}</TD>
                     <TD className="num">{receipt.purchase_order_number}</TD>
                     <TD>{receipt.supplier_name}</TD>
-                    <TD className="text-muted-foreground">
-                      {formatDate(receipt.business_date)}
-                    </TD>
+                    <TD className="text-muted-foreground">{formatDate(receipt.business_date)}</TD>
                     <TD className="num text-right">{Number(receipt.line_count)}</TD>
                     <TD className="num text-right font-semibold">
                       {ksh(Number(receipt.total_minor) / 100)}
