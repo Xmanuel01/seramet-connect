@@ -196,6 +196,36 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     ).rejects.toThrow(/permission/);
   });
 
+  it("respects consent withdrawal when grant and withdrawal share an effective timestamp", async () => {
+    const customer = await crm.createCustomer({
+      displayName: "Same millisecond withdrawal",
+      email: "simultaneous@example.test",
+      createdSource: "POS",
+    });
+    const effectiveAt = "2026-09-25T12:00:00.000Z";
+    await crm.appendConsent({
+      customerId: customer.id,
+      channel: "EMAIL_MARKETING",
+      status: "GRANTED",
+      source: "SIGNED_FORM",
+      policyVersion: "v1",
+      effectiveAt,
+    });
+    await crm.appendConsent({
+      customerId: customer.id,
+      channel: "EMAIL_MARKETING",
+      status: "WITHDRAWN",
+      source: "UNSUBSCRIBE",
+      policyVersion: "v1",
+      effectiveAt,
+    });
+    expect(
+      (await crm.customerProfile(customer.id)).consents.find(
+        (item) => item.channel === "EMAIL_MARKETING",
+      )?.status,
+    ).toBe("WITHDRAWN");
+  });
+
   it("defaults absent consent to UNKNOWN and withdrawal immediately suppresses marketing", async () => {
     const customer = await crm.createCustomer({
       displayName: "Consent Test",
