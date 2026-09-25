@@ -400,6 +400,32 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       minimumTierId: tier.id,
       validFrom: "2026-01-01T00:00:00.000Z",
     });
+    const otherBranchManager = new LoyaltyValueService(
+      db,
+      branchActor("branch-demo-ngong-road"),
+    );
+    await expect(
+      otherBranchManager.createTier({
+        programId: program.id,
+        code: "CROSS_BRANCH",
+        name: "Cross-branch tier",
+        rank: 1,
+        qualificationType: "POINTS_EARNED",
+        thresholdMinorOrPoints: 1,
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/branch/);
+    await expect(
+      otherBranchManager.createReward({
+        programId: program.id,
+        code: "CROSS_BRANCH",
+        name: "Cross-branch reward",
+        rewardType: "FIXED_DISCOUNT",
+        pointsCost: 1,
+        valueMinor: 100,
+        validFrom: "2026-01-01T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/branch/);
     expect(program.status).toBe("ACTIVE");
     expect(tier.id).toBeTruthy();
     expect(reward.id).toBeTruthy();
