@@ -1201,7 +1201,15 @@ export class OnboardingService {
       targetBranchIds: target.branchIds,
       referenceMap: input.referenceMap,
       templateVersion: template.version,
-      unsupportedColumns: input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
+      unsupportedColumns:
+        input.kind === "MENU"
+          ? unsupportedPopulatedMenuColumns(rawRows).filter(
+              (header) =>
+                !Object.values(input.columnMap ?? {}).some(
+                  (mapped) => normalizeMenuImportHeader(mapped) === normalizeMenuImportHeader(header),
+                ),
+            )
+          : [],
       duplicateStrategy: input.duplicateStrategy,
     });
     const id = crypto.randomUUID();
