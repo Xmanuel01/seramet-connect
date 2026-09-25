@@ -85,9 +85,9 @@ function MenuImport() {
     const query = catalogQuery.trim().toLowerCase();
     return centre.menuCatalog.filter((item) => {
       if (catalogCategory !== "ALL" && item.category_code !== catalogCategory) return false;
-      if (catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0))
+      if (!isAllBranches && catalogAvailability === "AVAILABLE" && (item.available === 0 || item.sellable === 0))
         return false;
-      if (catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0)
+      if (!isAllBranches && catalogAvailability === "UNAVAILABLE" && item.available !== 0 && item.sellable !== 0)
         return false;
       if (!query) return true;
       return [item.code, item.sku, item.name, item.category_code].some((value) =>
@@ -96,7 +96,7 @@ function MenuImport() {
           .includes(query),
       );
     });
-  }, [catalogQuery, catalogCategory, catalogAvailability, centre.menuCatalog]);
+  }, [catalogQuery, catalogCategory, catalogAvailability, centre.menuCatalog, isAllBranches]);
   const visibleCatalog = filteredCatalog.slice(
     (catalogPage - 1) * PAGE_SIZE,
     catalogPage * PAGE_SIZE,
@@ -118,6 +118,7 @@ function MenuImport() {
     setTargetMode(isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES");
     setTargetBranchIds(isAllBranches ? [] : [branchId]);
     setPreview(null);
+    setCatalogAvailability("ALL");
     setImportOpen(false);
     setManualOpen(false);
   }, [branchId, isAllBranches]);
@@ -350,6 +351,7 @@ function MenuImport() {
               <label className="grid gap-1 text-[12px]">
                 POS availability
                 <select
+                  disabled={isAllBranches}
                   value={catalogAvailability}
                   onChange={(event) => {
                     setCatalogAvailability(event.target.value);
@@ -398,9 +400,11 @@ function MenuImport() {
                       <TD>{item.recipe_reference ?? "Not linked"}</TD>
                       <TD>
                         <Status>
-                          {item.available === 0 || item.sellable === 0
-                            ? "Unavailable"
-                            : "Available"}
+                          {isAllBranches
+                            ? "Select branch"
+                            : item.available === 0 || item.sellable === 0
+                              ? "Unavailable"
+                              : "Available"}
                         </Status>
                       </TD>
                     </tr>
