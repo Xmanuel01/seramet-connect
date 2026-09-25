@@ -58,7 +58,10 @@ function SupplierBills() {
   );
   const availableReceipts = receipts.filter(
     (receipt) =>
-      receipt.status === "POSTED" && !receipt.invoice_linked && !invoicedReceiptIds.has(receipt.id),
+      receipt.status === "POSTED" &&
+      Number(receipt.accepted_quantity_minor) > 0 &&
+      !receipt.invoice_linked &&
+      !invoicedReceiptIds.has(receipt.id),
   );
 
   const run = async (
