@@ -300,8 +300,13 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
   });
 
   it("enrols a customer exactly once, audits once and rejects another branch", async () => {
-    const first = await value.joinProgram("customer-demo-001", "loyalty-demo-program");
-    const replay = await value.joinProgram("customer-demo-001", "loyalty-demo-program");
+    const createdCustomer = await crm.createCustomer({
+      displayName: "Loyalty enrollment workflow",
+      preferredBranchId: branchId,
+      createdSource: "SERAMET_CRM_UI",
+    });
+    const first = await value.joinProgram(createdCustomer.id, "loyalty-demo-program");
+    const replay = await value.joinProgram(createdCustomer.id, "loyalty-demo-program");
     expect(first.duplicate).toBe(false);
     expect(replay).toMatchObject({
       id: first.id,
