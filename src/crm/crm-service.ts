@@ -531,13 +531,20 @@ export class CrmService extends CrmServiceBase {
       )
       .bind(this.actor.tenantId, ...customerIds)
       .all<{ id: string; name: string }>();
+    const allowedNoteVisibility = [
+      "CRM",
+      ...(this.actor.permissions.includes(permissions.feedbackManage) ? ["SERVICE"] : []),
+      ...(this.actor.permissions.includes(permissions.financeView) ? ["FINANCE"] : []),
+    ];
     const notes = this.actor.permissions.includes(permissions.crmCustomerManage)
       ? await this.db
           .prepare(
             `SELECT id,note,created_at,created_by FROM customer_notes
-             WHERE tenant_id=? AND customer_id IN (${params}) ORDER BY created_at DESC LIMIT 50`,
+             WHERE tenant_id=? AND customer_id IN (${params})
+               AND visibility IN (${placeholders(allowedNoteVisibility.length)})
+             ORDER BY created_at DESC LIMIT 50`,
           )
-          .bind(this.actor.tenantId, ...customerIds)
+          .bind(this.actor.tenantId, ...customerIds, ...allowedNoteVisibility)
           .all<{ id: string; note: string; created_at: string; created_by: string }>()
       : {
           results: [] as Array<{
@@ -1197,6 +1204,7 @@ export class CrmService extends CrmServiceBase {
     const customerId = input.customerId
       ? await this.resolveCanonicalId(input.customerId)
       : undefined;
+    if (customerId) await this.assertCustomerVisible(customerId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
     await this.db.batch([
