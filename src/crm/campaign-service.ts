@@ -46,20 +46,24 @@ export class CampaignService extends CrmServiceBase {
     super(db, actor);
   }
 
-  async listSegments() {
+  async listSegments(branchId?: string) {
     this.require(permissions.crmView);
+    const scope = branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scope) this.branch(scope);
     const rows = await this.db
       .prepare(
         `SELECT s.*,
                 (SELECT customer_count FROM crm_segment_snapshots ss
                  WHERE ss.tenant_id=s.tenant_id AND ss.segment_id=s.id
+                   AND ((? IS NULL AND ss.branch_id IS NULL) OR ss.branch_id=?)
                  ORDER BY ss.as_of DESC LIMIT 1) AS latest_count,
                 (SELECT quality FROM crm_segment_snapshots ss
                  WHERE ss.tenant_id=s.tenant_id AND ss.segment_id=s.id
+                   AND ((? IS NULL AND ss.branch_id IS NULL) OR ss.branch_id=?)
                  ORDER BY ss.as_of DESC LIMIT 1) AS latest_quality
          FROM crm_segments s WHERE s.tenant_id=? ORDER BY s.created_at DESC`,
       )
-      .bind(this.actor.tenantId)
+      .bind(scope, scope, scope, scope, this.actor.tenantId)
       .all<Record<string, unknown>>();
     return rows.results ?? [];
   }
