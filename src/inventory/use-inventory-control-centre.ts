@@ -49,6 +49,11 @@ export type ProcurementOrderRow = {
   created_at: string;
   approved_at: string | null;
   received_at: string | null;
+  over_receipt_policy:
+    | "REJECT_OVER_RECEIPT"
+    | "ALLOW_WITH_APPROVAL"
+    | "ALLOW_WITH_TOLERANCE";
+  over_receipt_tolerance_bps: number;
   lines: Array<{
     id: string;
     inventory_item_id: string;
@@ -85,6 +90,25 @@ export type ProcurementRequisitionRow = {
     unit_symbol: string | null;
     notes: string | null;
   }>;
+};
+
+export type ProcurementReceiptRow = {
+  id: string;
+  receipt_number: string;
+  purchase_order_id: string;
+  purchase_order_number: string;
+  supplier_id: string;
+  supplier_name: string;
+  warehouse_id: string;
+  status: string;
+  business_date: string;
+  received_by: string;
+  received_at: string;
+  line_count: number;
+  received_quantity_minor: number;
+  accepted_quantity_minor: number;
+  rejected_quantity_minor: number;
+  total_minor: number;
 };
 
 export type ProcurementSupplierRow = {
@@ -173,7 +197,7 @@ export type InventoryBranchPayload = {
     purchaseOrders: ProcurementOrderRow[];
     suppliers: ProcurementSupplierRow[];
     requisitions: ProcurementRequisitionRow[];
-    receipts: Array<Record<string, unknown>>;
+    receipts: ProcurementReceiptRow[];
   };
   controlCentre: FoodCostControlData;
 };
