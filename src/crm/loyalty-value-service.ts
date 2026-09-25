@@ -55,9 +55,11 @@ export class LoyaltyValueService extends CrmServiceBase {
     super(db, actor);
   }
 
-  async listPrograms() {
+  async listPrograms(branchId?: string) {
     this.require(permissions.loyaltyView);
-    const scopedBranch = this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null;
+    const scopedBranch =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scopedBranch) this.branch(scopedBranch);
     const rows = await this.db
       .prepare(
         `SELECT p.*,
@@ -77,9 +79,11 @@ export class LoyaltyValueService extends CrmServiceBase {
     return rows.results ?? [];
   }
 
-  async listTiers(programId?: string) {
+  async listTiers(programId?: string, branchId?: string) {
     this.require(permissions.loyaltyView);
-    const scopedBranch = this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null;
+    const scopedBranch =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scopedBranch) this.branch(scopedBranch);
     const rows = await this.db
       .prepare(
         `SELECT t.*,p.name AS program_name
@@ -104,9 +108,11 @@ export class LoyaltyValueService extends CrmServiceBase {
     return rows.results ?? [];
   }
 
-  async listRewards(programId?: string) {
+  async listRewards(programId?: string, branchId?: string) {
     this.require(permissions.loyaltyView);
-    const scopedBranch = this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null;
+    const scopedBranch =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scopedBranch) this.branch(scopedBranch);
     const rows = await this.db
       .prepare(
         `SELECT r.*,p.name AS program_name
@@ -346,7 +352,26 @@ export class LoyaltyValueService extends CrmServiceBase {
 
   async joinProgram(customerId: string, programId: string) {
     this.require(permissions.loyaltyManage);
-    await this.customerExists(customerId);
+    const branchId = this.actor.branchId;
+    if (!branchId) throw new CrmDomainError("VALIDATION_FAILED", "Select a branch");
+    await Promise.all([
+      this.eligibleCustomerForBranch(customerId, branchId),
+      this.programForBranch(programId, branchId),
+    ]);
+    const existing = await this.db
+      .prepare(
+        `SELECT id,member_number_last_four FROM customer_loyalty_memberships
+         WHERE tenant_id=? AND customer_id=? AND program_id=?`,
+      )
+      .bind(this.actor.tenantId, customerId, programId)
+      .first<{ id: string; member_number_last_four: string }>();
+    if (existing) {
+      return {
+        id: existing.id,
+        duplicate: true,
+        memberNumberLastFour: existing.member_number_last_four,
+      };
+    }
     const token = generatePublicToken("MEM");
     const hash = await sha256Hex(token);
     const id = crypto.randomUUID();
@@ -358,7 +383,7 @@ export class LoyaltyValueService extends CrmServiceBase {
       )
       .bind(this.actor.tenantId, programId)
       .first<{ id: string }>();
-    await this.db.batch([
+    const inserted = await this.db.batch([
       this.db
         .prepare(
           `INSERT INTO customer_loyalty_memberships
@@ -380,15 +405,48 @@ export class LoyaltyValueService extends CrmServiceBase {
           stamp,
           stamp,
         ),
-      this.auditStatement({
-        action: "LOYALTY_MEMBERSHIP_CREATED",
-        entityType: "LOYALTY_MEMBERSHIP",
-        entityId: id,
-        at: stamp,
-        metadata: { customerId, programId, memberNumberLastFour: token.slice(-4) },
-      }),
+      this.db
+        .prepare(
+          `INSERT INTO audit_events
+            (tenant_id,id,branch_id,actor_id,device_id,action,entity_type,entity_id,
+             reason,correlation_id,session_id,metadata_json,created_at)
+           SELECT ?,?,?,?,?, 'LOYALTY_MEMBERSHIP_CREATED','LOYALTY_MEMBERSHIP',?,
+                  NULL,?,?,?,?
+           WHERE EXISTS (
+             SELECT 1 FROM customer_loyalty_memberships WHERE tenant_id=? AND id=?
+           )`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          branchId,
+          this.actor.id,
+          this.actor.deviceId ?? null,
+          id,
+          crypto.randomUUID(),
+          this.actor.sessionId ?? null,
+          JSON.stringify({ customerId, programId, memberNumberLastFour: token.slice(-4) }),
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
     ]);
-    return { id, memberToken: token, memberNumberLastFour: token.slice(-4) };
+    if ((inserted[0]?.meta?.changes ?? 0) !== 1) {
+      const raced = await this.db
+        .prepare(
+          `SELECT id,member_number_last_four FROM customer_loyalty_memberships
+           WHERE tenant_id=? AND customer_id=? AND program_id=?`,
+        )
+        .bind(this.actor.tenantId, customerId, programId)
+        .first<{ id: string; member_number_last_four: string }>();
+      if (!raced) throw new CrmDomainError("CONFLICT", "Membership changed; retry enrollment");
+      return {
+        id: raced.id,
+        duplicate: true,
+        memberNumberLastFour: raced.member_number_last_four,
+      };
+    }
+    return { id, duplicate: false, memberToken: token, memberNumberLastFour: token.slice(-4) };
   }
 
   async loyaltyBalance(customerId: string, programId: string) {
@@ -560,11 +618,16 @@ export class LoyaltyValueService extends CrmServiceBase {
     idempotencyKey: string;
   }) {
     this.require(permissions.loyaltyAdjust);
-    if (input.branchId) this.branch(input.branchId);
+    const branchId = input.branchId ?? this.actor.branchId;
+    if (!branchId) throw new CrmDomainError("VALIDATION_FAILED", "Select a branch");
+    await Promise.all([
+      this.eligibleCustomerForBranch(input.customerId, branchId),
+      this.programForBranch(input.programId, branchId),
+    ]);
     if (!Number.isSafeInteger(input.points) || input.points === 0) {
       throw new CrmDomainError("VALIDATION_FAILED", "Adjustment points must be a non-zero integer");
     }
-    const program = await this.program(input.programId);
+    const program = await this.programForBranch(input.programId, branchId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
     const result = await this.db
@@ -582,7 +645,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         id,
         input.customerId,
         input.programId,
-        input.branchId ?? null,
+        branchId,
         input.points,
         id,
         input.businessDate,
@@ -1749,6 +1812,45 @@ export class LoyaltyValueService extends CrmServiceBase {
     if (blocker) return [blocker];
     if (ordered.some((item) => item.stackingPolicy === "PRIORITY_ORDER")) return ordered;
     return ordered;
+  }
+
+  private async programForBranch(programId: string, branchId: string) {
+    this.branch(branchId);
+    const [program, branch] = await Promise.all([
+      this.program(programId),
+      this.db
+        .prepare("SELECT brand_id,active FROM branches WHERE tenant_id=? AND id=?")
+        .bind(this.actor.tenantId, branchId)
+        .first<{ brand_id: string | null; active: number }>(),
+    ]);
+    if (!branch || branch.active !== 1) {
+      throw new CrmDomainError("NOT_ELIGIBLE", "The selected branch is unavailable");
+    }
+    if (
+      (program.scope_type === "BRANCH" && program.branch_id !== branchId) ||
+      (program.scope_type === "BRAND" && program.brand_id !== branch.brand_id) ||
+      !eligible(program, branchId, "")
+    ) {
+      throw new CrmDomainError("PERMISSION_DENIED", "Loyalty program is not eligible for this branch");
+    }
+    return program;
+  }
+
+  private async eligibleCustomerForBranch(customerId: string, branchId: string) {
+    this.branch(branchId);
+    const customer = await this.db
+      .prepare(
+        `SELECT id FROM customers c
+         WHERE c.tenant_id=? AND c.id=? AND c.status='ACTIVE'
+           AND (c.preferred_branch_id IS NULL OR c.preferred_branch_id=? OR EXISTS (
+             SELECT 1 FROM customer_transaction_links l WHERE l.tenant_id=c.tenant_id
+               AND l.customer_id=c.id AND l.branch_id=?))`,
+      )
+      .bind(this.actor.tenantId, customerId, branchId, branchId)
+      .first<{ id: string }>();
+    if (!customer) {
+      throw new CrmDomainError("PERMISSION_DENIED", "Customer is not available in this branch");
+    }
   }
 
   private async program(programId: string) {
