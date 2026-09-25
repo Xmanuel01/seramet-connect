@@ -1084,6 +1084,141 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(link.net_minor).toBe(0);
   });
 
+  it("follows a registered POS customer through paid orders, loyalty, CRM, segments and feedback", async () => {
+    const registered = await crm.createCustomer({
+      displayName: "Workflow Guest",
+      phone: "0712 444 555",
+      email: "workflow@example.test",
+      preferredBranchId: branchId,
+      createdSource: "SERAMET_CRM_UI",
+    });
+    const profileBefore = await crm.customerProfile(registered.id);
+    expect(profileBefore.consents.find((item) => item.channel === "EMAIL_MARKETING")?.status).toBe(
+      "UNKNOWN",
+    );
+
+    const repository = new D1AuthoritativeTransactionRepository(db);
+    const placeAndPay = async (suffix: string) => {
+      let state = await repository.loadState(tenantId);
+      state = TransactionEngine.createOrder(
+        state,
+        {
+          tenantId,
+          branchId,
+          branch: branchId,
+          table: "T-01",
+          customer: registered.displayName,
+          customerId: registered.id,
+          customerCode: registered.customerCode,
+          channel: "DINE_IN",
+          cashier: actor.name,
+          lines: [
+            {
+              id: `workflow-line-${suffix}`,
+              productId: "menu-demo-main",
+              name: "Configured menu item",
+              category: "MAIN",
+              quantity: 1,
+              unitPrice: 100,
+              productionStation: "NONE",
+            },
+          ],
+        },
+        "OPEN",
+      );
+      const order = state.orders[0]!;
+      state = TransactionEngine.createOpenBill(state, order.id);
+      await repository.saveState(state, actor, "Workflow: opened customer invoice");
+      const bill = state.bills.find((item) => item.orderIds.includes(order.id))!;
+      const paid = TransactionEngine.recordCashPayment(state, bill.id, {
+        received: 100,
+        cashier: actor.name,
+        terminal: "WORKFLOW-TEST",
+      });
+      await repository.saveState(paid, actor, "Workflow: confirmed cash payment");
+      await repository.saveState(paid, actor, "Workflow: duplicate persistence retry");
+      return order.id;
+    };
+
+    const firstOrder = await placeAndPay("one");
+    const secondOrder = await placeAndPay("two");
+    expect(firstOrder).not.toBe(secondOrder);
+    const linkedOrders = db.sqlite
+      .prepare(
+        "SELECT source_id,net_minor,completed FROM customer_transaction_links WHERE tenant_id=? AND customer_id=? ORDER BY source_id",
+      )
+      .all(tenantId, registered.id) as Array<{
+      source_id: string;
+      net_minor: number;
+      completed: number;
+    }>;
+    expect(linkedOrders).toHaveLength(2);
+    expect(linkedOrders.every((row) => row.net_minor === 10_000 && row.completed === 1)).toBe(
+      true,
+    );
+    const earned = db.sqlite
+      .prepare(
+        "SELECT COALESCE(SUM(points),0) AS points,COUNT(*) AS count FROM loyalty_ledger WHERE tenant_id=? AND customer_id=? AND entry_type='EARN'",
+      )
+      .get(tenantId, registered.id) as { points: number; count: number };
+    expect(earned.count).toBe(2);
+    expect(earned.points).toBe(2);
+
+    const analytics = new CrmAnalyticsService(db, actor);
+    await analytics.recalculateMetrics(branchId);
+    const directory = await crm.searchCustomers({ query: "Workflow Guest", branchId });
+    const entry = directory.customers.find((item) => item.id === registered.id);
+    expect(entry).toMatchObject({
+      orderCount: 2,
+      netSpendMinor: 20_000,
+      loyaltyPoints: 2,
+    });
+    const profileAfter = await crm.customerProfile(registered.id);
+    expect(profileAfter.visits.count).toBeGreaterThan(0);
+    expect(profileAfter.journey.filter((event) => event.type === "ORDER_COMPLETED")).toHaveLength(
+      2,
+    );
+    const segments = new CampaignService(db, actor);
+    const segment = await segments.createSegment({
+      code: "WORKFLOW_REPEAT",
+      name: "Workflow repeat visitors",
+      definition: { all: [{ field: "orderCount", operator: "GTE", value: 2 }] },
+    });
+    const snapshot = await segments.buildSegmentSnapshot(segment.id, branchId);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM crm_segment_members WHERE tenant_id=? AND snapshot_id=? AND customer_id=?",
+        )
+        .get(tenantId, snapshot.id, registered.id),
+    ).toMatchObject({ count: 1 });
+
+    const feedback = await crm.createFeedback({
+      branchId,
+      customerId: registered.id,
+      orderId: secondOrder,
+      categoryId: "feedback-category-service",
+      surveyType: "CSAT",
+      rating: 5,
+      source: "POST_PURCHASE",
+    });
+    await crm.resolveFeedback({
+      feedbackId: feedback.id,
+      status: "RESOLVED",
+      note: "Customer contacted",
+      resolution: "Reviewed and resolved",
+    });
+    expect(
+      (await crm.customerProfile(registered.id)).feedback.find((item) => item.id === feedback.id),
+    ).toMatchObject({ status: "RESOLVED" });
+
+    const wrongBranch = new CrmService(db, branchActor("branch-demo-ngong-road"), {
+      defaultCallingCode: "254",
+      nationalPrefix: "0",
+    });
+    await expect(wrongBranch.customerProfile(registered.id)).rejects.toThrow(/branch scope/i);
+  });
+
   it("rejects cross-tenant and unauthorized branch customer and privacy access", async () => {
     seedOtherTenant(db);
     const other = new CrmService(db, testActor("tenant-other", "branch-other"), {
