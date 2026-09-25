@@ -103,10 +103,14 @@ function Procurement() {
       actions={
         <>
           <Link to="/receiving">
-            <Btn><PackageCheck className="h-4 w-4" /> Receiving</Btn>
+            <Btn>
+              <PackageCheck className="h-4 w-4" /> Receiving
+            </Btn>
           </Link>
           <Link to="/purchase-orders">
-            <Btn variant="primary"><Plus className="h-4 w-4" /> Purchase orders</Btn>
+            <Btn variant="primary">
+              <Plus className="h-4 w-4" /> Purchase orders
+            </Btn>
           </Link>
         </>
       }
@@ -124,12 +128,7 @@ function Procurement() {
         />
         <Metric label="Open commitments (recent)" value={commitmentAmount} />
         <Metric label="Suppliers" value={suppliers.length} />
-        <Metric
-          label="Recent receipts"
-          value={
-            serverData?.procurement.receipts.length ?? 0
-          }
-        />
+        <Metric label="Recent receipts" value={serverData?.procurement.receipts.length ?? 0} />
       </div>
 
       {(!authoritative || notice || control.error) && (
@@ -213,7 +212,9 @@ function Procurement() {
                         <TD className="num text-right">
                           {formatQuantity(line.receivedMicro)} {line.unit}
                         </TD>
-                        <TD className="num text-right">{ksh(line.unitPriceMinor / 100, selected.currency)}</TD>
+                        <TD className="num text-right">
+                          {ksh(line.unitPriceMinor / 100, selected.currency)}
+                        </TD>
                         <TD className="num text-right font-semibold">
                           {ksh(line.totalMinor / 100, selected.currency)}
                         </TD>
