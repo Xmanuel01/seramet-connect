@@ -70,6 +70,23 @@ export function ManualMenuItemDialog({
 
   useEffect(() => {
     setSelectedBranchId(initialBranchId);
+    if (open) {
+      setCode("");
+      setName("");
+      setCategoryCode("");
+      setPrice("");
+      setDescription("");
+      setSku("");
+      setStationCode("");
+      setBranchPrice("");
+      setOnlinePrice("");
+      setTaxCode("");
+      setUnitOfMeasure("");
+      setRecipeCode("");
+      setServiceChargeApplicable(false);
+      setAdvancedOpen(false);
+      setDraftRevision(0);
+    }
     setPreview(null);
     setError("");
     setNotice("");
