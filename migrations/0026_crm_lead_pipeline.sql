@@ -21,6 +21,7 @@ CREATE TABLE crm_leads (
   due_at TEXT,
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   request_key TEXT NOT NULL,
+  create_payload_json TEXT NOT NULL,
   last_mutation_key TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -36,6 +37,7 @@ CREATE TABLE crm_lead_events (
   id TEXT NOT NULL,
   lead_id TEXT NOT NULL,
   request_key TEXT NOT NULL,
+  request_payload_json TEXT NOT NULL DEFAULT '{}',
   from_stage TEXT,
   to_stage TEXT NOT NULL,
   note TEXT,
@@ -52,4 +54,4 @@ CREATE TRIGGER crm_lead_events_no_delete BEFORE DELETE ON crm_lead_events
 BEGIN SELECT RAISE(ABORT,'lead events are immutable'); END;
 
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES (26,'crm_lead_pipeline','crm-lead-pipeline-0026-v1',CURRENT_TIMESTAMP);
+VALUES (26,'crm_lead_pipeline','crm-lead-pipeline-0026-v2',CURRENT_TIMESTAMP);
