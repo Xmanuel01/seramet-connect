@@ -883,7 +883,7 @@ export class CampaignService extends CrmServiceBase {
     const consent = await this.db
       .prepare(
         `SELECT status FROM customer_consents WHERE tenant_id=? AND customer_id=? AND channel=?
-         ORDER BY effective_at DESC,created_at DESC,id DESC LIMIT 1`,
+         ORDER BY effective_at DESC,CASE WHEN status IN ('WITHDRAWN','DENIED') THEN 1 ELSE 0 END DESC,created_at DESC,id DESC LIMIT 1`,
       )
       .bind(this.actor.tenantId, customerId, `${channel}_MARKETING`)
       .first<{ status: string }>();
