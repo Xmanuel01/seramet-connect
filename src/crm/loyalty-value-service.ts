@@ -671,7 +671,8 @@ export class LoyaltyValueService extends CrmServiceBase {
     const program = await this.programForBranch(input.programId, branchId);
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
-    const result = await this.db
+    const statements = [
+      this.db
       .prepare(
         `INSERT INTO loyalty_ledger
           (tenant_id,id,customer_id,program_id,branch_id,entry_type,points,source_type,source_id,
@@ -700,9 +701,32 @@ export class LoyaltyValueService extends CrmServiceBase {
         input.customerId,
         input.programId,
         input.points,
-      )
-      .run();
-    if ((result.meta?.changes ?? 0) === 0) {
+      ),
+      this.db
+        .prepare(
+          `INSERT INTO audit_events
+            (tenant_id,id,branch_id,actor_id,device_id,action,entity_type,entity_id,
+             reason,correlation_id,session_id,metadata_json,created_at)
+           SELECT ?,?,?,?,?,'LOYALTY_POINTS_ADJUSTED','LOYALTY_LEDGER',?,?,?,?,?,?
+           WHERE EXISTS (SELECT 1 FROM loyalty_ledger WHERE tenant_id=? AND id=?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          branchId,
+          this.actor.id,
+          this.actor.deviceId ?? null,
+          id,
+          input.reason,
+          crypto.randomUUID(),
+          this.actor.sessionId ?? null,
+          JSON.stringify({ points: input.points }),
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+    ];
+    const results = await this.db.batch(statements);    if ((results[0]?.meta?.changes ?? 0) === 0) {
       const replay = await this.db
         .prepare(
           `SELECT id,customer_id,program_id,branch_id,entry_type,points,business_date,reason
@@ -716,16 +740,6 @@ export class LoyaltyValueService extends CrmServiceBase {
         "Adjustment would create a negative balance",
       );
     }
-    await this.db.batch([
-      this.auditStatement({
-        action: "LOYALTY_POINTS_ADJUSTED",
-        entityType: "LOYALTY_LEDGER",
-        entityId: id,
-        branchId,
-        reason: input.reason,
-        metadata: { points: input.points },
-      }),
-    ]);
     return { id, duplicate: false };
   }
 
