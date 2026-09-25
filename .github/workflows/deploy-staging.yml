@@ -3,7 +3,8 @@ name: Deploy staging
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # Temporary staging-only PR validation; remove before merging.
+    branches: [main, hardening/customers-20260925]
 
 concurrency:
   group: seramet-staging
