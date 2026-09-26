@@ -126,7 +126,7 @@ function post(
 ) {
   db.sqlite
     .prepare(
-      "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at,posted_at) VALUES (?,?,?,'TEST_SALE',?,?,'POSTED','Test posting',?,'{}',?,?)",
+      "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,?,?,'TEST_SALE',?,?,'DRAFT','Test posting',?,'{}',?)",
     )
     .run(
       input.tenant,
@@ -136,7 +136,6 @@ function post(
       input.date ?? "2026-09-20",
       input.id,
       stamp,
-      stamp,
     );
   for (const [index, [account, debit, credit]] of input.entries.entries()) {
     db.sqlite
@@ -145,6 +144,9 @@ function post(
       )
       .run(input.tenant, input.id, index + 1, account, debit, credit, input.currency ?? "KES");
   }
+  db.sqlite.prepare(
+    "UPDATE journal_entries SET status='POSTED',posted_at=? WHERE tenant_id=? AND id=? AND status='DRAFT'",
+  ).run(stamp, input.tenant, input.id);
 }
 
 describe("Authoritative finance and ERP-style reporting integrity", () => {
@@ -212,18 +214,32 @@ describe("Authoritative finance and ERP-style reporting integrity", () => {
     await expect(s.ledger({ ...window, limit: 999 })).rejects.toThrow();
   });
 
-  it("reports imbalanced posted vouchers and missing sales bridge without false success", async () => {
-    const s = new FinancialLedgerService(db, actor());
-    db.sqlite
-      .prepare(
+  it("rejects an unbalanced posting and preserves immutable posted voucher evidence", async () => {
+    expect(() =>
+      db.sqlite.prepare(
         "DELETE FROM journal_lines WHERE tenant_id=? AND journal_entry_id=? AND account_id=?",
-      )
-      .run(t, "sale-a", "income");
-    const report = await s.statement(window);
-    const codes = report.issues.map((issue) => issue.code);
-    expect(codes).toContain("IMBALANCED_POSTED_JOURNALS");
-    expect(codes).toContain("SETTLED_SALES_NOT_IN_GL");
-    expect(report.trial.balanced).toBe(false);
+      ).run(t, "sale-a", "income"),
+    ).toThrow(/POSTED_JOURNAL_IMMUTABLE/);
+    db.sqlite.prepare(
+      "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,?,?,'TEST_UNBALANCED',?,'2026-09-20','DRAFT','Unbalanced test',?,'{}',?)",
+    ).run(t, "bad-draft", a, "bad-draft", "bad-draft", stamp);
+    db.sqlite.prepare(
+      "INSERT INTO journal_lines (tenant_id,journal_entry_id,line_number,account_id,debit_minor,credit_minor,currency) VALUES (?,?,?,?,500,0,'KES')",
+    ).run(t, "bad-draft", 1, "cash");
+    expect(() => db.sqlite.prepare(
+      "UPDATE journal_entries SET status='POSTED',posted_at=? WHERE tenant_id=? AND id=?",
+    ).run(stamp,t,"bad-draft")).toThrow(/JOURNAL_NOT_BALANCED/);
+    const report = await new FinancialLedgerService(db, actor()).statement(window);
+    expect(report.trial.balanced).toBe(true);
+  });
+
+  it("flags settled customer sales without a posted revenue journal", async () => {
+    db.sqlite.prepare("DELETE FROM invoices WHERE tenant_id=?").run(t);
+    db.sqlite.prepare(
+      "INSERT INTO invoices (tenant_id,id,branch_id,invoice_number,status,business_date,currency,total_minor,paid_minor,payload_json,created_at,updated_at) VALUES (?,?,?,'UNPOSTED-1','PAID','2026-09-23','KES',1200,1200,'{}',?,?)",
+    ).run(t, "unposted-invoice", b, stamp, stamp);
+    const report = await new FinancialLedgerService(db, actor(t,b)).statement(window);
+    expect(report.issues.map((issue) => issue.code)).toContain("SETTLED_SALES_NOT_IN_GL");
     expect(report.quality).toBe("INCOMPLETE");
   });
 
