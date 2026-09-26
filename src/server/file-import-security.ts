@@ -1,4 +1,5 @@
 import { ServerOperationError } from "@/server/errors";
+import type { MalwareScanner } from "@/server/environment";
 
 export type ImportKind =
   | "BANK"
@@ -11,11 +12,11 @@ export type ImportKind =
   | "CONFIGURATION"
   | "HISTORICAL_SALES";
 
-export type MalwareScanAdapter = {
-  scan(input: { bytes: Uint8Array; filename: string; contentType: string }): Promise<{
-    clean: boolean;
-    reference?: string;
-  }>;
+export type CleanScanEvidence = {
+  status: "CLEAN";
+  fileDigest: string;
+  scannedAt: string;
+  reference?: string;
 };
 
 const limits: Record<ImportKind, { maxBytes: number; maxRows: number; extensions: string[] }> = {
@@ -36,7 +37,7 @@ export async function validateImportFile(input: {
   contentType: string;
   bytes: Uint8Array;
   estimatedRows?: number;
-  scanner?: MalwareScanAdapter;
+  scanner?: MalwareScanner;
 }) {
   const policy = limits[input.kind];
   const filename = input.filename.trim();
@@ -76,15 +77,47 @@ export async function validateImportFile(input: {
   if (extension === "xlsx" && !(input.bytes[0] === 0x50 && input.bytes[1] === 0x4b)) {
     throw new ServerOperationError("VALIDATION_FAILED", 400, "Workbook signature is invalid");
   }
-  if (input.scanner) {
-    const scan = await input.scanner.scan({
-      bytes: input.bytes,
-      filename,
-      contentType: normalizedType,
-    });
-    if (!scan.clean)
-      throw new ServerOperationError("VALIDATION_FAILED", 422, "Import failed malware screening");
+  if (!input.scanner) {
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "File imports are unavailable until security scanning is configured",
+    );
   }
+  const digest = await sha256(input.bytes);
+  let scan: Awaited<ReturnType<MalwareScanner["scan"]>>;
+  try {
+    scan = await withTimeout(
+      input.scanner.scan({
+        bytes: exactArrayBuffer(input.bytes),
+        fileName: filename,
+        contentType: normalizedType,
+      }),
+      10_000,
+    );
+  } catch {
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "File security scanning is temporarily unavailable",
+    );
+  }
+  if (scan.status === "ERROR") {
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "File security scanning is temporarily unavailable",
+    );
+  }
+  if (scan.status !== "CLEAN") {
+    throw new ServerOperationError("VALIDATION_FAILED", 422, "Import failed malware screening");
+  }
+  const scanEvidence: CleanScanEvidence = {
+    status: "CLEAN",
+    fileDigest: digest,
+    scannedAt: new Date().toISOString(),
+    ...(scan.reference ? { reference: scan.reference } : {}),
+  };
   return {
     kind: input.kind,
     filename,
@@ -92,8 +125,47 @@ export async function validateImportFile(input: {
     bytes: input.bytes.byteLength,
     maxRows: policy.maxRows,
     requiresPreview: true,
-    digest: await sha256(input.bytes),
+    digest,
+    scanEvidence,
   };
+}
+
+export function requireCleanScanEvidence(report: unknown, fileDigest: string) {
+  const evidence =
+    report && typeof report === "object"
+      ? (report as { cleanScan?: Partial<CleanScanEvidence> }).cleanScan
+      : undefined;
+  if (
+    evidence?.status !== "CLEAN" ||
+    evidence.fileDigest !== fileDigest ||
+    typeof evidence.scannedAt !== "string" ||
+    Number.isNaN(Date.parse(evidence.scannedAt))
+  ) {
+    throw new ServerOperationError(
+      "CONFLICT",
+      409,
+      "This preview has no valid file security scan. Upload the file again.",
+    );
+  }
+  return evidence as CleanScanEvidence;
+}
+
+function exactArrayBuffer(bytes: Uint8Array) {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Malware scan timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function sha256(bytes: Uint8Array) {

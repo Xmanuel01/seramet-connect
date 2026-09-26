@@ -72,7 +72,7 @@ export async function handleOnboardingApi(
     );
   }
   const service = new OnboardingService(env.SERAMET_DB, actor, env);
-  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor);
+  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor, env);
   const locationCurrency = new LocationCurrencyService(env.SERAMET_DB, actor);
 
   if (

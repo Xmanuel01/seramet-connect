@@ -222,6 +222,51 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
   });
 
+  it("does not parse or persist an import preview when the scanner is unavailable", async () => {
+    const unavailable = new OnboardingService(db, actor(), {
+      ...env,
+      SERAMET_MALWARE_SCANNER: undefined,
+    });
+    await expect(
+      previewCsv(
+        unavailable,
+        "MENU",
+        "code,name,category,price,currency\nUNSCANNED-1,Unsafe,MAIN,100,KES",
+        "unscanned-preview",
+      ),
+    ).rejects.toMatchObject({ code: "EXTERNAL_SERVICE_UNAVAILABLE", status: 503 });
+    expect(await rowCount(db, "setup_imports")).toBe(0);
+    expect(await rowCount(db, "setup_import_rows")).toBe(0);
+  });
+
+  it("does not expose or commit a legacy preview without matching clean-scan evidence", async () => {
+    const input = {
+      branchId,
+      kind: "MENU" as const,
+      originalName: "legacy-preview.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "code,name,category,price,currency\nLEGACY-1,Legacy row,MAIN,100,KES",
+      ),
+      duplicateStrategy: "ERROR" as const,
+      idempotencyKey: "legacy-client-key",
+    };
+    const preview = await service.previewImport(input);
+    await db
+      .prepare("UPDATE setup_imports SET report_json='{}' WHERE tenant_id=? AND id=?")
+      .bind(tenantId, preview.id)
+      .run();
+
+    await expect(service.previewImport(input)).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+    await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+  });
+
   it("imports an actual Excel workbook into the authoritative branch catalogue", async () => {
     const workbook = createXlsx([
       [
@@ -255,7 +300,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("previews and commits a one-time previous POS sales migration without replaying live flows", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const preview = await migration.preview({
       sourceSystem: "Previous POS",
       originalName: "historical-sales.csv",
@@ -314,7 +359,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows the optional previous POS migration to be skipped without permanently disabling it", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     await expect(migration.skip("No export is available yet")).resolves.toMatchObject({
       status: "SKIPPED",
       canImportLater: true,
@@ -331,7 +376,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows only one simultaneous previous POS migration commit", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const first = await migration.preview({
       sourceSystem: "Previous POS A",
       originalName: "history-a.csv",
@@ -1361,6 +1406,11 @@ function testEnvironment(
     SERAMET_ENVIRONMENT: "test",
     SERAMET_DB: database,
     SERAMET_CALLBACK_BASE_URL: "https://callbacks.example.test",
+    SERAMET_MALWARE_SCANNER: {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+    },
     SERAMET_MANAGED_SECRET_STORE: {
       async get(reference: string) {
         return secrets.get(reference) ?? null;

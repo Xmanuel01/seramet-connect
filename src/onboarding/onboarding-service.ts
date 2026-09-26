@@ -4,7 +4,7 @@ import { getProviderRegistry } from "@/integrations/provider-registry";
 import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
-import { validateImportFile } from "@/server/file-import-security";
+import { requireCleanScanEvidence, validateImportFile } from "@/server/file-import-security";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { ServerOperationError } from "@/server/errors";
 import { createSecretStore } from "@/server/secrets";
@@ -1251,6 +1251,7 @@ export class OnboardingService {
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
+      scanner: this.env.SERAMET_MALWARE_SCANNER,
     });
     let rawRows: Array<Record<string, string>>;
     try {
@@ -1337,6 +1338,7 @@ export class OnboardingService {
           json({
             requiresPreview: true,
             extension: file.extension,
+            cleanScan: file.scanEvidence,
             legacyTemplate: template.legacy,
             unsupportedColumns:
               input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
@@ -1395,7 +1397,7 @@ export class OnboardingService {
       .prepare(
         `SELECT branch_id,import_kind,duplicate_strategy,status,idempotency_key,row_count,
                 target_mode,target_branch_ids_json,catalogue_revision,expires_at,verification_json,
-                created_by
+                created_by,file_checksum,report_json
          FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, importId)
@@ -1412,8 +1414,11 @@ export class OnboardingService {
         expires_at: string | null;
         verification_json: string;
         created_by: string;
+        file_checksum: string;
+        report_json: string;
       }>();
     if (!record) throw notFound("Import preview not found");
+    requireCleanScanEvidence(parseJson(record.report_json, {}), record.file_checksum);
     const targetBranchIds = parseJson<string[]>(record.target_branch_ids_json, []);
     if (options.worker) {
       await this.assertQueuedImportAuthority(record.created_by, targetBranchIds);
@@ -4591,12 +4596,16 @@ export class OnboardingService {
         `SELECT id,import_kind,status,original_name,duplicate_strategy,row_count,valid_count,
                 warning_count,error_count,idempotency_key,created_at,template_version,
                 preview_fingerprint,importer_version,target_mode,target_branch_ids_json,expires_at,
-                verification_status,verification_json
+                verification_status,verification_json,file_checksum,report_json
          FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, id)
       .first<Record<string, unknown>>();
     if (!record) throw notFound("Import not found");
+    requireCleanScanEvidence(
+      parseJson(string(record["report_json"]), {}),
+      string(record["file_checksum"]),
+    );
     const rows = await this.db
       .prepare(
         `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json,action
