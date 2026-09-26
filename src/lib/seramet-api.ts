@@ -47,6 +47,7 @@ import { handleCookbookApi } from "@/server/cookbook-api";
 import { handleKitchenAnalyticsApi } from "@/server/kitchen-analytics-api";
 import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
+import { handleFinanceApi } from "@/server/finance-api";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
 import { handleIntelligenceApi } from "@/server/intelligence-api";
@@ -179,6 +180,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (prepResponse) return prepResponse;
     const managementResponse = await handleManagementApi(request, env);
     if (managementResponse) return managementResponse;
+    const financeResponse = await handleFinanceApi(request, env);
+    if (financeResponse) return financeResponse;
     const onboardingResponse = await handleOnboardingApi(request, env);
     if (onboardingResponse) return onboardingResponse;
     const intelligenceResponse = await handleIntelligenceApi(request, env);

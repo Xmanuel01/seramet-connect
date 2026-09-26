@@ -1,9 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
-import { EmptyState } from "@/components/app/EmptyState";
-import { emptyRecords } from "@/lib/empty-records";
+import { Metric, Panel, PanelHead, Status } from "@/components/app/ui";
+import { CrmEmpty, CrmError, CrmLoading, readableStatus } from "@/crm/crm-ui";
+import { useCrmApi } from "@/crm/use-crm";
+import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/crm")({
   head: () => ({
@@ -11,87 +13,212 @@ export const Route = createFileRoute("/crm")({
       { title: "CRM Overview - Seramet" },
       {
         name: "description",
-        content: "Customer segments, pipeline value, loyalty activity and complaint recovery.",
+        content: "Authoritative customer engagement, retention and loyalty overview.",
       },
     ],
   }),
   component: CrmOverview,
 });
 
-type CustomerSegment = {
-  name: string;
-  customers: number;
-  value: number;
-  trend: number;
-  status: string;
+type CrmDashboard = {
+  activeCustomers: number;
+  totalCustomers: number;
+  repeatCustomers: number;
+  returnRateBps: number;
+  orderCount: number;
+  loyaltyMembers: number;
+  pointsIssued: number;
+  pointsRedeemed: number;
+  vouchersRedeemed: number;
+  activeCampaigns: number;
+  feedbackCount: number;
+  csat: number | null;
+  nps: number | null;
+  quality: string;
+  evidence: { completedCustomerLinks: number };
+};
+type DashboardResponse = { ok: boolean; dashboard: CrmDashboard };
+type DashboardState = {
+  path: string;
+  status: "loading" | "ready" | "error";
+  dashboard: CrmDashboard | null;
+  error: string;
 };
 
-const segments = emptyRecords<CustomerSegment>();
-
 function CrmOverview() {
+  const { activeTenantId, branchId, branchLabel, isAllBranches, hasPermission } = useAppContext();
+  const { scopedPath, request } = useCrmApi();
+  const canView = hasPermission(permissions.crmView);
+  const dashboardPath = canView ? scopedPath("/api/seramet/crm/dashboard") : null;
+  const dashboardKey =
+    activeTenantId + ":" + (isAllBranches ? "ALL" : branchId) + ":" + (dashboardPath ?? "");
+  const [revision, setRevision] = useState(0);
+  const [state, setState] = useState<DashboardState>({
+    path: "",
+    status: "loading",
+    dashboard: null,
+    error: "",
+  });
+
+  useEffect(() => {
+    if (!dashboardPath) return;
+    const controller = new AbortController();
+    setState({ path: dashboardKey, status: "loading", dashboard: null, error: "" });
+    void request<DashboardResponse>(dashboardPath, { signal: controller.signal })
+      .then(({ dashboard }) => {
+        if (!controller.signal.aborted) {
+          setState({ path: dashboardKey, status: "ready", dashboard, error: "" });
+        }
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted) {
+          setState({
+            path: dashboardPath,
+            status: "error",
+            dashboard: null,
+            error: cause instanceof Error ? cause.message : "CRM dashboard unavailable",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [dashboardKey, dashboardPath, request, revision]);
+
+  const current = state.path === dashboardKey ? state : null;
+  const dashboard = current?.status === "ready" ? current.dashboard : null;
   return (
     <AppShell
       title="CRM overview"
-      subtitle="Customer growth, retention, pipeline and service recovery"
+      subtitle={"Authoritative customer growth and service activity - " + branchLabel}
       actions={
-        <>
-          <Btn>Export</Btn>
-          <Btn variant="primary">Create campaign</Btn>
-        </>
+        <button
+          type="button"
+          onClick={() => setRevision((value) => value + 1)}
+          className="rounded-md border border-border bg-card px-3 py-2 text-[13px] font-semibold"
+          disabled={!canView}
+        >
+          Refresh data
+        </button>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Active customers" value={0} />
-        <Metric label="Pipeline value" value={0} money />
-        <Metric label="Loyalty members" value={0} />
-        <Metric label="Open complaints" value={0} invert />
-      </div>
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Panel>
-          <PanelHead
-            title="Customer segments"
-            sub="Segments connect Customer 360, loyalty, complaints and CRM pipeline"
+      {!canView ? (
+        <Panel className="p-5">
+          <CrmEmpty
+            title="CRM access unavailable"
+            body="Your role does not permit viewing this overview."
           />
-          {segments.length ? (
-            <table className="w-full">
-              <thead>
-                <tr>
-                  <TH>Segment</TH>
-                  <TH className="text-right">Customers</TH>
-                  <TH className="text-right">Value</TH>
-                  <TH className="text-right">Trend</TH>
-                  <TH>Status</TH>
-                </tr>
-              </thead>
-              <tbody>
-                {segments.map((segment) => (
-                  <tr key={segment.name} className="hover:bg-secondary/50">
-                    <TD className="font-semibold">{segment.name}</TD>
-                    <TD className="num text-right">{segment.customers}</TD>
-                    <TD className="num text-right">{ksh(segment.value)}</TD>
-                    <TD className="num text-right">{segment.trend}%</TD>
-                    <TD>
-                      <Status>{segment.status}</Status>
-                    </TD>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyState
-              title="No customer segments yet"
-              description="Segments will appear after customer and order activity is recorded."
+        </Panel>
+      ) : !current || current.status === "loading" ? (
+        <Panel>
+          <CrmLoading label="Loading CRM metrics" />
+        </Panel>
+      ) : current.status === "error" ? (
+        <Panel>
+          <CrmError message={current.error} retry={() => setRevision((value) => value + 1)} />
+        </Panel>
+      ) : dashboard ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Metric label="Active customer profiles" value={dashboard.totalCustomers} />
+            <Metric label="Active last 30 days" value={dashboard.activeCustomers} />
+            <Metric label="Repeat customers" value={dashboard.repeatCustomers} />
+            <Metric
+              label="Customer return rate"
+              value={Number((dashboard.returnRateBps / 100).toFixed(1))}
+              suffix="%"
             />
-          )}
-        </Panel>
-        <Panel>
-          <PanelHead title="Next best actions" sub="Operational CRM prompts" />
-          <EmptyState
-            title="No CRM actions"
-            description="Evidence-based actions will appear as customer activity is collected."
+            <Metric label="Loyalty members" value={dashboard.loyaltyMembers} />
+            <Metric label="Confirmed voucher uses" value={dashboard.vouchersRedeemed} />
+            <Metric label="Active campaigns" value={dashboard.activeCampaigns} />
+            <Metric label="Feedback received" value={dashboard.feedbackCount} />
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <Panel>
+              <PanelHead title="Customer engagement" sub="Server-calculated CRM activity" />
+              <div className="space-y-3 p-4 text-[13px]">
+                <div className="flex items-center justify-between">
+                  <span>Linked completed orders</span>
+                  <span className="font-semibold">
+                    {dashboard.evidence.completedCustomerLinks.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Orders represented in customer metrics</span>
+                  <span className="font-semibold">{dashboard.orderCount.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Customer evidence quality</span>
+                  <Status>{readableStatus(dashboard.quality)}</Status>
+                </div>
+                <p className="text-[12px] text-muted-foreground">
+                  When transaction evidence is incomplete, CRM trends and segments may not be
+                  representative.
+                </p>
+              </div>
+            </Panel>
+            <Panel>
+              <PanelHead
+                title="Loyalty and service"
+                sub="Activity from the authoritative CRM ledger"
+              />
+              <div className="space-y-3 p-4 text-[13px]">
+                <div className="flex items-center justify-between">
+                  <span>Points issued</span>
+                  <span className="font-semibold">{dashboard.pointsIssued.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Points redeemed</span>
+                  <span className="font-semibold">{dashboard.pointsRedeemed.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Customer satisfaction (CSAT)</span>
+                  <span className="font-semibold">
+                    {dashboard.csat === null ? "Insufficient data" : dashboard.csat.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Net promoter score (NPS)</span>
+                  <span className="font-semibold">
+                    {dashboard.nps === null ? "Insufficient data" : dashboard.nps}
+                  </span>
+                </div>
+              </div>
+            </Panel>
+          </div>
+          <Panel className="mt-4">
+            <PanelHead
+              title="Customer workflows"
+              sub="Open the existing customer directory or related CRM modules"
+            />
+            <div className="flex flex-wrap gap-2 p-4 text-[13px]">
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/customers"
+              >
+                Customer 360
+              </Link>
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/loyalty"
+              >
+                Loyalty
+              </Link>
+              <Link
+                className="rounded-md border border-border px-3 py-2 font-semibold hover:bg-secondary"
+                to="/complaints"
+              >
+                Complaints
+              </Link>
+            </div>
+          </Panel>
+        </>
+      ) : (
+        <Panel className="p-5">
+          <CrmEmpty
+            title="CRM metrics unavailable"
+            body="No authoritative dashboard data was returned."
           />
         </Panel>
-      </div>
+      )}
     </AppShell>
   );
 }

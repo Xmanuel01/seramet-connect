@@ -35,7 +35,7 @@ describe.sequential("Pass 7 management intelligence and restaurant finance", () 
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(25);
+    expect(version?.version).toBe(26);
     for (const table of [
       "management_actions",
       "management_action_events",
