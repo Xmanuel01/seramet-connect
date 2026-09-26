@@ -119,7 +119,6 @@ function SetupCentre() {
   const [providerBranchId, setProviderBranchId] = useState("");
   const [providerEnvironment, setProviderEnvironment] = useState("SANDBOX");
   const [providerConfiguration, setProviderConfiguration] = useState<Record<string, string>>({});
-  const [providerCredentials, setProviderCredentials] = useState<Record<string, string>>({});
   const [mapping, setMapping] = useState({
     connectionId: "",
     resourceType: "STORE",
@@ -298,13 +297,9 @@ function SetupCentre() {
         ...(providerBranchId ? { branchId: providerBranchId } : {}),
         environment: providerEnvironment,
         configuration,
-        ...(Object.values(providerCredentials).some(Boolean)
-          ? { credentials: providerCredentials }
-          : {}),
         enabled: true,
       });
-      setProviderCredentials({});
-    }, `${provider.displayName} configuration stored. Credential values were not returned.`);
+    }, `${provider.displayName} restaurant configuration stored. Platform credentials remain server managed.`);
   };
   const saveMapping = (event: FormEvent) => {
     event.preventDefault();
@@ -704,7 +699,9 @@ function SetupCentre() {
                 <Field
                   label="Tax configuration reference"
                   value={business.taxConfigurationReference}
-                  onChange={(value) => setBusiness({ ...business, taxConfigurationReference: value })}
+                  onChange={(value) =>
+                    setBusiness({ ...business, taxConfigurationReference: value })
+                  }
                 />
                 <Field
                   label="Logo asset reference"
@@ -1060,7 +1057,6 @@ function SetupCentre() {
                 setProviderId={(value) => {
                   setProviderId(value);
                   setProviderConfiguration({});
-                  setProviderCredentials({});
                 }}
                 providerBranchId={providerBranchId}
                 setProviderBranchId={setProviderBranchId}
@@ -1068,8 +1064,6 @@ function SetupCentre() {
                 setEnvironment={setProviderEnvironment}
                 configuration={providerConfiguration}
                 setConfiguration={setProviderConfiguration}
-                credentials={providerCredentials}
-                setCredentials={setProviderCredentials}
                 onSubmit={saveProvider}
                 busy={busy}
               />
@@ -1578,8 +1572,6 @@ function ProviderPanel({
   setEnvironment,
   configuration,
   setConfiguration,
-  credentials,
-  setCredentials,
   onSubmit,
   busy,
 }: {
@@ -1593,8 +1585,6 @@ function ProviderPanel({
   setEnvironment: (value: string) => void;
   configuration: Record<string, string>;
   setConfiguration: (value: Record<string, string>) => void;
-  credentials: Record<string, string>;
-  setCredentials: (value: Record<string, string>) => void;
   onSubmit: (event: FormEvent) => void;
   busy: boolean;
 }) {
@@ -1713,18 +1703,14 @@ function ProviderPanel({
                 )}
               </label>
             ))}
-          {provider?.credentialFields.map((key) => (
-            <label className={labelClass} key={key}>
-              {humanize(key)}
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={credentials[key] ?? ""}
-                onChange={(event) => setCredentials({ ...credentials, [key]: event.target.value })}
-                className={inputClass}
-              />
-            </label>
-          ))}
+          {provider?.credentialFields.length ? (
+            <div className="rounded-md border border-border bg-secondary/50 px-3 py-3 text-xs text-muted-foreground">
+              Provider credentials are managed by the Seramet platform and are never entered or
+              returned on restaurant screens. Save the restaurant-specific configuration here;
+              connection status will remain <strong>Action needed</strong> until an authorized
+              platform operator completes verification.
+            </div>
+          ) : null}
           {provider && (
             <div className="flex flex-wrap gap-1.5">
               {provider.capabilities.slice(0, 8).map((item) => (
@@ -1974,13 +1960,21 @@ function StationSetupPanel({
               value={station.stationType}
               onChange={(event) => setStation({ ...station, stationType: event.target.value })}
             >
-              {["KITCHEN", "GRILL", "FRYER", "BAR", "COFFEE", "DESSERT", "PASS", "DISPATCH", "OTHER"].map(
-                (value) => (
-                  <option key={value} value={value}>
-                    {humanize(value)}
-                  </option>
-                ),
-              )}
+              {[
+                "KITCHEN",
+                "GRILL",
+                "FRYER",
+                "BAR",
+                "COFFEE",
+                "DESSERT",
+                "PASS",
+                "DISPATCH",
+                "OTHER",
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {humanize(value)}
+                </option>
+              ))}
             </select>
           </label>
           <label className={labelClass}>

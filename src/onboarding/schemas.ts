@@ -290,8 +290,6 @@ export const providerSetupSchema = z
     providerId: z.string().trim().min(1).max(120),
     environment: z.enum(["SANDBOX", "PRODUCTION"]),
     configuration: optionalRecord,
-    credentials: z.record(z.string().min(1)).optional(),
-    secretReference: z.string().trim().min(1).max(240).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
