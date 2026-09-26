@@ -37,6 +37,38 @@ export const onboardingStepSchema = z
   })
   .strict();
 
+export const departmentSetupSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(120).optional(),
+    code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/),
+    name: z.string().trim().min(2).max(120),
+    active: z.boolean().optional(),
+  })
+  .strict();
+
+export const stationSetupSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(120),
+    departmentId: z.string().trim().min(1).max(120).optional(),
+    code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/),
+    name: z.string().trim().min(2).max(120),
+    stationType: z.enum([
+      "KITCHEN",
+      "GRILL",
+      "FRYER",
+      "BAR",
+      "COFFEE",
+      "DESSERT",
+      "PASS",
+      "DISPATCH",
+      "OTHER",
+    ]),
+    printerDeviceId: z.string().trim().min(1).max(120).optional(),
+    kdsDeviceId: z.string().trim().min(1).max(120).optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+
 export const acceptedCurrencySchema = z
   .object({
     currencyCode: z

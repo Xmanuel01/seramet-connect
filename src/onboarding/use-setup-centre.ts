@@ -75,6 +75,7 @@ export type SetupOptions = {
   accounts: Array<Record<string, unknown>>;
   roles: Array<Record<string, unknown>>;
   warehouses: Array<Record<string, unknown>>;
+  departments: Array<Record<string, unknown>>;
   stations: Array<Record<string, unknown>>;
   documentTemplates: Array<Record<string, unknown>>;
   inventoryItems: Array<Record<string, unknown>>;
@@ -143,6 +144,7 @@ export function useSetupCentre() {
     accounts: [],
     roles: [],
     warehouses: [],
+    departments: [],
     stations: [],
     documentTemplates: [],
     inventoryItems: [],

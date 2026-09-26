@@ -28,6 +28,7 @@ import {
   type BusinessProfileInput,
   type DeviceHealthRow,
   type DeviceSetupInput,
+  type DepartmentSetupInput,
   type DocumentTemplateSetupInput,
   type ExternalMappingInput,
   type GoLiveDecision,
@@ -41,6 +42,7 @@ import {
   type OpeningStockInput,
   type OrganisationProvisionInput,
   type ProviderSetupInput,
+  type StationSetupInput,
   type ReadinessResult,
   type ReadinessSeverity,
   type ReadinessStatus,
@@ -545,8 +547,14 @@ export class OnboardingService {
   async setupOptions(branchId?: string) {
     this.require(permissions.setupView);
     if (branchId) await this.assertBranch(branchId);
-    const [accounts, roles, warehouses, stations, templates, inventoryItems, units] =
+    const [accounts, roles, warehouses, departments, stations, templates, inventoryItems, units] =
       await Promise.all([
+        this.db
+          .prepare(
+            "SELECT id,branch_id,code,name,active FROM departments WHERE tenant_id=? ORDER BY name LIMIT 500",
+          )
+          .bind(this.actor.tenantId)
+          .all(),
         this.db
           .prepare(
             "SELECT id,code,name,account_type,currency,active FROM accounts WHERE tenant_id=? ORDER BY code LIMIT 1000",
@@ -596,6 +604,10 @@ export class OnboardingService {
       warehouses: (warehouses.results ?? []).filter((row) =>
         this.canReadBranch(string((row as Record<string, unknown>)["branch_id"])),
       ),
+      departments: (departments.results ?? []).filter((row) => {
+        const target = string((row as Record<string, unknown>)["branch_id"]);
+        return !target || this.canReadBranch(target);
+      }),
       stations: (stations.results ?? []).filter((row) =>
         this.canReadBranch(string((row as Record<string, unknown>)["branch_id"])),
       ),
@@ -739,6 +751,97 @@ export class OnboardingService {
       }),
     ]);
     return this.recalculateReadiness(undefined, true);
+  }
+
+  async configureDepartment(input: DepartmentSetupInput) {
+    this.require(permissions.setupManage);
+    if (input.branchId) await this.assertBranch(input.branchId);
+    const id = stableId("department", `${input.branchId ?? "tenant"}:${input.code}`);
+    const stamp = now();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO departments (tenant_id,id,branch_id,code,name,active,payload_json)
+           VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(tenant_id,id) DO UPDATE SET branch_id=excluded.branch_id,
+             code=excluded.code,name=excluded.name,active=excluded.active,payload_json=excluded.payload_json`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId ?? null,
+          input.code.toUpperCase(),
+          clean(input.name),
+          bool(input.active ?? true),
+          json({ updatedBy: this.actor.id, updatedAt: stamp }),
+        ),
+      this.audit("DEPARTMENT_CONFIGURED", "DEPARTMENT", id, {
+        branchId: input.branchId ?? null,
+        code: input.code.toUpperCase(),
+      }),
+    ]);
+    return { id };
+  }
+
+  async configureStation(input: StationSetupInput) {
+    this.require(permissions.setupManage);
+    await this.assertBranch(input.branchId);
+    if (input.departmentId) {
+      const department = await this.db
+        .prepare(
+          `SELECT id FROM departments WHERE tenant_id=? AND id=? AND active=1
+           AND (branch_id IS NULL OR branch_id=?)`,
+        )
+        .bind(this.actor.tenantId, input.departmentId, input.branchId)
+        .first();
+      if (!department) throw validation("Department is not available to this branch");
+    }
+    for (const [deviceId, expectedType] of [
+      [input.printerDeviceId, "PRINTER"],
+      [input.kdsDeviceId, "KDS"],
+    ] as const) {
+      if (!deviceId) continue;
+      const device = await this.db
+        .prepare(
+          `SELECT id FROM hardware_devices WHERE tenant_id=? AND id=? AND branch_id=?
+           AND device_type=? AND lifecycle_state<>'RETIRED'`,
+        )
+        .bind(this.actor.tenantId, deviceId, input.branchId, expectedType)
+        .first();
+      if (!device) throw validation(`${expectedType} device is not available to this branch`);
+    }
+    const id = stableId("station", `${input.branchId}:${input.code}`);
+    const payload = {
+      departmentId: input.departmentId ?? null,
+      printerDeviceId: input.printerDeviceId ?? null,
+      kdsDeviceId: input.kdsDeviceId ?? null,
+    };
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json)
+           VALUES (?,?,?,?,?,?,?,?)
+           ON CONFLICT(tenant_id,id) DO UPDATE SET branch_id=excluded.branch_id,
+             code=excluded.code,name=excluded.name,station_type=excluded.station_type,
+             active=excluded.active,payload_json=excluded.payload_json`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.code.toUpperCase(),
+          clean(input.name),
+          input.stationType,
+          bool(input.active ?? true),
+          json(payload),
+        ),
+      this.audit("STATION_CONFIGURED", "STATION", id, {
+        branchId: input.branchId,
+        code: input.code.toUpperCase(),
+        ...payload,
+      }),
+    ]);
+    return { id };
   }
 
   async createBranch(input: BranchSetupInput) {

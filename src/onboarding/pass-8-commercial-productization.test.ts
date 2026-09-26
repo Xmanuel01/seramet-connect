@@ -119,6 +119,54 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "BUSINESS_PROFILE_UPDATED")).toBe(1);
   });
 
+  it("configures branch-safe departments and production stations with authoritative routing", async () => {
+    const department = await service.configureDepartment({
+      branchId,
+      code: "KITCHEN",
+      name: "Kitchen",
+    });
+    const station = await service.configureStation({
+      branchId,
+      departmentId: department.id,
+      code: "HOT_LINE",
+      name: "Hot line",
+      stationType: "KITCHEN",
+    });
+    expect(
+      await db
+        .prepare("SELECT branch_id,code,name FROM departments WHERE tenant_id=? AND id=?")
+        .bind(tenantId, department.id)
+        .first(),
+    ).toEqual({ branch_id: branchId, code: "KITCHEN", name: "Kitchen" });
+    const savedStation = await db
+      .prepare("SELECT branch_id,code,station_type,payload_json FROM stations WHERE tenant_id=? AND id=?")
+      .bind(tenantId, station.id)
+      .first<{ branch_id: string; code: string; station_type: string; payload_json: string }>();
+    expect(savedStation).toMatchObject({
+      branch_id: branchId,
+      code: "HOT_LINE",
+      station_type: "KITCHEN",
+    });
+    expect(JSON.parse(savedStation!.payload_json)).toMatchObject({ departmentId: department.id });
+    expect(await auditCount(db, "DEPARTMENT_CONFIGURED")).toBe(1);
+    expect(await auditCount(db, "STATION_CONFIGURED")).toBe(1);
+
+    const otherDepartment = await service.configureDepartment({
+      branchId: secondBranchId,
+      code: "SECOND_KITCHEN",
+      name: "Second kitchen",
+    });
+    await expect(
+      service.configureStation({
+        branchId,
+        departmentId: otherDepartment.id,
+        code: "INVALID",
+        name: "Invalid station",
+        stationType: "KITCHEN",
+      }),
+    ).rejects.toThrow(/not available to this branch/i);
+  });
+
   it("creates brands, branches, warehouse policy and audit without display-name logic", async () => {
     const brand = await service.createBrand({ code: "SECOND", name: "Second configured brand" });
     const result = await service.createBranch({

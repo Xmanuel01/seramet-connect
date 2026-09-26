@@ -114,6 +114,24 @@ export type BrandSetupInput = {
   active?: boolean;
 };
 
+export type DepartmentSetupInput = {
+  branchId?: string;
+  code: string;
+  name: string;
+  active?: boolean;
+};
+
+export type StationSetupInput = {
+  branchId: string;
+  departmentId?: string;
+  code: string;
+  name: string;
+  stationType: "KITCHEN" | "GRILL" | "FRYER" | "BAR" | "COFFEE" | "DESSERT" | "PASS" | "DISPATCH" | "OTHER";
+  printerDeviceId?: string;
+  kdsDeviceId?: string;
+  active?: boolean;
+};
+
 export type BranchSetupInput = {
   idempotencyKey: string;
   confirmPossibleDuplicate?: boolean;
