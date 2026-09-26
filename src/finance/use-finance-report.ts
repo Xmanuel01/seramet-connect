@@ -115,7 +115,9 @@ export function useFinanceReport<T>(
 ) {
   const { activeTenantId, branchId, isAllBranches, hasPermission } = useAppContext();
   const allowed =
-    hasPermission(permissions.accountingView) || hasPermission(permissions.financeJournalView);
+    hasPermission(permissions.accountingView) ||
+    hasPermission(permissions.financeJournalView) ||
+    hasPermission(permissions.financeView);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
     key: string;
