@@ -211,38 +211,50 @@ export class FinancialLedgerService {
         detail: "Submitted supplier invoices have no linked journal voucher.",
       });
     }
-    const sales = await this.db
+    const emptyPosted = await this.db
       .prepare(
         [
-          "SELECT COUNT(*) AS invoice_count FROM invoices WHERE tenant_id=?",
-          "AND business_date BETWEEN ? AND ? AND paid_minor>0",
-          "AND branch_id IN (",
-          scope.branchIds.map(() => "?").join(","),
-          ")",
-        ].join(" "),
-      )
-      .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
-      .first<{ invoice_count: number | string }>();
-    const salesLedgers = await this.db
-      .prepare(
-        [
-          "SELECT COUNT(*) AS posted_lines FROM journal_lines jl",
-          "JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
-          "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
-          "WHERE je.tenant_id=? AND je.business_date BETWEEN ? AND ?",
-          "AND je.status='POSTED' AND a.account_type IN ('INCOME','REVENUE')",
+          "SELECT COUNT(*) AS issue_count FROM journal_entries je",
+          "WHERE je.tenant_id=? AND je.status='POSTED' AND je.business_date BETWEEN ? AND ?",
           "AND",
           this.branches(scope),
+          "AND NOT EXISTS (SELECT 1 FROM journal_lines jl",
+          "WHERE jl.tenant_id=je.tenant_id AND jl.journal_entry_id=je.id)",
         ].join(" "),
       )
       .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
-      .first<{ posted_lines: number | string }>();
-    if (amount(sales?.invoice_count ?? 0) > 0 && amount(salesLedgers?.posted_lines ?? 0) === 0) {
+      .first<{ issue_count: number | string }>();
+    if (amount(emptyPosted?.issue_count ?? 0) > 0) {
+      issues.push({
+        code: "POSTED_JOURNAL_WITHOUT_LINES",
+        count: amount(emptyPosted!.issue_count),
+        detail: "Posted vouchers lacking debit and credit lines cannot substantiate a ledger balance.",
+      });
+    }
+    // Unrelated manually posted revenue is not evidence that a POS invoice
+    // was posted. An exact source-linked journal is required per invoice.
+    const untracedSales = await this.db
+      .prepare(
+        [
+          "SELECT COUNT(*) AS issue_count FROM invoices i",
+          "WHERE i.tenant_id=? AND i.business_date BETWEEN ? AND ? AND i.paid_minor>0",
+          "AND i.status NOT IN ('DRAFT','CANCELLED','VOID','VOIDED')",
+          "AND i.branch_id IN (",
+          scope.branchIds.map(() => "?").join(","),
+          ") AND NOT EXISTS (",
+          "SELECT 1 FROM journal_entries je",
+          "WHERE je.tenant_id=i.tenant_id AND je.branch_id=i.branch_id",
+          "AND je.status='POSTED' AND je.source_type='POS_INVOICE' AND je.source_id=i.id)",
+        ].join(" "),
+      )
+      .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
+      .first<{ issue_count: number | string }>();
+    if (amount(untracedSales?.issue_count ?? 0) > 0) {
       issues.push({
         code: "SETTLED_SALES_NOT_IN_GL",
-        count: amount(sales!.invoice_count),
+        count: amount(untracedSales!.issue_count),
         detail:
-          "Settled POS invoices exist but no revenue journal is posted for this period. Sales are not represented in the general ledger.",
+          "Settled POS invoices are missing exact source-linked posted journals. Unrelated revenue vouchers or unverified day totals do not prove POS-to-GL completeness.",
       });
     }
     return issues;
@@ -492,6 +504,7 @@ export class FinancialLedgerService {
         [
           "SELECT id,branch_id,invoice_number,status,business_date,currency,total_minor,paid_minor",
           "FROM invoices WHERE tenant_id=? AND business_date<=? AND paid_minor<total_minor",
+          "AND status NOT IN (\'DRAFT\',\'CANCELLED\',\'VOID\',\'VOIDED\')",
           "AND branch_id IN (",
           scope.branchIds.map(() => "?").join(","),
           ")",
@@ -504,7 +517,9 @@ export class FinancialLedgerService {
       currency: scope.currency,
       rows: (rows.results ?? []).slice(0, 200),
       truncated: (rows.results ?? []).length > 200,
-      note: "Unpaid invoices are based on authoritative invoice total and paid amounts; marketplace settlement receivables must be reconciled separately.",
+      historicalAsOfVerified: false,
+      note:
+        "Outstanding amounts reflect current persisted invoice payments. The selected date limits invoices included but does not reconstruct historical balances. Marketplace settlement is reconciled separately.",
     };
   }
 
