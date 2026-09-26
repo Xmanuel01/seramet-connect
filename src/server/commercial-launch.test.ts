@@ -273,6 +273,172 @@ describe.sequential("commercial launch foundation", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
+  it("requests a signup verification email server-side without revealing account state", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.1",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(202);
+    await expect(response?.json()).resolves.toEqual({
+      ok: true,
+      requested: true,
+      message:
+        "If this account is awaiting verification, a new verification email has been requested.",
+    });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [providerUrl, providerInit] = fetchSpy.mock.calls[0]!;
+    expect(String(providerUrl)).toBe(
+      "https://example.supabase.co/auth/v1/resend?redirect_to=https%3A%2F%2Fapp.seramet.test%2Flogin%3Fverified%3D1",
+    );
+    expect(JSON.parse(String(providerInit?.body))).toEqual({
+      email: "owner@example.test",
+      type: "signup",
+    });
+  });
+
+  it("does not disclose whether a verification account exists", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "user_not_found" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.2",
+        },
+        body: JSON.stringify({ email: "unknown@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(202);
+    await expect(response?.json()).resolves.toMatchObject({ ok: true, requested: true });
+  });
+
+  it("fails verification resend closed when the provider is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "provider_failure" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.3",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      code: "EXTERNAL_SERVICE_UNAVAILABLE",
+      message: "Email verification is temporarily unavailable. Please try again.",
+    });
+  });
+
+  it("does not allow verification resend without persistent rate limiting", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "production",
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      } as SerametEnv,
+    );
+
+    expect(response.status).toBe(503);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports an unverified email separately from incorrect credentials", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "email_not_confirmed" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.4",
+        },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Verify your email before signing in. You can request a new link from registration.",
+    });
+  });
+
   it("reports public auth disabled when the publishable key is missing", async () => {
     const response = await handleSupabaseAuthApi(
       new Request("https://app.seramet.test/api/seramet/public/auth/config"),

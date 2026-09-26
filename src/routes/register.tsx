@@ -16,6 +16,8 @@ function RegisterPage() {
   const [stage, setStage] = useState<Stage>("CHECKING");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [verificationNotice, setVerificationNotice] = useState<string>();
+  const [pendingEmail, setPendingEmail] = useState("");
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
   const sessionCheck = useRef(0);
   const verificationPending = useRef(false);
@@ -32,10 +34,6 @@ function RegisterPage() {
       const status = await authStatus();
       if (requestId !== sessionCheck.current) return;
       const destination = registrationSessionDestination(status, effectivePhase);
-      if (destination.kind === "SIGN_IN") {
-        window.location.assign("/login?account=1");
-        return;
-      }
       if (destination.kind === "ENTER_RESTAURANT") {
         enterRestaurant(destination.tenantId);
         return;
@@ -45,7 +43,10 @@ function RegisterPage() {
         setStage("VERIFY");
         return;
       }
-      if (status.authenticated) verificationPending.current = false;
+      if (status.authenticated) {
+        verificationPending.current = false;
+        window.sessionStorage.removeItem("seramet.registration.verification-pending");
+      }
       if (destination.kind === "CHOOSE_RESTAURANT") {
         setRestaurants(status.restaurants);
       } else {
@@ -60,6 +61,9 @@ function RegisterPage() {
   }, []);
 
   useEffect(() => {
+    verificationPending.current =
+      window.sessionStorage.getItem("seramet.registration.verification-pending") === "1" ||
+      new URLSearchParams(window.location.search).get("verify") === "1";
     void checkSession();
     const onFocus = () => {
       if (document.visibilityState === "visible") void checkSession();
@@ -95,11 +99,37 @@ function RegisterPage() {
       if (result.authenticated) {
         await checkSession();
       } else {
+        setPendingEmail(String(data.get("email")).trim());
         verificationPending.current = true;
+        window.sessionStorage.setItem("seramet.registration.verification-pending", "1");
+        setVerificationNotice(
+          "Open the verification email from Seramet before signing in. If it does not arrive, request another email below.",
+        );
         setStage("VERIFY");
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Account creation failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendVerification = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage(undefined);
+    setVerificationNotice(undefined);
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email")).trim();
+    try {
+      const result = await authMutation("resend-verification", { email });
+      setPendingEmail(email);
+      setVerificationNotice(
+        result.message ??
+          "If this account is awaiting verification, a new verification email has been requested.",
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Verification email could not be sent");
     } finally {
       setBusy(false);
     }
@@ -196,16 +226,42 @@ function RegisterPage() {
         }
       >
         <div className="rounded-md border border-border bg-secondary/50 px-4 py-3 text-sm">
-          Email verification does not automatically sign you in. No restaurant or operational
-          records are created until you are authenticated.
+          Seramet cannot mark your email as verified from this page. Open the secure link in your
+          email first, then sign in. No restaurant or operational records are created until the
+          identity provider confirms your account.
         </div>
-        <button
-          className={`${authButtonClass} mt-4`}
-          type="button"
-          onClick={() => void checkSession("VERIFICATION_CONFIRMED")}
-        >
-          I've verified my email
-        </button>
+        <form onSubmit={resendVerification} className="mt-4 space-y-4">
+          <label className="block text-sm font-medium">
+            Email
+            <input
+              name="email"
+              className={authInputClass}
+              type="email"
+              required
+              maxLength={254}
+              autoComplete="email"
+              value={pendingEmail}
+              onChange={(event) => setPendingEmail(event.target.value)}
+            />
+          </label>
+          {verificationNotice && (
+            <p
+              role="status"
+              className="rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm"
+            >
+              {verificationNotice}
+            </p>
+          )}
+          {message && (
+            <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">
+              {message}
+            </p>
+          )}
+          <button className={authButtonClass} type="submit" disabled={busy}>
+            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Resend verification email
+          </button>
+        </form>
       </AuthShell>
     );
   }

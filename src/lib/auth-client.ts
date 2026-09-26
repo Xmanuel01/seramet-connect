@@ -51,7 +51,7 @@ export async function authStatus(): Promise<AuthStatus> {
 }
 
 export async function authMutation(
-  action: "login" | "signup" | "logout" | "refresh",
+  action: "login" | "signup" | "resend-verification" | "logout" | "refresh",
   body?: unknown,
 ) {
   const response = await fetch(`/api/seramet/public/auth/${action}`, {
@@ -65,6 +65,7 @@ export async function authMutation(
     message?: string;
     authenticated?: boolean;
     verificationRequired?: boolean;
+    requested?: boolean;
   };
   if (!response.ok) throw new Error(payload.message ?? "The request could not be completed");
   return payload;
