@@ -228,7 +228,8 @@ export class FinancialLedgerService {
       issues.push({
         code: "POSTED_JOURNAL_WITHOUT_LINES",
         count: amount(emptyPosted!.issue_count),
-        detail: "Posted vouchers lacking debit and credit lines cannot substantiate a ledger balance.",
+        detail:
+          "Posted vouchers lacking debit and credit lines cannot substantiate a ledger balance.",
       });
     }
     // Unrelated manually posted revenue is not evidence that a POS invoice
@@ -504,7 +505,7 @@ export class FinancialLedgerService {
         [
           "SELECT id,branch_id,invoice_number,status,business_date,currency,total_minor,paid_minor",
           "FROM invoices WHERE tenant_id=? AND business_date<=? AND paid_minor<total_minor",
-          "AND status NOT IN (\'DRAFT\',\'CANCELLED\',\'VOID\',\'VOIDED\')",
+          "AND status NOT IN ('DRAFT','CANCELLED','VOID','VOIDED')",
           "AND branch_id IN (",
           scope.branchIds.map(() => "?").join(","),
           ")",
@@ -518,8 +519,11 @@ export class FinancialLedgerService {
       rows: (rows.results ?? []).slice(0, 200),
       truncated: (rows.results ?? []).length > 200,
       historicalAsOfVerified: false,
-      note:
-        "Outstanding amounts reflect current persisted invoice payments. The selected date limits invoices included but does not reconstruct historical balances. Marketplace settlement is reconciled separately.",
+      note: [
+        "Outstanding amounts reflect current persisted invoice payments.",
+        "The selected date filters invoices but does not reconstruct historical balances.",
+        "Marketplace settlement is reconciled separately.",
+      ].join(" "),
     };
   }
 
