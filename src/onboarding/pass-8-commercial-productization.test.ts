@@ -139,7 +139,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         .first(),
     ).toEqual({ branch_id: branchId, code: "KITCHEN", name: "Kitchen" });
     const savedStation = await db
-      .prepare("SELECT branch_id,code,station_type,payload_json FROM stations WHERE tenant_id=? AND id=?")
+      .prepare(
+        "SELECT branch_id,code,station_type,payload_json FROM stations WHERE tenant_id=? AND id=?",
+      )
       .bind(tenantId, station.id)
       .first<{ branch_id: string; code: string; station_type: string; payload_json: string }>();
     expect(savedStation).toMatchObject({

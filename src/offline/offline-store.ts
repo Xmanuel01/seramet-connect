@@ -64,7 +64,8 @@ export class OfflineStore {
   async clearSessionCache(tenantId: string) {
     const db = await openDatabase();
     await requestPromise(
-      db.transaction("read-cache", "readwrite")
+      db
+        .transaction("read-cache", "readwrite")
         .objectStore("read-cache")
         .delete(`transaction-state:${tenantId}`),
     );

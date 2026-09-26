@@ -40,7 +40,12 @@ export const onboardingStepSchema = z
 export const departmentSetupSchema = z
   .object({
     branchId: z.string().trim().min(1).max(120).optional(),
-    code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[A-Za-z0-9_-]+$/),
     name: z.string().trim().min(2).max(120),
     active: z.boolean().optional(),
   })
@@ -50,7 +55,12 @@ export const stationSetupSchema = z
   .object({
     branchId: z.string().trim().min(1).max(120),
     departmentId: z.string().trim().min(1).max(120).optional(),
-    code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[A-Za-z0-9_-]+$/),
     name: z.string().trim().min(2).max(120),
     stationType: z.enum([
       "KITCHEN",

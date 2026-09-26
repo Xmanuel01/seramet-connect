@@ -126,7 +126,8 @@ export type StationSetupInput = {
   departmentId?: string;
   code: string;
   name: string;
-  stationType: "KITCHEN" | "GRILL" | "FRYER" | "BAR" | "COFFEE" | "DESSERT" | "PASS" | "DISPATCH" | "OTHER";
+  stationType:
+    "KITCHEN" | "GRILL" | "FRYER" | "BAR" | "COFFEE" | "DESSERT" | "PASS" | "DISPATCH" | "OTHER";
   printerDeviceId?: string;
   kdsDeviceId?: string;
   active?: boolean;
