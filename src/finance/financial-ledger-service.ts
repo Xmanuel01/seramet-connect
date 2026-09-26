@@ -73,7 +73,8 @@ export class FinancialLedgerService {
   private permit() {
     if (
       !this.actor.permissions.includes(permissions.accountingView) &&
-      !this.actor.permissions.includes(permissions.financeJournalView)
+      !this.actor.permissions.includes(permissions.financeJournalView) &&
+      !this.actor.permissions.includes(permissions.financeView)
     ) {
       throw new SerametHttpError(403, "Accounting reporting permission is required");
     }
