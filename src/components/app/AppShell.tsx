@@ -33,6 +33,7 @@ import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
 import { useAppContext } from "@/lib/app-context";
+import { logoutSeramet } from "@/lib/auth-client";
 import { permissions as permissionCodes } from "@/platform/permissions";
 import type { PermissionCode } from "@/platform/types";
 import { Btn } from "@/components/app/ui";
@@ -863,14 +864,7 @@ export function AppShell({
             <button
               type="button"
               onClick={() => {
-                void fetch("/api/seramet/public/auth/logout", {
-                  method: "POST",
-                  credentials: "same-origin",
-                }).finally(() => {
-                  window.localStorage.removeItem("seramet.session.tenant-id");
-                  window.localStorage.removeItem("seramet.session.user-id");
-                  window.location.assign("/login");
-                });
+                void logoutSeramet().finally(() => window.location.replace("/login?account=1"));
               }}
               className="grid h-9 w-9 place-items-center rounded-md hover:bg-secondary"
               title="Sign out"

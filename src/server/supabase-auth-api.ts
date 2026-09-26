@@ -5,6 +5,7 @@ import { ServerOperationError, publicError } from "@/server/errors";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
+import { clearPosSessionCookie, PosIdentityService } from "@/server/pos-auth-service";
 
 const credentialsSchema = z
   .object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(200) })
@@ -155,6 +156,7 @@ export async function handleSupabaseAuthApi(
 
   if (url.pathname === "/api/seramet/public/auth/logout" && request.method === "POST") {
     const accessToken = readCookie(request, "seramet_access");
+    const posToken = readCookie(request, "seramet_pos_session");
     if (accessToken) {
       const identity = await verifyExternalIdentity(accessToken, env).catch(() => undefined);
       if (identity && database) {
@@ -172,7 +174,15 @@ export async function handleSupabaseAuthApi(
         () => undefined,
       );
     }
-    return Response.json({ ok: true }, { headers: clearSessionCookies(env) });
+    if (posToken && database) {
+      await new PosIdentityService(database).logoutPosSession(posToken);
+    }
+    const headers = clearSessionCookies(env);
+    headers.append(
+      "set-cookie",
+      clearPosSessionCookie(resolveRuntimeConfiguration(env).productionLike),
+    );
+    return Response.json({ ok: true }, { headers });
   }
 
   if (url.pathname === "/api/seramet/public/auth/status" && request.method === "GET") {

@@ -169,6 +169,74 @@ describe.sequential("commercial launch foundation", () => {
     expect(session?.revoked_at).not.toBeNull();
   });
 
+  it("revokes an employee session and clears both session cookies during unified logout", async () => {
+    const provisioned = await new RestaurantRegistrationService(database).register(
+      identity(),
+      registration(),
+    );
+    const token = "employee-session-token";
+    const tokenHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+    const encodedHash = Array.from(new Uint8Array(tokenHash), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const stamp = new Date().toISOString();
+    const expires = new Date(Date.now() + 60_000).toISOString();
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO hardware_devices
+            (tenant_id,id,branch_id,device_type,name,trust_status,registered_by,registered_at,
+             payload_json,lifecycle_state,credential_version)
+           VALUES (?,?,?,'POS_TERMINAL','Test POS','ACTIVE',?,?,'{}','ACTIVE',1)`,
+        )
+        .bind(
+          provisioned.tenantId,
+          "logout-device",
+          provisioned.branchId,
+          provisioned.userId,
+          stamp,
+        ),
+      database
+        .prepare(
+          `INSERT INTO pos_sessions
+            (tenant_id,id,user_id,device_id,branch_id,token_hash,auth_level,issued_at,expires_at,
+             last_seen_at,inactivity_expires_at,revoked_at,revoke_reason,credential_version,metadata_json)
+           VALUES (?,?,?,?,?,?,'POS_PIN',?,?,?,?,NULL,NULL,1,'{}')`,
+        )
+        .bind(
+          provisioned.tenantId,
+          "logout-pos-session",
+          provisioned.userId,
+          "logout-device",
+          provisioned.branchId,
+          encodedHash,
+          stamp,
+          expires,
+          stamp,
+          expires,
+        ),
+    ]);
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/logout", {
+        method: "POST",
+        headers: {
+          cookie: `seramet_pos_session=${token}`,
+          origin: "https://app.seramet.test",
+        },
+      }),
+      { ...authEnv(), SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test" },
+    );
+    expect(response?.status).toBe(200);
+    const session = await database
+      .prepare("SELECT revoked_at,revoke_reason FROM pos_sessions WHERE id=?")
+      .bind("logout-pos-session")
+      .first<{ revoked_at: string | null; revoke_reason: string | null }>();
+    expect(session?.revoked_at).not.toBeNull();
+    expect(session?.revoke_reason).toBe("EMPLOYEE_LOGOUT");
+    expect(response?.headers.get("set-cookie")).toContain("seramet_pos_session=;");
+  });
+
   it("allows public auth login before unrelated production bindings are present", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

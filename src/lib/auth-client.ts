@@ -74,3 +74,26 @@ export function enterRestaurant(tenantId: string, path = "/") {
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
   window.location.assign(path);
 }
+
+export async function logoutSeramet() {
+  const tenantId = window.localStorage.getItem("seramet.session.tenant-id")?.trim();
+  try {
+    await authMutation("logout");
+  } finally {
+    if (tenantId) await offlineStore.clearSessionCache(tenantId).catch(() => undefined);
+    setSerametSignedOutBrowserState();
+  }
+}
+
+export function setSerametSignedOutBrowserState() {
+  for (const key of [
+    "seramet.session.tenant-id",
+    "seramet.session.user-id",
+    "seramet.session.branch-scope.v2",
+    "seramet.platform.v2",
+    "seramet.transaction-engine.v2",
+  ]) {
+    window.localStorage.removeItem(key);
+  }
+}
+import { offlineStore } from "@/offline/offline-store";

@@ -61,6 +61,16 @@ export class OfflineStore {
     return (await this.get<{ id: string; value: T }>("preferences", id))?.value;
   }
 
+  async clearSessionCache(tenantId: string) {
+    const db = await openDatabase();
+    await requestPromise(
+      db.transaction("read-cache", "readwrite")
+        .objectStore("read-cache")
+        .delete(`transaction-state:${tenantId}`),
+    );
+    db.close();
+  }
+
   private async put(storeName: StoreName, value: unknown) {
     const db = await openDatabase();
     await transactionPromise(
