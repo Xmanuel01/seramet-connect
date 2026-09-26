@@ -60,6 +60,7 @@ import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { publishRealtimeEvent } from "@/server/realtime";
+import { checkMalwareScannerHealth } from "@/server/malware-scanner-service";
 
 type MutationRequest = {
   action?: string;
@@ -114,6 +115,15 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     if (url.pathname === "/api/seramet/health/ready" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
+      if (env.SERAMET_MALWARE_SCANNER) {
+        const scannerHealth = await checkMalwareScannerHealth(env.SERAMET_MALWARE_SCANNER);
+        if (!scannerHealth.ready) {
+          issues.push({
+            code: "MALWARE_SCANNER_UNAVAILABLE",
+            message: "Malware scanner health or signature freshness check failed",
+          });
+        }
+      }
       if (env.SERAMET_DB) {
         try {
           await assertDatabaseAvailable(env.SERAMET_DB);

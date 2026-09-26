@@ -10,7 +10,7 @@ bundles.
 | `SERAMET_HYPERDRIVE` | Worker binding | Yes | Hyperdrive PostgreSQL connection |
 | `SERAMET_WORK_QUEUE` | Queue binding | No | Durable job producer/consumer |
 | `SERAMET_OBJECTS` | R2 binding | No | Tenant object storage |
-| `SERAMET_MALWARE_SCANNER` | Service binding | No | Upload scanning service |
+| `SERAMET_MALWARE_SCANNER` | Private service binding | No | Protocol-v1 genuine malware scanner; health and signature freshness are verified |
 | `SERAMET_IDENTITY_PROVIDER` | Worker variable | No | Must be `supabase` |
 | `SERAMET_SUPABASE_URL` | Worker variable | No | Trusted Auth project URL |
 | `SERAMET_SUPABASE_PUBLISHABLE_KEY` | Worker variable | No | Public Auth API key; not DB authority |
@@ -22,6 +22,7 @@ bundles.
 | `SERAMET_BUILD_ID` | Worker variable | No | Immutable release identifier |
 | `SERAMET_APP_VERSION` | Worker variable | No | Application version |
 | `SERAMET_POSTGRES_URL` | CI secret only | Yes | Direct migration connection; never a Worker var |
+| `SERAMET_POSTGRES_TEST_URL` | CI secret only | Yes | Dedicated non-production PostgreSQL database used by destructive isolated-schema concurrency verification |
 
 Production must set `SERAMET_REQUIRE_BEARER=true`, `SERAMET_ENABLE_DEV_AUTH=false`,
 `SERAMET_ENABLE_LOCAL_DATABASE=false`, and `SERAMET_ALLOW_TEST_PROVIDERS=false`. Readiness fails

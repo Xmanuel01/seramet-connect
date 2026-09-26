@@ -604,6 +604,44 @@ describe.sequential("commercial launch foundation", () => {
       issues: Array<{ code: string }>;
     };
     expect(payload.issues.map((issue) => issue.code)).toContain("MALWARE_SCANNER_REQUIRED");
+
+    env.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+      async health() {
+        return { ready: false };
+      },
+    };
+    const unhealthyScanner = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/ready"),
+      env,
+    );
+    expect(unhealthyScanner.status).toBe(503);
+    await expect(unhealthyScanner.json()).resolves.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "MALWARE_SCANNER_UNAVAILABLE" }),
+      ]),
+    });
+
+    env.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+      async health() {
+        return {
+          ready: true,
+          engine: "Test scanner",
+          signatureVersion: "test-current",
+          signaturesUpdatedAt: new Date().toISOString(),
+        };
+      },
+    };
+    const ready = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/ready"),
+      env,
+    );
+    expect(ready.status).toBe(200);
   });
 
   it("fails production readiness without real Hyperdrive, R2, queue and scanner bindings", () => {

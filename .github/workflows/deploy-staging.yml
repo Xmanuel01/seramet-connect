@@ -25,6 +25,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run validate
+      - name: Verify isolated PostgreSQL concurrency
+        run: npm run test:postgres:concurrency
+        env:
+          SERAMET_POSTGRES_TEST_URL: ${{ secrets.SERAMET_POSTGRES_TEST_URL }}
+          SERAMET_POSTGRES_TEST_CONFIRM: isolated-test-database
       - name: Apply PostgreSQL migrations
         run: npm run migrate:postgres
         env:
@@ -73,7 +78,7 @@ jobs:
             .map((row) => row.queue_name ?? row.name)
             .find((name) => name === expectedDlq || name === "seramet-staging-dlq");
 
-          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin };
+          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
           const missing = Object.entries(required)
             .filter(([, value]) => !value)
             .map(([name]) => name);
@@ -154,6 +159,5 @@ jobs:
           console.log(JSON.stringify(payload));
           NODE
 
-      - name: Report full readiness
-        continue-on-error: true
+      - name: Verify full readiness
         run: curl --fail-with-body "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/ready"

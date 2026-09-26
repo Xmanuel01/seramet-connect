@@ -50,6 +50,14 @@ export type MalwareScanner = {
     contentType: string;
     fileName: string;
   }): Promise<{ status: "CLEAN" | "INFECTED" | "ERROR"; reference?: string }>;
+  health?(): Promise<MalwareScannerHealth>;
+};
+
+export type MalwareScannerHealth = {
+  ready: boolean;
+  engine?: string;
+  signatureVersion?: string;
+  signaturesUpdatedAt?: string;
 };
 
 export type ProductionRuntimeEnv = {
@@ -215,7 +223,11 @@ export function validateRuntimeConfiguration(
       message: "Production R2 object storage is required",
     });
   }
-  if (!env.SERAMET_MALWARE_SCANNER) {
+  if (
+    !env.SERAMET_MALWARE_SCANNER ||
+    (typeof env.SERAMET_MALWARE_SCANNER.scan !== "function" &&
+      typeof (env.SERAMET_MALWARE_SCANNER as unknown as { fetch?: unknown }).fetch !== "function")
+  ) {
     issues.push({
       code: "MALWARE_SCANNER_REQUIRED",
       message: "Production uploads require a configured malware scanner",
