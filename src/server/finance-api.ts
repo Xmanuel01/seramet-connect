@@ -41,7 +41,8 @@ export async function handleFinanceApi(
       const limit = Number(url.searchParams.get("limit") ?? "100");
       const offset = Number(url.searchParams.get("offset") ?? "0");
       const accountId = url.searchParams.get("accountId")?.trim() || undefined;
-      report = await service.ledger({ ...opts, limit, offset, ...(accountId ? { accountId } : {}) });
+      const accountType = url.searchParams.get("accountType")?.trim() || undefined;
+      report = await service.ledger({ ...opts, limit, offset, ...(accountId ? { accountId } : {}), ...(accountType ? { accountType } : {}) });
       break;
     }
     case "receivables":

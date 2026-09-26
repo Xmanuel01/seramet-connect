@@ -341,7 +341,7 @@ export class FinancialLedgerService {
     };
   }
 
-  async ledger(input: FinanceWindow & { limit?: number; offset?: number; accountId?: string }) {
+  async ledger(input: FinanceWindow & { limit?: number; offset?: number; accountId?: string; accountType?: string }) {
     const scope = await this.scope(input);
     const limit = input.limit ?? 100;
     const offset = input.offset ?? 0;
@@ -349,11 +349,14 @@ export class FinancialLedgerService {
         !Number.isSafeInteger(offset) || offset < 0 || offset > 20_000) {
       throw new SerametHttpError(400, "Invalid ledger page parameters");
     }
-    const condition = input.accountId ? "AND a.id=?" : "";
-    const bindings = [scope.tenantId, scope.from, scope.to, ...scope.branchIds, ...(input.accountId ? [input.accountId] : [])];
+    if (input.accountType && !["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(input.accountType)) {
+      throw new SerametHttpError(400, "Unsupported accounting account filter");
+    }
+    const condition = (input.accountId ? "AND a.id=? " : "") + (input.accountType ? "AND a.account_type=?" : "");
+    const bindings = [scope.tenantId, scope.from, scope.to, ...scope.branchIds, ...(input.accountId ? [input.accountId] : []), ...(input.accountType ? [input.accountType] : [])];
     const result = await this.db.prepare([
       "SELECT je.id AS voucher_id,je.business_date,je.source_type,je.source_id,",
-      "je.description,je.branch_id,jl.line_number,jl.account_id,a.code AS account_code,",
+      "je.description,je.branch_id,jl.line_number,jl.account_id,a.code AS account_code,a.account_type,",
       "a.name AS account_name,jl.currency,jl.debit_minor,jl.credit_minor",
       "FROM journal_lines jl JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
       "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
