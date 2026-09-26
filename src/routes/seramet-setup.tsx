@@ -85,7 +85,13 @@ function SetupCentre() {
     timezone: "",
     locale: "",
     accountingMode: "",
+    taxConfigurationReference: "",
+    logoAssetReference: "",
     defaultDocumentFooter: "",
+    contact: { address: "", phone: "", email: "", website: "" },
+    legalIdentifiers: { registrationNumber: "", taxNumber: "" },
+    fiscalSettings: {} as Record<string, unknown>,
+    documentBranding: {} as Record<string, unknown>,
   });
   const [brand, setBrand] = useState({ code: "", name: "" });
   const [branchCreateKey, setBranchCreateKey] = useState(() => crypto.randomUUID());
@@ -161,7 +167,23 @@ function SetupCentre() {
       timezone: centre.profile.timezone,
       locale: centre.profile.locale,
       accountingMode: centre.profile.accountingMode,
+      taxConfigurationReference: centre.profile.taxConfigurationReference ?? "",
+      logoAssetReference: centre.profile.logoAssetReference ?? "",
       defaultDocumentFooter: centre.profile.defaultDocumentFooter ?? "",
+      contact: {
+        ...centre.profile.contact,
+        address: centre.profile.contact.address ?? "",
+        phone: centre.profile.contact.phone ?? "",
+        email: centre.profile.contact.email ?? "",
+        website: centre.profile.contact.website ?? "",
+      },
+      legalIdentifiers: {
+        ...centre.profile.legalIdentifiers,
+        registrationNumber: centre.profile.legalIdentifiers.registrationNumber ?? "",
+        taxNumber: centre.profile.legalIdentifiers.taxNumber ?? "",
+      },
+      fiscalSettings: centre.profile.fiscalSettings,
+      documentBranding: centre.profile.documentBranding,
     });
     setDocument((current) => ({
       ...current,
@@ -201,10 +223,6 @@ function SetupCentre() {
       () =>
         centre.command("/api/seramet/setup/business-profile", {
           ...business,
-          contact: {},
-          legalIdentifiers: {},
-          fiscalSettings: {},
-          documentBranding: {},
         }),
       "Business profile saved to the authoritative tenant configuration.",
     );
@@ -598,6 +616,64 @@ function SetupCentre() {
                   label="Default document footer"
                   value={business.defaultDocumentFooter}
                   onChange={(value) => setBusiness({ ...business, defaultDocumentFooter: value })}
+                />
+                <Field
+                  label="Business address"
+                  value={business.contact.address}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, address: value } })
+                  }
+                />
+                <Field
+                  label="Business phone"
+                  value={business.contact.phone}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, phone: value } })
+                  }
+                />
+                <Field
+                  label="Business email"
+                  value={business.contact.email}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, email: value } })
+                  }
+                />
+                <Field
+                  label="Website"
+                  value={business.contact.website}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, website: value } })
+                  }
+                />
+                <Field
+                  label="Registration number"
+                  value={business.legalIdentifiers.registrationNumber}
+                  onChange={(value) =>
+                    setBusiness({
+                      ...business,
+                      legalIdentifiers: { ...business.legalIdentifiers, registrationNumber: value },
+                    })
+                  }
+                />
+                <Field
+                  label="Tax number"
+                  value={business.legalIdentifiers.taxNumber}
+                  onChange={(value) =>
+                    setBusiness({
+                      ...business,
+                      legalIdentifiers: { ...business.legalIdentifiers, taxNumber: value },
+                    })
+                  }
+                />
+                <Field
+                  label="Tax configuration reference"
+                  value={business.taxConfigurationReference}
+                  onChange={(value) => setBusiness({ ...business, taxConfigurationReference: value })}
+                />
+                <Field
+                  label="Logo asset reference"
+                  value={business.logoAssetReference}
+                  onChange={(value) => setBusiness({ ...business, logoAssetReference: value })}
                 />
                 <div className="md:col-span-2 flex justify-end">
                   <Btn type="submit" variant="primary" disabled={busy}>

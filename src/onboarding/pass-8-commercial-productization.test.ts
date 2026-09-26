@@ -86,13 +86,35 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       timezone: "Africa/Nairobi",
       locale: "en-KE",
       accountingMode: "PERPETUAL",
+      taxConfigurationReference: "tax-policy-ke",
+      logoAssetReference: "asset://tenant-logo",
       defaultDocumentFooter: "Configured footer",
+      contact: {
+        address: "Configured address",
+        phone: "+254700000000",
+        email: "operations@example.test",
+        customContact: "preserved",
+      },
+      legalIdentifiers: { registrationNumber: "REG-001", taxNumber: "PIN-001" },
+      fiscalSettings: { invoiceSequence: "configured" },
+      documentBranding: { accent: "green" },
     });
     expect(await service.getBusinessProfile()).toMatchObject({
       legalName: "Configured Legal Entity",
       tradingName: "Configured Restaurant",
       countryCode: "KE",
       defaultCurrency: "KES",
+      taxConfigurationReference: "tax-policy-ke",
+      logoAssetReference: "asset://tenant-logo",
+      contact: {
+        address: "Configured address",
+        phone: "+254700000000",
+        email: "operations@example.test",
+        customContact: "preserved",
+      },
+      legalIdentifiers: { registrationNumber: "REG-001", taxNumber: "PIN-001" },
+      fiscalSettings: { invoiceSequence: "configured" },
+      documentBranding: { accent: "green" },
     });
     expect(await auditCount(db, "BUSINESS_PROFILE_UPDATED")).toBe(1);
   });
