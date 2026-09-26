@@ -23,6 +23,40 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: node --test scripts/verify-staging-health.test.mjs
       - run: npm run build
       - name: Verify production bundle has no source secrets
         run: npm run audit:bundle
+
+  postgres-crm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: seramet_test
+          POSTGRES_USER: seramet_test
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seramet_test -d seramet_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SERAMET_POSTGRES_URL: postgresql://seramet_test:isolated_ci_only@127.0.0.1:5432/seramet_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply every historical migration on disposable real PostgreSQL
+        run: npm run migrate:postgres
+      - name: Assert the CRM schema, JSON compatibility and immutable audit triggers
+        run: node scripts/verify-crm-postgres.mjs
+      - name: Execute authoritative CRM pipeline and campaign queries on PostgreSQL
+        run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts

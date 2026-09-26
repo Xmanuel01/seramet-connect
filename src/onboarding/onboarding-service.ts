@@ -622,7 +622,9 @@ export class OnboardingService {
 
   async listMenuCatalog(branchId?: string) {
     this.require(permissions.setupView);
-    if (branchId) await this.assertBranch(branchId);
+    const scopedBranchId =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : undefined);
+    if (scopedBranchId) await this.assertBranch(scopedBranchId);
     const rows = await this.db
       .prepare(
         `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
@@ -636,7 +638,7 @@ export class OnboardingService {
          WHERE m.tenant_id=? AND m.active=1 AND (? IS NULL OR bs.menu_item_id IS NOT NULL)
          ORDER BY m.category_code,m.name LIMIT 5000`,
       )
-      .bind(branchId ?? null, this.actor.tenantId, branchId ?? null)
+      .bind(scopedBranchId ?? null, this.actor.tenantId, scopedBranchId ?? null)
       .all<{
         id: string;
         code: string;
@@ -1303,7 +1305,16 @@ export class OnboardingService {
       targetBranchIds: target.branchIds,
       referenceMap: input.referenceMap,
       templateVersion: template.version,
-      unsupportedColumns: input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
+      unsupportedColumns:
+        input.kind === "MENU"
+          ? unsupportedPopulatedMenuColumns(rawRows).filter(
+              (header) =>
+                !Object.values(input.columnMap ?? {}).some(
+                  (mapped) =>
+                    normalizeMenuImportHeader(mapped) === normalizeMenuImportHeader(header),
+                ),
+            )
+          : [],
       duplicateStrategy: input.duplicateStrategy,
     });
     const id = crypto.randomUUID();

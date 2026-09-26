@@ -500,7 +500,19 @@ export async function handleOnboardingApi(
     );
   }
   if (url.pathname === "/api/seramet/setup/menu-catalog" && request.method === "GET") {
-    return json({ ok: true, items: await service.listMenuCatalog(optional(url, "branchId")) });
+    try {
+      return json({ ok: true, items: await service.listMenuCatalog(optional(url, "branchId")) });
+    } catch (cause) {
+      if (cause instanceof ServerOperationError) throw cause;
+      const correlationId = crypto.randomUUID();
+      console.error("Authoritative menu catalogue query failed", { correlationId, cause });
+      throw new ServerOperationError(
+        "DATABASE_UNAVAILABLE",
+        503,
+        "Menu catalogue unavailable; support reference " + correlationId,
+        correlationId,
+      );
+    }
   }
   if (url.pathname === "/api/seramet/setup/exports" && request.method === "POST") {
     return json(

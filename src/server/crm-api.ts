@@ -3,8 +3,11 @@ import { CampaignService } from "@/crm/campaign-service";
 import { CrmAnalyticsService } from "@/crm/crm-analytics";
 import { CrmService } from "@/crm/crm-service";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
+import { CrmLeadService, leadStages, type LeadStage } from "@/crm/crm-lead-service";
 import {
   anonymizeSchema,
+  crmLeadCreateSchema,
+  crmLeadUpdateSchema,
   campaignApprovalSchema,
   campaignSchema,
   consentSchema,
@@ -125,8 +128,52 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
   const loyalty = new LoyaltyValueService(env.SERAMET_DB, actor);
   const analytics = new CrmAnalyticsService(env.SERAMET_DB, actor);
   const campaigns = new CampaignService(env.SERAMET_DB, actor);
+  const leads = new CrmLeadService(env.SERAMET_DB, actor);
 
   try {
+    if (url.pathname === "/api/seramet/crm/leads/summary" && request.method === "GET") {
+      return json({ ok: true, summary: await leads.summary(optionalQuery(url, "branchId")) });
+    }
+    if (url.pathname === "/api/seramet/crm/leads" && request.method === "GET") {
+      const stage = optionalQuery(url, "stage");
+      if (stage && !leadStages.some((item) => item === stage)) {
+        throw new SerametHttpError(400, "Unsupported CRM lead stage");
+      }
+      return json({
+        ok: true,
+        ...(await leads.list(
+          omitUndefined({
+            branchId: optionalQuery(url, "branchId"),
+            stage: stage as LeadStage | undefined,
+            cursor: optionalQuery(url, "cursor"),
+            limit: integerQuery(url, "limit", 30, 1, 100),
+          }),
+        )),
+      });
+    }
+    if (url.pathname === "/api/seramet/crm/leads" && request.method === "POST") {
+      return json(
+        { ok: true, ...(await leads.create(await parse(request, crmLeadCreateSchema))) },
+        201,
+      );
+    }
+    const leadHistoryRoute = /^\/api\/seramet\/crm\/leads\/([^/]+)\/history$/.exec(url.pathname);
+    if (leadHistoryRoute && request.method === "GET") {
+      return json({
+        ok: true,
+        history: await leads.history(decodeURIComponent(leadHistoryRoute[1]!)),
+      });
+    }
+    const leadUpdateRoute = /^\/api\/seramet\/crm\/leads\/([^/]+)\/updates$/.exec(url.pathname);
+    if (leadUpdateRoute && request.method === "POST") {
+      return json({
+        ok: true,
+        ...(await leads.update(
+          decodeURIComponent(leadUpdateRoute[1]!),
+          await parse(request, crmLeadUpdateSchema),
+        )),
+      });
+    }
     if (url.pathname === "/api/seramet/crm/dashboard" && request.method === "GET") {
       return json({ ok: true, dashboard: await crm.dashboard(optionalQuery(url, "branchId")) });
     }
@@ -277,7 +324,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/loyalty/programs" && request.method === "GET") {
-      return json({ ok: true, programs: await loyalty.listPrograms() });
+      return json({
+        ok: true,
+        programs: await loyalty.listPrograms(optionalQuery(url, "branchId")),
+      });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/programs" && request.method === "POST") {
       return json(
@@ -289,7 +339,13 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
       );
     }
     if (url.pathname === "/api/seramet/crm/loyalty/tiers" && request.method === "GET") {
-      return json({ ok: true, tiers: await loyalty.listTiers(optionalQuery(url, "programId")) });
+      return json({
+        ok: true,
+        tiers: await loyalty.listTiers(
+          optionalQuery(url, "programId"),
+          optionalQuery(url, "branchId"),
+        ),
+      });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/tiers" && request.method === "POST") {
       return json(
@@ -300,7 +356,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     if (url.pathname === "/api/seramet/crm/loyalty/rewards" && request.method === "GET") {
       return json({
         ok: true,
-        rewards: await loyalty.listRewards(optionalQuery(url, "programId")),
+        rewards: await loyalty.listRewards(
+          optionalQuery(url, "programId"),
+          optionalQuery(url, "branchId"),
+        ),
       });
     }
     if (url.pathname === "/api/seramet/crm/loyalty/rewards" && request.method === "POST") {
@@ -389,7 +448,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "GET") {
-      return json({ ok: true, segments: await campaigns.listSegments() });
+      return json({
+        ok: true,
+        segments: await campaigns.listSegments(optionalQuery(url, "branchId")),
+      });
     }
     if (url.pathname === "/api/seramet/crm/segments" && request.method === "POST") {
       return json(
@@ -428,7 +490,10 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
 
     if (url.pathname === "/api/seramet/crm/campaigns" && request.method === "GET") {
-      return json({ ok: true, campaigns: await campaigns.listCampaigns() });
+      return json({
+        ok: true,
+        campaigns: await campaigns.listCampaigns(optionalQuery(url, "branchId")),
+      });
     }
     if (url.pathname === "/api/seramet/crm/campaigns" && request.method === "POST") {
       return json(
@@ -461,6 +526,13 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
           ok: true,
           campaign: await campaigns.approveCampaign(campaignId, body.reason),
         });
+      }
+      if (!env.SERAMET_WORK_QUEUE) {
+        throw new ServerOperationError(
+          "QUEUE_UNAVAILABLE",
+          503,
+          "Durable campaign worker queue is unavailable; campaign was not queued",
+        );
       }
       const campaign = await campaigns.queueCampaign(campaignId);
       const worker = await requireDurableCrmWork(env, {
