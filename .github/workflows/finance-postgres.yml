@@ -1,0 +1,48 @@
+name: Verify Financials PostgreSQL
+
+on:
+  pull_request:
+    paths:
+      - "src/finance/**"
+      - "src/server/finance-api.ts"
+      - "src/lib/seramet-api.ts"
+      - "scripts/verify-finance-postgres.ts"
+      - ".github/workflows/finance-postgres.yml"
+      - "migrations/**"
+      - "package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-postgres-finance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: seramet_finance_ci
+          POSTGRES_USER: finance_ci
+          POSTGRES_PASSWORD: test_only_isolated
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finance_ci -d seramet_finance_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SERAMET_POSTGRES_URL: postgresql://finance_ci:test_only_isolated@127.0.0.1:5432/seramet_finance_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Run every existing migration in disposable PostgreSQL
+        run: npm run migrate:postgres
+      - name: Verify real journal accounting service, permissions and SQL
+        run: ./node_modules/.bin/vite-node scripts/verify-finance-postgres.ts
