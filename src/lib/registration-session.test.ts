@@ -17,15 +17,6 @@ describe("registration session routing", () => {
     ).toEqual({ kind: "VERIFY" });
   });
 
-  it("routes an email-verified user without a session to sign in, not signup", () => {
-    expect(
-      registrationSessionDestination(
-        { authenticated: false, restaurants: [] },
-        "VERIFICATION_CONFIRMED",
-      ),
-    ).toEqual({ kind: "SIGN_IN" });
-  });
-
   it("shows restaurant creation for a verified session with no linked restaurants", () => {
     expect(registrationSessionDestination({ authenticated: true, restaurants: [] })).toEqual({
       kind: "RESTAURANT",
@@ -33,9 +24,18 @@ describe("registration session routing", () => {
     expect(
       registrationSessionDestination(
         { authenticated: true, restaurants: [] },
-        "VERIFICATION_CONFIRMED",
+        "VERIFICATION_PENDING",
       ),
     ).toEqual({ kind: "RESTAURANT" });
+  });
+
+  it("never treats a browser verification phase as authentication evidence", () => {
+    expect(
+      registrationSessionDestination(
+        { authenticated: false, restaurants: [] },
+        "VERIFICATION_PENDING",
+      ),
+    ).toEqual({ kind: "VERIFY" });
   });
 
   it("enters the only linked restaurant", () => {

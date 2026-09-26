@@ -8,6 +8,7 @@ import type { D1Database } from "./server/database/d1";
 import type { DurableQueueBatch } from "./server/environment";
 import { resolveRuntimeConfiguration } from "./server/environment";
 import { cloudflareBindings } from "./server/cloudflare-bindings";
+import { resolveMalwareScannerBinding } from "./server/malware-scanner-service";
 import {
   handleWorkerQueue,
   scheduleDurableWork,
@@ -228,6 +229,8 @@ async function resolveEnvironmentFromBindings(bindingsInput: unknown): Promise<S
     ...processEnvironment,
     ...bindings,
   } as SerametEnv;
+
+  resolved.SERAMET_MALWARE_SCANNER = resolveMalwareScannerBinding(resolved.SERAMET_MALWARE_SCANNER);
 
   if (import.meta.env.DEV) {
     resolved.SERAMET_ENVIRONMENT ??= "development";

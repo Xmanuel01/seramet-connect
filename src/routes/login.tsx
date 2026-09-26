@@ -18,9 +18,12 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
+  const [verificationReturn, setVerificationReturn] = useState(false);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("account") === "1") return;
+    const search = new URLSearchParams(window.location.search);
+    setVerificationReturn(search.get("verified") === "1");
+    if (search.get("account") === "1" || search.get("verified") === "1") return;
     void deviceStartup()
       .then((device) => {
         if (device.state === "ACTIVE") window.location.assign("/pos-login");
@@ -81,6 +84,14 @@ function LoginPage() {
         </div>
       ) : (
         <form onSubmit={submit} className="space-y-4">
+          {verificationReturn && (
+            <p
+              role="status"
+              className="rounded-md border border-border bg-secondary/50 px-3 py-2 text-sm"
+            >
+              If you opened the verification link from your email, sign in to continue.
+            </p>
+          )}
           <label className="block text-sm font-medium">
             Email
             <input
@@ -115,6 +126,12 @@ function LoginPage() {
             {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Sign in
           </button>
+          <a
+            href="/register?verify=1"
+            className="block text-center text-sm font-semibold text-primary"
+          >
+            Didn't receive the verification email?
+          </a>
         </form>
       )}
     </AuthShell>

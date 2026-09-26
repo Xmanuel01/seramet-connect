@@ -11,6 +11,7 @@ import {
   businessProfileSchema,
   demoResetSchema,
   deviceSetupSchema,
+  departmentSetupSchema,
   diagnosticsExportSchema,
   documentTemplateSetupSchema,
   entitlementSchema,
@@ -25,6 +26,7 @@ import {
   openingStockSchema,
   organisationProvisionSchema,
   providerSetupSchema,
+  stationSetupSchema,
   reasonRequestSchema,
   setupTestRequestSchema,
   setupWeightSchema,
@@ -38,12 +40,14 @@ import type {
   BrandSetupInput,
   BusinessProfileInput,
   DeviceSetupInput,
+  DepartmentSetupInput,
   DocumentTemplateSetupInput,
   ExternalMappingInput,
   GoLiveState,
   OpeningStockInput,
   OrganisationProvisionInput,
   ProviderSetupInput,
+  StationSetupInput,
   TaxServiceRuleInput,
 } from "@/onboarding/types";
 import { ServerOperationError } from "@/server/errors";
@@ -68,7 +72,7 @@ export async function handleOnboardingApi(
     );
   }
   const service = new OnboardingService(env.SERAMET_DB, actor, env);
-  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor);
+  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor, env);
   const locationCurrency = new LocationCurrencyService(env.SERAMET_DB, actor);
 
   if (
@@ -159,6 +163,28 @@ export async function handleOnboardingApi(
         ok: true,
         setup: await service.updateBusinessProfile(
           await parse<BusinessProfileInput>(request, businessProfileSchema),
+        ),
+      },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/setup/departments" && request.method === "POST") {
+    return json(
+      {
+        ok: true,
+        department: await service.configureDepartment(
+          await parse<DepartmentSetupInput>(request, departmentSetupSchema),
+        ),
+      },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/setup/stations" && request.method === "POST") {
+    return json(
+      {
+        ok: true,
+        station: await service.configureStation(
+          await parse<StationSetupInput>(request, stationSetupSchema),
         ),
       },
       201,

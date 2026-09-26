@@ -1,4 +1,4 @@
-import type { ServerActor } from "@/lib/seramet-auth";
+import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import {
   HISTORICAL_SALES_TEMPLATE_VERSION,
@@ -9,7 +9,7 @@ import { parseMajorAmount, sumMinor } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
-import { validateImportFile } from "@/server/file-import-security";
+import { requireCleanScanEvidence, validateImportFile } from "@/server/file-import-security";
 
 export type HistoricalSalesIssue = { field: string; code: string; message: string };
 export type HistoricalSalesPreviewRow = {
@@ -68,6 +68,7 @@ export class HistoricalSalesMigrationService {
   constructor(
     private readonly db: D1Database,
     private readonly actor: ServerActor,
+    private readonly env: SerametEnv = {},
   ) {}
 
   async getState() {
@@ -104,6 +105,7 @@ export class HistoricalSalesMigrationService {
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
+      scanner: this.env.SERAMET_MALWARE_SCANNER,
     });
     let rawRows: Array<Record<string, string>>;
     try {
@@ -159,7 +161,12 @@ export class HistoricalSalesMigrationService {
           sumMinor(validRows.map((row) => row.normalized.grossSalesMinor)),
           sumMinor(validRows.map((row) => row.normalized.netSalesMinor)),
           validRows.reduce((total, row) => total + row.normalized.orderCount, 0),
-          JSON.stringify({ unsupportedColumns, archivalOnly: true, requiresConfirmation: true }),
+          JSON.stringify({
+            unsupportedColumns,
+            archivalOnly: true,
+            requiresConfirmation: true,
+            cleanScan: file.scanEvidence,
+          }),
           idempotencyKey,
           this.actor.id,
           stamp,
@@ -196,7 +203,7 @@ export class HistoricalSalesMigrationService {
     this.require();
     const migration = await this.db
       .prepare(
-        `SELECT status,idempotency_key,source_system,created_by FROM historical_sales_migrations
+        `SELECT status,idempotency_key,source_system,created_by,file_checksum,report_json FROM historical_sales_migrations
          WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, id)
@@ -205,8 +212,11 @@ export class HistoricalSalesMigrationService {
         idempotency_key: string;
         source_system: string;
         created_by: string;
+        file_checksum: string;
+        report_json: string;
       }>();
     if (!migration) throw validation("Historical sales preview was not found");
+    requireCleanScanEvidence(JSON.parse(migration.report_json), migration.file_checksum);
     if (migration.status === "COMMITTED")
       return { id, duplicate: true, status: "COMMITTED" as const };
     if (migration.status !== "VALIDATED")
@@ -517,6 +527,10 @@ export class HistoricalSalesMigrationService {
       .bind(this.actor.tenantId, id)
       .first<Record<string, unknown>>();
     if (!migration) throw validation("Historical sales preview was not found");
+    requireCleanScanEvidence(
+      JSON.parse(String(migration.report_json)),
+      String(migration.file_checksum),
+    );
     const rows = await this.db
       .prepare(
         "SELECT * FROM historical_sales_migration_rows WHERE tenant_id=? AND migration_id=? ORDER BY row_number LIMIT 1000",

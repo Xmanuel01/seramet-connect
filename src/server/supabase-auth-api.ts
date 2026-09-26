@@ -5,11 +5,13 @@ import { ServerOperationError, publicError } from "@/server/errors";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
+import { clearPosSessionCookie, PosIdentityService } from "@/server/pos-auth-service";
 
 const credentialsSchema = z
   .object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(200) })
   .strict();
 const signupSchema = credentialsSchema.extend({ name: z.string().trim().min(2).max(100) }).strict();
+const resendVerificationSchema = z.object({ email: z.string().trim().email().max(254) }).strict();
 
 type SupabaseSessionPayload = {
   access_token?: string;
@@ -62,6 +64,35 @@ export async function handleSupabaseAuthApi(
     );
   }
 
+  if (
+    url.pathname === "/api/seramet/public/auth/resend-verification" &&
+    request.method === "POST"
+  ) {
+    const body = parse(resendVerificationSchema, await request.json().catch(() => null));
+    if (!database) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "Email verification is temporarily unavailable. Please try again.",
+      );
+    }
+    await throttle(env, request, `verification-email:${body.email.toLowerCase()}`, 3, 60 * 60);
+    await requestVerificationEmail(
+      env,
+      body.email,
+      `${trustedOrigin(request, env)}/login?verified=1`,
+    );
+    return Response.json(
+      {
+        ok: true,
+        requested: true,
+        message:
+          "If this account is awaiting verification, a new verification email has been requested.",
+      },
+      { status: 202, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (url.pathname === "/api/seramet/public/auth/login" && request.method === "POST") {
     let stage: PublicAuthLoginStage = "request-validation";
     structuredServerLog({
@@ -89,6 +120,13 @@ export async function handleSupabaseAuthApi(
         body,
         undefined,
         "Email or password is incorrect",
+        {
+          email_not_confirmed: {
+            status: 403,
+            message:
+              "Verify your email before signing in. You can request a new link from registration.",
+          },
+        },
       );
       stage = "session-cookie";
       if (!response.access_token || !response.refresh_token) {
@@ -155,6 +193,7 @@ export async function handleSupabaseAuthApi(
 
   if (url.pathname === "/api/seramet/public/auth/logout" && request.method === "POST") {
     const accessToken = readCookie(request, "seramet_access");
+    const posToken = readCookie(request, "seramet_pos_session");
     if (accessToken) {
       const identity = await verifyExternalIdentity(accessToken, env).catch(() => undefined);
       if (identity && database) {
@@ -172,7 +211,15 @@ export async function handleSupabaseAuthApi(
         () => undefined,
       );
     }
-    return Response.json({ ok: true }, { headers: clearSessionCookies(env) });
+    if (posToken && database) {
+      await new PosIdentityService(database).logoutPosSession(posToken);
+    }
+    const headers = clearSessionCookies(env);
+    headers.append(
+      "set-cookie",
+      clearPosSessionCookie(resolveRuntimeConfiguration(env).productionLike),
+    );
+    return Response.json({ ok: true }, { headers });
   }
 
   if (url.pathname === "/api/seramet/public/auth/status" && request.method === "GET") {
@@ -227,6 +274,7 @@ async function supabaseRequest<T = Record<string, unknown>>(
   body?: unknown,
   bearer?: string,
   publicError = "Identity provider request failed",
+  providerErrorOverrides: Record<string, { status: number; message: string }> = {},
 ) {
   const baseUrl = normalizedSupabaseUrl(env.SERAMET_SUPABASE_URL);
   const apiKey = env.SERAMET_SUPABASE_PUBLISHABLE_KEY?.trim();
@@ -257,7 +305,19 @@ async function supabaseRequest<T = Record<string, unknown>>(
         "Sign-in service is temporarily unavailable. Please try again.",
       );
     }
-    if (!response.ok) throw new ServerOperationError("AUTHENTICATION_REQUIRED", 401, publicError);
+    if (!response.ok) {
+      const providerError = (await response.json().catch(() => ({}))) as {
+        code?: string;
+        error_code?: string;
+      };
+      const providerCode = providerError.code ?? providerError.error_code;
+      const override = providerCode ? providerErrorOverrides[providerCode] : undefined;
+      throw new ServerOperationError(
+        "AUTHENTICATION_REQUIRED",
+        override?.status ?? 401,
+        override?.message ?? publicError,
+      );
+    }
     return (await response.json().catch(() => ({}))) as T;
   } catch (error) {
     if (error instanceof ServerOperationError) throw error;
@@ -265,6 +325,62 @@ async function supabaseRequest<T = Record<string, unknown>>(
       "EXTERNAL_SERVICE_UNAVAILABLE",
       503,
       "Sign-in service is temporarily unavailable. Please try again.",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestVerificationEmail(env: SerametEnv, email: string, redirect: string) {
+  const baseUrl = normalizedSupabaseUrl(env.SERAMET_SUPABASE_URL);
+  const apiKey = env.SERAMET_SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!apiKey) {
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "Email verification is temporarily unavailable. Please try again.",
+    );
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(
+      `${baseUrl}/auth/v1/resend?redirect_to=${encodeURIComponent(redirect)}`,
+      {
+        method: "POST",
+        headers: { apikey: apiKey, "content-type": "application/json" },
+        body: JSON.stringify({ email, type: "signup" }),
+        signal: controller.signal,
+      },
+    );
+    if (response.ok) return;
+    if (response.status === 429) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        429,
+        "Please wait before requesting another verification email.",
+      );
+    }
+    if (response.status >= 500) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "Email verification is temporarily unavailable. Please try again.",
+      );
+    }
+    // Supabase can reject resend for account-state reasons. Do not reveal whether an account exists.
+    if ([400, 401, 404, 422].includes(response.status)) return;
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "Email verification is temporarily unavailable. Please try again.",
+    );
+  } catch (error) {
+    if (error instanceof ServerOperationError) throw error;
+    throw new ServerOperationError(
+      "EXTERNAL_SERVICE_UNAVAILABLE",
+      503,
+      "Email verification is temporarily unavailable. Please try again.",
     );
   } finally {
     clearTimeout(timeout);

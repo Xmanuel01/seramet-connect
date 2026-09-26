@@ -51,7 +51,7 @@ export async function authStatus(): Promise<AuthStatus> {
 }
 
 export async function authMutation(
-  action: "login" | "signup" | "logout" | "refresh",
+  action: "login" | "signup" | "resend-verification" | "logout" | "refresh",
   body?: unknown,
 ) {
   const response = await fetch(`/api/seramet/public/auth/${action}`, {
@@ -65,6 +65,7 @@ export async function authMutation(
     message?: string;
     authenticated?: boolean;
     verificationRequired?: boolean;
+    requested?: boolean;
   };
   if (!response.ok) throw new Error(payload.message ?? "The request could not be completed");
   return payload;
@@ -74,3 +75,26 @@ export function enterRestaurant(tenantId: string, path = "/") {
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
   window.location.assign(path);
 }
+
+export async function logoutSeramet() {
+  const tenantId = window.localStorage.getItem("seramet.session.tenant-id")?.trim();
+  try {
+    await authMutation("logout");
+  } finally {
+    if (tenantId) await offlineStore.clearSessionCache(tenantId).catch(() => undefined);
+    setSerametSignedOutBrowserState();
+  }
+}
+
+export function setSerametSignedOutBrowserState() {
+  for (const key of [
+    "seramet.session.tenant-id",
+    "seramet.session.user-id",
+    "seramet.session.branch-scope.v2",
+    "seramet.platform.v2",
+    "seramet.transaction-engine.v2",
+  ]) {
+    window.localStorage.removeItem(key);
+  }
+}
+import { offlineStore } from "@/offline/offline-store";

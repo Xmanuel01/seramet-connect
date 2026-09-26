@@ -25,6 +25,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run validate
+      - name: Verify isolated PostgreSQL concurrency
+        run: npm run test:postgres:concurrency
+        env:
+          SERAMET_POSTGRES_TEST_URL: ${{ secrets.SERAMET_POSTGRES_TEST_URL }}
+          SERAMET_POSTGRES_TEST_CONFIRM: isolated-test-database
       - name: Apply PostgreSQL migrations
         run: npm run migrate:postgres
         env:

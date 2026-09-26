@@ -22,6 +22,7 @@
 ## Data and money
 
 - [ ] Forward migrations completed and checksum/version recorded.
+- [ ] `npm run test:postgres:concurrency` passes against a dedicated non-production PostgreSQL database; archive the release commit and result.
 - [ ] Database backup and restore drill completed.
 - [ ] Journal, allocation, refund, settlement, drawer and inventory invariants pass.
 - [ ] Document sequence scope/format is configured.
@@ -43,13 +44,15 @@
 - [ ] Scheduled orders release with no browser open.
 - [ ] EOD aggregates run from the scheduler.
 - [ ] Offline cash, reconnect, duplicate replay, conflict and digital-payment block tests pass.
-- [ ] Printer bridge/KOT/receipt reprint audit survives browser reset.
+- [ ] Authenticated browser shift passes owner/staff login, branch selection, POS order, KOT/KDS, payment, receipt, reconciliation, EOD and logout/reload.
+- [ ] Printer bridge discovery and a real KOT plus receipt are acknowledged by the intended physical pilot printer; PDF and dry-run output are not physical-printer evidence.
+- [ ] Sandbox payment initiation, authoritative callback/query confirmation, duplicate callback and failed-payment behavior pass without real-money movement.
 
 ## Operations and rollback
 
 - [ ] Structured logs and correlation IDs reach the operations platform.
 - [ ] Rate-limit and file-size policies match expected traffic.
-- [ ] Malware scan adapter is connected for production imports.
+- [ ] Private malware scanner passes health/signature freshness, clean-file digest binding, EICAR rejection, timeout and unavailable-service tests defined in `MALWARE_SCANNER_SERVICE.md`.
 - [ ] Audit and financial retention policy is configured.
 - [ ] Support diagnostics export is reviewed for redaction.
 - [ ] Rollback procedure and on-call contacts are documented.

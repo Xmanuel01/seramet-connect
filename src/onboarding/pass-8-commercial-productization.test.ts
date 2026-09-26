@@ -87,15 +87,87 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       timezone: "Africa/Nairobi",
       locale: "en-KE",
       accountingMode: "PERPETUAL",
+      taxConfigurationReference: "tax-policy-ke",
+      logoAssetReference: "asset://tenant-logo",
       defaultDocumentFooter: "Configured footer",
+      contact: {
+        address: "Configured address",
+        phone: "+254700000000",
+        email: "operations@example.test",
+        customContact: "preserved",
+      },
+      legalIdentifiers: { registrationNumber: "REG-001", taxNumber: "PIN-001" },
+      fiscalSettings: { invoiceSequence: "configured" },
+      documentBranding: { accent: "green" },
     });
     expect(await service.getBusinessProfile()).toMatchObject({
       legalName: "Configured Legal Entity",
       tradingName: "Configured Restaurant",
       countryCode: "KE",
       defaultCurrency: "KES",
+      taxConfigurationReference: "tax-policy-ke",
+      logoAssetReference: "asset://tenant-logo",
+      contact: {
+        address: "Configured address",
+        phone: "+254700000000",
+        email: "operations@example.test",
+        customContact: "preserved",
+      },
+      legalIdentifiers: { registrationNumber: "REG-001", taxNumber: "PIN-001" },
+      fiscalSettings: { invoiceSequence: "configured" },
+      documentBranding: { accent: "green" },
     });
     expect(await auditCount(db, "BUSINESS_PROFILE_UPDATED")).toBe(1);
+  });
+
+  it("configures branch-safe departments and production stations with authoritative routing", async () => {
+    const department = await service.configureDepartment({
+      branchId,
+      code: "KITCHEN",
+      name: "Kitchen",
+    });
+    const station = await service.configureStation({
+      branchId,
+      departmentId: department.id,
+      code: "HOT_LINE",
+      name: "Hot line",
+      stationType: "KITCHEN",
+    });
+    expect(
+      await db
+        .prepare("SELECT branch_id,code,name FROM departments WHERE tenant_id=? AND id=?")
+        .bind(tenantId, department.id)
+        .first(),
+    ).toEqual({ branch_id: branchId, code: "KITCHEN", name: "Kitchen" });
+    const savedStation = await db
+      .prepare(
+        "SELECT branch_id,code,station_type,payload_json FROM stations WHERE tenant_id=? AND id=?",
+      )
+      .bind(tenantId, station.id)
+      .first<{ branch_id: string; code: string; station_type: string; payload_json: string }>();
+    expect(savedStation).toMatchObject({
+      branch_id: branchId,
+      code: "HOT_LINE",
+      station_type: "KITCHEN",
+    });
+    expect(JSON.parse(savedStation!.payload_json)).toMatchObject({ departmentId: department.id });
+    expect(await auditCount(db, "DEPARTMENT_CONFIGURED")).toBe(1);
+    expect(await auditCount(db, "STATION_CONFIGURED")).toBe(1);
+
+    const otherDepartment = await service.configureDepartment({
+      branchId: secondBranchId,
+      code: "SECOND_KITCHEN",
+      name: "Second kitchen",
+    });
+    await expect(
+      service.configureStation({
+        branchId,
+        departmentId: otherDepartment.id,
+        code: "INVALID",
+        name: "Invalid station",
+        stationType: "KITCHEN",
+      }),
+    ).rejects.toThrow(/not available to this branch/i);
   });
 
   it("creates brands, branches, warehouse policy and audit without display-name logic", async () => {
@@ -186,6 +258,51 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
   });
 
+  it("does not parse or persist an import preview when the scanner is unavailable", async () => {
+    const unavailable = new OnboardingService(db, actor(), {
+      ...env,
+      SERAMET_MALWARE_SCANNER: undefined,
+    });
+    await expect(
+      previewCsv(
+        unavailable,
+        "MENU",
+        "code,name,category,price,currency\nUNSCANNED-1,Unsafe,MAIN,100,KES",
+        "unscanned-preview",
+      ),
+    ).rejects.toMatchObject({ code: "EXTERNAL_SERVICE_UNAVAILABLE", status: 503 });
+    expect(await rowCount(db, "setup_imports")).toBe(0);
+    expect(await rowCount(db, "setup_import_rows")).toBe(0);
+  });
+
+  it("does not expose or commit a legacy preview without matching clean-scan evidence", async () => {
+    const input = {
+      branchId,
+      kind: "MENU" as const,
+      originalName: "legacy-preview.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "code,name,category,price,currency\nLEGACY-1,Legacy row,MAIN,100,KES",
+      ),
+      duplicateStrategy: "ERROR" as const,
+      idempotencyKey: "legacy-client-key",
+    };
+    const preview = await service.previewImport(input);
+    await db
+      .prepare("UPDATE setup_imports SET report_json='{}' WHERE tenant_id=? AND id=?")
+      .bind(tenantId, preview.id)
+      .run();
+
+    await expect(service.previewImport(input)).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+    await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    });
+  });
+
   it("follows the manual-item popup contract through preview, verified commit and real POS visibility", async () => {
     const bytes = new TextEncoder().encode(
       createManualMenuCsv({
@@ -266,7 +383,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("previews and commits a one-time previous POS sales migration without replaying live flows", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const preview = await migration.preview({
       sourceSystem: "Previous POS",
       originalName: "historical-sales.csv",
@@ -325,7 +442,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows the optional previous POS migration to be skipped without permanently disabling it", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     await expect(migration.skip("No export is available yet")).resolves.toMatchObject({
       status: "SKIPPED",
       canImportLater: true,
@@ -342,7 +459,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows only one simultaneous previous POS migration commit", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const first = await migration.preview({
       sourceSystem: "Previous POS A",
       originalName: "history-a.csv",
@@ -1372,6 +1489,11 @@ function testEnvironment(
     SERAMET_ENVIRONMENT: "test",
     SERAMET_DB: database,
     SERAMET_CALLBACK_BASE_URL: "https://callbacks.example.test",
+    SERAMET_MALWARE_SCANNER: {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+    },
     SERAMET_MANAGED_SECRET_STORE: {
       async get(reference: string) {
         return secrets.get(reference) ?? null;

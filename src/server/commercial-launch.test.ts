@@ -169,6 +169,74 @@ describe.sequential("commercial launch foundation", () => {
     expect(session?.revoked_at).not.toBeNull();
   });
 
+  it("revokes an employee session and clears both session cookies during unified logout", async () => {
+    const provisioned = await new RestaurantRegistrationService(database).register(
+      identity(),
+      registration(),
+    );
+    const token = "employee-session-token";
+    const tokenHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+    const encodedHash = Array.from(new Uint8Array(tokenHash), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const stamp = new Date().toISOString();
+    const expires = new Date(Date.now() + 60_000).toISOString();
+    await database.batch([
+      database
+        .prepare(
+          `INSERT INTO hardware_devices
+            (tenant_id,id,branch_id,device_type,name,trust_status,registered_by,registered_at,
+             payload_json,lifecycle_state,credential_version)
+           VALUES (?,?,?,'POS_TERMINAL','Test POS','ACTIVE',?,?,'{}','ACTIVE',1)`,
+        )
+        .bind(
+          provisioned.tenantId,
+          "logout-device",
+          provisioned.branchId,
+          provisioned.userId,
+          stamp,
+        ),
+      database
+        .prepare(
+          `INSERT INTO pos_sessions
+            (tenant_id,id,user_id,device_id,branch_id,token_hash,auth_level,issued_at,expires_at,
+             last_seen_at,inactivity_expires_at,revoked_at,revoke_reason,credential_version,metadata_json)
+           VALUES (?,?,?,?,?,?,'POS_PIN',?,?,?,?,NULL,NULL,1,'{}')`,
+        )
+        .bind(
+          provisioned.tenantId,
+          "logout-pos-session",
+          provisioned.userId,
+          "logout-device",
+          provisioned.branchId,
+          encodedHash,
+          stamp,
+          expires,
+          stamp,
+          expires,
+        ),
+    ]);
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/logout", {
+        method: "POST",
+        headers: {
+          cookie: `seramet_pos_session=${token}`,
+          origin: "https://app.seramet.test",
+        },
+      }),
+      { ...authEnv(), SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test" },
+    );
+    expect(response?.status).toBe(200);
+    const session = await database
+      .prepare("SELECT revoked_at,revoke_reason FROM pos_sessions WHERE id=?")
+      .bind("logout-pos-session")
+      .first<{ revoked_at: string | null; revoke_reason: string | null }>();
+    expect(session?.revoked_at).not.toBeNull();
+    expect(session?.revoke_reason).toBe("EMPLOYEE_LOGOUT");
+    expect(response?.headers.get("set-cookie")).toContain("seramet_pos_session=;");
+  });
+
   it("allows public auth login before unrelated production bindings are present", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -203,6 +271,172 @@ describe.sequential("commercial launch foundation", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
+  });
+
+  it("requests a signup verification email server-side without revealing account state", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.1",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(202);
+    await expect(response?.json()).resolves.toEqual({
+      ok: true,
+      requested: true,
+      message:
+        "If this account is awaiting verification, a new verification email has been requested.",
+    });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [providerUrl, providerInit] = fetchSpy.mock.calls[0]!;
+    expect(String(providerUrl)).toBe(
+      "https://example.supabase.co/auth/v1/resend?redirect_to=https%3A%2F%2Fapp.seramet.test%2Flogin%3Fverified%3D1",
+    );
+    expect(JSON.parse(String(providerInit?.body))).toEqual({
+      email: "owner@example.test",
+      type: "signup",
+    });
+  });
+
+  it("does not disclose whether a verification account exists", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "user_not_found" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.2",
+        },
+        body: JSON.stringify({ email: "unknown@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response?.status).toBe(202);
+    await expect(response?.json()).resolves.toMatchObject({ ok: true, requested: true });
+  });
+
+  it("fails verification resend closed when the provider is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "provider_failure" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.3",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      code: "EXTERNAL_SERVICE_UNAVAILABLE",
+      message: "Email verification is temporarily unavailable. Please try again.",
+    });
+  });
+
+  it("does not allow verification resend without persistent rate limiting", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/resend-verification", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ email: "owner@example.test" }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "production",
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      } as SerametEnv,
+    );
+
+    expect(response.status).toBe(503);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports an unverified email separately from incorrect credentials", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "email_not_confirmed" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/public/auth/login", {
+        method: "POST",
+        headers: {
+          origin: "https://app.seramet.test",
+          "content-type": "application/json",
+          "cf-connecting-ip": "192.0.2.4",
+        },
+        body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
+      }),
+      {
+        ...authEnv(),
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "publishable",
+      },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Verify your email before signing in. You can request a new link from registration.",
+    });
   });
 
   it("reports public auth disabled when the publishable key is missing", async () => {
@@ -536,6 +770,44 @@ describe.sequential("commercial launch foundation", () => {
       issues: Array<{ code: string }>;
     };
     expect(payload.issues.map((issue) => issue.code)).toContain("MALWARE_SCANNER_REQUIRED");
+
+    env.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+      async health() {
+        return { ready: false };
+      },
+    };
+    const unhealthyScanner = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/ready"),
+      env,
+    );
+    expect(unhealthyScanner.status).toBe(503);
+    await expect(unhealthyScanner.json()).resolves.toMatchObject({
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "MALWARE_SCANNER_UNAVAILABLE" }),
+      ]),
+    });
+
+    env.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "CLEAN", reference: "scan://test/clean" };
+      },
+      async health() {
+        return {
+          ready: true,
+          engine: "Test scanner",
+          signatureVersion: "test-current",
+          signaturesUpdatedAt: new Date().toISOString(),
+        };
+      },
+    };
+    const ready = await handleSerametApiRequest(
+      new Request("https://app.seramet.test/api/seramet/health/ready"),
+      env,
+    );
+    expect(ready.status).toBe(200);
   });
 
   it("fails production readiness without real Hyperdrive, R2, queue and scanner bindings", () => {

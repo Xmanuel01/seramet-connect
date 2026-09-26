@@ -85,7 +85,13 @@ function SetupCentre() {
     timezone: "",
     locale: "",
     accountingMode: "",
+    taxConfigurationReference: "",
+    logoAssetReference: "",
     defaultDocumentFooter: "",
+    contact: { address: "", phone: "", email: "", website: "" },
+    legalIdentifiers: { registrationNumber: "", taxNumber: "" },
+    fiscalSettings: {} as Record<string, unknown>,
+    documentBranding: {} as Record<string, unknown>,
   });
   const [brand, setBrand] = useState({ code: "", name: "" });
   const [branchCreateKey, setBranchCreateKey] = useState(() => crypto.randomUUID());
@@ -113,12 +119,21 @@ function SetupCentre() {
   const [providerBranchId, setProviderBranchId] = useState("");
   const [providerEnvironment, setProviderEnvironment] = useState("SANDBOX");
   const [providerConfiguration, setProviderConfiguration] = useState<Record<string, string>>({});
-  const [providerCredentials, setProviderCredentials] = useState<Record<string, string>>({});
   const [mapping, setMapping] = useState({
     connectionId: "",
     resourceType: "STORE",
     internalId: "",
     externalId: "",
+  });
+  const [department, setDepartment] = useState({ branchId: "", code: "", name: "" });
+  const [station, setStation] = useState({
+    branchId: "",
+    departmentId: "",
+    code: "",
+    name: "",
+    stationType: "KITCHEN",
+    printerDeviceId: "",
+    kdsDeviceId: "",
   });
   const [device, setDevice] = useState({
     branchId: "",
@@ -161,7 +176,23 @@ function SetupCentre() {
       timezone: centre.profile.timezone,
       locale: centre.profile.locale,
       accountingMode: centre.profile.accountingMode,
+      taxConfigurationReference: centre.profile.taxConfigurationReference ?? "",
+      logoAssetReference: centre.profile.logoAssetReference ?? "",
       defaultDocumentFooter: centre.profile.defaultDocumentFooter ?? "",
+      contact: {
+        ...centre.profile.contact,
+        address: centre.profile.contact.address ?? "",
+        phone: centre.profile.contact.phone ?? "",
+        email: centre.profile.contact.email ?? "",
+        website: centre.profile.contact.website ?? "",
+      },
+      legalIdentifiers: {
+        ...centre.profile.legalIdentifiers,
+        registrationNumber: centre.profile.legalIdentifiers.registrationNumber ?? "",
+        taxNumber: centre.profile.legalIdentifiers.taxNumber ?? "",
+      },
+      fiscalSettings: centre.profile.fiscalSettings,
+      documentBranding: centre.profile.documentBranding,
     });
     setDocument((current) => ({
       ...current,
@@ -201,10 +232,6 @@ function SetupCentre() {
       () =>
         centre.command("/api/seramet/setup/business-profile", {
           ...business,
-          contact: {},
-          legalIdentifiers: {},
-          fiscalSettings: {},
-          documentBranding: {},
         }),
       "Business profile saved to the authoritative tenant configuration.",
     );
@@ -270,13 +297,9 @@ function SetupCentre() {
         ...(providerBranchId ? { branchId: providerBranchId } : {}),
         environment: providerEnvironment,
         configuration,
-        ...(Object.values(providerCredentials).some(Boolean)
-          ? { credentials: providerCredentials }
-          : {}),
         enabled: true,
       });
-      setProviderCredentials({});
-    }, `${provider.displayName} configuration stored. Credential values were not returned.`);
+    }, `${provider.displayName} restaurant configuration stored. Platform credentials remain server managed.`);
   };
   const saveMapping = (event: FormEvent) => {
     event.preventDefault();
@@ -289,6 +312,32 @@ function SetupCentre() {
           confidenceBps: 10000,
         }),
       "Reviewed external mapping committed.",
+    );
+  };
+  const saveDepartment = (event: FormEvent) => {
+    event.preventDefault();
+    void run(
+      () =>
+        centre.command("/api/seramet/setup/departments", {
+          ...department,
+          ...(department.branchId ? {} : { branchId: undefined }),
+          active: true,
+        }),
+      "Department saved to the authoritative restaurant configuration.",
+    );
+  };
+  const saveStation = (event: FormEvent) => {
+    event.preventDefault();
+    void run(
+      () =>
+        centre.command("/api/seramet/setup/stations", {
+          ...station,
+          ...(station.departmentId ? {} : { departmentId: undefined }),
+          ...(station.printerDeviceId ? {} : { printerDeviceId: undefined }),
+          ...(station.kdsDeviceId ? {} : { kdsDeviceId: undefined }),
+          active: true,
+        }),
+      "Production station and output routing saved.",
     );
   };
   const saveDevice = (event: FormEvent) => {
@@ -598,6 +647,66 @@ function SetupCentre() {
                   label="Default document footer"
                   value={business.defaultDocumentFooter}
                   onChange={(value) => setBusiness({ ...business, defaultDocumentFooter: value })}
+                />
+                <Field
+                  label="Business address"
+                  value={business.contact.address}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, address: value } })
+                  }
+                />
+                <Field
+                  label="Business phone"
+                  value={business.contact.phone}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, phone: value } })
+                  }
+                />
+                <Field
+                  label="Business email"
+                  value={business.contact.email}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, email: value } })
+                  }
+                />
+                <Field
+                  label="Website"
+                  value={business.contact.website}
+                  onChange={(value) =>
+                    setBusiness({ ...business, contact: { ...business.contact, website: value } })
+                  }
+                />
+                <Field
+                  label="Registration number"
+                  value={business.legalIdentifiers.registrationNumber}
+                  onChange={(value) =>
+                    setBusiness({
+                      ...business,
+                      legalIdentifiers: { ...business.legalIdentifiers, registrationNumber: value },
+                    })
+                  }
+                />
+                <Field
+                  label="Tax number"
+                  value={business.legalIdentifiers.taxNumber}
+                  onChange={(value) =>
+                    setBusiness({
+                      ...business,
+                      legalIdentifiers: { ...business.legalIdentifiers, taxNumber: value },
+                    })
+                  }
+                />
+                <Field
+                  label="Tax configuration reference"
+                  value={business.taxConfigurationReference}
+                  onChange={(value) =>
+                    setBusiness({ ...business, taxConfigurationReference: value })
+                  }
+                />
+                <Field
+                  label="Logo asset reference"
+                  value={business.logoAssetReference}
+                  onChange={(value) => setBusiness({ ...business, logoAssetReference: value })}
                 />
                 <div className="md:col-span-2 flex justify-end">
                   <Btn type="submit" variant="primary" disabled={busy}>
@@ -948,7 +1057,6 @@ function SetupCentre() {
                 setProviderId={(value) => {
                   setProviderId(value);
                   setProviderConfiguration({});
-                  setProviderCredentials({});
                 }}
                 providerBranchId={providerBranchId}
                 setProviderBranchId={setProviderBranchId}
@@ -956,19 +1064,20 @@ function SetupCentre() {
                 setEnvironment={setProviderEnvironment}
                 configuration={providerConfiguration}
                 setConfiguration={setProviderConfiguration}
-                credentials={providerCredentials}
-                setCredentials={setProviderCredentials}
                 onSubmit={saveProvider}
                 busy={busy}
               />
             </>
           )}
           {section === "KITCHEN_STATIONS" && (
-            <MappingPanel
+            <StationSetupPanel
               centre={centre}
-              mapping={mapping}
-              setMapping={setMapping}
-              onSubmit={saveMapping}
+              department={department}
+              setDepartment={setDepartment}
+              station={station}
+              setStation={setStation}
+              onSaveDepartment={saveDepartment}
+              onSaveStation={saveStation}
               busy={busy}
             />
           )}
@@ -1463,8 +1572,6 @@ function ProviderPanel({
   setEnvironment,
   configuration,
   setConfiguration,
-  credentials,
-  setCredentials,
   onSubmit,
   busy,
 }: {
@@ -1478,8 +1585,6 @@ function ProviderPanel({
   setEnvironment: (value: string) => void;
   configuration: Record<string, string>;
   setConfiguration: (value: Record<string, string>) => void;
-  credentials: Record<string, string>;
-  setCredentials: (value: Record<string, string>) => void;
   onSubmit: (event: FormEvent) => void;
   busy: boolean;
 }) {
@@ -1598,18 +1703,14 @@ function ProviderPanel({
                 )}
               </label>
             ))}
-          {provider?.credentialFields.map((key) => (
-            <label className={labelClass} key={key}>
-              {humanize(key)}
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={credentials[key] ?? ""}
-                onChange={(event) => setCredentials({ ...credentials, [key]: event.target.value })}
-                className={inputClass}
-              />
-            </label>
-          ))}
+          {provider?.credentialFields.length ? (
+            <div className="rounded-md border border-border bg-secondary/50 px-3 py-3 text-xs text-muted-foreground">
+              Provider credentials are managed by the Seramet platform and are never entered or
+              returned on restaurant screens. Save the restaurant-specific configuration here;
+              connection status will remain <strong>Action needed</strong> until an authorized
+              platform operator completes verification.
+            </div>
+          ) : null}
           {provider && (
             <div className="flex flex-wrap gap-1.5">
               {provider.capabilities.slice(0, 8).map((item) => (
@@ -1724,6 +1825,198 @@ function MappingPanel({
         </div>
       </form>
     </Panel>
+  );
+}
+
+function StationSetupPanel({
+  centre,
+  department,
+  setDepartment,
+  station,
+  setStation,
+  onSaveDepartment,
+  onSaveStation,
+  busy,
+}: {
+  centre: ReturnType<typeof useSetupCentre>;
+  department: { branchId: string; code: string; name: string };
+  setDepartment: (value: { branchId: string; code: string; name: string }) => void;
+  station: {
+    branchId: string;
+    departmentId: string;
+    code: string;
+    name: string;
+    stationType: string;
+    printerDeviceId: string;
+    kdsDeviceId: string;
+  };
+  setStation: (value: {
+    branchId: string;
+    departmentId: string;
+    code: string;
+    name: string;
+    stationType: string;
+    printerDeviceId: string;
+    kdsDeviceId: string;
+  }) => void;
+  onSaveDepartment: (event: FormEvent) => void;
+  onSaveStation: (event: FormEvent) => void;
+  busy: boolean;
+}) {
+  const branchDepartments = centre.options.departments.filter((item) => {
+    const target = String(item["branch_id"] ?? "");
+    return !target || target === station.branchId;
+  });
+  const branchDevices = centre.devices.filter((item) => item.branchId === station.branchId);
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Panel>
+        <PanelHead
+          title="Departments"
+          sub="Kitchen, bar and service ownership for a branch or the full restaurant"
+        />
+        <form onSubmit={onSaveDepartment} className="grid gap-3 p-4">
+          <label className={labelClass}>
+            Scope
+            <select
+              className={inputClass}
+              value={department.branchId}
+              onChange={(event) => setDepartment({ ...department, branchId: event.target.value })}
+            >
+              <option value="">All branches</option>
+              {centre.structure.branches.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Field
+            label="Department code"
+            value={department.code}
+            onChange={(value) => setDepartment({ ...department, code: value.toUpperCase() })}
+          />
+          <Field
+            label="Department name"
+            value={department.name}
+            onChange={(value) => setDepartment({ ...department, name: value })}
+          />
+          <Btn type="submit" variant="primary" disabled={busy}>
+            Save department
+          </Btn>
+        </form>
+      </Panel>
+      <Panel>
+        <PanelHead
+          title="Production station"
+          sub="Route menu production to an authoritative station and configured output"
+        />
+        <form onSubmit={onSaveStation} className="grid gap-3 p-4">
+          <label className={labelClass}>
+            Branch
+            <select
+              required
+              className={inputClass}
+              value={station.branchId}
+              onChange={(event) => setStation({ ...station, branchId: event.target.value })}
+            >
+              <option value="">Select branch</option>
+              {centre.structure.branches.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            Department
+            <select
+              className={inputClass}
+              value={station.departmentId}
+              onChange={(event) => setStation({ ...station, departmentId: event.target.value })}
+            >
+              <option value="">No department</option>
+              {branchDepartments.map((item) => (
+                <option key={String(item.id)} value={String(item.id)}>
+                  {String(item.name)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Field
+            label="Station code"
+            value={station.code}
+            onChange={(value) => setStation({ ...station, code: value.toUpperCase() })}
+          />
+          <Field
+            label="Station name"
+            value={station.name}
+            onChange={(value) => setStation({ ...station, name: value })}
+          />
+          <label className={labelClass}>
+            Station type
+            <select
+              className={inputClass}
+              value={station.stationType}
+              onChange={(event) => setStation({ ...station, stationType: event.target.value })}
+            >
+              {[
+                "KITCHEN",
+                "GRILL",
+                "FRYER",
+                "BAR",
+                "COFFEE",
+                "DESSERT",
+                "PASS",
+                "DISPATCH",
+                "OTHER",
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {humanize(value)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            Printer output
+            <select
+              className={inputClass}
+              value={station.printerDeviceId}
+              onChange={(event) => setStation({ ...station, printerDeviceId: event.target.value })}
+            >
+              <option value="">Not assigned</option>
+              {branchDevices
+                .filter((item) => item.deviceType === "PRINTER")
+                .map((item) => (
+                  <option key={item.deviceId} value={item.deviceId}>
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            KDS output
+            <select
+              className={inputClass}
+              value={station.kdsDeviceId}
+              onChange={(event) => setStation({ ...station, kdsDeviceId: event.target.value })}
+            >
+              <option value="">Not assigned</option>
+              {branchDevices
+                .filter((item) => item.deviceType === "KDS")
+                .map((item) => (
+                  <option key={item.deviceId} value={item.deviceId}>
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <Btn type="submit" variant="primary" disabled={busy || !station.branchId}>
+            Save station
+          </Btn>
+        </form>
+      </Panel>
+    </div>
   );
 }
 

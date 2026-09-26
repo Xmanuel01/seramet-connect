@@ -20,7 +20,15 @@ describe.sequential("Pass 8 realistic onboarding load foundation", () => {
   beforeAll(() => {
     db = createMigratedTestDatabase();
     seedScaleFixture(db);
-    env = { SERAMET_ENVIRONMENT: "test", SERAMET_DB: db };
+    env = {
+      SERAMET_ENVIRONMENT: "test",
+      SERAMET_DB: db,
+      SERAMET_MALWARE_SCANNER: {
+        async scan() {
+          return { status: "CLEAN", reference: "scan://test/load-clean" };
+        },
+      },
+    };
     service = new OnboardingService(db, loadActor(), env);
   }, 120_000);
 
