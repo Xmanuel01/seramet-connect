@@ -21,7 +21,11 @@ export async function handleFinanceApi(
   if (request.method !== "GET") throw new SerametHttpError(405, "Finance reporting is read-only");
   const actor = await authenticateSerametRequest(request, env);
   if (!env.SERAMET_DB) {
-    throw new ServerOperationError("DATABASE_UNAVAILABLE", 503, "Authoritative finance database unavailable");
+    throw new ServerOperationError(
+      "DATABASE_UNAVAILABLE",
+      503,
+      "Authoritative finance database unavailable",
+    );
   }
   const service = new FinancialLedgerService(env.SERAMET_DB, actor);
   const today = new Date().toISOString().slice(0, 10);
@@ -42,7 +46,13 @@ export async function handleFinanceApi(
       const offset = Number(url.searchParams.get("offset") ?? "0");
       const accountId = url.searchParams.get("accountId")?.trim() || undefined;
       const accountType = url.searchParams.get("accountType")?.trim() || undefined;
-      report = await service.ledger({ ...opts, limit, offset, ...(accountId ? { accountId } : {}), ...(accountType ? { accountType } : {}) });
+      report = await service.ledger({
+        ...opts,
+        limit,
+        offset,
+        ...(accountId ? { accountId } : {}),
+        ...(accountType ? { accountType } : {}),
+      });
       break;
     }
     case "receivables":

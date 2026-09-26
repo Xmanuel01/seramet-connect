@@ -1,8 +1,4 @@
-import {
-  authorizeBranchRead,
-  SerametHttpError,
-  type ServerActor,
-} from "@/lib/seramet-auth";
+import { authorizeBranchRead, SerametHttpError, type ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import type { D1Database } from "@/server/database/d1";
 
@@ -58,8 +54,11 @@ function amount(value: number | string) {
 
 function date(value: string, label: string) {
   const parsed = Date.parse(value + "T00:00:00Z");
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value) || Number.isNaN(parsed) ||
-      new Date(parsed).toISOString().slice(0, 10) !== value) {
+  if (
+    !/^\\d{4}-\\d{2}-\\d{2}$/.test(value) ||
+    Number.isNaN(parsed) ||
+    new Date(parsed).toISOString().slice(0, 10) !== value
+  ) {
     throw new SerametHttpError(400, label + " must be a valid ISO date");
   }
   return value;
@@ -112,7 +111,8 @@ export class FinancialLedgerService {
       .prepare("SELECT default_currency FROM tenants WHERE id=?")
       .bind(this.actor.tenantId)
       .first<{ default_currency: string }>();
-    if (!tenant?.default_currency) throw new SerametHttpError(409, "Tenant base currency is missing");
+    if (!tenant?.default_currency)
+      throw new SerametHttpError(409, "Tenant base currency is missing");
     return {
       tenantId: this.actor.tenantId,
       branchIds,
@@ -130,7 +130,8 @@ export class FinancialLedgerService {
     const result = await this.db
       .prepare(
         "SELECT id,code,name,account_type,currency FROM accounts WHERE tenant_id=? AND (branch_id IS NULL OR branch_id IN (" +
-          scope.branchIds.map(() => "?").join(",") + ")) ORDER BY code,id",
+          scope.branchIds.map(() => "?").join(",") +
+          ")) ORDER BY code,id",
       )
       .bind(scope.tenantId, ...scope.branchIds)
       .all<Account>();
@@ -153,7 +154,15 @@ export class FinancialLedgerService {
     ].join(" ");
     const result = await this.db
       .prepare(query)
-      .bind(scope.from, scope.from, scope.from, scope.from, scope.tenantId, scope.to, ...scope.branchIds)
+      .bind(
+        scope.from,
+        scope.from,
+        scope.from,
+        scope.from,
+        scope.tenantId,
+        scope.to,
+        ...scope.branchIds,
+      )
       .all<RawMovement>();
     return result.results ?? [];
   }
@@ -161,14 +170,17 @@ export class FinancialLedgerService {
   private async postingIssues(scope: Scope): Promise<PostingIssue[]> {
     const issues: PostingIssue[] = [];
     const imbalanced = await this.db
-      .prepare([
-        "SELECT COUNT(*) AS issue_count FROM (",
-        "SELECT je.id,jl.currency FROM journal_entries je JOIN journal_lines jl",
-        "ON jl.tenant_id=je.tenant_id AND jl.journal_entry_id=je.id",
-        "WHERE je.tenant_id=? AND je.status='POSTED' AND je.business_date BETWEEN ? AND ?",
-        "AND", this.branches(scope),
-        "GROUP BY je.id,jl.currency HAVING SUM(jl.debit_minor)<>SUM(jl.credit_minor)) AS unmatched",
-      ].join(" "))
+      .prepare(
+        [
+          "SELECT COUNT(*) AS issue_count FROM (",
+          "SELECT je.id,jl.currency FROM journal_entries je JOIN journal_lines jl",
+          "ON jl.tenant_id=je.tenant_id AND jl.journal_entry_id=je.id",
+          "WHERE je.tenant_id=? AND je.status='POSTED' AND je.business_date BETWEEN ? AND ?",
+          "AND",
+          this.branches(scope),
+          "GROUP BY je.id,jl.currency HAVING SUM(jl.debit_minor)<>SUM(jl.credit_minor)) AS unmatched",
+        ].join(" "),
+      )
       .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
       .first<{ issue_count: number | string }>();
     if (amount(imbalanced?.issue_count ?? 0) > 0) {
@@ -179,13 +191,16 @@ export class FinancialLedgerService {
       });
     }
     const unpostedSuppliers = await this.db
-      .prepare([
-        "SELECT COUNT(*) AS issue_count FROM supplier_invoices",
-        "WHERE tenant_id=? AND invoice_date BETWEEN ? AND ?",
-        "AND status IN ('POSTED','PARTIALLY_PAID','PAID')",
-        "AND journal_entry_id IS NULL AND branch_id IN (",
-        scope.branchIds.map(() => "?").join(","), ")",
-      ].join(" "))
+      .prepare(
+        [
+          "SELECT COUNT(*) AS issue_count FROM supplier_invoices",
+          "WHERE tenant_id=? AND invoice_date BETWEEN ? AND ?",
+          "AND status IN ('POSTED','PARTIALLY_PAID','PAID')",
+          "AND journal_entry_id IS NULL AND branch_id IN (",
+          scope.branchIds.map(() => "?").join(","),
+          ")",
+        ].join(" "),
+      )
       .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
       .first<{ issue_count: number | string }>();
     if (amount(unpostedSuppliers?.issue_count ?? 0) > 0) {
@@ -196,29 +211,37 @@ export class FinancialLedgerService {
       });
     }
     const sales = await this.db
-      .prepare([
-        "SELECT COUNT(*) AS invoice_count FROM invoices WHERE tenant_id=?",
-        "AND business_date BETWEEN ? AND ? AND paid_minor>0",
-        "AND branch_id IN (", scope.branchIds.map(() => "?").join(","), ")",
-      ].join(" "))
+      .prepare(
+        [
+          "SELECT COUNT(*) AS invoice_count FROM invoices WHERE tenant_id=?",
+          "AND business_date BETWEEN ? AND ? AND paid_minor>0",
+          "AND branch_id IN (",
+          scope.branchIds.map(() => "?").join(","),
+          ")",
+        ].join(" "),
+      )
       .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
       .first<{ invoice_count: number | string }>();
     const salesLedgers = await this.db
-      .prepare([
-        "SELECT COUNT(*) AS posted_lines FROM journal_lines jl",
-        "JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
-        "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
-        "WHERE je.tenant_id=? AND je.business_date BETWEEN ? AND ?",
-        "AND je.status='POSTED' AND a.account_type IN ('INCOME','REVENUE')",
-        "AND", this.branches(scope),
-      ].join(" "))
+      .prepare(
+        [
+          "SELECT COUNT(*) AS posted_lines FROM journal_lines jl",
+          "JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
+          "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
+          "WHERE je.tenant_id=? AND je.business_date BETWEEN ? AND ?",
+          "AND je.status='POSTED' AND a.account_type IN ('INCOME','REVENUE')",
+          "AND",
+          this.branches(scope),
+        ].join(" "),
+      )
       .bind(scope.tenantId, scope.from, scope.to, ...scope.branchIds)
       .first<{ posted_lines: number | string }>();
     if (amount(sales?.invoice_count ?? 0) > 0 && amount(salesLedgers?.posted_lines ?? 0) === 0) {
       issues.push({
         code: "SETTLED_SALES_NOT_IN_GL",
         count: amount(sales!.invoice_count),
-        detail: "Settled POS invoices exist but no revenue journal is posted for this period. Sales are not represented in the general ledger.",
+        detail:
+          "Settled POS invoices exist but no revenue journal is posted for this period. Sales are not represented in the general ledger.",
       });
     }
     return issues;
@@ -234,14 +257,16 @@ export class FinancialLedgerService {
       issues.push({
         code: "FOREIGN_CURRENCY_REVALUATION_REQUIRED",
         count: missingCurrency.length,
-        detail: "Some accounts use a different currency; no unapproved currency conversion has been applied.",
+        detail:
+          "Some accounts use a different currency; no unapproved currency conversion has been applied.",
       });
     }
     if (masters.length === 0) {
       issues.push({
         code: "CHART_OF_ACCOUNTS_MISSING",
         count: 1,
-        detail: "Configure the organization's chart of accounts before issuing financial statements.",
+        detail:
+          "Configure the organization's chart of accounts before issuing financial statements.",
       });
     }
     const movementById = new Map(raw.map((row) => [row.account_id, row]));
@@ -263,11 +288,24 @@ export class FinancialLedgerService {
         periodCreditMinor,
         debitMinor: openingDebitMinor + periodDebitMinor,
         creditMinor: openingCreditMinor + periodCreditMinor,
-        closingSignedMinor: openingDebitMinor + periodDebitMinor - openingCreditMinor - periodCreditMinor,
+        closingSignedMinor:
+          openingDebitMinor + periodDebitMinor - openingCreditMinor - periodCreditMinor,
       };
     });
     const unknown = lines.filter(
-      (line) => !["ASSET", "LIABILITY", "EQUITY", "INCOME", "REVENUE", "EXPENSE", "COGS", "COST_OF_GOODS_SOLD", "BANK", "CASH"].includes(line.type),
+      (line) =>
+        ![
+          "ASSET",
+          "LIABILITY",
+          "EQUITY",
+          "INCOME",
+          "REVENUE",
+          "EXPENSE",
+          "COGS",
+          "COST_OF_GOODS_SOLD",
+          "BANK",
+          "CASH",
+        ].includes(line.type),
     );
     if (unknown.length) {
       issues.push({
@@ -277,8 +315,13 @@ export class FinancialLedgerService {
       });
     }
     const sum = (types: string[], side: "debit" | "credit") =>
-      lines.filter((line) => types.includes(line.type) && line.currency === scope.currency)
-        .reduce((total, line) => total + (side === "debit" ? line.closingSignedMinor : -line.closingSignedMinor), 0);
+      lines
+        .filter((line) => types.includes(line.type) && line.currency === scope.currency)
+        .reduce(
+          (total, line) =>
+            total + (side === "debit" ? line.closingSignedMinor : -line.closingSignedMinor),
+          0,
+        );
     const assetsMinor = sum(["ASSET", "BANK", "CASH"], "debit");
     const liabilitiesMinor = sum(["LIABILITY"], "credit");
     const equityMinor = sum(["EQUITY"], "credit");
@@ -289,8 +332,11 @@ export class FinancialLedgerService {
       .filter((row) => ["INCOME", "REVENUE"].includes(row.type) && row.currency === scope.currency)
       .reduce((sum, row) => sum + row.periodCreditMinor - row.periodDebitMinor, 0);
     const periodExpenseMinor = lines
-      .filter((row) => ["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(row.type) &&
-        row.currency === scope.currency)
+      .filter(
+        (row) =>
+          ["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(row.type) &&
+          row.currency === scope.currency,
+      )
       .reduce((sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor, 0);
     const balanceDifferenceMinor = assetsMinor - liabilitiesMinor - equityMinor - retainedMinor;
     const hasMovement = lines.some((line) => line.debitMinor || line.creditMinor);
@@ -305,7 +351,8 @@ export class FinancialLedgerService {
       issues.push({
         code: "BALANCE_SHEET_DIFFERENCE",
         count: 1,
-        detail: "Assets differ from liabilities, equity and unclosed earnings; investigate posting and opening balances.",
+        detail:
+          "Assets differ from liabilities, equity and unclosed earnings; investigate posting and opening balances.",
       });
     }
     const cashAccounts = lines.filter((line) => line.type === "BANK" || line.type === "CASH");
@@ -313,20 +360,41 @@ export class FinancialLedgerService {
       issues.push({
         code: "CASH_ACCOUNT_CLASSIFICATION_MISSING",
         count: 1,
-        detail: "Bank and cash accounts must be explicitly classified before cash movement can be reported.",
+        detail:
+          "Bank and cash accounts must be explicitly classified before cash movement can be reported.",
       });
     }
-    const debit = lines.filter((line) => line.currency === scope.currency)
+    const debit = lines
+      .filter((line) => line.currency === scope.currency)
       .reduce((total, line) => total + line.periodDebitMinor, 0);
-    const credit = lines.filter((line) => line.currency === scope.currency)
+    const credit = lines
+      .filter((line) => line.currency === scope.currency)
       .reduce((total, line) => total + line.periodCreditMinor, 0);
     return {
-      scope: { from: scope.from, to: scope.to, branchIds: scope.branchIds, currency: scope.currency },
-      quality: issues.length ? "INCOMPLETE" as const : "RECONCILED" as const,
+      scope: {
+        from: scope.from,
+        to: scope.to,
+        branchIds: scope.branchIds,
+        currency: scope.currency,
+      },
+      quality: issues.length ? ("INCOMPLETE" as const) : ("RECONCILED" as const),
       issues,
       lines,
-      trial: { periodDebitMinor: debit, periodCreditMinor: credit, balanced: hasMovement && debit === credit && issues.every((issue) => issue.code !== "IMBALANCED_POSTED_JOURNALS") },
-      balanceSheet: { assetsMinor, liabilitiesMinor, equityMinor, unclosedEarningsMinor: retainedMinor, differenceMinor: balanceDifferenceMinor },
+      trial: {
+        periodDebitMinor: debit,
+        periodCreditMinor: credit,
+        balanced:
+          hasMovement &&
+          debit === credit &&
+          issues.every((issue) => issue.code !== "IMBALANCED_POSTED_JOURNALS"),
+      },
+      balanceSheet: {
+        assetsMinor,
+        liabilitiesMinor,
+        equityMinor,
+        unclosedEarningsMinor: retainedMinor,
+        differenceMinor: balanceDifferenceMinor,
+      },
       incomeStatement: {
         incomeMinor: periodIncomeMinor,
         expenseMinor: periodExpenseMinor,
@@ -334,39 +402,81 @@ export class FinancialLedgerService {
       },
       cashMovement: cashAccounts.length
         ? {
-            openingMinor: cashAccounts.reduce((sum, row) => sum + row.openingDebitMinor - row.openingCreditMinor, 0),
-            periodMinor: cashAccounts.reduce((sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor, 0),
+            openingMinor: cashAccounts.reduce(
+              (sum, row) => sum + row.openingDebitMinor - row.openingCreditMinor,
+              0,
+            ),
+            periodMinor: cashAccounts.reduce(
+              (sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor,
+              0,
+            ),
           }
         : null,
     };
   }
 
-  async ledger(input: FinanceWindow & { limit?: number; offset?: number; accountId?: string; accountType?: string }) {
+  async ledger(
+    input: FinanceWindow & {
+      limit?: number;
+      offset?: number;
+      accountId?: string;
+      accountType?: string;
+    },
+  ) {
     const scope = await this.scope(input);
     const limit = input.limit ?? 100;
     const offset = input.offset ?? 0;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 ||
-        !Number.isSafeInteger(offset) || offset < 0 || offset > 20_000) {
+    if (
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 200 ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > 20_000
+    ) {
       throw new SerametHttpError(400, "Invalid ledger page parameters");
     }
-    if (input.accountType && !["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(input.accountType)) {
+    if (
+      input.accountType &&
+      !["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(input.accountType)
+    ) {
       throw new SerametHttpError(400, "Unsupported accounting account filter");
     }
-    const condition = (input.accountId ? "AND a.id=? " : "") + (input.accountType ? "AND a.account_type=?" : "");
-    const bindings = [scope.tenantId, scope.from, scope.to, ...scope.branchIds, ...(input.accountId ? [input.accountId] : []), ...(input.accountType ? [input.accountType] : [])];
-    const result = await this.db.prepare([
-      "SELECT je.id AS voucher_id,je.business_date,je.source_type,je.source_id,",
-      "je.description,je.branch_id,jl.line_number,jl.account_id,a.code AS account_code,a.account_type,",
-      "a.name AS account_name,jl.currency,jl.debit_minor,jl.credit_minor",
-      "FROM journal_lines jl JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
-      "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
-      "WHERE je.tenant_id=? AND je.status='POSTED' AND je.business_date BETWEEN ? AND ?",
-      "AND", this.branches(scope), condition,
-      "ORDER BY je.business_date DESC,je.id DESC,jl.line_number ASC LIMIT ? OFFSET ?",
-    ].join(" ")).bind(...bindings, limit + 1, offset).all<Record<string, string | number>>();
+    const condition =
+      (input.accountId ? "AND a.id=? " : "") + (input.accountType ? "AND a.account_type=?" : "");
+    const bindings = [
+      scope.tenantId,
+      scope.from,
+      scope.to,
+      ...scope.branchIds,
+      ...(input.accountId ? [input.accountId] : []),
+      ...(input.accountType ? [input.accountType] : []),
+    ];
+    const result = await this.db
+      .prepare(
+        [
+          "SELECT je.id AS voucher_id,je.business_date,je.source_type,je.source_id,",
+          "je.description,je.branch_id,jl.line_number,jl.account_id,a.code AS account_code,a.account_type,",
+          "a.name AS account_name,jl.currency,jl.debit_minor,jl.credit_minor",
+          "FROM journal_lines jl JOIN journal_entries je ON je.tenant_id=jl.tenant_id AND je.id=jl.journal_entry_id",
+          "JOIN accounts a ON a.tenant_id=jl.tenant_id AND a.id=jl.account_id",
+          "WHERE je.tenant_id=? AND je.status='POSTED' AND je.business_date BETWEEN ? AND ?",
+          "AND",
+          this.branches(scope),
+          condition,
+          "ORDER BY je.business_date DESC,je.id DESC,jl.line_number ASC LIMIT ? OFFSET ?",
+        ].join(" "),
+      )
+      .bind(...bindings, limit + 1, offset)
+      .all<Record<string, string | number>>();
     const rows = result.results ?? [];
     return {
-      scope: { from: scope.from, to: scope.to, branchIds: scope.branchIds, currency: scope.currency },
+      scope: {
+        from: scope.from,
+        to: scope.to,
+        branchIds: scope.branchIds,
+        currency: scope.currency,
+      },
       rows: rows.slice(0, limit),
       hasMore: rows.length > limit,
       offset,
@@ -376,12 +486,19 @@ export class FinancialLedgerService {
 
   async receivables(input: FinanceWindow) {
     const scope = await this.scope(input);
-    const rows = await this.db.prepare([
-      "SELECT id,branch_id,invoice_number,status,business_date,currency,total_minor,paid_minor",
-      "FROM invoices WHERE tenant_id=? AND business_date<=? AND paid_minor<total_minor",
-      "AND branch_id IN (", scope.branchIds.map(() => "?").join(","), ")",
-      "ORDER BY business_date DESC,id DESC LIMIT 201",
-    ].join(" ")).bind(scope.tenantId, scope.to, ...scope.branchIds).all<Record<string, string | number>>();
+    const rows = await this.db
+      .prepare(
+        [
+          "SELECT id,branch_id,invoice_number,status,business_date,currency,total_minor,paid_minor",
+          "FROM invoices WHERE tenant_id=? AND business_date<=? AND paid_minor<total_minor",
+          "AND branch_id IN (",
+          scope.branchIds.map(() => "?").join(","),
+          ")",
+          "ORDER BY business_date DESC,id DESC LIMIT 201",
+        ].join(" "),
+      )
+      .bind(scope.tenantId, scope.to, ...scope.branchIds)
+      .all<Record<string, string | number>>();
     return {
       currency: scope.currency,
       rows: (rows.results ?? []).slice(0, 200),
@@ -392,14 +509,21 @@ export class FinancialLedgerService {
 
   async payables(input: FinanceWindow) {
     const scope = await this.scope(input);
-    const rows = await this.db.prepare([
-      "SELECT i.id,i.branch_id,i.invoice_number,i.invoice_date,i.due_date,i.currency,",
-      "i.total_minor,i.status,i.journal_entry_id,s.name AS supplier_name",
-      "FROM supplier_invoices i JOIN suppliers s ON s.tenant_id=i.tenant_id AND s.id=i.supplier_id",
-      "WHERE i.tenant_id=? AND i.invoice_date<=? AND i.status<>'DRAFT'",
-      "AND i.branch_id IN (", scope.branchIds.map(() => "?").join(","), ")",
-      "ORDER BY i.invoice_date DESC,i.id DESC LIMIT 201",
-    ].join(" ")).bind(scope.tenantId, scope.to, ...scope.branchIds).all<Record<string, string | number | null>>();
+    const rows = await this.db
+      .prepare(
+        [
+          "SELECT i.id,i.branch_id,i.invoice_number,i.invoice_date,i.due_date,i.currency,",
+          "i.total_minor,i.status,i.journal_entry_id,s.name AS supplier_name",
+          "FROM supplier_invoices i JOIN suppliers s ON s.tenant_id=i.tenant_id AND s.id=i.supplier_id",
+          "WHERE i.tenant_id=? AND i.invoice_date<=? AND i.status<>'DRAFT'",
+          "AND i.branch_id IN (",
+          scope.branchIds.map(() => "?").join(","),
+          ")",
+          "ORDER BY i.invoice_date DESC,i.id DESC LIMIT 201",
+        ].join(" "),
+      )
+      .bind(scope.tenantId, scope.to, ...scope.branchIds)
+      .all<Record<string, string | number | null>>();
     return {
       currency: scope.currency,
       rows: (rows.results ?? []).slice(0, 200),
