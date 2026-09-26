@@ -57,7 +57,9 @@ function amount(value: number | string) {
 }
 
 function date(value: string, label: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || new Date(value + "T00:00:00Z").toISOString().slice(0, 10) !== value) {
+  const parsed = Date.parse(value + "T00:00:00Z");
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value) || Number.isNaN(parsed) ||
+      new Date(parsed).toISOString().slice(0, 10) !== value) {
     throw new SerametHttpError(400, label + " must be a valid ISO date");
   }
   return value;
@@ -127,9 +129,10 @@ export class FinancialLedgerService {
   private async accounts(scope: Scope) {
     const result = await this.db
       .prepare(
-        "SELECT id,code,name,account_type,currency FROM accounts WHERE tenant_id=? ORDER BY code,id",
+        "SELECT id,code,name,account_type,currency FROM accounts WHERE tenant_id=? AND (branch_id IS NULL OR branch_id IN (" +
+          scope.branchIds.map(() => "?").join(",") + ")) ORDER BY code,id",
       )
-      .bind(scope.tenantId)
+      .bind(scope.tenantId, ...scope.branchIds)
       .all<Account>();
     return result.results ?? [];
   }
@@ -264,7 +267,7 @@ export class FinancialLedgerService {
       };
     });
     const unknown = lines.filter(
-      (line) => !["ASSET", "LIABILITY", "EQUITY", "INCOME", "REVENUE", "EXPENSE", "BANK", "CASH"].includes(line.type),
+      (line) => !["ASSET", "LIABILITY", "EQUITY", "INCOME", "REVENUE", "EXPENSE", "COGS", "COST_OF_GOODS_SOLD", "BANK", "CASH"].includes(line.type),
     );
     if (unknown.length) {
       issues.push({
@@ -280,8 +283,15 @@ export class FinancialLedgerService {
     const liabilitiesMinor = sum(["LIABILITY"], "credit");
     const equityMinor = sum(["EQUITY"], "credit");
     const incomeMinor = sum(["INCOME", "REVENUE"], "credit");
-    const expenseMinor = sum(["EXPENSE"], "debit");
+    const expenseMinor = sum(["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"], "debit");
     const retainedMinor = incomeMinor - expenseMinor;
+    const periodIncomeMinor = lines
+      .filter((row) => ["INCOME", "REVENUE"].includes(row.type) && row.currency === scope.currency)
+      .reduce((sum, row) => sum + row.periodCreditMinor - row.periodDebitMinor, 0);
+    const periodExpenseMinor = lines
+      .filter((row) => ["EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(row.type) &&
+        row.currency === scope.currency)
+      .reduce((sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor, 0);
     const balanceDifferenceMinor = assetsMinor - liabilitiesMinor - equityMinor - retainedMinor;
     const hasMovement = lines.some((line) => line.debitMinor || line.creditMinor);
     if (!hasMovement) {
@@ -317,7 +327,11 @@ export class FinancialLedgerService {
       lines,
       trial: { periodDebitMinor: debit, periodCreditMinor: credit, balanced: hasMovement && debit === credit && issues.every((issue) => issue.code !== "IMBALANCED_POSTED_JOURNALS") },
       balanceSheet: { assetsMinor, liabilitiesMinor, equityMinor, unclosedEarningsMinor: retainedMinor, differenceMinor: balanceDifferenceMinor },
-      incomeStatement: { incomeMinor, expenseMinor, netResultMinor: retainedMinor },
+      incomeStatement: {
+        incomeMinor: periodIncomeMinor,
+        expenseMinor: periodExpenseMinor,
+        netResultMinor: periodIncomeMinor - periodExpenseMinor,
+      },
       cashMovement: cashAccounts.length
         ? {
             openingMinor: cashAccounts.reduce((sum, row) => sum + row.openingDebitMinor - row.openingCreditMinor, 0),
