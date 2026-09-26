@@ -27,7 +27,7 @@ export type LedgerLine = {
   voucher_id: string; business_date: string; source_type: string; source_id: string;
   description: string; branch_id: string; line_number: number;
   account_id: string; account_code: string; account_name: string;
-  currency: string; debit_minor: number; credit_minor: number;
+  currency: string; debit_minor: number; credit_minor: number; account_type: string;
 };
 export type FinanceLedger = {
   scope: FinanceStatement["scope"]; rows: LedgerLine[];
@@ -64,6 +64,7 @@ export function useFinanceReport<T>(
   to: string,
   page = 0,
   limit = 100,
+  accountType = "",
 ) {
   const { activeTenantId, branchId, isAllBranches, hasPermission } = useAppContext();
   const allowed = hasPermission(permissions.accountingView) ||
@@ -74,8 +75,8 @@ export function useFinanceReport<T>(
     report: T | null; error: string;
   }>({ key: "", status: "loading", report: null, error: "" });
   const key = useMemo(
-    () => [activeTenantId, isAllBranches ? "ALL" : branchId, kind, from, to, page, limit].join(":"),
-    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit],
+    () => [activeTenantId, isAllBranches ? "ALL" : branchId, kind, from, to, page, limit, accountType].join(":"),
+    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType],
   );
   useEffect(() => {
     if (!allowed) return;
@@ -86,6 +87,7 @@ export function useFinanceReport<T>(
     if (kind === "ledger") {
       query.set("limit", String(limit));
       query.set("offset", String(page * limit));
+      if (accountType) query.set("accountType", accountType);
     }
     void authenticatedFetch("/api/seramet/finance/reports/" + kind + "?" + query, {
       credentials: "same-origin",
@@ -108,7 +110,7 @@ export function useFinanceReport<T>(
         });
       });
     return () => controller.abort();
-  }, [key, allowed, isAllBranches, branchId, kind, from, to, page, limit, revision]);
+  }, [key, allowed, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision]);
   const current = allowed && state.key === key ? state : null;
   return {
     status: !allowed ? "denied" as const : current?.status ?? "loading",
