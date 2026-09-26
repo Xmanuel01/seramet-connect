@@ -4,6 +4,7 @@ const paths = [
   "src/finance/financial-ledger-service.test.ts",
   "src/finance/financial-ledger-service.ts",
   "src/finance/use-finance-report.ts",
+  "src/finance/AdvancedFinanceModules.tsx",
 ];
 const before = new Map(paths.map((path) => [path, fs.readFileSync(path, "utf8")]));
 execFileSync("./node_modules/.bin/prettier", ["--write", ...paths], { stdio: "inherit" });
