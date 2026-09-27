@@ -1593,12 +1593,53 @@ export class OnboardingService {
       )
       .bind(this.actor.tenantId, `setup-import-commit:${importId}`)
       .first<{ status: string; attempt_count: number; updated_at: string }>();
+    const counts = await this.db
+      .prepare(
+        `SELECT
+          COALESCE(SUM(CASE WHEN status='COMMITTED' AND action='UPDATE' THEN 1 ELSE 0 END),0) updated,
+          COALESCE(SUM(CASE WHEN status='COMMITTED' AND action<>'UPDATE' THEN 1 ELSE 0 END),0) created,
+          COALESCE(SUM(CASE WHEN status='SKIPPED' THEN 1 ELSE 0 END),0) skipped,
+          COALESCE(SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END),0) failed,
+          COALESCE(SUM(CASE WHEN status IN ('WAITING_FOR_REVIEW','REVIEW_REQUIRED')
+            THEN 1 ELSE 0 END),0) needs_review
+         FROM setup_import_rows WHERE tenant_id=? AND import_id=?`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .first<{
+        created: number;
+        updated: number;
+        skipped: number;
+        failed: number;
+        needs_review: number;
+      }>();
+    const verification = parseJson<ImportPreview["verification"]>(
+      record.verification_json,
+      undefined,
+    );
+    const created = number(counts?.created);
+    const updated = number(counts?.updated);
+    const skipped = number(counts?.skipped);
+    const failed = number(counts?.failed);
+    const needsReview = number(counts?.needs_review);
+    const processed = created + updated + skipped + failed;
     return {
       id: importId,
       status: record.status,
       rowCount: record.row_count,
       updatedAt: record.updated_at,
-      verification: parseJson<ImportPreview["verification"]>(record.verification_json, undefined),
+      verification,
+      progress: {
+        total: record.row_count,
+        created,
+        updated,
+        skipped,
+        failed,
+        needsReview,
+        pending: Math.max(0, record.row_count - processed - needsReview),
+        processed,
+        revision: processed,
+        verified: verification?.status === "VERIFIED" && record.status === "COMMITTED",
+      },
       worker: worker
         ? { status: worker.status, attempts: worker.attempt_count, updatedAt: worker.updated_at }
         : null,
