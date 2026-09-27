@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
-import type { ServerActor } from "@/lib/seramet-auth";
+import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
+import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { OnboardingService } from "@/onboarding/onboarding-service";
 import {
   createMigratedTestDatabase,
@@ -110,6 +111,26 @@ describe.sequential("identity, device and branch hardening", () => {
     expect(posActor.branchId).toBe(provisioned.branchId);
     expect(posActor.authLevel).toBe("POS_PIN");
     expect(() => requireFullAuthentication(posActor)).toThrow(/full account/i);
+
+    // PIN login must remove an earlier owner's browser cookies on shared POS devices.
+    const response = await handleIdentityDeviceApi(
+      new Request("https://pos.seramet.test/api/seramet/public/employee/login", {
+        method: "POST",
+        headers: {
+          origin: "https://pos.seramet.test",
+          "content-type": "application/json",
+          cookie: `seramet_device=${encodeURIComponent(device.credential)}; seramet_access=previous-owner; seramet_refresh=previous-refresh`,
+        },
+        body: JSON.stringify({ identifier: "CASH-01", pin: "602947" }),
+      }),
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
+    );
+    expect(response.status).toBe(200);
+    const cookies = response.headers.get("set-cookie") ?? "";
+    expect(cookies).toContain("seramet_access=;");
+    expect(cookies).toContain("seramet_refresh=;");
+    expect(cookies).toContain("seramet_pos_session=");
+
 
     await service.resetPin(actor, employee.id, {
       pin: "830275",
