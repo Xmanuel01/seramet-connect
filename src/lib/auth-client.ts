@@ -74,3 +74,18 @@ export function enterRestaurant(tenantId: string, path = "/") {
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
   window.location.assign(path);
 }
+
+// This is only a browser navigation gate. Authorization always happens on the server.
+const interactiveSignInKey = "seramet.session.interactive-sign-in";
+
+export function markInteractiveSignIn() {
+  window.sessionStorage.setItem(interactiveSignInKey, "1");
+}
+
+export function hasInteractiveSignIn() {
+  return typeof window !== "undefined" && window.sessionStorage.getItem(interactiveSignInKey) === "1";
+}
+
+export function clearInteractiveSignIn() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(interactiveSignInKey);
+}
