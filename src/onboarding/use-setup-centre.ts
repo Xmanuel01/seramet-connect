@@ -1,3 +1,4 @@
+import type { PersistedImportProgress } from "@/onboarding/menu-import-progress";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
@@ -367,6 +368,7 @@ export function useSetupCentre() {
           rowCount: number;
           updatedAt: string;
           verification?: ImportPreview["verification"];
+          progress: PersistedImportProgress & { pending: number; processed: number; revision: number };
           worker: { status: string; attempts: number; updatedAt: string } | null;
         };
       }>(`/api/seramet/setup/imports/${encodeURIComponent(id)}/status`);
