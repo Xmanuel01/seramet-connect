@@ -64,7 +64,9 @@ function normalized(field: keyof ComparedMenuItem, value: unknown) {
   if (value === null) return null;
   if (typeof value === "boolean" || typeof value === "number") return value;
   const trimmed = String(value ?? "").trim();
-  if (field === "categoryCode" || field === "currency") return trimmed.toUpperCase();
+  if (field === "code" || field === "categoryCode" || field === "currency") {
+    return trimmed.toUpperCase();
+  }
   if (field === "name") return trimmed.replace(/\s+/g, " ");
   return trimmed;
 }
@@ -96,6 +98,12 @@ export function classifyMenuItemChange(
     const rawProposed = uploaded[field];
     // Optional blank spreadsheet columns must not clear existing values by accident.
     if (rawProposed === undefined || rawProposed === null) continue;
+    if (
+      rawProposed === "" &&
+      ["description", "sku", "barcode", "taxRuleId", "recipeReference", "modifierGroupReference", "stationId"].includes(field)
+    ) {
+      continue;
+    }
     const current = normalized(field, existing[field]);
     const proposed = normalized(field, rawProposed);
     if (current === proposed) continue;
