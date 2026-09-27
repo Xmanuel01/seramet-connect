@@ -100,7 +100,15 @@ export function classifyMenuItemChange(
     if (rawProposed === undefined || rawProposed === null) continue;
     if (
       rawProposed === "" &&
-      ["description", "sku", "barcode", "taxRuleId", "recipeReference", "modifierGroupReference", "stationId"].includes(field)
+      [
+        "description",
+        "sku",
+        "barcode",
+        "taxRuleId",
+        "recipeReference",
+        "modifierGroupReference",
+        "stationId",
+      ].includes(field)
     ) {
       continue;
     }
