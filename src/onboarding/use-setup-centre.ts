@@ -19,6 +19,18 @@ import type {
 } from "@/onboarding/location-currency-types";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
 
+export type RecentMenuImport = {
+  id: string;
+  originalName: string;
+  status: ImportPreview["status"];
+  rowCount: number;
+  templateVersion: number;
+  duplicateStrategy: DuplicateStrategy;
+  targetBranchIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SetupProviderDefinition = {
   id: string;
   code: string;
@@ -349,6 +361,12 @@ export function useSetupCentre() {
     [activeTenantId, branchId, command, isAllBranches],
   );
 
+  const recentMenuImports = useCallback(
+    async () =>
+      (await get<{ imports: RecentMenuImport[] }>("/api/seramet/setup/imports/recent")).imports,
+    [get],
+  );
+
   const inspectImport = useCallback(
     async (id: string) => {
       const response = await get<{ preview: ImportPreview }>(
@@ -486,6 +504,7 @@ export function useSetupCentre() {
     refresh,
     command,
     previewImport,
+    recentMenuImports,
     inspectImport,
     importStatus,
     refreshMenuCatalog,
