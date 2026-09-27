@@ -52,7 +52,8 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { branchId, isAllBranches, currency, hasPermission } = useAppContext();
+  const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
+  const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
   const canImport = hasPermission(permissions.setupImport);
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
@@ -132,6 +133,105 @@ function MenuImport() {
     setManualOpen(false);
   }, [branchId, isAllBranches]);
 
+  // Restore a pending import after refresh without re-uploading or re-committing.
+  useEffect(() => {
+    const savedId = window.sessionStorage.getItem(pendingImportKey);
+    if (!savedId) return;
+    let active = true;
+    void centre
+      .inspectImport(savedId)
+      .then((restored) => {
+        if (!active) return;
+        setPreview((current) => current ?? restored);
+        setImportOpen(true);
+        if (restored.status === "COMMITTED" || restored.status === "FAILED") {
+          window.sessionStorage.removeItem(pendingImportKey);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setNotice(
+            "A previous import needs checking, but its server status could not be retrieved. Do not upload it again.",
+          );
+          setNoticeTone("warning");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [centre.inspectImport, pendingImportKey]);
+
+  useEffect(() => {
+    if (preview?.status !== "COMMITTING") return;
+    const importId = preview.id;
+    let active = true;
+    let checking = false;
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await centre.importStatus(importId);
+        if (!active) return;
+        if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+          setPreview((current) =>
+            current?.id === importId
+              ? { ...current, status: "COMMITTED", canCommit: false, verification: result.verification }
+              : current,
+          );
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice("Menu import committed and independently verified in the authoritative catalogue.");
+          setNoticeTone("success");
+          void centre.refreshMenuCatalog();
+        } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
+          setPreview((current) =>
+            current?.id === importId ? { ...current, status: "FAILED", canCommit: false } : current,
+          );
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            "Import failed or exhausted worker retries. Check worker logs and the import audit before starting another import.",
+          );
+          setNoticeTone("warning");
+        } else if (result.status === "COMMITTING") {
+          if (!result.worker && Date.now() - Date.parse(result.updatedAt) > 120_000) {
+            setNotice(
+              "The earlier synchronous import is still marked COMMITTING without a worker job. It may have been interrupted. Do not retry until its committed rows are audited.",
+            );
+          } else {
+            setNotice(
+              result.worker
+                ? `Import is processing safely in the background (worker: ${result.worker.status}, attempts: ${result.worker.attempts}).`
+                : "Server is still processing the existing import. Do not submit it again.",
+            );
+          }
+          setNoticeTone("warning");
+        } else if (result.status === "COMMITTED") {
+          setNotice(
+            "Server shows COMMITTED but its independent verification is unavailable. Review the import audit before proceeding.",
+          );
+          setNoticeTone("warning");
+        } else {
+          setNotice(
+            "Commit result is still uncertain. Do not retry until the existing server request is resolved.",
+          );
+          setNoticeTone("warning");
+        }
+      } catch {
+        if (active) {
+          setNotice("Cannot check the import status right now. Do not re-upload or retry it.");
+          setNoticeTone("warning");
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [centre.importStatus, centre.refreshMenuCatalog, pendingImportKey, preview?.id, preview?.status]);
+
   const invalidatePreview = (
     message = "Import settings changed. Run preview again before commit.",
   ) => {
@@ -201,30 +301,74 @@ function MenuImport() {
   };
 
   const commit = () => {
-    if (!preview) return;
-    void run(async () => {
-      const response = await centre.commitImport(preview);
-      if (response.result.queued) {
-        setPreview({ ...preview, status: "COMMITTING", canCommit: false });
+    if (!preview?.canCommit || busy) return;
+    const pending = preview;
+    setBusy(true);
+    setNotice("Submitting the existing preview once. You can track its status without repeating it.");
+    setNoticeTone("warning");
+    window.sessionStorage.setItem(pendingImportKey, pending.id);
+    void centre
+      .commitImport(pending)
+      .then((response) => {
+        if (response.result.queued) {
+          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
+          setNotice(
+            `Menu import queued as ${response.result.jobId ?? "a durable worker job"}. Its status will update automatically.`,
+          );
+          return;
+        }
+        if (response.result.verification?.status !== "VERIFIED") {
+          throw new Error(
+            "Commit returned without verified catalogue confirmation. Inspect the existing import before retrying.",
+          );
+        }
+        setPreview({
+          ...pending,
+          status: "COMMITTED",
+          canCommit: false,
+          verification: response.result.verification,
+        });
+        window.sessionStorage.removeItem(pendingImportKey);
+        setNotice("Menu import committed and verified in the authoritative catalogue.");
+        setNoticeTone("success");
+      })
+      .catch(async (error: unknown) => {
+        const result = await centre.importStatus(pending.id).catch(() => null);
+        if (result?.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+          setPreview({
+            ...pending,
+            status: "COMMITTED",
+            canCommit: false,
+            verification: result.verification,
+          });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice("Menu import was verified despite a lost commit response.");
+          setNoticeTone("success");
+          void centre.refreshMenuCatalog();
+          return;
+        }
+        if (result?.status === "FAILED") {
+          setPreview({ ...pending, status: "FAILED", canCommit: false });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            "Import failed. Review the failure before revalidating or retrying the file.",
+          );
+        } else if (!result || result.status === "COMMITTING") {
+          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
+          setNotice(
+            "Commit response was interrupted. Checking the existing import; do not submit it again.",
+          );
+        } else {
+          setPreview({ ...pending, canCommit: false });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            (error instanceof Error ? error.message : "Import request failed") +
+              " Revalidate the existing file only after reviewing this result.",
+          );
+        }
         setNoticeTone("warning");
-        throw new QueuedImportNotice(
-          `Import queued as ${response.result.jobId ?? "a durable worker job"}. It is not committed until verification completes.`,
-        );
-      }
-      if (response.result.verification?.status !== "VERIFIED") {
-        setPreview({ ...preview, canCommit: false });
-        throw new Error(
-          "Server accepted the import but verification did not pass. Refresh the authoritative catalogue before further changes.",
-        );
-      }
-      setPreview({
-        ...preview,
-        status: "COMMITTED",
-        canCommit: false,
-        ...(response.result.verification ? { verification: response.result.verification } : {}),
-      });
-      return response;
-    }, "Menu import committed and verified in the authoritative catalogue.");
+      })
+      .finally(() => setBusy(false));
   };
 
   const uploadHistoricalSales = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -773,10 +917,14 @@ function MenuImport() {
             <Panel>
               <PanelHead
                 title="Import preview"
-                sub="Nothing is persisted until Commit import is selected"
+                sub={
+                  preview?.status === "COMMITTING"
+                    ? "Server-side import in progress. Do not re-submit the same preview."
+                    : "Nothing is persisted until Commit import is selected"
+                }
                 right={
                   preview ? (
-                    <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
+                    <SetupStatus value={preview.status === "COMMITTING" ? "COMMITTING" : preview.canCommit ? "READY" : "BLOCKED"} />
                   ) : (
                     <Status>Pending</Status>
                   )
@@ -960,8 +1108,6 @@ function Pagination({
     </div>
   );
 }
-
-class QueuedImportNotice extends Error {}
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
