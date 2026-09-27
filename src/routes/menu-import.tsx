@@ -1246,9 +1246,8 @@ function MenuImport() {
           </DialogHeader>
           {progressSummary && (
             <p className="text-[13px] tabular-nums" role="status">
-              {progressSummary.processed} of {progressSummary.total} processed.{" "}
-              {progress?.created} created, {progress?.updated} updated and{" "}
-              {progress?.skipped} skipped.
+              {progressSummary.processed} of {progressSummary.total} processed. {progress?.created}{" "}
+              created, {progress?.updated} updated and {progress?.skipped} skipped.
             </p>
           )}
           <DialogFooter>
