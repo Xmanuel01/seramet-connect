@@ -5,7 +5,7 @@ export const STAGING_PROJECT_REF = "vnymbavsbxorwxpebkot";
 const fail = (reason) => {
   throw new Error("STAGING_RECONCILIATION_REFUSED: " + reason);
 };
-const json = (value) => (typeof value === "string" ? JSON.parse(value) : value);
+const json = (value) =>\n  typeof value === "string" && /^[\\s]*[\\[{]/.test(value) ? JSON.parse(value) : value;
 const stable = (value) => {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object") {
