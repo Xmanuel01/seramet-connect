@@ -226,7 +226,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       db,
       actor(
         [secondBranchId],
-        allPermissionCodes.filter((permission) => permission !== permissions.tenantScopeAllBranches),
+        allPermissionCodes.filter(
+          (permission) => permission !== permissions.tenantScopeAllBranches,
+        ),
       ),
       env,
     );
