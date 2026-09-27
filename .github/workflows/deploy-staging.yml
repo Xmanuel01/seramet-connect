@@ -121,6 +121,12 @@ jobs:
           SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
         run: node scripts/verify-staging-release-gate.mjs
 
+      - name: Inspect pending staging work and block overlapping menu commits
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/inspect-staging-backlog.mjs
+
       # Only after resource and release safety gates may any staging database
       # migrations or Cloudflare origin settings change.
       - name: Apply PostgreSQL migrations
