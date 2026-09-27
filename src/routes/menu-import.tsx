@@ -237,13 +237,7 @@ function MenuImport() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [
-    importStatus,
-    refreshMenuCatalog,
-    pendingImportKey,
-    preview?.id,
-    preview?.status,
-  ]);
+  }, [importStatus, refreshMenuCatalog, pendingImportKey, preview?.id, preview?.status]);
 
   const invalidatePreview = (
     message = "Import settings changed. Run preview again before commit.",
