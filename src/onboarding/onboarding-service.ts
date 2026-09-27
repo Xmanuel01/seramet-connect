@@ -1558,6 +1558,48 @@ export class OnboardingService {
     };
   }
 
+  /** Existing previews are recoverable by authorized users; never re-upload just to inspect. */
+  async recentMenuImports() {
+    this.require(permissions.setupImport);
+    const results = await this.db
+      .prepare(
+        `SELECT id,original_name,status,row_count,template_version,duplicate_strategy,
+                target_branch_ids_json,created_at,updated_at
+         FROM setup_imports WHERE tenant_id=? AND import_kind='MENU'
+         ORDER BY created_at DESC LIMIT 20`,
+      )
+      .bind(this.actor.tenantId)
+      .all<{
+        id: string;
+        original_name: string;
+        status: ImportPreview["status"];
+        row_count: number;
+        template_version: number;
+        duplicate_strategy: ImportPreview["duplicateStrategy"];
+        target_branch_ids_json: string;
+        created_at: string;
+        updated_at: string;
+      }>();
+    return (results.results ?? [])
+      .filter((record) => {
+        const branches = parseJson<string[]>(record.target_branch_ids_json, []);
+        return branches.length
+          ? branches.every((branchId) => this.canReadBranch(branchId))
+          : this.actor.branchScope.type === "ALL";
+      })
+      .map((record) => ({
+        id: record.id,
+        originalName: record.original_name,
+        status: record.status,
+        rowCount: record.row_count,
+        templateVersion: record.template_version,
+        duplicateStrategy: record.duplicate_strategy,
+        targetBranchIds: parseJson<string[]>(record.target_branch_ids_json, []),
+        createdAt: record.created_at,
+        updatedAt: record.updated_at,
+      }));
+  }
+
   /** Read-only inspection of an existing import; never replays a commit. */
   async inspectImport(importId: string) {
     this.require(permissions.setupImport);
