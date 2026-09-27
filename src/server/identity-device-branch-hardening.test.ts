@@ -125,12 +125,12 @@ describe.sequential("identity, device and branch hardening", () => {
       }),
       { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
     );
+    if (!response) throw new Error("Employee login route was not handled");
     expect(response.status).toBe(200);
     const cookies = response.headers.get("set-cookie") ?? "";
     expect(cookies).toContain("seramet_access=;");
     expect(cookies).toContain("seramet_refresh=;");
     expect(cookies).toContain("seramet_pos_session=");
-
 
     await service.resetPin(actor, employee.id, {
       pin: "830275",
