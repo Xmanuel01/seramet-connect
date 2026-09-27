@@ -8,6 +8,7 @@ const approved = {
   SERAMET_STAGING_APPROVED_SHA: sha,
   SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: "true",
   SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: "true",
+  SERAMET_DATA_API_EXPOSURE_CLEARED: "true",
 };
 
 test("a specifically approved commit with verified backup and backlog review passes", () => {
@@ -25,7 +26,15 @@ test("missing release verification fails closed before migration", () => {
     "RELEASE_SHA_NOT_APPROVED",
     "STAGING_BACKUP_RESTORE_NOT_VERIFIED",
     "PENDING_WORK_NOT_REVIEWED",
+    "DATA_API_EXPOSURE_NOT_CLEARED",
   ]);
+});
+
+test("an approval never overrides unreviewed Data API exposure", () => {
+  assert.deepEqual(
+    assessStagingReleaseApproval({ ...approved, SERAMET_DATA_API_EXPOSURE_CLEARED: "false" }),
+    ["DATA_API_EXPOSURE_NOT_CLEARED"],
+  );
 });
 
 test("an approval never excuses a missing backup or unreviewed pending jobs", () => {
