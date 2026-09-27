@@ -36,7 +36,7 @@ import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
 import { createHistoricalSalesTemplate } from "@/onboarding/historical-sales-import-schema";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
 import { SetupStatus } from "@/onboarding/ui";
-import { useSetupCentre } from "@/onboarding/use-setup-centre";
+import { useSetupCentre, type RecentMenuImport } from "@/onboarding/use-setup-centre";
 import { useAppContext } from "@/lib/app-context";
 import { cn } from "@/lib/utils";
 import { formatMinor } from "@/payments/money";
@@ -59,7 +59,7 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { inspectImport, importStatus, refreshMenuCatalog, commitImport } = centre;
+  const { recentMenuImports, inspectImport, importStatus, refreshMenuCatalog, commitImport } = centre;
   const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
   const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
   const canImport = hasPermission(permissions.setupImport);
@@ -84,6 +84,8 @@ function MenuImport() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [progress, setProgress] = useState<PersistedImportProgress | null>(null);
+  const [recent, setRecent] = useState<RecentMenuImport[]>([]);
+  const [recentError, setRecentError] = useState("");
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const lastProgressSample = useRef<ImportProgressSnapshot | null>(null);
   const lastImportedCount = useRef(0);
@@ -156,6 +158,48 @@ function MenuImport() {
     setImportOpen(false);
     setManualOpen(false);
   }, [branchId, isAllBranches]);
+
+  useEffect(() => {
+    if (!canImport) return;
+    let active = true;
+    void recentMenuImports()
+      .then((items) => {
+        if (active) setRecent(items);
+      })
+      .catch(() => {
+        if (active) setRecentError("Import history cannot be retrieved. Do not re-upload yet.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [canImport, recentMenuImports]);
+
+  const inspectPreviousImport = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const restored = await inspectImport(id);
+      setPreview(restored);
+      setImportOpen(true);
+      setProgress(null);
+      setEtaSeconds(null);
+      currentProgressImport.current = null;
+      if (restored.status === "COMMITTING") {
+        window.sessionStorage.setItem(pendingImportKey, restored.id);
+      }
+      setNotice("Existing import recovered without uploading or creating a new commit.");
+      setNoticeTone("success");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Existing import is unavailable. No import was restarted.",
+      );
+      setNoticeTone("warning");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Restore a pending import after refresh without re-uploading or re-committing.
   useEffect(() => {
@@ -529,6 +573,45 @@ function MenuImport() {
         </div>
       )}
 
+      {canImport && (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Existing menu imports"
+            sub="Resume or inspect an existing preview. Never re-upload a file just to check a pending commit."
+            right={<History className="h-4 w-4 text-primary" />}
+          />
+          {recentError && (
+            <p className="px-4 py-2 text-[12px] text-warning" role="alert">
+              {recentError}
+            </p>
+          )}
+          {recent.length === 0 && !recentError ? (
+            <p className="px-4 py-3 text-[12px] text-muted-foreground">
+              No recent menu imports found.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {recent.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-2"
+                >
+                  <div className="min-w-0 text-[12px]">
+                    <p className="truncate font-semibold">{item.originalName}</p>
+                    <p className="text-muted-foreground">
+                      {item.rowCount} rows · v{item.templateVersion} · {item.status} ·{" "}
+                      {item.duplicateStrategy}
+                    </p>
+                  </div>
+                  <Btn disabled={busy} onClick={() => void inspectPreviousImport(item.id)}>
+                    {item.status === "COMMITTING" ? "Track existing job" : "Inspect"}
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
       <div className="mt-4 grid gap-4">
         <div className="grid min-w-0 gap-4">
           <Panel>
