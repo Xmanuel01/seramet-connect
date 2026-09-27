@@ -236,9 +236,7 @@ export async function handleOnboardingApi(
       preview: await service.inspectImport(decodeURIComponent(inspectImport[1]!)),
     });
   }
-  const importStatus = /^\/api\/seramet\/setup\/imports\/([^/]+)\/status$/.exec(
-    url.pathname,
-  );
+  const importStatus = /^\/api\/seramet\/setup\/imports\/([^/]+)\/status$/.exec(url.pathname);
   if (importStatus && request.method === "GET") {
     return json({
       ok: true,
