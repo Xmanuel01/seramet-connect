@@ -24,15 +24,21 @@ export function summarizeImportProgress(progress: PersistedImportProgress) {
   );
   const pending = Math.max(0, total - processed - Math.max(0, progress.needsReview));
   const fullyVerified = progress.verified && processed === total;
-  const percent = total === 0 ? 0 : Math.min(fullyVerified ? 100 : 99, Math.floor((processed / total) * 100));
+  const percent =
+    total === 0 ? 0 : Math.min(fullyVerified ? 100 : 99, Math.floor((processed / total) * 100));
   const stage = fullyVerified
-    ? progress.failed > 0 ? "COMPLETED_WITH_ERRORS" : "COMPLETED"
-    : progress.workerStatus === "DEAD_LETTER" ? "FAILED"
-    : progress.needsReview > 0 && pending === 0 ? "WAITING_FOR_REVIEW"
-    : processed === total && total > 0 ? "VERIFYING"
-    : ["PENDING", "RETRY_PENDING", "CLAIMED"].includes(progress.workerStatus ?? "")
-      ? "QUEUED"
-      : "PROCESSING";
+    ? progress.failed > 0
+      ? "COMPLETED_WITH_ERRORS"
+      : "COMPLETED"
+    : progress.workerStatus === "DEAD_LETTER"
+      ? "FAILED"
+      : progress.needsReview > 0 && pending === 0
+        ? "WAITING_FOR_REVIEW"
+        : processed === total && total > 0
+          ? "VERIFYING"
+          : ["PENDING", "RETRY_PENDING", "CLAIMED"].includes(progress.workerStatus ?? "")
+            ? "QUEUED"
+            : "PROCESSING";
   return { total, processed, pending, percent, stage };
 }
 
