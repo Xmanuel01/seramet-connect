@@ -188,6 +188,7 @@ describe.sequential("commercial launch foundation", () => {
         headers: {
           origin: "https://app.seramet.test",
           "content-type": "application/json",
+          cookie: "seramet_pos_session=previous-employee-token",
         },
         body: JSON.stringify({ email: "owner@example.test", password: "supersecret12" }),
       }),
@@ -202,6 +203,7 @@ describe.sequential("commercial launch foundation", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("seramet_pos_session=;");
     await expect(response.json()).resolves.toEqual({ ok: true, authenticated: true });
   });
 
