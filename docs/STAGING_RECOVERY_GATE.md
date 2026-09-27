@@ -15,6 +15,18 @@ queue/import incident. A passing source build is **not** staging acceptance.
 - Nitro Queue/Cron hook restoration (#53) and durable 101+ item import (#52) are
   independently reviewed changes, not assumed to be active.
 
+## Verified onboarding constraint (staging)
+
+Read-only staging SQL found one bootstrap branch named Mona Swahili in `CONFIGURING`
+status, a completed 20-step onboarding wizard, and a tenant go-live state of
+`SETUP`. Every pending 343-row import targets only this generic branch;
+neither separately configured Westlands nor Ngong Road exists yet. The repaired
+`OnboardingService.createBranch()` now permits authorized creation of
+additional `CONFIGURING` branches once the wizard is complete, without
+pretending the tenant is already LIVE. After the incident snapshot, reconcile
+the generic branch with the intended real site and only then configure the
+other site; do not rename or mutate existing linked branch rows blindly.
+
 ## Safe recovery checklist
 
 1. Freeze staging deployments and do not click Retry import.
@@ -44,22 +56,27 @@ queue/import incident. A passing source build is **not** staging acceptance.
 7. Independently review #53 hook wiring and compiled-event checks and #52
    durable import tests. Do not activate workers until the stale/duplicate
    job disposition is approved and replay-idempotency is checked.
-8. Approve *only the exact new release commit*: staging GitHub environment
+8. Verify Supabase Data API is disabled if unused, or its exposed tables have
+   explicit least-privilege grants and RLS. Staging currently shows 302
+   RLS-disabled public tables with anonymous SELECT grants. Follow
+   `docs/SUPABASE_DATA_API_EXPOSURE.md` and record the isolated proof.
+9. Approve *only the exact new release commit*: staging GitHub environment
    variables `SERAMET_STAGING_APPROVED_SHA=<exact 40-character release SHA>`,
-   `SERAMET_STAGING_BACKUP_RESTORE_VERIFIED=true`, and
-   `SERAMET_STAGING_BACKLOG_REVIEW_APPROVED=true`.
+   `SERAMET_STAGING_BACKUP_RESTORE_VERIFIED=true`,
+   `SERAMET_STAGING_BACKLOG_REVIEW_APPROVED=true`, and
+   `SERAMET_DATA_API_EXPOSURE_CLEARED=true`.
    Flags attest to a documented human review; they do **not** perform backups
    or quarantine. A new commit invalidates the SHA approval. Use GitHub
    environment protection and limit who can change these variables.
-9. Run the staging deployment. The workflow now verifies resources and
+10. Run the staging deployment. The workflow now verifies resources and
    approvals, reads pending job/import aggregate counts and only then runs
    migrations or modifies Cloudflare settings. If any check fails, do not
    bypass the gate: investigate and rerun for that exact SHA.
-10. Observe one isolated approved sentinel through Queue/Cron exactly once.
+11. Observe one isolated approved sentinel through Queue/Cron exactly once.
     Validate oldest-job lag, retries, failed jobs and dead letters. The
     `/health/ready` guard rejects work more than 30 minutes overdue; this
     is **not** proof of consumer correctness without a successful sentinel.
-11. Execute one approved 343-row V3 Mona test import on a disposable staging
+12. Execute one approved 343-row V3 Mona test import on a disposable staging
     tenant with Westlands and Ngong Road selected and appropriate KITCHEN/BAR
     stations. Verify one tenant master per item code and branch activation.
     Then run the restaurant end-to-end cash/simulated-payment/stock/GL oracle.
