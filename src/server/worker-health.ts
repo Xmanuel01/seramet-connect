@@ -19,10 +19,12 @@ export async function findOverdueDurableWork(
     .first<{ overdue: number }>();
 
   return row
-    ? [{
-        code: "WORKER_BACKLOG_STALE",
-        message:
-          "Overdue durable work exists; investigate Queue/Cron dispatch and pending imports before release",
-      }]
+    ? [
+        {
+          code: "WORKER_BACKLOG_STALE",
+          message:
+            "Overdue durable work exists; investigate Queue/Cron dispatch and pending imports before release",
+        },
+      ]
     : [];
 }
