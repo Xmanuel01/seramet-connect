@@ -59,9 +59,10 @@ function MenuImport() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [strategy, setStrategy] = useState<DuplicateStrategy>("ERROR");
-  const [targetMode, setTargetMode] = useState<ImportTargetMode>(
-    isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES",
-  );
+  // Never silently default an operational import to a master-only, POS-invisible catalog.
+  // A manager in all-branches view must explicitly choose the activation branches.
+  const [targetMode, setTargetMode] = useState<ImportTargetMode>("SELECTED_BRANCHES");
+  const [masterOnlyAcknowledged, setMasterOnlyAcknowledged] = useState(false);
   const [targetBranchIds, setTargetBranchIds] = useState<string[]>(isAllBranches ? [] : [branchId]);
   const [stationMap, setStationMap] = useState<Record<string, string>>({});
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
@@ -124,7 +125,8 @@ function MenuImport() {
   }, [centre.options.stations, targetBranchIds, targetMode]);
 
   useEffect(() => {
-    setTargetMode(isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES");
+    setTargetMode("SELECTED_BRANCHES");
+    setMasterOnlyAcknowledged(false);
     setTargetBranchIds(isAllBranches ? [] : [branchId]);
     setPreview(null);
     setCatalogAvailability("ALL");
@@ -160,6 +162,7 @@ function MenuImport() {
     if (targetMode === "SELECTED_BRANCHES" && !targetBranchIds.length) {
       throw new Error("Select at least one branch or choose Tenant master only.");
     }
+    setMasterOnlyAcknowledged(false);
     const result = await centre.previewImport(file, "MENU", strategy, {
       targetMode,
       targetBranchIds: targetMode === "SELECTED_BRANCHES" ? targetBranchIds : [],
@@ -202,6 +205,11 @@ function MenuImport() {
 
   const commit = () => {
     if (!preview) return;
+    if (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged) {
+      setNoticeTone("warning");
+      setNotice("Confirm that this master-only import will not activate products in POS.");
+      return;
+    }
     void run(async () => {
       const response = await centre.commitImport(preview);
       if (response.result.queued) {
@@ -602,6 +610,7 @@ function MenuImport() {
                   value={targetMode}
                   onChange={(event) => {
                     setTargetMode(event.target.value as ImportTargetMode);
+                    setMasterOnlyAcknowledged(false);
                     invalidatePreview();
                   }}
                   className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
@@ -836,6 +845,40 @@ function MenuImport() {
             </Panel>
           )}
 
+          {preview && (
+            <div className="space-y-2 rounded-md border border-border p-3 text-[12px]">
+              <p className="font-semibold">Activation review before commit</p>
+              {preview.targetMode === "TENANT_MASTER" ? (
+                <label className="flex items-start gap-2 text-warning">
+                  <input
+                    type="checkbox"
+                    checked={masterOnlyAcknowledged}
+                    onChange={(event) => setMasterOnlyAcknowledged(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                  />
+                  I understand these items will NOT appear in any branch POS until separately
+                  activated. This import is intentionally tenant-master only.
+                </label>
+              ) : preview.targetMode === "SELECTED_BRANCHES" ? (
+                <p>
+                  POS activation targets:{" "}
+                  {preview.targetBranchIds
+                    .map(
+                      (id) =>
+                        centre.structure.branches.find((branch) => branch.id === id)?.name ??
+                        "Unknown branch",
+                    )
+                    .join(", ") || "NONE — select branches and revalidate"}
+                  . Products additionally require sellable=true and available=true.
+                </p>
+              ) : (
+                <p>
+                  Row-level branch activation: each row must contain a validated branchCode.
+                  Review preview errors before committing.
+                </p>
+              )}
+            </div>
+          )}
           {notice && (
             <p
               role="status"
@@ -862,7 +905,12 @@ function MenuImport() {
             <Btn
               variant="primary"
               onClick={commit}
-              disabled={!preview?.canCommit || !canImport || busy}
+              disabled={
+                !preview?.canCommit ||
+                !canImport ||
+                busy ||
+                (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged)
+              }
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
