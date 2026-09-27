@@ -349,16 +349,18 @@ export function useSetupCentre() {
   );
 
   const inspectImport = useCallback(
-    async (id: string) =>
-      (await get<{ preview: ImportPreview }>(
+    async (id: string) => {
+      const response = await get<{ preview: ImportPreview }>(
         `/api/seramet/setup/imports/${encodeURIComponent(id)}`,
-      )).preview,
+      );
+      return response.preview;
+    },
     [get],
   );
 
   const importStatus = useCallback(
-    async (id: string) =>
-      (await get<{
+    async (id: string) => {
+      const response = await get<{
         result: {
           id: string;
           status: ImportPreview["status"];
@@ -367,7 +369,9 @@ export function useSetupCentre() {
           verification?: ImportPreview["verification"];
           worker: { status: string; attempts: number; updatedAt: string } | null;
         };
-      }>(`/api/seramet/setup/imports/${encodeURIComponent(id)}/status`)).result,
+      }>(`/api/seramet/setup/imports/${encodeURIComponent(id)}/status`);
+      return response.result;
+    },
     [get],
   );
 
