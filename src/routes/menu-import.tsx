@@ -862,7 +862,7 @@ function MenuImport() {
               ) : preview.targetMode === "SELECTED_BRANCHES" ? (
                 <p>
                   POS activation targets:{" "}
-                  {preview.targetBranchIds
+                  {(preview.targetBranchIds ?? [])
                     .map(
                       (id) =>
                         centre.structure.branches.find((branch) => branch.id === id)?.name ??
