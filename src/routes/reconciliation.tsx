@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { CheckCircle2, Link2, RefreshCcw, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -12,6 +12,9 @@ import { getConfigurationRepository } from "@/platform/repositories/configuratio
 import { CashDrawerCloseForm } from "@/components/app/CashDrawerCloseForm";
 
 export const Route = createFileRoute("/reconciliation")({
+  beforeLoad: () => {
+    throw redirect({ to: "/payment-control" });
+  },
   head: () => ({
     meta: [
       { title: "Reconciliation - Seramet" },

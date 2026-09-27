@@ -59,7 +59,6 @@ import { handleSupabaseAuthApi } from "@/server/supabase-auth-api";
 import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
-import { publishRealtimeEvent } from "@/server/realtime";
 
 type MutationRequest = {
   action?: string;
@@ -747,21 +746,6 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
             idempotencyKey: `transaction-management:${body.idempotencyKey}:${branchId}`,
             correlationId,
           }),
-        ),
-      );
-    }
-    if (env.SERAMET_DB) {
-      await Promise.all(
-        (branches.length ? branches : [actor.branchId]).map((branchId) =>
-          publishRealtimeEvent(env.SERAMET_DB!, {
-            tenantId: actor.tenantId,
-            branchId,
-            topic: "transactions",
-            entityType: "TRANSACTION_COMMAND",
-            entityId: body.idempotencyKey!,
-            eventType: body.action!,
-            correlationId,
-          }).catch((error) => console.error("Real-time event publication failed", error)),
         ),
       );
     }

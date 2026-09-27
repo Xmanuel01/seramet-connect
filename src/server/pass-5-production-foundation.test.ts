@@ -219,6 +219,55 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(await count("mutation_commits", tenantA)).toBe(1);
   });
 
+  it("projects authoritative POS orders and invoices and records refresh events atomically", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const created = await mutation(
+      repository,
+      "projection-order",
+      "projection-order",
+      "upsertOrderDraft",
+      {
+        draft: orderDraft("Projection"),
+        targetStatus: "OPEN",
+      },
+    );
+    const orderId = created.state.orders[0]!.id;
+    await mutation(repository, "projection-kitchen", "projection-kitchen", "sendToKitchen", {
+      orderId,
+    });
+    await mutation(
+      repository,
+      "projection-invoice",
+      "projection-invoice",
+      "prepareInvoiceForPayment",
+      {
+        orderId,
+      },
+    );
+
+    const order = await database
+      .prepare("SELECT branch_id,business_date,total_minor FROM orders WHERE tenant_id=? AND id=?")
+      .bind(tenantA, orderId)
+      .first<{ branch_id: string; business_date: string; total_minor: number }>();
+    const invoice = await database
+      .prepare("SELECT branch_id,business_date,total_minor FROM invoices WHERE tenant_id=?")
+      .bind(tenantA)
+      .first<{ branch_id: string; business_date: string; total_minor: number }>();
+    const events = await database
+      .prepare("SELECT event_type FROM realtime_events WHERE tenant_id=? ORDER BY created_at,id")
+      .bind(tenantA)
+      .all<{ event_type: string }>();
+
+    expect(order).toMatchObject({ branch_id: branchA, total_minor: 100_000 });
+    expect(invoice).toMatchObject({ branch_id: branchA, total_minor: 100_000 });
+    expect(order?.business_date).toBe(invoice?.business_date);
+    expect(events.results?.map((event) => event.event_type)).toEqual([
+      "upsertOrderDraft",
+      "sendToKitchen",
+      "prepareInvoiceForPayment",
+    ]);
+  });
+
   it("allows only one concurrent mutation from the same base revision", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     const results = await Promise.allSettled([
@@ -598,6 +647,62 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(row?.last_error).toMatch(/No live worker implementation/);
     expect(acknowledged).toBe(true);
     expect(retried).toBe(false);
+  });
+
+  it("commits worker completion and its management refresh event together", async () => {
+    const stamp = new Date().toISOString();
+    await database
+      .prepare(
+        `INSERT INTO worker_jobs (tenant_id,id,branch_id,job_type,payload_json,idempotency_key,
+         correlation_id,status,attempt_count,max_attempts,scheduled_at,created_at,updated_at)
+         VALUES (?,?,?,'EOD_AGGREGATION','{}',?,?,'PENDING',0,3,?,?,?)`,
+      )
+      .bind(
+        tenantA,
+        "worker-success",
+        branchA,
+        "worker-success-key",
+        "worker-success-correlation",
+        stamp,
+        stamp,
+        stamp,
+      )
+      .run();
+    let acknowledged = false;
+    await handleWorkerQueue(
+      {
+        queue: "test",
+        messages: [
+          {
+            id: "message-success",
+            timestamp: new Date(),
+            body: {
+              kind: "worker-job",
+              tenantId: tenantA,
+              jobId: "worker-success",
+              correlationId: "worker-success-correlation",
+            },
+            attempts: 1,
+            ack: () => {
+              acknowledged = true;
+            },
+            retry: () => undefined,
+          },
+        ],
+      },
+      testEnv(),
+    );
+    const job = await database
+      .prepare("SELECT status FROM worker_jobs WHERE tenant_id=? AND id=?")
+      .bind(tenantA, "worker-success")
+      .first<{ status: string }>();
+    const event = await database
+      .prepare("SELECT event_type FROM realtime_events WHERE tenant_id=? AND entity_id=?")
+      .bind(tenantA, "worker-success")
+      .first<{ event_type: string }>();
+    expect(job?.status).toBe("SUCCEEDED");
+    expect(event?.event_type).toBe("EOD_AGGREGATION_COMPLETED");
+    expect(acknowledged).toBe(true);
   });
 
   it("previews and idempotently imports a mapped legacy snapshot with reconciled totals", async () => {

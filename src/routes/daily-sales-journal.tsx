@@ -1,115 +1,155 @@
-import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
+import { currentDateKey } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
+import { formatMinor, majorFromMinor, sumMinor } from "@/payments/money";
 
 export const Route = createFileRoute("/daily-sales-journal")({
   head: () => ({
     meta: [
       { title: "Daily Sales Journal - Seramet" },
-      {
-        name: "description",
-        content:
-          "Day-end Z report turned into a balanced double-entry journal: sales, tax, tenders and variances.",
-      },
-      { property: "og:title", content: "Daily Sales Journal - Seramet" },
-      {
-        property: "og:description",
-        content: "One balanced journal per trading day, per branch, straight from the POS.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
+      { name: "description", content: "Authoritative day-close sales and journal evidence." },
     ],
   }),
   component: DailySalesJournal,
 });
 
-const journal: [string, string, number, number][] = emptyRecords();
-
-const tenders = emptyRecords();
-
 function DailySalesJournal() {
-  const { branchLabel } = useAppContext();
-  const debit = journal.reduce((sum, row) => sum + row[2], 0);
-  const credit = journal.reduce((sum, row) => sum + row[3], 0);
+  const { activeTenantId, branchId, branchLabel, currency, timeZone } = useAppContext();
+  const { state, backendStatus } = useTransactionEngine();
+  const businessDate = currentDateKey(new Date(), timeZone);
+  const dayClose = state.paymentOperations?.dayCloses.find(
+    (item) => item.branchId === branchId && item.businessDate === businessDate,
+  );
+  const live = projectFinancialLifecycle(state, {
+    tenantId: activeTenantId,
+    branchId,
+    businessDate,
+    currency,
+  });
+  const report = dayClose?.status === "CLOSED" && dayClose.snapshot ? dayClose.snapshot : live;
+  const reportCurrency = report.currency === "XXX" ? currency : report.currency;
+  const debitMinor = sumMinor(report.journal.map((line) => line.debitMinor));
+  const creditMinor = sumMinor(report.journal.map((line) => line.creditMinor));
+  const closed = dayClose?.status === "CLOSED" && Boolean(dayClose.snapshot);
+
   return (
     <AppShell
       title="Daily sales journal"
-      subtitle={`Z-report journal for the selected business date - ${branchLabel}`}
-      actions={
-        <>
-          <Btn>Print Z report</Btn>
-          <Btn variant="primary">Post journal</Btn>
-        </>
-      }
+      subtitle={`${closed ? "Closed snapshot" : "Live preview"} for ${report.businessDate} - ${branchLabel}`}
+      actions={<Btn onClick={() => window.print()}>Print Z report</Btn>}
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Gross sales" value={0} money />
-        <Metric label="Tax collected" value={0} money />
-        <Metric label="Net takings" value={0} money />
-        <Metric label="Cash variance" value={0} money invert />
+        <Metric
+          label="Settled sales"
+          value={majorFromMinor(report.settledMinor, reportCurrency)}
+          money
+        />
+        <Metric
+          label="Tax collected"
+          value={majorFromMinor(report.taxMinor, reportCurrency)}
+          money
+        />
+        <Metric
+          label="Collected"
+          value={majorFromMinor(report.collectedMinor, reportCurrency)}
+          money
+        />
+        <Metric
+          label="Cash variance"
+          value={majorFromMinor(report.cashVarianceMinor, reportCurrency)}
+          money
+          invert
+        />
       </div>
 
       <Panel className="mt-4">
         <PanelHead
           title="Daily sales journal"
-          sub="Balanced automatically from the day's settled orders"
-          right={<Status>{debit === credit ? "Balanced" : "Out of balance"}</Status>}
+          sub={`Revision ${dayClose?.snapshot?.revision ?? 0} - as of ${report.calculatedAt}`}
+          right={
+            <Status>
+              {backendStatus !== "synced"
+                ? "Data not synchronized"
+                : closed
+                  ? debitMinor === creditMinor
+                    ? "Closed and balanced"
+                    : "Closed out of balance"
+                  : "Not closed"}
+            </Status>
+          }
+        />
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <TH>Account</TH>
+                <TH className="text-right">Debit</TH>
+                <TH className="text-right">Credit</TH>
+              </tr>
+            </thead>
+            <tbody>
+              {report.journal.map((line) => (
+                <tr key={line.account} className="hover:bg-secondary/40">
+                  <TD className="font-semibold">{line.account}</TD>
+                  <TD className="num text-right">
+                    {line.debitMinor ? formatMinor(line.debitMinor, reportCurrency) : "-"}
+                  </TD>
+                  <TD className="num text-right">
+                    {line.creditMinor ? formatMinor(line.creditMinor, reportCurrency) : "-"}
+                  </TD>
+                </tr>
+              ))}
+              {!report.journal.length ? (
+                <tr>
+                  <TD className="text-muted-foreground" colSpan={3}>
+                    No posted journal lines exist for this business date.
+                  </TD>
+                </tr>
+              ) : null}
+              <tr className="bg-secondary/50">
+                <TD className="font-bold">Total</TD>
+                <TD className="num text-right font-bold">
+                  {formatMinor(debitMinor, reportCurrency)}
+                </TD>
+                <TD className="num text-right font-bold">
+                  {formatMinor(creditMinor, reportCurrency)}
+                </TD>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel className="mt-4">
+        <PanelHead
+          title="Tender reconciliation"
+          sub="Authoritative collections by payment method"
         />
         <table className="w-full">
           <thead>
             <tr>
-              <TH>Code</TH>
-              <TH>Account</TH>
-              <TH className="text-right">Debit</TH>
-              <TH className="text-right">Credit</TH>
+              <TH>Tender</TH>
+              <TH className="text-right">System collected</TH>
             </tr>
           </thead>
           <tbody>
-            {journal.map(([code, account, dr, cr]) => (
-              <tr key={code} className="hover:bg-secondary/40">
-                <TD className="num text-muted-foreground">{code}</TD>
-                <TD className="font-semibold">{account}</TD>
-                <TD className="num text-right">{dr ? ksh(dr) : "-"}</TD>
-                <TD className="num text-right">{cr ? ksh(cr) : "-"}</TD>
+            {report.tenders.map((row) => (
+              <tr key={row.method} className="hover:bg-secondary/40">
+                <TD className="font-semibold">{row.method}</TD>
+                <TD className="num text-right">{formatMinor(row.amountMinor, reportCurrency)}</TD>
               </tr>
             ))}
-            <tr className="bg-secondary/50">
-              <TD className="font-bold">Total</TD>
-              <TD className="font-bold">&nbsp;</TD>
-              <TD className="num text-right font-bold">{ksh(debit)}</TD>
-              <TD className="num text-right font-bold">{ksh(credit)}</TD>
-            </tr>
-          </tbody>
-        </table>
-      </Panel>
-
-      <Panel className="mt-4">
-        <PanelHead title="Tender reconciliation" sub="Declared cash-up against system takings" />
-        <table className="w-full">
-          <thead>
-            <tr>
-              <TH>Tender</TH>
-              <TH className="text-right">Declared</TH>
-              <TH className="text-right">System</TH>
-              <TH className="text-right">Variance</TH>
-              <TH>Status</TH>
-            </tr>
-          </thead>
-          <tbody>
-            {tenders.map((row) => (
-              <tr key={row.tender} className="hover:bg-secondary/40">
-                <TD className="font-semibold">{row.tender}</TD>
-                <TD className="num text-right">{ksh(row.declared)}</TD>
-                <TD className="num text-right text-muted-foreground">{ksh(row.system)}</TD>
-                <TD className="num text-right font-semibold">{ksh(row.variance)}</TD>
-                <TD>
-                  <Status>{row.status}</Status>
+            {!report.tenders.length ? (
+              <tr>
+                <TD className="text-muted-foreground" colSpan={2}>
+                  No collections exist for this business date.
                 </TD>
               </tr>
-            ))}
+            ) : null}
           </tbody>
         </table>
       </Panel>

@@ -336,6 +336,15 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         stamp,
       )),
     );
+    statements.push(
+      ...(await this.operationalFinancialBridgeStatements(
+        tenantId,
+        nextEntities,
+        currentByKey,
+        input,
+        stamp,
+      )),
+    );
     statements.push(...this.fxPaymentBridgeStatements(tenantId, nextEntities, currentByKey, stamp));
 
     statements.push(
@@ -359,6 +368,28 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
           input.requestHash,
           responseJson,
           stamp,
+        ),
+    );
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO realtime_events
+            (tenant_id,id,branch_id,topic,entity_type,entity_id,event_type,correlation_id,
+             payload_json,created_at,expires_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .bind(
+          tenantId,
+          crypto.randomUUID(),
+          input.actor.branchId ?? null,
+          "transactions",
+          "TRANSACTION_COMMAND",
+          input.idempotencyKey,
+          input.action,
+          input.correlationId,
+          JSON.stringify({ revision: newRevision }),
+          stamp,
+          new Date(Date.parse(stamp) + 24 * 60 * 60 * 1_000).toISOString(),
         ),
     );
 
@@ -443,6 +474,495 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       409,
       "Authoritative state changed while the command was being prepared",
     );
+  }
+
+  private async operationalFinancialBridgeStatements(
+    tenantId: string,
+    nextEntities: PersistedEntity[],
+    currentByKey: Map<string, AuthoritativeRow>,
+    input: { actor: ServerActor; correlationId: string },
+    stamp: string,
+  ) {
+    const tenant = await this.db
+      .prepare("SELECT default_currency FROM tenants WHERE id=? AND active=1")
+      .bind(tenantId)
+      .first<{ default_currency: string }>();
+    if (!tenant?.default_currency) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Tenant currency is not configured");
+    }
+    const branches = await this.db
+      .prepare(
+        `SELECT id,code,name,timezone,business_day_cutoff_minutes FROM branches
+         WHERE tenant_id=? AND active=1`,
+      )
+      .bind(tenantId)
+      .all<{
+        id: string;
+        code: string;
+        name: string;
+        timezone: string;
+        business_day_cutoff_minutes: number;
+      }>();
+    type FinancialBranch = {
+      id: string;
+      code: string;
+      name: string;
+      timezone: string;
+      business_day_cutoff_minutes: number;
+    };
+    const branchByReference = new Map<string, FinancialBranch>();
+    for (const branch of branches.results ?? []) {
+      branchByReference.set(branch.id, branch);
+      branchByReference.set(branch.code, branch);
+      branchByReference.set(branch.name, branch);
+    }
+    const statements: D1PreparedStatement[] = [];
+    const changed = nextEntities.filter((entity) => {
+      const current = currentByKey.get(`${entity.entityType}:${entity.entityId}`);
+      return current?.payload_json !== entity.payloadJson;
+    });
+    const businessDate = (
+      entity: PersistedEntity,
+      payload: Record<string, unknown>,
+      at: string,
+    ) => {
+      const branch = branchByReference.get(
+        entity.branchId ?? stringValue(payload["branchId"]) ?? stringValue(payload["branch"]) ?? "",
+      );
+      if (!branch) {
+        throw new ServerOperationError(
+          "TENANT_SCOPE_VIOLATION",
+          403,
+          "Financial record branch is unavailable",
+        );
+      }
+      return {
+        branch,
+        date:
+          entity.businessDate ??
+          stringValue(payload["businessDate"]) ??
+          authoritativeBusinessDate({
+            occurredAt: at,
+            timezone: branch.timezone,
+            cutoffMinutes: branch.business_day_cutoff_minutes,
+          }),
+      };
+    };
+
+    for (const entity of changed.filter((item) => item.entityType === "state:orders")) {
+      const payload = parseObject(entity.payloadJson);
+      const at = stringValue(payload["createdAt"]) ?? entity.createdAt;
+      const scope = businessDate(entity, payload, at);
+      const total = numberValue(payload["total"]);
+      if (total === null || total < 0) throw new Error("Authoritative order total is invalid");
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO orders
+              (tenant_id,id,branch_id,display_number,status,channel_id,business_date,currency,
+               total_minor,correlation_id,version,payload_json,created_at,updated_at)
+             VALUES (?,?,?,?,?,NULL,?,?,?,?,1,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               branch_id=excluded.branch_id,status=excluded.status,business_date=excluded.business_date,
+               currency=excluded.currency,total_minor=excluded.total_minor,
+               correlation_id=excluded.correlation_id,version=orders.version+1,
+               payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            scope.branch.id,
+            entity.entityId,
+            stringValue(payload["status"]) ?? "OPEN",
+            scope.date,
+            tenant.default_currency,
+            parseMajorAmount(total, tenant.default_currency),
+            input.correlationId,
+            entity.payloadJson,
+            at,
+            entity.updatedAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "state:bills")) {
+      const payload = parseObject(entity.payloadJson);
+      const at = stringValue(payload["issuedAt"]) ?? entity.createdAt;
+      const scope = businessDate(entity, payload, at);
+      const total = numberValue(payload["total"]);
+      const paid = numberValue(payload["paid"]);
+      if (total === null || paid === null || total < 0 || paid < 0) {
+        throw new Error("Authoritative invoice amount is invalid");
+      }
+      const totalMinor = parseMajorAmount(total, tenant.default_currency);
+      const paidMinor = parseMajorAmount(paid, tenant.default_currency);
+      const subtotalMinor = parseMajorAmount(
+        numberValue(payload["subtotal"]) ?? total,
+        tenant.default_currency,
+      );
+      const taxMinor = parseMajorAmount(numberValue(payload["tax"]) ?? 0, tenant.default_currency);
+      const normalizedPayload = JSON.stringify({
+        ...payload,
+        totalMinor,
+        paidMinor,
+        subtotalMinor,
+        taxMinor,
+      });
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO invoices
+              (tenant_id,id,branch_id,invoice_number,status,business_date,currency,total_minor,
+               paid_minor,version,payload_json,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               branch_id=excluded.branch_id,status=excluded.status,business_date=excluded.business_date,
+               currency=excluded.currency,total_minor=excluded.total_minor,paid_minor=excluded.paid_minor,
+               version=invoices.version+1,payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            scope.branch.id,
+            entity.entityId,
+            stringValue(payload["status"]) ?? "OPEN",
+            scope.date,
+            tenant.default_currency,
+            totalMinor,
+            paidMinor,
+            normalizedPayload,
+            at,
+            entity.updatedAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:transactions")) {
+      const payload = parseObject(entity.payloadJson);
+      const branchId = stringValue(payload["branchId"]);
+      const amountMinor = numberValue(payload["amountMinor"]);
+      const unallocatedMinor = numberValue(payload["unallocatedAmountMinor"]);
+      const paymentMethodId = stringValue(payload["paymentMethodId"]);
+      const merchantReference = stringValue(payload["merchantReference"]);
+      const occurredAt = stringValue(payload["occurredAt"]) ?? entity.createdAt;
+      if (
+        !branchId ||
+        !branchByReference.has(branchId) ||
+        amountMinor === null ||
+        unallocatedMinor === null ||
+        !paymentMethodId ||
+        !merchantReference
+      ) {
+        throw new Error("Authoritative payment transaction is incomplete");
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO payment_transactions
+              (tenant_id,id,branch_id,intent_id,payment_method_id,provider_connection_id,direction,
+               amount_minor,unallocated_amount_minor,currency,status,provider_transaction_id,
+               merchant_reference,original_transaction_id,correlation_id,payload_json,occurred_at,
+               confirmed_at,created_at)
+             VALUES (?,?,?,NULL,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               status=excluded.status,unallocated_amount_minor=excluded.unallocated_amount_minor,
+               provider_transaction_id=excluded.provider_transaction_id,
+               payload_json=excluded.payload_json,confirmed_at=excluded.confirmed_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            branchId,
+            paymentMethodId,
+            stringValue(payload["providerConnectionId"]) ?? null,
+            stringValue(payload["direction"]) ?? "COLLECTION",
+            amountMinor,
+            unallocatedMinor,
+            stringValue(payload["currency"]) ?? tenant.default_currency,
+            stringValue(payload["status"]) ?? "PENDING",
+            stringValue(payload["providerTransactionId"]) ?? null,
+            merchantReference,
+            input.correlationId,
+            entity.payloadJson,
+            occurredAt,
+            stringValue(payload["confirmedAt"]) ?? null,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:allocations")) {
+      const payload = parseObject(entity.payloadJson);
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO payment_allocations
+              (tenant_id,id,branch_id,payment_transaction_id,invoice_id,amount_minor,currency,
+               payload_json,created_at)
+             VALUES (?,?,?,?,?,?,?,'{}',?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET amount_minor=excluded.amount_minor`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            stringValue(payload["branchId"]),
+            stringValue(payload["paymentTransactionId"]),
+            stringValue(payload["invoiceId"]),
+            numberValue(payload["amountMinor"]),
+            stringValue(payload["currency"]) ?? tenant.default_currency,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:collections")) {
+      const payload = parseObject(entity.payloadJson);
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO payment_collections
+              (tenant_id,id,branch_id,payment_transaction_id,account_id,amount_minor,currency,
+               collection_state,payload_json,collected_at,settled_at)
+             VALUES (?,?,?,?,?,?,?,?,'{}',?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               collection_state=excluded.collection_state,settled_at=excluded.settled_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            stringValue(payload["branchId"]),
+            stringValue(payload["paymentTransactionId"]),
+            stringValue(payload["accountId"]),
+            numberValue(payload["amountMinor"]),
+            stringValue(payload["currency"]) ?? tenant.default_currency,
+            stringValue(payload["collectionState"]) ?? "IN_CLEARING",
+            stringValue(payload["collectedAt"]) ?? entity.createdAt,
+            stringValue(payload["settledAt"]) ?? null,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:refunds")) {
+      const payload = parseObject(entity.payloadJson);
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO payment_refunds
+              (tenant_id,id,branch_id,original_transaction_id,provider_connection_id,amount_minor,
+               currency,status,correlation_id,payload_json,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               status=excluded.status,payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            stringValue(payload["branchId"]),
+            stringValue(payload["originalTransactionId"]),
+            stringValue(payload["providerConnectionId"]) ?? null,
+            numberValue(payload["amountMinor"]),
+            stringValue(payload["currency"]) ?? tenant.default_currency,
+            stringValue(payload["status"]) ?? "REQUESTED",
+            input.correlationId,
+            entity.payloadJson,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+            entity.updatedAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "state:receipts")) {
+      const payload = parseObject(entity.payloadJson);
+      const at = stringValue(payload["issuedAt"]) ?? entity.createdAt;
+      const scope = businessDate(entity, payload, at);
+      const invoiceId = stringValue(payload["invoiceId"]);
+      if (!invoiceId) throw new Error("Authoritative receipt invoice is missing");
+      const reprints = Array.isArray(payload["reprints"]) ? payload["reprints"].length : 0;
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO receipts
+              (tenant_id,id,branch_id,receipt_number,invoice_id,payment_transaction_id,
+               business_date,original,reprint_count,payload_json,created_at)
+             VALUES (?,?,?,?,?,NULL,?,1,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               branch_id=excluded.branch_id,invoice_id=excluded.invoice_id,
+               business_date=excluded.business_date,reprint_count=excluded.reprint_count,
+               payload_json=excluded.payload_json`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            scope.branch.id,
+            entity.entityId,
+            invoiceId,
+            scope.date,
+            reprints,
+            entity.payloadJson,
+            at,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:drawerSessions")) {
+      const payload = parseObject(entity.payloadJson);
+      const branchId = stringValue(payload["branchId"]);
+      if (!branchId || !branchByReference.has(branchId))
+        throw new Error("Drawer branch is invalid");
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO cash_drawer_sessions
+              (tenant_id,id,branch_id,device_id,employee_id,status,opening_float_minor,
+               expected_cash_minor,counted_cash_minor,variance_minor,version,payload_json,opened_at,closed_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,1,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               status=excluded.status,expected_cash_minor=excluded.expected_cash_minor,
+               counted_cash_minor=excluded.counted_cash_minor,variance_minor=excluded.variance_minor,
+               version=cash_drawer_sessions.version+1,payload_json=excluded.payload_json,
+               closed_at=excluded.closed_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            branchId,
+            stringValue(payload["deviceId"]) ?? null,
+            stringValue(payload["employeeId"]) ?? input.actor.id,
+            stringValue(payload["status"]) ?? "OPEN",
+            numberValue(payload["openingFloatMinor"]) ?? 0,
+            numberValue(payload["expectedCashMinor"]) ?? 0,
+            numberValue(payload["countedCashMinor"]),
+            numberValue(payload["varianceMinor"]),
+            entity.payloadJson,
+            stringValue(payload["openedAt"]) ?? entity.createdAt,
+            stringValue(payload["closedAt"]) ?? null,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:exceptions")) {
+      const payload = parseObject(entity.payloadJson);
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO reconciliation_exceptions
+              (tenant_id,id,branch_id,source_type,source_id,amount_minor,currency,status,severity,
+               payload_json,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               status=excluded.status,severity=excluded.severity,amount_minor=excluded.amount_minor,
+               payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            stringValue(payload["branchId"]) ?? null,
+            stringValue(payload["sourceType"]) ?? "PAYMENT",
+            stringValue(payload["sourceId"]) ?? entity.entityId,
+            numberValue(payload["amountMinor"]) ?? 0,
+            stringValue(payload["currency"]) ?? tenant.default_currency,
+            stringValue(payload["status"]) ?? "OPEN",
+            stringValue(payload["severity"]) ?? "WARNING",
+            entity.payloadJson,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+            entity.updatedAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:dayCloses")) {
+      const payload = parseObject(entity.payloadJson);
+      const branchId = stringValue(payload["branchId"]);
+      const date = stringValue(payload["businessDate"]);
+      if (!branchId || !date || !branchByReference.has(branchId)) {
+        throw new Error("Day-close scope is invalid");
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO day_closes
+              (tenant_id,id,branch_id,business_date,status,version,payload_json,created_at,updated_at)
+             VALUES (?,?,?,?,?,1,?,?,?)
+             ON CONFLICT(tenant_id,id) DO UPDATE SET
+               status=excluded.status,version=day_closes.version+1,
+               payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            branchId,
+            date,
+            stringValue(payload["status"]) ?? "OPEN",
+            entity.payloadJson,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+            entity.updatedAt,
+          ),
+      );
+    }
+    for (const entity of changed.filter((item) => item.entityType === "payments:journals")) {
+      const payload = parseObject(entity.payloadJson);
+      const sourceType = stringValue(payload["sourceType"]) ?? "PAYMENT_RECONCILIATION";
+      if (
+        ["GIFT_CARD_REDEMPTION", "VOUCHER_REDEMPTION", "LOYALTY_REDEMPTION"].includes(sourceType)
+      ) {
+        continue;
+      }
+      const lines = Array.isArray(payload["lines"]) ? payload["lines"].filter(isRecord) : [];
+      const sourceId = stringValue(payload["sourceId"]) ?? entity.entityId;
+      const desiredStatus = stringValue(payload["status"]) ?? "DRAFT";
+      const isNew = !currentByKey.has(`${entity.entityType}:${entity.entityId}`);
+      if (!isNew) {
+        throw new Error("Authoritative journal projection is immutable after creation");
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO journal_entries
+              (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,
+               correlation_id,payload_json,created_at,posted_at)
+             VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,?,NULL)`,
+          )
+          .bind(
+            tenantId,
+            entity.entityId,
+            stringValue(payload["branchId"]) ?? null,
+            sourceType,
+            sourceId,
+            stringValue(payload["businessDate"]) ?? stamp.slice(0, 10),
+            stringValue(payload["description"]) ?? sourceType,
+            input.correlationId,
+            entity.payloadJson,
+            stringValue(payload["createdAt"]) ?? entity.createdAt,
+          ),
+      );
+      lines.forEach((line, index) => {
+        const debit = numberValue(line["debitMinor"]) ?? 0;
+        const credit = numberValue(line["creditMinor"]) ?? 0;
+        if ((debit === 0) === (credit === 0)) {
+          throw new Error("Authoritative journal line must contain exactly one debit or credit");
+        }
+        statements.push(
+          this.db
+            .prepare(
+              `INSERT INTO journal_lines
+                (tenant_id,journal_entry_id,line_number,account_id,debit_minor,credit_minor,
+                 currency,payload_json) VALUES (?,?,?,?,?,?,?,'{}')`,
+            )
+            .bind(
+              tenantId,
+              entity.entityId,
+              index + 1,
+              stringValue(line["accountId"]),
+              debit,
+              credit,
+              stringValue(line["currency"]) ?? tenant.default_currency,
+            ),
+        );
+      });
+      if (desiredStatus === "POSTED") {
+        statements.push(
+          this.db
+            .prepare(
+              "UPDATE journal_entries SET status='POSTED',posted_at=? WHERE tenant_id=? AND id=? AND status='DRAFT'",
+            )
+            .bind(stringValue(payload["postedAt"]) ?? entity.updatedAt, tenantId, entity.entityId),
+        );
+      } else if (desiredStatus !== "DRAFT") {
+        throw new Error(`Unsupported authoritative journal status: ${desiredStatus}`);
+      }
+    }
+    return statements;
   }
 
   private async legacyInventoryBridgeStatements(
@@ -1862,6 +2382,13 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       timezone: branch.timezone,
       cutoffMinutes: branch.business_day_cutoff_minutes,
     });
+    if (draft) draft["businessDate"] = businessDate;
+    if (nested) nested["businessDate"] = businessDate;
+    if (nested && ["prepareDayClose", "recordPeriodClose"].includes(input.action)) {
+      nested["currency"] = getConfigurationRepository().getTenant(
+        input.actor.tenantId,
+      ).defaultCurrency;
+    }
     if (
       nested &&
       ["prepareDayClose", "recordPeriodClose", "automaticPaymentMatching"].includes(input.action)

@@ -32,6 +32,7 @@ export function useManagementIntelligence(enabled = true) {
   const [owner, setOwner] = useState<OwnerControlCentre | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState("");
+  const [asOf, setAsOf] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!enabled) {
@@ -82,6 +83,7 @@ export function useManagementIntelligence(enabled = true) {
       setControls(controlRows);
       setOwner(ownerPayload);
       setStatus("ready");
+      setAsOf(new Date().toISOString());
     } catch (cause) {
       setControls([]);
       setOwner(null);
@@ -92,6 +94,21 @@ export function useManagementIntelligence(enabled = true) {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const onRefresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void refresh(), 200);
+    };
+    window.addEventListener("seramet:realtime", onRefresh);
+    window.addEventListener("seramet:refresh", onRefresh);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("seramet:realtime", onRefresh);
+      window.removeEventListener("seramet:refresh", onRefresh);
+    };
   }, [refresh]);
 
   const command = useCallback(
@@ -172,6 +189,7 @@ export function useManagementIntelligence(enabled = true) {
     control: controls[0] ?? null,
     owner,
     combined,
+    asOf,
     status,
     error,
     refresh,

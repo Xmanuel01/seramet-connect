@@ -615,7 +615,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.SETUP",
-    routes: ["/settings", "/design-system", "/branches", "/menu-import"],
+    routes: ["/settings", "/design-system", "/branches", "/menu-import", "/seramet-setup"],
   },
   {
     key: "hardware",

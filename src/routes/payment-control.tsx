@@ -19,6 +19,7 @@ import type { CashDrawerSession, PaymentTransaction } from "@/payments/types";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { cn } from "@/lib/utils";
+import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 
 export const Route = createFileRoute("/payment-control")({
   head: () => ({
@@ -47,8 +48,15 @@ type Tab = (typeof tabs)[number];
 
 function PaymentControlCentre() {
   const { state, mutate: mutateTransaction } = useTransactionEngine();
-  const { activeTenantId, branchId, branchLabel, currentUser, hasPermission, isAllBranches } =
-    useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    branchLabel,
+    branchRecords,
+    currentUser,
+    hasPermission,
+    isAllBranches,
+  } = useAppContext();
   const [tab, setTab] = useState<Tab>("Payments");
   const [periodDate, setPeriodDate] = useState(todayInputValue);
   const [query, setQuery] = useState("");
@@ -122,14 +130,20 @@ function PaymentControlCentre() {
         (isAllBranches || receivable.branchId === branchId),
     )
     .reduce((total, receivable) => total + receivable.outstandingAmount, 0);
-  const salesToday = state.bills
-    .filter(
-      (bill) =>
-        bill.tenantId === activeTenantId &&
-        (isAllBranches || bill.branchId === branchId) &&
-        bill.issuedAt.slice(0, 10) === periodDate,
-    )
-    .reduce((total, bill) => total + bill.total, 0);
+  const salesToday = majorFromMinor(
+    branchRecords
+      .filter((record) => isAllBranches || record.id === branchId)
+      .map((record) =>
+        projectFinancialLifecycle(state, {
+          tenantId: activeTenantId,
+          branchId: record.id,
+          businessDate: periodDate,
+          currency,
+        }),
+      )
+      .reduce((total, projection) => total + projection.settledMinor, 0),
+    currency,
+  );
 
   const runMutation = (label: string, action: string, payload: unknown) => {
     void mutateTransaction(action, payload)
@@ -335,14 +349,18 @@ function PaymentControlCentre() {
   };
 
   const prepareEod = () =>
-    runMutation("EOD review prepared from current exceptions and refunds.", "prepareDayClose", {
-      input: {
-        tenantId: activeTenantId,
-        branchId,
-        businessDate: periodDate,
-        actor: currentUser.name,
+    runMutation(
+      "EOD review prepared from authoritative operational and financial state.",
+      "prepareDayClose",
+      {
+        input: {
+          tenantId: activeTenantId,
+          branchId,
+          businessDate: periodDate,
+          actor: currentUser.name,
+        },
       },
-    });
+    );
 
   const closeEod = (dayCloseId: string) =>
     runMutation("Business day closed with immutable review history.", "closeDay", {
@@ -816,7 +834,7 @@ function PaymentControlCentre() {
                 value={overrideReason}
                 onChange={(event) => setOverrideReason(event.target.value)}
                 className="h-10 w-full rounded-md border border-border bg-card px-3 text-[12px]"
-                placeholder="Override reason for unresolved critical issues"
+                placeholder="Override reason for unresolved close blockers"
               />
               <Btn
                 className="w-full"
@@ -834,8 +852,22 @@ function PaymentControlCentre() {
                       <Status>{day.status}</Status>
                     </div>
                     <div className="mt-1 text-[12px] text-muted-foreground">
-                      {day.unresolvedExceptionIds.length} critical issue(s)
+                      {day.readiness.length} close blocker(s)
                     </div>
+                    {day.readiness.length ? (
+                      <ul className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                        {day.readiness.slice(0, 5).map((issue) => (
+                          <li key={issue.id}>
+                            {issue.code}: {issue.message}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {day.snapshot ? (
+                      <div className="mt-2 text-[11px] text-muted-foreground">
+                        Snapshot revision {day.snapshot.revision} at {day.snapshot.closedAt}
+                      </div>
+                    ) : null}
                     <Btn
                       variant="primary"
                       className="mt-3 w-full"

@@ -26,7 +26,7 @@ export function currentMonthSettledSales(
   const bills = state.bills.filter(
     (bill) =>
       matchesBranch(bill.branchId ?? bill.branch) &&
-      bill.issuedAt.slice(0, 7) === period &&
+      (bill.businessDate ?? bill.issuedAt.slice(0, 10)).slice(0, 7) === period &&
       !["VOID", "MERGED", "SPLIT"].includes(bill.status) &&
       isSettledRevenue(bill),
   );
@@ -68,7 +68,8 @@ export function currentMonthJournalStatus(
   const journals = state.journalEntries.filter(
     (entry) =>
       matchesBranch(entry.branchId ?? entry.branch) &&
-      (!entry.postedAt || entry.postedAt.slice(0, 7) === period),
+      (!entry.postedAt ||
+        (entry.businessDate ?? entry.postedAt.slice(0, 10)).slice(0, 7) === period),
   );
   const posted = journals.filter((entry) => entry.status === "POSTED");
   const debit = posted.reduce(

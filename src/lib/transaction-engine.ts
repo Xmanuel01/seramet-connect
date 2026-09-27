@@ -95,6 +95,7 @@ export type TransactionOrder = {
   paymentStatus: "UNPAID" | "PARTIAL" | "PAID" | "PROVIDER_RECEIVABLE" | "REFUNDED";
   createdAt: string;
   updatedAt: string;
+  businessDate?: string;
   lines: TransactionLine[];
   subtotal: number;
   tax: number;
@@ -317,6 +318,7 @@ export type BillingRecord = {
   status: InvoiceStatus;
   paymentStatus: "UNPAID" | "PARTIAL" | "PAID" | "PROVIDER_RECEIVABLE";
   issuedAt: string;
+  businessDate?: string;
   dueAt: string;
   lines: TransactionLine[];
   subtotal: number;
@@ -429,6 +431,7 @@ export type PaymentRecord = {
   cashier: string;
   terminal: string;
   timestamp: string;
+  businessDate?: string;
   reconciliationStatus: ReconciliationStatus;
   settlementStatus: "PENDING" | "SETTLED" | "FAILED" | "NOT_REQUIRED";
   card?: {
@@ -463,6 +466,7 @@ export type ReceiptRecord = {
   customerId?: string;
   customerCode?: string;
   issuedAt: string;
+  businessDate?: string;
   total: number;
   paidAmount: number;
   change: number;
@@ -540,6 +544,7 @@ export type JournalEntry = {
   branch: string;
   status: JournalEntryStatus;
   postedAt?: string;
+  businessDate?: string;
   lines: { account: string; debit: number; credit: number; costCentre: string; taxCode?: string }[];
 };
 
@@ -579,6 +584,7 @@ export type RefundRecord = {
   status: "REQUESTED" | "APPROVED" | "REJECTED" | "COMPLETED";
   createdAt: string;
   completedAt?: string;
+  businessDate?: string;
 };
 
 export type AuditEvent = {
@@ -629,6 +635,7 @@ export type OrderDraft = {
   tenantId?: string;
   branchId?: string;
   branch: string;
+  businessDate?: string;
   table?: string;
   customer: string;
   customerId?: string;
@@ -2177,6 +2184,7 @@ export const TransactionEngine = {
       status: "OPEN",
       paymentStatus: "UNPAID",
       issuedAt: now(),
+      ...(order.businessDate ? { businessDate: order.businessDate } : {}),
       dueAt: addMinutes(now(), 120),
       lines: order.lines.map((line) => ({ ...line, sourceOrderId: order.id })),
       subtotal: order.subtotal,
@@ -2892,6 +2900,7 @@ export const TransactionEngine = {
       branch: bill.branch,
       currency: configurationRepository.getTenant(tenantId).defaultCurrency,
       timestamp: now(),
+      ...(bill.businessDate ? { businessDate: bill.businessDate } : {}),
       ...input,
     };
     next.payments.unshift(payment);
@@ -2967,6 +2976,7 @@ export const TransactionEngine = {
       status: "OPEN",
       paymentStatus: "UNPAID",
       issuedAt: now(),
+      ...(firstBill.businessDate ? { businessDate: firstBill.businessDate } : {}),
       dueAt: addMinutes(now(), 120),
       lines: allLines,
       paid: 0,
@@ -3337,6 +3347,7 @@ function createReceipt(
     ...(bill.customerId ? { customerId: bill.customerId } : {}),
     ...(bill.customerCode ? { customerCode: bill.customerCode } : {}),
     issuedAt: now(),
+    ...(bill.businessDate ? { businessDate: bill.businessDate } : {}),
     total: bill.total,
     paidAmount,
     change: cashChange,
@@ -3383,6 +3394,7 @@ function createPaymentJournal(
     sourceId: payment.id,
     status: "POSTED",
     postedAt: now(),
+    ...(bill.businessDate ? { businessDate: bill.businessDate } : {}),
     lines: [
       {
         account: method.settlementAccountId,

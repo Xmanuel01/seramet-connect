@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
@@ -6,12 +7,14 @@ import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import { cn } from "@/lib/utils";
 import {
+  canNavigateToPath,
   moduleAccessRegistry,
   permissionCodes,
   type PermissionRequirement,
 } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { settingsGroups } from "@/platform/settings-navigation";
 import type { OrderChannelType, PaymentMethodCategory } from "@/platform/types";
 
 export const Route = createFileRoute("/settings")({
@@ -28,24 +31,6 @@ export const Route = createFileRoute("/settings")({
   }),
   component: Settings,
 });
-
-const groups = [
-  { g: "Company", items: ["Profile", "Branches", "Operating hours", "Currencies"] },
-  { g: "Users and access", items: ["Users", "Roles", "Permissions", "Approval limits"] },
-  { g: "POS and restaurant", items: ["Registers", "Tables", "Order types", "Receipt templates"] },
-  { g: "Inventory", items: ["Units", "Categories", "Warehouses", "PAR rules"] },
-  {
-    g: "Procurement",
-    items: ["PO numbering", "Supplier terms", "Receiving rules", "Approval routing"],
-  },
-  { g: "Finance", items: ["Chart of accounts", "Taxes", "Payment methods", "Payroll"] },
-  { g: "CRM", items: ["Segments", "Loyalty tiers", "Coupons", "Complaint SLAs"] },
-  { g: "Website and marketing", items: ["Website", "Social pages", "WhatsApp", "Campaigns"] },
-  {
-    g: "Platform",
-    items: ["Integrations", "Notifications", "AI", "Appearance", "Audit", "System"],
-  },
-];
 
 const accessColumns = [
   { key: "navigationPermission", label: "Navigation" },
@@ -65,24 +50,19 @@ function Settings() {
     roles,
     roleRecords,
     currentUser,
-    isAllBranches,
+    moduleAccess,
     platformState,
     refreshConfiguration,
     refreshAccess,
     canAccessModule,
-    addBranch,
-    removeBranch,
+    hasPermission,
     addRole,
     removeRole,
   } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId);
   const repository = getConfigurationRepository();
-  const [active, setActive] = useState(groups[1]!.g);
-  const [newBranch, setNewBranch] = useState("");
+  const [active, setActive] = useState("Users and access");
   const [newRole, setNewRole] = useState("");
-  const [selectedSetting, setSelectedSetting] = useState("Approval limits");
-  const [businessName, setBusinessName] = useState(tenant?.tradingName ?? "");
-  const [legalName, setLegalName] = useState(tenant?.legalName ?? "");
   const [paymentName, setPaymentName] = useState("");
   const [paymentCode, setPaymentCode] = useState("");
   const [paymentCategory, setPaymentCategory] = useState<PaymentMethodCategory>("CUSTOM");
@@ -120,10 +100,18 @@ function Settings() {
     canAccessModule("users", "CREATE") ||
     canAccessModule("users", "EDIT") ||
     canAccessModule("users", "APPROVE");
-  const visibleGroups = groups.filter(
-    (group) => group.g !== "Users and access" || canViewUserAccess,
-  );
-  const current = visibleGroups.find((group) => group.g === active) ?? visibleGroups[0]!;
+  const canManagePaymentMethods = hasPermission(platformPermissions.settingsPaymentManage);
+  const canManageOrderChannels = hasPermission(platformPermissions.settingsChannelManage);
+  const visibleGroups = settingsGroups
+    .filter((group) => group.label !== "Users and access" || canViewUserAccess)
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => item.kind === "inline" || canNavigateToPath(moduleAccess, item.to),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
+  const current = visibleGroups.find((group) => group.label === active) ?? visibleGroups[0]!;
   const selectedAccessRole =
     roleRecords.find((role) => role.id === selectedAccessRoleId) ?? roleRecords[0];
   const paymentMethods = platformState.paymentMethods
@@ -141,19 +129,13 @@ function Settings() {
     );
   }, [selectedBranchUser]);
 
-  const saveBusinessProfile = () => {
-    if (!tenant || !businessName.trim() || !legalName.trim()) return;
-    repository.upsertTenant({
-      ...tenant,
-      tradingName: businessName.trim(),
-      legalName: legalName.trim(),
-      updatedAt: new Date().toISOString(),
-    });
-    refreshConfiguration();
-    setConfigNotice("Business profile saved.");
-  };
+  useEffect(() => {
+    if (visibleGroups.some((group) => group.label === active)) return;
+    setActive(visibleGroups[0]?.label ?? "");
+  }, [active, visibleGroups]);
 
   const addPaymentMethod = () => {
+    if (!canManagePaymentMethods) return;
     const displayName = paymentName.trim();
     const code = paymentCode.trim().toUpperCase();
     if (!displayName || !code) return;
@@ -178,6 +160,7 @@ function Settings() {
   };
 
   const addOrderChannel = () => {
+    if (!canManageOrderChannels) return;
     const displayName = channelName.trim();
     const code = channelCode.trim().toUpperCase();
     if (!displayName || !code) return;
@@ -289,10 +272,15 @@ function Settings() {
       title="Settings"
       subtitle={`${tenant?.tradingName ?? "Business"} - ${branches.length} branches - ${platformState.users.filter((user) => user.tenantId === activeTenantId && user.active).length} users`}
       actions={
-        <>
-          <Btn>Audit log</Btn>
-          <Btn variant="primary">Save changes</Btn>
-        </>
+        canNavigateToPath(moduleAccess, "/audit-trail") ? (
+          <Link
+            to="/audit-trail"
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-semibold transition-colors hover:bg-secondary"
+          >
+            Audit log
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        ) : undefined
       }
     >
       <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -300,16 +288,16 @@ function Settings() {
           <nav className="space-y-1">
             {visibleGroups.map((group) => (
               <button
-                key={group.g}
-                onClick={() => setActive(group.g)}
+                key={group.label}
+                onClick={() => setActive(group.label)}
                 className={cn(
                   "flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-[13px] font-semibold",
-                  active === group.g
+                  active === group.label
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
               >
-                <span>{group.g}</span>
+                <span>{group.label}</span>
                 <span className="num text-[11px]">{group.items.length}</span>
               </button>
             ))}
@@ -319,32 +307,44 @@ function Settings() {
         <div className="grid min-w-0 gap-4">
           <Panel>
             <PanelHead
-              title={current.g}
-              sub="Configure related settings without exposing every option at once"
+              title={current.label}
+              sub="Open the authoritative workspace or use the permission-controlled editor below"
             />
             <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-              {current.items.map((item, index) => (
-                <button
-                  key={item}
-                  onClick={() => setSelectedSetting(item)}
-                  className="rounded-lg border border-border p-3 text-left hover:bg-secondary/60"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13px] font-semibold">{item}</span>
-                    <Status>
-                      {index % 3 === 0 ? "Active" : index % 3 === 1 ? "Pending" : "Healthy"}
-                    </Status>
+              {current.items.map((item) =>
+                item.kind === "route" ? (
+                  <Link
+                    key={`${item.label}:${item.to}`}
+                    to={item.to}
+                    className="group rounded-lg border border-border p-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-semibold">{item.label}</span>
+                      <ArrowRight
+                        className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-muted-foreground">
+                      {item.description}
+                    </p>
+                  </Link>
+                ) : (
+                  <div key={item.label} className="rounded-lg border border-border p-3 text-left">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-semibold">{item.label}</span>
+                      <span className="text-[11px] font-semibold text-primary">On this page</span>
+                    </div>
+                    <p className="mt-2 text-[12px] leading-5 text-muted-foreground">
+                      {item.description}
+                    </p>
                   </div>
-                  <p className="mt-2 text-[12px] text-muted-foreground">
-                    Manage {item.toLowerCase()} settings for Seramet roles, branches and module
-                    behaviour.
-                  </p>
-                </button>
-              ))}
+                ),
+              )}
             </div>
           </Panel>
 
-          {current.g === "Users and access" && (
+          {current.label === "Users and access" && (
             <>
               <Panel className="min-w-0">
                 <PanelHead
@@ -601,80 +601,30 @@ function Settings() {
             </>
           )}
 
-          {current.g === "Company" && (
-            <Panel>
-              <PanelHead
-                title="Business profile"
-                sub="Trading and legal identity used throughout the application"
-              />
-              <div className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                <ConfigField label="Trading name" value={businessName} onChange={setBusinessName} />
-                <ConfigField label="Legal name" value={legalName} onChange={setLegalName} />
-                <Btn className="self-end" onClick={saveBusinessProfile}>
-                  Save profile
-                </Btn>
-              </div>
-            </Panel>
-          )}
-
-          {current.g === "Company" && (
-            <Panel>
-              <PanelHead
-                title="Branches"
-                sub="Add or remove locations without changing application code"
-              />
-              <div className="space-y-3 p-4">
-                <div className="grid gap-2 md:grid-cols-2">
-                  {branches.map((branch) => (
-                    <div
-                      key={branch}
-                      className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
-                    >
-                      <span className="text-[13px] font-semibold">{branch}</span>
-                      {!isAllBranches && (
-                        <button
-                          onClick={() => removeBranch(branch)}
-                          className="text-[12px] font-semibold text-muted-foreground hover:text-danger"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={newBranch}
-                    onChange={(event) => setNewBranch(event.target.value)}
-                    placeholder="Add branch"
-                    className="h-9 min-w-0 flex-1 rounded-md border border-border bg-card px-3 text-[13px] outline-none"
-                  />
-                  <Btn
-                    onClick={() => {
-                      addBranch(newBranch);
-                      setNewBranch("");
-                    }}
-                  >
-                    Add branch
-                  </Btn>
-                </div>
-              </div>
-            </Panel>
-          )}
-
-          {current.g === "POS and restaurant" && (
+          {current.label === "POS and restaurant" && (
             <Panel>
               <PanelHead
                 title="Order channels"
                 sub="POS source options are sorted from these tenant records"
               />
               <div className="grid gap-3 p-4 md:grid-cols-5">
-                <ConfigField label="Display name" value={channelName} onChange={setChannelName} />
-                <ConfigField label="Code" value={channelCode} onChange={setChannelCode} />
+                <ConfigField
+                  label="Display name"
+                  value={channelName}
+                  onChange={setChannelName}
+                  disabled={!canManageOrderChannels}
+                />
+                <ConfigField
+                  label="Code"
+                  value={channelCode}
+                  onChange={setChannelCode}
+                  disabled={!canManageOrderChannels}
+                />
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                   Channel type
                   <select
                     value={channelType}
+                    disabled={!canManageOrderChannels}
                     onChange={(event) => setChannelType(event.target.value as OrderChannelType)}
                     className="h-9 rounded-md border border-border bg-card px-3 text-foreground"
                   >
@@ -700,11 +650,16 @@ function Settings() {
                   <input
                     type="checkbox"
                     checked={channelUsesOnlinePrice}
+                    disabled={!canManageOrderChannels}
                     onChange={(event) => setChannelUsesOnlinePrice(event.target.checked)}
                   />
                   Use online price
                 </label>
-                <Btn className="self-end" onClick={addOrderChannel}>
+                <Btn
+                  className="self-end"
+                  disabled={!canManageOrderChannels}
+                  onClick={addOrderChannel}
+                >
                   Add channel
                 </Btn>
               </div>
@@ -723,6 +678,7 @@ function Settings() {
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>Active</Status>
                       <Btn
+                        disabled={!canManageOrderChannels}
                         onClick={() => {
                           const enablingOnlinePrice = channel.metadata["useOnlinePrice"] !== true;
                           repository.upsertOrderChannel(activeTenantId, {
@@ -744,6 +700,7 @@ function Settings() {
                         Online price: {channel.metadata["useOnlinePrice"] === true ? "On" : "Off"}
                       </Btn>
                       <Btn
+                        disabled={!canManageOrderChannels}
                         onClick={() => {
                           repository.archiveOrderChannel(activeTenantId, channel.id);
                           refreshConfiguration();
@@ -758,19 +715,30 @@ function Settings() {
             </Panel>
           )}
 
-          {current.g === "Finance" && (
+          {current.label === "Finance" && (
             <Panel>
               <PanelHead
                 title="Payment methods"
                 sub="Arbitrary payment methods appear in POS without source changes"
               />
               <div className="grid gap-3 p-4 md:grid-cols-4">
-                <ConfigField label="Display name" value={paymentName} onChange={setPaymentName} />
-                <ConfigField label="Code" value={paymentCode} onChange={setPaymentCode} />
+                <ConfigField
+                  label="Display name"
+                  value={paymentName}
+                  onChange={setPaymentName}
+                  disabled={!canManagePaymentMethods}
+                />
+                <ConfigField
+                  label="Code"
+                  value={paymentCode}
+                  onChange={setPaymentCode}
+                  disabled={!canManagePaymentMethods}
+                />
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                   Category
                   <select
                     value={paymentCategory}
+                    disabled={!canManagePaymentMethods}
                     onChange={(event) =>
                       setPaymentCategory(event.target.value as PaymentMethodCategory)
                     }
@@ -793,7 +761,11 @@ function Settings() {
                     ))}
                   </select>
                 </label>
-                <Btn className="self-end" onClick={addPaymentMethod}>
+                <Btn
+                  className="self-end"
+                  disabled={!canManagePaymentMethods}
+                  onClick={addPaymentMethod}
+                >
                   Add method
                 </Btn>
               </div>
@@ -812,6 +784,7 @@ function Settings() {
                     <div className="flex items-center gap-2">
                       <Status>Active</Status>
                       <Btn
+                        disabled={!canManagePaymentMethods}
                         onClick={() => {
                           repository.archivePaymentMethod(activeTenantId, method.id);
                           refreshConfiguration();
@@ -826,73 +799,16 @@ function Settings() {
             </Panel>
           )}
 
-          {current.g === "Website and marketing" && (
-            <Panel>
-              <PanelHead
-                title="Website, social and WhatsApp"
-                sub="For operators with Website and Marketing privileges"
-              />
-              <div className="grid gap-3 p-4 md:grid-cols-3">
-                {[
-                  ["Website menu", "Publish menu items, photos, prices and branch availability."],
-                  [
-                    "Social pages",
-                    "Plan Instagram, Facebook and TikTok posts from approved offers.",
-                  ],
-                  [
-                    "WhatsApp Business",
-                    "Manage catalog links, quick replies and customer broadcasts.",
-                  ],
-                ].map(([title, detail]) => (
-                  <button
-                    key={title}
-                    onClick={() => setSelectedSetting(title ?? "Settings")}
-                    className="rounded-lg border border-border p-3 text-left hover:bg-secondary/60"
-                  >
-                    <div className="text-[13px] font-semibold">{title}</div>
-                    <p className="mt-2 text-[12px] text-muted-foreground">{detail}</p>
-                    <Status>Configurable</Status>
-                  </button>
-                ))}
-              </div>
-            </Panel>
-          )}
-
-          <Panel>
-            <PanelHead
-              title={`Selected setting: ${selectedSetting}`}
-              sub="Sensitive finance and inventory changes require controlled approval"
-            />
-            <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_280px]">
-              <div className="space-y-3">
-                {[
-                  ["Purchase order auto-approval", ""],
-                  ["Cash variance manager approval", ""],
-                  ["Refund supervisor approval", ""],
-                  ["Stock adjustment reason required", ""],
-                ].map(([label, value]) => (
-                  <label key={label} className="grid gap-1 text-[12px] font-semibold">
-                    {label}
-                    <input
-                      className="h-9 rounded-md border border-border bg-card px-3 text-[13px] outline-none focus:ring-2 focus:ring-ring/40"
-                      defaultValue={value}
-                      placeholder="Not configured"
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="rounded-lg border border-warning/30 bg-warning-soft p-3">
-                <div className="text-[13px] font-semibold text-warning">Security note</div>
-                <p className="mt-1 text-[12px]">
-                  High-risk actions such as refunds, payroll changes and stock adjustments should
-                  require a reason and an immutable audit entry.
-                </p>
-              </div>
-            </div>
-            <div className="border-t border-border px-4 py-3 text-[12px] text-muted-foreground">
+          {(current.label === "Users and access" ||
+            current.label === "POS and restaurant" ||
+            current.label === "Finance") && (
+            <div
+              role="status"
+              className="rounded-lg border border-border bg-card px-4 py-3 text-[12px] text-muted-foreground"
+            >
               {configNotice}
             </div>
-          </Panel>
+          )}
         </div>
       </div>
     </AppShell>
@@ -954,16 +870,19 @@ function ConfigField({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
       {label}
       <input
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="h-9 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none focus:border-primary"
       />

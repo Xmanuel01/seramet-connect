@@ -60,6 +60,10 @@ export function normalizePaymentOperations(
       },
     };
   }
+  for (const dayClose of normalized.dayCloses) {
+    dayClose.readiness ??= [];
+    dayClose.snapshots ??= dayClose.snapshot ? [dayClose.snapshot] : [];
+  }
   const migratedDrawerIds = new Set(normalized.drawerSessions.map((drawer) => drawer.id));
   for (const legacy of state.cashDrawers ?? []) {
     if (!currency) continue;

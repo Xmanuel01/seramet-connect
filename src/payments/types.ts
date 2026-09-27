@@ -523,6 +523,7 @@ export type DayClose = {
   tenantId: string;
   branchId: string;
   businessDate: string;
+  currency?: string;
   status: "OPEN" | "REVIEW" | "CLOSED" | "REOPENED";
   unresolvedExceptionIds: string[];
   closedBy?: string;
@@ -530,6 +531,21 @@ export type DayClose = {
   reopenedBy?: string;
   reason?: string;
   overrideReason?: string;
+  readiness: import("@/lib/financial-lifecycle").DayCloseReadinessIssue[];
+  snapshot?: import("@/lib/financial-lifecycle").FinancialLifecycleProjection & {
+    revision: number;
+    closedBy: string;
+    closedAt: string;
+    overrideReason?: string;
+  };
+  snapshots: Array<
+    import("@/lib/financial-lifecycle").FinancialLifecycleProjection & {
+      revision: number;
+      closedBy: string;
+      closedAt: string;
+      overrideReason?: string;
+    }
+  >;
   createdAt: string;
   updatedAt: string;
 };

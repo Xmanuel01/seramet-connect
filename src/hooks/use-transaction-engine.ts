@@ -156,9 +156,11 @@ export function useTransactionEngine() {
       timer = window.setTimeout(() => void syncFromBackend(), 150);
     };
     window.addEventListener("seramet:realtime", refresh);
+    window.addEventListener("seramet:refresh", refresh);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("seramet:realtime", refresh);
+      window.removeEventListener("seramet:refresh", refresh);
     };
   }, [syncFromBackend]);
 

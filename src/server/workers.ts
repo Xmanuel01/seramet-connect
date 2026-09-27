@@ -2041,14 +2041,35 @@ async function aggregateEod(env: SerametEnv, tenantId: string) {
 
 async function completeWorkerJob(env: SerametEnv, job: WorkerJobRow, durationMs: number) {
   const stamp = new Date().toISOString();
-  await env
-    .SERAMET_DB!.prepare(
-      `UPDATE worker_jobs SET status = 'SUCCEEDED', finished_at = ?, duration_ms = ?,
-       lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND status = 'RUNNING'`,
-    )
-    .bind(stamp, durationMs, stamp, job.tenant_id, job.id)
-    .run();
+  await env.SERAMET_DB!.batch([
+    env
+      .SERAMET_DB!.prepare(
+        `UPDATE worker_jobs SET status = 'SUCCEEDED', finished_at = ?, duration_ms = ?,
+         lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE tenant_id = ? AND id = ? AND status = 'RUNNING'`,
+      )
+      .bind(stamp, durationMs, stamp, job.tenant_id, job.id),
+    env
+      .SERAMET_DB!.prepare(
+        `INSERT INTO realtime_events
+          (tenant_id,id,branch_id,topic,entity_type,entity_id,event_type,correlation_id,
+           payload_json,created_at,expires_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .bind(
+        job.tenant_id,
+        crypto.randomUUID(),
+        job.branch_id,
+        "workers",
+        "WORKER_JOB",
+        job.id,
+        `${job.job_type}_COMPLETED`,
+        job.correlation_id,
+        JSON.stringify({ durationMs }),
+        stamp,
+        new Date(Date.parse(stamp) + 24 * 60 * 60 * 1_000).toISOString(),
+      ),
+  ]);
 }
 
 async function recordWorkerFailure(env: SerametEnv, body: SerametWorkerMessage, error: unknown) {

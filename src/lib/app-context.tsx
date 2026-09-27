@@ -511,6 +511,9 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     if (typeof EventSource === "undefined") return;
     const endpoint = `/api/seramet/realtime/events?tenant=${encodeURIComponent(tenantId)}&branchId=${encodeURIComponent(branchId)}`;
     const stream = new EventSource(endpoint, { withCredentials: true });
+    const requestRefresh = (reason: string) => {
+      window.dispatchEvent(new CustomEvent("seramet:refresh", { detail: { reason } }));
+    };
     const message = (event: MessageEvent<string>) => {
       try {
         const detail = JSON.parse(event.data) as Record<string, unknown>;
@@ -520,7 +523,26 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }
     };
     stream.addEventListener("seramet", message as EventListener);
-    return () => stream.close();
+    stream.addEventListener("unavailable", () => requestRefresh("stream-unavailable"));
+    stream.onerror = () => requestRefresh("stream-error");
+    const focus = () => requestRefresh("focus");
+    const online = () => requestRefresh("online");
+    const visible = () => {
+      if (document.visibilityState === "visible") requestRefresh("visible");
+    };
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) requestRefresh("poll");
+    }, 30_000);
+    window.addEventListener("focus", focus);
+    window.addEventListener("online", online);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("online", online);
+      document.removeEventListener("visibilitychange", visible);
+      stream.close();
+    };
   }, [branchId, tenantId]);
   return null;
 }

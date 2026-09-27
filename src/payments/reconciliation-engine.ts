@@ -1,4 +1,5 @@
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
+import { financialCloseReadiness, projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 import { createJournal, reverseJournal } from "@/payments/accounting-posting";
 import {
   assertMinorAmount,
@@ -847,7 +848,13 @@ export class ReconciliationEngine {
 
   prepareDayClose(
     state: TransactionState,
-    input: { tenantId: string; branchId: string; businessDate: string; actor: string },
+    input: {
+      tenantId: string;
+      branchId: string;
+      businessDate: string;
+      actor: string;
+      currency?: string;
+    },
   ) {
     const next = normalizeTransactionState(state);
     assertTenant(next, input.tenantId);
@@ -858,27 +865,14 @@ export class ReconciliationEngine {
         day.branchId === input.branchId &&
         day.businessDate === input.businessDate,
     );
-    const unresolvedExceptionIds = operations.exceptions
-      .filter(
-        (exception) =>
-          exception.tenantId === input.tenantId &&
-          (!exception.branchId || exception.branchId === input.branchId) &&
-          exception.status !== "RESOLVED" &&
-          exception.severity === "CRITICAL",
-      )
-      .map((exception) => exception.id);
-    const pendingRefundIds = operations.refunds
-      .filter(
-        (refund) =>
-          refund.tenantId === input.tenantId &&
-          refund.branchId === input.branchId &&
-          ["REQUESTED", "APPROVED", "PROCESSING"].includes(refund.status),
-      )
-      .map((refund) => refund.id);
-    const ids = [...new Set([...unresolvedExceptionIds, ...pendingRefundIds])];
+    const readiness = financialCloseReadiness(next, input);
+    const ids = readiness.map((item) => item.id);
     const stamp = new Date().toISOString();
     if (existing) {
       existing.unresolvedExceptionIds = ids;
+      existing.readiness = readiness;
+      existing.snapshots ??= existing.snapshot ? [existing.snapshot] : [];
+      existing.currency ??= input.currency ?? resolveCloseCurrency(next, input.branchId);
       existing.status = ids.length ? "REVIEW" : "OPEN";
       existing.updatedAt = stamp;
       return next;
@@ -888,8 +882,11 @@ export class ReconciliationEngine {
       tenantId: input.tenantId,
       branchId: input.branchId,
       businessDate: input.businessDate,
+      currency: input.currency ?? resolveCloseCurrency(next, input.branchId),
       status: ids.length ? "REVIEW" : "OPEN",
       unresolvedExceptionIds: ids,
+      readiness,
+      snapshots: [],
       createdAt: stamp,
       updatedAt: stamp,
     });
@@ -913,14 +910,36 @@ export class ReconciliationEngine {
     );
     if (!day) throw new Error("Day close was not found");
     if (day.status === "CLOSED") return next;
-    if (day.unresolvedExceptionIds.length) {
-      if (!input.hasOverridePermission) throw new Error("Critical EOD exceptions must be resolved");
+    const readiness = financialCloseReadiness(next, day);
+    day.readiness = readiness;
+    day.unresolvedExceptionIds = readiness.map((item) => item.id);
+    if (readiness.length) {
+      if (!input.hasOverridePermission) throw new Error("EOD close blockers must be resolved");
       if (!input.overrideReason?.trim()) throw new Error("EOD override reason is required");
       day.overrideReason = input.overrideReason;
     }
+    const closedAt = new Date().toISOString();
+    const currency = day.currency ?? resolveCloseCurrency(next, day.branchId);
+    const projection = projectFinancialLifecycle(next, {
+      tenantId: day.tenantId,
+      branchId: day.branchId,
+      businessDate: day.businessDate,
+      currency,
+      calculatedAt: closedAt,
+    });
+    const snapshots = day.snapshots ?? (day.snapshot ? [day.snapshot] : []);
+    const snapshot = {
+      ...projection,
+      revision: snapshots.length + 1,
+      closedBy: input.actor,
+      closedAt,
+      ...(input.overrideReason?.trim() ? { overrideReason: input.overrideReason.trim() } : {}),
+    };
     day.status = "CLOSED";
     day.closedBy = input.actor;
-    day.closedAt = new Date().toISOString();
+    day.closedAt = closedAt;
+    day.snapshot = snapshot;
+    day.snapshots = [...snapshots, snapshot];
     day.updatedAt = day.closedAt;
     return next;
   }
@@ -966,6 +985,14 @@ export function businessDateFor(timestamp: string, cutoffHour: number) {
   if (!Number.isFinite(date.getTime())) throw new Error("Invalid business timestamp");
   const shifted = new Date(date.getTime() - cutoffHour * 60 * 60 * 1000);
   return shifted.toISOString().slice(0, 10);
+}
+
+function resolveCloseCurrency(state: TransactionState, branchId: string) {
+  return (
+    state.paymentOperations?.transactions.find((item) => item.branchId === branchId)?.currency ??
+    state.payments.find((item) => item.branchId === branchId)?.currency ??
+    "XXX"
+  );
 }
 
 function requiredOperations(state: TransactionState) {

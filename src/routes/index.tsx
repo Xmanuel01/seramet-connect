@@ -16,11 +16,13 @@ import {
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Segmented, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
+import { currentDateKey, ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
 import { permissions } from "@/platform/permissions";
+import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
+import { majorFromMinor } from "@/payments/money";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -91,6 +93,8 @@ function Home() {
     hasPermission,
     locale,
     timeZone,
+    activeTenantId,
+    currency,
   } = useAppContext();
   const { state } = useTransactionEngine();
   const operations = deriveBranchOperations(state, branch);
@@ -104,10 +108,27 @@ function Home() {
         matchesBranch(order.branchId ?? order.branch) &&
         created >= start &&
         created <= now &&
-        !["DRAFT", "HELD", "CANCELLED"].includes(order.status)
+        !["DRAFT", "HELD", "CANCELLED", "REFUNDED"].includes(order.status)
       );
     });
-    const netSales = scopedOrders.reduce((total, order) => total + order.total, 0);
+    const currentBusinessDate = currentDateKey(now, timeZone);
+    const todayProjection = branchRecords
+      .filter((record) => matchesBranch(record.id))
+      .map((record) =>
+        projectFinancialLifecycle(state, {
+          tenantId: activeTenantId,
+          branchId: record.id,
+          businessDate: currentBusinessDate,
+          currency,
+        }),
+      );
+    const netSales =
+      period === "Today"
+        ? majorFromMinor(
+            todayProjection.reduce((total, row) => total + row.netRevenueMinor, 0),
+            currency,
+          )
+        : scopedOrders.reduce((total, order) => total + order.total, 0);
     const scopedMovements = state.stockMovements.filter((movement) => {
       const created = new Date(movement.createdAt);
       return (
@@ -121,14 +142,22 @@ function Home() {
       (total, movement) => total + Math.abs(movement.quantity) * movement.unitCost,
       0,
     );
-    const collected = state.payments
-      .filter((payment) => {
-        const created = new Date(payment.timestamp);
-        return (
-          matchesBranch(payment.branchId ?? payment.branch) && created >= start && created <= now
-        );
-      })
-      .reduce((total, payment) => total + payment.amount, 0);
+    const collected =
+      period === "Today"
+        ? majorFromMinor(
+            todayProjection.reduce((total, row) => total + row.collectedMinor, 0),
+            currency,
+          )
+        : state.payments
+            .filter((payment) => {
+              const created = new Date(payment.timestamp);
+              return (
+                matchesBranch(payment.branchId ?? payment.branch) &&
+                created >= start &&
+                created <= now
+              );
+            })
+            .reduce((total, payment) => total + payment.amount, 0);
     const trend = lastSevenDays(now).map(({ key, label }) => ({
       d: label,
       sales: scopedOrders
@@ -172,7 +201,7 @@ function Home() {
         };
       });
     return { netSales, cost, collected, orders: scopedOrders, trend, hourly, channels, branches };
-  }, [branchRecords, matchesBranch, period, state.orders, state.payments, state.stockMovements]);
+  }, [activeTenantId, branchRecords, currency, matchesBranch, period, state, timeZone]);
   const grossProfit = report.netSales - report.cost;
   const scopedKpis = [
     { label: "Net Sales", value: report.netSales, money: true },

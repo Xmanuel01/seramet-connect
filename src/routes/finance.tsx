@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
+import { formatDateTime } from "@/lib/currency";
 import {
   configuredTenantCurrency,
   formatBps,
@@ -44,7 +45,7 @@ function Finance() {
   return (
     <AppShell
       title="Finance"
-      subtitle={`Daily flash P&L and profitability - ${branchLabel}`}
+      subtitle={`Daily flash P&L and profitability - ${branchLabel}${management.asOf ? ` - as of ${formatDateTime(management.asOf)}` : ""}`}
       actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
       <ManagementReadModelState status={management.status} error={management.error} empty={!pnl} />
