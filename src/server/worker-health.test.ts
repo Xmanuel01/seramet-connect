@@ -26,9 +26,7 @@ describe("read-only worker readiness", () => {
   it("stops a release with overdue work, without mutating or enqueueing", async () => {
     const recorded: string[] = [];
     const result = await findOverdueDurableWork(dbWithOverdue(true, recorded), now);
-    expect(result).toEqual([
-      expect.objectContaining({ code: "WORKER_BACKLOG_STALE" }),
-    ]);
+    expect(result).toEqual([expect.objectContaining({ code: "WORKER_BACKLOG_STALE" })]);
     expect(recorded[0]).toContain("LIMIT 1");
     expect(recorded[0]).toContain("FROM worker_jobs");
     expect(recorded[0]).not.toMatch(/UPDATE|DELETE|INSERT/);
