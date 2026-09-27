@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   CheckCircle2,
   ChevronLeft,
@@ -14,6 +14,13 @@ import {
   Upload,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { Progress } from "@/components/ui/progress";
+import {
+  estimateImportEtaSeconds,
+  summarizeImportProgress,
+  type ImportProgressSnapshot,
+  type PersistedImportProgress,
+} from "@/onboarding/menu-import-progress";
 import { ManualMenuItemDialog } from "@/components/app/ManualMenuItemDialog";
 import {
   Dialog,
@@ -76,11 +83,27 @@ function MenuImport() {
   const [catalogAvailability, setCatalogAvailability] = useState("ALL");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [progress, setProgress] = useState<PersistedImportProgress | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const lastProgressSample = useRef<ImportProgressSnapshot | null>(null);
+  const lastImportedCount = useRef(0);
+  const currentProgressImport = useRef<string | null>(null);
+  const [completionOpen, setCompletionOpen] = useState(false);
   const [noticeTone, setNoticeTone] = useState<"success" | "warning">("warning");
   const [historicalPreview, setHistoricalPreview] = useState<HistoricalSalesPreview | null>(null);
   const [previousPosName, setPreviousPosName] = useState("");
 
-  const previewRows = preview?.rows ?? [];
+  const previewRows =
+    preview?.status === "COMMITTING"
+      ? (preview.rows ?? []).filter((row) => row.status !== "COMMITTED" && row.status !== "SKIPPED")
+      : (preview?.rows ?? []);
+  const progressSummary = progress ? summarizeImportProgress(progress) : null;
+  const estimatedTime =
+    etaSeconds === null
+      ? "Calculating from completed items"
+      : etaSeconds < 60
+        ? `About ${etaSeconds} seconds remaining`
+        : `About ${Math.ceil(etaSeconds / 60)} minutes remaining`;
   const committedCount = centre.menuCatalog.length;
   const categoryCodes = [...new Set(centre.menuCatalog.map((item) => item.category_code))].sort();
   const filteredCatalog = useMemo(() => {
@@ -164,6 +187,13 @@ function MenuImport() {
   useEffect(() => {
     if (preview?.status !== "COMMITTING") return;
     const importId = preview.id;
+    if (currentProgressImport.current !== importId) {
+      currentProgressImport.current = importId;
+      lastProgressSample.current = null;
+      lastImportedCount.current = 0;
+      setProgress(null);
+      setEtaSeconds(null);
+    }
     let active = true;
     let checking = false;
     const check = async () => {
@@ -172,6 +202,32 @@ function MenuImport() {
       try {
         const result = await importStatus(importId);
         if (!active) return;
+        const persisted = { ...result.progress, workerStatus: result.worker?.status };
+        const sample: ImportProgressSnapshot = {
+          processed: persisted.processed,
+          total: persisted.total,
+          observedAt: Date.now(),
+        };
+        setProgress(persisted);
+        if (result.worker?.status !== "RUNNING") setEtaSeconds(null);
+        if (sample.processed > lastImportedCount.current) {
+          // Only refresh after actual persisted row results change.
+          lastImportedCount.current = sample.processed;
+          void inspectImport(importId).then((updated) => {
+            if (active) setPreview((current) => (current?.id === importId ? updated : current));
+          }).catch(() => undefined);
+          void refreshMenuCatalog();
+        }
+        if (
+          result.worker?.status === "RUNNING" &&
+          lastProgressSample.current &&
+          sample.processed > lastProgressSample.current.processed
+        ) {
+          setEtaSeconds(estimateImportEtaSeconds(lastProgressSample.current, sample));
+        }
+        if (!lastProgressSample.current || sample.processed > lastProgressSample.current.processed) {
+          lastProgressSample.current = sample;
+        }
         if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
           setPreview((current) =>
             current?.id === importId
@@ -188,6 +244,7 @@ function MenuImport() {
             "Menu import committed and independently verified in the authoritative catalogue.",
           );
           setNoticeTone("success");
+          setCompletionOpen(true);
           void refreshMenuCatalog();
         } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
           setPreview((current) =>
@@ -237,7 +294,14 @@ function MenuImport() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [importStatus, refreshMenuCatalog, pendingImportKey, preview?.id, preview?.status]);
+  }, [
+    importStatus,
+    inspectImport,
+    refreshMenuCatalog,
+    pendingImportKey,
+    preview?.id,
+    preview?.status,
+  ]);
 
   const invalidatePreview = (
     message = "Import settings changed. Run preview again before commit.",
@@ -315,6 +379,11 @@ function MenuImport() {
       "Submitting the existing preview once. You can track its status without repeating it.",
     );
     setNoticeTone("warning");
+    currentProgressImport.current = pending.id;
+    lastProgressSample.current = null;
+    lastImportedCount.current = 0;
+    setProgress(null);
+    setEtaSeconds(null);
     window.sessionStorage.setItem(pendingImportKey, pending.id);
     void commitImport(pending)
       .then((response) => {
@@ -339,6 +408,7 @@ function MenuImport() {
         window.sessionStorage.removeItem(pendingImportKey);
         setNotice("Menu import committed and verified in the authoritative catalogue.");
         setNoticeTone("success");
+        setCompletionOpen(true);
       })
       .catch(async (error: unknown) => {
         const result = await importStatus(pending.id).catch(() => null);
