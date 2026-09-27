@@ -778,7 +778,19 @@ export class OnboardingService {
       .bind(this.actor.tenantId)
       .first<{ id: string }>();
     if (unresolvedBootstrap) {
-      throw invalidTransition("Finish and activate the first branch before adding another branch");
+      // A completed onboarding wizard confirms the first branch's configuration,
+      // but the tenant may intentionally remain in SETUP until its *other* branches
+      // are configured. Requiring tenant-wide LIVE here creates a multi-branch
+      // deadlock: operators cannot provision the remaining branches before go-live.
+      const wizard = await this.db
+        .prepare("SELECT status FROM onboarding_wizard_progress WHERE tenant_id=?")
+        .bind(this.actor.tenantId)
+        .first<{ status: string }>();
+      if (wizard?.status !== "COMPLETED") {
+        throw invalidTransition(
+          "Complete the first branch's guided onboarding before adding another branch",
+        );
+      }
     }
     const brand = await this.db
       .prepare("SELECT id FROM brands WHERE tenant_id=? AND id=? AND active=1")
