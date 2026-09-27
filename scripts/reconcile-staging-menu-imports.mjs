@@ -17,8 +17,10 @@ import {
  * quarantine from a validation error or an actually attempted worker failure.
  */
 const apply = process.argv.includes("--apply");
-if (process.argv.some((arg) => !["--apply", "--plan"].includes(arg)) ||
-    (process.argv.includes("--apply") && process.argv.includes("--plan"))) {
+if (
+  process.argv.some((arg) => !["--apply", "--plan"].includes(arg)) ||
+  (process.argv.includes("--apply") && process.argv.includes("--plan"))
+) {
   throw new Error("Usage: node scripts/reconcile-staging-menu-imports.mjs [--plan | --apply]");
 }
 if (process.env.SERAMET_ENVIRONMENT !== "staging") {
@@ -28,19 +30,25 @@ if (!process.env.SERAMET_POSTGRES_URL) {
   throw new Error("Staging Postgres connection is required; never paste credentials into logs");
 }
 const dsn = new URL(process.env.SERAMET_POSTGRES_URL);
-if (!["postgres:", "postgresql:"].includes(dsn.protocol) ||
-    !(dsn.hostname.includes(STAGING_PROJECT_REF) ||
-      decodeURIComponent(dsn.username).includes(STAGING_PROJECT_REF))) {
+if (
+  !["postgres:", "postgresql:"].includes(dsn.protocol) ||
+  !(
+    dsn.hostname.includes(STAGING_PROJECT_REF) ||
+    decodeURIComponent(dsn.username).includes(STAGING_PROJECT_REF)
+  )
+) {
   throw new Error("Postgres connection does not identify the expected staging Supabase project");
 }
 const db = new pg.Client({ connectionString: process.env.SERAMET_POSTGRES_URL });
 const optionalLock = apply ? " FOR UPDATE" : "";
 
 async function snapshot() {
-  const imports = (await db.query(
-    "SELECT * FROM public.setup_imports WHERE import_kind='MENU' AND status='COMMITTING' ORDER BY created_at" +
-      optionalLock,
-  )).rows;
+  const imports = (
+    await db.query(
+      "SELECT * FROM public.setup_imports WHERE import_kind='MENU' AND status='COMMITTING' ORDER BY created_at" +
+        optionalLock,
+    )
+  ).rows;
   if (imports.length !== 3 || new Set(imports.map((record) => record.tenant_id)).size !== 1) {
     throw new Error("Expected exactly the three known staging pending menu imports");
   }
@@ -49,16 +57,20 @@ async function snapshot() {
   const [rows, jobs, branches, catalogue, applied, migrations, importJobCount] = await Promise.all([
     db.query(
       "SELECT * FROM public.setup_import_rows WHERE tenant_id=$1 AND import_id=ANY($2::text[]) " +
-        "ORDER BY import_id,row_number" + (apply ? " FOR SHARE" : ""),
+        "ORDER BY import_id,row_number" +
+        (apply ? " FOR SHARE" : ""),
       [tenantId, ids],
     ),
     db.query(
       "SELECT * FROM public.worker_jobs WHERE tenant_id=$1 AND job_type='SETUP_IMPORT_COMMIT' " +
-        "AND payload_json::jsonb->>'importId'=ANY($2::text[]) ORDER BY id" + optionalLock,
+        "AND payload_json::jsonb->>'importId'=ANY($2::text[]) ORDER BY id" +
+        optionalLock,
       [tenantId, ids],
     ),
-    db.query("SELECT * FROM public.branches WHERE tenant_id=$1 ORDER BY id" +
-      (apply ? " FOR SHARE" : ""), [tenantId]),
+    db.query(
+      "SELECT * FROM public.branches WHERE tenant_id=$1 ORDER BY id" + (apply ? " FOR SHARE" : ""),
+      [tenantId],
+    ),
     db.query(
       "SELECT COUNT(*)::integer AS count FROM public.menu_catalog_items m WHERE m.tenant_id=$1 " +
         "AND EXISTS (SELECT 1 FROM public.setup_import_rows r " +
@@ -96,17 +108,25 @@ async function snapshot() {
 
 function checkApprovals(plan) {
   const env = process.env;
-  if (env.SERAMET_RECONCILE_BACKUP_RESTORE_VERIFIED !== "true" ||
-      !env.SERAMET_RECONCILE_RESTORE_EVIDENCE?.trim()) {
-    throw new Error("Missing independently verified backup, isolated restore and evidence reference");
+  if (
+    env.SERAMET_RECONCILE_BACKUP_RESTORE_VERIFIED !== "true" ||
+    !env.SERAMET_RECONCILE_RESTORE_EVIDENCE?.trim()
+  ) {
+    throw new Error(
+      "Missing independently verified backup, isolated restore and evidence reference",
+    );
   }
-  if (env.SERAMET_RECONCILE_APPROVED_PLAN_SHA256 !== plan.fingerprint ||
-      env.SERAMET_RECONCILE_APPROVED_TENANT_REF !== plan.tenantRef ||
-      env.SERAMET_RECONCILE_APPROVED_CANONICAL_REF !== plan.canonicalRef) {
+  if (
+    env.SERAMET_RECONCILE_APPROVED_PLAN_SHA256 !== plan.fingerprint ||
+    env.SERAMET_RECONCILE_APPROVED_TENANT_REF !== plan.tenantRef ||
+    env.SERAMET_RECONCILE_APPROVED_CANONICAL_REF !== plan.canonicalRef
+  ) {
     throw new Error("Exact tenant, canonical V3 and current plan fingerprint were not approved");
   }
-  if (env.SERAMET_RECONCILE_UNSCANNED_IMPORTS_WILL_NOT_REPLAY !== "true" ||
-      !env.SERAMET_RECONCILE_OPERATOR?.trim()) {
+  if (
+    env.SERAMET_RECONCILE_UNSCANNED_IMPORTS_WILL_NOT_REPLAY !== "true" ||
+    !env.SERAMET_RECONCILE_OPERATOR?.trim()
+  ) {
     throw new Error("Explicit no-replay acknowledgment and operator identity are required");
   }
 }
@@ -147,17 +167,22 @@ async function quarantine(plan) {
         "last_error=$2, lease_owner=NULL, lease_expires_at=NULL " +
         "WHERE tenant_id=$3 AND id=$4 AND status='PENDING' AND attempt_count=0 " +
         "AND started_at IS NULL AND lease_owner IS NULL RETURNING id",
-      [stamp, "Administrative staging import quarantine, no execution: " + reason,
-        plan.tenantId, job.id],
+      [
+        stamp,
+        "Administrative staging import quarantine, no execution: " + reason,
+        plan.tenantId,
+        job.id,
+      ],
     );
     if (jobUpdate.rowCount !== 1) throw new Error("Job changed during quarantine; rollback");
     const metadata = JSON.stringify({
       disposition: reason,
       canonicalImportReference: plan.canonicalRef,
-      originalImportReference: plan.dispositions
-        .find((item) => item.record.id === record.id)?.record.id === plan.canonicalId
-        ? plan.canonicalRef
-        : "preserved-in-setup-imports",
+      originalImportReference:
+        plan.dispositions.find((item) => item.record.id === record.id)?.record.id ===
+        plan.canonicalId
+          ? plan.canonicalRef
+          : "preserved-in-setup-imports",
       planSha256: plan.fingerprint,
       restoreEvidenceReference: evidence,
       originalPreviewRowsPreserved: true,
@@ -169,8 +194,17 @@ async function quarantine(plan) {
         "(tenant_id,id,branch_id,actor_id,action,entity_type,entity_id,reason," +
         "correlation_id,metadata_json,created_at) VALUES " +
         "($1,$2,$3,$4,'SETUP_IMPORT_QUARANTINED','SETUP_IMPORT',$5,$6,$7,$8,$9)",
-      [plan.tenantId, randomUUID(), record.branch_id, actor, record.id,
-        reason, job.correlation_id, metadata, stamp],
+      [
+        plan.tenantId,
+        randomUUID(),
+        record.branch_id,
+        actor,
+        record.id,
+        reason,
+        job.correlation_id,
+        metadata,
+        stamp,
+      ],
     );
   }
   const [imports, jobs, audited] = await Promise.all([
@@ -190,8 +224,7 @@ async function quarantine(plan) {
       [plan.tenantId, plan.dispositions.map((item) => item.record.id)],
     ),
   ]);
-  if (imports.rows[0].count !== 3 || jobs.rows[0].count !== 3 ||
-      audited.rows[0].count !== 3) {
+  if (imports.rows[0].count !== 3 || jobs.rows[0].count !== 3 || audited.rows[0].count !== 3) {
     throw new Error("Reconciliation postconditions failed; rollback the whole transaction");
   }
 }
@@ -199,9 +232,11 @@ async function quarantine(plan) {
 let transactionOpen = false;
 try {
   await db.connect();
-  await db.query(apply
-    ? "BEGIN ISOLATION LEVEL SERIALIZABLE"
-    : "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  await db.query(
+    apply
+      ? "BEGIN ISOLATION LEVEL SERIALIZABLE"
+      : "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+  );
   transactionOpen = true;
   await db.query("SET LOCAL lock_timeout = '6s'");
   if (apply) await db.query("SELECT pg_advisory_xact_lock(20260927, 1)");
@@ -212,20 +247,29 @@ try {
     await quarantine(plan);
     await db.query("COMMIT");
     transactionOpen = false;
-    console.log("Three import previews and jobs administratively quarantined; no rows deleted. " +
-      "The V3 reference is UNSCANNED and MUST NOT be replayed. Review other pending jobs separately.");
+    console.log(
+      "Three import previews and jobs administratively quarantined; no rows deleted. " +
+        "The V3 reference is UNSCANNED and MUST NOT be replayed. Review other pending jobs separately.",
+    );
   } else {
     await db.query("ROLLBACK");
     transactionOpen = false;
-    console.log("READ-ONLY PLAN ONLY. No changes. Apply requires independently verified " +
-      "backup and isolated restore, exact plan approval, and a separate staging write credential.");
+    console.log(
+      "READ-ONLY PLAN ONLY. No changes. Apply requires independently verified " +
+        "backup and isolated restore, exact plan approval, and a separate staging write credential.",
+    );
   }
 } catch (error) {
   if (transactionOpen) {
-    try { await db.query("ROLLBACK"); } catch { /* preserve original error */ }
+    try {
+      await db.query("ROLLBACK");
+    } catch {
+      /* preserve original error */
+    }
   }
-  console.error("Reconciliation refused: " +
-    (error instanceof Error ? error.message : "unknown failure"));
+  console.error(
+    "Reconciliation refused: " + (error instanceof Error ? error.message : "unknown failure"),
+  );
   process.exitCode = 1;
 } finally {
   await db.end();
