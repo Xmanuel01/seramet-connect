@@ -1357,7 +1357,10 @@ export class OnboardingService {
     }
     // Menu rows expand into multiple item/branch/audit SQL statements. Avoid a long
     // synchronous Cloudflare request even for a medium-sized restaurant menu.
-    if ((record.row_count > 500 || (record.import_kind === "MENU" && record.row_count > 100)) && !options.worker) {
+    if (
+      (record.row_count > 500 || (record.import_kind === "MENU" && record.row_count > 100)) &&
+      !options.worker
+    ) {
       const jobId = stableId("worker", `setup-import-commit:${importId}`);
       const correlationId = crypto.randomUUID();
       const stamp = now();
