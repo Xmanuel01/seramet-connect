@@ -94,10 +94,7 @@ export function clearInteractiveSignIn() {
 
 /** Revoke both account and device-PIN sessions; never treat a failed request as success. */
 export async function revokeAllBrowserSessions() {
-  const endpoints = [
-    "/api/seramet/public/auth/logout",
-    "/api/seramet/public/employee/logout",
-  ];
+  const endpoints = ["/api/seramet/public/auth/logout", "/api/seramet/public/employee/logout"];
   const results = await Promise.allSettled(
     endpoints.map((url) => fetch(url, { method: "POST", credentials: "same-origin" })),
   );
