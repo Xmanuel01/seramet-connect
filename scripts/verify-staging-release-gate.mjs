@@ -15,6 +15,9 @@ export function assessStagingReleaseApproval(env) {
   if (env.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED !== "true") {
     issues.push("PENDING_WORK_NOT_REVIEWED");
   }
+  if (env.SERAMET_DATA_API_EXPOSURE_CLEARED !== "true") {
+    issues.push("DATA_API_EXPOSURE_NOT_CLEARED");
+  }
   return issues;
 }
 
@@ -25,7 +28,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       "Unsafe staging release blocked before migrations: " +
         issues.join(", ") +
         ". Approve this exact commit only after independently verifying staging backup/restore, " +
-        "pending import/job reconciliation, and the scanner resource. Do not disable this gate.",
+        "pending import/job reconciliation, the scanner resource and the Data API exposure review. Do not disable this gate.",
     );
     process.exitCode = 1;
   } else {
