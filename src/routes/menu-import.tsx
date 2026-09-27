@@ -52,6 +52,7 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
+  const { inspectImport, importStatus, refreshMenuCatalog, commitImport } = centre;
   const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
   const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
   const canImport = hasPermission(permissions.setupImport);
@@ -138,8 +139,7 @@ function MenuImport() {
     const savedId = window.sessionStorage.getItem(pendingImportKey);
     if (!savedId) return;
     let active = true;
-    void centre
-      .inspectImport(savedId)
+    void inspectImport(savedId)
       .then((restored) => {
         if (!active) return;
         setPreview((current) => current ?? restored);
@@ -159,7 +159,7 @@ function MenuImport() {
     return () => {
       active = false;
     };
-  }, [centre.inspectImport, pendingImportKey]);
+  }, [inspectImport, pendingImportKey]);
 
   useEffect(() => {
     if (preview?.status !== "COMMITTING") return;
@@ -170,18 +170,25 @@ function MenuImport() {
       if (checking) return;
       checking = true;
       try {
-        const result = await centre.importStatus(importId);
+        const result = await importStatus(importId);
         if (!active) return;
         if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
           setPreview((current) =>
             current?.id === importId
-              ? { ...current, status: "COMMITTED", canCommit: false, verification: result.verification }
+              ? {
+                  ...current,
+                  status: "COMMITTED",
+                  canCommit: false,
+                  verification: result.verification,
+                }
               : current,
           );
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Menu import committed and independently verified in the authoritative catalogue.");
+          setNotice(
+            "Menu import committed and independently verified in the authoritative catalogue.",
+          );
           setNoticeTone("success");
-          void centre.refreshMenuCatalog();
+          void refreshMenuCatalog();
         } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
           setPreview((current) =>
             current?.id === importId ? { ...current, status: "FAILED", canCommit: false } : current,
@@ -230,7 +237,13 @@ function MenuImport() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [centre.importStatus, centre.refreshMenuCatalog, pendingImportKey, preview?.id, preview?.status]);
+  }, [
+    importStatus,
+    refreshMenuCatalog,
+    pendingImportKey,
+    preview?.id,
+    preview?.status,
+  ]);
 
   const invalidatePreview = (
     message = "Import settings changed. Run preview again before commit.",
@@ -304,11 +317,12 @@ function MenuImport() {
     if (!preview?.canCommit || busy) return;
     const pending = preview;
     setBusy(true);
-    setNotice("Submitting the existing preview once. You can track its status without repeating it.");
+    setNotice(
+      "Submitting the existing preview once. You can track its status without repeating it.",
+    );
     setNoticeTone("warning");
     window.sessionStorage.setItem(pendingImportKey, pending.id);
-    void centre
-      .commitImport(pending)
+    void commitImport(pending)
       .then((response) => {
         if (response.result.queued) {
           setPreview({ ...pending, status: "COMMITTING", canCommit: false });
@@ -333,7 +347,7 @@ function MenuImport() {
         setNoticeTone("success");
       })
       .catch(async (error: unknown) => {
-        const result = await centre.importStatus(pending.id).catch(() => null);
+        const result = await importStatus(pending.id).catch(() => null);
         if (result?.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
           setPreview({
             ...pending,
@@ -344,15 +358,13 @@ function MenuImport() {
           window.sessionStorage.removeItem(pendingImportKey);
           setNotice("Menu import was verified despite a lost commit response.");
           setNoticeTone("success");
-          void centre.refreshMenuCatalog();
+          void refreshMenuCatalog();
           return;
         }
         if (result?.status === "FAILED") {
           setPreview({ ...pending, status: "FAILED", canCommit: false });
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice(
-            "Import failed. Review the failure before revalidating or retrying the file.",
-          );
+          setNotice("Import failed. Review the failure before revalidating or retrying the file.");
         } else if (!result || result.status === "COMMITTING") {
           setPreview({ ...pending, status: "COMMITTING", canCommit: false });
           setNotice(
@@ -924,7 +936,15 @@ function MenuImport() {
                 }
                 right={
                   preview ? (
-                    <SetupStatus value={preview.status === "COMMITTING" ? "COMMITTING" : preview.canCommit ? "READY" : "BLOCKED"} />
+                    <SetupStatus
+                      value={
+                        preview.status === "COMMITTING"
+                          ? "COMMITTING"
+                          : preview.canCommit
+                            ? "READY"
+                            : "BLOCKED"
+                      }
+                    />
                   ) : (
                     <Status>Pending</Status>
                   )
