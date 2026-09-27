@@ -1355,7 +1355,9 @@ export class OnboardingService {
         );
       }
     }
-    if (record.row_count > 500 && !options.worker) {
+    // Menu rows expand into multiple item/branch/audit SQL statements. Avoid a long
+    // synchronous Cloudflare request even for a medium-sized restaurant menu.
+    if ((record.row_count > 500 || (record.import_kind === "MENU" && record.row_count > 100)) && !options.worker) {
       const jobId = stableId("worker", `setup-import-commit:${importId}`);
       const correlationId = crypto.randomUUID();
       const stamp = now();
@@ -1550,6 +1552,47 @@ export class OnboardingService {
       status: "COMMITTED" as const,
       rows: rows.results?.length ?? 0,
       verification,
+    };
+  }
+
+  /** Read-only inspection of an existing import; never replays a commit. */
+  async inspectImport(importId: string) {
+    this.require(permissions.setupImport);
+    return this.getImport(importId);
+  }
+
+  /** Cheap polling response, tenant-scoped and guarded by the import permission. */
+  async importStatus(importId: string) {
+    this.require(permissions.setupImport);
+    const record = await this.db
+      .prepare(
+        `SELECT status,row_count,verification_json,updated_at FROM setup_imports
+         WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .first<{
+        status: ImportPreview["status"];
+        row_count: number;
+        verification_json: string;
+        updated_at: string;
+      }>();
+    if (!record) throw notFound("Import not found");
+    const worker = await this.db
+      .prepare(
+        `SELECT status,attempt_count,updated_at FROM worker_jobs
+         WHERE tenant_id=? AND idempotency_key=? AND job_type='SETUP_IMPORT_COMMIT'`,
+      )
+      .bind(this.actor.tenantId, `setup-import-commit:${importId}`)
+      .first<{ status: string; attempt_count: number; updated_at: string }>();
+    return {
+      id: importId,
+      status: record.status,
+      rowCount: record.row_count,
+      updatedAt: record.updated_at,
+      verification: parseJson<ImportPreview["verification"]>(record.verification_json, undefined),
+      worker: worker
+        ? { status: worker.status, attempts: worker.attempt_count, updatedAt: worker.updated_at }
+        : null,
     };
   }
 
