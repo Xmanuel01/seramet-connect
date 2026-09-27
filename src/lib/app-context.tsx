@@ -14,7 +14,7 @@ import {
   type ConfigurationRepository,
 } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
-import { hasInteractiveSignIn } from "@/lib/auth-client";
+import { clearInteractiveSignIn, hasInteractiveSignIn } from "@/lib/auth-client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import {
   buildModuleAccessProfile,
@@ -178,13 +178,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshing = true;
       try {
         const result = await bootstrapAuthoritativeSession(repository);
-        if (
-          active &&
-          result.status === "AUTHENTICATED" &&
+        if (!active) return;
+        if (result.status !== "AUTHENTICATED") {
+          setBootstrap({
+            status: "ERROR",
+            kind: "SERVICE_UNAVAILABLE",
+            message: "Secure authentication is unavailable. Access has been paused.",
+          });
+        } else if (
           result.actor.moduleAccess.accessRevision !== bootstrap.actor.moduleAccess.accessRevision
         ) {
           setBootstrap(result);
         }
+      } catch (error) {
+        if (!active) return;
+        const failure = bootstrapFailure(error);
+        if (failure.kind === "AUTHENTICATION") clearInteractiveSignIn();
+        setBootstrap({ status: "ERROR", ...failure });
       } finally {
         refreshing = false;
       }
