@@ -386,7 +386,11 @@ export function useSetupCentre() {
           rowCount: number;
           updatedAt: string;
           verification?: ImportPreview["verification"];
-          progress: PersistedImportProgress & { pending: number; processed: number; revision: number };
+          progress: PersistedImportProgress & {
+            pending: number;
+            processed: number;
+            revision: number;
+          };
           worker: { status: string; attempts: number; updatedAt: string } | null;
         };
       }>(`/api/seramet/setup/imports/${encodeURIComponent(id)}/status`);
