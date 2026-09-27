@@ -575,8 +575,10 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       referenceMap: { stations: { "Main Kitchen": "MAIN" } },
     });
     expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
-    const result = await service.commitImport(preview.id, preview.commitKey);
-    expect(result).toMatchObject({
+    const queued = await service.commitImport(preview.id, preview.commitKey);
+    expect(queued).toMatchObject({ status: "QUEUED", queued: true, rows: 343 });
+    await processWorkerJob(db, env, String(queued.jobId), true);
+    expect(await service.importStatus(preview.id)).toMatchObject({
       status: "COMMITTED",
       verification: {
         created: 343,
@@ -584,6 +586,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         branchSettings: 343,
         catalogueVerified: true,
       },
+      worker: { status: "SUCCEEDED" },
     });
     const operational = await createMenuCatalogReader(db)(tenantId, branchId);
     expect(operational).toHaveLength(343);
