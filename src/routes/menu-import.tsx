@@ -873,8 +873,8 @@ function MenuImport() {
                 </p>
               ) : (
                 <p>
-                  Row-level branch activation: each row must contain a validated branchCode.
-                  Review preview errors before committing.
+                  Row-level branch activation: each row must contain a validated branchCode. Review
+                  preview errors before committing.
                 </p>
               )}
             </div>
