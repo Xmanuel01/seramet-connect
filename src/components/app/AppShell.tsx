@@ -1,3 +1,4 @@
+import { clearInteractiveSignIn } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -863,6 +864,7 @@ export function AppShell({
             <button
               type="button"
               onClick={() => {
+                clearInteractiveSignIn();
                 void fetch("/api/seramet/public/auth/logout", {
                   method: "POST",
                   credentials: "same-origin",
