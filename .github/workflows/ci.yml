@@ -25,6 +25,8 @@ jobs:
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs
       - run: npm run build
+      - name: Verify deployed worker retains Cron and Queue handlers
+        run: node scripts/verify-cloudflare-events.mjs
       - name: Verify production bundle has no source secrets
         run: npm run audit:bundle
 
