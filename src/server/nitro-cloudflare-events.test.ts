@@ -13,7 +13,9 @@ vi.mock("@/server/workers", () => ({
   scheduleDurableWork: vi.fn(async () => ({ queued: 0 })),
 }));
 
-import registerCloudflareEvents, { type CloudflareHookRegistry } from "@/server/nitro-cloudflare-events";
+import registerCloudflareEvents, {
+  type CloudflareHookRegistry,
+} from "@/server/nitro-cloudflare-events";
 import { resolveEnvironmentFromBindings } from "@/server/runtime-env-resolver";
 import { handleWorkerQueue, scheduleDurableWork } from "@/server/workers";
 
@@ -43,7 +45,10 @@ describe("Nitro Cloudflare event registration", () => {
     const callbacks = createHooks();
     const expectedEnvironment = { SERAMET_ENVIRONMENT: "test", SERAMET_DB: "resolved-test-db" };
     const bindings = { SERAMET_HYPERDRIVE: "staging-test-binding" };
-    const batch = { queue: "staging-work", messages: [] } as unknown as DurableQueueBatch<SerametWorkerMessage>;
+    const batch = {
+      queue: "staging-work",
+      messages: [],
+    } as unknown as DurableQueueBatch<SerametWorkerMessage>;
 
     expect([...callbacks.keys()].sort()).toEqual(["cloudflare:queue", "cloudflare:scheduled"]);
     await callbacks.get("cloudflare:scheduled")!({ env: bindings });
