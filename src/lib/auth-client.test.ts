@@ -24,10 +24,11 @@ describe("sign out", () => {
   });
 
   it("does not claim a successful logout if employee revocation fails", async () => {
-    const request = vi.fn(async (url: string) =>
-      new Response(null, {
-        status: url.includes("/employee/logout") ? 503 : 200,
-      }),
+    const request = vi.fn(
+      async (url: string) =>
+        new Response(null, {
+          status: url.includes("/employee/logout") ? 503 : 200,
+        }),
     );
     vi.stubGlobal("fetch", request);
 
