@@ -1014,6 +1014,46 @@ function MenuImport() {
                   )
                 }
               />
+              {preview.status === "COMMITTING" && progressSummary && (
+                <section
+                  aria-label="Authoritative import progress"
+                  className="space-y-2 border-b border-border px-4 py-3"
+                >
+                  <div className="flex items-center justify-between text-[12px] font-medium">
+                    <span>
+                      {progressSummary.stage === "QUEUED"
+                        ? "Waiting for the import worker"
+                        : progressSummary.stage === "VERIFYING"
+                          ? "Verifying the committed menu"
+                          : "Importing menu items"}
+                    </span>
+                    <span className="tabular-nums">{progressSummary.percent}%</span>
+                  </div>
+                  <Progress
+                    value={progressSummary.percent}
+                    aria-label="Menu import completion"
+                    aria-valuetext={`${progressSummary.processed} of ${progressSummary.total} rows processed`}
+                  />
+                  <div className="flex flex-wrap justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="tabular-nums">
+                      {progressSummary.processed}/{progressSummary.total} processed ·{" "}
+                      {progress?.created} created · {progress?.updated} updated ·{" "}
+                      {progress?.skipped} skipped · {progress?.failed} failed
+                    </span>
+                    <span>
+                      {progress?.workerStatus === "RUNNING" && progressSummary.pending > 0
+                        ? estimatedTime
+                        : progressSummary.stage === "QUEUED"
+                          ? "Waiting for worker; ETA unavailable"
+                          : "Awaiting verified completion"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    You can continue in the background. The progress shown is based on rows
+                    recorded in the database, not an estimated animation.
+                  </p>
+                </section>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px]">
                   <thead>
@@ -1081,7 +1121,7 @@ function MenuImport() {
           )}
           <DialogFooter className="gap-2">
             <Btn disabled={busy} onClick={() => setImportOpen(false)}>
-              Close
+              {preview?.status === "COMMITTING" ? "Continue in background" : "Close"}
             </Btn>
             <Btn
               disabled={!sourceFile || busy}
@@ -1102,6 +1142,35 @@ function MenuImport() {
                 <CheckCircle2 className="h-4 w-4" />
               )}
               Commit import
+            </Btn>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={completionOpen} onOpenChange={setCompletionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Menu import completed</DialogTitle>
+            <DialogDescription>
+              Seramet has independently verified the imported records in the authoritative
+              catalogue. Review any skipped or previously existing items before opening sales.
+            </DialogDescription>
+          </DialogHeader>
+          {progressSummary && (
+            <p className="text-[13px] tabular-nums" role="status">
+              {progressSummary.processed} of {progressSummary.total} processed.{" "}
+              {progress?.created} created, {progress?.updated} updated and{" "}
+              {progress?.skipped} skipped.
+            </p>
+          )}
+          <DialogFooter>
+            <Btn
+              variant="primary"
+              onClick={() => {
+                setCompletionOpen(false);
+                setImportOpen(false);
+              }}
+            >
+              View menu
             </Btn>
           </DialogFooter>
         </DialogContent>
