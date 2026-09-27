@@ -10,8 +10,11 @@ queue/import incident. A passing source build is **not** staging acceptance.
   upload**, because the required scanner service name was absent.
 - Older deployment workflow migrated PostgreSQL before Cloudflare binding discovery.
   The proposed repair reorders preflight ahead of migration.
-- PR descriptions **report**, but this change has **not re-measured**, three
-  overlapping 343-row imports plus 41 pending management jobs, and CPU 503s.
+- Live staging read-only SQL independently confirmed three unfinished 343-row
+  menu previews, three zero-attempt queued import jobs and 41 zero-attempt
+  pending management jobs. The first V3 CREATE and later V3 SKIP are exact
+  343-row duplicates. The older V1 differs in menu metadata, not prices.
+  **All three report UNSCANNED_STAGING**, so none may be replayed.
 - Nitro Queue/Cron hook restoration (#53) and durable 101+ item import (#52) are
   independently reviewed changes, not assumed to be active.
 
@@ -41,11 +44,15 @@ other site; do not rename or mutate existing linked branch rows blindly.
 4. Obtain a verified staging backup **and rehearse restore to an isolated database**.
    Preserve immutable import and event audit rows. Record backup time,
    coverage and the independent restore evidence in a restricted operations log.
-5. Inspect the actual import IDs, target branches, normalized item-code overlap
-   and associated job IDs within authorized staging DB access, without copying
-   private payloads to CI logs. Decide which *one* import may be completed.
-   Require separate explicit approval for any auditable quarantine of the
-   others. Review each of the reported management jobs for safe replay.
+5. Follow [the verified three-import reconciliation and backup-gated runbook](STAGING_MENU_IMPORT_RECONCILIATION.md).
+   The newer V3 SKIP repeats the earlier V3 CREATE exactly; the V1 is an
+   older metadata version. Preserve the earlier V3 as a **reference only**.
+   Because every old preview is UNSCANNED_STAGING and targets the generic
+   bootstrap branch, none can safely execute. After a separately verified
+   backup and isolated restore, use the fail-closed, exact-plan-approved
+   reconciliation tool to preserve all 1,029 rows while administratively
+   quarantining all three import jobs and recording separate audit events.
+   Review the 41 unrelated management jobs separately before any worker restart.
 6. Provision a real internal malware-scanner Worker on the correct Cloudflare
    account. It must expose the expected RPC `scan({bytes,contentType,fileName})`
    contract and return `CLEAN`, `INFECTED`, or `ERROR`. A stub returning
