@@ -61,7 +61,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toMatchObject({
-      version: 25,
+      version: 26,
     });
     const tables = db.sqlite
       .prepare(
@@ -94,6 +94,33 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     ).resolves.toMatchObject({
       customerId: customer.id,
     });
+  });
+
+  it("refuses consent changes outside a manager's assigned branch", async () => {
+    const westlandsCustomer = await crm.createCustomer({
+      displayName: "Consent scope regression",
+      preferredBranchId: branchId,
+      createdSource: "CRM_TEST",
+    });
+    const ngongManager = new CrmService(db, branchActor("branch-demo-ngong-road"), {
+      defaultCallingCode: "254",
+      nationalPrefix: "0",
+    });
+    await expect(
+      ngongManager.appendConsent({
+        customerId: westlandsCustomer.id,
+        channel: "EMAIL_MARKETING",
+        status: "GRANTED",
+        source: "SIGNED_FORM",
+        policyVersion: "test-v1",
+        proofReference: "untrusted-cross-branch-evidence",
+      }),
+    ).rejects.toThrow(/outside the assigned branch/);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS count FROM customer_consents WHERE customer_id=?")
+        .get(westlandsCustomer.id),
+    ).toMatchObject({ count: 0 });
   });
 
   it("does not auto-merge similar names", async () => {
@@ -167,6 +194,36 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
         idempotencyKey: "merge-denied",
       }),
     ).rejects.toThrow(/permission/);
+  });
+
+  it("respects consent withdrawal when grant and withdrawal share an effective timestamp", async () => {
+    const customer = await crm.createCustomer({
+      displayName: "Same millisecond withdrawal",
+      email: "simultaneous@example.test",
+      createdSource: "POS",
+    });
+    const effectiveAt = "2026-09-25T12:00:00.000Z";
+    await crm.appendConsent({
+      customerId: customer.id,
+      channel: "EMAIL_MARKETING",
+      status: "GRANTED",
+      source: "SIGNED_FORM",
+      policyVersion: "v1",
+      effectiveAt,
+    });
+    await crm.appendConsent({
+      customerId: customer.id,
+      channel: "EMAIL_MARKETING",
+      status: "WITHDRAWN",
+      source: "UNSUBSCRIBE",
+      policyVersion: "v1",
+      effectiveAt,
+    });
+    expect(
+      (await crm.customerProfile(customer.id)).consents.find(
+        (item) => item.channel === "EMAIL_MARKETING",
+      )?.status,
+    ).toBe("WITHDRAWN");
   });
 
   it("defaults absent consent to UNKNOWN and withdrawal immediately suppresses marketing", async () => {
@@ -255,6 +312,114 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(result.customers[0]?.email).toContain("***@");
   });
 
+  it("protects finance and service notes from unauthorized CRM roles", async () => {
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "CRM-visible service history",
+      visibility: "CRM",
+    });
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "Finance-only confidential note",
+      visibility: "FINANCE",
+    });
+    await crm.addCustomerNote({
+      customerId: "customer-demo-001",
+      note: "Service-only confidential note",
+      visibility: "SERVICE",
+    });
+    const restricted = new CrmService(
+      db,
+      testActor(tenantId, branchId, [permissions.crmCustomerView, permissions.crmCustomerManage]),
+    );
+    const profile = await restricted.customerProfile("customer-demo-001");
+    const notes = profile.notes.map((item) => item.note);
+    expect(notes).toContain("CRM-visible service history");
+    expect(notes).not.toContain("Finance-only confidential note");
+    expect(notes).not.toContain("Service-only confidential note");
+  });
+
+  it("rejects feedback linked to a customer outside the staff member's branch", async () => {
+    const restricted = new CrmService(db, {
+      ...branchActor("branch-demo-ngong-road"),
+      permissions: [permissions.feedbackManage, permissions.crmCustomerView],
+    });
+    await expect(
+      restricted.createFeedback({
+        branchId: "branch-demo-ngong-road",
+        customerId: "customer-demo-001",
+        categoryId: "feedback-category-service",
+        surveyType: "GENERAL",
+        rating: 0,
+        source: "STAFF_ENTRY",
+      }),
+    ).rejects.toThrow(/branch scope/i);
+  });
+
+  it("enrols a customer exactly once, audits once and rejects another branch", async () => {
+    const createdCustomer = await crm.createCustomer({
+      displayName: "Loyalty enrollment workflow",
+      preferredBranchId: branchId,
+      createdSource: "SERAMET_CRM_UI",
+    });
+    const first = await value.joinProgram(createdCustomer.id, "loyalty-demo-program");
+    const replay = await value.joinProgram(createdCustomer.id, "loyalty-demo-program");
+    expect(first.duplicate).toBe(false);
+    expect(replay).toMatchObject({
+      id: first.id,
+      duplicate: true,
+      memberNumberLastFour: first.memberNumberLastFour,
+    });
+    expect(replay).not.toHaveProperty("memberToken");
+    const audit = db.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action='LOYALTY_MEMBERSHIP_CREATED' AND entity_id=?",
+      )
+      .get(tenantId, first.id);
+    expect(audit).toMatchObject({ count: 1 });
+    const scoped = new LoyaltyValueService(db, branchActor("branch-demo-ngong-road"));
+    await expect(scoped.joinProgram("customer-demo-001", "loyalty-demo-program")).rejects.toThrow(
+      /branch/,
+    );
+    await expect(
+      scoped.adjustPoints({
+        customerId: "customer-demo-001",
+        programId: "loyalty-demo-program",
+        branchId: "branch-demo-ngong-road",
+        points: 20,
+        reason: "Incorrect branch attempted manual award",
+        businessDate: "2026-09-25",
+        idempotencyKey: "wrong-branch-award",
+      }),
+    ).rejects.toThrow(/branch/);
+  });
+
+  it("rejects altered manual point adjustment replays without posting duplicate points", async () => {
+    const request = {
+      customerId: "customer-demo-001",
+      programId: "loyalty-demo-program",
+      branchId,
+      points: 3,
+      reason: "Documented service recovery",
+      businessDate: "2026-09-25",
+      idempotencyKey: "manual-adjust-regression",
+    };
+    const posted = await value.adjustPoints(request);
+    expect(posted.duplicate).toBe(false);
+    await expect(value.adjustPoints(request)).resolves.toMatchObject({
+      id: posted.id,
+      duplicate: true,
+    });
+    await expect(value.adjustPoints({ ...request, points: 30 })).rejects.toThrow(/different data/);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM loyalty_ledger WHERE tenant_id=? AND idempotency_key=?",
+        )
+        .get(tenantId, request.idempotencyKey),
+    ).toMatchObject({ count: 1 });
+  });
+
   it("creates data-driven loyalty programs, tiers and rewards", async () => {
     const program = await value.createProgram({
       code: "CUSTOM",
@@ -290,6 +455,29 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       minimumTierId: tier.id,
       validFrom: "2026-01-01T00:00:00.000Z",
     });
+    const otherBranchManager = new LoyaltyValueService(db, branchActor("branch-demo-ngong-road"));
+    await expect(
+      otherBranchManager.createTier({
+        programId: program.id,
+        code: "CROSS_BRANCH",
+        name: "Cross-branch tier",
+        rank: 1,
+        qualificationType: "POINTS_EARNED",
+        thresholdMinorOrPoints: 1,
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/branch/);
+    await expect(
+      otherBranchManager.createReward({
+        programId: program.id,
+        code: "CROSS_BRANCH",
+        name: "Cross-branch reward",
+        rewardType: "FIXED_DISCOUNT",
+        pointsCost: 1,
+        valueMinor: 100,
+        validFrom: "2026-01-01T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/branch/);
     expect(program.status).toBe("ACTIVE");
     expect(tier.id).toBeTruthy();
     expect(reward.id).toBeTruthy();
@@ -705,6 +893,62 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     });
   });
 
+  it("quarantines ambiguous provider outcomes rather than sending twice", async () => {
+    let attempts = 0;
+    const ambiguousProvider = {
+      key: "AMBIGUOUS_TEST",
+      displayName: "Ambiguous network fixture",
+      capabilities: new Set(["SEND_EMAIL"] as const),
+      async health() {
+        return "CONFIGURED" as const;
+      },
+      async send() {
+        attempts += 1;
+        throw new Error("Provider accepted the request, then connection dropped");
+      },
+    };
+    const campaigns = new CampaignService(
+      db,
+      actor,
+      new CampaignProviderRegistry().register(ambiguousProvider),
+    );
+    await campaigns.upsertProviderConfig({
+      id: "provider-ambiguous",
+      providerKey: "AMBIGUOUS_TEST",
+      displayName: "Ambiguous test provider",
+      capabilities: ["SEND_EMAIL"],
+      maxAttempts: 3,
+    });
+    const campaign = await campaigns.createCampaign({
+      name: "Ambiguous provider test",
+      objective: "Never blindly retry an uncertain external delivery",
+      segmentId: "segment-demo-repeat",
+      channels: ["EMAIL"],
+      templateBody: "Hello {{customer.firstName}}",
+      branchIds: [branchId],
+      brandIds: [],
+      providerConfigId: "provider-ambiguous",
+      approvalRequired: true,
+    });
+    await campaigns.approveCampaign(campaign.id, "Controlled regression test");
+    const first = await campaigns.processCampaign(campaign.id);
+    expect(first.sent).toBe(0);
+    expect(attempts).toBe(1);
+    expect(
+      db.sqlite
+        .prepare("SELECT status,last_error_code FROM campaign_deliveries WHERE campaign_id=?")
+        .get(campaign.id),
+    ).toMatchObject({
+      status: "UNKNOWN",
+      last_error_code: "PROVIDER_OUTCOME_UNKNOWN",
+    });
+    await campaigns.processCampaign(campaign.id);
+    expect(attempts).toBe(1);
+    expect(
+      (await campaigns.listCampaigns(branchId)).find((row) => row.id === campaign.id),
+    ).toMatchObject({ unknown: 1, status: "ACTIVE" });
+  });
+
   it("moves permanent campaign failures to dead letter without duplicate delivery rows", async () => {
     const registry = new CampaignProviderRegistry().register(new TestCampaignProvider("PERMANENT"));
     const campaigns = new CampaignService(db, actor, registry);
@@ -1082,6 +1326,139 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
       .get() as { gross_minor: number; net_minor: number; refund_minor: number };
     expect(link.refund_minor).toBe(amountMinor);
     expect(link.net_minor).toBe(0);
+  });
+
+  it("follows a registered POS customer through paid orders, loyalty, CRM, segments and feedback", async () => {
+    const registered = await crm.createCustomer({
+      displayName: "Workflow Guest",
+      phone: "0712 444 555",
+      email: "workflow@example.test",
+      preferredBranchId: branchId,
+      createdSource: "SERAMET_CRM_UI",
+    });
+    const profileBefore = await crm.customerProfile(registered.id);
+    expect(profileBefore.consents.find((item) => item.channel === "EMAIL_MARKETING")?.status).toBe(
+      "UNKNOWN",
+    );
+
+    const repository = new D1AuthoritativeTransactionRepository(db);
+    const placeAndPay = async (suffix: string) => {
+      let state = await repository.loadState(tenantId);
+      state = TransactionEngine.createOrder(
+        state,
+        {
+          tenantId,
+          branchId,
+          branch: branchId,
+          table: "T-01",
+          customer: registered.displayName,
+          customerId: registered.id,
+          customerCode: registered.customerCode,
+          channel: "DINE_IN",
+          cashier: actor.name,
+          lines: [
+            {
+              id: `workflow-line-${suffix}`,
+              productId: "menu-demo-main",
+              name: "Configured menu item",
+              category: "MAIN",
+              quantity: 1,
+              unitPrice: 100,
+              productionStation: "NONE",
+            },
+          ],
+        },
+        "OPEN",
+      );
+      const order = state.orders[0]!;
+      state = TransactionEngine.createOpenBill(state, order.id);
+      await repository.saveState(state, actor, "Workflow: opened customer invoice");
+      const bill = state.bills.find((item) => item.orderIds.includes(order.id))!;
+      const paid = TransactionEngine.recordCashPayment(state, bill.id, {
+        received: 100,
+        cashier: actor.name,
+        terminal: "WORKFLOW-TEST",
+      });
+      await repository.saveState(paid, actor, "Workflow: confirmed cash payment");
+      await repository.saveState(paid, actor, "Workflow: duplicate persistence retry");
+      return order.id;
+    };
+
+    const firstOrder = await placeAndPay("one");
+    const secondOrder = await placeAndPay("two");
+    expect(firstOrder).not.toBe(secondOrder);
+    const linkedOrders = db.sqlite
+      .prepare(
+        "SELECT source_id,net_minor,completed FROM customer_transaction_links WHERE tenant_id=? AND customer_id=? ORDER BY source_id",
+      )
+      .all(tenantId, registered.id) as Array<{
+      source_id: string;
+      net_minor: number;
+      completed: number;
+    }>;
+    expect(linkedOrders).toHaveLength(2);
+    expect(linkedOrders.every((row) => row.net_minor === 10_000 && row.completed === 1)).toBe(true);
+    const earned = db.sqlite
+      .prepare(
+        "SELECT COALESCE(SUM(points),0) AS points,COUNT(*) AS count FROM loyalty_ledger WHERE tenant_id=? AND customer_id=? AND entry_type='EARN'",
+      )
+      .get(tenantId, registered.id) as { points: number; count: number };
+    expect(earned.count).toBe(2);
+    expect(earned.points).toBe(2);
+
+    const analytics = new CrmAnalyticsService(db, actor);
+    await analytics.recalculateMetrics(branchId);
+    const directory = await crm.searchCustomers({ query: "Workflow Guest", branchId });
+    const entry = directory.customers.find((item) => item.id === registered.id);
+    expect(entry).toMatchObject({
+      orderCount: 2,
+      netSpendMinor: 20_000,
+      loyaltyPoints: 2,
+    });
+    const profileAfter = await crm.customerProfile(registered.id);
+    expect(profileAfter.visits.count).toBeGreaterThan(0);
+    expect(profileAfter.journey.filter((event) => event.type === "ORDER_COMPLETED")).toHaveLength(
+      2,
+    );
+    const segments = new CampaignService(db, actor);
+    const segment = await segments.createSegment({
+      code: "WORKFLOW_REPEAT",
+      name: "Workflow repeat visitors",
+      definition: { all: [{ field: "orderCount", operator: "GTE", value: 2 }] },
+    });
+    const snapshot = await segments.buildSegmentSnapshot(segment.id, branchId);
+    expect(
+      db.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM crm_segment_members WHERE tenant_id=? AND snapshot_id=? AND customer_id=?",
+        )
+        .get(tenantId, snapshot.id, registered.id),
+    ).toMatchObject({ count: 1 });
+
+    const feedback = await crm.createFeedback({
+      branchId,
+      customerId: registered.id,
+      orderId: secondOrder,
+      categoryId: "feedback-category-service",
+      surveyType: "CSAT",
+      rating: 5,
+      source: "POST_PURCHASE",
+    });
+    await crm.resolveFeedback({
+      feedbackId: feedback.id,
+      status: "RESOLVED",
+      note: "Customer contacted",
+      resolution: "Reviewed and resolved",
+    });
+    expect(
+      (await crm.customerProfile(registered.id)).feedback.find((item) => item.id === feedback.id),
+    ).toMatchObject({ status: "RESOLVED" });
+
+    const wrongBranch = new CrmService(db, branchActor("branch-demo-ngong-road"), {
+      defaultCallingCode: "254",
+      nationalPrefix: "0",
+    });
+    await expect(wrongBranch.customerProfile(registered.id)).rejects.toThrow(/branch scope/i);
   });
 
   it("rejects cross-tenant and unauthorized branch customer and privacy access", async () => {

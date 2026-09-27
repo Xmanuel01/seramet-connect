@@ -314,7 +314,7 @@ export const settingsGroups: readonly SettingsGroup[] = [
 ] as const;
 
 export const settingsRouteItems = settingsGroups.flatMap((group) =>
-  group.items.filter((item): item is Extract<SettingsItem, { kind: "route" }> =>
-    item.kind === "route",
+  group.items.filter(
+    (item): item is Extract<SettingsItem, { kind: "route" }> => item.kind === "route",
   ),
 );

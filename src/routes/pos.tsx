@@ -15,6 +15,12 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
+import {
+  linkedOrderCustomer,
+  resolvePosCustomer,
+  type PosCustomerSelection,
+} from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
@@ -173,6 +179,7 @@ function POS() {
   const [kitchenNote, setKitchenNote] = useState("");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
   const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [customerSelection, setCustomerSelection] = useState<PosCustomerSelection | null>(null);
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
@@ -326,6 +333,11 @@ function POS() {
     [branchOrders],
   );
   const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
+  const linkedCustomer = resolvePosCustomer(
+    { tenantId: activeTenantId, branchId },
+    activeOrder,
+    customerSelection,
+  );
   const canPrintBill =
     activeOrder !== null &&
     ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(activeOrder.status);
@@ -654,11 +666,13 @@ function POS() {
     cashier: currentUser.name,
     waiter: currentUser.name,
     createdAt: activeOrder?.createdAt ?? new Date().toISOString(),
-    customer: isOnlineSource
-      ? (selectedChannel?.displayName ?? "Online customer")
-      : tableNo
-        ? `Table ${tableNo}`
-        : "Walk-in Customer",
+    customer:
+      linkedCustomer?.displayName ??
+      (isOnlineSource
+        ? (selectedChannel?.displayName ?? "Online customer")
+        : tableNo
+          ? `Table ${tableNo}`
+          : "Walk-in Customer"),
     ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
     ...(profile?.printIdentity.tillNumber ? { tillNumber: profile.printIdentity.tillNumber } : {}),
     receiptNumber: predictedNextReceiptId(),
@@ -747,7 +761,8 @@ function POS() {
       branchId,
       branch,
       ...(tableNo ? { table: tableNo } : {}),
-      customer:
+      ...linkedOrderCustomer(
+        linkedCustomer,
         channelLocked && activeOrder
           ? activeOrder.customer
           : isOnlineSource
@@ -757,6 +772,7 @@ function POS() {
               : tableNo
                 ? `Table ${tableNo}`
                 : "Unassigned table",
+      ),
       channel:
         channelLocked && activeOrder
           ? activeOrder.channel
@@ -780,6 +796,7 @@ function POS() {
     noticeType: "idle" | "success" | "warning" = "idle",
   ) => {
     setActiveOrderId(null);
+    setCustomerSelection(null);
     setLines({});
     setKitchenNote("");
     setItemNotes({});
@@ -871,6 +888,7 @@ function POS() {
     try {
       let orderId = activeOrder?.id;
       let optimisticPaymentState = transactionState;
+      let kitchenOrderUpdated = false;
 
       if (!selectedChannel?.requiresTable) {
         const mustSendToKitchen = !activeOrder || !activeOrderKitchenSent || hasUnsentItems;
@@ -879,6 +897,7 @@ function POS() {
           if (!kitchen) throw new Error("The order could not be routed to kitchen.");
           orderId = kitchen.order.id;
           optimisticPaymentState = kitchen.state;
+          kitchenOrderUpdated = true;
           if (!kitchen.printResult?.jobs.length) {
             throw new Error(
               "Payment was not opened because no KOT/KDS delivery job was created for this order.",
@@ -889,6 +908,32 @@ function POS() {
 
       if (!orderId) {
         throw new Error("Create and send the order to kitchen before payment.");
+      }
+
+      if (
+        !kitchenOrderUpdated &&
+        activeOrder?.id === orderId &&
+        (linkedCustomer?.id ?? null) !== (activeOrder.customerId ?? null)
+      ) {
+        const customerUpdate = await mutateTransaction(
+          "upsertOrderDraft",
+          {
+            orderId,
+            draft: buildTransactionDraft(),
+            targetStatus: "OPEN",
+          },
+          () =>
+            TransactionEngine.updateOrderDraft(
+              optimisticPaymentState,
+              orderId!,
+              buildTransactionDraft(),
+              currentUser.name,
+            ),
+        );
+        if (!customerUpdate?.state) {
+          throw new Error("Customer linkage could not be confirmed before payment.");
+        }
+        optimisticPaymentState = customerUpdate.state;
       }
 
       const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
@@ -1536,6 +1581,7 @@ function POS() {
 
   const closePaidOrder = () => {
     setActiveOrderId(null);
+    setCustomerSelection(null);
     setLines({});
     setKitchenNote("");
     setItemNotes({});
@@ -1723,6 +1769,23 @@ function POS() {
               </div>
             )}
           </div>
+          <PosCustomerPicker
+            value={linkedCustomer}
+            disabled={
+              backendStatus !== "synced" ||
+              paymentBusy ||
+              paymentOpen ||
+              Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
+            }
+            onSelect={(customer) =>
+              setCustomerSelection({
+                tenantId: activeTenantId,
+                branchId,
+                orderId: activeOrder?.id ?? null,
+                customer,
+              })
+            }
+          />
           <div className="mb-3 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3">
             <Search className="h-4 w-4 text-muted-foreground" />
             <input

@@ -1,7 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { compileSqliteMigrationForPostgres } from "@/server/database/postgres-migration-compiler";
+import {
+  compileSqliteMigrationForPostgres,
+  postgresCompatibilityPrelude,
+} from "@/server/database/postgres-migration-compiler";
 
 describe("SQLite-to-PostgreSQL trigger compilation", () => {
+  it("provides a TEXT JSON-array iterator for CRM branch scope queries", () => {
+    expect(postgresCompatibilityPrelude).toContain("FUNCTION json_each(document TEXT)");
+    expect(postgresCompatibilityPrelude).toContain("jsonb_array_elements_text(document::jsonb)");
+    expect(postgresCompatibilityPrelude).toContain("RETURNS TABLE(key TEXT, value TEXT)");
+  });
+
+  it("compiles the CRM lead's immutable event triggers to PostgreSQL", () => {
+    const sql = `
+CREATE TRIGGER crm_lead_events_no_update BEFORE UPDATE ON crm_lead_events
+BEGIN SELECT RAISE(ABORT,'lead events are immutable'); END;
+CREATE TRIGGER crm_lead_events_no_delete BEFORE DELETE ON crm_lead_events
+BEGIN SELECT RAISE(ABORT,'lead events are immutable'); END;
+`;
+    const compiled = compileSqliteMigrationForPostgres(sql);
+    expect(compiled.triggerCount).toBe(2);
+    expect(compiled.sql).toContain("RAISE EXCEPTION 'lead events are immutable'");
+    expect(compiled.sql).toContain("BEFORE DELETE ON crm_lead_events");
+  });
+
   it("qualifies the access-control revision in UPSERT triggers", () => {
     const compiled = compileSqliteMigrationForPostgres(`
 CREATE TRIGGER access_revision_user_role_insert AFTER INSERT ON user_roles

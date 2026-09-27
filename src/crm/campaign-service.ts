@@ -46,20 +46,25 @@ export class CampaignService extends CrmServiceBase {
     super(db, actor);
   }
 
-  async listSegments() {
+  async listSegments(branchId?: string) {
     this.require(permissions.crmView);
+    const scope =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scope) this.branch(scope);
     const rows = await this.db
       .prepare(
         `SELECT s.*,
                 (SELECT customer_count FROM crm_segment_snapshots ss
                  WHERE ss.tenant_id=s.tenant_id AND ss.segment_id=s.id
+                   AND ((? IS NULL AND ss.branch_id IS NULL) OR ss.branch_id=?)
                  ORDER BY ss.as_of DESC LIMIT 1) AS latest_count,
                 (SELECT quality FROM crm_segment_snapshots ss
                  WHERE ss.tenant_id=s.tenant_id AND ss.segment_id=s.id
+                   AND ((? IS NULL AND ss.branch_id IS NULL) OR ss.branch_id=?)
                  ORDER BY ss.as_of DESC LIMIT 1) AS latest_quality
          FROM crm_segments s WHERE s.tenant_id=? ORDER BY s.created_at DESC`,
       )
-      .bind(this.actor.tenantId)
+      .bind(scope, scope, scope, scope, this.actor.tenantId)
       .all<Record<string, unknown>>();
     return rows.results ?? [];
   }
@@ -223,9 +228,11 @@ export class CampaignService extends CrmServiceBase {
     return { id, segmentId, branchId: scopedBranch, customerCount: members.length, quality };
   }
 
-  async listCampaigns() {
+  async listCampaigns(branchId?: string) {
     this.require(permissions.campaignView);
-    const scopedBranch = this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null;
+    const scopedBranch =
+      branchId ?? (this.actor.branchScope.type === "BRANCH" ? this.actor.branchId : null);
+    if (scopedBranch) this.branch(scopedBranch);
     const rows = await this.db
       .prepare(
         `SELECT c.id,c.name,c.status,c.objective,c.schedule_at,c.starts_at,c.ends_at,
@@ -236,7 +243,9 @@ export class CampaignService extends CrmServiceBase {
                 (SELECT COUNT(*) FROM campaign_deliveries d WHERE d.tenant_id=c.tenant_id
                   AND d.campaign_id=c.id AND d.status IN ('SENT','DELIVERED')) AS sent,
                 (SELECT COUNT(*) FROM campaign_deliveries d WHERE d.tenant_id=c.tenant_id
-                  AND d.campaign_id=c.id AND d.status='DELIVERED') AS delivered
+                  AND d.campaign_id=c.id AND d.status='DELIVERED') AS delivered,
+                (SELECT COUNT(*) FROM campaign_deliveries d WHERE d.tenant_id=c.tenant_id
+                  AND d.campaign_id=c.id AND d.status='UNKNOWN') AS unknown
          FROM campaigns c JOIN crm_segments s ON s.tenant_id=c.tenant_id AND s.id=c.segment_id
          LEFT JOIN communication_provider_configs p ON p.tenant_id=c.tenant_id AND p.id=c.provider_config_id
          WHERE c.tenant_id=?
@@ -568,6 +577,21 @@ export class CampaignService extends CrmServiceBase {
       return { sent: 0, failed: 0, providerStatus: "CONFIGURED" as const };
     }
     await this.queueCampaign(campaignId);
+    // A worker may crash after provider dispatch but before persisting the result.
+    // Never resend that delivery blindly; force provider-side reconciliation.
+    await this.db
+      .prepare(
+        `UPDATE campaign_deliveries SET status='UNKNOWN',
+           last_error_code='SEND_OUTCOME_UNCONFIRMED',next_attempt_at=NULL,updated_at=?
+         WHERE tenant_id=? AND campaign_id=? AND status='SENDING' AND updated_at<?`,
+      )
+      .bind(
+        new Date().toISOString(),
+        this.actor.tenantId,
+        campaignId,
+        new Date(Date.now() - 10 * 60_000).toISOString(),
+      )
+      .run();
     const campaign = await this.campaign(campaignId);
     if (!campaign.provider_config_id) throw new CrmDomainError("INVALID_STATE", "Provider missing");
     const config = await this.providerConfig(campaign.provider_config_id);
@@ -655,18 +679,59 @@ export class CampaignService extends CrmServiceBase {
         .bind(new Date().toISOString(), this.actor.tenantId, delivery.id)
         .run();
       if ((claimed.meta?.changes ?? 0) === 0) continue;
-      const variables = await this.templateVariables(campaign, delivery, eligibility.contact);
-      const result = await adapter.send({
-        tenantId: this.actor.tenantId,
-        deliveryId: delivery.id,
-        channel: delivery.channel,
-        destination: eligibility.contact,
-        ...(campaign.template_subject
-          ? { subject: renderTemplate(campaign.template_subject, variables) }
-          : {}),
-        body: renderTemplate(campaign.template_body, variables),
-        idempotencyKey: delivery.idempotency_key,
-      });
+      // Recheck immediately before contacting the external provider to reduce the
+      // window in which a withdrawn consent could still be acted upon.
+      const confirmed = await this.currentEligibility(delivery.customer_id, delivery.channel);
+      if (!confirmed.eligible || !confirmed.contact) {
+        await this.db
+          .prepare(
+            `UPDATE campaign_deliveries SET status='UNSUBSCRIBED',last_error_code=?,updated_at=?
+             WHERE tenant_id=? AND id=? AND status='SENDING'`,
+          )
+          .bind(confirmed.reason, new Date().toISOString(), this.actor.tenantId, delivery.id)
+          .run();
+        continue;
+      }
+      const variables = await this.templateVariables(campaign, delivery, confirmed.contact);
+      let result;
+      try {
+        result = await adapter.send({
+          tenantId: this.actor.tenantId,
+          deliveryId: delivery.id,
+          channel: delivery.channel,
+          destination: confirmed.contact,
+          ...(campaign.template_subject
+            ? { subject: renderTemplate(campaign.template_subject, variables) }
+            : {}),
+          body: renderTemplate(campaign.template_body, variables),
+          idempotencyKey: delivery.idempotency_key,
+        });
+      } catch {
+        // A network exception can occur AFTER the provider accepts the message.
+        // Automatic retry risks double-delivery unless the provider is reconciled.
+        await this.db
+          .prepare(
+            `UPDATE campaign_deliveries SET status='UNKNOWN',last_error_code='PROVIDER_OUTCOME_UNKNOWN',
+               next_attempt_at=NULL,updated_at=?
+             WHERE tenant_id=? AND id=? AND status='SENDING'`,
+          )
+          .bind(new Date().toISOString(), this.actor.tenantId, delivery.id)
+          .run();
+        failed += 1;
+        continue;
+      }
+      if (result.status === "UNKNOWN") {
+        await this.db
+          .prepare(
+            `UPDATE campaign_deliveries SET status='UNKNOWN',
+               last_error_code='PROVIDER_OUTCOME_UNKNOWN',next_attempt_at=NULL,updated_at=?
+             WHERE tenant_id=? AND id=? AND status='SENDING'`,
+          )
+          .bind(new Date().toISOString(), this.actor.tenantId, delivery.id)
+          .run();
+        failed += 1;
+        continue;
+      }
       if (result.status === "SENT") {
         const stamp = new Date().toISOString();
         await this.db.batch([
@@ -709,7 +774,7 @@ export class CampaignService extends CrmServiceBase {
     const pending = await this.db
       .prepare(
         `SELECT COUNT(*) AS count FROM campaign_deliveries WHERE tenant_id=? AND campaign_id=?
-         AND status IN ('QUEUED','SENDING','FAILED')`,
+         AND status IN ('QUEUED','SENDING','FAILED','UNKNOWN')`,
       )
       .bind(this.actor.tenantId, campaignId)
       .first<{ count: number }>();
@@ -818,7 +883,7 @@ export class CampaignService extends CrmServiceBase {
     const consent = await this.db
       .prepare(
         `SELECT status FROM customer_consents WHERE tenant_id=? AND customer_id=? AND channel=?
-         ORDER BY effective_at DESC,rowid DESC LIMIT 1`,
+         ORDER BY effective_at DESC,CASE WHEN status IN ('WITHDRAWN','DENIED') THEN 1 ELSE 0 END DESC,created_at DESC,id DESC LIMIT 1`,
       )
       .bind(this.actor.tenantId, customerId, `${channel}_MARKETING`)
       .first<{ status: string }>();
