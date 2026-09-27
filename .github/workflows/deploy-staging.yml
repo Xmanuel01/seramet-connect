@@ -119,6 +119,7 @@ jobs:
           SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
           SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
           SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
+          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
         run: node scripts/verify-staging-release-gate.mjs
 
       - name: Inspect pending staging work and block overlapping menu commits
