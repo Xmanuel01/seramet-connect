@@ -134,8 +134,7 @@ function checkApprovals(plan) {
 async function quarantine(plan) {
   const stamp = new Date().toISOString();
   const evidence = process.env.SERAMET_RECONCILE_RESTORE_EVIDENCE.trim();
-  const actor = "system:staging-reconciliation:" +
-    process.env.SERAMET_RECONCILE_OPERATOR.trim();
+  const actor = process.env.SERAMET_RECONCILE_OPERATOR.trim();
   for (const { record, job, reason } of plan.dispositions) {
     const reportJson = JSON.stringify({
       ...JSON.parse(record.report_json),
