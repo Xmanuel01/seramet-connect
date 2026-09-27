@@ -274,6 +274,23 @@ export function useSetupCentre() {
     setStatus(criticalFailure ? "error" : "ready");
   }, [branchId, get, isAllBranches]);
 
+  /** Refresh only the item catalogue after a verified import. */
+  const refreshMenuCatalog = useCallback(async () => {
+    const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
+    setMenuCatalogStatus("loading");
+    try {
+      const result = await get<{ items: SetupMenuCatalogItem[] }>(
+        `/api/seramet/setup/menu-catalog${query}`,
+      );
+      setMenuCatalog(result.items);
+      setMenuCatalogError("");
+      setMenuCatalogStatus("ready");
+    } catch (error) {
+      setMenuCatalogError(failureMessage(error, "Authoritative menu catalogue is unavailable"));
+      setMenuCatalogStatus("error");
+    }
+  }, [branchId, get, isAllBranches]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -331,9 +348,42 @@ export function useSetupCentre() {
     [activeTenantId, branchId, command, isAllBranches],
   );
 
+  const inspectImport = useCallback(
+    async (id: string) =>
+      (await get<{ preview: ImportPreview }>(
+        `/api/seramet/setup/imports/${encodeURIComponent(id)}`,
+      )).preview,
+    [get],
+  );
+
+  const importStatus = useCallback(
+    async (id: string) =>
+      (await get<{
+        result: {
+          id: string;
+          status: ImportPreview["status"];
+          rowCount: number;
+          updatedAt: string;
+          verification?: ImportPreview["verification"];
+          worker: { status: string; attempts: number; updatedAt: string } | null;
+        };
+      }>(`/api/seramet/setup/imports/${encodeURIComponent(id)}/status`)).result,
+    [get],
+  );
+
+  // A queued commit must return as soon as the server accepts it. Fetching every
+  // setup dashboard endpoint before resolving keeps the spinner open unnecessarily.
   const commitImport = useCallback(
-    (preview: ImportPreview) =>
-      command<{
+    async (preview: ImportPreview) => {
+      const response = await authenticatedFetch(
+        `/api/seramet/setup/imports/${encodeURIComponent(preview.id)}/commit`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ idempotencyKey: preview.commitKey }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
         result: {
           rows?: number;
           duplicate: boolean;
@@ -342,10 +392,18 @@ export function useSetupCentre() {
           jobId?: string;
           verification?: ImportPreview["verification"];
         };
-      }>(`/api/seramet/setup/imports/${encodeURIComponent(preview.id)}/commit`, {
-        idempotencyKey: preview.commitKey,
-      }),
-    [command],
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(
+          payload.message ?? payload.error ?? `Import commit failed (${response.status})`,
+        );
+      }
+      if (payload.result?.status === "COMMITTED") void refreshMenuCatalog();
+      return payload;
+    },
+    [headers, refreshMenuCatalog],
   );
 
   const runTest = useCallback(
@@ -422,6 +480,9 @@ export function useSetupCentre() {
     refresh,
     command,
     previewImport,
+    inspectImport,
+    importStatus,
+    refreshMenuCatalog,
     commitImport,
     runTest,
     transitionGoLive,
