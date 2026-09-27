@@ -15,21 +15,17 @@ test("a specifically approved commit with verified backup and backlog review pas
 });
 
 test("an unrelated new commit cannot reuse stale staging approval", () => {
-  assert.deepEqual(
-    assessStagingReleaseApproval({ ...approved, GITHUB_SHA: "b".repeat(40) }),
-    ["RELEASE_SHA_NOT_APPROVED"],
-  );
+  assert.deepEqual(assessStagingReleaseApproval({ ...approved, GITHUB_SHA: "b".repeat(40) }), [
+    "RELEASE_SHA_NOT_APPROVED",
+  ]);
 });
 
 test("missing release verification fails closed before migration", () => {
-  assert.deepEqual(
-    assessStagingReleaseApproval({ GITHUB_SHA: sha }),
-    [
-      "RELEASE_SHA_NOT_APPROVED",
-      "STAGING_BACKUP_RESTORE_NOT_VERIFIED",
-      "PENDING_WORK_NOT_REVIEWED",
-    ],
-  );
+  assert.deepEqual(assessStagingReleaseApproval({ GITHUB_SHA: sha }), [
+    "RELEASE_SHA_NOT_APPROVED",
+    "STAGING_BACKUP_RESTORE_NOT_VERIFIED",
+    "PENDING_WORK_NOT_REVIEWED",
+  ]);
 });
 
 test("an approval never excuses a missing backup or unreviewed pending jobs", () => {
