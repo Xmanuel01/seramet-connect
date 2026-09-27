@@ -1558,7 +1558,9 @@ export class OnboardingService {
   /** Read-only inspection of an existing import; never replays a commit. */
   async inspectImport(importId: string) {
     this.require(permissions.setupImport);
-    return this.getImport(importId);
+    const preview = await this.getImport(importId);
+    for (const id of preview.targetBranchIds ?? []) await this.assertImportBranch(id);
+    return preview;
   }
 
   /** Cheap polling response, tenant-scoped and guarded by the import permission. */
@@ -1566,8 +1568,8 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const record = await this.db
       .prepare(
-        `SELECT status,row_count,verification_json,updated_at FROM setup_imports
-         WHERE tenant_id=? AND id=?`,
+        `SELECT status,row_count,verification_json,updated_at,target_branch_ids_json
+         FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, importId)
       .first<{
@@ -1575,8 +1577,12 @@ export class OnboardingService {
         row_count: number;
         verification_json: string;
         updated_at: string;
+        target_branch_ids_json: string;
       }>();
     if (!record) throw notFound("Import not found");
+    for (const id of parseJson<string[]>(record.target_branch_ids_json, [])) {
+      await this.assertImportBranch(id);
+    }
     const worker = await this.db
       .prepare(
         `SELECT status,attempt_count,updated_at FROM worker_jobs
