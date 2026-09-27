@@ -59,7 +59,8 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { recentMenuImports, inspectImport, importStatus, refreshMenuCatalog, commitImport } = centre;
+  const { recentMenuImports, inspectImport, importStatus, refreshMenuCatalog, commitImport } =
+    centre;
   const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
   const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
   const canImport = hasPermission(permissions.setupImport);
@@ -257,9 +258,11 @@ function MenuImport() {
         if (sample.processed > lastImportedCount.current) {
           // Only refresh after actual persisted row results change.
           lastImportedCount.current = sample.processed;
-          void inspectImport(importId).then((updated) => {
-            if (active) setPreview((current) => (current?.id === importId ? updated : current));
-          }).catch(() => undefined);
+          void inspectImport(importId)
+            .then((updated) => {
+              if (active) setPreview((current) => (current?.id === importId ? updated : current));
+            })
+            .catch(() => undefined);
           void refreshMenuCatalog();
         }
         if (
@@ -269,7 +272,10 @@ function MenuImport() {
         ) {
           setEtaSeconds(estimateImportEtaSeconds(lastProgressSample.current, sample));
         }
-        if (!lastProgressSample.current || sample.processed > lastProgressSample.current.processed) {
+        if (
+          !lastProgressSample.current ||
+          sample.processed > lastProgressSample.current.processed
+        ) {
           lastProgressSample.current = sample;
         }
         if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
@@ -1132,8 +1138,8 @@ function MenuImport() {
                     </span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    You can continue in the background. The progress shown is based on rows
-                    recorded in the database, not an estimated animation.
+                    You can continue in the background. The progress shown is based on rows recorded
+                    in the database, not an estimated animation.
                   </p>
                 </section>
               )}
