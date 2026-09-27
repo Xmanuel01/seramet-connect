@@ -1,0 +1,43 @@
+name: Temporary format of incident reconciliation files
+
+on:
+  pull_request:
+    types: [synchronize]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: format-staging-menu-reconciliation
+  cancel-in-progress: true
+
+jobs:
+  format:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/audit-staging-safety-20260927'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/audit-staging-safety-20260927
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Format only the added incident files
+        run: npx --no-install prettier --write scripts/staging-menu-reconciliation-plan.mjs scripts/staging-menu-reconciliation-plan.test.mjs scripts/reconcile-staging-menu-imports.mjs
+      - name: Commit formatting to incident branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/staging-menu-reconciliation-plan.mjs \
+                  scripts/staging-menu-reconciliation-plan.test.mjs \
+                  scripts/reconcile-staging-menu-imports.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format staging recovery incident scripts"
+            git push origin HEAD:fix/audit-staging-safety-20260927
+          fi
