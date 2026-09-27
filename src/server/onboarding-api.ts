@@ -229,6 +229,22 @@ export async function handleOnboardingApi(
       201,
     );
   }
+  const inspectImport = /^\/api\/seramet\/setup\/imports\/([^/]+)$/.exec(url.pathname);
+  if (inspectImport && request.method === "GET") {
+    return json({
+      ok: true,
+      preview: await service.inspectImport(decodeURIComponent(inspectImport[1]!)),
+    });
+  }
+  const importStatus = /^\/api\/seramet\/setup\/imports\/([^/]+)\/status$/.exec(
+    url.pathname,
+  );
+  if (importStatus && request.method === "GET") {
+    return json({
+      ok: true,
+      result: await service.importStatus(decodeURIComponent(importStatus[1]!)),
+    });
+  }
   if (url.pathname === "/api/seramet/setup/historical-sales" && request.method === "GET") {
     return json({ ok: true, state: await historicalSales.getState() });
   }
