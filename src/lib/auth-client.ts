@@ -83,7 +83,9 @@ export function markInteractiveSignIn() {
 }
 
 export function hasInteractiveSignIn() {
-  return typeof window !== "undefined" && window.sessionStorage.getItem(interactiveSignInKey) === "1";
+  return (
+    typeof window !== "undefined" && window.sessionStorage.getItem(interactiveSignInKey) === "1"
+  );
 }
 
 export function clearInteractiveSignIn() {
