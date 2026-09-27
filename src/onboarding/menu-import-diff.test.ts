@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  classifyMenuItemChange,
-  type ComparedMenuItem,
-} from "@/onboarding/menu-import-diff";
+import { classifyMenuItemChange, type ComparedMenuItem } from "@/onboarding/menu-import-diff";
 
 const current: ComparedMenuItem = {
   code: "PILAU-001",
