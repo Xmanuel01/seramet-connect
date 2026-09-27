@@ -188,6 +188,62 @@ describe.sequential("identity, device and branch hardening", () => {
     expect(counts).toEqual({ branches: 1, nodes: 1, owner_access: 1 });
   });
 
+  it("allows a second configuring branch after completing the wizard, before tenant go-live", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const actor = await ownerActor(provisioned);
+    const brand = await db
+      .prepare("SELECT id FROM brands WHERE tenant_id=? LIMIT 1")
+      .bind(provisioned.tenantId)
+      .first<{ id: string }>();
+    const service = new OnboardingService(db, actor, {});
+    const input = {
+      idempotencyKey: "pre-live-second-branch-0001",
+      brandId: brand!.id,
+      code: "NGONG",
+      name: "Ngong Road",
+      timezone: "Africa/Nairobi",
+      businessDayCutoffMinutes: 240,
+      negativeStockPolicy: "BLOCK" as const,
+      createWarehouse: { code: "NGONG-STORE", name: "Ngong Stock" },
+    };
+
+    // Incomplete first-branch onboarding must still prevent bypassing setup.
+    await expect(service.createBranch(input)).rejects.toThrow(/onboarding/i);
+    // Completing the wizard must not require prematurely activating the first
+    // branch, nor require marking the *entire tenant* LIVE before branch two.
+    await db
+      .prepare(
+        "UPDATE onboarding_wizard_progress SET status='COMPLETED',current_step=20 WHERE tenant_id=?",
+      )
+      .bind(provisioned.tenantId)
+      .run();
+    const result = await service.createBranch(input);
+    expect(await service.createBranch(input)).toEqual(result);
+
+    const branches = await db
+      .prepare(
+        "SELECT code,lifecycle_state FROM branches WHERE tenant_id=? ORDER BY code",
+      )
+      .bind(provisioned.tenantId)
+      .all<{ code: string; lifecycle_state: string }>();
+    expect(branches.results).toContainEqual({
+      code: "NGONG",
+      lifecycle_state: "CONFIGURING",
+    });
+    const original = branches.results?.find((row) => row.code !== "NGONG");
+    expect(original?.lifecycle_state).toBe("DRAFT");
+    const ownerAccess = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM user_branches WHERE tenant_id=? AND user_id=? AND branch_id=?",
+      )
+      .bind(provisioned.tenantId, provisioned.userId, result.id)
+      .first<{ count: number }>();
+    expect(ownerAccess?.count).toBe(1);
+  });
+
   it("transfers ownership only after recent full authentication and preserves an active owner", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(
       identity(),
