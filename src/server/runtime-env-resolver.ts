@@ -25,7 +25,7 @@ export async function resolveEnvironmentFromBindings(bindingsInput: unknown): Pr
   }
 
   if (!resolved.SERAMET_DB && resolved.SERAMET_HYPERDRIVE) {
-    const { PostgresD1Database } = await import("./server/database/postgres-database");
+    const { PostgresD1Database } = await import("./database/postgres-database");
 
     resolved.SERAMET_DB = PostgresD1Database.fromHyperdrive(resolved.SERAMET_HYPERDRIVE);
 
@@ -38,7 +38,7 @@ export async function resolveEnvironmentFromBindings(bindingsInput: unknown): Pr
       resolved.SERAMET_ENVIRONMENT === "development" &&
       (resolved.SERAMET_ENABLE_LOCAL_DATABASE === "true" || import.meta.env.DEV)
     ) {
-      localDevelopmentDatabase ??= import("./server/database/local-development-database").then(
+      localDevelopmentDatabase ??= import("./database/local-development-database").then(
         ({ createLocalDevelopmentDatabase }) => createLocalDevelopmentDatabase(),
       );
 
