@@ -22,7 +22,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const issues = assessStagingReleaseApproval(process.env);
   if (issues.length) {
     console.error(
-      "Unsafe staging release blocked before migrations: " + issues.join(", ") +
+      "Unsafe staging release blocked before migrations: " +
+        issues.join(", ") +
         ". Approve this exact commit only after independently verifying staging backup/restore, " +
         "pending import/job reconciliation, and the scanner resource. Do not disable this gate.",
     );
