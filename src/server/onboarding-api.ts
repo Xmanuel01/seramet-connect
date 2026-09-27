@@ -229,6 +229,9 @@ export async function handleOnboardingApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/setup/imports/recent" && request.method === "GET") {
+    return json({ ok: true, imports: await service.recentMenuImports() });
+  }
   const inspectImport = /^\/api\/seramet\/setup\/imports\/([^/]+)$/.exec(url.pathname);
   if (inspectImport && request.method === "GET") {
     return json({
