@@ -9,6 +9,7 @@ import {
   readCookie,
 } from "@/server/pos-auth-service";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
+import { appendClearedAccountCookies } from "@/server/supabase-auth-api";
 
 const employeeLoginSchema = z
   .object({
@@ -93,6 +94,8 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
       networkHash,
     );
     const headers = noStore();
+    // An old administrator cookie must not override the newly authenticated employee.
+    appendClearedAccountCookies(headers, env);
     headers.append("set-cookie", posSessionCookie(login.token, secure));
     return Response.json(
       {
