@@ -186,6 +186,38 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
   });
 
+  it("queues a medium-sized menu import and exposes its progress without duplicate writes", async () => {
+    const rows = Array.from(
+      { length: 101 },
+      (_, index) => `MEDIUM-${index + 1},Menu item ${index + 1},MAIN,450,KES`,
+    );
+    const preview = await previewCsv(
+      service,
+      "MENU",
+      ["code,name,category,price,currency", ...rows].join("\n"),
+      "medium-menu-import",
+    );
+    expect(preview).toMatchObject({ rowCount: 101, canCommit: true, errorCount: 0 });
+    const result = await service.commitImport(preview.id, preview.commitKey);
+    expect(result).toMatchObject({ status: "QUEUED", queued: true, rows: 101 });
+    expect(await rowCount(db, "menu_catalog_items")).toBe(0);
+    expect(await service.inspectImport(preview.id)).toMatchObject({ status: "COMMITTING" });
+    expect(await service.importStatus(preview.id)).toMatchObject({
+      status: "COMMITTING",
+      rowCount: 101,
+      worker: { status: "PENDING", attempts: 0 },
+    });
+    await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toThrow(
+      "already being committed",
+    );
+    const otherTenant = new OnboardingService(
+      db,
+      { ...actor(), tenantId: secondTenantId },
+      env,
+    );
+    await expect(otherTenant.importStatus(preview.id)).rejects.toThrow("Import not found");
+  });
+
   it("follows the manual-item popup contract through preview, verified commit and real POS visibility", async () => {
     const bytes = new TextEncoder().encode(
       createManualMenuCsv({
