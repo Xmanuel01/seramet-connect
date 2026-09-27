@@ -1,4 +1,4 @@
-import { clearInteractiveSignIn } from "@/lib/auth-client";
+import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -865,14 +865,20 @@ export function AppShell({
               type="button"
               onClick={() => {
                 clearInteractiveSignIn();
-                void fetch("/api/seramet/public/auth/logout", {
-                  method: "POST",
-                  credentials: "same-origin",
-                }).finally(() => {
-                  window.localStorage.removeItem("seramet.session.tenant-id");
-                  window.localStorage.removeItem("seramet.session.user-id");
-                  window.location.assign("/login");
-                });
+                void revokeAllBrowserSessions()
+                  .catch((error: unknown) => {
+                    const message =
+                      error instanceof Error ? error.message : "Could not confirm secure sign-out.";
+                    window.alert(
+                      message +
+                        " This device may still have a valid server session. Retry signing out when connected.",
+                    );
+                  })
+                  .finally(() => {
+                    window.localStorage.removeItem("seramet.session.tenant-id");
+                    window.localStorage.removeItem("seramet.session.user-id");
+                    window.location.replace("/login?account=1");
+                  });
               }}
               className="grid h-9 w-9 place-items-center rounded-md hover:bg-secondary"
               title="Sign out"
