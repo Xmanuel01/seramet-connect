@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createFileRoute } from "@tanstack/react-router";
 import { Delete, LockKeyhole, RefreshCcw, Wifi, WifiOff } from "lucide-react";
 import { Logo } from "@/components/app/Logo";
-import { deviceStartup, employeePinLogin, type DeviceStartup } from "@/lib/auth-client";
+import { deviceStartup, employeePinLogin, markInteractiveSignIn, type DeviceStartup } from "@/lib/auth-client";
 
 export const Route = createFileRoute("/pos-login")({
   head: () => ({ meta: [{ title: "Employee sign in - Seramet" }] }),
@@ -56,6 +56,7 @@ function PosLoginPage() {
     setMessage("");
     try {
       const result = await employeePinLogin(identifier, pin);
+      markInteractiveSignIn();
       window.location.assign(result.nextPath ?? "/pos");
     } catch (error) {
       setPin("");
