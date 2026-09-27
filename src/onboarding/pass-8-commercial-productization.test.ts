@@ -210,11 +210,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toThrow(
       "already being committed",
     );
-    const otherTenant = new OnboardingService(
-      db,
-      { ...actor(), tenantId: secondTenantId },
-      env,
-    );
+    const otherTenant = new OnboardingService(db, { ...actor(), tenantId: secondTenantId }, env);
     await expect(otherTenant.importStatus(preview.id)).rejects.toThrow("Import not found");
   });
 
