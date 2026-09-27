@@ -2,7 +2,14 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
-import { authMutation, authStatus, enterRestaurant, hasInteractiveSignIn, markInteractiveSignIn, type AuthRestaurant } from "@/lib/auth-client";
+import {
+  authMutation,
+  authStatus,
+  enterRestaurant,
+  hasInteractiveSignIn,
+  markInteractiveSignIn,
+  type AuthRestaurant,
+} from "@/lib/auth-client";
 import {
   registrationSessionDestination,
   type RegistrationSessionPhase,
