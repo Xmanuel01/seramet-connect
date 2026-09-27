@@ -205,8 +205,37 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await service.importStatus(preview.id)).toMatchObject({
       status: "COMMITTING",
       rowCount: 101,
+      progress: {
+        total: 101,
+        processed: 0,
+        pending: 101,
+        created: 0,
+        skipped: 0,
+        verified: false,
+      },
       worker: { status: "PENDING", attempts: 0 },
     });
+    expect(await service.recentMenuImports()).toContainEqual(
+      expect.objectContaining({
+        id: preview.id,
+        status: "COMMITTING",
+        rowCount: 101,
+      }),
+    );
+    const restricted = new OnboardingService(
+      db,
+      actor(
+        [secondBranchId],
+        allPermissionCodes.filter((permission) => permission !== permissions.tenantScopeAllBranches),
+      ),
+      env,
+    );
+    expect((await restricted.recentMenuImports()).some((entry) => entry.id === preview.id)).toBe(
+      false,
+    );
+    await expect(restricted.inspectImport(preview.id)).rejects.toThrow(
+      /branch|permission|access|denied/i,
+    );
     await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toThrow(
       "already being committed",
     );
