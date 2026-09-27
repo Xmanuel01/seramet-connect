@@ -224,9 +224,7 @@ describe.sequential("identity, device and branch hardening", () => {
     expect(await service.createBranch(input)).toEqual(result);
 
     const branches = await db
-      .prepare(
-        "SELECT code,lifecycle_state FROM branches WHERE tenant_id=? ORDER BY code",
-      )
+      .prepare("SELECT code,lifecycle_state FROM branches WHERE tenant_id=? ORDER BY code")
       .bind(provisioned.tenantId)
       .all<{ code: string; lifecycle_state: string }>();
     expect(branches.results).toContainEqual({
