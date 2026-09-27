@@ -74,3 +74,31 @@ export function enterRestaurant(tenantId: string, path = "/") {
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
   window.location.assign(path);
 }
+
+// This is only a browser navigation gate. Authorization always happens on the server.
+const interactiveSignInKey = "seramet.session.interactive-sign-in";
+
+export function markInteractiveSignIn() {
+  window.sessionStorage.setItem(interactiveSignInKey, "1");
+}
+
+export function hasInteractiveSignIn() {
+  return (
+    typeof window !== "undefined" && window.sessionStorage.getItem(interactiveSignInKey) === "1"
+  );
+}
+
+export function clearInteractiveSignIn() {
+  if (typeof window !== "undefined") window.sessionStorage.removeItem(interactiveSignInKey);
+}
+
+/** Revoke both account and device-PIN sessions; never treat a failed request as success. */
+export async function revokeAllBrowserSessions() {
+  const endpoints = ["/api/seramet/public/auth/logout", "/api/seramet/public/employee/logout"];
+  const results = await Promise.allSettled(
+    endpoints.map((url) => fetch(url, { method: "POST", credentials: "same-origin" })),
+  );
+  if (results.some((result) => result.status === "rejected" || !result.value.ok)) {
+    throw new Error("Could not confirm that all sessions were revoked. Check your connection.");
+  }
+}

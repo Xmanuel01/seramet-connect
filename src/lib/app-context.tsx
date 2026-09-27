@@ -14,6 +14,7 @@ import {
   type ConfigurationRepository,
 } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { clearInteractiveSignIn, hasInteractiveSignIn } from "@/lib/auth-client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import {
   buildModuleAccessProfile,
@@ -136,6 +137,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   >({ status: "LOADING" });
 
   useEffect(() => {
+    // An existing server cookie must not silently unlock a newly opened POS tab.
+    if (!hasInteractiveSignIn()) {
+      window.location.replace("/login");
+      return;
+    }
     let active = true;
     void bootstrapAuthoritativeSession(repository)
       .then((result) => {
@@ -172,13 +178,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refreshing = true;
       try {
         const result = await bootstrapAuthoritativeSession(repository);
-        if (
-          active &&
-          result.status === "AUTHENTICATED" &&
+        if (!active) return;
+        if (result.status !== "AUTHENTICATED") {
+          setBootstrap({
+            status: "ERROR",
+            kind: "SERVICE_UNAVAILABLE",
+            message: "Secure authentication is unavailable. Access has been paused.",
+          });
+        } else if (
           result.actor.moduleAccess.accessRevision !== bootstrap.actor.moduleAccess.accessRevision
         ) {
           setBootstrap(result);
         }
+      } catch (error) {
+        if (!active) return;
+        const failure = bootstrapFailure(error);
+        if (failure.kind === "AUTHENTICATION") clearInteractiveSignIn();
+        setBootstrap({ status: "ERROR", ...failure });
       } finally {
         refreshing = false;
       }
@@ -595,7 +611,15 @@ async function bootstrapAuthoritativeSession(
     );
   }
   const health = (await healthResponse.json()) as { database?: string; environment?: string };
-  if (health.database !== "authoritative") return { status: "DEVELOPMENT" };
+  if (health.database !== "authoritative") {
+    if (import.meta.env.DEV && health.environment === "development") {
+      return { status: "DEVELOPMENT" };
+    }
+    throw new SerametBootstrapError(
+      "SERVICE_UNAVAILABLE",
+      "Secure database is unavailable. Access is blocked until the service recovers.",
+    );
+  }
   const token = getSerametAccessToken();
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
   const selectedTenant =

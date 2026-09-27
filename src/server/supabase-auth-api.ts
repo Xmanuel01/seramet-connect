@@ -5,6 +5,7 @@ import { ServerOperationError, publicError } from "@/server/errors";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
+import { clearPosSessionCookie, PosIdentityService } from "@/server/pos-auth-service";
 
 const credentialsSchema = z
   .object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(200) })
@@ -110,10 +111,16 @@ export async function handleSupabaseAuthApi(
           requiredConfigAvailability: availability.requiredConfigAvailability,
         },
       });
-      return Response.json(
-        { ok: true, authenticated: true },
-        { headers: sessionCookies(response, env) },
+      const headers = sessionCookies(response, env);
+      const previousPosSession = readCookie(request, "seramet_pos_session");
+      if (previousPosSession && database) {
+        await new PosIdentityService(database).logoutPosSession(previousPosSession);
+      }
+      headers.append(
+        "set-cookie",
+        clearPosSessionCookie(resolveRuntimeConfiguration(env).productionLike),
       );
+      return Response.json({ ok: true, authenticated: true }, { headers });
     } catch (error) {
       logPublicAuthFailure({
         env,
@@ -304,8 +311,7 @@ function sessionCookies(payload: SupabaseSessionPayload, env: SerametEnv) {
   return headers;
 }
 
-function clearSessionCookies(env: SerametEnv) {
-  const headers = new Headers({ "cache-control": "no-store" });
+export function appendClearedAccountCookies(headers: Headers, env: SerametEnv) {
   const secure = resolveRuntimeConfiguration(env).productionLike ? "; Secure" : "";
   headers.append(
     "set-cookie",
@@ -315,6 +321,11 @@ function clearSessionCookies(env: SerametEnv) {
     "set-cookie",
     `seramet_refresh=; HttpOnly; Path=/api/seramet/public/auth; SameSite=Strict; Max-Age=0${secure}`,
   );
+}
+
+function clearSessionCookies(env: SerametEnv) {
+  const headers = new Headers({ "cache-control": "no-store" });
+  appendClearedAccountCookies(headers, env);
   return headers;
 }
 
