@@ -60,6 +60,7 @@ import { handleSupabaseAuthApi } from "@/server/supabase-auth-api";
 import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
+import { findOverdueDurableWork } from "@/server/worker-health";
 
 type MutationRequest = {
   action?: string;
@@ -105,6 +106,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
           environment: runtime.environment,
           database: env.SERAMET_DB ? "authoritative" : "unavailable",
           queue: runtime.durableQueue ? "available" : "unavailable",
+          // Binding availability is not consumer execution. Prove a sentinel separately.
+          queueConsumerVerification: "NOT_PERFORMED",
           schemaVersion: env.SERAMET_DB ? CURRENT_SCHEMA_VERSION : null,
           issues,
         },
@@ -119,6 +122,9 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
           await assertDatabaseAvailable(env.SERAMET_DB);
           if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB);
           else await createTransactionRepository(env.SERAMET_DB).migrate();
+          if (runtime.durableQueue) {
+            issues.push(...(await findOverdueDurableWork(env.SERAMET_DB)));
+          }
         } catch (error) {
           issues.push({
             code: "DATABASE_UNAVAILABLE",
@@ -132,6 +138,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
           environment: runtime.environment,
           database: env.SERAMET_DB ? "authoritative" : "unavailable",
           queue: runtime.durableQueue ? "available" : "unavailable",
+          // Binding availability is not consumer execution. Prove a sentinel separately.
+          queueConsumerVerification: "NOT_PERFORMED",
           schemaVersion: env.SERAMET_DB ? CURRENT_SCHEMA_VERSION : null,
           issues,
         },

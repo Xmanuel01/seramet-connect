@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   CheckCircle2,
   ChevronLeft,
@@ -14,6 +14,13 @@ import {
   Upload,
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { Progress } from "@/components/ui/progress";
+import {
+  estimateImportEtaSeconds,
+  summarizeImportProgress,
+  type ImportProgressSnapshot,
+  type PersistedImportProgress,
+} from "@/onboarding/menu-import-progress";
 import { ManualMenuItemDialog } from "@/components/app/ManualMenuItemDialog";
 import {
   Dialog,
@@ -29,7 +36,7 @@ import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
 import { createHistoricalSalesTemplate } from "@/onboarding/historical-sales-import-schema";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
 import { SetupStatus } from "@/onboarding/ui";
-import { useSetupCentre } from "@/onboarding/use-setup-centre";
+import { useSetupCentre, type RecentMenuImport } from "@/onboarding/use-setup-centre";
 import { useAppContext } from "@/lib/app-context";
 import { cn } from "@/lib/utils";
 import { formatMinor } from "@/payments/money";
@@ -52,16 +59,18 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { branchId, isAllBranches, currency, hasPermission } = useAppContext();
+  const { recentMenuImports, inspectImport, importStatus, refreshMenuCatalog, commitImport } =
+    centre;
+  const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
+  const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
   const canImport = hasPermission(permissions.setupImport);
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [strategy, setStrategy] = useState<DuplicateStrategy>("ERROR");
-  const [targetMode, setTargetMode] = useState<ImportTargetMode>(
-    isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES",
-  );
+  const [targetMode, setTargetMode] = useState<ImportTargetMode>("SELECTED_BRANCHES");
+  const [masterOnlyAcknowledged, setMasterOnlyAcknowledged] = useState(false);
   const [targetBranchIds, setTargetBranchIds] = useState<string[]>(isAllBranches ? [] : [branchId]);
   const [stationMap, setStationMap] = useState<Record<string, string>>({});
   const [columnMap, setColumnMap] = useState<Record<string, string>>({});
@@ -74,11 +83,29 @@ function MenuImport() {
   const [catalogAvailability, setCatalogAvailability] = useState("ALL");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [progress, setProgress] = useState<PersistedImportProgress | null>(null);
+  const [recent, setRecent] = useState<RecentMenuImport[]>([]);
+  const [recentError, setRecentError] = useState("");
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const lastProgressSample = useRef<ImportProgressSnapshot | null>(null);
+  const lastImportedCount = useRef(0);
+  const currentProgressImport = useRef<string | null>(null);
+  const [completionOpen, setCompletionOpen] = useState(false);
   const [noticeTone, setNoticeTone] = useState<"success" | "warning">("warning");
   const [historicalPreview, setHistoricalPreview] = useState<HistoricalSalesPreview | null>(null);
   const [previousPosName, setPreviousPosName] = useState("");
 
-  const previewRows = preview?.rows ?? [];
+  const previewRows =
+    preview?.status === "COMMITTING"
+      ? (preview.rows ?? []).filter((row) => row.status !== "COMMITTED" && row.status !== "SKIPPED")
+      : (preview?.rows ?? []);
+  const progressSummary = progress ? summarizeImportProgress(progress) : null;
+  const estimatedTime =
+    etaSeconds === null
+      ? "Calculating from completed items"
+      : etaSeconds < 60
+        ? `About ${etaSeconds} seconds remaining`
+        : `About ${Math.ceil(etaSeconds / 60)} minutes remaining`;
   const committedCount = centre.menuCatalog.length;
   const categoryCodes = [...new Set(centre.menuCatalog.map((item) => item.category_code))].sort();
   const filteredCatalog = useMemo(() => {
@@ -124,7 +151,8 @@ function MenuImport() {
   }, [centre.options.stations, targetBranchIds, targetMode]);
 
   useEffect(() => {
-    setTargetMode(isAllBranches ? "TENANT_MASTER" : "SELECTED_BRANCHES");
+    setTargetMode("SELECTED_BRANCHES");
+    setMasterOnlyAcknowledged(false);
     setTargetBranchIds(isAllBranches ? [] : [branchId]);
     setPreview(null);
     setCatalogAvailability("ALL");
@@ -132,12 +160,206 @@ function MenuImport() {
     setManualOpen(false);
   }, [branchId, isAllBranches]);
 
+  useEffect(() => {
+    if (!canImport) return;
+    let active = true;
+    void recentMenuImports()
+      .then((items) => {
+        if (active) setRecent(items);
+      })
+      .catch(() => {
+        if (active) setRecentError("Import history cannot be retrieved. Do not re-upload yet.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [canImport, recentMenuImports]);
+
+  const inspectPreviousImport = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const restored = await inspectImport(id);
+      setPreview(restored);
+      setImportOpen(true);
+      setProgress(null);
+      setEtaSeconds(null);
+      currentProgressImport.current = null;
+      if (restored.status === "COMMITTING") {
+        window.sessionStorage.setItem(pendingImportKey, restored.id);
+      }
+      setNotice("Existing import recovered without uploading or creating a new commit.");
+      setNoticeTone("success");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Existing import is unavailable. No import was restarted.",
+      );
+      setNoticeTone("warning");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Restore a pending import after refresh without re-uploading or re-committing.
+  useEffect(() => {
+    const savedId = window.sessionStorage.getItem(pendingImportKey);
+    if (!savedId) return;
+    let active = true;
+    void inspectImport(savedId)
+      .then((restored) => {
+        if (!active) return;
+        setPreview((current) => current ?? restored);
+        setImportOpen(true);
+        if (restored.status === "COMMITTED" || restored.status === "FAILED") {
+          window.sessionStorage.removeItem(pendingImportKey);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setNotice(
+            "A previous import needs checking, but its server status could not be retrieved. Do not upload it again.",
+          );
+          setNoticeTone("warning");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [inspectImport, pendingImportKey]);
+
+  useEffect(() => {
+    if (preview?.status !== "COMMITTING") return;
+    const importId = preview.id;
+    if (currentProgressImport.current !== importId) {
+      currentProgressImport.current = importId;
+      lastProgressSample.current = null;
+      lastImportedCount.current = 0;
+      setProgress(null);
+      setEtaSeconds(null);
+    }
+    let active = true;
+    let checking = false;
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await importStatus(importId);
+        if (!active) return;
+        const persisted = { ...result.progress, workerStatus: result.worker?.status };
+        const sample: ImportProgressSnapshot = {
+          processed: persisted.processed,
+          total: persisted.total,
+          observedAt: Date.now(),
+        };
+        setProgress(persisted);
+        if (result.worker?.status !== "RUNNING") setEtaSeconds(null);
+        if (sample.processed > lastImportedCount.current) {
+          // Only refresh after actual persisted row results change.
+          lastImportedCount.current = sample.processed;
+          void inspectImport(importId)
+            .then((updated) => {
+              if (active) setPreview((current) => (current?.id === importId ? updated : current));
+            })
+            .catch(() => undefined);
+          void refreshMenuCatalog();
+        }
+        if (
+          result.worker?.status === "RUNNING" &&
+          lastProgressSample.current &&
+          sample.processed > lastProgressSample.current.processed
+        ) {
+          setEtaSeconds(estimateImportEtaSeconds(lastProgressSample.current, sample));
+        }
+        if (
+          !lastProgressSample.current ||
+          sample.processed > lastProgressSample.current.processed
+        ) {
+          lastProgressSample.current = sample;
+        }
+        if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+          setPreview((current) =>
+            current?.id === importId
+              ? {
+                  ...current,
+                  status: "COMMITTED",
+                  canCommit: false,
+                  verification: result.verification,
+                }
+              : current,
+          );
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            "Menu import committed and independently verified in the authoritative catalogue.",
+          );
+          setNoticeTone("success");
+          setCompletionOpen(true);
+          void refreshMenuCatalog();
+        } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
+          setPreview((current) =>
+            current?.id === importId ? { ...current, status: "FAILED", canCommit: false } : current,
+          );
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            "Import failed or exhausted worker retries. Check worker logs and the import audit before starting another import.",
+          );
+          setNoticeTone("warning");
+        } else if (result.status === "COMMITTING") {
+          if (!result.worker && Date.now() - Date.parse(result.updatedAt) > 120_000) {
+            setNotice(
+              "The earlier synchronous import is still marked COMMITTING without a worker job. It may have been interrupted. Do not retry until its committed rows are audited.",
+            );
+          } else {
+            setNotice(
+              result.worker
+                ? `Import is processing safely in the background (worker: ${result.worker.status}, attempts: ${result.worker.attempts}).`
+                : "Server is still processing the existing import. Do not submit it again.",
+            );
+          }
+          setNoticeTone("warning");
+        } else if (result.status === "COMMITTED") {
+          setNotice(
+            "Server shows COMMITTED but its independent verification is unavailable. Review the import audit before proceeding.",
+          );
+          setNoticeTone("warning");
+        } else {
+          setNotice(
+            "Commit result is still uncertain. Do not retry until the existing server request is resolved.",
+          );
+          setNoticeTone("warning");
+        }
+      } catch {
+        if (active) {
+          setNotice("Cannot check the import status right now. Do not re-upload or retry it.");
+          setNoticeTone("warning");
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    importStatus,
+    inspectImport,
+    refreshMenuCatalog,
+    pendingImportKey,
+    preview?.id,
+    preview?.status,
+  ]);
+
   const invalidatePreview = (
     message = "Import settings changed. Run preview again before commit.",
   ) => {
     if (preview) setNotice(message);
     setNoticeTone("warning");
     setPreview(null);
+    setMasterOnlyAcknowledged(false);
     setPreviewPage(1);
   };
 
@@ -160,6 +382,7 @@ function MenuImport() {
     if (targetMode === "SELECTED_BRANCHES" && !targetBranchIds.length) {
       throw new Error("Select at least one branch or choose Tenant master only.");
     }
+    setMasterOnlyAcknowledged(false);
     const result = await centre.previewImport(file, "MENU", strategy, {
       targetMode,
       targetBranchIds: targetMode === "SELECTED_BRANCHES" ? targetBranchIds : [],
@@ -201,30 +424,86 @@ function MenuImport() {
   };
 
   const commit = () => {
-    if (!preview) return;
-    void run(async () => {
-      const response = await centre.commitImport(preview);
-      if (response.result.queued) {
-        setPreview({ ...preview, status: "COMMITTING", canCommit: false });
+    if (!preview?.canCommit || busy) return;
+    if (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged) {
+      setNoticeTone("warning");
+      setNotice(
+        "Explicitly confirm master-only imports will not activate products in any branch POS.",
+      );
+      return;
+    }
+    const pending = preview;
+    setBusy(true);
+    setNotice(
+      "Submitting the existing preview once. You can track its status without repeating it.",
+    );
+    setNoticeTone("warning");
+    currentProgressImport.current = pending.id;
+    lastProgressSample.current = null;
+    lastImportedCount.current = 0;
+    setProgress(null);
+    setEtaSeconds(null);
+    window.sessionStorage.setItem(pendingImportKey, pending.id);
+    void commitImport(pending)
+      .then((response) => {
+        if (response.result.queued) {
+          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
+          setNotice(
+            `Menu import queued as ${response.result.jobId ?? "a durable worker job"}. Its status will update automatically.`,
+          );
+          return;
+        }
+        if (response.result.verification?.status !== "VERIFIED") {
+          throw new Error(
+            "Commit returned without verified catalogue confirmation. Inspect the existing import before retrying.",
+          );
+        }
+        setPreview({
+          ...pending,
+          status: "COMMITTED",
+          canCommit: false,
+          verification: response.result.verification,
+        });
+        window.sessionStorage.removeItem(pendingImportKey);
+        setNotice("Menu import committed and verified in the authoritative catalogue.");
+        setNoticeTone("success");
+        setCompletionOpen(true);
+      })
+      .catch(async (error: unknown) => {
+        const result = await importStatus(pending.id).catch(() => null);
+        if (result?.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+          setPreview({
+            ...pending,
+            status: "COMMITTED",
+            canCommit: false,
+            verification: result.verification,
+          });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice("Menu import was verified despite a lost commit response.");
+          setNoticeTone("success");
+          void refreshMenuCatalog();
+          return;
+        }
+        if (result?.status === "FAILED") {
+          setPreview({ ...pending, status: "FAILED", canCommit: false });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice("Import failed. Review the failure before revalidating or retrying the file.");
+        } else if (!result || result.status === "COMMITTING") {
+          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
+          setNotice(
+            "Commit response was interrupted. Checking the existing import; do not submit it again.",
+          );
+        } else {
+          setPreview({ ...pending, canCommit: false });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice(
+            (error instanceof Error ? error.message : "Import request failed") +
+              " Revalidate the existing file only after reviewing this result.",
+          );
+        }
         setNoticeTone("warning");
-        throw new QueuedImportNotice(
-          `Import queued as ${response.result.jobId ?? "a durable worker job"}. It is not committed until verification completes.`,
-        );
-      }
-      if (response.result.verification?.status !== "VERIFIED") {
-        setPreview({ ...preview, canCommit: false });
-        throw new Error(
-          "Server accepted the import but verification did not pass. Refresh the authoritative catalogue before further changes.",
-        );
-      }
-      setPreview({
-        ...preview,
-        status: "COMMITTED",
-        canCommit: false,
-        ...(response.result.verification ? { verification: response.result.verification } : {}),
-      });
-      return response;
-    }, "Menu import committed and verified in the authoritative catalogue.");
+      })
+      .finally(() => setBusy(false));
   };
 
   const uploadHistoricalSales = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -309,6 +588,45 @@ function MenuImport() {
         </div>
       )}
 
+      {canImport && (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Existing menu imports"
+            sub="Resume or inspect an existing preview. Never re-upload a file just to check a pending commit."
+            right={<History className="h-4 w-4 text-primary" />}
+          />
+          {recentError && (
+            <p className="px-4 py-2 text-[12px] text-warning" role="alert">
+              {recentError}
+            </p>
+          )}
+          {recent.length === 0 && !recentError ? (
+            <p className="px-4 py-3 text-[12px] text-muted-foreground">
+              No recent menu imports found.
+            </p>
+          ) : (
+            <div className="divide-y divide-border">
+              {recent.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-2"
+                >
+                  <div className="min-w-0 text-[12px]">
+                    <p className="truncate font-semibold">{item.originalName}</p>
+                    <p className="text-muted-foreground">
+                      {item.rowCount} rows · v{item.templateVersion} · {item.status} ·{" "}
+                      {item.duplicateStrategy}
+                    </p>
+                  </div>
+                  <Btn disabled={busy} onClick={() => void inspectPreviousImport(item.id)}>
+                    {item.status === "COMMITTING" ? "Track existing job" : "Inspect"}
+                  </Btn>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
       <div className="mt-4 grid gap-4">
         <div className="grid min-w-0 gap-4">
           <Panel>
@@ -602,6 +920,7 @@ function MenuImport() {
                   value={targetMode}
                   onChange={(event) => {
                     setTargetMode(event.target.value as ImportTargetMode);
+                    setMasterOnlyAcknowledged(false);
                     invalidatePreview();
                   }}
                   className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
@@ -773,15 +1092,67 @@ function MenuImport() {
             <Panel>
               <PanelHead
                 title="Import preview"
-                sub="Nothing is persisted until Commit import is selected"
+                sub={
+                  preview?.status === "COMMITTING"
+                    ? "Server-side import in progress. Do not re-submit the same preview."
+                    : "Nothing is persisted until Commit import is selected"
+                }
                 right={
                   preview ? (
-                    <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
+                    <SetupStatus
+                      value={
+                        preview.status === "COMMITTING"
+                          ? "COMMITTING"
+                          : preview.canCommit
+                            ? "READY"
+                            : "BLOCKED"
+                      }
+                    />
                   ) : (
                     <Status>Pending</Status>
                   )
                 }
               />
+              {preview.status === "COMMITTING" && progressSummary && (
+                <section
+                  aria-label="Authoritative import progress"
+                  className="space-y-2 border-b border-border px-4 py-3"
+                >
+                  <div className="flex items-center justify-between text-[12px] font-medium">
+                    <span>
+                      {progressSummary.stage === "QUEUED"
+                        ? "Waiting for the import worker"
+                        : progressSummary.stage === "VERIFYING"
+                          ? "Verifying the committed menu"
+                          : "Importing menu items"}
+                    </span>
+                    <span className="tabular-nums">{progressSummary.percent}%</span>
+                  </div>
+                  <Progress
+                    value={progressSummary.percent}
+                    aria-label="Menu import completion"
+                    aria-valuetext={`${progressSummary.processed} of ${progressSummary.total} rows processed`}
+                  />
+                  <div className="flex flex-wrap justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="tabular-nums">
+                      {progressSummary.processed}/{progressSummary.total} processed ·{" "}
+                      {progress?.created} created · {progress?.updated} updated ·{" "}
+                      {progress?.skipped} skipped · {progress?.failed} failed
+                    </span>
+                    <span>
+                      {progress?.workerStatus === "RUNNING" && progressSummary.pending > 0
+                        ? estimatedTime
+                        : progressSummary.stage === "QUEUED"
+                          ? "Waiting for worker; ETA unavailable"
+                          : "Awaiting verified completion"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    You can continue in the background. The progress shown is based on rows recorded
+                    in the database, not an estimated animation.
+                  </p>
+                </section>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px]">
                   <thead>
@@ -847,9 +1218,39 @@ function MenuImport() {
               {notice}
             </p>
           )}
+          {preview && (
+            <div className="space-y-2 rounded-md border border-border p-3 text-[12px]">
+              <p className="font-semibold">Activation targets before committing</p>
+              {preview.targetMode === "TENANT_MASTER" ? (
+                <label className="flex items-start gap-2 text-warning">
+                  <input
+                    type="checkbox"
+                    checked={masterOnlyAcknowledged}
+                    onChange={(event) => setMasterOnlyAcknowledged(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                  />
+                  I understand master-only items will NOT appear in branch POS until explicitly
+                  activated.
+                </label>
+              ) : preview.targetMode === "SELECTED_BRANCHES" ? (
+                <p>
+                  POS activation targets:{" "}
+                  {(preview.targetBranchIds ?? [])
+                    .map(
+                      (id) =>
+                        centre.structure.branches.find((branch) => branch.id === id)?.name ??
+                        "Unknown branch",
+                    )
+                    .join(", ") || "NONE — choose branches and revalidate"}
+                </p>
+              ) : (
+                <p>Row-level activation requires each row to specify a validated branch code.</p>
+              )}
+            </div>
+          )}
           <DialogFooter className="gap-2">
             <Btn disabled={busy} onClick={() => setImportOpen(false)}>
-              Close
+              {preview?.status === "COMMITTING" ? "Continue in background" : "Close"}
             </Btn>
             <Btn
               disabled={!sourceFile || busy}
@@ -862,7 +1263,12 @@ function MenuImport() {
             <Btn
               variant="primary"
               onClick={commit}
-              disabled={!preview?.canCommit || !canImport || busy}
+              disabled={
+                !preview?.canCommit ||
+                !canImport ||
+                busy ||
+                (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged)
+              }
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -870,6 +1276,34 @@ function MenuImport() {
                 <CheckCircle2 className="h-4 w-4" />
               )}
               Commit import
+            </Btn>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={completionOpen} onOpenChange={setCompletionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Menu import completed</DialogTitle>
+            <DialogDescription>
+              Seramet has independently verified the imported records in the authoritative
+              catalogue. Review any skipped or previously existing items before opening sales.
+            </DialogDescription>
+          </DialogHeader>
+          {progressSummary && (
+            <p className="text-[13px] tabular-nums" role="status">
+              {progressSummary.processed} of {progressSummary.total} processed. {progress?.created}{" "}
+              created, {progress?.updated} updated and {progress?.skipped} skipped.
+            </p>
+          )}
+          <DialogFooter>
+            <Btn
+              variant="primary"
+              onClick={() => {
+                setCompletionOpen(false);
+                setImportOpen(false);
+              }}
+            >
+              View menu
             </Btn>
           </DialogFooter>
         </DialogContent>
@@ -960,8 +1394,6 @@ function Pagination({
     </div>
   );
 }
-
-class QueuedImportNotice extends Error {}
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";

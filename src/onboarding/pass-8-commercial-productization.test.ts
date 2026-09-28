@@ -160,6 +160,107 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
   });
 
+  it("requires verified malware scan on staging and rejects unscanned prior preview replay", async () => {
+    const bytes = new TextEncoder().encode(
+      "code,name,category,price,currency\nSEC-01,Scanner-verified item,MAIN,1250,KES",
+    );
+    const original = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "scanner-test.csv",
+      mimeType: "text/csv",
+      bytes,
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "legacy-unscanned-preview",
+    });
+    const stagingEnv: SerametEnv = { ...env, SERAMET_ENVIRONMENT: "staging" };
+    const staging = new OnboardingService(db, actor(), stagingEnv);
+    await expect(staging.commitImport(original.id, original.commitKey)).rejects.toThrow(
+      /no verified current malware scan/,
+    );
+    await expect(
+      staging.previewImport({
+        targetMode: "SELECTED_BRANCHES",
+        targetBranchIds: [branchId],
+        kind: "MENU",
+        originalName: "scanner-test.csv",
+        mimeType: "text/csv",
+        bytes,
+        duplicateStrategy: "ERROR",
+        idempotencyKey: "staging-no-scanner",
+      }),
+    ).rejects.toThrow(/verified malware scanner is required/);
+
+    stagingEnv.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "ERROR" };
+      },
+    };
+    await expect(
+      staging.previewImport({
+        targetMode: "SELECTED_BRANCHES",
+        targetBranchIds: [branchId],
+        kind: "MENU",
+        originalName: "scanner-test.csv",
+        mimeType: "text/csv",
+        bytes,
+        duplicateStrategy: "ERROR",
+        idempotencyKey: "staging-error-scanner",
+      }),
+    ).rejects.toThrow(/scanning could not be verified/);
+
+    stagingEnv.SERAMET_MALWARE_SCANNER = {
+      async scan() {
+        return { status: "INFECTED" };
+      },
+    };
+    await expect(
+      staging.previewImport({
+        targetMode: "SELECTED_BRANCHES",
+        targetBranchIds: [branchId],
+        kind: "MENU",
+        originalName: "scanner-test.csv",
+        mimeType: "text/csv",
+        bytes,
+        duplicateStrategy: "ERROR",
+        idempotencyKey: "staging-infected",
+      }),
+    ).rejects.toThrow(/Import failed malware screening/);
+
+    let scannedBytes = 0;
+    stagingEnv.SERAMET_MALWARE_SCANNER = {
+      async scan(input) {
+        scannedBytes = input.bytes.byteLength;
+        return { status: "CLEAN", reference: "isolated-clamav-fixture" };
+      },
+    };
+    const safe = await staging.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "scanner-test.csv",
+      mimeType: "text/csv",
+      bytes,
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "staging-scanned",
+    });
+    expect(scannedBytes).toBe(bytes.byteLength);
+    expect(safe.id).not.toBe(original.id);
+    const report = await db
+      .prepare("SELECT report_json FROM setup_imports WHERE tenant_id=? AND id=?")
+      .bind(tenantId, safe.id)
+      .first<{ report_json: string }>();
+    expect(JSON.parse(report!.report_json).cleanScan).toMatchObject({
+      status: "CLEAN",
+      reference: "isolated-clamav-fixture",
+      policy: "verified-private-av-v1",
+    });
+    expect(await staging.commitImport(safe.id, safe.commitKey)).toMatchObject({
+      status: "COMMITTED",
+    });
+  });
+
   it("previews menu files without mutation, commits explicitly and deduplicates commit retries", async () => {
     const preview = await previewCsv(
       service,
@@ -184,6 +285,65 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       }),
     );
     expect(await auditCount(db, "SETUP_IMPORT_COMMITTED")).toBe(1);
+  });
+
+  it("queues a medium-sized menu import and exposes its progress without duplicate writes", async () => {
+    const rows = Array.from(
+      { length: 101 },
+      (_, index) => `MEDIUM-${index + 1},Menu item ${index + 1},MAIN,450,KES`,
+    );
+    const preview = await previewCsv(
+      service,
+      "MENU",
+      ["code,name,category,price,currency", ...rows].join("\n"),
+      "medium-menu-import",
+    );
+    expect(preview).toMatchObject({ rowCount: 101, canCommit: true, errorCount: 0 });
+    const result = await service.commitImport(preview.id, preview.commitKey);
+    expect(result).toMatchObject({ status: "QUEUED", queued: true, rows: 101 });
+    expect(await rowCount(db, "menu_catalog_items")).toBe(0);
+    expect(await service.inspectImport(preview.id)).toMatchObject({ status: "COMMITTING" });
+    expect(await service.importStatus(preview.id)).toMatchObject({
+      status: "COMMITTING",
+      rowCount: 101,
+      progress: {
+        total: 101,
+        processed: 0,
+        pending: 101,
+        created: 0,
+        skipped: 0,
+        verified: false,
+      },
+      worker: { status: "PENDING", attempts: 0 },
+    });
+    expect(await service.recentMenuImports()).toContainEqual(
+      expect.objectContaining({
+        id: preview.id,
+        status: "COMMITTING",
+        rowCount: 101,
+      }),
+    );
+    const restricted = new OnboardingService(
+      db,
+      actor(
+        [secondBranchId],
+        allPermissionCodes.filter(
+          (permission) => permission !== permissions.tenantScopeAllBranches,
+        ),
+      ),
+      env,
+    );
+    expect((await restricted.recentMenuImports()).some((entry) => entry.id === preview.id)).toBe(
+      false,
+    );
+    await expect(restricted.inspectImport(preview.id)).rejects.toThrow(
+      /branch|permission|access|denied/i,
+    );
+    await expect(service.commitImport(preview.id, preview.commitKey)).rejects.toThrow(
+      "already being committed",
+    );
+    const otherTenant = new OnboardingService(db, { ...actor(), tenantId: secondTenantId }, env);
+    await expect(otherTenant.importStatus(preview.id)).rejects.toThrow("Import not found");
   });
 
   it("follows the manual-item popup contract through preview, verified commit and real POS visibility", async () => {
@@ -547,8 +707,10 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       referenceMap: { stations: { "Main Kitchen": "MAIN" } },
     });
     expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
-    const result = await service.commitImport(preview.id, preview.commitKey);
-    expect(result).toMatchObject({
+    const queued = await service.commitImport(preview.id, preview.commitKey);
+    expect(queued).toMatchObject({ status: "QUEUED", queued: true, rows: 343 });
+    await processWorkerJob(db, env, String(queued.jobId), true);
+    expect(await service.importStatus(preview.id)).toMatchObject({
       status: "COMMITTED",
       verification: {
         created: 343,
@@ -556,6 +718,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         branchSettings: 343,
         catalogueVerified: true,
       },
+      worker: { status: "SUCCEEDED" },
     });
     const operational = await createMenuCatalogReader(db)(tenantId, branchId);
     expect(operational).toHaveLength(343);

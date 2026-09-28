@@ -1,13 +1,13 @@
 name: Deploy staging
 
+# Incident: staging release requires human-invoked recovery gates. Never deploy
+# automatically from a main push until the original backlog and scanner are safe.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 concurrency:
   group: seramet-staging
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -25,11 +25,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run validate
-      - name: Apply PostgreSQL migrations
-        run: npm run migrate:postgres
-        env:
-          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
-
       - name: Resolve existing Cloudflare staging bindings
         shell: bash
         env:
@@ -104,6 +99,53 @@ jobs:
             append("SERAMET_MALWARE_SCANNER_SERVICE", scannerService);
           }
           NODE
+
+      - name: Verify real malware-scanner Worker exists
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # The previous preflight established an allowed service name. Verify that
+          # the target script actually exists; a configured string is not proof.
+          curl --fail --silent --show-error \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SERAMET_MALWARE_SCANNER_SERVICE}/settings" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -o /dev/null
+
+      - name: Require release-specific backup and pending-work approval
+        env:
+          SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
+          SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
+          SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
+          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
+        run: node scripts/verify-staging-release-gate.mjs
+
+      - name: Inspect pending staging work and block overlapping menu commits
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/inspect-staging-backlog.mjs
+
+      - name: Independently verify PostgreSQL public RLS and client grants
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-staging-api-posture.mjs
+
+      # Only after resource and release safety gates may any staging database
+      # migrations or Cloudflare origin settings change.
+      - name: Apply PostgreSQL migrations
+        run: npm run migrate:postgres
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+
+      - name: Recheck actual database security after migrations
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-staging-api-posture.mjs
 
       - name: Synchronize Hyperdrive origin credentials
         run: |

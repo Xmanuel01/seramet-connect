@@ -52,7 +52,14 @@ export default defineConfig(({ command }) => ({
       // Keep the hardened SSR/API wrapper as the authoritative server entry.
       server: { entry: "server" },
     }),
-    ...(command === "build" ? [nitro({ defaultPreset: "cloudflare-module" })] : []),
+    ...(command === "build"
+      ? [
+          nitro({
+            defaultPreset: "cloudflare-module",
+            plugins: ["./src/server/nitro-cloudflare-events.ts"],
+          }),
+        ]
+      : []),
     react(),
   ],
 }));

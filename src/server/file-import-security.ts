@@ -76,6 +76,7 @@ export async function validateImportFile(input: {
   if (extension === "xlsx" && !(input.bytes[0] === 0x50 && input.bytes[1] === 0x4b)) {
     throw new ServerOperationError("VALIDATION_FAILED", 400, "Workbook signature is invalid");
   }
+  let scanReference: string | undefined;
   if (input.scanner) {
     const scan = await input.scanner.scan({
       bytes: input.bytes,
@@ -84,6 +85,7 @@ export async function validateImportFile(input: {
     });
     if (!scan.clean)
       throw new ServerOperationError("VALIDATION_FAILED", 422, "Import failed malware screening");
+    scanReference = scan.reference;
   }
   return {
     kind: input.kind,
@@ -93,6 +95,7 @@ export async function validateImportFile(input: {
     maxRows: policy.maxRows,
     requiresPreview: true,
     digest: await sha256(input.bytes),
+    ...(scanReference ? { scanReference } : {}),
   };
 }
 
