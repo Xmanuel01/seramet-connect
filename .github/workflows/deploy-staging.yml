@@ -1,9 +1,9 @@
 name: Deploy staging
 
+# Incident: staging release requires human-invoked recovery gates. Never deploy
+# automatically from a main push until the original backlog and scanner are safe.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 concurrency:
   group: seramet-staging
