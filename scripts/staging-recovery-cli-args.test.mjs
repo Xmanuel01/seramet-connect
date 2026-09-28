@@ -9,11 +9,7 @@ test("a no-flag invocation stays read-only", () => {
 });
 
 test("a GitHub Actions node script --plan invocation succeeds", () => {
-  const argv = [
-    "/opt/node",
-    "/runner/scripts/reconcile-staging-management-backlog.mjs",
-    "--plan",
-  ];
+  const argv = ["/opt/node", "/runner/scripts/reconcile-staging-management-backlog.mjs", "--plan"];
   assert.equal(parseStagingRecoveryMode(argv.slice(2)), "plan");
 });
 
@@ -46,21 +42,25 @@ test("rejects combined, repeated and arbitrary arguments", () => {
 
 test("both complete scripts reach staging configuration checks with valid --plan", () => {
   const scripts = [
-    { filename: "reconcile-staging-menu-imports.mjs", expected: /Staging Postgres connection is required/ },
+    {
+      filename: "reconcile-staging-menu-imports.mjs",
+      expected: /Staging Postgres connection is required/,
+    },
     { filename: "reconcile-staging-management-backlog.mjs", expected: /STAGING ONLY:/ },
   ];
   for (const { filename, expected } of scripts) {
-    const command = spawnSync(process.execPath, [
-      fileURLToPath(new URL(filename, import.meta.url)),
-      "--plan",
-    ], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        SERAMET_ENVIRONMENT: "staging",
-        SERAMET_POSTGRES_URL: "",
+    const command = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL(filename, import.meta.url)), "--plan"],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          SERAMET_ENVIRONMENT: "staging",
+          SERAMET_POSTGRES_URL: "",
+        },
       },
-    });
+    );
     assert.notEqual(command.status, 0);
     assert.match(command.stderr, expected);
     assert.doesNotMatch(command.stderr, /Use --plan OR --apply/);
