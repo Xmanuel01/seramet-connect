@@ -1187,8 +1187,10 @@ export class OnboardingService {
                     "File malware scanner could not complete its security check",
                   );
                 }
-                if (scanned.status === "ERROR" ||
-                    (scanned.status === "CLEAN" && !scanned.reference?.trim())) {
+                if (
+                  scanned.status === "ERROR" ||
+                  (scanned.status === "CLEAN" && !scanned.reference?.trim())
+                ) {
                   throw new ServerOperationError(
                     "EXTERNAL_SERVICE_UNAVAILABLE",
                     503,
@@ -1404,10 +1406,9 @@ export class OnboardingService {
       };
     }
     if (resolveRuntimeConfiguration(this.env).productionLike) {
-      const report = parseJson<{ cleanScan?: { status?: string; reference?: string; policy?: string } }>(
-        record.report_json,
-        {},
-      );
+      const report = parseJson<{
+        cleanScan?: { status?: string; reference?: string; policy?: string };
+      }>(record.report_json, {});
       if (
         report.cleanScan?.status !== "CLEAN" ||
         !report.cleanScan.reference?.trim() ||

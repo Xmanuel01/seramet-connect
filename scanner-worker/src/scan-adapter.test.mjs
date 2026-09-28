@@ -69,7 +69,15 @@ test("unconfigured, insecure and missing token services all fail closed", async 
 test("malformed or spoofed clean response fails closed", async () => {
   for (const response of [
     { ...result("CLEAN"), json: async () => ({ status: "CLEAN" }) },
-    { ...result("CLEAN"), json: async () => ({ status: "CLEAN", engine: "clamav", signatureVersion: "daily", reference: " " }) },
+    {
+      ...result("CLEAN"),
+      json: async () => ({
+        status: "CLEAN",
+        engine: "clamav",
+        signatureVersion: "daily",
+        reference: " ",
+      }),
+    },
     result("UNKNOWN"),
     { ok: false, status: 503, json: async () => ({ status: "CLEAN" }) },
   ]) {
