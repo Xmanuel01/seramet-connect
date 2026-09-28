@@ -151,7 +151,17 @@ async function readLocalSnapshot() {
   });
   let inTransaction = false;
   try {
-    await local.connect();
+    try {
+      await local.connect();
+    } catch (error) {
+      if (error?.code === "28P01") {
+        throw new Error("LOCAL restored PostgreSQL password authentication failed");
+      }
+      throw new Error(
+        "LOCAL restored PostgreSQL connection failed: " +
+          (error instanceof Error ? error.message : "unknown connection error"),
+      );
+    }
     const identity = (await local.query(LOCAL_RESTORE_IDENTITY_SQL)).rows[0];
     if (
       identity.host !== "127.0.0.1" ||
@@ -319,7 +329,17 @@ async function main() {
   const stage = new pg.Client({ connectionString: stageDsn, connectionTimeoutMillis: 10000 });
   let transactionOpen = false;
   try {
-    await stage.connect();
+    try {
+      await stage.connect();
+    } catch (error) {
+      if (error?.code === "28P01") {
+        throw new Error("STAGING PostgreSQL password authentication failed");
+      }
+      throw new Error(
+        "STAGING PostgreSQL connection failed: " +
+          (error instanceof Error ? error.message : "unknown connection error"),
+      );
+    }
     if (mode === "--verify") {
       await stage.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       transactionOpen = true;
