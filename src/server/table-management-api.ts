@@ -195,7 +195,7 @@ export async function handleTableManagementApi(
   env: SerametEnv,
 ): Promise<Response | null> {
   const url = new URL(request.url);
-  const tableEdit = /^\\/api\\/seramet\\/tables\\/configuration\\/([^/]+)$/.exec(url.pathname);
+  const tableEdit = /^\/api\/seramet\/tables\/configuration\/([^/]+)$/.exec(url.pathname);
   const isCreateTable = url.pathname === "/api/seramet/tables/configuration";
   const isCreateArea = url.pathname === "/api/seramet/tables/areas";
   if (!tableEdit && !isCreateTable && !isCreateArea) return null;
