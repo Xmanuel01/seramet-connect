@@ -11,9 +11,8 @@ BEGIN
        IS DISTINCT FROM 'APPROVED_AFTER_ISOLATED_RESTORE' THEN
     RAISE EXCEPTION 'Lockdown refused: independently verified staging restore and tested application role are required';
   END IF;
-  IF current_database() = 'postgres' THEN
-    RAISE EXCEPTION 'Refusing unverified generic postgres database target';
-  END IF;
+  -- A separate runner MUST verify the staging project-ref in the DSN;
+  -- Supabase staging itself commonly has database name 'postgres'.
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') OR
      NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
     RAISE EXCEPTION 'Supabase role inventory differs; stop';
