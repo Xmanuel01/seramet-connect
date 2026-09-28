@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+export const LOCAL_RESTORE_IDENTITY_SQL =
+  "SELECT host(inet_server_addr()) AS host,current_database() AS database,current_user AS username";
+
 export const INCIDENT = Object.freeze({
   projectRef: "vnymbavsbxorwxpebkot",
   tenantId: "64d00226-45e6-48eb-b43f-972061e7abac",
