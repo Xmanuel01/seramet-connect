@@ -50,6 +50,7 @@ import { handleManagementApi } from "@/server/management-api";
 import { handleFinanceApi } from "@/server/finance-api";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
+import { handleTableManagementApi } from "@/server/table-management-api";
 import { handleIntelligenceApi } from "@/server/intelligence-api";
 import { handleCrmApi } from "@/server/crm-api";
 import { handleEnterpriseApi } from "@/server/enterprise-api";
@@ -189,6 +190,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (managementResponse) return managementResponse;
     const financeResponse = await handleFinanceApi(request, env);
     if (financeResponse) return financeResponse;
+    const tableManagementResponse = await handleTableManagementApi(request, env);
+    if (tableManagementResponse) return tableManagementResponse;
     const onboardingResponse = await handleOnboardingApi(request, env);
     if (onboardingResponse) return onboardingResponse;
     const intelligenceResponse = await handleIntelligenceApi(request, env);
