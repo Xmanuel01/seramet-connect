@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
-import { financeDefaultDates } from "@/finance/finance-business-date";
+import { scopedFinancePeriod } from "@/finance/finance-period-state";
 
 export type FinancialIssue = { code: string; count: number; detail: string };
 export type FinancialAccountRow = {
@@ -102,11 +102,23 @@ export function useFinancePeriod() {
     platformState.tenants.find((item) => item.id === activeTenantId)?.timezone ??
     "UTC";
   const cutoff = Number(branch?.metadata?.["businessDayCutoffMinutes"] ?? 240);
-  const [dates, setDates] = useState(() => financeDefaultDates(new Date(), zone, cutoff));
+  // Keep user-edited dates for the current scope. When the user changes tenant,
+  // branch, timezone, or business-day cutoff, do not reuse another branch's period.
+  const scopeKey = [activeTenantId, branchId, zone, cutoff].join(":");
+  const [saved, setSaved] = useState(() =>
+    scopedFinancePeriod(null, scopeKey, new Date(), zone, cutoff),
+  );
+  const dates = scopedFinancePeriod(saved, scopeKey, new Date(), zone, cutoff);
+  const update = (field: "from" | "to", value: string) =>
+    setSaved((previous) => ({
+      ...scopedFinancePeriod(previous, scopeKey, new Date(), zone, cutoff),
+      [field]: value,
+    }));
   return {
-    ...dates,
-    setFrom: (from: string) => setDates((prev) => ({ ...prev, from })),
-    setTo: (to: string) => setDates((prev) => ({ ...prev, to })),
+    from: dates.from,
+    to: dates.to,
+    setFrom: (from: string) => update("from", from),
+    setTo: (to: string) => update("to", to),
   };
 }
 
@@ -141,8 +153,9 @@ export function useFinanceReport<T>(
         page,
         limit,
         accountType,
+        revision,
       ].join(":"),
-    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType],
+    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision],
   );
   useEffect(() => {
     if (!allowed) return;
