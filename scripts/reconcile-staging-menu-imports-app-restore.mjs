@@ -152,11 +152,7 @@ async function readLocalSnapshot() {
   let inTransaction = false;
   try {
     await local.connect();
-    const identity = (
-      await local.query(
-        LOCAL_RESTORE_IDENTITY_SQL,
-      )
-    ).rows[0];
+    const identity = (await local.query(LOCAL_RESTORE_IDENTITY_SQL)).rows[0];
     if (
       identity.host !== "127.0.0.1" ||
       identity.database !== INCIDENT.localDatabase ||
