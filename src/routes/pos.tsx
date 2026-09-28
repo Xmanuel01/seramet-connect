@@ -909,7 +909,7 @@ function POS() {
           orderId = kitchen.order.id;
           optimisticPaymentState = kitchen.state;
           kitchenOrderUpdated = true;
-          if (!kitchen.printResult?.jobs.length) {
+          if (!kitchen.printResult?.jobs.length && !isStagingPrinterlessTestingEnabled()) {
             throw new Error(
               "Payment was not opened because no KOT/KDS delivery job was created for this order.",
             );
