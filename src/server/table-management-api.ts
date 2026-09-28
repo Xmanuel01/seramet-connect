@@ -183,7 +183,7 @@ async function assertArea(db:D1Database,tenantId:string,branchId:string,id:strin
 }
 async function assertNoOpenOrders(db:D1Database,tenantId:string,branchId:string,code:string) {
   const orders = await db.prepare(
-    "SELECT payload_json FROM orders WHERE tenant_id=? AND branch_id=? AND status IN ('HELD','OPEN','SENT_TO_KITCHEN','IN_PROGRESS','READY','SERVED','BILL_REQUESTED','PARTIALLY_PAID')",
+    "SELECT payload_json FROM orders WHERE tenant_id=? AND branch_id=? AND status IN ('DRAFT','HELD','OPEN','SENT_TO_KITCHEN','IN_PROGRESS','READY','SERVED','BILL_REQUESTED','AWAITING_PAYMENT','PARTIALLY_PAID')",
   ).bind(tenantId,branchId).all<{payload_json:string}>();
   if ((orders.results??[]).some(({payload_json})=>{
     try { const payload=JSON.parse(payload_json) as {table?:unknown}; return payload.table===code; }
