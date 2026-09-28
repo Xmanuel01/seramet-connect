@@ -5,6 +5,14 @@ const ref = (id) => createHash("md5").update(id).digest("hex").slice(0, 12);
 const refuse = (message) => {
   throw new Error("STAGING_MANAGEMENT_BACKLOG_REFUSED: " + message);
 };
+const isExpectedPayload = (raw, branchId) => {
+  try {
+    const payload = JSON.parse(raw);
+    return payload && !Array.isArray(payload) &&
+      Object.keys(payload).sort().join(",") === "branchId,businessDate" &&
+      payload.branchId === branchId && payload.businessDate === null;
+  } catch { return false; }
+};
 const stable = (value) => {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object")
@@ -42,7 +50,7 @@ export function planStagingManagementBacklog({
         job.started_at !== null || job.finished_at !== null ||
         job.lease_owner !== null || job.lease_expires_at !== null ||
         !job.idempotency_key || !job.id ||
-        job.payload_json !== "{}" ||
+        !isExpectedPayload(job.payload_json, branchId) ||
         uniqueIds.has(job.id) || uniqueKeys.has(job.idempotency_key)) {
       refuse("One of the dated management jobs has changed or could be material");
     }
