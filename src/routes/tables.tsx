@@ -85,9 +85,7 @@ function Tables() {
               if (newArea) setArea(newArea);
             }}
           />
-          <Btn onClick={() => (window.location.href = "/reservations")}>
-            New reservation
-          </Btn>
+          <Btn onClick={() => (window.location.href = "/reservations")}>New reservation</Btn>
         </div>
       }
     >

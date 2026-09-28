@@ -90,7 +90,11 @@ export function AddTableDialog({
       <Btn variant="primary" onClick={begin}>
         Add table
       </Btn>
-      {notice && <span className="text-[11px] text-success" role="status">{notice}</span>}
+      {notice && (
+        <span className="text-[11px] text-success" role="status">
+          {notice}
+        </span>
+      )}
       <Dialog open={open} onOpenChange={(next) => !creating && setOpen(next)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -145,16 +149,16 @@ export function AddTableDialog({
                 </select>
               </label>
             )}
-            {error && <p className="text-[12px] text-danger" role="alert">{error}</p>}
+            {error && (
+              <p className="text-[12px] text-danger" role="alert">
+                {error}
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <Btn type="button" disabled={creating} onClick={() => setOpen(false)}>
                 Cancel
               </Btn>
-              <Btn
-                type="submit"
-                variant="primary"
-                disabled={creating || !code.trim() || !seats}
-              >
+              <Btn type="submit" variant="primary" disabled={creating || !code.trim() || !seats}>
                 {creating ? "Creating..." : "Create table"}
               </Btn>
             </div>

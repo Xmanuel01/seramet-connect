@@ -78,7 +78,13 @@ export function PosCustomerPicker({
   };
 
   return (
-    <div className={compact ? "relative text-[12px]" : "mb-3 rounded-lg border border-border bg-card p-3 text-[12px]"}>
+    <div
+      className={
+        compact
+          ? "relative text-[12px]"
+          : "mb-3 rounded-lg border border-border bg-card p-3 text-[12px]"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         {!compact && (
           <div>
@@ -88,7 +94,9 @@ export function PosCustomerPicker({
             </p>
           </div>
         )}
-        {compact && value && <span className="max-w-36 truncate font-semibold">{value.displayName}</span>}
+        {compact && value && (
+          <span className="max-w-36 truncate font-semibold">{value.displayName}</span>
+        )}
         <div className="flex gap-2">
           {value && (
             <button
@@ -124,7 +132,13 @@ export function PosCustomerPicker({
         </p>
       )}
       {canSearch && !disabled && open && (
-        <div className={compact ? "absolute right-0 top-10 z-40 w-[min(22rem,85vw)] rounded-lg border border-border bg-card p-3 shadow-xl" : "mt-3 border-t border-border pt-3"}>
+        <div
+          className={
+            compact
+              ? "absolute right-0 top-10 z-40 w-[min(22rem,85vw)] rounded-lg border border-border bg-card p-3 shadow-xl"
+              : "mt-3 border-t border-border pt-3"
+          }
+        >
           <form onSubmit={search} className="flex gap-2">
             <input
               type="search"

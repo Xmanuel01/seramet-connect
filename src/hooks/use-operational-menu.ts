@@ -79,53 +79,64 @@ export function useOperationalMenu(input: {
     } else {
       setView({ key, ...existing.value, status: "ready", error: "" });
       // Navigating back within 12 seconds does not fetch 345 items again.
-      if (!existing.revalidate) return () => { active = false; };
+      if (!existing.revalidate)
+        return () => {
+          active = false;
+        };
     }
 
-    void menuCache.load(key, async () => {
-      const response = await fetch(
-        `/api/seramet/menu/catalog?branchId=${encodeURIComponent(input.branchId)}`,
-        { headers, cache: "no-store" },
-      );
-      const body = (await response.json().catch(() => ({}))) as {
-        items?: CatalogRow[];
-        pricingRules?: OperationalPricingRule[];
-        message?: string;
-        error?: string;
-      };
-      if (!response.ok)
-        throw new Error(body.message ?? body.error ?? `Menu request failed (${response.status})`);
-      const items = (body.items ?? []).map<Product>((row) => ({
-        id: row.id,
-        itemCode: row.code,
-        ...(row.sku ? { sku: row.sku } : {}),
-        ...(row.barcode ? { barcode: row.barcode } : {}),
-        name: row.name,
-        category: row.category_code.replaceAll("_", " "),
-        price: majorFromMinor(row.effective_price_minor, row.currency),
-        priceMinor: row.effective_price_minor,
-        currency: row.currency,
-        ...(row.tax_rule_id ? { taxRuleId: row.tax_rule_id } : {}),
-        serviceChargeApplicable: row.service_charge_applicable === 1,
-        prep: 0,
-        out: !row.available,
-        productionStation: row.station_code ?? "NONE",
-        importSource: "menu-import",
-      }));
-      const value = { items, pricingRules: body.pricingRules ?? [] };
-      menuCache.set(key, value);
-      return value;
-    }).then((data) => {
-      if (active) setView({ key, ...data, status: "ready", error: "" });
-    }).catch((cause: unknown) => {
-      menuCache.clear(key);
-      if (!active) return;
-      setView({
-        key, items: [], pricingRules: [], status: "error",
-        error: cause instanceof Error ? cause.message : "Authoritative menu is unavailable",
+    void menuCache
+      .load(key, async () => {
+        const response = await fetch(
+          `/api/seramet/menu/catalog?branchId=${encodeURIComponent(input.branchId)}`,
+          { headers, cache: "no-store" },
+        );
+        const body = (await response.json().catch(() => ({}))) as {
+          items?: CatalogRow[];
+          pricingRules?: OperationalPricingRule[];
+          message?: string;
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(body.message ?? body.error ?? `Menu request failed (${response.status})`);
+        const items = (body.items ?? []).map<Product>((row) => ({
+          id: row.id,
+          itemCode: row.code,
+          ...(row.sku ? { sku: row.sku } : {}),
+          ...(row.barcode ? { barcode: row.barcode } : {}),
+          name: row.name,
+          category: row.category_code.replaceAll("_", " "),
+          price: majorFromMinor(row.effective_price_minor, row.currency),
+          priceMinor: row.effective_price_minor,
+          currency: row.currency,
+          ...(row.tax_rule_id ? { taxRuleId: row.tax_rule_id } : {}),
+          serviceChargeApplicable: row.service_charge_applicable === 1,
+          prep: 0,
+          out: !row.available,
+          productionStation: row.station_code ?? "NONE",
+          importSource: "menu-import",
+        }));
+        const value = { items, pricingRules: body.pricingRules ?? [] };
+        menuCache.set(key, value);
+        return value;
+      })
+      .then((data) => {
+        if (active) setView({ key, ...data, status: "ready", error: "" });
+      })
+      .catch((cause: unknown) => {
+        menuCache.clear(key);
+        if (!active) return;
+        setView({
+          key,
+          items: [],
+          pricingRules: [],
+          status: "error",
+          error: cause instanceof Error ? cause.message : "Authoritative menu is unavailable",
+        });
       });
-    });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [headers, input.branchId, key]);
 
   if (view.key !== key) {

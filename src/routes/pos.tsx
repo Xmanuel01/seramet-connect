@@ -24,7 +24,12 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
-import { INITIAL_POS_MENU_ITEMS, POS_MENU_PAGE_SIZE, shouldLoadNextPosMenuPage, visiblePosMenuItems } from "@/lib/pos-menu-view";
+import {
+  INITIAL_POS_MENU_ITEMS,
+  POS_MENU_PAGE_SIZE,
+  shouldLoadNextPosMenuPage,
+  visiblePosMenuItems,
+} from "@/lib/pos-menu-view";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
@@ -1676,9 +1681,9 @@ function POS() {
             <button
               key={c}
               onClick={() => {
-                 setCat(c);
-                 setMenuLimit(INITIAL_POS_MENU_ITEMS);
-               }}
+                setCat(c);
+                setMenuLimit(INITIAL_POS_MENU_ITEMS);
+              }}
               className={cn(
                 "shrink-0 rounded-lg px-3 py-2.5 text-left text-[13px] font-semibold transition-colors lg:w-full",
                 cat === c
@@ -1778,62 +1783,63 @@ function POS() {
             )}
           </div>
           <div className="mb-3 flex min-w-0 items-center gap-2">
-          <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <input
-              value={searchQuery}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-                setMenuLimit(INITIAL_POS_MENU_ITEMS);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                const exact = branchMenu.find((product) =>
-                  [product.barcode, product.sku, product.itemCode].some(
-                    (value) =>
-                      value?.trim().toLocaleLowerCase() === searchQuery.trim().toLocaleLowerCase(),
-                  ),
-                );
-                if (!exact || exact.out) return;
-                event.preventDefault();
-                bump(exact.id, 1);
-                setSearchQuery("");
-                setMenuLimit(INITIAL_POS_MENU_ITEMS);
-              }}
-              placeholder="Search dishes or scan barcode"
-              className="w-full bg-transparent text-[13px] outline-none"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => {
+            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <input
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  const exact = branchMenu.find((product) =>
+                    [product.barcode, product.sku, product.itemCode].some(
+                      (value) =>
+                        value?.trim().toLocaleLowerCase() ===
+                        searchQuery.trim().toLocaleLowerCase(),
+                    ),
+                  );
+                  if (!exact || exact.out) return;
+                  event.preventDefault();
+                  bump(exact.id, 1);
                   setSearchQuery("");
                   setMenuLimit(INITIAL_POS_MENU_ITEMS);
                 }}
-                className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-          <PosCustomerPicker
-            compact
-            value={linkedCustomer}
-            disabled={
-              backendStatus !== "synced" ||
-              paymentBusy ||
-              paymentOpen ||
-              Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
-            }
-            onSelect={(customer) =>
-              setCustomerSelection({
-                tenantId: activeTenantId,
-                branchId,
-                orderId: activeOrder?.id ?? null,
-                customer,
-              })
-            }
-          />
+                placeholder="Search dishes or scan barcode"
+                className="w-full bg-transparent text-[13px] outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                  }}
+                  className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <PosCustomerPicker
+              compact
+              value={linkedCustomer}
+              disabled={
+                backendStatus !== "synced" ||
+                paymentBusy ||
+                paymentOpen ||
+                Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
+              }
+              onSelect={(customer) =>
+                setCustomerSelection({
+                  tenantId: activeTenantId,
+                  branchId,
+                  orderId: activeOrder?.id ?? null,
+                  customer,
+                })
+              }
+            />
           </div>
           {isOnlineSource && (
             <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
@@ -1861,128 +1867,132 @@ function POS() {
             aria-label="Scrollable POS menu"
             className="relative max-h-[min(76vh,980px)] overflow-y-auto overscroll-contain rounded-lg"
             onScroll={(event) => {
-              if (shouldLoadNextPosMenuPage({
-                scrollTop: event.currentTarget.scrollTop,
-                scrollHeight: event.currentTarget.scrollHeight,
-                clientHeight: event.currentTarget.clientHeight,
-                displayed: renderedMenu.length,
-                total: visible.length,
-              })) setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE);
+              if (
+                shouldLoadNextPosMenuPage({
+                  scrollTop: event.currentTarget.scrollTop,
+                  scrollHeight: event.currentTarget.scrollHeight,
+                  clientHeight: event.currentTarget.clientHeight,
+                  displayed: renderedMenu.length,
+                  total: visible.length,
+                })
+              )
+                setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE);
             }}
           >
-          <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 xl:grid-cols-4">
-            {renderedMenu.map((p) => {
-              const qty = lines[p.id] ?? 0;
-              const imageSrc = productImageSource(p);
+            <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 xl:grid-cols-4">
+              {renderedMenu.map((p) => {
+                const qty = lines[p.id] ?? 0;
+                const imageSrc = productImageSource(p);
 
-              return (
-                <article
-                  key={p.id}
-                  role="button"
-                  tabIndex={p.out ? -1 : 0}
-                  aria-disabled={p.out}
-                  aria-label={`Add ${p.name} to order`}
-                  onClick={() => {
-                    if (!p.out) bump(p.id, 1);
-                  }}
-                  onKeyDown={(event) => {
-                    if (p.out || (event.key !== "Enter" && event.key !== " ")) return;
-                    event.preventDefault();
-                    bump(p.id, 1);
-                  }}
-                  className={cn(
-                    "group rounded-xl border border-border bg-card p-2.5 text-left shadow-card transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
-                    p.out
-                      ? "opacity-50"
-                      : "cursor-pointer hover:-translate-y-0.5 hover:border-primary",
-                    qty ? "border-primary ring-1 ring-primary/25" : "",
-                  )}
-                >
-                  <div className="relative mb-2 overflow-hidden rounded-lg border border-border bg-secondary/60 aspect-[1.45/1]">
-                    <div
-                      className={cn(
-                        "absolute inset-0 grid place-items-center",
-                        productFallbackTone(p.category),
+                return (
+                  <article
+                    key={p.id}
+                    role="button"
+                    tabIndex={p.out ? -1 : 0}
+                    aria-disabled={p.out}
+                    aria-label={`Add ${p.name} to order`}
+                    onClick={() => {
+                      if (!p.out) bump(p.id, 1);
+                    }}
+                    onKeyDown={(event) => {
+                      if (p.out || (event.key !== "Enter" && event.key !== " ")) return;
+                      event.preventDefault();
+                      bump(p.id, 1);
+                    }}
+                    className={cn(
+                      "group rounded-xl border border-border bg-card p-2.5 text-left shadow-card transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
+                      p.out
+                        ? "opacity-50"
+                        : "cursor-pointer hover:-translate-y-0.5 hover:border-primary",
+                      qty ? "border-primary ring-1 ring-primary/25" : "",
+                    )}
+                  >
+                    <div className="relative mb-2 overflow-hidden rounded-lg border border-border bg-secondary/60 aspect-[1.45/1]">
+                      <div
+                        className={cn(
+                          "absolute inset-0 grid place-items-center",
+                          productFallbackTone(p.category),
+                        )}
+                      >
+                        <div className="grid h-14 w-14 place-items-center rounded-full border border-card/80 bg-card/85 text-[13px] font-extrabold shadow-sm">
+                          {productInitials(p.name)}
+                        </div>
+                      </div>
+                      {imageSrc && (
+                        <img
+                          src={imageSrc}
+                          alt={p.name}
+                          loading="lazy"
+                          className="relative z-10 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                          onError={(event) => {
+                            event.currentTarget.style.display = "none";
+                          }}
+                        />
                       )}
-                    >
-                      <div className="grid h-14 w-14 place-items-center rounded-full border border-card/80 bg-card/85 text-[13px] font-extrabold shadow-sm">
-                        {productInitials(p.name)}
+                      {p.popular && (
+                        <span className="absolute right-2 top-2 z-20 grid h-6 w-6 place-items-center rounded-full border border-border bg-card/90 shadow-sm">
+                          <Flame className="h-3.5 w-3.5 text-warning" />
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0 px-0.5">
+                      <div className="truncate text-[11px] text-muted-foreground">{p.category}</div>
+                      <div className="mt-0.5 truncate text-[13px] font-bold">{p.name}</div>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="num text-[13px] font-extrabold">{ksh(p.price)}</span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {p.out
+                            ? "86'd"
+                            : p.availabilityPortions !== undefined && p.availabilityPortions <= 5
+                              ? `${p.availabilityPortions} left`
+                              : `${p.prep} min`}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="truncate text-[10px] text-muted-foreground">
+                          {p.productionStation ?? "NONE"}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              bump(p.id, -1);
+                            }}
+                            className="grid h-6 w-6 place-items-center rounded-full border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-secondary disabled:opacity-40"
+                            aria-label={`Remove ${p.name}`}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="num w-4 text-center text-[12px] font-bold">{qty}</span>
+                          <button
+                            type="button"
+                            disabled={p.out}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              bump(p.id, 1);
+                            }}
+                            className="grid h-6 w-6 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
+                            aria-label={`Add ${p.name}`}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                    {imageSrc && (
-                      <img
-                        src={imageSrc}
-                        alt={p.name}
-                        loading="lazy"
-                        className="relative z-10 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                        onError={(event) => {
-                          event.currentTarget.style.display = "none";
-                        }}
-                      />
-                    )}
-                    {p.popular && (
-                      <span className="absolute right-2 top-2 z-20 grid h-6 w-6 place-items-center rounded-full border border-border bg-card/90 shadow-sm">
-                        <Flame className="h-3.5 w-3.5 text-warning" />
-                      </span>
-                    )}
-                  </div>
-                  <div className="min-w-0 px-0.5">
-                    <div className="truncate text-[11px] text-muted-foreground">{p.category}</div>
-                    <div className="mt-0.5 truncate text-[13px] font-bold">{p.name}</div>
-                    <div className="mt-1 flex items-center justify-between gap-2">
-                      <span className="num text-[13px] font-extrabold">{ksh(p.price)}</span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {p.out
-                          ? "86'd"
-                          : p.availabilityPortions !== undefined && p.availabilityPortions <= 5
-                            ? `${p.availabilityPortions} left`
-                            : `${p.prep} min`}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <span className="truncate text-[10px] text-muted-foreground">
-                        {p.productionStation ?? "NONE"}
-                      </span>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            bump(p.id, -1);
-                          }}
-                          className="grid h-6 w-6 place-items-center rounded-full border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-secondary disabled:opacity-40"
-                          aria-label={`Remove ${p.name}`}
-                        >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <span className="num w-4 text-center text-[12px] font-bold">{qty}</span>
-                        <button
-                          type="button"
-                          disabled={p.out}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            bump(p.id, 1);
-                          }}
-                          className="grid h-6 w-6 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
-                          aria-label={`Add ${p.name}`}
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-          {visible.length > renderedMenu.length && (
-            <div className="sticky bottom-0 flex justify-center bg-gradient-to-t from-card via-card/95 to-transparent px-2 pb-2 pt-9">
-              <Btn onClick={() => setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE)}>
-                Show next {Math.min(POS_MENU_PAGE_SIZE, visible.length - renderedMenu.length)} of {visible.length}
-              </Btn>
+                  </article>
+                );
+              })}
             </div>
-          )}
+            {visible.length > renderedMenu.length && (
+              <div className="sticky bottom-0 flex justify-center bg-gradient-to-t from-card via-card/95 to-transparent px-2 pb-2 pt-9">
+                <Btn onClick={() => setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE)}>
+                  Show next {Math.min(POS_MENU_PAGE_SIZE, visible.length - renderedMenu.length)} of{" "}
+                  {visible.length}
+                </Btn>
+              </div>
+            )}
           </div>
         </div>
 

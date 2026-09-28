@@ -17,7 +17,6 @@ export function shouldLoadNextPosMenuPage(input: {
   total: number;
 }) {
   return (
-    input.total > input.displayed &&
-    input.scrollHeight - input.scrollTop - input.clientHeight < 180
+    input.total > input.displayed && input.scrollHeight - input.scrollTop - input.clientHeight < 180
   );
 }

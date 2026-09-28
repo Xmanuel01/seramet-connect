@@ -15,7 +15,12 @@ import { requireFullAuthentication } from "@/server/pos-auth-service";
 
 const createTableSchema = z
   .object({
-    code: z.string().trim().min(1).max(16).regex(/^[a-zA-Z0-9-]+$/, "Use letters, numbers or hyphens"),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(16)
+      .regex(/^[a-zA-Z0-9-]+$/, "Use letters, numbers or hyphens"),
     seats: z.number().int().min(1).max(30),
     serviceAreaId: z.string().trim().min(1).max(160).nullable().optional(),
   })
@@ -27,23 +32,15 @@ type TableActor = Pick<ServerActor, "tenantId" | "branchId" | "id" | "permission
 export function parseCreateTableInput(raw: unknown): CreateTableInput {
   const result = createTableSchema.safeParse(raw);
   if (!result.success) {
-    throw new SerametHttpError(
-      400,
-      result.error.issues.map((issue) => issue.message).join("; "),
-    );
+    throw new SerametHttpError(400, result.error.issues.map((issue) => issue.message).join("; "));
   }
   return result.data;
 }
 
-export async function createConfiguredTable(
-  db: D1Database,
-  actor: TableActor,
-  raw: unknown,
-) {
+export async function createConfiguredTable(db: D1Database, actor: TableActor, raw: unknown) {
   if (!actor.permissions.includes(permissions.tableManage))
     throw new SerametHttpError(403, "Table management permission is required");
-  if (!actor.branchId)
-    throw new SerametHttpError(400, "Select your restaurant branch first");
+  if (!actor.branchId) throw new SerametHttpError(400, "Select your restaurant branch first");
   const data = parseCreateTableInput(raw);
   const code = data.code.toUpperCase();
   const branch = await db
@@ -63,9 +60,7 @@ export async function createConfiguredTable(
     if (!area) throw new SerametHttpError(400, "The selected area is not in this branch");
   }
   const duplicate = await db
-    .prepare(
-      "SELECT id FROM restaurant_tables WHERE tenant_id=? AND branch_id=? AND UPPER(code)=?",
-    )
+    .prepare("SELECT id FROM restaurant_tables WHERE tenant_id=? AND branch_id=? AND UPPER(code)=?")
     .bind(actor.tenantId, actor.branchId, code)
     .first<{ id: string }>();
   if (duplicate) throw new SerametHttpError(409, "A table with this number already exists");
@@ -119,13 +114,12 @@ export async function handleTableManagementApi(
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ message: "Method not allowed" }), {
       status: 405,
-      headers: { "content-type": "application/json", "allow": "POST" },
+      headers: { "content-type": "application/json", allow: "POST" },
     });
   }
   const actor = await authenticateSerametRequest(request, env);
   requireFullAuthentication(actor);
-  if (!env.SERAMET_DB)
-    throw new SerametHttpError(503, "Restaurant database is unavailable");
+  if (!env.SERAMET_DB) throw new SerametHttpError(503, "Restaurant database is unavailable");
   const raw: unknown = await request.json().catch(() => {
     throw new SerametHttpError(400, "Please provide valid table details");
   });
