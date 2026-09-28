@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
-import { financeDefaultDates } from "@/finance/finance-business-date";
+import { scopedFinancePeriod } from "@/finance/finance-period-state";
 
 export type FinancialIssue = { code: string; count: number; detail: string };
 export type FinancialAccountRow = {
@@ -105,19 +105,13 @@ export function useFinancePeriod() {
   // Keep user-edited dates for the current scope. When the user changes tenant,
   // branch, timezone, or business-day cutoff, do not reuse another branch's period.
   const scopeKey = [activeTenantId, branchId, zone, cutoff].join(":");
-  const [saved, setSaved] = useState(() => ({
-    scopeKey,
-    ...financeDefaultDates(new Date(), zone, cutoff),
-  }));
-  const dates =
-    saved.scopeKey === scopeKey
-      ? saved
-      : { scopeKey, ...financeDefaultDates(new Date(), zone, cutoff) };
+  const [saved, setSaved] = useState(() =>
+    scopedFinancePeriod(null, scopeKey, new Date(), zone, cutoff),
+  );
+  const dates = scopedFinancePeriod(saved, scopeKey, new Date(), zone, cutoff);
   const update = (field: "from" | "to", value: string) =>
     setSaved((previous) => ({
-      ...(previous.scopeKey === scopeKey
-        ? previous
-        : { scopeKey, ...financeDefaultDates(new Date(), zone, cutoff) }),
+      ...scopedFinancePeriod(previous, scopeKey, new Date(), zone, cutoff),
       [field]: value,
     }));
   return {
