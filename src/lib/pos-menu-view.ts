@@ -1,6 +1,6 @@
 /** The POS never mounts the entire restaurant catalogue at once. */
-export const INITIAL_POS_MENU_ITEMS = 20;
-export const POS_MENU_PAGE_SIZE = 20;
+export const INITIAL_POS_MENU_ITEMS = 16;
+export const POS_MENU_PAGE_SIZE = 16;
 
 export function visiblePosMenuItems<T>(matches: readonly T[], limit: number): T[] {
   const safeLimit = Number.isSafeInteger(limit)
