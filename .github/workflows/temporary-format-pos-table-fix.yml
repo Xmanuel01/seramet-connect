@@ -1,0 +1,33 @@
+name: Temporary format POS and table recovery
+on:
+  pull_request:
+    types: [opened, synchronize]
+permissions:
+  contents: write
+concurrency:
+  group: temporary-format-pos-table-recovery
+  cancel-in-progress: true
+jobs:
+  format:
+    if: github.head_ref == 'fix/pos-menu-speed-and-table-create-20260928'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pos-menu-speed-and-table-create-20260928
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx --no-install prettier --write src/hooks/operational-menu-cache.ts src/hooks/operational-menu-cache.test.ts src/hooks/use-operational-menu.ts src/lib/pos-menu-view.ts src/lib/pos-menu-view.test.ts src/components/app/PosCustomerPicker.tsx src/components/app/AddTableDialog.tsx src/routes/pos.tsx src/routes/tables.tsx src/routes/settings.tsx src/server/table-management-api.ts src/server/table-management-api.test.ts src/lib/seramet-api.ts
+      - name: Commit formatting
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/hooks/operational-menu-cache.ts src/hooks/operational-menu-cache.test.ts src/hooks/use-operational-menu.ts src/lib/pos-menu-view.ts src/lib/pos-menu-view.test.ts src/components/app/PosCustomerPicker.tsx src/components/app/AddTableDialog.tsx src/routes/pos.tsx src/routes/tables.tsx src/routes/settings.tsx src/server/table-management-api.ts src/server/table-management-api.test.ts src/lib/seramet-api.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "style: format POS speed and restaurant table changes"
+            git push origin HEAD:fix/pos-menu-speed-and-table-create-20260928
+          fi
