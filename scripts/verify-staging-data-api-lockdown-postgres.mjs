@@ -6,15 +6,18 @@ import pg from "pg";
 const connectionString = process.env.SERAMET_POSTGRES_URL;
 if (!connectionString) throw new Error("Missing disposable CI PostgreSQL URL");
 const url = new URL(connectionString);
-if (!["127.0.0.1", "localhost"].includes(url.hostname) ||
-    url.pathname !== "/seramet_test") {
+if (!["127.0.0.1", "localhost"].includes(url.hostname) || url.pathname !== "/seramet_test") {
   throw new Error("Refusing security integration test outside disposable local seramet_test");
 }
 const db = new pg.Client({ connectionString });
 await db.connect();
 try {
-  await db.query("DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;");
-  await db.query("DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;");
+  await db.query(
+    "DO $$ BEGIN CREATE ROLE anon; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+  );
+  await db.query(
+    "DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+  );
   await db.query("GRANT USAGE ON SCHEMA public TO anon, authenticated");
   await db.query("GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated");
   const sql = await readFile("ops/sql/staging-public-schema-lockdown.sql", "utf8");
@@ -26,7 +29,9 @@ try {
       "AND NOT rowsecurity AND has_table_privilege('anon',format('%I.%I',schemaname,tablename),'SELECT')",
   );
   assert.ok(before.rows[0].exposed > 0, "Test must begin with a real exposed-table fixture");
-  await db.query("SET seramet.staging_schema_lockdown_approved = 'APPROVED_AFTER_ISOLATED_RESTORE'");
+  await db.query(
+    "SET seramet.staging_schema_lockdown_approved = 'APPROVED_AFTER_ISOLATED_RESTORE'",
+  );
   await db.query(sql);
   const result = await db.query(
     "SELECT count(*)::integer AS missing_rls, " +

@@ -35,23 +35,69 @@ test("private RPC adapter accepts verified clean result without forwarding origi
 });
 
 test("verified infected fixture rejects the file", async () => {
-  assert.equal((await scanViaClamavGateway(input, env, async () => result("INFECTED"))).status, "INFECTED");
+  assert.equal(
+    (await scanViaClamavGateway(input, env, async () => result("INFECTED"))).status,
+    "INFECTED",
+  );
 });
 
 test("unconfigured, insecure and missing token services all fail closed", async () => {
-  assert.equal((await scanViaClamavGateway(input, {}, async () => result("CLEAN"))).status, "ERROR");
-  assert.equal((await scanViaClamavGateway(input, {...env, AV_UPSTREAM_URL: "http://local.test/scan"}, async () => result("CLEAN"))).status, "ERROR");
-  assert.equal((await scanViaClamavGateway(input, {...env, AV_UPSTREAM_TOKEN: ""}, async () => result("CLEAN"))).status, "ERROR");
+  assert.equal(
+    (await scanViaClamavGateway(input, {}, async () => result("CLEAN"))).status,
+    "ERROR",
+  );
+  assert.equal(
+    (
+      await scanViaClamavGateway(
+        input,
+        { ...env, AV_UPSTREAM_URL: "http://local.test/scan" },
+        async () => result("CLEAN"),
+      )
+    ).status,
+    "ERROR",
+  );
+  assert.equal(
+    (
+      await scanViaClamavGateway(input, { ...env, AV_UPSTREAM_TOKEN: "" }, async () =>
+        result("CLEAN"),
+      )
+    ).status,
+    "ERROR",
+  );
 });
 
 test("malformed or spoofed clean response fails closed", async () => {
-  for (const response of [{...result("CLEAN"),json:async()=>({status:"CLEAN"})},result("UNKNOWN"),{ok:false,status:503,json:async()=>({status:"CLEAN"})}]) {
+  for (const response of [
+    { ...result("CLEAN"), json: async () => ({ status: "CLEAN" }) },
+    result("UNKNOWN"),
+    { ok: false, status: 503, json: async () => ({ status: "CLEAN" }) },
+  ]) {
     assert.equal((await scanViaClamavGateway(input, env, async () => response)).status, "ERROR");
   }
 });
 
 test("timeouts, redirects, oversized files and upstream exceptions fail closed", async () => {
-  assert.equal((await scanViaClamavGateway(input, env, async () => {throw new Error("timeout")})).status, "ERROR");
-  assert.equal((await scanViaClamavGateway(input, env, async () => ({...result("CLEAN"),status:301}))).status, "ERROR");
-  assert.equal((await scanViaClamavGateway({...input, bytes:new ArrayBuffer(21*1024*1024)}, env, async () => result("CLEAN"))).status, "ERROR");
+  assert.equal(
+    (
+      await scanViaClamavGateway(input, env, async () => {
+        throw new Error("timeout");
+      })
+    ).status,
+    "ERROR",
+  );
+  assert.equal(
+    (await scanViaClamavGateway(input, env, async () => ({ ...result("CLEAN"), status: 301 })))
+      .status,
+    "ERROR",
+  );
+  assert.equal(
+    (
+      await scanViaClamavGateway(
+        { ...input, bytes: new ArrayBuffer(21 * 1024 * 1024) },
+        env,
+        async () => result("CLEAN"),
+      )
+    ).status,
+    "ERROR",
+  );
 });
