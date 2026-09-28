@@ -23,12 +23,14 @@ async function api<T>(path: string, method: "GET" | "POST" | "PATCH" = "GET", bo
 }
 
 export function TableManagementControls() {
-  const { activeTenantId, branchId, hasPermission, refreshConfiguration } = useAppContext();
+  const { branchId, hasPermission, refreshConfiguration } = useAppContext();
   const [areas, setAreas] = useState<ServiceArea[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [areaName, setAreaName] = useState("");
   const [code, setCode] = useState("");
+  const [newTableSeats, setNewTableSeats] = useState(2);
+  const [newTableAreaId, setNewTableAreaId] = useState("");
   const [seats, setSeats] = useState(2);
   const [serviceAreaId, setServiceAreaId] = useState("");
   const [active, setActive] = useState(true);
@@ -56,6 +58,8 @@ export function TableManagementControls() {
     setTables(result.tables);
     return result;
   }, [branchId]);
+
+  useEffect(() => { setNewTableAreaId(""); setSelectedId(""); }, [branchId]);
 
   useEffect(() => {
     if (!canManage) return;
@@ -101,21 +105,22 @@ export function TableManagementControls() {
     const name = areaName.trim();
     if (!name) return;
     void submit(async () => {
-      await api("/api/seramet/table-management/areas", "POST", { branchId, name });
+      const result = await api<{ area: ServiceArea }>("/api/seramet/table-management/areas", "POST", { branchId, name });
       setAreaName("");
+      setNewTableAreaId(result.area.id);
     }, `${name} area added.`);
   };
 
   const createTable = (event: FormEvent) => {
     event.preventDefault();
     const tableCode = code.trim().toUpperCase() || proposedCode;
-    if (!serviceAreaId || !tableCode) {
+    if (!newTableAreaId || !tableCode) {
       setError("Select a dining area and table number");
       return;
     }
     void submit(async () => {
       await api("/api/seramet/table-management/tables", "POST", {
-        branchId, serviceAreaId, code: tableCode, seats,
+        branchId, serviceAreaId: newTableAreaId, code: tableCode, seats: newTableSeats,
       });
       setCode("");
     }, `Table ${tableCode} added to this branch.`);
@@ -164,16 +169,16 @@ export function TableManagementControls() {
             placeholder={proposedCode || "01"} value={code} onChange={(event) => setCode(event.target.value)}
             disabled={busy} />
           <label htmlFor="new-table-area" className="block text-xs text-muted-foreground">Area</label>
-          <select id="new-table-area" required value={selectedId ? "" : serviceAreaId}
-            onChange={(event) => { setSelectedId("");setServiceAreaId(event.target.value); }}
+          <select id="new-table-area" required value={newTableAreaId}
+            onChange={(event) => setNewTableAreaId(event.target.value)}
             disabled={busy || !branchAreas.length}
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm">
             <option value="">Select area</option>
             {branchAreas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
           </select>
           <label htmlFor="new-table-seats" className="block text-xs text-muted-foreground">Seats</label>
-          <input id="new-table-seats" type="number" min={1} max={24} required value={selectedId ? 2 : seats}
-            onChange={(event) => {setSelectedId("");setSeats(Number(event.target.value));}}
+          <input id="new-table-seats" type="number" min={1} max={24} required value={newTableSeats}
+            onChange={(event) => setNewTableSeats(Number(event.target.value))}
             disabled={busy}
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" />
           <Btn type="submit" variant="primary" disabled={busy || loading || !branchAreas.length}>Create table</Btn>
