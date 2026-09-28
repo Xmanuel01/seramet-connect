@@ -174,7 +174,9 @@ try {
   if (!apply) {
     await db.query("ROLLBACK");
     transactionOpen = false;
-    console.info(`Read-only inspection. ${plan.superseded.length} jobs remain unchanged until an authorized apply.`);
+    console.info(
+      `Read-only inspection. ${plan.superseded.length} jobs remain unchanged until an authorized apply.`,
+    );
   } else {
     requireApproval(plan);
     await collapse(plan);
