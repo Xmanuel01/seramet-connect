@@ -23,8 +23,8 @@ jobs:
       - name: Temporary formatting for branch table-management review
         if: github.head_ref == 'feature/branch-table-management-20260928'
         run: |
-          npx prettier --write src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx
-          for f in src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx; do
+          npx prettier --write src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx src/routes/tables.tsx src/server/configuration-api.ts
+          for f in src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx src/routes/tables.tsx src/server/configuration-api.ts; do
             echo "TABLE_FORMAT_BEGIN:$f"
             base64 -w0 "$f"
             echo
