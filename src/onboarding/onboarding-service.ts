@@ -1153,11 +1153,56 @@ export class OnboardingService {
 
   async previewImport(input: ImportPreviewInput): Promise<ImportPreview> {
     this.require(permissions.setupImport);
+    const runtime = resolveRuntimeConfiguration(this.env);
+    const upstreamScanner = this.env.SERAMET_MALWARE_SCANNER;
+    if (runtime.productionLike && !upstreamScanner) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "A verified malware scanner is required before importing files",
+      );
+    }
     const file = await validateImportFile({
       kind: input.kind,
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
+      ...(upstreamScanner
+        ? {
+            scanner: {
+              scan: async ({ bytes, filename, contentType }) => {
+                const copy = new Uint8Array(bytes.byteLength);
+                copy.set(bytes);
+                let scanned: Awaited<ReturnType<typeof upstreamScanner.scan>>;
+                try {
+                  scanned = await upstreamScanner.scan({
+                    bytes: copy.buffer,
+                    fileName: filename,
+                    contentType,
+                  });
+                } catch {
+                  throw new ServerOperationError(
+                    "EXTERNAL_SERVICE_UNAVAILABLE",
+                    503,
+                    "File malware scanner could not complete its security check",
+                  );
+                }
+                if (scanned.status === "ERROR" ||
+                    (scanned.status === "CLEAN" && !scanned.reference?.trim())) {
+                  throw new ServerOperationError(
+                    "EXTERNAL_SERVICE_UNAVAILABLE",
+                    503,
+                    "File malware scanning could not be verified",
+                  );
+                }
+                return {
+                  clean: scanned.status === "CLEAN",
+                  ...(scanned.reference ? { reference: scanned.reference } : {}),
+                };
+              },
+            },
+          }
+        : {}),
     });
     let rawRows: Array<Record<string, string>>;
     try {
@@ -1186,6 +1231,7 @@ export class OnboardingService {
         fileDigest: file.digest,
         templateVersion: template.version,
         importerVersion: input.kind === "MENU" ? MENU_IMPORTER_VERSION : "setup-import-v1",
+        ...(runtime.productionLike ? { scannerPolicy: "verified-private-av-v1" } : {}),
         columnMap: normalizeStringRecord(input.columnMap),
         duplicateStrategy: input.duplicateStrategy,
         targetMode: target.mode,
@@ -1253,6 +1299,16 @@ export class OnboardingService {
           json({
             requiresPreview: true,
             extension: file.extension,
+            ...(file.scanReference
+              ? {
+                  cleanScan: {
+                    status: "CLEAN",
+                    reference: file.scanReference,
+                    scannedAt: stamp,
+                    policy: "verified-private-av-v1",
+                  },
+                }
+              : {}),
             legacyTemplate: template.legacy,
             unsupportedColumns:
               input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
@@ -1311,7 +1367,7 @@ export class OnboardingService {
       .prepare(
         `SELECT branch_id,import_kind,duplicate_strategy,status,idempotency_key,row_count,
                 target_mode,target_branch_ids_json,catalogue_revision,expires_at,verification_json,
-                created_by
+                report_json,created_by
          FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, importId)
@@ -1327,6 +1383,7 @@ export class OnboardingService {
         catalogue_revision: string | null;
         expires_at: string | null;
         verification_json: string;
+        report_json: string;
         created_by: string;
       }>();
     if (!record) throw notFound("Import preview not found");
@@ -1345,6 +1402,21 @@ export class OnboardingService {
         status: "COMMITTED" as const,
         verification: parseJson(record.verification_json, {}),
       };
+    }
+    if (resolveRuntimeConfiguration(this.env).productionLike) {
+      const report = parseJson<{ cleanScan?: { status?: string; reference?: string; policy?: string } }>(
+        record.report_json,
+        {},
+      );
+      if (
+        report.cleanScan?.status !== "CLEAN" ||
+        !report.cleanScan.reference?.trim() ||
+        report.cleanScan.policy !== "verified-private-av-v1"
+      ) {
+        throw invalidTransition(
+          "Import preview has no verified current malware scan; upload it again instead of replaying old work",
+        );
+      }
     }
     if (record.status !== "VALIDATED" && !(options.worker && record.status === "COMMITTING")) {
       throw validation("Import has validation errors or is already being committed");
