@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
+import { financeDefaultDates } from "@/finance/finance-business-date";
 
 export type FinancialIssue = { code: string; count: number; detail: string };
 export type FinancialAccountRow = {
@@ -91,13 +92,17 @@ export type PayableReport = {
   note: string;
 };
 
-function defaultDates() {
-  const today = new Date().toISOString().slice(0, 10);
-  return { from: today.slice(0, 8) + "01", to: today };
-}
-
 export function useFinancePeriod() {
-  const [dates, setDates] = useState(defaultDates);
+  const { activeTenantId, branchId, platformState } = useAppContext();
+  const branch = platformState.branches.find(
+    (item) => item.tenantId === activeTenantId && item.id === branchId,
+  );
+  const zone =
+    branch?.timezone ??
+    platformState.tenants.find((item) => item.id === activeTenantId)?.timezone ??
+    "UTC";
+  const cutoff = Number(branch?.metadata?.["businessDayCutoffMinutes"] ?? 240);
+  const [dates, setDates] = useState(() => financeDefaultDates(new Date(), zone, cutoff));
   return {
     ...dates,
     setFrom: (from: string) => setDates((prev) => ({ ...prev, from })),
@@ -183,6 +188,24 @@ export function useFinanceReport<T>(
       });
     return () => controller.abort();
   }, [key, allowed, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision]);
+  // Finance pages must refresh after cash settlement or any authoritative
+  // real-time event, without requiring the operator to manually reload.
+  useEffect(() => {
+    if (!allowed || typeof window === "undefined") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => setRevision((value) => value + 1), 250);
+    };
+    window.addEventListener("seramet:refresh", schedule);
+    window.addEventListener("seramet:realtime", schedule);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener("seramet:refresh", schedule);
+      window.removeEventListener("seramet:realtime", schedule);
+    };
+  }, [allowed]);
+
   const current = allowed && state.key === key ? state : null;
   return {
     status: !allowed ? ("denied" as const) : (current?.status ?? "loading"),
