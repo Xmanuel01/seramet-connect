@@ -1,0 +1,26 @@
+name: Temporary finance formatter
+on:
+  push:
+    branches: [fix/finance-branch-date-live-refresh-20260928]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Emit repo-formatted finance source
+        run: |
+          npx prettier --write src/finance/finance-business-date.ts src/finance/finance-business-date.test.ts src/finance/use-finance-report.ts src/routes/finance.tsx
+          for f in src/finance/finance-business-date.ts src/finance/finance-business-date.test.ts src/finance/use-finance-report.ts src/routes/finance.tsx; do
+            echo "SERAMET_FINANCE_FORMAT_BEGIN:$f"
+            base64 -w0 "$f"
+            echo
+            echo "SERAMET_FINANCE_FORMAT_END:$f"
+          done
