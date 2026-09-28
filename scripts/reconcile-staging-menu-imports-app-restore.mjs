@@ -1,4 +1,5 @@
-import { createHash, createReadStream, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import pg from "pg";
 import {
