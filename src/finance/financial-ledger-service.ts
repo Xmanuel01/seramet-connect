@@ -381,9 +381,7 @@ export class FinancialLedgerService {
     // Never combine a foreign-currency bank balance with KES cash movement.
     // Even when other base-currency cash accounts exist, the resulting
     // total would be incomplete without verified currency conversion.
-    const foreignCashAccounts = cashAccounts.filter(
-      (line) => line.currency !== scope.currency,
-    );
+    const foreignCashAccounts = cashAccounts.filter((line) => line.currency !== scope.currency);
     if (foreignCashAccounts.length > 0) {
       issues.push({
         code: "CASH_MOVEMENT_CURRENCY_MISMATCH",
@@ -428,18 +426,19 @@ export class FinancialLedgerService {
         expenseMinor: periodExpenseMinor,
         netResultMinor: periodIncomeMinor - periodExpenseMinor,
       },
-      cashMovement: cashAccounts.length && foreignCashAccounts.length === 0
-        ? {
-            openingMinor: cashAccounts.reduce(
-              (sum, row) => sum + row.openingDebitMinor - row.openingCreditMinor,
-              0,
-            ),
-            periodMinor: cashAccounts.reduce(
-              (sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor,
-              0,
-            ),
-          }
-        : null,
+      cashMovement:
+        cashAccounts.length && foreignCashAccounts.length === 0
+          ? {
+              openingMinor: cashAccounts.reduce(
+                (sum, row) => sum + row.openingDebitMinor - row.openingCreditMinor,
+                0,
+              ),
+              periodMinor: cashAccounts.reduce(
+                (sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor,
+                0,
+              ),
+            }
+          : null,
     };
   }
 
