@@ -52,7 +52,11 @@ other site; do not rename or mutate existing linked branch rows blindly.
    backup and isolated restore, use the fail-closed, exact-plan-approved
    reconciliation tool to preserve all 1,029 rows while administratively
    quarantining all three import jobs and recording separate audit events.
-   Review the 41 unrelated management jobs separately before any worker restart.
+   Then follow [the guarded management-backlog procedure](STAGING_MANAGEMENT_BACKLOG_RECONCILIATION.md):
+   the 41 original date-free, same-branch jobs may be reduced to 40
+   administratively superseded audit-preserved jobs and one unexecuted
+   pending recomputation. It also requires its own fresh plan digest, exact
+   approvals and the verified isolated-restore evidence. Do not replay all 41.
 6. Provision a real internal malware-scanner Worker on the correct Cloudflare
    account. It must expose the expected RPC `scan({bytes,contentType,fileName})`
    contract and return `CLEAN`, `INFECTED`, or `ERROR`. A stub returning
@@ -87,6 +91,21 @@ other site; do not rename or mutate existing linked branch rows blindly.
     tenant with Westlands and Ngong Road selected and appropriate KITCHEN/BAR
     stations. Verify one tenant master per item code and branch activation.
     Then run the restaurant end-to-end cash/simulated-payment/stock/GL oracle.
+
+## Source integration versus live staging
+
+The consolidated staging-recovery branch includes a private, fail-closed
+scanner RPC adapter and enforces a verified nonempty CLEAN scan reference
+on all production-like setup import previews and queued commits. Existing
+UNSCANNED_STAGING previews are specifically rejected, even if an old
+Queue message is delivered. The branch also includes durable >100-row
+queue routing and compiled Queue/Cron registration, but neither scanner
+provisioning nor real queue delivery is established merely by source tests.
+
+The proposed staging deployment is **manual-only**. Main-branch CI alone
+does not start the staging deployment; recovery operators must explicitly
+dispatch it after independent backup, API security, backlog, scanner and
+exact-commit approvals are complete.
 
 ## Release controls and rollback
 
