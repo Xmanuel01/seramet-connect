@@ -427,7 +427,9 @@ function MenuImport() {
     if (!preview?.canCommit || busy) return;
     if (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged) {
       setNoticeTone("warning");
-      setNotice("Explicitly confirm master-only imports will not activate products in any branch POS.");
+      setNotice(
+        "Explicitly confirm master-only imports will not activate products in any branch POS.",
+      );
       return;
     }
     const pending = preview;
@@ -1227,8 +1229,8 @@ function MenuImport() {
                     onChange={(event) => setMasterOnlyAcknowledged(event.target.checked)}
                     className="mt-0.5 h-4 w-4 accent-primary"
                   />
-                  I understand master-only items will NOT appear in branch POS until
-                  explicitly activated.
+                  I understand master-only items will NOT appear in branch POS until explicitly
+                  activated.
                 </label>
               ) : preview.targetMode === "SELECTED_BRANCHES" ? (
                 <p>
