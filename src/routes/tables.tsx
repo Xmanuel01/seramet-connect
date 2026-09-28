@@ -7,6 +7,7 @@ import { ksh } from "@/lib/currency";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { cn } from "@/lib/utils";
 import { useAppContext } from "@/lib/app-context";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 
 export const Route = createFileRoute("/tables")({
   head: () => ({
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/tables")({
 
 const stateStyle: Record<string, string> = {
   Available: "border-border bg-card",
+  Unverified: "border-warning/30 bg-warning-soft",
   Occupied: "border-primary/40 bg-accent/50",
   Reserved: "border-info/30 bg-info-soft",
   "Needs Cleaning": "border-warning/30 bg-warning-soft",
@@ -36,6 +38,7 @@ const stateStyle: Record<string, string> = {
 
 function Tables() {
   const { branchId, branchLabel, platformState } = useAppContext();
+  const { state: transactions, backendStatus } = useTransactionEngine();
   const serviceAreas = platformState.serviceAreas.filter(
     (serviceArea) => serviceArea.branchId === branchId && serviceArea.active,
   );
@@ -48,6 +51,15 @@ function Tables() {
   const configuredTables = platformState.tables
     .filter((table) => table.branchId === branchId && table.active)
     .map((configuredTable) => {
+      const openOrder = transactions.orders.find(
+        (order) => order.branchId === branchId && order.table === configuredTable.code &&
+          order.paymentStatus !== "PAID" && !["PAID", "CANCELLED", "REFUNDED"].includes(order.status),
+      );
+      const unpaidBill = openOrder
+        ? transactions.bills.find((bill) => bill.orderIds.includes(openOrder.id) &&
+          ["OPEN", "PARTIAL", "PENDING"].includes(bill.status))
+        : undefined;
+      const fresh = backendStatus === "synced";
       const configuredArea = serviceAreas.find(
         (serviceArea) => serviceArea.id === configuredTable.serviceAreaId,
       );
@@ -55,11 +67,11 @@ function Tables() {
         no: configuredTable.code,
         area: configuredArea?.name ?? activeArea,
         seats: configuredTable.seats,
-        state: "Available",
-        guests: undefined as number | undefined,
-        waiter: undefined as string | undefined,
-        amount: undefined as number | undefined,
-        mins: undefined as number | undefined,
+        state: fresh ? (openOrder ? "Occupied" : "Available") : "Unverified",
+        guests: fresh && openOrder ? Number(openOrder.customer.match(/(\\d+)\\s+guest/i)?.[1] ?? 0) : undefined,
+        waiter: fresh && openOrder ? (openOrder.waiter ?? openOrder.cashier) : undefined,
+        amount: fresh && openOrder ? (unpaidBill ? Math.max(0, unpaidBill.total - unpaidBill.paid) : openOrder.total) : undefined,
+        mins: fresh && openOrder ? Math.max(0, Math.floor((Date.now() - Date.parse(openOrder.createdAt)) / 60_000)) : undefined,
       };
     });
   const visibleTables = configuredTables
