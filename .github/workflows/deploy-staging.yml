@@ -128,12 +128,24 @@ jobs:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
         run: node scripts/inspect-staging-backlog.mjs
 
+      - name: Independently verify PostgreSQL public RLS and client grants
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-staging-api-posture.mjs
+
       # Only after resource and release safety gates may any staging database
       # migrations or Cloudflare origin settings change.
       - name: Apply PostgreSQL migrations
         run: npm run migrate:postgres
         env:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+
+      - name: Recheck actual database security after migrations
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/assert-staging-api-posture.mjs
 
       - name: Synchronize Hyperdrive origin credentials
         run: |
