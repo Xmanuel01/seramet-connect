@@ -28,6 +28,8 @@ jobs:
       - run: node --test scripts/inspect-staging-backlog.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
       - run: npm run build
+      - name: Verify compiled Cloudflare Queue and Cron handlers
+        run: node scripts/verify-cloudflare-events.mjs
       - name: Verify production bundle has no source secrets
         run: npm run audit:bundle
 
