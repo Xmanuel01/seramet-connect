@@ -5,11 +5,12 @@ Do not run this on production, skip an actual isolated-restore rehearsal or
 restart Cloudflare queue consumers until the whole release gate is cleared.
 
 Read-only forensic findings (28 Sep 2026):
-- 41 PENDING MANAGEMENT_INTELLIGENCE_RECALCULATION jobs, all zero attempts,
+- 42 PENDING MANAGEMENT_INTELLIGENCE_RECALCULATION jobs, all zero attempts,
   unleased, same tenant, same generic CONFIGURING bootstrap branch.
-- All 41 payloads specify the *same branch* and businessDate=null. None
+- All 42 payloads specify the *same branch* and businessDate=null. None
   requests a historical dated reprocessing task. All have unique IDs and
-  idempotency keys, dating from 22 Sep to 25 Sep.
+  idempotency keys: the 41 original jobs date from 22–25 Sep and a new,
+  same-payload job was scheduled on 28 Sep.
 - The worker executes recalculateTenant(branchId, businessDate), where null
   selects the current server business date when executed. One future run on
   the same branch can replace these identical date-free requests; it does
@@ -18,9 +19,9 @@ Read-only forensic findings (28 Sep 2026):
 - These are **not** the 3 UNSCANNED 343-row setup import jobs. Handle those
   separately using STAGING_MENU_IMPORT_RECONCILIATION.md first.
 
-Safe treatment after backup/restore: preserve the newest of the 41 as
+Safe treatment after backup/restore: preserve the newest of the 42 as
 PENDING so the newly verified Queue/Cron worker can recompute precisely one
-current business-date branch snapshot. Mark the older 40 as DEAD_LETTER with
+current business-date branch snapshot. Mark the older 41 as DEAD_LETTER with
 an explicit **administrative supersession, no actual execution** reason,
 plus one immutable audit event per superseded job. Do not delete anything,
 mark old work SUCCEEDED, or activate the consumer until the full staging
@@ -40,9 +41,9 @@ Procedure:
 
        node scripts/reconcile-staging-management-backlog.mjs --plan
 
-   The read-only repeatable-read transaction proves all 41 existing pending
-   jobs are same-branch, date-free and unleased and returns sanitized
-   record references, a count (40+1), and an exact snapshot SHA256. A changed
+   The read-only repeatable-read transaction proves the 41 original jobs
+   and the one new 28 Sep job are same-branch, date-free and unleased;
+   it returns sanitized references, a count (41+1), and exact snapshot SHA256. A changed
    row, additional new job, different business date, completed work or a
    new branch makes the plan refuse execution.
 
@@ -60,11 +61,11 @@ Procedure:
        SERAMET_MANAGEMENT_QUEUE_REDELIVERY_REVIEWED=true
 
    A single SERIALIZABLE transaction locks the affected rows, recalculates
-   the plan fingerprint, changes 40 jobs to DEAD_LETTER, appends 40 audit
+   the plan fingerprint, changes 41 jobs to DEAD_LETTER, appends 41 audit
    events and verifies exact postconditions. Any mismatch rolls everything
    back. The newest pending job is *not* executed by the script.
 
-6. Independently requery the database: expect precisely 40 incident jobs
+6. Independently requery the database: expect precisely 41 incident jobs
    administratively terminal, one original job still PENDING at zero
    attempts, 40 corresponding append-only audit events, zero ACTIVE
    import jobs, unchanged menu and branch rows.
