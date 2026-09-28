@@ -18,7 +18,7 @@ import {
  */
 const apply = process.argv.includes("--apply");
 if (
-  process.argv.some((arg) => !["--apply", "--plan"].includes(arg)) ||
+  process.argv.slice(2).some((arg) => !["--apply", "--plan"].includes(arg)) ||
   (process.argv.includes("--apply") && process.argv.includes("--plan"))
 ) {
   throw new Error("Usage: node scripts/reconcile-staging-menu-imports.mjs [--plan | --apply]");
