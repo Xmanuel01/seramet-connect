@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
+import { TableManagementControls } from "@/components/app/TableManagementControls";
 import { Btn, Chips, Panel, Status } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -78,6 +79,7 @@ function Tables() {
         </Btn>
       }
     >
+      <TableManagementControls />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Panel className="p-4">
           <div className="mb-4">
