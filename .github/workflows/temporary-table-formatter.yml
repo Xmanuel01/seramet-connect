@@ -1,0 +1,27 @@
+name: Temporary table-management formatter
+on:
+  push:
+    branches: [feature/branch-table-management-20260928]
+permissions:
+  contents: read
+jobs:
+  formatter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prettier --write src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx src/server/configuration-api.ts src/routes/tables.tsx
+      - name: Emit formatted branch-only source for reviewed commit
+        run: |
+          for f in src/server/table-management-api.ts src/server/table-management-api.test.ts src/components/app/TableManagementControls.tsx src/server/configuration-api.ts src/routes/tables.tsx; do
+            echo "SERAMET_TABLE_FORMAT_BEGIN:$f"
+            base64 -w0 "$f"
+            echo
+            echo "SERAMET_TABLE_FORMAT_END:$f"
+          done
+      - run: npx vitest run src/server/table-management-api.test.ts
