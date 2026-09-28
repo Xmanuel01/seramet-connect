@@ -6,6 +6,7 @@ import { formatTime } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import type { OrderForPrint, PrintJob, ProductionStation } from "@/lib/seramet-print-service";
 import type { TransactionOrder } from "@/lib/transaction-engine";
@@ -108,8 +109,12 @@ function KDS() {
   const visibleRows =
     selectedStation === "ALL" ? rows : rows.filter((ticket) => ticket.station === selectedStation);
 
+  const stagingDigitalTest =
+    isStagingPrinterlessTestingEnabled() && hasPermission(permissions.kitchenOperate);
   const hasKdsWorkflow =
-    profile?.kitchenMode === "KDS_ONLY" || profile?.kitchenMode === "KDS_AND_PRINTER";
+    profile?.kitchenMode === "KDS_ONLY" ||
+    profile?.kitchenMode === "KDS_AND_PRINTER" ||
+    stagingDigitalTest;
   const canPrintProduction =
     profile?.kitchenMode === "PRINTER_ONLY" ||
     profile?.kitchenMode === "KDS_AND_PRINTER" ||
@@ -135,7 +140,7 @@ function KDS() {
 
   const moveTicket = async (ticket: KitchenTicket) => {
     const next = nextForwardKitchenState(ticket.state);
-    if (!hasKdsWorkflow || !next) return;
+    if (!hasKdsWorkflow || !next || (!profile && !isStagingPrinterlessTestingEnabled())) return;
     setNotice("");
     try {
       await mutate("setProductionStationStatus", {
@@ -244,6 +249,13 @@ function KDS() {
         </div>
       </div>
 
+      {stagingDigitalTest && !profile && (
+        <div role="note" className="mx-3 mt-3 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[12px]">
+          Staging-only digital kitchen testing. Authorized station status changes remain
+          recorded by the backend. No physical KOT has been printed or delivered; this
+          testing exception expires automatically after 48 hours.
+        </div>
+      )}
       {(notice || configurationError) && (
         <div className="mx-3 mt-3 rounded-md border border-border bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
           {notice || configurationError}
