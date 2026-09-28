@@ -31,13 +31,7 @@ describe("finance period changes follow the authorized branch", () => {
       to: "2026-06-30",
     };
     expect(
-      scopedFinancePeriod(
-        previous,
-        previous.scopeKey,
-        atBoundary,
-        "Africa/Nairobi",
-        240,
-      ),
+      scopedFinancePeriod(previous, previous.scopeKey, atBoundary, "Africa/Nairobi", 240),
     ).toBe(previous);
   });
 
