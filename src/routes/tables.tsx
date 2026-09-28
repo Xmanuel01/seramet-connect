@@ -68,7 +68,7 @@ function Tables() {
         area: configuredArea?.name ?? activeArea,
         seats: configuredTable.seats,
         state: fresh ? (openOrder ? "Occupied" : "Available") : "Unverified",
-        guests: fresh && openOrder ? Number(openOrder.customer.match(/(\\d+)\\s+guest/i)?.[1] ?? 0) : undefined,
+        guests: fresh && openOrder ? Number(openOrder.customer.match(/(\d+)\s+guest/i)?.[1] ?? 0) : undefined,
         waiter: fresh && openOrder ? (openOrder.waiter ?? openOrder.cashier) : undefined,
         amount: fresh && openOrder ? (unpaidBill ? Math.max(0, unpaidBill.total - unpaidBill.paid) : openOrder.total) : undefined,
         mins: fresh && openOrder ? Math.max(0, Math.floor((Date.now() - Date.parse(openOrder.createdAt)) / 60_000)) : undefined,
