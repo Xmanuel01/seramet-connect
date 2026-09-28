@@ -28,6 +28,7 @@ jobs:
       - run: node --test scripts/inspect-staging-backlog.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
+      - run: node --test scripts/assert-staging-api-posture.test.mjs
       - run: node --test scanner-worker/src/scan-adapter.test.mjs
       - run: npm run build
       - name: Verify compiled Cloudflare Queue and Cron handlers
