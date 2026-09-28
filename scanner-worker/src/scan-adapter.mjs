@@ -43,6 +43,7 @@ export async function scanViaClamavGateway(input, env, fetchImpl = fetch) {
       !result.signatureVersion.trim() ||
       !["CLEAN", "INFECTED"].includes(result.status) ||
       typeof result.reference !== "string" ||
+      !result.reference.trim() ||
       result.reference.length > 128
     ) {
       return { status: "ERROR" };
