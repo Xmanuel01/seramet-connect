@@ -11,13 +11,14 @@ export function assessStagingApiPosture(row) {
   if (!row || Number(row.public_tables) < 1) issues.push("NO_PUBLIC_TABLE_INVENTORY");
   if (Number(row?.rls_disabled) !== 0) issues.push("PUBLIC_RLS_DISABLED");
   if (Number(row?.anon_select) !== 0) issues.push("PUBLIC_ANON_SELECT_REMAINS");
-  if (Number(row?.authenticated_select) !== 0)
-    issues.push("PUBLIC_AUTHENTICATED_SELECT_REMAINS");
+  if (Number(row?.authenticated_select) !== 0) issues.push("PUBLIC_AUTHENTICATED_SELECT_REMAINS");
   if (row?.anon_schema_usage === true) issues.push("ANON_PUBLIC_SCHEMA_USAGE_REMAINS");
   if (row?.authenticated_schema_usage === true)
     issues.push("AUTHENTICATED_PUBLIC_SCHEMA_USAGE_REMAINS");
-  if (typeof row?.anon_schema_usage !== "boolean" ||
-      typeof row?.authenticated_schema_usage !== "boolean")
+  if (
+    typeof row?.anon_schema_usage !== "boolean" ||
+    typeof row?.authenticated_schema_usage !== "boolean"
+  )
     issues.push("SCHEMA_PRIVILEGE_PROBE_FAILED");
   return issues;
 }
@@ -29,9 +30,9 @@ export async function inspectStagingApiPosture(db) {
       "SELECT COUNT(*)::integer AS public_tables, " +
         "COUNT(*) FILTER (WHERE NOT rowsecurity)::integer AS rls_disabled, " +
         "COUNT(*) FILTER (WHERE has_table_privilege('anon', " +
-          "format('%I.%I',schemaname,tablename),'SELECT'))::integer AS anon_select, " +
+        "format('%I.%I',schemaname,tablename),'SELECT'))::integer AS anon_select, " +
         "COUNT(*) FILTER (WHERE has_table_privilege('authenticated', " +
-          "format('%I.%I',schemaname,tablename),'SELECT'))::integer AS authenticated_select, " +
+        "format('%I.%I',schemaname,tablename),'SELECT'))::integer AS authenticated_select, " +
         "has_schema_privilege('anon','public','USAGE') AS anon_schema_usage, " +
         "has_schema_privilege('authenticated','public','USAGE') AS authenticated_schema_usage " +
         "FROM pg_tables WHERE schemaname='public'",
@@ -47,9 +48,13 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   if (process.env.SERAMET_ENVIRONMENT !== "staging" || !urlText)
     throw new Error("Read-only staging security preflight requires staging environment and DSN");
   const url = new URL(urlText);
-  if (!["postgres:", "postgresql:"].includes(url.protocol) ||
-      !(url.hostname.includes("vnymbavsbxorwxpebkot") ||
-        decodeURIComponent(url.username).includes("vnymbavsbxorwxpebkot"))) {
+  if (
+    !["postgres:", "postgresql:"].includes(url.protocol) ||
+    !(
+      url.hostname.includes("vnymbavsbxorwxpebkot") ||
+      decodeURIComponent(url.username).includes("vnymbavsbxorwxpebkot")
+    )
+  ) {
     throw new Error("Refusing SQL security gate against an unidentified PostgreSQL project");
   }
   const db = new pg.Client({ connectionString: urlText });
