@@ -32,9 +32,8 @@ export const auditDigest = (plan) =>
     }))
     .digest("hex");
 
-export function assertConnectionTargets(stagingUrl, localUrl) {
+export function assertStagingTarget(stagingUrl) {
   const stage = new URL(stagingUrl);
-  const local = new URL(localUrl);
   if (
     !["postgres:", "postgresql:"].includes(stage.protocol) ||
     !["aws-1-eu-west-1.pooler.supabase.com", "db.vnymbavsbxorwxpebkot.supabase.co"].includes(stage.hostname) ||
@@ -46,6 +45,11 @@ export function assertConnectionTargets(stagingUrl, localUrl) {
   ) {
     throw new Error("Staging connection must match the exact project with verify-full and a CA file");
   }
+}
+
+export function assertConnectionTargets(stagingUrl, localUrl) {
+  assertStagingTarget(stagingUrl);
+  const local = new URL(localUrl);
   if (
     !["postgres:", "postgresql:"].includes(local.protocol) ||
     local.hostname !== "127.0.0.1" ||
