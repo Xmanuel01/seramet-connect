@@ -37,5 +37,7 @@ jobs:
             scanner-worker/src/scan-adapter.test.mjs scripts/verify-staging-data-api-lockdown-postgres.mjs
           if ! git diff --cached --quiet; then
             git commit -m "style: format staged scanner and lockdown test code"
+            git fetch origin fix/staging-recovery-integrated-20260928
+            git rebase origin/fix/staging-recovery-integrated-20260928
             git push origin HEAD:fix/staging-recovery-integrated-20260928
           fi
