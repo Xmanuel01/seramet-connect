@@ -88,9 +88,8 @@ export function planStagingManagementBacklog({
     !ordered[0].scheduled_at.startsWith("2026-09-22") ||
     !ordered.at(-2).scheduled_at.startsWith("2026-09-25") ||
     !ordered.at(-1).scheduled_at.startsWith("2026-09-28") ||
-    ordered.slice(0, -1).some((job) =>
-      job.scheduled_at < "2026-09-22" || job.scheduled_at >= "2026-09-26",
-    )
+    ordered.slice(0, -1)
+      .some((job) => job.scheduled_at < "2026-09-22" || job.scheduled_at >= "2026-09-26")
   )
     refuse("Stale-work time window changed");
   const latest = ordered.at(-1);
