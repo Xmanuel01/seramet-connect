@@ -312,9 +312,7 @@ describe("Authoritative finance and ERP-style reporting integrity", () => {
     const report = await new FinancialLedgerService(db, actor()).statement(window);
     expect(report.cashMovement).toBeNull();
     expect(report.quality).toBe("INCOMPLETE");
-    expect(report.issues.map((issue) => issue.code)).toContain(
-      "CASH_MOVEMENT_CURRENCY_MISMATCH",
-    );
+    expect(report.issues.map((issue) => issue.code)).toContain("CASH_MOVEMENT_CURRENCY_MISMATCH");
   });
 
   it("refuses fake cash-flow totals if there is no explicit bank/cash account", async () => {
