@@ -102,11 +102,29 @@ export function useFinancePeriod() {
     platformState.tenants.find((item) => item.id === activeTenantId)?.timezone ??
     "UTC";
   const cutoff = Number(branch?.metadata?.["businessDayCutoffMinutes"] ?? 240);
-  const [dates, setDates] = useState(() => financeDefaultDates(new Date(), zone, cutoff));
+  // Keep user-edited dates for the current scope. When the user changes tenant,
+  // branch, timezone, or business-day cutoff, do not reuse another branch's period.
+  const scopeKey = [activeTenantId, branchId, zone, cutoff].join(":");
+  const [saved, setSaved] = useState(() => ({
+    scopeKey,
+    ...financeDefaultDates(new Date(), zone, cutoff),
+  }));
+  const dates =
+    saved.scopeKey === scopeKey
+      ? saved
+      : { scopeKey, ...financeDefaultDates(new Date(), zone, cutoff) };
+  const update = (field: "from" | "to", value: string) =>
+    setSaved((previous) => ({
+      ...(previous.scopeKey === scopeKey
+        ? previous
+        : { scopeKey, ...financeDefaultDates(new Date(), zone, cutoff) }),
+      [field]: value,
+    }));
   return {
-    ...dates,
-    setFrom: (from: string) => setDates((prev) => ({ ...prev, from })),
-    setTo: (to: string) => setDates((prev) => ({ ...prev, to })),
+    from: dates.from,
+    to: dates.to,
+    setFrom: (from: string) => update("from", from),
+    setTo: (to: string) => update("to", to),
   };
 }
 
@@ -141,8 +159,9 @@ export function useFinanceReport<T>(
         page,
         limit,
         accountType,
+        revision,
       ].join(":"),
-    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType],
+    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision],
   );
   useEffect(() => {
     if (!allowed) return;
