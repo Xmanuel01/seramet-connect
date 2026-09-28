@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
+import { AddTableDialog } from "@/components/app/AddTableDialog";
 import { Btn, Chips, Panel, Status } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -73,9 +74,21 @@ function Tables() {
       title="Table management"
       subtitle={`${branchLabel} - ${configuredTables.length} tables - ${configuredTables.length ? Math.round((configuredTables.filter((table) => table.state === "Occupied").length / configuredTables.length) * 100) : 0}% occupancy`}
       actions={
-        <Btn variant="primary" onClick={() => (window.location.href = "/reservations")}>
-          New reservation
-        </Btn>
+        <div className="flex flex-wrap items-center gap-2">
+          <AddTableDialog
+            branchLabel={branchLabel}
+            existingCount={configuredTables.length}
+            areas={serviceAreas.map((area) => ({ id: area.id, name: area.name }))}
+            onCreated={(code, serviceAreaId) => {
+              setSelectedTableNo(code);
+              const newArea = serviceAreas.find((item) => item.id === serviceAreaId)?.name;
+              if (newArea) setArea(newArea);
+            }}
+          />
+          <Btn onClick={() => (window.location.href = "/reservations")}>
+            New reservation
+          </Btn>
+        </div>
       }
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
