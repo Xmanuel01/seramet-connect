@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { scanViaClamavGateway } from "./scan-adapter.mjs";
 
@@ -109,4 +110,29 @@ test("timeouts, redirects, oversized files and upstream exceptions fail closed",
     ).status,
     "ERROR",
   );
+});
+
+test("WorkerEntrypoint exposes private scan RPC but rejects all HTTP requests", async () => {
+  const source = await readFile(new URL("./index.mjs", import.meta.url), "utf8");
+  const stub =
+    "data:text/javascript," +
+    encodeURIComponent("export class WorkerEntrypoint { constructor() { this.env = {}; } }");
+  const adapter = new URL("./scan-adapter.mjs", import.meta.url).href;
+  const injected = source
+    .replace('"cloudflare:workers"', JSON.stringify(stub))
+    .replace('"./scan-adapter.mjs"', JSON.stringify(adapter));
+  const module = await import(
+    "data:text/javascript;base64," + Buffer.from(injected).toString("base64")
+  );
+  const worker = new module.default();
+
+  for (const method of ["GET", "POST"]) {
+    const response = await worker.fetch(new Request("https://private.invalid/scan", { method }));
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    assert.equal(await response.text(), "Not found");
+  }
+  assert.deepEqual(await worker.scan(input), { status: "ERROR" });
+  const config = await readFile(new URL("../wrangler.toml", import.meta.url), "utf8");
+  assert.match(config, /^workers_dev = false$/m);
 });
