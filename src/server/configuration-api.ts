@@ -16,12 +16,15 @@ import { replaceRolePermissions } from "@/server/module-access-service";
 import { replaceUserBranchAssignments } from "@/server/branch-access-service";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
+import { handleTableManagementApi } from "@/server/table-management-api";
 
 export async function handleConfigurationApi(
   request: Request,
   env: SerametEnv,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const tableResponse = await handleTableManagementApi(request, env);
+  if (tableResponse) return tableResponse;
   const rolePermissionsRoute = /^\/api\/seramet\/access\/roles\/([^/]+)\/permissions$/.exec(
     url.pathname,
   );
