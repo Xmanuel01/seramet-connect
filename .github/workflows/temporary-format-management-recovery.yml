@@ -24,7 +24,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx --no-install prettier --write scripts/staging-management-backlog-plan.mjs scripts/staging-management-backlog-plan.test.mjs scripts/reconcile-staging-management-backlog.mjs
+      - run: npx --no-install prettier --write scripts/staging-management-backlog-plan.mjs scripts/staging-management-backlog-plan.test.mjs scripts/reconcile-staging-management-backlog.mjs src/onboarding/onboarding-service.ts src/onboarding/pass-8-commercial-productization.test.ts src/server/file-import-security.ts scanner-worker/src/scan-adapter.mjs scanner-worker/src/scan-adapter.test.mjs
       - name: Commit formatted files on recovery branch
         shell: bash
         run: |
