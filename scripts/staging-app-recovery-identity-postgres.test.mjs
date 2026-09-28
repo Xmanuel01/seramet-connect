@@ -14,12 +14,10 @@ test(
     try {
       await client.connect();
       const normalized = (await client.query(LOCAL_RESTORE_IDENTITY_SQL)).rows[0];
-      const raw = (
-        await client.query("SELECT inet_server_addr()::text AS host")
-      ).rows[0].host;
-      const literal = (
-        await client.query("SELECT host('127.0.0.1/32'::inet) AS host")
-      ).rows[0].host;
+      const rawResult = await client.query("SELECT inet_server_addr()::text AS host");
+      const raw = rawResult.rows[0].host;
+      const literalResult = await client.query("SELECT host('127.0.0.1/32'::inet) AS host");
+      const literal = literalResult.rows[0].host;
 
       assert.equal(literal, "127.0.0.1");
       assert.equal(normalized.host, raw.split("/")[0]);
