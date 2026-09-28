@@ -19,31 +19,37 @@ export const INCIDENT = Object.freeze({
 
 export const auditDigest = (plan) =>
   createHash("sha256")
-    .update(JSON.stringify({
-      scope: "THREE_STAGING_MENU_IMPORTS_APP_ONLY",
-      project: INCIDENT.projectRef,
-      archiveSha256: INCIDENT.archiveSha256,
-      archiveSize: INCIDENT.archiveSize,
-      localDatabase: INCIDENT.localDatabase,
-      applicationCounts: INCIDENT.publicCounts,
-      planSha256: plan.fingerprint,
-      tenantRef: plan.tenantRef,
-      canonicalRef: plan.canonicalRef,
-    }))
+    .update(
+      JSON.stringify({
+        scope: "THREE_STAGING_MENU_IMPORTS_APP_ONLY",
+        project: INCIDENT.projectRef,
+        archiveSha256: INCIDENT.archiveSha256,
+        archiveSize: INCIDENT.archiveSize,
+        localDatabase: INCIDENT.localDatabase,
+        applicationCounts: INCIDENT.publicCounts,
+        planSha256: plan.fingerprint,
+        tenantRef: plan.tenantRef,
+        canonicalRef: plan.canonicalRef,
+      }),
+    )
     .digest("hex");
 
 export function assertStagingTarget(stagingUrl) {
   const stage = new URL(stagingUrl);
   if (
     !["postgres:", "postgresql:"].includes(stage.protocol) ||
-    !["aws-1-eu-west-1.pooler.supabase.com", "db.vnymbavsbxorwxpebkot.supabase.co"].includes(stage.hostname) ||
+    !["aws-1-eu-west-1.pooler.supabase.com", "db.vnymbavsbxorwxpebkot.supabase.co"].includes(
+      stage.hostname,
+    ) ||
     decodeURIComponent(stage.username) !== "postgres." + INCIDENT.projectRef ||
     (stage.port || "5432") !== "5432" ||
     stage.pathname !== "/postgres" ||
     stage.searchParams.get("sslmode") !== "verify-full" ||
     !stage.searchParams.get("sslrootcert")
   ) {
-    throw new Error("Staging connection must match the exact project with verify-full and a CA file");
+    throw new Error(
+      "Staging connection must match the exact project with verify-full and a CA file",
+    );
   }
 }
 
@@ -81,9 +87,11 @@ export function assertMatchingRecoveryPlans(local, staging) {
     local.canonicalRef !== INCIDENT.canonicalRef ||
     staging.canonicalRef !== INCIDENT.canonicalRef
   ) {
-    throw new Error("Local application restore and current staging are not the approved identical incident snapshot");
+    throw new Error(
+      "Local application restore and current staging are not the approved identical incident snapshot",
+    );
   }
-  const observed = staging.dispositions.map(({record}) => record.id);
+  const observed = staging.dispositions.map(({ record }) => record.id);
   if (observed.length !== 3 || observed.some((id, i) => id !== INCIDENT.ids[i])) {
     throw new Error("Unexpected staging incident import identities or ordering");
   }
@@ -97,8 +105,12 @@ export function assertOperatorApproval(env, plan) {
     env.SERAMET_APP_RECOVERY_PLAN_SHA256 !== plan.fingerprint ||
     env.SERAMET_APP_RECOVERY_EVIDENCE_SHA256 !== auditDigest(plan) ||
     env.SERAMET_APP_RECOVERY_OPERATOR_ID !== plan.dispositions[0].record.created_by ||
-    !plan.dispositions.every(({record}) => record.created_by === env.SERAMET_APP_RECOVERY_OPERATOR_ID)
+    !plan.dispositions.every(
+      ({ record }) => record.created_by === env.SERAMET_APP_RECOVERY_OPERATOR_ID,
+    )
   ) {
-    throw new Error("Missing exact incident approval, owner identity, evidence digest, or Queue/Cron freeze acknowledgment");
+    throw new Error(
+      "Missing exact incident approval, owner identity, evidence digest, or Queue/Cron freeze acknowledgment",
+    );
   }
 }
