@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
 import type { Product } from "@/lib/menu-product";
 import { majorFromMinor } from "@/payments/money";
+import { createOperationalMenuCache } from "./operational-menu-cache";
 
 type CatalogRow = {
   id: string;
@@ -28,6 +29,16 @@ export type OperationalPricingRule = {
   calculation_mode: "INCLUSIVE" | "EXCLUSIVE";
 };
 
+type MenuData = { items: Product[]; pricingRules: OperationalPricingRule[] };
+type ViewState = MenuData & {
+  key: string;
+  status: "loading" | "ready" | "error";
+  error: string;
+};
+
+/* Module scoped: survives route changes, never persists across a page/tab session. */
+const menuCache = createOperationalMenuCache<MenuData>();
+
 export function useOperationalMenu(input: {
   tenantId: string;
   branchId: string;
@@ -35,41 +46,60 @@ export function useOperationalMenu(input: {
   userName: string;
   role: string;
 }) {
-  const headers = useMemo(() => {
-    const token = getSerametAccessToken();
-    return {
+  const token = getSerametAccessToken();
+  const key = JSON.stringify([input.tenantId, input.branchId, input.userId, input.role, token]);
+  const headers = useMemo(
+    () => ({
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       "x-seramet-user-id": input.userId,
       "x-seramet-user": input.userName,
       "x-seramet-role": input.role,
       "x-seramet-tenant-id": input.tenantId,
       "x-seramet-branch-id": input.branchId,
+    }),
+    [input.branchId, input.role, input.tenantId, input.userId, input.userName, token],
+  );
+  const [view, setView] = useState<ViewState>(() => {
+    const existing = menuCache.get(key);
+    return {
+      key,
+      items: existing?.value.items ?? [],
+      pricingRules: existing?.value.pricingRules ?? [],
+      status: existing ? "ready" : "loading",
+      error: "",
     };
-  }, [input.branchId, input.role, input.tenantId, input.userId, input.userName]);
-  const [items, setItems] = useState<Product[]>([]);
-  const [pricingRules, setPricingRules] = useState<OperationalPricingRule[]>([]);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState("");
+  });
 
   useEffect(() => {
-    const controller = new AbortController();
-    setStatus("loading");
-    setError("");
-    void fetch(`/api/seramet/menu/catalog?branchId=${encodeURIComponent(input.branchId)}`, {
-      headers,
-      signal: controller.signal,
-    })
-      .then(async (response) => {
+    let active = true;
+    const existing = menuCache.get(key);
+    // The previous branch's items must never appear during a context switch.
+    if (!existing) {
+      setView({ key, items: [], pricingRules: [], status: "loading", error: "" });
+    } else {
+      setView({ key, ...existing.value, status: "ready", error: "" });
+      // Navigating back within 12 seconds does not fetch 345 items again.
+      if (!existing.revalidate)
+        return () => {
+          active = false;
+        };
+    }
+
+    void menuCache
+      .load(key, async () => {
+        const response = await fetch(
+          `/api/seramet/menu/catalog?branchId=${encodeURIComponent(input.branchId)}`,
+          { headers, cache: "no-store" },
+        );
         const body = (await response.json().catch(() => ({}))) as {
           items?: CatalogRow[];
           pricingRules?: OperationalPricingRule[];
           message?: string;
           error?: string;
         };
-        if (!response.ok) {
+        if (!response.ok)
           throw new Error(body.message ?? body.error ?? `Menu request failed (${response.status})`);
-        }
-        const catalog = (body.items ?? []).map<Product>((row) => ({
+        const items = (body.items ?? []).map<Product>((row) => ({
           id: row.id,
           itemCode: row.code,
           ...(row.sku ? { sku: row.sku } : {}),
@@ -86,19 +116,41 @@ export function useOperationalMenu(input: {
           productionStation: row.station_code ?? "NONE",
           importSource: "menu-import",
         }));
-        setItems(catalog);
-        setPricingRules(body.pricingRules ?? []);
-        setStatus("ready");
+        const value = { items, pricingRules: body.pricingRules ?? [] };
+        menuCache.set(key, value);
+        return value;
+      })
+      .then((data) => {
+        if (active) setView({ key, ...data, status: "ready", error: "" });
       })
       .catch((cause: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : "Authoritative menu is unavailable");
-        setItems([]);
-        setPricingRules([]);
-        setStatus("error");
+        menuCache.clear(key);
+        if (!active) return;
+        setView({
+          key,
+          items: [],
+          pricingRules: [],
+          status: "error",
+          error: cause instanceof Error ? cause.message : "Authoritative menu is unavailable",
+        });
       });
-    return () => controller.abort();
-  }, [headers, input.branchId]);
+    return () => {
+      active = false;
+    };
+  }, [headers, input.branchId, key]);
 
-  return { items, pricingRules, status, error };
+  if (view.key !== key) {
+    return {
+      items: [] as Product[],
+      pricingRules: [] as OperationalPricingRule[],
+      status: "loading" as const,
+      error: "",
+    };
+  }
+  return {
+    items: view.items,
+    pricingRules: view.pricingRules,
+    status: view.status,
+    error: view.error,
+  };
 }

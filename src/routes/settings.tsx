@@ -342,6 +342,17 @@ function Settings() {
                 ),
               )}
             </div>
+            {current.label === "POS and restaurant" && (
+              <div className="border-t border-border px-4 py-3">
+                <Link
+                  to="/tables"
+                  className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-[12px] font-semibold text-primary-foreground hover:opacity-90"
+                >
+                  Open tables · Add table
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                </Link>
+              </div>
+            )}
           </Panel>
 
           {current.label === "Users and access" && (

@@ -15,10 +15,12 @@ export function PosCustomerPicker({
   value,
   disabled,
   onSelect,
+  compact = false,
 }: {
   value: PosCustomerIdentity | null;
   disabled: boolean;
   onSelect: (value: PosCustomerIdentity | null) => void;
+  compact?: boolean;
 }) {
   const { activeTenantId, branchId, hasPermission } = useAppContext();
   const { request } = useCrmApi();
@@ -76,14 +78,25 @@ export function PosCustomerPicker({
   };
 
   return (
-    <div className="mb-3 rounded-lg border border-border bg-card p-3 text-[12px]">
+    <div
+      className={
+        compact
+          ? "relative text-[12px]"
+          : "mb-3 rounded-lg border border-border bg-card p-3 text-[12px]"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <span className="font-semibold">Customer account</span>
-          <p className="mt-0.5 text-muted-foreground">
-            {value ? value.displayName + " · " + value.customerCode : "Unlinked walk-in"}
-          </p>
-        </div>
+        {!compact && (
+          <div>
+            <span className="font-semibold">Customer account</span>
+            <p className="mt-0.5 text-muted-foreground">
+              {value ? value.displayName + " · " + value.customerCode : "Unlinked walk-in"}
+            </p>
+          </div>
+        )}
+        {compact && value && (
+          <span className="max-w-36 truncate font-semibold">{value.displayName}</span>
+        )}
         <div className="flex gap-2">
           {value && (
             <button
@@ -108,18 +121,24 @@ export function PosCustomerPicker({
           </button>
         </div>
       </div>
-      {!canSearch && (
+      {!compact && !canSearch && (
         <p className="mt-2 text-muted-foreground">
           Customer lookup requires crm.customer.view permission for this role.
         </p>
       )}
-      {disabled && (
+      {!compact && disabled && (
         <p className="mt-2 text-muted-foreground">
           Customer changes are unavailable while disconnected or after billing begins.
         </p>
       )}
       {canSearch && !disabled && open && (
-        <div className="mt-3 border-t border-border pt-3">
+        <div
+          className={
+            compact
+              ? "absolute right-0 top-10 z-40 w-[min(22rem,85vw)] rounded-lg border border-border bg-card p-3 shadow-xl"
+              : "mt-3 border-t border-border pt-3"
+          }
+        >
           <form onSubmit={search} className="flex gap-2">
             <input
               type="search"
