@@ -24,6 +24,7 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
+import { INITIAL_POS_MENU_ITEMS, POS_MENU_PAGE_SIZE, shouldLoadNextPosMenuPage, visiblePosMenuItems } from "@/lib/pos-menu-view";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
@@ -136,6 +137,7 @@ function POS() {
   });
   const [cat, setCat] = useState("All items");
   const [searchQuery, setSearchQuery] = useState("");
+  const [menuLimit, setMenuLimit] = useState(INITIAL_POS_MENU_ITEMS);
   const [clockNow, setClockNow] = useState(() => new Date());
   const [orderSource, setOrderSource] = useState(() => orderChannels[0]?.id ?? "");
   const [lines, setLines] = useState<Record<string, number>>({});
@@ -557,15 +559,18 @@ function POS() {
     [activeOrder],
   );
 
-  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
-  const visible = branchMenu.filter((product) => {
-    const categoryMatches = cat === "All items" ? true : product.category === cat;
-    if (!categoryMatches) return false;
-    if (!normalizedSearch) return true;
-    return [product.name, product.category, product.itemCode, product.sku, product.barcode].some(
-      (value) => value?.toLocaleLowerCase().includes(normalizedSearch),
-    );
-  });
+  const visible = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+    return branchMenu.filter((product) => {
+      const categoryMatches = cat === "All items" ? true : product.category === cat;
+      if (!categoryMatches) return false;
+      if (!normalizedSearch) return true;
+      return [product.name, product.category, product.itemCode, product.sku, product.barcode].some(
+        (value) => value?.toLocaleLowerCase().includes(normalizedSearch),
+      );
+    });
+  }, [branchMenu, cat, searchQuery]);
+  const renderedMenu = visiblePosMenuItems(visible, menuLimit);
   const items = Object.entries(lines)
     .map(([id, qty]) => ({ p: branchMenu.find((x) => x.id === id)!, qty }))
     .filter((l) => l.p && l.qty > 0);
@@ -1670,7 +1675,10 @@ function POS() {
           {posCategories.map((c) => (
             <button
               key={c}
-              onClick={() => setCat(c)}
+              onClick={() => {
+                 setCat(c);
+                 setMenuLimit(INITIAL_POS_MENU_ITEMS);
+               }}
               className={cn(
                 "shrink-0 rounded-lg px-3 py-2.5 text-left text-[13px] font-semibold transition-colors lg:w-full",
                 cat === c
@@ -1690,7 +1698,7 @@ function POS() {
         </nav>
 
         <div className="min-w-0 p-4">
-          <div className="relative mb-2 flex gap-1.5 overflow-visible rounded-lg border border-border bg-card p-1.5">
+          <div className="relative mb-2 flex gap-1.5 overflow-visible rounded-lg bg-card p-1.5">
             {orderChannels.map((source) => (
               <button
                 key={source.id}
@@ -1769,7 +1777,47 @@ function POS() {
               </div>
             )}
           </div>
+          <div className="mb-3 flex min-w-0 items-center gap-2">
+          <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <input
+              value={searchQuery}
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                setMenuLimit(INITIAL_POS_MENU_ITEMS);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                const exact = branchMenu.find((product) =>
+                  [product.barcode, product.sku, product.itemCode].some(
+                    (value) =>
+                      value?.trim().toLocaleLowerCase() === searchQuery.trim().toLocaleLowerCase(),
+                  ),
+                );
+                if (!exact || exact.out) return;
+                event.preventDefault();
+                bump(exact.id, 1);
+                setSearchQuery("");
+                setMenuLimit(INITIAL_POS_MENU_ITEMS);
+              }}
+              placeholder="Search dishes or scan barcode"
+              className="w-full bg-transparent text-[13px] outline-none"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                }}
+                className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <PosCustomerPicker
+            compact
             value={linkedCustomer}
             disabled={
               backendStatus !== "synced" ||
@@ -1786,36 +1834,6 @@ function POS() {
               })
             }
           />
-          <div className="mb-3 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3">
-            <Search className="h-4 w-4 text-muted-foreground" />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                const exact = branchMenu.find((product) =>
-                  [product.barcode, product.sku, product.itemCode].some(
-                    (value) =>
-                      value?.trim().toLocaleLowerCase() === searchQuery.trim().toLocaleLowerCase(),
-                  ),
-                );
-                if (!exact || exact.out) return;
-                event.preventDefault();
-                bump(exact.id, 1);
-                setSearchQuery("");
-              }}
-              placeholder="Search dishes or scan barcode"
-              className="w-full bg-transparent text-[13px] outline-none"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
-              >
-                Clear
-              </button>
-            )}
           </div>
           {isOnlineSource && (
             <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
@@ -1839,8 +1857,21 @@ function POS() {
               No menu items match “{searchQuery}” in {cat}.
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-            {visible.map((p) => {
+          <div
+            aria-label="Scrollable POS menu"
+            className="relative max-h-[min(76vh,980px)] overflow-y-auto overscroll-contain rounded-lg"
+            onScroll={(event) => {
+              if (shouldLoadNextPosMenuPage({
+                scrollTop: event.currentTarget.scrollTop,
+                scrollHeight: event.currentTarget.scrollHeight,
+                clientHeight: event.currentTarget.clientHeight,
+                displayed: renderedMenu.length,
+                total: visible.length,
+              })) setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE);
+            }}
+          >
+          <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 xl:grid-cols-4">
+            {renderedMenu.map((p) => {
               const qty = lines[p.id] ?? 0;
               const imageSrc = productImageSource(p);
 
@@ -1944,6 +1975,14 @@ function POS() {
                 </article>
               );
             })}
+          </div>
+          {visible.length > renderedMenu.length && (
+            <div className="sticky bottom-0 flex justify-center bg-gradient-to-t from-card via-card/95 to-transparent px-2 pb-2 pt-9">
+              <Btn onClick={() => setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE)}>
+                Show next {Math.min(POS_MENU_PAGE_SIZE, visible.length - renderedMenu.length)} of {visible.length}
+              </Btn>
+            </div>
+          )}
           </div>
         </div>
 
