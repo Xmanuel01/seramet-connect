@@ -22,8 +22,5 @@ export function stagingPrinterlessTestingEnabled(
 }
 
 export function isStagingPrinterlessTestingEnabled(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    stagingPrinterlessTestingEnabled(window.location.hostname)
-  );
+  return typeof window !== "undefined" && stagingPrinterlessTestingEnabled(window.location.hostname);
 }
