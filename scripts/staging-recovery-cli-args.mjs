@@ -4,7 +4,11 @@
  * exact --apply argument and all separate backup/operator approval checks.
  */
 export function parseStagingRecoveryMode(args) {
-  if (!Array.isArray(args) || args.length > 1 || (args.length === 1 && !["--plan", "--apply"].includes(args[0]))) {
+  if (
+    !Array.isArray(args) ||
+    args.length > 1 ||
+    (args.length === 1 && !["--plan", "--apply"].includes(args[0]))
+  ) {
     throw new Error("Use --plan OR --apply");
   }
   return args[0] === "--apply" ? "apply" : "plan";
