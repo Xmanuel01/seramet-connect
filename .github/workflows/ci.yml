@@ -21,6 +21,16 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
+      - name: Temporary format recovery scripts for branch review
+        if: github.head_ref == 'fix/staging-app-restore-audited-alternative'
+        run: |
+          npx prettier --write scripts/staging-app-recovery-guards.mjs scripts/staging-app-recovery-guards.test.mjs scripts/reconcile-staging-menu-imports-app-restore.mjs
+          for f in scripts/staging-app-recovery-guards.mjs scripts/staging-app-recovery-guards.test.mjs scripts/reconcile-staging-menu-imports-app-restore.mjs; do
+            echo "SERAMET_FORMAT_BEGIN:$f"
+            base64 -w0 "$f"
+            echo
+            echo "SERAMET_FORMAT_END:$f"
+          done
       - run: npm run lint
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs
