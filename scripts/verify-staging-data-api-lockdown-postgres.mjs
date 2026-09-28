@@ -20,6 +20,7 @@ try {
   const sql = await readFile("ops/sql/staging-public-schema-lockdown.sql", "utf8");
   // Isolated instance must refuse a direct accidentally unapproved execution.
   await assert.rejects(db.query(sql), /Lockdown refused/);
+  await db.query("ROLLBACK");
   const before = await db.query(
     "SELECT count(*)::integer AS exposed FROM pg_tables WHERE schemaname='public' " +
       "AND NOT rowsecurity AND has_table_privilege('anon',format('%I.%I',schemaname,tablename),'SELECT')",
