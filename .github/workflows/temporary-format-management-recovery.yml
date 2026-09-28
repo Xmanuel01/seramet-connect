@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/staging-management-backlog-plan.mjs scripts/staging-management-backlog-plan.test.mjs scripts/reconcile-staging-management-backlog.mjs
+          git add scripts/staging-management-backlog-plan.mjs scripts/staging-management-backlog-plan.test.mjs scripts/reconcile-staging-management-backlog.mjs src/onboarding/onboarding-service.ts src/onboarding/pass-8-commercial-productization.test.ts src/server/file-import-security.ts scanner-worker/src/scan-adapter.mjs scanner-worker/src/scan-adapter.test.mjs
           if ! git diff --cached --quiet; then
             git commit -m "style: format management backlog recovery scripts"
             git push origin HEAD:fix/staging-recovery-integrated-20260928
