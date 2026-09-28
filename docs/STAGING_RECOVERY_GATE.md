@@ -101,3 +101,34 @@ other site; do not rename or mutate existing linked branch rows blindly.
   unrelated Worker does not satisfy this requirement.
 - Keep real Daraja/Pesapal merchant transactions disabled until the internal
   POS→receipt→stock→GL→EOD test and duplicate-callback negative cases pass.
+
+## Integrated recovery branch status (28 September 2026)
+
+This branch includes the source changes from draft #52, #53, #54 and #55,
+but has **not** been merged to main or deployed. Independent staging SQL
+still sees the original 3 COMMITTING imports and 44 zero-attempt PENDING
+jobs. Read the exact-plan transaction in
+[STAGING_MENU_IMPORT_RECONCILIATION.md](STAGING_MENU_IMPORT_RECONCILIATION.md)
+before touching them. All three old imports have UNSCANNED_STAGING flags;
+none may replay. The extra 41 management jobs need independent triage.
+
+Read [STAGING_TWO_BRANCH_RECONCILIATION.md](STAGING_TWO_BRANCH_RECONCILIATION.md)
+before mapping existing bootstrap branch to a physical site: it has two
+device records and three branch menu settings. The completed-wizard
+source fix enables authorized creation of the second branch, but cannot
+choose which existing devices belong to Westlands versus Ngong.
+
+Staging Supabase actually served 28 successful REST Data API GETs in the
+last-24-hour evidence window, including sensitive public tables. Neither
+those API keys nor missing JWT role metadata proves the caller's identity;
+treat the public grants and RLS gap as urgent and **do not disable the API
+without reviewing legitimate external clients**. See
+[STAGING_SCHEMA_LOCKDOWN_RUNBOOK.md](STAGING_SCHEMA_LOCKDOWN_RUNBOOK.md)
+and the restore-gated [public-schema lockdown script](../ops/sql/staging-public-schema-lockdown.sql).
+
+The scanner implementation under scanner-worker requires a real privately
+hosted ClamAV gateway with authenticated HTTPS and valid signature updates.
+See [STAGING_SCANNER_PROVISIONING.md](STAGING_SCANNER_PROVISIONING.md).
+Scanner source, existing service name, mocked tests and HTTP 200 deploy
+responses do not prove real AV scanning. Full staging scanner RPC fixtures
+and operational approvals remain mandatory.
