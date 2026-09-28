@@ -27,7 +27,9 @@ const state = () => ({
     finished_at: null,
     lease_owner: null,
     lease_expires_at: null,
-    scheduled_at: new Date(Date.UTC(2026, 8, i === 41 ? 28 : i === 40 ? 25 : 22, 11, i)).toISOString(),
+    scheduled_at: new Date(
+      Date.UTC(2026, 8, i === 41 ? 28 : i === 40 ? 25 : 22, 11, i),
+    ).toISOString(),
   })),
 });
 
