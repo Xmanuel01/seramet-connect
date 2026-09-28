@@ -19,7 +19,7 @@ const state = () => ({
     started_at: null, finished_at: null, lease_owner: null, lease_expires_at: null,
     scheduled_at: new Date(Date.UTC(2026, 8, i === 40 ? 25 : 22, 11, i)).toISOString(),
   })),
-}));
+});
 
 test("consolidates only the exact 41 identical date-free branch jobs", () => {
   const p = planStagingManagementBacklog(state());
