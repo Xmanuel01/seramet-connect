@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { permissions } from "@/platform/permissions";
-import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
+import { SerametHttpError, type ServerActor, type SerametEnv } from "@/lib/seramet-auth";
 import { createMigratedTestDatabase, type SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
 import { handleTableManagementApi } from "@/server/table-management-api";
 
@@ -29,9 +29,16 @@ async function send(path: string,method:"GET"|"POST"|"PATCH"="GET",body?:Record<
     ...(body ? { headers:{"content-type":"application/json","origin":"https://tables.seramet.test"},
       body:JSON.stringify(body) } : {}),
   });
-  const result = await handleTableManagementApi(request,env);
-  if (!result) throw new Error("Route not handled");
-  return result;
+  try {
+    const result = await handleTableManagementApi(request,env);
+    if (!result) throw new Error("Route not handled");
+    return result;
+  } catch (error) {
+    if (error instanceof SerametHttpError) {
+      return Response.json({ message: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 }
 
 describe.sequential("branch table management",()=>{
