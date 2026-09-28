@@ -1,13 +1,9 @@
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { planStagingManagementBacklog } from "./staging-management-backlog-plan.mjs";
+import { parseStagingRecoveryMode } from "./staging-recovery-cli-args.mjs";
 
-const apply = process.argv.includes("--apply");
-if (
-  process.argv.some((arg) => !["--plan", "--apply"].includes(arg)) ||
-  (process.argv.includes("--plan") && apply)
-)
-  throw new Error("Use --plan OR --apply");
+const apply = parseStagingRecoveryMode(process.argv.slice(2)) === "apply";
 
 if (process.env.SERAMET_ENVIRONMENT !== "staging" || !process.env.SERAMET_POSTGRES_URL)
   throw new Error("STAGING ONLY: set staging environment and staging-only Postgres DSN");
