@@ -54,7 +54,7 @@ export function planStagingManagementBacklog({
     Number(branches[0].is_bootstrap) !== 1
   )
     refuse("Original staging branch setup has changed");
-  if (jobs.length !== 41) refuse("Expected exactly 41 original pending recalculations");
+  if (jobs.length !== 42) refuse("Expected exactly 41 original and one new pending recalculation");
   const tenantId = branches[0].tenant_id;
   const branchId = branches[0].id;
   const uniqueIds = new Set();
@@ -86,7 +86,11 @@ export function planStagingManagementBacklog({
   );
   if (
     !ordered[0].scheduled_at.startsWith("2026-09-22") ||
-    !ordered.at(-1).scheduled_at.startsWith("2026-09-25")
+    !ordered.at(-2).scheduled_at.startsWith("2026-09-25") ||
+    !ordered.at(-1).scheduled_at.startsWith("2026-09-28") ||
+    ordered
+      .slice(0, -1)
+      .some((job) => job.scheduled_at < "2026-09-22" || job.scheduled_at >= "2026-09-26")
   )
     refuse("Stale-work time window changed");
   const latest = ordered.at(-1);

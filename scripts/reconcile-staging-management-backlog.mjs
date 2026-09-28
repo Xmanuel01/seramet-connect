@@ -152,9 +152,9 @@ async function collapse(plan) {
     ),
   ]);
   if (
-    terminal.rows[0].count !== 40 ||
+    terminal.rows[0].count !== plan.superseded.length ||
     remaining.rows[0].count !== 1 ||
-    audited.rows[0].count !== 40
+    audited.rows[0].count !== plan.superseded.length
   )
     throw new Error("Postconditions failed; transaction will rollback");
 }
@@ -174,14 +174,16 @@ try {
   if (!apply) {
     await db.query("ROLLBACK");
     transactionOpen = false;
-    console.info("Read-only inspection. 40 jobs remain unchanged until an authorized apply.");
+    console.info(
+      `Read-only inspection. ${plan.superseded.length} jobs remain unchanged until an authorized apply.`,
+    );
   } else {
     requireApproval(plan);
     await collapse(plan);
     await db.query("COMMIT");
     transactionOpen = false;
     console.info(
-      "40 superseded jobs preserved as terminal + audited; newest PENDING. " +
+      `${plan.superseded.length} superseded jobs preserved as terminal + audited; newest PENDING. ` +
         "Do not resume the worker until the scanner, Queue and branch prereqs are verified.",
     );
   }

@@ -14,7 +14,7 @@ const state = () => ({
       is_bootstrap: 1,
     },
   ],
-  jobs: Array.from({ length: 41 }, (_, i) => ({
+  jobs: Array.from({ length: 42 }, (_, i) => ({
     tenant_id: "tenant",
     branch_id: "generic-branch",
     id: "job-" + i,
@@ -27,16 +27,24 @@ const state = () => ({
     finished_at: null,
     lease_owner: null,
     lease_expires_at: null,
-    scheduled_at: new Date(Date.UTC(2026, 8, i === 40 ? 25 : 22, 11, i)).toISOString(),
+    scheduled_at: new Date(
+      Date.UTC(2026, 8, i === 41 ? 28 : i === 40 ? 25 : 22, 11, i),
+    ).toISOString(),
   })),
 });
 
-test("consolidates only the exact 41 identical date-free branch jobs", () => {
+test("retains the Sep28 job and supersedes exactly 41 identical prior requests", () => {
   const p = planStagingManagementBacklog(state());
-  assert.equal(p.retained.id, "job-40");
-  assert.equal(p.superseded.length, 40);
+  assert.equal(p.retained.id, "job-41");
+  assert.equal(p.superseded.length, 41);
   assert.equal(p.publicSummary.to_recalculate_once, 1);
   assert.match(p.fingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("refuses a novel intermediate date not present in the vetted original 41 jobs", () => {
+  const a = state();
+  a.jobs[17].scheduled_at = "2026-09-26T11:17:00.000Z";
+  assert.throws(() => planStagingManagementBacklog(a), /Stale-work time window changed/);
 });
 
 test("rejects pending unscanned menu imports or other active jobs", () => {
