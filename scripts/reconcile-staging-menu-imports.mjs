@@ -4,6 +4,7 @@ import {
   buildStagingMenuReconciliationPlan,
   STAGING_PROJECT_REF,
 } from "./staging-menu-reconciliation-plan.mjs";
+import { parseStagingRecoveryMode } from "./staging-recovery-cli-args.mjs";
 
 /**
  * ONE-TIME STAGING INCIDENT TOOL; not a migration, no CI application.
@@ -16,13 +17,7 @@ import {
  * terminal states. Audit metadata explicitly distinguishes an administrative
  * quarantine from a validation error or an actually attempted worker failure.
  */
-const apply = process.argv.includes("--apply");
-if (
-  process.argv.some((arg) => !["--apply", "--plan"].includes(arg)) ||
-  (process.argv.includes("--apply") && process.argv.includes("--plan"))
-) {
-  throw new Error("Usage: node scripts/reconcile-staging-menu-imports.mjs [--plan | --apply]");
-}
+const apply = parseStagingRecoveryMode(process.argv.slice(2)) === "apply";
 if (process.env.SERAMET_ENVIRONMENT !== "staging") {
   throw new Error("STAGING ONLY: set SERAMET_ENVIRONMENT=staging");
 }
