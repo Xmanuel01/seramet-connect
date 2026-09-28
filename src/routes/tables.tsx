@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { AddTableDialog } from "@/components/app/AddTableDialog";
+import { DiningAreaDialog } from "@/components/app/DiningAreaDialog";
+import { EditTableDialog } from "@/components/app/EditTableDialog";
 import { Btn, Chips, Panel, Status } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -52,6 +54,8 @@ function Tables() {
         (serviceArea) => serviceArea.id === configuredTable.serviceAreaId,
       );
       return {
+        id: configuredTable.id,
+        serviceAreaId: configuredTable.serviceAreaId ?? null,
         no: configuredTable.code,
         area: configuredArea?.name ?? activeArea,
         seats: configuredTable.seats,
@@ -75,6 +79,7 @@ function Tables() {
       subtitle={`${branchLabel} - ${configuredTables.length} tables - ${configuredTables.length ? Math.round((configuredTables.filter((table) => table.state === "Occupied").length / configuredTables.length) * 100) : 0}% occupancy`}
       actions={
         <div className="flex flex-wrap items-center gap-2">
+          <DiningAreaDialog branchLabel={branchLabel} onCreated={setArea} />
           <AddTableDialog
             branchLabel={branchLabel}
             existingCount={configuredTables.length}
@@ -209,6 +214,23 @@ function Tables() {
                   </span>
                 </div>
               </div>
+            </div>
+          )}
+          {selectedTable && (
+            <div className="mt-3">
+              <EditTableDialog
+                key={selectedTable.id}
+                table={{
+                  id: selectedTable.id,
+                  code: selectedTable.no,
+                  seats: selectedTable.seats,
+                  serviceAreaId: selectedTable.serviceAreaId,
+                }}
+                areas={serviceAreas.map((item) => ({ id: item.id, name: item.name }))}
+                onSaved={(name) => {
+                  if (name) setArea(name);
+                }}
+              />
             </div>
           )}
           <h3 className="mt-4 text-[13px] font-semibold">Open bills</h3>
