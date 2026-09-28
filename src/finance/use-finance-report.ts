@@ -192,7 +192,7 @@ export function useFinanceReport<T>(
   // real-time event, without requiring the operator to manually reload.
   useEffect(() => {
     if (!allowed || typeof window === "undefined") return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const schedule = () => {
       if (timer) window.clearTimeout(timer);
       timer = window.setTimeout(() => setRevision((value) => value + 1), 250);
