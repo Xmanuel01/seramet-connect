@@ -43,6 +43,7 @@ import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money"
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
+import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -1129,7 +1130,8 @@ function POS() {
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Select a table before sending a dine-in order to kitchen.");
     }
-    if (!profile) {
+    const printerlessStaging = isStagingPrinterlessTestingEnabled();
+    if (!profile && !printerlessStaging) {
       throw new Error(
         `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
       );
@@ -1165,16 +1167,20 @@ function POS() {
         printResult: null,
       };
     }
-    const preflight = SerametPrintService.createProductionTicketJobs(
-      profile,
-      { ...buildPrintOrder(tableNo), lines: previewLines },
-      printJobs,
-      amendmentType,
-    );
-    if (!preflight.jobs.length) {
-      throw new Error(
-        `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
+    // The temporary staging exception only removes the physical delivery preflight.
+    // Normal backend order validation and authoritative kitchen-ticket creation still run.
+    if (!printerlessStaging && profile) {
+      const preflight = SerametPrintService.createProductionTicketJobs(
+        profile,
+        { ...buildPrintOrder(tableNo), lines: previewLines },
+        printJobs,
+        amendmentType,
       );
+      if (!preflight.jobs.length) {
+        throw new Error(
+          `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
+        );
+      }
     }
 
     const resultState = await mutateTransaction("upsertAndSendKitchen", {
@@ -1195,6 +1201,25 @@ function POS() {
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
       setPrintNotice("No new kitchen items require a KOT amendment.");
       setPrintNoticeType("idle");
+      return {
+        order: authoritativeOrder,
+        state: resultState.state,
+        printResult: null,
+      };
+    }
+
+    // Staging laptop demo: never pretend a physical KOT has printed.
+    // The authoritative transaction above persists the kitchen work independently.
+    if (printerlessStaging) {
+      setTrackedPrint(null);
+      setActiveOrderId(authoritativeOrder.id);
+      setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
+      setPrintNotice(
+        "STAGING TEST: Kitchen order saved without physical printing. Open Kitchen " +
+          "and verify the digital ticket; physical KOT delivery is NOT confirmed. " +
+          "Standard printer routing resumes automatically when the test window expires.",
+      );
+      setPrintNoticeType("warning");
       return {
         order: authoritativeOrder,
         state: resultState.state,
