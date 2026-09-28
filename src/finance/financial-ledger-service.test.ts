@@ -293,6 +293,30 @@ describe("Authoritative finance and ERP-style reporting integrity", () => {
     expect(report.scope.currency).toBe("KES");
   });
 
+  it("does not add unconverted foreign bank funds to the base-currency cash total", async () => {
+    db.sqlite
+      .prepare(
+        "INSERT INTO accounts (tenant_id,id,branch_id,code,name,account_type,currency,active,payload_json) VALUES (?,? ,NULL,'EUR-BANK','EUR Bank','BANK','EUR',1,'{}')",
+      )
+      .run(t, "eur-bank");
+    post(db, {
+      tenant: t,
+      branch: a,
+      id: "eur-bank-movement",
+      currency: "EUR",
+      entries: [
+        ["eur-bank", 500, 0],
+        ["eur-bank", 0, 500],
+      ],
+    });
+    const report = await new FinancialLedgerService(db, actor()).statement(window);
+    expect(report.cashMovement).toBeNull();
+    expect(report.quality).toBe("INCOMPLETE");
+    expect(report.issues.map((issue) => issue.code)).toContain(
+      "CASH_MOVEMENT_CURRENCY_MISMATCH",
+    );
+  });
+
   it("refuses fake cash-flow totals if there is no explicit bank/cash account", async () => {
     db.sqlite
       .prepare("UPDATE accounts SET account_type='ASSET' WHERE tenant_id=? AND id='cash'")
