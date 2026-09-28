@@ -67,7 +67,7 @@ Procedure:
 
 6. Independently requery the database: expect precisely 41 incident jobs
    administratively terminal, one original job still PENDING at zero
-   attempts, 40 corresponding append-only audit events, zero ACTIVE
+   attempts, 41 corresponding append-only audit events, zero ACTIVE
    import jobs, unchanged menu and branch rows.
 
 7. Provision the real scanner and protect Data API, validate compiled
