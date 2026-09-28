@@ -63,6 +63,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Check CIDR-safe restore identity against disposable real PostgreSQL
+        run: node --test scripts/staging-app-recovery-identity-postgres.test.mjs
       - name: Apply every historical migration on disposable real PostgreSQL
         run: npm run migrate:postgres
       - name: Assert the CRM schema, JSON compatibility and immutable audit triggers
