@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import pg from "pg";
 import {
+  LOCAL_RESTORE_IDENTITY_SQL,
   INCIDENT,
   auditDigest,
   assertConnectionTargets,
@@ -153,7 +154,7 @@ async function readLocalSnapshot() {
     await local.connect();
     const identity = (
       await local.query(
-        "SELECT inet_server_addr()::text AS host,current_database() AS database,current_user AS username",
+        LOCAL_RESTORE_IDENTITY_SQL,
       )
     ).rows[0];
     if (
