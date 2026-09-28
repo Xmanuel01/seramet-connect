@@ -26,9 +26,9 @@ async function snapshot() {
   if (!jobs.length) throw new Error("Management backlog absent or already processed; stop");
   const tenantId = jobs[0].tenant_id;
   const branch = await db.query(
-    "SELECT * FROM public.branches WHERE tenant_id=$1 AND id=$2" +
+    "SELECT * FROM public.branches WHERE tenant_id=$1 ORDER BY id" +
       (apply ? " FOR SHARE" : ""),
-    [tenantId, jobs[0].branch_id],
+    [tenantId],
   );
   const [activeOther, pendingImport, schema, activeManagement] = await Promise.all([
     db.query("SELECT COUNT(*)::integer AS count FROM public.worker_jobs " +
