@@ -96,7 +96,7 @@ export async function handleTableManagementApi(
       "SELECT id FROM service_areas WHERE tenant_id=? AND branch_id=? AND LOWER(TRIM(name))=LOWER(?)",
     ).bind(actor.tenantId, input.branchId, input.name).first<{id:string}>();
     if (existing) throw new SerametHttpError(409, "An area with that name already exists");
-    const id = crypto.randomUUID();
+    const id = await deterministicAreaId(actor.tenantId, input.branchId, input.name);
     const area = { id, tenantId: actor.tenantId, branchId: input.branchId, name: input.name, active: true };
     await auditedBatch(db, actor, input.branchId, "SERVICE_AREA_CREATED", "SERVICE_AREA", id,
       [db.prepare(
@@ -151,6 +151,12 @@ export async function handleTableManagementApi(
   }
 
   throw new SerametHttpError(405,"Unsupported table-management method");
+}
+
+async function deterministicAreaId(tenantId: string, branchId: string, name: string) {
+  const key = tenantId + ":" + branchId + ":" + name.trim().toLowerCase();
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)));
+  return "area-" + Array.from(bytes.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function parseBody<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -209,7 +215,8 @@ async function auditedBatch(db:D1Database,actor:ServerActor,branchId:string,acti
     ).bind(actor.tenantId,crypto.randomUUID(),branchId,actor.id,actor.deviceId??null,action,entityType,id,
       "Authorized branch table management",crypto.randomUUID(),actor.sessionId??null,"{}",new Date().toISOString())]);
   } catch(error) {
-    if (typeof error==="object" && error && "code" in error && (error as {code?:unknown}).code==="23505") {
+    if (typeof error==="object" && error && "code" in error && ((error as {code?:unknown}).code==="23505" ||
+      (error instanceof Error && /unique constraint/i.test(error.message)))) {
       throw new SerametHttpError(409,"This table or area already exists; refresh and retry");
     }
     throw error;
