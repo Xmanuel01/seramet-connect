@@ -220,10 +220,16 @@ function Tables() {
             <div className="mt-3">
               <EditTableDialog
                 key={selectedTable.id}
-                table={{id:selectedTable.id,code:selectedTable.no,seats:selectedTable.seats,
-                  serviceAreaId:selectedTable.serviceAreaId}}
-                areas={serviceAreas.map((item)=>({id:item.id,name:item.name}))}
-                onSaved={(name)=>{if(name)setArea(name);}}
+                table={{
+                  id: selectedTable.id,
+                  code: selectedTable.no,
+                  seats: selectedTable.seats,
+                  serviceAreaId: selectedTable.serviceAreaId,
+                }}
+                areas={serviceAreas.map((item) => ({ id: item.id, name: item.name }))}
+                onSaved={(name) => {
+                  if (name) setArea(name);
+                }}
               />
             </div>
           )}
