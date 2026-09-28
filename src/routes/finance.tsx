@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
@@ -45,9 +45,21 @@ function Finance() {
   return (
     <AppShell
       title="Finance"
-      subtitle={`Daily flash P&L and profitability - ${branchLabel}${management.asOf ? ` - as of ${formatDateTime(management.asOf)}` : ""}`}
+      subtitle={`Daily flash P&L and profitability - ${branchLabel}${management.asOf ? ` - fetched ${formatDateTime(management.asOf)}` : ""}`}
       actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
+      <div role="note" className="mb-3 rounded-lg border border-warning/40 bg-warning-soft p-3 text-[12px]">
+        <strong>Management flash estimates are not posted accounting statements.</strong>{" "}
+        Refresh fetches existing read models; it does not run pending recalculation jobs.
+        For actual posted vouchers and accounting completeness, review{" "}
+        <Link to="/accounting" className="font-semibold underline">
+          Accounting
+        </Link>{" "}
+        and the{" "}
+        <Link to="/general-ledger" className="font-semibold underline">
+          General ledger
+        </Link>.
+      </div>
       <ManagementReadModelState status={management.status} error={management.error} empty={!pnl} />
       {management.status === "ready" && pnl && (
         <>
