@@ -90,10 +90,10 @@ describe("POS Phase 1 authoritative transitions", () => {
       ),
     ).toThrow(/identity could not be verified/);
     expect(
-      verifyOrderTransition(
-        response([order("SENT_TO_KITCHEN"), order("HELD", "other")]),
-        { ...input("KITCHEN", "order-1"), knownOrderIds: new Set(["other"]) },
-      ).order.id,
+      verifyOrderTransition(response([order("SENT_TO_KITCHEN"), order("HELD", "other")]), {
+        ...input("KITCHEN", "order-1"),
+        knownOrderIds: new Set(["other"]),
+      }).order.id,
     ).toBe("order-1");
   });
 
@@ -119,13 +119,8 @@ describe("POS Phase 1 authoritative transitions", () => {
         },
       ],
     };
-    const actor = {
-      id: "cashier-1",
-      name: "Cashier",
-      role: "Cashier",
-      tenantId: DEMO_TENANT_ID,
-      branchId: DEMO_WESTLANDS_BRANCH_ID,
-    };
+    // This mutation only consumes actor.name; authorization is covered by the API tests.
+    const actor = { name: "Cashier" } as Parameters<typeof applyServerMutation>[3];
     const initial = TransactionEngine.createOrder(
       createEmptyTransactionState(DEMO_TENANT_ID),
       draft,
@@ -173,9 +168,7 @@ describe("POS Phase 1 authoritative transitions", () => {
         { id: "bar-1", status: "Failed" },
       ]),
     ).toBe(false);
-    expect(kitchenJobsAcceptedForDelivery(jobs, [{ id: "kot-1", status: "Printed" }])).toBe(
-      false,
-    );
+    expect(kitchenJobsAcceptedForDelivery(jobs, [{ id: "kot-1", status: "Printed" }])).toBe(false);
     expect(kitchenJobsAcceptedForDelivery([], [])).toBe(false);
   });
 });
