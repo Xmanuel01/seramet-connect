@@ -148,6 +148,12 @@ export const DevicePrintQueueStore = {
     return (update) => this.setReprints(branchKey, update);
   },
 
+  simulateRestartForTests() {
+    // Reload the module-level cache without discarding the durable device data.
+    snapshots.clear();
+    listeners.clear();
+  },
+
   resetForTests() {
     const storage = localStorageForPrint();
     if (storage) {
