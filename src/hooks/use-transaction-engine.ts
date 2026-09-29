@@ -117,7 +117,10 @@ export function useTransactionEngine() {
         }
         if (hydrationScopeRef.current !== requestScope) {
           hydrationScopeRef.current = requestScope;
-          const cached = await offlineStore.readCachedState(activeTenantId, branchId);
+          // Browsers with unavailable IndexedDB can still use the authoritative POS.
+          const cached = await offlineStore.readCachedState(activeTenantId, branchId).catch(
+            () => null,
+          );
           if (
             cached &&
             scopeRef.current === requestScope &&
@@ -154,7 +157,9 @@ export function useTransactionEngine() {
           setRevision(nextRevision);
           revisionRef.current = nextRevision;
           serverScopeRef.current = requestScope;
-          await offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision);
+          void offlineStore
+            .cacheState(activeTenantId, branchId, body.state, nextRevision)
+            .catch((cause) => console.warn("Unable to update the offline read cache", cause));
         }
         setBackendStatus("synced");
         await refreshPendingCount();
