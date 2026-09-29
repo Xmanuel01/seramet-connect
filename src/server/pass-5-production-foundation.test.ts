@@ -342,13 +342,15 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(claimed.kitchenPrintObligations?.[0]?.status).toBe("CLAIMED");
     expect(claimed.kitchenPrintObligations?.[0]?.claimId).toMatch(/^terminal-claim-/);
     expect(
-      (await database
-        .prepare(
-          `SELECT count(*) AS total FROM authoritative_records
+      (
+        await database
+          .prepare(
+            `SELECT count(*) AS total FROM authoritative_records
            WHERE tenant_id=? AND entity_type='state:kitchenPrintObligations'`,
-        )
-        .bind(tenantA)
-        .first<{ total: number }>())?.total,
+          )
+          .bind(tenantA)
+          .first<{ total: number }>()
+      )?.total,
     ).toBe(1);
   });
 
