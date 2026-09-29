@@ -1339,8 +1339,8 @@ function POS() {
         });
         const dispatched = Boolean(
           result.printResult?.jobs.length ||
-            printerlessStaging ||
-            (result.printResult === null && trackedKot),
+          printerlessStaging ||
+          (result.printResult === null && trackedKot),
         );
         if (dispatched) {
           const notice = printerlessStaging
