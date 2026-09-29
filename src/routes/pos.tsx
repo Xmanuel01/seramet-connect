@@ -32,6 +32,7 @@ import {
   visiblePosMenuItems,
 } from "@/lib/pos-menu-view";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useKotDeliveryAcknowledgement } from "@/hooks/use-kot-delivery-ack";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import {
@@ -222,6 +223,7 @@ function POS() {
     sendKitchenTickets,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
+  useKotDeliveryAcknowledgement(branchId, transactionState.orders, printJobs, mutateTransaction);
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
