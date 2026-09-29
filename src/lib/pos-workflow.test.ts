@@ -44,6 +44,7 @@ describe("POS business-branch clock", () => {
   it("respects non-Kenyan configured branch zones", () => {
     expect(resolvePosTimeZone("Europe/London", "Africa/Nairobi", "GB")).toBe("Europe/London");
     expect(resolvePosTimeZone(undefined, "Africa/Nairobi", "KE")).toBe("Africa/Nairobi");
+    expect(resolvePosTimeZone("UTC", "UTC", undefined, "KES")).toBe("Africa/Nairobi");
   });
 });
 
