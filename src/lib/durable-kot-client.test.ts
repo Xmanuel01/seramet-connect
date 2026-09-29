@@ -81,6 +81,28 @@ describe("crash-safe KOT dispatch orchestration", () => {
     return { mutate, current: () => state };
   };
 
+
+  it("leaves the authoritative obligation pending when known printer preflight fails", async () => {
+    const harness = createHarness();
+    const preflight = vi.fn(async () => {
+      throw new Error("Printer bridge offline");
+    });
+    const deliver = vi.fn();
+    await expect(
+      dispatchDurableKitchenObligation({
+        obligation,
+        terminalId: "WEST-POS-1",
+        mutate: harness.mutate,
+        preflight,
+        deliver,
+      }),
+    ).rejects.toThrow(/offline/i);
+    expect(preflight).toHaveBeenCalledTimes(1);
+    expect(harness.mutate).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(harness.current().kitchenPrintObligations[0]?.status).toBe("PENDING");
+  });
+
   it("claims authoritatively before submitting to the bridge and records only OS-spool acceptance", async () => {
     const harness = createHarness();
     const deliver = vi.fn(async () => {
