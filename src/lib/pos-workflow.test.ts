@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { TransactionEngine, createEmptyTransactionState, type OrderDraft } from "@/lib/transaction-engine";
-import { createDefaultDemoPlatformState, DEMO_TENANT_ID, DEMO_WESTLANDS_BRANCH_ID } from "@/platform/demo/default-demo-data";
-import { ConfigurationRepository, setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
+import {
+  TransactionEngine,
+  createEmptyTransactionState,
+  type OrderDraft,
+} from "@/lib/transaction-engine";
+import {
+  createDefaultDemoPlatformState,
+  DEMO_TENANT_ID,
+  DEMO_WESTLANDS_BRANCH_ID,
+} from "@/platform/demo/default-demo-data";
+import {
+  ConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
 import { acknowledgedSyncStatus, transactionCacheKey } from "@/offline/offline-store";
 import {
   formatPosClock,
@@ -68,7 +79,9 @@ describe("offline isolation and acknowledgement safety", () => {
 
 describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
   beforeEach(() => {
-    setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
   });
   it("moves the exact held order out of entry pending without deleting the kitchen or invoice record", () => {
     const draft: OrderDraft = {
