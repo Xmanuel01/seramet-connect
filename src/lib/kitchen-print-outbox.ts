@@ -1,11 +1,6 @@
 import type { TransactionLine, TransactionOrder } from "@/lib/transaction-engine";
 
-export type KitchenPrintStatus =
-  | "PENDING"
-  | "CLAIMED"
-  | "SPOOLED"
-  | "DIGITAL_QUEUED"
-  | "UNCERTAIN";
+export type KitchenPrintStatus = "PENDING" | "CLAIMED" | "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN";
 
 export type KitchenPrintObligation = {
   id: string;
@@ -141,7 +136,10 @@ export function finishKitchenPrintObligation(
   if (!["SPOOLED", "DIGITAL_QUEUED", "UNCERTAIN"].includes(status)) {
     throw new Error("Invalid ticket delivery acknowledgement");
   }
-  if (bridgeJobIds.length > 16 || bridgeJobIds.some((id) => typeof id !== "string" || id.length > 150)) {
+  if (
+    bridgeJobIds.length > 16 ||
+    bridgeJobIds.some((id) => typeof id !== "string" || id.length > 150)
+  ) {
     throw new Error("Invalid printer bridge job evidence");
   }
   if (target.claimId !== claimId || target.claimedBy !== actorId) {
