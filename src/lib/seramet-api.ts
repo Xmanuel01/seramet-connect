@@ -19,6 +19,8 @@ import { TransactionEngine, type TransactionState } from "@/lib/transaction-engi
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { getConfiguredBranchHardwareProfile } from "@/platform/adapters/print-profile-adapter";
+import { stagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { ProviderService } from "@/integrations/provider-service";
 import {
   createDefaultProviderRegistry,
@@ -716,6 +718,34 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     await consumeRateLimit(env, `${actor.tenantId}:${actor.id}`, sensitiveRateLimits.refund);
   }
   const current = await repo.loadState(actor.tenantId);
+  // Browsers cannot manufacture a successful digital KOT for a physical
+  // production route. This exception expires with the pre-existing staging
+  // printerless test window; production requires a genuine KDS-only route.
+  if (body.action === "finishKitchenPrintObligation") {
+    const payload = body.payload as { obligationId?: string; status?: string } | undefined;
+    if (payload?.status === "DIGITAL_QUEUED") {
+      const ticket = current.kitchenPrintObligations?.find(
+        (item) => item.id === payload.obligationId && item.tenantId === actor.tenantId,
+      );
+      if (!ticket) throw new SerametHttpError(404, "Kitchen print obligation not found");
+      const authorizedStagingTest =
+        env.SERAMET_ENVIRONMENT === "staging" &&
+        stagingPrinterlessTestingEnabled(new URL(request.url).hostname);
+      let genuineKdsOnly = false;
+      try {
+        const profile = getConfiguredBranchHardwareProfile(ticket.branchId, actor.tenantId);
+        genuineKdsOnly = profile.kitchenMode === "KDS_ONLY";
+      } catch {
+        // Missing hardware configuration is not proof of digital delivery.
+      }
+      if (!authorizedStagingTest && !genuineKdsOnly) {
+        throw new SerametHttpError(
+          403,
+          "Physical KOT cannot be acknowledged as digital-only delivery",
+        );
+      }
+    }
+  }
   const branches = branchesForAction(current, body.action, body.payload);
   branches.forEach((branchId) =>
     authorizeSerametMutation(actor, body.action!, actor.tenantId, branchId),
