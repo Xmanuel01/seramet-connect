@@ -10,10 +10,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ksh } from "@/lib/currency";
+import { currentDateKey, ksh } from "@/lib/currency";
+import { ordersDashboardFinancials } from "@/lib/orders-dashboard-financials";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { formatFilterDate } from "@/lib/date-filters";
 
 export const Route = createFileRoute("/orders")({
   head: () => ({
@@ -34,9 +35,9 @@ export const Route = createFileRoute("/orders")({
 });
 
 function Orders() {
-  const { branchLabel, matchesBranch, currentUser } = useAppContext();
+  const { branchLabel, matchesBranch, currentUser, timeZone, currency } = useAppContext();
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
-  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
+  const [periodDate, setPeriodDate] = useState(() => currentDateKey(new Date(), timeZone));
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [operationNotice, setOperationNotice] = useState("");
@@ -44,11 +45,12 @@ function Orders() {
   const { state, mutate } = useTransactionEngine();
   const rows = state.orders
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
-    .filter((order) => !periodDate || order.createdAt.slice(0, 10) === periodDate);
-  const netSales = rows.reduce((sum, order) => sum + order.total, 0);
-  const unpaid = rows
-    .filter((order) => order.paymentStatus !== "PAID")
-    .reduce((sum, order) => sum + order.total, 0);
+    .filter(
+      (order) =>
+        !periodDate ||
+        (order.businessDate ?? currentDateKey(new Date(order.createdAt), timeZone)) === periodDate,
+    );
+  const financials = ordersDashboardFinancials(state, matchesBranch, periodDate, timeZone, currency);
   const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
   const selectedOrder =
     selectedOrders.length === 1 ? rows.find((order) => order.id === selectedOrders[0]) : undefined;
@@ -110,7 +112,7 @@ function Orders() {
   return (
     <AppShell
       title="Orders"
-      subtitle={`${rows.length} visible orders today - ${branchLabel}`}
+      subtitle={`${rows.length} orders in selected period - ${branchLabel}`}
       actions={
         <>
           <Btn>Saved views</Btn>
@@ -124,12 +126,22 @@ function Orders() {
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Orders" value={rows.length} />
-        <Metric label="Net sales" value={netSales} money />
-        <Metric label="Unpaid bills" value={unpaid} money />
-        <Metric label="Cancelled" value={cancelled} invert />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+        <Metric label="Orders created" value={rows.length} />
+        <Metric label="Open order value" value={financials.activeOrderValue} money />
+        <Metric label="Invoiced outstanding" value={financials.invoiceOutstanding} money />
+        <Metric label="Paid invoice sales" value={financials.paidInvoiceSales} money />
+        <Metric label="Provider receivables" value={financials.providerReceivables} money />
+        <Metric label="Completed refunds" value={financials.completedRefunds} money invert />
+        <Metric label="Cancelled orders" value={cancelled} invert />
       </div>
+      <p className="mt-2 text-[12px] text-muted-foreground">
+        Open order value includes held and kitchen orders, not revenue. Outstanding balances,
+        provider receivables and paid sales use issued invoices, with void and replaced invoices
+        excluded. Paid sales are gross paid invoices issued in the selected period, before
+        separately displayed refunds; this is not payment-date cash flow or accounting revenue.
+        Refunds use their completion date. See Finance for recognized revenue.
+      </p>
       {operationNotice && (
         <div className="mt-3 rounded-md border border-border bg-card px-3 py-2 text-[13px]">
           {operationNotice}
