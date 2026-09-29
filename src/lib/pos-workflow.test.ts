@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { acknowledgedSyncStatus, transactionCacheKey } from "@/offline/offline-store";
 import {
   formatPosClock,
   pendingPosOrders,
@@ -43,5 +44,20 @@ describe("POS business-branch clock", () => {
   it("respects non-Kenyan configured branch zones", () => {
     expect(resolvePosTimeZone("Europe/London", "Africa/Nairobi", "GB")).toBe("Europe/London");
     expect(resolvePosTimeZone(undefined, "Africa/Nairobi", "KE")).toBe("Africa/Nairobi");
+  });
+});
+
+describe("offline isolation and acknowledgement safety", () => {
+  it("separates the same tenant's two branch transaction caches", () => {
+    expect(transactionCacheKey("tenant-a", "westlands")).not.toBe(
+      transactionCacheKey("tenant-a", "ngong"),
+    );
+  });
+  it("never silently marks missing or conflicting acknowledgements as synced", () => {
+    expect(acknowledgedSyncStatus("accepted")).toBe("SYNCED");
+    expect(acknowledgedSyncStatus("duplicate")).toBe("SYNCED");
+    expect(acknowledgedSyncStatus("conflict")).toBe("CONFLICT");
+    expect(acknowledgedSyncStatus(undefined)).toBe("FAILED");
+    expect(acknowledgedSyncStatus("rejected")).toBe("FAILED");
   });
 });
