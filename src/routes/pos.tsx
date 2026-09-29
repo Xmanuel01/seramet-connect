@@ -877,9 +877,6 @@ function POS() {
 
   const createOrUpdateActiveOrder = async (targetStatus: "HELD" | "OPEN", tableNo = orderTable) => {
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
-    const knownObligationIds = new Set(
-      (transactionState.kitchenPrintObligations ?? []).map((obligation) => obligation.id),
-    );
     const draft = buildTransactionDraft(tableNo);
     const result = await mutateTransaction("upsertOrderDraft", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
@@ -1185,6 +1182,9 @@ function POS() {
     }
 
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
+    const knownObligationIds = new Set(
+      (transactionState.kitchenPrintObligations ?? []).map((obligation) => obligation.id),
+    );
     const sentLineIds = new Set(
       activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
     );
