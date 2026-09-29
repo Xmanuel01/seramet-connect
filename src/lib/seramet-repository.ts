@@ -322,7 +322,7 @@ export function applyServerMutation(
                 state.kitchenPrintObligations ?? [],
                 obligationId,
                 String(input["claimId"] ?? ""),
-                actor.id,
+                actor,
                 String(input["status"]) as "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN",
                 Array.isArray(input["bridgeJobIds"])
                   ? (input["bridgeJobIds"] as string[]).slice(0, 16)
