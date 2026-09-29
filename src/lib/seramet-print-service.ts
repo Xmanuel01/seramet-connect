@@ -430,7 +430,10 @@ export const SerametPrintService = {
       const ticketRecordId = `KTR-${order.branch.replace(/[^A-Z0-9]/gi, "")}-${ticketId}`;
       const duplicateKey = `PRODUCTION:${order.branch}:${ticketId}:${amendmentType}`;
       const duplicate = existingJobs.some(
-        (job) => job.duplicateKey === duplicateKey && job.amendmentType === amendmentType,
+        (job) =>
+          job.duplicateKey === duplicateKey &&
+          job.amendmentType === amendmentType &&
+          (!order.kotObligationId || !["Failed", "Cancelled"].includes(job.status)),
       );
       if (duplicate && (Boolean(order.kotObligationId) || amendmentType === "NEW")) {
         skipped.push(`${ticketId} already exists`);
