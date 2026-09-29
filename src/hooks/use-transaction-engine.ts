@@ -372,7 +372,8 @@ export function useTransactionEngine() {
         await refreshPendingCount();
         return { state: nextState, revision, offline: true as const };
       }
-      setBackendStatus("syncing");
+      const silentMutation = action.startsWith("markProductionPrint");
+      if (!silentMutation) setBackendStatus("syncing");
       mutationInFlightRef.current += 1;
       let receivedServerResponse = false;
       let serverConflict = false;
@@ -412,7 +413,7 @@ export function useTransactionEngine() {
         setRevision(nextRevision);
         revisionRef.current = nextRevision;
         await offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision);
-        setBackendStatus("synced");
+        if (!silentMutation) setBackendStatus("synced");
         return body;
       } catch (error) {
         if (
