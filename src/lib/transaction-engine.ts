@@ -1956,7 +1956,7 @@ export const TransactionEngine = {
     const order = next.orders.find((item) => item.id === orderId);
     const obligation = order?.kotObligations?.find((item) => item.id === obligationId);
     if (!order || !obligation) throw new Error("Durable KOT obligation not found");
-    if (obligation.status === "PENDING") throw new Error("KOT is already pending");
+    if (obligation.status === "PENDING") throw new Error("KOT is already pending");\n    if (obligation.status === "SUPERSEDED") throw new Error("A superseded KOT cannot be reissued");
     const before = obligation.status;
     obligation.status = "PENDING";
     obligation.reviewedBy = manager;
@@ -3224,6 +3224,12 @@ export const TransactionEngine = {
     const kitchenStarted = ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
       order.status,
     );
+    if (kitchenStarted) {
+      // Never send a newly unclaimed original ticket after cancellation.
+      for (const obligation of order.kotObligations ?? []) {
+        if (obligation.status === "PENDING") obligation.status = "SUPERSEDED";
+      }
+    }
     if (kitchenStarted) {
       const activeLines = order.lines.filter((line) => line.productionStatus !== "CANCELLED");
       activeLines.forEach((line) => {
