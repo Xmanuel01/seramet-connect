@@ -32,7 +32,7 @@
     "audit:bundle": "node scripts/audit-production-bundle.mjs",
     "deploy:staging": "npm run build && node scripts/render-cloudflare-config.mjs staging && npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json",
     "typecheck": "tsc --noEmit",
-    "validate": "npm run typecheck && npm run lint && npm test && npm run build && node scripts/verify-cloudflare-events.mjs",
+    "validate": "node scripts/assert-no-lovable-source.mjs && npm run typecheck && npm run lint && npm test && npm run build && node scripts/verify-cloudflare-events.mjs",
     "format": "prettier --write ."
   },
   "dependencies": {
