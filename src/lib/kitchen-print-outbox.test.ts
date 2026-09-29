@@ -228,6 +228,50 @@ describe("authoritative durable KOT outbox", () => {
     ).toThrow();
   });
 
+  it("creates separate durable ADDITION and VOID obligations for an audited kitchen amendment", () => {
+    let state = TransactionEngine.holdOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      createDraft(),
+    );
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const originalCount = state.kitchenPrintObligations!.length;
+    const retainedPilau = { ...state.orders[0]!.lines.find((line) => line.id === "pilau")! };
+    state = TransactionEngine.amendKitchenOrder(
+      state,
+      orderId,
+      {
+        ...createDraft(),
+        lines: [
+          retainedPilau,
+          {
+            id: "chips-amendment",
+            productId: "chips",
+            name: "Chips",
+            category: "Sides",
+            quantity: 1,
+            unitPrice: 250,
+            productionStation: "MAIN KITCHEN",
+          },
+        ],
+      },
+      "Cashier",
+    );
+
+    const newTickets = state.kitchenPrintObligations!.slice(
+      0,
+      state.kitchenPrintObligations!.length - originalCount,
+    );
+    expect(newTickets.map((ticket) => ticket.kind).sort()).toEqual(["ADDITION", "VOID"]);
+    expect(newTickets.find((ticket) => ticket.kind === "ADDITION")?.lines.map((line) => line.id)).toEqual([
+      "chips-amendment",
+    ]);
+    expect(newTickets.find((ticket) => ticket.kind === "VOID")?.lines.map((line) => line.id)).toEqual([
+      "juice",
+    ]);
+    expect(newTickets.every((ticket) => ticket.status === "PENDING")).toBe(true);
+  });
+
   it("only new line snapshots generate an amendment ticket after original kitchen dispatch", () => {
     let state = TransactionEngine.holdOrder(
       createEmptyTransactionState(DEMO_TENANT_ID),
