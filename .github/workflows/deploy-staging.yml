@@ -1,7 +1,8 @@
 name: Deploy staging
 
 # Incident: staging release requires human-invoked recovery gates. Never deploy
-# automatically from a main push until the original backlog and scanner are safe.
+# automatically from a main push until backup, backlog, and security checks pass.
+# Scanner is intentionally disabled for this staging release; uploads must fail closed.
 on:
   workflow_dispatch:
 
@@ -17,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
+    env:
+      SERAMET_STAGING_SCANNER_MODE: disabled
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +33,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          STAGING_SCANNER_SERVICE: ${{ vars.SERAMET_MALWARE_SCANNER_SERVICE }}
         run: |
           set -euo pipefail
           curl --fail-with-body --silent --show-error \
@@ -57,13 +59,13 @@ jobs:
           const bucket = bindings.get("SERAMET_OBJECTS")?.bucket_name;
           const workQueue = bindings.get("SERAMET_WORK_QUEUE")?.queue_name;
           const publicOrigin = bindings.get("SERAMET_PUBLIC_ORIGIN")?.text;
-          // A staging environment variable can supply the actual scanner Worker
-          // service name before it has ever been bound to the existing POS Worker.
-          const scannerService =
-            bindings.get("SERAMET_MALWARE_SCANNER")?.service ||
-            process.env.STAGING_SCANNER_SERVICE?.trim();
-          if (scannerService && !/^[a-zA-Z0-9_-]+$/.test(scannerService)) {
-            throw new Error("Invalid staging scanner service name");
+          // Scanner is intentionally disabled; an existing service binding would silently
+          // re-enable upload scanning when keep_vars preserves existing Worker bindings.
+          if (process.env.SERAMET_STAGING_SCANNER_MODE !== "disabled") {
+            throw new Error("This staging workflow requires explicitly disabled scanning");
+          }
+          if (bindings.has("SERAMET_MALWARE_SCANNER")) {
+            throw new Error("Existing scanner binding must be removed before scanner-disabled deployment");
           }
 
           const queueRows = Array.isArray(queuesPayload.result)
@@ -76,9 +78,8 @@ jobs:
             .map((row) => row.queue_name ?? row.name)
             .find((name) => name === expectedDlq || name === "seramet-staging-dlq");
 
-          // Full staging readiness requires a real configured scanner; never treat
-          // scanner absence as a successful deploy just because HTTP is 200.
-          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin, scannerService };
+          // Retain every non-scanner resource requirement and all data safety gates.
+          const required = { hyperdrive, bucket, workQueue, dlq, publicOrigin };
           const missing = Object.entries(required)
             .filter(([, value]) => !value)
             .map(([name]) => name);
@@ -95,24 +96,7 @@ jobs:
           append("SERAMET_CLOUDFLARE_QUEUE", workQueue);
           append("SERAMET_CLOUDFLARE_DLQ", dlq);
           append("SERAMET_PUBLIC_ORIGIN", publicOrigin);
-          if (scannerService) {
-            append("SERAMET_MALWARE_SCANNER_SERVICE", scannerService);
-          }
           NODE
-
-      - name: Verify real malware-scanner Worker exists
-        shell: bash
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          # The previous preflight established an allowed service name. Verify that
-          # the target script actually exists; a configured string is not proof.
-          curl --fail --silent --show-error \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${SERAMET_MALWARE_SCANNER_SERVICE}/settings" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -o /dev/null
 
       - name: Require release-specific backup and pending-work approval
         env:
@@ -206,5 +190,20 @@ jobs:
           console.log(JSON.stringify(payload));
           NODE
 
-      - name: Require full staging readiness
-        run: node scripts/verify-staging-health.mjs ready
+      - name: Verify scanner-disabled staging remains fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Scanner-disabled staging is intentionally operational, not fully ready.
+          # The readiness endpoint must report the missing scanner explicitly.
+          node <<'NODE'
+          const origin = process.env.SERAMET_PUBLIC_ORIGIN;
+          const response = await fetch(new URL('/api/seramet/health/ready', origin));
+          const body = await response.json();
+          if (response.status !== 503 ||
+              !Array.isArray(body.issues) ||
+              !body.issues.some(issue => issue.code === 'MALWARE_SCANNER_REQUIRED')) {
+            throw new Error('Scanner-disabled readiness must fail closed with MALWARE_SCANNER_REQUIRED');
+          }
+          console.log('Scanner-disabled staging readiness is explicitly degraded: PASS');
+          NODE
