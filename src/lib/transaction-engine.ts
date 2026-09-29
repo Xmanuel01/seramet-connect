@@ -388,6 +388,24 @@ export type ProductionAmendmentRecord = {
   createdAt: string;
 };
 
+/**
+ * Durable logical production-ticket obligation, written atomically with the
+ * authoritative kitchen transition. PENDING never means physically printed.
+ * Device delivery and acknowledged physical output require a separate step.
+ */
+export type KitchenPrintObligation = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branch: string;
+  orderId: string;
+  type: "NEW" | "ADDITION";
+  lines: TransactionLine[];
+  requestedBy: string;
+  createdAt: string;
+  status: "PENDING" | "QUEUED" | "DELIVERED" | "FAILED" | "UNKNOWN";
+};
+
 export type PaymentIntent = {
   id: string;
   tenantId?: string;
@@ -614,6 +632,7 @@ export type TransactionState = {
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
   productionAmendments: ProductionAmendmentRecord[];
+  kitchenPrintObligations?: KitchenPrintObligation[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
   journalEntries: JournalEntry[];
@@ -892,6 +911,9 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
     ),
+    kitchenPrintObligations: scoped(
+      Array.isArray(state.kitchenPrintObligations) ? state.kitchenPrintObligations : [],
+    ),
     externalTransactions: (Array.isArray(state.externalTransactions)
       ? state.externalTransactions
       : []
@@ -1050,6 +1072,7 @@ export function createEmptyTransactionState(tenantId: string): TransactionState 
     marketplaceReceivables: [],
     marketplaceCharges: [],
     productionAmendments: [],
+    kitchenPrintObligations: [],
     externalTransactions: [],
     reconciliationMatches: [],
     journalEntries: [],
@@ -1808,6 +1831,28 @@ export const TransactionEngine = {
       line.sentAt = stamp;
       line.sentQuantity = line.quantity;
     });
+    if (unsentLines.length > 0) {
+      // This record persists in the same authoritative mutation as the line
+      // dispatch, even if the cashier browser crashes before creating a
+      // local delivery job. Subsequent sends with no new lines create none.
+      const scope = resolveScope(
+        order.branchId ?? order.branch,
+        order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
+      );
+      next.kitchenPrintObligations ??= [];
+      next.kitchenPrintObligations.unshift({
+        id: id("KOT", next, "kitchenPrintObligations"),
+        ...scope,
+        orderId,
+        type: ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)
+          ? "ADDITION"
+          : "NEW",
+        lines: clone(unsentLines),
+        requestedBy: user,
+        createdAt: stamp,
+        status: "PENDING",
+      });
+    }
     if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
       next.productionAmendments.unshift({
         id: id("AMD", next, "productionAmendments"),
