@@ -2077,7 +2077,23 @@ export const TransactionEngine = {
         createdAt: stamp,
       });
     }
+    if (additions.length) {
+      const obligationWave = createKotObligations(
+        order,
+        additions.map((line) => ({ ...line, sentAt: stamp, sentQuantity: line.quantity })),
+        "ADDITION",
+        stamp,
+      );
+      order.kotObligations = [...(order.kotObligations ?? []), ...obligationWave];
+    }
     if (removals.length) {
+      const voidWave = createKotObligations(
+        order,
+        removals.filter((line) => line.sentAt),
+        "VOID",
+        stamp,
+      );
+      order.kotObligations = [...(order.kotObligations ?? []), ...voidWave];
       next.productionAmendments.unshift({
         id: id("AMD", next, "productionAmendments"),
         tenantId: scope.tenantId,
@@ -3214,6 +3230,13 @@ export const TransactionEngine = {
         line.productionStatus = "CANCELLED";
       });
       if (activeLines.length) {
+        const voidWave = createKotObligations(
+          order,
+          activeLines.filter((line) => line.sentAt),
+          "VOID",
+          stamp,
+        );
+        order.kotObligations = [...(order.kotObligations ?? []), ...voidWave];
         next.productionAmendments.unshift({
           id: id("AMD", next, "productionAmendments"),
           tenantId: order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
