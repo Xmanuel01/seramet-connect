@@ -105,8 +105,9 @@ export function useSerametPrintQueue(branch: string) {
   };
 
   const enqueue = (nextJobs: PrintJob[]): QueueResult => {
-    if (!profile) return unavailableResult(jobs, configurationError);
-    const queued = processJobs(nextJobs, jobs, profile);
+    const currentJobs = DevicePrintQueueStore.snapshot(branch).jobs;
+    if (!profile) return unavailableResult(currentJobs, configurationError);
+    const queued = processJobs(nextJobs, currentJobs, profile);
     return { jobs: nextJobs, skipped: [], queue: queued };
   };
 
@@ -114,14 +115,15 @@ export function useSerametPrintQueue(branch: string) {
     order: OrderForPrint,
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
   ): QueueResult => {
-    if (!profile) return unavailableResult(jobs, configurationError);
+    const currentJobs = DevicePrintQueueStore.snapshot(branch).jobs;
+    if (!profile) return unavailableResult(currentJobs, configurationError);
     const plan = SerametPrintService.createProductionTicketJobs(
       profile,
       order,
-      jobs,
+      currentJobs,
       amendmentType,
     );
-    const queued = processJobs(plan.jobs, jobs, profile);
+    const queued = processJobs(plan.jobs, currentJobs, profile);
     return { ...plan, queue: queued };
   };
 
@@ -129,14 +131,15 @@ export function useSerametPrintQueue(branch: string) {
     order: OrderForPrint,
     documentType: "BILL" | "RECEIPT" | "INVOICE",
   ): QueueResult => {
-    if (!profile) return unavailableResult(jobs, configurationError);
+    const currentJobs = DevicePrintQueueStore.snapshot(branch).jobs;
+    if (!profile) return unavailableResult(currentJobs, configurationError);
     try {
       const targetProfile =
         order.branch === profile.branch
           ? profile
           : SerametPrintService.getBranchHardwareProfile(order.branch);
       const job = SerametPrintService.createDocumentJob(targetProfile, order, documentType);
-      const queued = processJobs([job], jobs, targetProfile);
+      const queued = processJobs([job], currentJobs, targetProfile);
       return { jobs: [job], skipped: [], queue: queued };
     } catch (error) {
       return unavailableResult(
