@@ -1,5 +1,9 @@
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import {
+  appendKitchenPrintObligations,
+  type KitchenPrintObligation,
+} from "@/lib/kitchen-print-outbox";
+import {
   type ConfigurationRepository,
   getConfigurationRepository,
   PlatformConfigurationError,
@@ -614,6 +618,8 @@ export type TransactionState = {
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
   productionAmendments: ProductionAmendmentRecord[];
+  /** Durable, authoritative print obligations; optional only for legacy snapshots. */
+  kitchenPrintObligations?: KitchenPrintObligation[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
   journalEntries: JournalEntry[];
@@ -892,6 +898,9 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
     ),
+    kitchenPrintObligations: scoped(
+      Array.isArray(state.kitchenPrintObligations) ? state.kitchenPrintObligations : [],
+    ),
     externalTransactions: (Array.isArray(state.externalTransactions)
       ? state.externalTransactions
       : []
@@ -1050,6 +1059,7 @@ export function createEmptyTransactionState(tenantId: string): TransactionState 
     marketplaceReceivables: [],
     marketplaceCharges: [],
     productionAmendments: [],
+    kitchenPrintObligations: [],
     externalTransactions: [],
     reconciliationMatches: [],
     journalEntries: [],
@@ -1808,6 +1818,17 @@ export const TransactionEngine = {
       line.sentAt = stamp;
       line.sentQuantity = line.quantity;
     });
+    // The obligation and its immutable production-line snapshot MUST be committed
+    // with the kitchen state; browser printing is a separate, recoverable step.
+    next.kitchenPrintObligations = appendKitchenPrintObligations(
+      next.kitchenPrintObligations ?? [],
+      order,
+      unsentLines,
+      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)
+        ? "ADDITION"
+        : "ORIGINAL",
+      stamp,
+    );
     if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
       next.productionAmendments.unshift({
         id: id("AMD", next, "productionAmendments"),
