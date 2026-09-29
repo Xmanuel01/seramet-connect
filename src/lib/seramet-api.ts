@@ -1127,6 +1127,10 @@ function mergeSnapshotForActor(
     marketplaceReceivables: merge(current.marketplaceReceivables, next.marketplaceReceivables),
     marketplaceCharges: merge(current.marketplaceCharges, next.marketplaceCharges),
     productionAmendments: merge(current.productionAmendments, next.productionAmendments),
+    kitchenPrintObligations: merge(
+      current.kitchenPrintObligations ?? [],
+      next.kitchenPrintObligations ?? [],
+    ),
     auditEvents: merge(current.auditEvents, next.auditEvents),
     inventory: merge(current.inventory, next.inventory),
     recipes: next.recipes,
@@ -1172,6 +1176,7 @@ function branchRestrictedSnapshot(
     marketplaceReceivables: keep(state.marketplaceReceivables),
     marketplaceCharges: keep(state.marketplaceCharges),
     productionAmendments: keep(state.productionAmendments),
+    kitchenPrintObligations: keep(state.kitchenPrintObligations ?? []),
     auditEvents: keep(state.auditEvents),
     inventory: keep(state.inventory),
     recipes: state.recipes,
