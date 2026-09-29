@@ -20,7 +20,21 @@ function hydrate(branchKey: string) {
     if (!raw) return;
     const parsed = JSON.parse(raw) as DevicePrintQueueSnapshot;
     if (Array.isArray(parsed.jobs) && Array.isArray(parsed.reprints)) {
-      snapshots.set(branchKey, parsed);
+      const recovered = {
+        ...parsed,
+        jobs: parsed.jobs.map((job) =>
+          ["Sending", "Retrying"].includes(job.status)
+            ? {
+                ...job,
+                status: "Uncertain" as const,
+                failureReason:
+                  "POS restarted while delivery acknowledgement was outstanding; manual review required",
+              }
+            : job,
+        ),
+      };
+      snapshots.set(branchKey, recovered);
+      persist(branchKey, recovered);
     }
   } catch {
     // Corrupt device-local queue must not crash POS startup.
