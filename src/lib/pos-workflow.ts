@@ -65,8 +65,8 @@ export function payableInvoiceForOrder(
     (bill) =>
       bill.orderIds.includes(orderId) &&
       ["OPEN", "PARTIAL", "PENDING"].includes(bill.status) &&
-      bill.tenantId === tenantId &&
-      bill.branchId === branchId,
+      (bill.tenantId ?? tenantId) === tenantId &&
+      (bill.branchId ?? branchId) === branchId,
   );
 }
 
