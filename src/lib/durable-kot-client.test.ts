@@ -46,6 +46,7 @@ describe("crash-safe KOT dispatch orchestration", () => {
       ...createEmptyTransactionState(obligation.tenantId),
       kitchenPrintObligations: [{ ...obligation }],
     };
+    const actor = { id: "cashier-1", deviceId: "pos-device-1" };
     const mutate = vi.fn(async (action: string, payload: unknown) => {
       const fields = payload as Record<string, string>;
       if (action === "claimKitchenPrintObligation") {
@@ -55,7 +56,7 @@ describe("crash-safe KOT dispatch orchestration", () => {
             state.kitchenPrintObligations,
             fields.obligationId!,
             fields.claimId!,
-            { id: "cashier-1" },
+            actor,
             "2026-09-29T01:00:10.000Z",
           ),
         };
@@ -66,7 +67,7 @@ describe("crash-safe KOT dispatch orchestration", () => {
             state.kitchenPrintObligations,
             fields.obligationId!,
             fields.claimId!,
-            { id: "cashier-1" },
+            actor,
             fields.status as "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN",
             (payload as { bridgeJobIds: string[] }).bridgeJobIds,
             "2026-09-29T01:00:20.000Z",
@@ -101,6 +102,58 @@ describe("crash-safe KOT dispatch orchestration", () => {
     expect(harness.mutate).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
     expect(harness.current().kitchenPrintObligations[0]?.status).toBe("PENDING");
+  });
+
+  it("resumes the same server claim after a lost claim response without creating a second spool identity", async () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
+      },
+    });
+    const harness = createHarness();
+    let firstClaim = true;
+    const mutate = vi.fn(async (action: string, payload: unknown) => {
+      const result = await harness.mutate(action, payload);
+      if (action === "claimKitchenPrintObligation" && firstClaim) {
+        firstClaim = false;
+        throw new Error("Claim response lost");
+      }
+      return result;
+    });
+    const deliver = vi.fn(async () => ({
+      jobs: [{ id: "bridge-job-resumed" } as never],
+      outcomes: ["SPOOLED" as const],
+      skipped: [],
+    }));
+
+    await expect(
+      dispatchDurableKitchenObligation({
+        obligation,
+        terminalId: "WEST-POS-1",
+        mutate,
+        deliver,
+      }),
+    ).rejects.toThrow(/response lost/i);
+    expect(harness.current().kitchenPrintObligations[0]?.status).toBe("CLAIMED");
+    expect(deliver).not.toHaveBeenCalled();
+
+    await dispatchDurableKitchenObligation({
+      obligation,
+      terminalId: "WEST-POS-1",
+      mutate,
+      deliver,
+    });
+    const claimPayloads = mutate.mock.calls
+      .filter((call) => call[0] === "claimKitchenPrintObligation")
+      .map((call) => call[1] as { claimId: string });
+    expect(claimPayloads).toHaveLength(2);
+    expect(claimPayloads[0]?.claimId).toBe(claimPayloads[1]?.claimId);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(harness.current().kitchenPrintObligations[0]?.status).toBe("SPOOLED");
+    vi.unstubAllGlobals();
   });
 
   it("claims authoritatively before submitting to the bridge and records only OS-spool acceptance", async () => {
