@@ -42,9 +42,7 @@ describe("POS unbilled order continuity", () => {
       const progressed = firstSent.map((order) =>
         order.id === "held-1" ? { ...order, status } : order,
       );
-      expect(pendingPosOrders(progressed, bills).some((order) => order.id === "held-1")).toBe(
-        true,
-      );
+      expect(pendingPosOrders(progressed, bills).some((order) => order.id === "held-1")).toBe(true);
     }
     expect(
       pendingPosOrders([...firstSent, { id: "cancelled", status: "CANCELLED" as const }], bills),
