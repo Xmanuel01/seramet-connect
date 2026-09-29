@@ -1312,6 +1312,23 @@ function POS() {
     };
   };
 
+  const kitchenDispatchHasDelivery = (
+    result: NonNullable<Awaited<ReturnType<typeof queueKitchenTicketsForTable>>>,
+  ) =>
+    Boolean(
+      result.printResult?.jobs.length ||
+      isStagingPrinterlessTestingEnabled() ||
+      (result.printResult === null &&
+        printJobs.some(
+          (job) =>
+            job.orderId === result.order.id &&
+            ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
+            ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
+              job.status,
+            ),
+        )),
+    );
+
   const queueKitchenTickets = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
@@ -1325,23 +1342,7 @@ function POS() {
         const result = await queueKitchenTicketsForTable();
         if (!result) return;
         const printerlessStaging = isStagingPrinterlessTestingEnabled();
-        const trackedKot = printJobs.some((job) => {
-          if (job.orderId !== result.order.id) return false;
-          if (!["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType)) return false;
-          return [
-            "Queued",
-            "Sending",
-            "Retrying",
-            "Printed",
-            "Displayed",
-            "Fallback Printed",
-          ].includes(job.status);
-        });
-        const dispatched = Boolean(
-          result.printResult?.jobs.length ||
-          printerlessStaging ||
-          (result.printResult === null && trackedKot),
-        );
+        const dispatched = kitchenDispatchHasDelivery(result);
         if (dispatched) {
           const notice = printerlessStaging
             ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
@@ -1359,6 +1360,54 @@ function POS() {
         // Without a tracked KOT, retain the order instead of claiming print success.
       } catch (error) {
         setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
+        setPrintNoticeType("warning");
+      }
+    });
+
+  const sendKitchenAndBill = () =>
+    void runOrderAction(async () => {
+      if (!items.length) return;
+      if (selectedChannel?.requiresTable && !orderTable) {
+        setTablePickerOpen(true);
+        setPrintNotice("Select a table before sending this dine-in order to kitchen.");
+        setPrintNoticeType("warning");
+        return;
+      }
+      try {
+        const result = await queueKitchenTicketsForTable();
+        if (!result) return;
+        if (!kitchenDispatchHasDelivery(result)) {
+          setPrintNotice(
+            "Order saved in Kitchen, but KOT delivery is unconfirmed. " +
+              "Check Printers before creating the customer bill.",
+          );
+          setPrintNoticeType("warning");
+          return;
+        }
+        const billing = await mutateTransaction("prepareInvoiceForPayment", {
+          orderId: result.order.id,
+        });
+        const exactInvoice = billing?.state.bills.find(
+          (invoice) =>
+            invoice.orderIds.includes(result.order.id) &&
+            ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
+        );
+        if (!exactInvoice) {
+          throw new Error("Kitchen dispatch succeeded, but the invoice was not confirmed.");
+        }
+        clearCurrentOrder(
+          `${result.order.id} sent to Kitchen and billed as ${exactInvoice.id}. ` +
+            "KOT physical delivery has not been independently verified.",
+          "success",
+        );
+        await navigate({ to: "/invoices" });
+      } catch (error) {
+        setPrintNotice(
+          cashierErrorMessage(
+            error,
+            "Check the Kitchen and Invoices for this order before retrying.",
+          ),
+        );
         setPrintNoticeType("warning");
       }
     });
@@ -2235,6 +2284,15 @@ function POS() {
                   : !dineInPaymentReady && selectedChannel?.requiresTable
                     ? "Send kitchen first"
                     : `Pay ${ksh(total)}`}
+              </Btn>
+            </div>
+            <div className="mt-2">
+              <Btn
+                className="w-full"
+                onClick={sendKitchenAndBill}
+                disabled={orderActionBusy || !items.length}
+              >
+                {orderActionBusy ? "Working..." : "Send kitchen & bill"}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">

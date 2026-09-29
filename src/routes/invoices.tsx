@@ -1,15 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { unbilledKitchenOrders } from "@/lib/pos-workflow";
+import { invoiceBusinessDate, resolvePosTimeZone, unbilledKitchenOrders } from "@/lib/pos-workflow";
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { activeTimeZone, ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { formatFilterDate } from "@/lib/date-filters";
 import { TransactionEngine, type BillingRecord } from "@/lib/transaction-engine";
 import { SerametPrintService } from "@/lib/seramet-print-service";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
@@ -147,7 +147,7 @@ function Invoices() {
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
   const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
-  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
+  const [periodDate, setPeriodDate] = useState("");
   const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
   const { state, mutate, syncFromBackend } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
@@ -168,6 +168,21 @@ function Invoices() {
     identityConfigurationError =
       error instanceof Error ? error.message : "Document identity is not configured";
   }
+  const invoiceTimeZone = (() => {
+    try {
+      const config = getConfigurationRepository();
+      const tenant = config.getTenant(activeTenantId);
+      const branch = config.getBranch(activeTenantId, branchId);
+      return resolvePosTimeZone(
+        branch.timezone,
+        tenant.timezone,
+        tenant.countryCode,
+        tenant.defaultCurrency,
+      );
+    } catch {
+      return activeTimeZone();
+    }
+  })();
   const rows = state.bills.filter((bill) => matchesBranch(bill.branchId ?? bill.branch));
   const awaitingBill = unbilledKitchenOrders(
     state.orders.filter((order) => (order.branchId ?? branchId) === branchId),
@@ -175,7 +190,7 @@ function Invoices() {
   );
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
-    .filter((row) => !periodDate || row.issuedAt.slice(0, 10) === periodDate)
+    .filter((row) => !periodDate || invoiceBusinessDate(row, invoiceTimeZone) === periodDate)
     .filter((row) => {
       if (statusFilter === "Paid") return row.paymentStatus === "PAID";
       if (statusFilter === "Open") return row.status === "OPEN" || row.paymentStatus === "PARTIAL";
