@@ -23,7 +23,13 @@ import {
 } from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
-import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import {
+  formatPosClock,
+  needsKitchenDispatch,
+  payableInvoiceForOrder,
+  pendingPosOrders,
+  resolvePosTimeZone,
+} from "@/lib/pos-workflow";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
@@ -39,6 +45,7 @@ import {
   nextTransactionRecordId,
   TransactionEngine,
   type OrderDraft,
+  type TransactionState,
 } from "@/lib/transaction-engine";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
@@ -891,7 +898,7 @@ function POS() {
   };
 
   const openPayment = async () => {
-    if (!items.length || paymentBusy) return;
+    if (!items.length || paymentBusy || orderActionRef.current) return;
     if (!paymentMethods.length) {
       setPrintNotice("No payment methods are configured for this restaurant.");
       setPrintNoticeType("warning");
@@ -938,31 +945,28 @@ function POS() {
     setPaymentConfirmed(false);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
+    orderActionRef.current = true;
+    setOrderActionBusy(true);
     setPaymentBusy(true);
     try {
       let orderId = activeOrder?.id;
-      let optimisticPaymentState = transactionState;
+      let paymentState = transactionState;
       let kitchenOrderUpdated = false;
 
-      if (!selectedChannel?.requiresTable) {
-        const mustSendToKitchen = !activeOrder || !activeOrderKitchenSent || hasUnsentItems;
-        if (mustSendToKitchen) {
-          const kitchen = await queueKitchenTicketsForTable(orderTable);
-          if (!kitchen) throw new Error("The order could not be routed to kitchen.");
-          orderId = kitchen.order.id;
-          optimisticPaymentState = kitchen.state;
-          kitchenOrderUpdated = true;
-          if (!kitchen.printResult?.jobs.length && !isStagingPrinterlessTestingEnabled()) {
-            throw new Error(
-              "Payment was not opened because no KOT/KDS delivery job was created for this order.",
-            );
-          }
+      if (!selectedChannel?.requiresTable && needsKitchenDispatch(activeOrder, hasUnsentItems)) {
+        const kitchen = await ensureKitchenDispatched(orderTable);
+        if (!kitchen) throw new Error("The order could not be routed to kitchen.");
+        // Production must not proceed silently with a local-only order.
+        if (!kitchenDispatchHasDelivery(kitchen)) {
+          throw new Error(
+            "Kitchen dispatch was saved but delivery remains unconfirmed. Check Printers before payment.",
+          );
         }
+        orderId = kitchen.order.id;
+        paymentState = kitchen.state;
+        kitchenOrderUpdated = true;
       }
-
-      if (!orderId) {
-        throw new Error("Create and send the order to kitchen before payment.");
-      }
+      if (!orderId) throw new Error("Create and send the order to kitchen before payment.");
 
       if (
         !kitchenOrderUpdated &&
@@ -971,14 +975,10 @@ function POS() {
       ) {
         const customerUpdate = await mutateTransaction(
           "upsertOrderDraft",
-          {
-            orderId,
-            draft: buildTransactionDraft(),
-            targetStatus: "OPEN",
-          },
+          { orderId, draft: buildTransactionDraft(), targetStatus: "OPEN" },
           () =>
             TransactionEngine.updateOrderDraft(
-              optimisticPaymentState,
+              paymentState,
               orderId!,
               buildTransactionDraft(),
               currentUser.name,
@@ -987,41 +987,23 @@ function POS() {
         if (!customerUpdate?.state) {
           throw new Error("Customer linkage could not be confirmed before payment.");
         }
-        optimisticPaymentState = customerUpdate.state;
+        paymentState = customerUpdate.state;
       }
-
-      const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
-        TransactionEngine.prepareInvoiceForPayment(
-          optimisticPaymentState,
-          orderId!,
-          currentUser.name,
-        ),
-      );
-      const order = prepared?.state.orders.find((candidate) => candidate.id === orderId);
-      const bill = prepared?.state.bills.find(
-        (candidate) =>
-          candidate.orderIds.includes(orderId!) &&
-          ["OPEN", "PARTIAL", "PENDING"].includes(candidate.status),
-      );
-      if (!order) throw new Error("The selected order is no longer available.");
-      if (!bill) throw new Error("Seramet could not prepare a payable invoice for this order.");
-      if (
-        (bill.tenantId ?? activeTenantId) !== activeTenantId ||
-        (bill.branchId ?? branchId) !== branchId
-      ) {
-        throw new Error("The prepared invoice belongs to another restaurant branch.");
-      }
+      const { bill } = await preparePayableInvoice(orderId, paymentState);
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPreviouslyPaid(bill.paid ?? 0);
-      setTendered(Math.max(0, total - (bill.paid ?? 0)));
-      setCashReceived(Math.max(0, total - (bill.paid ?? 0)));
+      // Use the persisted invoice total: never collect using stale local cart pricing.
+      setTendered(Math.max(0, bill.total - (bill.paid ?? 0)));
+      setCashReceived(Math.max(0, bill.total - (bill.paid ?? 0)));
       setPaymentOpen(true);
     } catch (error) {
       setPrintNotice(cashierErrorMessage(error, "Payment could not be prepared."));
       setPrintNoticeType("warning");
     } finally {
       setPaymentBusy(false);
+      orderActionRef.current = false;
+      setOrderActionBusy(false);
     }
   };
 
@@ -1330,6 +1312,96 @@ function POS() {
         )),
     );
 
+  // A single dispatch decision is used by every POS entry path. Existing sent
+  // lines never create another KOT unless the cashier adds unsent quantities.
+  const ensureKitchenDispatched = async (tableNo = orderTable) => {
+    if (!needsKitchenDispatch(activeOrder, hasUnsentItems) && activeOrder) {
+      return { order: activeOrder, state: transactionState, printResult: null };
+    }
+    return queueKitchenTicketsForTable(tableNo);
+  };
+
+  // Every invoice entry path resolves the exact authoritative order and branch.
+  // Preserve the resulting snapshot for permitted offline payment preparation.
+  const preparePayableInvoice = async (orderId: string, sourceState: TransactionState) => {
+    let authoritativeSource = sourceState;
+    const selectedOrder = sourceState.orders.find((candidate) => candidate.id === orderId);
+    // Save an explicitly changed customer before billing, without editing sent
+    // kitchen lines or issuing an unnecessary extra command on the common path.
+    if (
+      selectedOrder &&
+      activeOrder?.id === orderId &&
+      (linkedCustomer?.id ?? null) !== (selectedOrder.customerId ?? null)
+    ) {
+      const update = await mutateTransaction(
+        "upsertOrderDraft",
+        { orderId, draft: buildTransactionDraft(), targetStatus: "OPEN" },
+        () =>
+          TransactionEngine.updateOrderDraft(
+            authoritativeSource,
+            orderId,
+            buildTransactionDraft(),
+            currentUser.name,
+          ),
+      );
+      if (!update?.state) throw new Error("Customer details were not confirmed before billing.");
+      authoritativeSource = update.state;
+    }
+    const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
+      TransactionEngine.prepareInvoiceForPayment(authoritativeSource, orderId, currentUser.name),
+    );
+    const order = prepared?.state.orders.find(
+      (candidate) =>
+        candidate.id === orderId &&
+        (candidate.tenantId ?? activeTenantId) === activeTenantId &&
+        (candidate.branchId ?? branchId) === branchId,
+    );
+    const bill = prepared
+      ? payableInvoiceForOrder(orderId, activeTenantId, branchId, prepared.state.bills)
+      : undefined;
+    if (!order || !bill) {
+      throw new Error("The server did not confirm a payable invoice for this order and branch.");
+    }
+    return { prepared, bill };
+  };
+
+  // Invoicing is a single terminal path for the combined action and Invoice /
+  // Print bill. Once confirmed, printing failures are independent of billing.
+  const completeInvoice = async (
+    orderId: string,
+    sourceState: TransactionState,
+    print: boolean,
+  ) => {
+    const { prepared, bill } = await preparePayableInvoice(orderId, sourceState);
+    if ("offline" in prepared && prepared.offline) {
+      throw new Error(
+        "Invoice queued offline. Keep this order selected and wait for synchronization before retrying.",
+      );
+    }
+    let notice = `${orderId} invoiced as ${bill.id}.`;
+    let noticeType: "success" | "warning" = "success";
+    if (print) {
+      try {
+        const result = printCustomerDocument(
+          billingRecordToPrintOrder(bill, prepared.state.payments, prepared.state.orders),
+          "BILL",
+        );
+        if (result.jobs.length > 0) {
+          setTrackedPrint({ jobIds: result.jobs.map((job) => job.id), label: "Customer bill" });
+          notice += " Customer bill queued; physical delivery is not yet confirmed.";
+        } else {
+          notice += ` Printing not queued: ${result.skipped[0] ?? "Check printer configuration."}`;
+          noticeType = "warning";
+        }
+      } catch {
+        notice += " Printing failed. The invoice is saved; reprint it from Invoices.";
+        noticeType = "warning";
+      }
+    }
+    clearCurrentOrder(notice, noticeType);
+    await navigate({ to: "/invoices" });
+  };
+
   const queueKitchenTickets = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
@@ -1340,25 +1412,28 @@ function POS() {
         return;
       }
       try {
-        const result = await queueKitchenTicketsForTable();
+        const alreadyDispatched = !needsKitchenDispatch(activeOrder, hasUnsentItems);
+        const result = await ensureKitchenDispatched();
         if (!result) return;
-        const printerlessStaging = isStagingPrinterlessTestingEnabled();
-        const dispatched = kitchenDispatchHasDelivery(result);
-        if (dispatched) {
-          const notice = printerlessStaging
-            ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
-            : result.printResult?.jobs.length
-              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Reopen it from POS Orders to invoice.`
-              : `${result.order.id} is already in kitchen. Reopen it from POS Orders to invoice.`;
-          clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
-        } else if (!result.printResult && !printerlessStaging) {
+        // Never clear the cashier's active selection after dispatch. Invoice is
+        // now immediately available without reopening or repeating the KOT.
+        setActiveOrderId(result.order.id);
+        if (alreadyDispatched) {
+          setPrintNotice(`${result.order.id} is already in kitchen. Select Invoice when ready.`);
+          setPrintNoticeType("idle");
+        } else if (kitchenDispatchHasDelivery(result)) {
           setPrintNotice(
-            "This order has reached kitchen state, but no existing KOT delivery job is confirmed. " +
-              "Verify the ticket in Printers before leaving this order.",
+            isStagingPrinterlessTestingEnabled()
+              ? `${result.order.id} saved to digital Kitchen. Physical KOT not confirmed; Invoice is ready.`
+              : `${result.order.id} sent to Kitchen. KOT queued, delivery unconfirmed. Invoice is ready.`,
+          );
+          setPrintNoticeType(isStagingPrinterlessTestingEnabled() ? "warning" : "success");
+        } else {
+          setPrintNotice(
+            `${result.order.id} saved to Kitchen, but KOT delivery is unconfirmed. Verify Printers before billing.`,
           );
           setPrintNoticeType("warning");
         }
-        // Without a tracked KOT, retain the order instead of claiming print success.
       } catch (error) {
         setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
         setPrintNoticeType("warning");
@@ -1375,103 +1450,45 @@ function POS() {
         return;
       }
       try {
-        // Do not resend an already-dispatched order merely to prepare its bill.
-        // Only newly added items require another kitchen amendment.
-        const alreadyDispatched = activeOrderKitchenSent && !hasUnsentItems && activeOrder;
-        const result = alreadyDispatched
-          ? { order: activeOrder, state: transactionState, printResult: null }
-          : await queueKitchenTicketsForTable();
+        const alreadyDispatched = !needsKitchenDispatch(activeOrder, hasUnsentItems);
+        const result = await ensureKitchenDispatched();
         if (!result) return;
         if (!alreadyDispatched && !kitchenDispatchHasDelivery(result)) {
           setPrintNotice(
-            "Order saved in Kitchen, but KOT delivery is unconfirmed. " +
-              "Check Printers before creating the customer bill.",
+            "Order saved to Kitchen, but KOT delivery is unconfirmed. Verify Printers before billing.",
           );
           setPrintNoticeType("warning");
           return;
         }
-        const billing = await mutateTransaction("prepareInvoiceForPayment", {
-          orderId: result.order.id,
-        });
-        const exactInvoice = billing?.state.bills.find(
-          (invoice) =>
-            invoice.orderIds.includes(result.order.id) &&
-            ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
-        );
-        if (!exactInvoice) {
-          throw new Error("Kitchen dispatch succeeded, but the invoice was not confirmed.");
-        }
-        clearCurrentOrder(
-          `${result.order.id} sent to Kitchen and billed as ${exactInvoice.id}. ` +
-            "KOT physical delivery has not been independently verified.",
-          "success",
-        );
-        await navigate({ to: "/invoices" });
+        // If the kitchen mutation committed but invoice preparation failed,
+        // keep the exact order selected for an invoice-only retry.
+        await completeInvoice(result.order.id, result.state, false);
       } catch (error) {
         setPrintNotice(
-          cashierErrorMessage(
-            error,
-            "Check the Kitchen and Invoices for this order before retrying.",
-          ),
+          cashierErrorMessage(error, "Check Kitchen and Invoices before retrying this order."),
         );
         setPrintNoticeType("warning");
       }
     });
 
-  const moveOrderToInvoice = async (printBill: boolean) => {
-    if (orderActionRef.current) return;
-    orderActionRef.current = true;
-    setOrderActionBusy(true);
-    if (!activeOrder || !canPrintBill || hasUnsentItems) {
-      setPrintNotice(
-        hasUnsentItems
-          ? "Send newly added items to kitchen before creating the invoice."
-          : "Send the order to kitchen before printing a bill or creating an invoice.",
-      );
-      setPrintNoticeType("warning");
-      orderActionRef.current = false;
-      setOrderActionBusy(false);
-      return;
-    }
-    try {
-      const orderId = activeOrder.id;
-      // Both the direct Invoice and combined Send kitchen & bill actions use
-      // the same idempotent, exact-order invoice preparation command.
-      const billing = await mutateTransaction("prepareInvoiceForPayment", { orderId });
-      const confirmedBill = billing?.state.bills.find(
-        (bill) =>
-          bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
-      );
-      if (!confirmedBill) {
-        throw new Error("The server did not confirm an invoice for this order.");
-      }
-      if (printBill) {
-        // Print only the exact, server-confirmed invoice number and line totals.
-        const result = printCustomerDocument(
-          billingRecordToPrintOrder(confirmedBill, billing.state.payments, billing.state.orders),
-          "BILL",
+  const moveOrderToInvoice = (printBill: boolean) =>
+    void runOrderAction(async () => {
+      if (!activeOrder || !canPrintBill || hasUnsentItems) {
+        setPrintNotice(
+          hasUnsentItems
+            ? "Send newly added items to kitchen before creating the invoice."
+            : "Send the order to kitchen before creating an invoice.",
         );
-        if (result.jobs.length > 0) {
-          setTrackedPrint({ jobIds: result.jobs.map((job) => job.id), label: "Customer bill" });
-        }
-        clearCurrentOrder(
-          result.jobs.length > 0
-            ? `${orderId} invoiced as ${confirmedBill.id}. Customer bill queued; delivery is not yet confirmed.`
-            : `${orderId} invoiced as ${confirmedBill.id}. ${result.skipped[0] ?? "Printing is not configured."}`,
-          result.jobs.length > 0 ? "success" : "warning",
-        );
-      } else {
-        clearCurrentOrder(`${orderId} invoiced as ${confirmedBill.id}.`, "success");
+        setPrintNoticeType("warning");
+        return;
       }
-      await navigate({ to: "/invoices" });
-    } catch (error) {
-      setPrintNotice(cashierErrorMessage(error, "The invoice could not be created."));
-      setPrintNoticeType("warning");
-    } finally {
-      orderActionRef.current = false;
-      setOrderActionBusy(false);
-    }
-  };
+      try {
+        await completeInvoice(activeOrder.id, transactionState, printBill);
+      } catch (error) {
+        setPrintNotice(cashierErrorMessage(error, "The invoice could not be created."));
+        setPrintNoticeType("warning");
+      }
+    });
 
   const toggleReceipt = (option: string) => {
     if (option === "No receipt") {
