@@ -116,7 +116,11 @@ export function useTransactionEngine() {
         if (hydrationScopeRef.current !== requestScope) {
           hydrationScopeRef.current = requestScope;
           const cached = await offlineStore.readCachedState(activeTenantId, branchId);
-          if (cached && scopeRef.current === requestScope && serverScopeRef.current !== requestScope) {
+          if (
+            cached &&
+            scopeRef.current === requestScope &&
+            serverScopeRef.current !== requestScope
+          ) {
             setState(cached.state);
             setRevision(cached.revision);
             revisionRef.current = cached.revision;
