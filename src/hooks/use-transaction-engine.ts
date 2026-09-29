@@ -253,14 +253,41 @@ export function useTransactionEngine() {
   }, [activeTenantId, flushOfflineCommands, scopeKey, syncFromBackend]);
 
   useEffect(() => {
+    // Many events can arrive during one write. Coalesce bursts and retain one
+    // trailing refresh so we never lose the latest revision or spin on every event.
     let timer: number | undefined;
+    let inFlight = false;
+    let queued = false;
+    let disposed = false;
+    let lastStarted = 0;
+    const run = async () => {
+      timer = undefined;
+      if (disposed || inFlight || !queued) return;
+      queued = false;
+      inFlight = true;
+      lastStarted = Date.now();
+      try {
+        await syncFromBackend();
+      } finally {
+        inFlight = false;
+        if (queued && !disposed) schedule();
+      }
+    };
+    const schedule = () => {
+      if (disposed || inFlight || timer !== undefined) return;
+      const delay = Math.max(300, 2_000 - (Date.now() - lastStarted));
+      timer = window.setTimeout(() => void run(), delay);
+    };
     const refresh = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => void syncFromBackend(), 150);
+      // Visibility/focus refresh catches up after background tabs are paused.
+      if (document.visibilityState === "hidden") return;
+      queued = true;
+      schedule();
     };
     window.addEventListener("seramet:realtime", refresh);
     window.addEventListener("seramet:refresh", refresh);
     return () => {
+      disposed = true;
       window.clearTimeout(timer);
       window.removeEventListener("seramet:realtime", refresh);
       window.removeEventListener("seramet:refresh", refresh);
