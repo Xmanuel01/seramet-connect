@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { createServer } from "node:http";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { acceptSpoolJob } from "./spool-ledger.mjs";
 
 const configPath =
   process.env.SERAMET_BRIDGE_CONFIG ||
@@ -76,24 +76,31 @@ const server = createServer(async (request, response) => {
         sendJson(response, 400, { accepted: false, message: validation.message });
         return;
       }
-      const bridgeJobId = randomUUID();
-      const spoolPath = join(dataDir, `${bridgeJobId}.txt`);
-      await writeFile(spoolPath, body.content, "utf8");
-      const result = dryRun
-        ? { printed: true, command: "dry-run", message: "Job spooled but not sent to OS printer" }
-        : await printSpoolFile(spoolPath, body.printerName || body.printerId);
-      await logEvent(result.printed ? "printed" : "failed", {
-        bridgeJobId,
-        printer: body.printerName || body.printerId,
-        documentType: body.documentType,
-        orderId: body.orderId,
-        spoolPath,
-        result,
+      const result = await acceptSpoolJob({
+        dataDir,
+        job: body,
+        printerName: body.printerName || body.printerId,
+        dryRun,
+        spool: printSpoolFile,
       });
-      sendJson(response, result.printed ? 202 : 502, {
-        accepted: result.printed,
-        bridgeJobId,
-        spoolPath,
+      await logEvent(
+        result.accepted ? "spool-accepted" : result.uncertain ? "spool-uncertain" : "spool-rejected",
+        {
+          bridgeJobId: result.bridgeJobId ?? null,
+          jobId: body.id,
+          orderId: body.orderId,
+          documentType: body.documentType,
+          replayed: result.replayed ?? false,
+          dryRun,
+        },
+      );
+      // Do not expose local spool paths, credentials or claim-file contents.
+      sendJson(response, result.status, {
+        accepted: result.accepted,
+        bridgeJobId: result.bridgeJobId,
+        replayed: result.replayed ?? false,
+        uncertain: result.uncertain ?? false,
+        physicalPrintConfirmed: false,
         message: result.message,
       });
       return;
