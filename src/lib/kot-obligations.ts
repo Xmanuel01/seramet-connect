@@ -11,7 +11,7 @@ export type KotObligation = {
   tenantId: string;
   branchId: string;
   station: string;
-  kind: "NEW" | "ADDITION";
+  kind: "NEW" | "ADDITION" | "VOID";
   lines: TransactionLine[];
   status:
     "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED";
