@@ -114,8 +114,7 @@ function SerametPrinters() {
   const [kotNotice, setKotNotice] = useState("");
   const [kotBusyId, setKotBusyId] = useState<string | null>(null);
   const [reviewReason, setReviewReason] = useState("");
-  const { state: liveTransactions, mutate: mutateTicket, syncFromBackend } =
-    useTransactionEngine();
+  const { state: liveTransactions, mutate: mutateTicket, syncFromBackend } = useTransactionEngine();
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
@@ -437,8 +436,8 @@ function SerametPrinters() {
           )}
           {outstandingTickets.length === 0 && (
             <p className="text-[12px] text-muted-foreground">
-              No outstanding server-owned KOT obligations for this branch. Old pre-upgrade
-              kitchen orders are not automatically reprinted.
+              No outstanding server-owned KOT obligations for this branch. Old pre-upgrade kitchen
+              orders are not automatically reprinted.
             </p>
           )}
           {outstandingTickets.map((ticket) => (
@@ -450,8 +449,8 @@ function SerametPrinters() {
                 <Status>{ticket.status}</Status>
               </div>
               <p className="mt-1 text-muted-foreground">
-                {ticket.kind.replaceAll("_", " ")} / {ticket.lines.length} production line(s)
-                / {ticket.createdAt}
+                {ticket.kind.replaceAll("_", " ")} / {ticket.lines.length} production line(s) /{" "}
+                {ticket.createdAt}
               </p>
               {ticket.status === "PENDING" ? (
                 <Btn
@@ -463,8 +462,8 @@ function SerametPrinters() {
               ) : (
                 <div className="mt-2 space-y-2">
                   <p className="text-amber-700">
-                    Previous printer output is uncertain. Check the local bridge spool and
-                    kitchen physically before authorizing a new copy.
+                    Previous printer output is uncertain. Check the local bridge spool and kitchen
+                    physically before authorizing a new copy.
                   </p>
                   {canReviewTickets && (
                     <>
