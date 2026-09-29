@@ -216,7 +216,7 @@ export function buildStagingMenuReconciliationPlan({
     {
       record: canonical,
       job: jobByImport.get(canonical.id),
-      reason: "CANONICAL_V3_REFERENCE_ONLY_REQUIRES_FRESH_MALWARE_SCAN",
+      reason: "CANONICAL_V3_REFERENCE_ONLY_REQUIRES_FRESH_VALIDATION",
     },
     { record: repeated, job: jobByImport.get(repeated.id), reason: "EXACT_V3_DUPLICATE" },
   ];
@@ -254,7 +254,7 @@ export function buildStagingMenuReconciliationPlan({
       worker_jobs_to_terminally_quarantine: 3,
       importer_replay_allowed: false,
       required_next_step:
-        "Configure real scanner and correct branches; create a fresh scanned V3 preview",
+        "Verify correct branches; create and review a fresh policy-validated V3 preview",
       plan_sha256: fingerprint,
     },
   };
