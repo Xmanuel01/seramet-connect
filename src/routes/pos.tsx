@@ -1316,7 +1316,15 @@ function POS() {
       if (
         result.printResult?.jobs.length ||
         isStagingPrinterlessTestingEnabled() ||
-        (result.printResult === null && result.order.lines.some((line) => line.sentAt))
+        (result.printResult === null &&
+          printJobs.some(
+            (job) =>
+              job.orderId === result.order.id &&
+              ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
+              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
+                job.status,
+              ),
+          ))
       ) {
         const notice = isStagingPrinterlessTestingEnabled()
           ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
@@ -1324,6 +1332,13 @@ function POS() {
             ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
             : `${result.order.id} is already in kitchen; no new KOT is required.`;
         clearCurrentOrder(notice, isStagingPrinterlessTestingEnabled() ? "warning" : "success");
+      }
+      if (!result.printResult && !isStagingPrinterlessTestingEnabled()) {
+        setPrintNotice(
+          "This order has reached kitchen state, but no existing KOT delivery job is confirmed. " +
+            "Verify the ticket in Printers before leaving this order.",
+        );
+        setPrintNoticeType("warning");
       }
       // If delivery was not queued, leave the order open and display the print warning.
     } catch (error) {
