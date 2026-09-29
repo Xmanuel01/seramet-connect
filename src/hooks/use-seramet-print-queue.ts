@@ -161,6 +161,12 @@ export function useSerametPrintQueue(branch: string) {
     ) {
       throw new Error("Local printer bridge is unavailable; no physical printing was attempted");
     }
+    if (tracked.some((job) => job.printerId !== "KDS-DISPLAY")) {
+      const health = await SerametLocalPrintBridge.getInstalledBridgeHealth(bridgeConfig.endpoint);
+      if (!health.ok || health.dryRun) {
+        throw new Error("Installed printer bridge is offline or running in dry-run mode");
+      }
+    }
     setJobs((existing) => [
       ...tracked,
       ...existing.filter((job) => !tracked.some((next) => next.id === job.id)),
