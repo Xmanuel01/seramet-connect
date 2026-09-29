@@ -4,11 +4,7 @@ import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useKotDeliveryAcknowledgement } from "@/hooks/use-kot-delivery-ack";
 import { useAppContext } from "@/lib/app-context";
 import { pendingKotObligations } from "@/lib/kot-obligations";
-import type {
-  OrderForPrint,
-  PrintJob,
-  PrintPlanResult,
-} from "@/lib/seramet-print-service";
+import type { OrderForPrint, PrintJob, PrintPlanResult } from "@/lib/seramet-print-service";
 import { permissions as permissionCodes } from "@/platform/permissions";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
@@ -108,15 +104,17 @@ export function KotOutboxRecovery({
         },
         ticket.kind,
       );
-      const persisted = result.jobs.length > 0 && result.jobs.every((job) => {
-        const local = result.queue.find((item) => item.id === job.id);
-        return (
-          local &&
-          !local.failureReason &&
-          local.printerId !== "UNASSIGNED" &&
-          ["Queued", "Sending", "Retrying", "Displayed"].includes(local.status)
-        );
-      });
+      const persisted =
+        result.jobs.length > 0 &&
+        result.jobs.every((job) => {
+          const local = result.queue.find((item) => item.id === job.id);
+          return (
+            local &&
+            !local.failureReason &&
+            local.printerId !== "UNASSIGNED" &&
+            ["Queued", "Sending", "Retrying", "Displayed"].includes(local.status)
+          );
+        });
       const marked = await mutate("markKotObligations", {
         orderId,
         obligationIds: [obligationId],
@@ -138,7 +136,9 @@ export function KotOutboxRecovery({
           // The claim remains server-visible for manager review.
         }
       }
-      setNotice(error instanceof Error ? error.message : "Recovery failed; review server KOT claim.");
+      setNotice(
+        error instanceof Error ? error.message : "Recovery failed; review server KOT claim.",
+      );
     } finally {
       setBusyId(null);
     }
@@ -176,8 +176,8 @@ export function KotOutboxRecovery({
         )}
         {legacy.length > 0 && (
           <p className="text-[12px] text-amber-700">
-            {legacy.length} historical orders predate durable KOT tracking. Check them manually:
-            no automatic reprinting is permitted.
+            {legacy.length} historical orders predate durable KOT tracking. Check them manually: no
+            automatic reprinting is permitted.
           </p>
         )}
         {obligations.length === 0 && (
@@ -188,7 +188,10 @@ export function KotOutboxRecovery({
         {obligations.map(({ order, obligation }) => {
           const local = jobs.filter((job) => job.kotObligationId === obligation.id);
           return (
-            <div key={obligation.id} className="rounded-lg border border-border bg-secondary/30 p-3">
+            <div
+              key={obligation.id}
+              className="rounded-lg border border-border bg-secondary/30 p-3"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
                 <div className="font-bold">
                   {order.id} · {obligation.station} · {obligation.kind}
@@ -224,7 +227,11 @@ export function KotOutboxRecovery({
             </div>
           );
         })}
-        {notice && <p role="status" className="text-[12px] text-amber-700">{notice}</p>}
+        {notice && (
+          <p role="status" className="text-[12px] text-amber-700">
+            {notice}
+          </p>
+        )}
       </div>
     </Panel>
   );

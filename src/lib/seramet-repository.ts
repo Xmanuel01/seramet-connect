@@ -288,7 +288,11 @@ export function applyServerMutation(
       );
     case "markKotObligations": {
       const status = input["status"];
-      if (!["QUEUED", "DIGITAL_DISPLAYED", "UNCERTAIN", "BRIDGE_ACKNOWLEDGED"].includes(String(status))) {
+      if (
+        !["QUEUED", "DIGITAL_DISPLAYED", "UNCERTAIN", "BRIDGE_ACKNOWLEDGED"].includes(
+          String(status),
+        )
+      ) {
         throw new Error("Invalid KOT state; physical printing is never inferred");
       }
       return TransactionEngine.markKotObligations(

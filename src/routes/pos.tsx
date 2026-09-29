@@ -1327,15 +1327,17 @@ function POS() {
         );
         queuedJobs.push(...result.jobs);
         skipped.push(...result.skipped);
-        const persisted = result.jobs.length > 0 && result.jobs.every((job) => {
-          const current = result.queue.find((item) => item.id === job.id);
-          return (
-            current &&
-            !current.failureReason &&
-            current.printerId !== "UNASSIGNED" &&
-            ["Queued", "Sending", "Retrying", "Displayed"].includes(current.status)
-          );
-        });
+        const persisted =
+          result.jobs.length > 0 &&
+          result.jobs.every((job) => {
+            const current = result.queue.find((item) => item.id === job.id);
+            return (
+              current &&
+              !current.failureReason &&
+              current.printerId !== "UNASSIGNED" &&
+              ["Queued", "Sending", "Retrying", "Displayed"].includes(current.status)
+            );
+          });
         // Queue registration is never presented as proof of physical printing.
         const marked = await mutateTransaction("markKotObligations", {
           orderId: authoritativeOrder.id,

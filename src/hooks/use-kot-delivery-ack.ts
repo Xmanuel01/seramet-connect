@@ -30,9 +30,7 @@ export function useKotDeliveryAcknowledgement(
       const deliveries = jobs.filter((job) => job.kotObligationId === item.obligationId);
       if (
         deliveries.length === 0 ||
-        deliveries.some(
-          (job) => !["Printed", "Fallback Printed", "Displayed"].includes(job.status),
-        )
+        deliveries.some((job) => !["Printed", "Fallback Printed", "Displayed"].includes(job.status))
       ) {
         continue;
       }

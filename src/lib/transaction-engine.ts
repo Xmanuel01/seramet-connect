@@ -1915,9 +1915,7 @@ export const TransactionEngine = {
       selected.some(
         (item) =>
           item.claimedBy !== owner ||
-          (status === "BRIDGE_ACKNOWLEDGED"
-            ? item.status !== "QUEUED"
-            : item.status !== "CLAIMED"),
+          (status === "BRIDGE_ACKNOWLEDGED" ? item.status !== "QUEUED" : item.status !== "CLAIMED"),
       )
     ) {
       throw new Error("KOT claim belongs to another device or needs manager review");
@@ -1952,7 +1950,8 @@ export const TransactionEngine = {
     reason: string,
     manager: string,
   ) {
-    if (reason.trim().length < 15) throw new Error("Explain verified missing ticket in 15+ characters");
+    if (reason.trim().length < 15)
+      throw new Error("Explain verified missing ticket in 15+ characters");
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
     const obligation = order?.kotObligations?.find((item) => item.id === obligationId);

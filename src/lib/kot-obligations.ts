@@ -13,7 +13,8 @@ export type KotObligation = {
   station: string;
   kind: "NEW" | "ADDITION";
   lines: TransactionLine[];
-  status: "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED";
+  status:
+    "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED";
   createdAt: string;
   claimedBy?: string;
   claimedAt?: string;
