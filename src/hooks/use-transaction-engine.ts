@@ -7,7 +7,7 @@ import {
   createEmptyTransactionState,
   type TransactionState,
 } from "@/lib/transaction-engine";
-import { offlineStore } from "@/offline/offline-store";
+import { acknowledgedSyncStatus, offlineStore } from "@/offline/offline-store";
 import {
   offlineAllowedCommands,
   type OfflineAllowedCommand,
@@ -28,6 +28,19 @@ export function useTransactionEngine() {
   const revisionRef = useRef(0);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const deviceIdRef = useRef("development-pos");
+  const scopeKey = `${activeTenantId}:${branchId}`;
+  const scopeRef = useRef(scopeKey);
+  const hydrationScopeRef = useRef("");
+  const sessionScopeRef = useRef("");
+  const serverScopeRef = useRef("");
+  const modeRef = useRef<PersistenceMode>("unknown");
+  const refreshInFlightRef = useRef<{
+    scope: string;
+    promise: Promise<{ state: TransactionState; revision: number } | undefined>;
+  } | null>(null);
+  const mutationInFlightRef = useRef(0);
+  const refreshAfterMutationRef = useRef(false);
+  const flushInFlightRef = useRef<Promise<void> | null>(null);
 
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
@@ -52,102 +65,184 @@ export function useTransactionEngine() {
     }
   }, [activeTenantId]);
 
+  // Refresh is a silent read once the POS is online. An in-flight background
+  // read must never overwrite a newer mutation or a different branch.
   const syncFromBackend = useCallback(async () => {
-    try {
-      setBackendStatus((current) => (current === "offline" ? "reconnecting" : "loading"));
-      const health = await fetch("/api/seramet/health");
-      if (!health.ok) throw new Error(`Server readiness failed: ${health.status}`);
-      const healthBody = (await health.json()) as { database?: string };
-      const mode: PersistenceMode =
-        healthBody.database === "authoritative" ? "authoritative" : "development";
-      setPersistenceMode(mode);
-      if (mode === "development") {
-        const localState = TransactionEngine.load();
-        setState(localState);
-        setRevision(0);
-        revisionRef.current = 0;
+    const requestScope = scopeKey;
+    if (refreshInFlightRef.current?.scope === requestScope) {
+      return refreshInFlightRef.current.promise;
+    }
+    const refresh = async () => {
+      setBackendStatus((current) =>
+        current === "offline" ? "reconnecting" : current === "loading" ? "loading" : current,
+      );
+      try {
+        let mode = modeRef.current;
+        if (mode === "unknown") {
+          const health = await fetch("/api/seramet/health");
+          if (!health.ok) {
+            throw Object.assign(new Error(`Server health failed: ${health.status}`), {
+              httpStatus: health.status,
+            });
+          }
+          const healthBody = (await health.json()) as { database?: string };
+          mode = healthBody.database === "authoritative" ? "authoritative" : "development";
+          if (scopeRef.current !== requestScope) return undefined;
+          modeRef.current = mode;
+          setPersistenceMode(mode);
+        }
+        if (mode === "development") {
+          const localState = TransactionEngine.load();
+          if (scopeRef.current !== requestScope) return undefined;
+          setState(localState);
+          setRevision(0);
+          revisionRef.current = 0;
+          setBackendStatus("synced");
+          await refreshPendingCount();
+          return { state: localState, revision: 0 };
+        }
+        if (sessionScopeRef.current !== requestScope) {
+          const session = await fetch("/api/seramet/auth/session", { headers });
+          if (!session.ok) {
+            throw Object.assign(new Error(`Session validation failed: ${session.status}`), {
+              httpStatus: session.status,
+            });
+          }
+          const sessionBody = (await session.json()) as { actor?: { deviceId?: string } };
+          if (scopeRef.current !== requestScope) return undefined;
+          if (sessionBody.actor?.deviceId) deviceIdRef.current = sessionBody.actor.deviceId;
+          sessionScopeRef.current = requestScope;
+        }
+        if (hydrationScopeRef.current !== requestScope) {
+          hydrationScopeRef.current = requestScope;
+          const cached = await offlineStore.readCachedState(activeTenantId, branchId);
+          if (cached && scopeRef.current === requestScope && serverScopeRef.current !== requestScope) {
+            setState(cached.state);
+            setRevision(cached.revision);
+            revisionRef.current = cached.revision;
+          }
+        }
+        const response = await fetch(
+          `/api/seramet/transactions?branchId=${encodeURIComponent(branchId)}`,
+          { headers },
+        );
+        if (!response.ok) {
+          throw Object.assign(new Error(`Transaction refresh failed: ${response.status}`), {
+            httpStatus: response.status,
+          });
+        }
+        const body = (await response.json()) as { state?: TransactionState; revision?: number };
+        if (!body.state) throw new Error("Transaction refresh did not return state");
+        if (scopeRef.current !== requestScope) return undefined;
+        const nextRevision = body.revision ?? 0;
+        if (mutationInFlightRef.current > 0) {
+          refreshAfterMutationRef.current = true;
+          return undefined;
+        }
+        if (nextRevision < revisionRef.current) {
+          // A slower read must not roll back a later committed write.
+          return undefined;
+        }
+        if (nextRevision !== revisionRef.current || serverScopeRef.current !== requestScope) {
+          setState(body.state);
+          setRevision(nextRevision);
+          revisionRef.current = nextRevision;
+          serverScopeRef.current = requestScope;
+          await offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision);
+        }
         setBackendStatus("synced");
         await refreshPendingCount();
-        return { state: localState, revision: 0 };
+        return { state: body.state, revision: nextRevision };
+      } catch (error) {
+        if (scopeRef.current !== requestScope) return undefined;
+        console.error(error);
+        const httpStatus = (error as { httpStatus?: number }).httpStatus;
+        // HTTP rejections are NOT an internet outage and must not enable
+        // offline mutations or overwrite a valid working state with stale cache.
+        setBackendStatus(httpStatus !== undefined || navigator.onLine ? "error" : "offline");
+        return undefined;
       }
-      const session = await fetch("/api/seramet/auth/session", { headers });
-      if (!session.ok) throw new Error(`Session validation failed: ${session.status}`);
-      const sessionBody = (await session.json()) as { actor?: { deviceId?: string } };
-      if (sessionBody.actor?.deviceId) deviceIdRef.current = sessionBody.actor.deviceId;
-      const cached = await offlineStore.readCachedState(activeTenantId);
-      if (cached) {
-        setState(cached.state);
-        setRevision(cached.revision);
-        revisionRef.current = cached.revision;
+    };
+    const promise = refresh();
+    refreshInFlightRef.current = { scope: requestScope, promise };
+    try {
+      return await promise;
+    } finally {
+      if (refreshInFlightRef.current?.promise === promise) {
+        refreshInFlightRef.current = null;
       }
-      const response = await fetch(
-        `/api/seramet/transactions?branchId=${encodeURIComponent(branchId)}`,
-        { headers },
-      );
-      if (!response.ok) throw new Error(`Transaction sync failed: ${response.status}`);
-      const body = (await response.json()) as { state?: TransactionState; revision?: number };
-      if (!body.state) throw new Error("Transaction sync did not return state");
-      await offlineStore.cacheState(activeTenantId, body.state, body.revision ?? 0);
-      setState(body.state);
-      const nextRevision = body.revision ?? 0;
-      setRevision(nextRevision);
-      revisionRef.current = nextRevision;
-      setBackendStatus("synced");
-      await refreshPendingCount();
-      return { state: body.state, revision: nextRevision };
-    } catch (error) {
-      console.error(error);
-      try {
-        const cached = await offlineStore.readCachedState(activeTenantId);
-        if (cached) {
-          setState(cached.state);
-          setRevision(cached.revision);
-          revisionRef.current = cached.revision;
-        }
-      } catch {
-        // A missing cache is expected on a device's first offline launch.
-      }
-      setBackendStatus("offline");
-      return undefined;
     }
-  }, [activeTenantId, branchId, headers, refreshPendingCount]);
+  }, [activeTenantId, branchId, headers, refreshPendingCount, scopeKey]);
 
   const flushOfflineCommands = useCallback(async () => {
-    const commands = await offlineStore.pending(activeTenantId, deviceIdRef.current);
-    if (!commands.length) return;
-    setBackendStatus("reconnecting");
-    for (const command of commands) {
-      await offlineStore.updateCommand({ ...command, syncStatus: "SYNCING" });
-    }
-    const response = await fetch("/api/seramet/offline/sync", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ commands }),
-    });
-    if (!response.ok) throw new Error(`Offline synchronization failed: ${response.status}`);
-    const result = (await response.json()) as {
-      commands: Array<{ id: string; status: string; code?: string }>;
-    };
-    for (const command of commands) {
-      const server = result.commands.find((item) => item.id === command.id);
-      const syncStatus = server?.status === "conflict" ? "CONFLICT" : "SYNCED";
-      await offlineStore.updateCommand({
-        ...command,
-        syncStatus,
-        ...(server?.code ? { error: server.code } : {}),
+    if (flushInFlightRef.current) return flushInFlightRef.current;
+    const run = async () => {
+      const commands = await offlineStore.replayable(activeTenantId, deviceIdRef.current);
+      if (!commands.length) return;
+      setBackendStatus("reconnecting");
+      for (const command of commands) {
+        await offlineStore.updateCommand({ ...command, syncStatus: "SYNCING" });
+      }
+      const response = await fetch("/api/seramet/offline/sync", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ commands }),
       });
+      if (!response.ok) {
+        // Keep original identities unresolved for idempotent replay.
+        throw new Error(`Offline synchronization failed: ${response.status}`);
+      }
+      const result = (await response.json()) as {
+        commands?: Array<{ id: string; status: string; code?: string }>;
+      };
+      let conflicts = false;
+      let failures = false;
+      for (const command of commands) {
+        const server = result.commands?.find((item) => item.id === command.id);
+        const syncStatus = acknowledgedSyncStatus(server?.status);
+        conflicts ||= syncStatus === "CONFLICT";
+        failures ||= syncStatus === "FAILED";
+        await offlineStore.updateCommand({
+          ...command,
+          syncStatus,
+          ...(server?.code ? { error: server.code } : {}),
+          ...(!server ? { error: "MISSING_SERVER_ACKNOWLEDGEMENT" } : {}),
+        });
+      }
+      await refreshPendingCount();
+      if (conflicts || failures) {
+        setBackendStatus(conflicts ? "conflict" : "error");
+        return;
+      }
+      await syncFromBackend();
+    };
+    const promise = run();
+    flushInFlightRef.current = promise;
+    try {
+      await promise;
+    } finally {
+      if (flushInFlightRef.current === promise) flushInFlightRef.current = null;
     }
-    await refreshPendingCount();
-    if (result.commands.some((command) => command.status === "conflict")) {
-      setBackendStatus("conflict");
-      return;
-    }
-    await syncFromBackend();
   }, [activeTenantId, headers, refreshPendingCount, syncFromBackend]);
 
   useEffect(() => {
-    void syncFromBackend();
-  }, [syncFromBackend]);
+    // Switching branches must invalidate all branch-filtered snapshots.
+    scopeRef.current = scopeKey;
+    hydrationScopeRef.current = "";
+    sessionScopeRef.current = "";
+    serverScopeRef.current = "";
+    modeRef.current = "unknown";
+    revisionRef.current = 0;
+    setRevision(0);
+    setState(createEmptyTransactionState(activeTenantId));
+    setPersistenceMode("unknown");
+    setBackendStatus("loading");
+    void syncFromBackend().then((snapshot) => {
+      if (snapshot && navigator.onLine) {
+        void flushOfflineCommands().catch(() => setBackendStatus("error"));
+      }
+    });
+  }, [activeTenantId, flushOfflineCommands, scopeKey, syncFromBackend]);
 
   useEffect(() => {
     let timer: number | undefined;
@@ -165,7 +260,11 @@ export function useTransactionEngine() {
   }, [syncFromBackend]);
 
   useEffect(() => {
-    const online = () => void flushOfflineCommands().catch(() => setBackendStatus("offline"));
+    const online = () => {
+      void syncFromBackend().then((snapshot) => {
+        if (snapshot) void flushOfflineCommands().catch(() => setBackendStatus("error"));
+      });
+    };
     const offline = () => setBackendStatus("offline");
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
@@ -173,7 +272,7 @@ export function useTransactionEngine() {
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
     };
-  }, [flushOfflineCommands]);
+  }, [flushOfflineCommands, syncFromBackend]);
 
   const localActor = useMemo(
     () => ({
@@ -234,7 +333,7 @@ export function useTransactionEngine() {
           ? optimistic(state)
           : applyServerMutation(state, action, payload, localActor);
         setState(next);
-        void offlineStore.cacheState(activeTenantId, next, revision);
+        void offlineStore.cacheState(activeTenantId, branchId, next, revision);
         return next;
       };
       if (persistenceMode === "development") {
@@ -267,6 +366,7 @@ export function useTransactionEngine() {
         return { state: nextState, revision, offline: true as const };
       }
       setBackendStatus("syncing");
+      mutationInFlightRef.current += 1;
       let receivedServerResponse = false;
       let serverConflict = false;
       try {
@@ -304,7 +404,7 @@ export function useTransactionEngine() {
         const nextRevision = body.revision ?? revisionRef.current + 1;
         setRevision(nextRevision);
         revisionRef.current = nextRevision;
-        await offlineStore.cacheState(activeTenantId, body.state, nextRevision);
+        await offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision);
         setBackendStatus("synced");
         return body;
       } catch (error) {
@@ -326,11 +426,18 @@ export function useTransactionEngine() {
         }
         if (!serverConflict) setBackendStatus("error");
         throw error;
+      } finally {
+        mutationInFlightRef.current -= 1;
+        if (mutationInFlightRef.current === 0 && refreshAfterMutationRef.current) {
+          refreshAfterMutationRef.current = false;
+          queueMicrotask(() => void syncFromBackend());
+        }
       }
     },
     [
       activeTenantId,
       backendStatus,
+      branchId,
       createOfflineCommand,
       headers,
       localActor,
@@ -338,6 +445,7 @@ export function useTransactionEngine() {
       refreshPendingCount,
       revision,
       state,
+      syncFromBackend,
     ],
   );
 
