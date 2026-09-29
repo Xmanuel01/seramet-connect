@@ -129,6 +129,8 @@ export type OrderLineForPrint = {
 
 export type OrderForPrint = {
   orderId: string;
+  /** Server-issued immutable ticket obligation identity for crash recovery. */
+  kotObligationId?: string;
   branch: string;
   terminalId: string;
   table?: string;
@@ -183,6 +185,7 @@ export type PrintJob = {
   content: string;
   duplicateKey: string;
   reprintOfJobId?: string;
+  kotObligationId?: string;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
@@ -421,18 +424,20 @@ export const SerametPrintService = {
     const skipped: string[] = [];
 
     groups.forEach((lines, station) => {
-      const ticketId = `KT-${order.orderId.replace(/[^A-Z0-9]/gi, "")}-${station.replace(/[^A-Z0-9]/gi, "")}`;
+      const ticketId = order.kotObligationId
+        ? `KT-${order.kotObligationId.replace(/[^A-Z0-9]/gi, "")}`
+        : `KT-${order.orderId.replace(/[^A-Z0-9]/gi, "")}-${station.replace(/[^A-Z0-9]/gi, "")}`;
       const ticketRecordId = `KTR-${order.branch.replace(/[^A-Z0-9]/gi, "")}-${ticketId}`;
       const duplicateKey = `PRODUCTION:${order.branch}:${ticketId}:${amendmentType}`;
       const duplicate = existingJobs.some(
         (job) => job.duplicateKey === duplicateKey && job.amendmentType === amendmentType,
       );
-      if (duplicate && amendmentType === "NEW") {
+      if (duplicate && (Boolean(order.kotObligationId) || amendmentType === "NEW")) {
         skipped.push(`${ticketId} already exists`);
         return;
       }
       const kitchenTicketId =
-        amendmentType === "NEW"
+        order.kotObligationId || amendmentType === "NEW"
           ? ticketId
           : `${ticketId}-${amendmentType}-${Date.now().toString(36)}`;
       const printDocumentType = productionDocumentType(station);
@@ -875,6 +880,7 @@ function createJob({
     content,
     duplicateKey:
       duplicateKey ?? `DOCUMENT:${order.branch}:${order.orderId}:${documentType}:${makeId("DUP")}`,
+    ...(order.kotObligationId ? { kotObligationId: order.kotObligationId } : {}),
   };
   return stripUndefined({
     ...base,
