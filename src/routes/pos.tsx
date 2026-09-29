@@ -149,9 +149,13 @@ function POS() {
   const [clockNow, setClockNow] = useState(() => new Date());
   const channelPreferenceKey = `seramet.pos.channel:${activeTenantId}:${branchId}:${currentUser.id}`;
   const [preferredChannelId, setPreferredChannelId] = useState<string>(() =>
-    typeof window !== "undefined" ? window.sessionStorage.getItem(channelPreferenceKey) ?? "" : "",
+    typeof window !== "undefined"
+      ? (window.sessionStorage.getItem(channelPreferenceKey) ?? "")
+      : "",
   );
-  const [orderSource, setOrderSource] = useState(() => preferredChannelId || orderChannels[0]?.id || "");
+  const [orderSource, setOrderSource] = useState(
+    () => preferredChannelId || orderChannels[0]?.id || "",
+  );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
   const [orderActionBusy, setOrderActionBusy] = useState(false);
@@ -684,7 +688,11 @@ function POS() {
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
   const currentOrderNumber = activeOrder?.id ?? paymentOrderId ?? predictedNextOrderId();
-  const clockTimeZone = resolvePosTimeZone(branchRecord.timezone, tenant.timezone, tenant.countryCode);
+  const clockTimeZone = resolvePosTimeZone(
+    branchRecord.timezone,
+    tenant.timezone,
+    tenant.countryCode,
+  );
   const clockLabel = formatPosClock(clockNow, tenant.locale || activeLocale(), clockTimeZone);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
@@ -1147,16 +1155,17 @@ function POS() {
     );
   };
 
-  const holdOrder = () => void runOrderAction(async () => {
-    if (!items.length) return;
-    try {
-      await createOrUpdateActiveOrder("HELD");
-      clearCurrentOrder("Order held in active orders.");
-    } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
-      setPrintNoticeType("warning");
-    }
-  });
+  const holdOrder = () =>
+    void runOrderAction(async () => {
+      if (!items.length) return;
+      try {
+        await createOrUpdateActiveOrder("HELD");
+        clearCurrentOrder("Order held in active orders.");
+      } catch (error) {
+        setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
+        setPrintNoticeType("warning");
+      }
+    });
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return null;
@@ -1302,50 +1311,56 @@ function POS() {
     };
   };
 
-  const queueKitchenTickets = () => void runOrderAction(async () => {
-    if (!items.length) return;
-    if (selectedChannel?.requiresTable && !orderTable) {
-      setTablePickerOpen(true);
-      setPrintNotice("Select a table before sending this dine-in order to kitchen.");
-      setPrintNoticeType("warning");
-      return;
-    }
-    try {
-      const result = await queueKitchenTicketsForTable();
-      if (!result) return;
-      if (
-        result.printResult?.jobs.length ||
-        isStagingPrinterlessTestingEnabled() ||
-        (result.printResult === null &&
-          printJobs.some(
-            (job) =>
-              job.orderId === result.order.id &&
-              ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
-              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-                job.status,
-              ),
-          ))
-      ) {
-        const notice = isStagingPrinterlessTestingEnabled()
-          ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
-          : result.printResult?.jobs.length
-            ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
-            : `${result.order.id} is already in kitchen; no new KOT is required.`;
-        clearCurrentOrder(notice, isStagingPrinterlessTestingEnabled() ? "warning" : "success");
+  const queueKitchenTickets = () =>
+    void runOrderAction(async () => {
+      if (!items.length) return;
+      if (selectedChannel?.requiresTable && !orderTable) {
+        setTablePickerOpen(true);
+        setPrintNotice("Select a table before sending this dine-in order to kitchen.");
+        setPrintNoticeType("warning");
+        return;
       }
-      if (!result.printResult && !isStagingPrinterlessTestingEnabled()) {
-        setPrintNotice(
-          "This order has reached kitchen state, but no existing KOT delivery job is confirmed. " +
-            "Verify the ticket in Printers before leaving this order.",
+      try {
+        const result = await queueKitchenTicketsForTable();
+        if (!result) return;
+        const printerlessStaging = isStagingPrinterlessTestingEnabled();
+        const trackedKot = printJobs.some((job) => {
+          if (job.orderId !== result.order.id) return false;
+          if (!["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType)) return false;
+          return [
+            "Queued",
+            "Sending",
+            "Retrying",
+            "Printed",
+            "Displayed",
+            "Fallback Printed",
+          ].includes(job.status);
+        });
+        const dispatched = Boolean(
+          result.printResult?.jobs.length ||
+            printerlessStaging ||
+            (result.printResult === null && trackedKot),
         );
+        if (dispatched) {
+          const notice = printerlessStaging
+            ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
+            : result.printResult?.jobs.length
+              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
+              : `${result.order.id} is already in kitchen; no new KOT is required.`;
+          clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
+        } else if (!result.printResult && !printerlessStaging) {
+          setPrintNotice(
+            "This order has reached kitchen state, but no existing KOT delivery job is confirmed. " +
+              "Verify the ticket in Printers before leaving this order.",
+          );
+          setPrintNoticeType("warning");
+        }
+        // Without a tracked KOT, retain the order instead of claiming print success.
+      } catch (error) {
+        setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
         setPrintNoticeType("warning");
       }
-      // If delivery was not queued, leave the order open and display the print warning.
-    } catch (error) {
-      setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
-      setPrintNoticeType("warning");
-    }
-  });
+    });
 
   const moveOrderToInvoice = async (printBill: boolean) => {
     if (orderActionRef.current) return;
@@ -2179,12 +2194,17 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder} disabled={orderActionBusy || !items.length || activeOrderHasSentLines}>
+              <Btn
+                onClick={holdOrder}
+                disabled={orderActionBusy || !items.length || activeOrderHasSentLines}
+              >
                 Hold
               </Btn>
               {canPrintBill ? (
                 <>
-                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>Print bill</Btn>
+                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>
+                    Print bill
+                  </Btn>
                   <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
                     <FileText className="h-4 w-4" />
                     Invoice
