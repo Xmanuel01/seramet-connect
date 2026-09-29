@@ -366,3 +366,68 @@ describe("durable KOT delivery obligations", () => {
     expect(amendment.status).toBe("PENDING");
   });
 });
+
+
+describe("durable KOT retry state machine", () => {
+  beforeEach(() => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+  });
+
+  it("never permits an unattempted or already delivered ticket to be silently rewritten", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      {
+        tenantId: DEMO_TENANT_ID,
+        branchId: DEMO_WESTLANDS_BRANCH_ID,
+        branch: "Westlands",
+        customer: "Walk-in",
+        channel: "Walk-in",
+        cashier: "Cashier",
+        lines: [
+          {
+            id: "retry-line",
+            name: "Pilau",
+            category: "Main",
+            quantity: 1,
+            unitPrice: 700,
+            productionStation: "MAIN KITCHEN",
+          },
+        ],
+      },
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const id = state.productionPrintObligations![0]!.id;
+    expect(() =>
+      TransactionEngine.markProductionPrintOutcome(state, id, "DELIVERED", "Cashier"),
+    ).toThrow(/cannot move from PENDING/i);
+
+    state = TransactionEngine.markProductionPrintAttempting(
+      state,
+      [id],
+      "Cashier",
+      "WEST-POS-01",
+    );
+    state = TransactionEngine.markProductionPrintOutcome(
+      state,
+      id,
+      "UNCERTAIN",
+      "Cashier",
+      "Bridge connection ended before acknowledgement",
+    );
+    expect(state.productionPrintObligations?.[0]?.status).toBe("UNCERTAIN");
+
+    state = TransactionEngine.authorizeProductionPrintRetry(
+      state,
+      id,
+      "Manager",
+      "Kitchen confirmed no ticket was received",
+    );
+    expect(state.productionPrintObligations?.[0]?.status).toBe("PENDING");
+    expect(state.productionPrintObligations?.[0]?.retryCount).toBe(1);
+    expect(state.productionPrintObligations?.[0]?.lastRetryReason).toMatch(/Kitchen confirmed/);
+  });
+});
