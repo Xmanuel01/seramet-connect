@@ -66,7 +66,7 @@ describe("crash-safe KOT dispatch orchestration", () => {
             state.kitchenPrintObligations,
             fields.obligationId!,
             fields.claimId!,
-            "cashier-1",
+            { id: "cashier-1" },
             fields.status as "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN",
             (payload as { bridgeJobIds: string[] }).bridgeJobIds,
             "2026-09-29T01:00:20.000Z",
