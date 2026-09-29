@@ -69,7 +69,11 @@ export class TenantObjectStorage {
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
     };
     if (!permittedExtensions[input.contentType]?.includes(safeExtension(input.fileName))) {
-      throw new ServerOperationError("VALIDATION_FAILED", 415, "Filename extension does not match file type");
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        415,
+        "Filename extension does not match file type",
+      );
     }
     assertFileSignature(input.contentType, input.bytes);
     const id = crypto.randomUUID();
