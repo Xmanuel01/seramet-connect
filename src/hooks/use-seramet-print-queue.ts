@@ -128,16 +128,11 @@ export function useSerametPrintQueue(branch: string) {
     return { ...plan, queue: queued };
   };
 
-  /**
-   * Delivery runs only AFTER the authoritative KOT obligation has been claimed.
-   * PrintJob identities are stable per obligation and delivery route.
-   * Browser storage is not the source of truth for this operation.
-   */
-  const deliverDurableKitchenTicket = async (
+  const durableKitchenPlan = (
     order: OrderForPrint,
     kind: KitchenPrintObligation["kind"],
     obligationId: string,
-  ): Promise<KotDeliveryOutcome> => {
+  ) => {
     if (!profile) throw new Error(configurationError ?? "No configured kitchen printer");
     const ticketKind =
       kind === "AUDITED_REPRINT" ? "REPRINT" : kind === "ADDITION" ? "ADDITION" : "NEW";
@@ -150,29 +145,59 @@ export function useSerametPrintQueue(branch: string) {
     if (!plan.jobs.length || plan.skipped.length) {
       throw new Error(plan.skipped.join("; ") || "No authorized kitchen delivery route");
     }
-    const tracked = plan.jobs.map((job) => ({
-      ...job,
-      id: `${obligationId}:${job.kitchenDelivery ?? job.documentType}`,
-      obligationId,
-    }));
-    if (
-      tracked.some((job) => job.printerId !== "KDS-DISPLAY") &&
-      !bridgeConfigReady(bridgeConfig)
-    ) {
-      throw new Error("Local printer bridge is unavailable; no physical printing was attempted");
+    return {
+      plan,
+      tracked: plan.jobs.map((job) => ({
+        ...job,
+        id: `${obligationId}:${job.kitchenDelivery ?? job.documentType}`,
+        obligationId,
+      })),
+    };
+  };
+
+  /**
+   * Known configuration failures are checked before the server claim. This
+   * prevents an offline bridge from converting a never-attempted ticket into an
+   * uncertain physical print.
+   */
+  const preflightDurableKitchenTicket = async (
+    order: OrderForPrint,
+    kind: KitchenPrintObligation["kind"],
+    obligationId: string,
+  ) => {
+    const { tracked } = durableKitchenPlan(order, kind, obligationId);
+    const requiresBridge = tracked.some((job) => job.printerId !== "KDS-DISPLAY");
+    if (!requiresBridge) return;
+    if (!bridgeConfigReady(bridgeConfig)) {
+      throw new Error("Local printer bridge is unavailable; ticket remains pending");
     }
-    if (tracked.some((job) => job.printerId !== "KDS-DISPLAY")) {
-      const health = await SerametLocalPrintBridge.getInstalledBridgeHealth(bridgeConfig.endpoint);
-      if (!health.ok || health.dryRun) {
-        throw new Error("Installed printer bridge is offline or running in dry-run mode");
-      }
+    const health = await SerametLocalPrintBridge.getInstalledBridgeHealth(bridgeConfig.endpoint);
+    if (!health.ok || health.dryRun) {
+      throw new Error("Installed printer bridge is offline or running in dry-run mode");
+    }
+  };
+
+  /**
+   * Delivery runs only AFTER the authoritative KOT obligation has been claimed.
+   * PrintJob identities are stable per obligation and delivery route.
+   * Browser storage is not the source of truth for this operation.
+   */
+  const deliverDurableKitchenTicket = async (
+    order: OrderForPrint,
+    kind: KitchenPrintObligation["kind"],
+    obligationId: string,
+  ): Promise<KotDeliveryOutcome> => {
+    const { plan, tracked } = durableKitchenPlan(order, kind, obligationId);
+    const requiresBridge = tracked.some((job) => job.printerId !== "KDS-DISPLAY");
+    if (requiresBridge && !bridgeConfigReady(bridgeConfig)) {
+      throw new Error("Local printer bridge is unavailable; no physical printing was attempted");
     }
     setJobs((existing) => [
       ...tracked,
       ...existing.filter((job) => !tracked.some((next) => next.id === job.id)),
     ]);
     const outcomes = await Promise.all(
-      tracked.map((job) => sendInstalledBridgeJob(job, profile, bridgeConfig, setJobs, true)),
+      tracked.map((job) => sendInstalledBridgeJob(job, profile!, bridgeConfig, setJobs, true)),
     );
     return { jobs: tracked, outcomes, skipped: plan.skipped };
   };
@@ -265,6 +290,7 @@ export function useSerametPrintQueue(branch: string) {
     reprints,
     bridgeConfig,
     sendKitchenTickets,
+    preflightDurableKitchenTicket,
     deliverDurableKitchenTicket,
     printCustomerDocument,
     retryJob,
