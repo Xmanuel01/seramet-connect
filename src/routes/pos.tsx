@@ -31,7 +31,7 @@ import {
   resolvePosTimeZone,
 } from "@/lib/pos-workflow";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
-import { requireServerConfirmation, verifyOrderTransition } from "@/lib/pos-transition-guards";
+import { verifyOrderTransition } from "@/lib/pos-transition-guards";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -511,6 +511,7 @@ function POS() {
         `${trackedPrint.label} delivery failed${failed.failureReason ? `: ${failed.failureReason}` : "."} Open Printers, correct the route, then retry.`,
       );
       setPrintNoticeType("warning");
+      setWorkflowNextStep("Retry the existing job in Printers; do not resend the order.");
       return;
     }
     const delivered = tracked.every((job) =>
@@ -903,6 +904,11 @@ function POS() {
 
   const openPayment = async () => {
     if (!items.length || paymentBusy || orderActionRef.current) return;
+    if (backendStatus === "offline" || pendingSyncCount > 0) {
+      setPrintNotice("Wait for offline commands to synchronize before opening payment.");
+      setPrintNoticeType("warning");
+      return;
+    }
     if (!paymentMethods.length) {
       setPrintNotice("No payment methods are configured for this restaurant.");
       setPrintNoticeType("warning");
@@ -1211,6 +1217,7 @@ function POS() {
         order: activeOrder,
         state: transactionState,
         printResult: null,
+        persistence: backendStatus === "offline" ? "queued-offline" as const : "confirmed" as const,
       };
     }
     // The temporary staging exception only removes the physical delivery preflight.
@@ -1295,20 +1302,20 @@ function POS() {
     let printResult: ReturnType<typeof sendKitchenTickets>;
     try {
       printResult = sendKitchenTickets(
-      {
-        ...buildPrintOrder(tableNo),
-        orderId: authoritativeOrder.id,
-        lines: ticketLines.map((line) => ({
-          id: line.id,
-          name: line.name,
-          category: line.category,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          productionStation: line.productionStation ?? "NONE",
-          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-        })),
-      },
-      amendmentType,
+        {
+          ...buildPrintOrder(tableNo),
+          orderId: authoritativeOrder.id,
+          lines: ticketLines.map((line) => ({
+            id: line.id,
+            name: line.name,
+            category: line.category,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            productionStation: line.productionStation ?? "NONE",
+            ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+          })),
+        },
+        amendmentType,
       );
     } catch (error) {
       // The database committed. Do not resend the order to recover a printer
@@ -1357,7 +1364,17 @@ function POS() {
     result: NonNullable<Awaited<ReturnType<typeof queueKitchenTicketsForTable>>>,
   ) =>
     Boolean(
-      result.printResult?.jobs.length ||
+      (result.printResult &&
+        result.printResult.jobs.length > 0 &&
+        result.printResult.jobs.every((job) =>
+          result.printResult!.queue.some(
+            (queued) =>
+              queued.id === job.id &&
+              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
+                queued.status,
+              ),
+          ),
+        )) ||
       isStagingPrinterlessTestingEnabled() ||
       (result.printResult === null &&
         printJobs.some(
@@ -1466,6 +1483,12 @@ function POS() {
   const queueKitchenTickets = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
+      if (pendingSyncCount > 0) {
+        setPrintNotice("Pending offline commands must synchronize before another kitchen dispatch.");
+        setPrintNoticeType("warning");
+        setWorkflowNextStep("Verify earlier offline commands before sending another kitchen ticket.");
+        return;
+      }
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
         setPrintNotice("Select a table before sending this dine-in order to kitchen.");
@@ -1513,6 +1536,11 @@ function POS() {
   const sendKitchenAndBill = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
+      if (pendingSyncCount > 0 || backendStatus === "offline") {
+        setPrintNotice("Offline changes are unconfirmed. Reconnect and verify Orders before billing.");
+        setPrintNoticeType("warning");
+        return;
+      }
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
         setPrintNotice("Select a table before sending this dine-in order to kitchen.");
@@ -1551,6 +1579,11 @@ function POS() {
 
   const moveOrderToInvoice = (printBill: boolean) =>
     void runOrderAction(async () => {
+      if (backendStatus === "offline" || pendingSyncCount > 0) {
+        setPrintNotice("Offline changes are unconfirmed. Reconnect and verify Orders before invoicing.");
+        setPrintNoticeType("warning");
+        return;
+      }
       if (!activeOrder || !canPrintBill || hasUnsentItems) {
         setPrintNotice(
           hasUnsentItems
