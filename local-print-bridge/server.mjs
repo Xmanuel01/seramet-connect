@@ -84,7 +84,11 @@ const server = createServer(async (request, response) => {
         spool: printSpoolFile,
       });
       await logEvent(
-        result.accepted ? "spool-accepted" : result.uncertain ? "spool-uncertain" : "spool-rejected",
+        result.accepted
+          ? "spool-accepted"
+          : result.uncertain
+            ? "spool-uncertain"
+            : "spool-rejected",
         {
           bridgeJobId: result.bridgeJobId ?? null,
           jobId: body.id,
