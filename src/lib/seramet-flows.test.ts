@@ -238,6 +238,42 @@ describe("kitchen hardware modes", () => {
     expect(adjustment.notes.length).toBeGreaterThan(0);
   });
 
+  it("uses one stable outbox ticket identity for original and amendment retries", () => {
+    const profile = profileForMode("KDS_AND_PRINTER");
+    const original = {
+      ...order,
+      kotObligationId: "KOT-ORD-1-1",
+      lines: order.lines.filter((line) => line.productionStation === "MAIN KITCHEN"),
+    };
+    const first = SerametPrintService.createProductionTicketJobs(profile, original, [], "NEW");
+    expect(first.jobs).toHaveLength(2);
+    expect(first.jobs.map((job) => job.kotObligationId)).toEqual([
+      "KOT-ORD-1-1",
+      "KOT-ORD-1-1",
+    ]);
+    expect(new Set(first.jobs.map((job) => job.kitchenTicketId)).size).toBe(1);
+    expect(
+      SerametPrintService.createProductionTicketJobs(profile, original, first.jobs, "NEW").jobs,
+    ).toHaveLength(0);
+    const addition = { ...original, kotObligationId: "KOT-ORD-1-2" };
+    const amended = SerametPrintService.createProductionTicketJobs(
+      profile,
+      addition,
+      first.jobs,
+      "ADDITION",
+    );
+    expect(amended.jobs).toHaveLength(2);
+    expect(
+      SerametPrintService.createProductionTicketJobs(
+        profile,
+        addition,
+        [...amended.jobs, ...first.jobs],
+        "ADDITION",
+      ).jobs,
+    ).toHaveLength(0);
+    expect(amended.jobs[0]?.kitchenTicketId).not.toBe(first.jobs[0]?.kitchenTicketId);
+  });
+
   it("creates display jobs instead of printer jobs in KDS only mode", () => {
     const profile = profileForMode("KDS_ONLY");
     const plan = SerametPrintService.createProductionTicketJobs(profile, order, []);
