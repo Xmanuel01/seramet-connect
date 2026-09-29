@@ -308,6 +308,10 @@ function POS() {
       ),
     [activeTenantId, branchId, platformState.serviceAreas],
   );
+  const billedOrderIds = useMemo(
+    () => new Set(transactionState.bills.flatMap((bill) => bill.orderIds)),
+    [transactionState.bills],
+  );
   const branchOrders = useMemo(
     () =>
       transactionState.orders.filter(
