@@ -71,3 +71,26 @@ export function requireServerConfirmation(
     );
   }
 }
+
+/** A created print job is not accepted unless the device queue actually retains it
+ * in an actionable or delivered state. A failed print must never unlock billing.
+ */
+export function kitchenJobsAcceptedForDelivery(
+  jobs: readonly { id: string }[],
+  queue: readonly { id: string; status: string }[],
+): boolean {
+  const actionable = new Set([
+    "Queued",
+    "Sending",
+    "Retrying",
+    "Printed",
+    "Displayed",
+    "Fallback Printed",
+  ]);
+  return (
+    jobs.length > 0 &&
+    jobs.every((job) =>
+      queue.some((entry) => entry.id === job.id && actionable.has(entry.status)),
+    )
+  );
+}
