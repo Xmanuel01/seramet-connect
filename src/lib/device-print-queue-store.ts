@@ -9,46 +9,6 @@ export type DevicePrintQueueSnapshot = {
 const emptySnapshot: DevicePrintQueueSnapshot = { jobs: [], reprints: [] };
 const snapshots = new Map<string, DevicePrintQueueSnapshot>();
 const listeners = new Map<string, Set<() => void>>();
-const hydrated = new Set<string>();
-const storageKey = (branchKey: string) => `seramet.print-queue.v1:${branchKey}`;
-
-function hydrate(branchKey: string) {
-  if (hydrated.has(branchKey) || typeof window === "undefined") return;
-  hydrated.add(branchKey);
-  try {
-    const raw = window.localStorage.getItem(storageKey(branchKey));
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as DevicePrintQueueSnapshot;
-    if (Array.isArray(parsed.jobs) && Array.isArray(parsed.reprints)) {
-      const recovered = {
-        ...parsed,
-        jobs: parsed.jobs.map((job) =>
-          ["Sending", "Retrying"].includes(job.status)
-            ? {
-                ...job,
-                status: "Uncertain" as const,
-                failureReason:
-                  "POS restarted while delivery acknowledgement was outstanding; manual review required",
-              }
-            : job,
-        ),
-      };
-      snapshots.set(branchKey, recovered);
-      persist(branchKey, recovered);
-    }
-  } catch {
-    // Corrupt device-local queue must not crash POS startup.
-  }
-}
-
-function persist(branchKey: string, snapshot: DevicePrintQueueSnapshot) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey(branchKey), JSON.stringify(snapshot));
-  } catch {
-    // Authoritative print obligations remain the recovery source if local storage is unavailable.
-  }
-}
 
 function normalizedBranchKey(branchKey: string) {
   const key = branchKey.trim();
@@ -66,9 +26,7 @@ function updateList<T>(current: T[], update: SetStateAction<T[]>) {
 
 export const DevicePrintQueueStore = {
   snapshot(branchKey: string): DevicePrintQueueSnapshot {
-    const key = normalizedBranchKey(branchKey);
-    hydrate(key);
-    return snapshots.get(key) ?? emptySnapshot;
+    return snapshots.get(normalizedBranchKey(branchKey)) ?? emptySnapshot;
   },
 
   subscribe(branchKey: string, listener: () => void) {
@@ -85,23 +43,17 @@ export const DevicePrintQueueStore = {
 
   setJobs(branchKey: string, update: SetStateAction<PrintJob[]>) {
     const key = normalizedBranchKey(branchKey);
-    hydrate(key);
     const current = snapshots.get(key) ?? emptySnapshot;
     const jobs = updateList(current.jobs, update);
-    const next = { jobs, reprints: current.reprints };
-    snapshots.set(key, next);
-    persist(key, next);
+    snapshots.set(key, { jobs, reprints: current.reprints });
     notify(key);
   },
 
   setReprints(branchKey: string, update: SetStateAction<ReprintLogEntry[]>) {
     const key = normalizedBranchKey(branchKey);
-    hydrate(key);
     const current = snapshots.get(key) ?? emptySnapshot;
     const reprints = updateList(current.reprints, update);
-    const next = { jobs: current.jobs, reprints };
-    snapshots.set(key, next);
-    persist(key, next);
+    snapshots.set(key, { jobs: current.jobs, reprints });
     notify(key);
   },
 
@@ -116,14 +68,5 @@ export const DevicePrintQueueStore = {
   resetForTests() {
     snapshots.clear();
     listeners.clear();
-    hydrated.clear();
-    if (typeof window !== "undefined") {
-      const remove: string[] = [];
-      for (let index = 0; index < window.localStorage.length; index += 1) {
-        const key = window.localStorage.key(index);
-        if (key?.startsWith("seramet.print-queue.v1:")) remove.push(key);
-      }
-      remove.forEach((key) => window.localStorage.removeItem(key));
-    }
   },
 };
