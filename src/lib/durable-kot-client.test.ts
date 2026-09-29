@@ -82,7 +82,6 @@ describe("crash-safe KOT dispatch orchestration", () => {
     return { mutate, current: () => state };
   };
 
-
   it("leaves the authoritative obligation pending when known printer preflight fails", async () => {
     const harness = createHarness();
     const preflight = vi.fn(async () => {
