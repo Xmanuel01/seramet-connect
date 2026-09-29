@@ -6,6 +6,7 @@ import {
 } from "@/lib/transaction-engine";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
+import { parseMajorAmount } from "@/payments/money";
 import { custodyLedger } from "@/payments/custody-ledger";
 import { ReconciliationEngine } from "@/payments/reconciliation-engine";
 import { SettlementService } from "@/payments/settlement-service";
@@ -423,29 +424,83 @@ export function applyServerMutation(
         actor.name,
       );
     case "recordManualTillPayment":
-      return TransactionEngine.recordManualTillPayment(
-        state,
-        String(input["invoiceId"]),
-        input["input"] as Parameters<typeof TransactionEngine.recordManualTillPayment>[2],
-      );
-    case "recordCashPayment":
-      return TransactionEngine.recordCashPayment(
-        state,
-        String(input["invoiceId"]),
-        input["input"] as Parameters<typeof TransactionEngine.recordCashPayment>[2],
-      );
     case "recordCardPayment":
-      return TransactionEngine.recordCardPayment(
-        state,
-        String(input["invoiceId"]),
-        input["input"] as Parameters<typeof TransactionEngine.recordCardPayment>[2],
-      );
-    case "recordBankPayment":
+    case "recordBankPayment": {
+      // Older demo helpers immediately close a bill and issue a receipt from
+      // unverified external references. Production callers must use the typed
+      // configured payment orchestration, whose card/bank/wallet collections
+      // retain provider-verification and reconciliation states.
+      if (actor.authLevel !== "DEVELOPMENT") {
+        throw new Error(
+          "Legacy manual external-payment settlement is disabled. " +
+            "Use applyConfiguredPayment and the verified provider/reconciliation workflow.",
+        );
+      }
+      const invoiceId = String(input["invoiceId"]);
+      if (action === "recordManualTillPayment") {
+        return TransactionEngine.recordManualTillPayment(
+          state,
+          invoiceId,
+          input["input"] as Parameters<typeof TransactionEngine.recordManualTillPayment>[2],
+        );
+      }
+      if (action === "recordCardPayment") {
+        return TransactionEngine.recordCardPayment(
+          state,
+          invoiceId,
+          input["input"] as Parameters<typeof TransactionEngine.recordCardPayment>[2],
+        );
+      }
       return TransactionEngine.recordBankPayment(
         state,
-        String(input["invoiceId"]),
+        invoiceId,
         input["input"] as Parameters<typeof TransactionEngine.recordBankPayment>[2],
       );
+    }
+    case "recordCashPayment": {
+      if (actor.authLevel === "DEVELOPMENT") {
+        return TransactionEngine.recordCashPayment(
+          state,
+          String(input["invoiceId"]),
+          input["input"] as Parameters<typeof TransactionEngine.recordCashPayment>[2],
+        );
+      }
+      // Preserve existing offline CASH command compatibility, but settle
+      // through the same authoritative drawer/ledger path as normal POS cash.
+      const invoiceId = String(input["invoiceId"]);
+      const paymentInput = input["input"] as { received?: unknown; terminal?: unknown } | undefined;
+      const invoice = state.bills.find((candidate) => candidate.id === invoiceId);
+      if (!invoice) throw new Error("Invoice was not found");
+      const configuration = getConfigurationRepository();
+      const invoiceBranchId =
+        invoice.branchId ?? configuration.resolveBranch(actor.tenantId, invoice.branch).id;
+      if (invoice.tenantId !== actor.tenantId || invoiceBranchId !== actor.branchId) {
+        throw new Error("Invoice belongs to another tenant or branch");
+      }
+      if (typeof paymentInput?.received !== "number" || !Number.isFinite(paymentInput.received)) {
+        throw new Error("Cash amount received must be a finite number");
+      }
+      const outstanding = invoice.total - invoice.paid;
+      if (outstanding <= 0) throw new Error("Invoice has no remaining balance");
+      if (paymentInput.received <= 0) throw new Error("Cash amount must be positive");
+      const method = configuration
+        .listPaymentMethods(actor.tenantId, false)
+        .find((candidate) => candidate.enabled && candidate.category === "CASH");
+      if (!method) throw new Error("No enabled cash collection method is configured");
+      const currency = configuration.getTenant(actor.tenantId).defaultCurrency;
+      return applyServerMutation(
+        state,
+        "applyConfiguredPayment",
+        {
+          invoiceId,
+          paymentMethodId: method.id,
+          amountMinor: parseMajorAmount(Math.min(paymentInput.received, outstanding), currency),
+          tenderedAmountMinor: parseMajorAmount(paymentInput.received, currency),
+          terminalId: actor.deviceId ?? String(paymentInput.terminal ?? "POS"),
+        },
+        actor,
+      );
+    }
     case "mergeBills":
       return TransactionEngine.mergeBills(
         state,
