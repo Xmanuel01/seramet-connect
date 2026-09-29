@@ -138,6 +138,12 @@ export function finishKitchenPrintObligation(
 ): KitchenPrintObligation[] {
   const target = existing.find((obligation) => obligation.id === obligationId);
   if (!target) throw new Error("Kitchen print obligation not found");
+  if (!["SPOOLED", "DIGITAL_QUEUED", "UNCERTAIN"].includes(status)) {
+    throw new Error("Invalid ticket delivery acknowledgement");
+  }
+  if (bridgeJobIds.length > 16 || bridgeJobIds.some((id) => typeof id !== "string" || id.length > 150)) {
+    throw new Error("Invalid printer bridge job evidence");
+  }
   if (target.claimId !== claimId || target.claimedBy !== actorId) {
     throw new Error("Only the operator who claimed this ticket can report its outcome");
   }
