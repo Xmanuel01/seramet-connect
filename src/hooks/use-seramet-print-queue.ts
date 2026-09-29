@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type Dispatch,
@@ -68,6 +69,7 @@ export function useSerametPrintQueue(
   const [bridgeConfig, setBridgeConfig] = useState<InstalledPrintBridgeConfig>(() =>
     loadInstalledPrintBridgeConfig(),
   );
+  const recoveredQueuedBranchRef = useRef("");
 
   useEffect(() => {
     const onConfig = () => setBridgeConfig(loadInstalledPrintBridgeConfig());
@@ -106,6 +108,15 @@ export function useSerametPrintQueue(
     });
     return queued;
   };
+
+  useEffect(() => {
+    if (!profile || !bridgeConfigReady(bridgeConfig)) return;
+    if (recoveredQueuedBranchRef.current === branch) return;
+    recoveredQueuedBranchRef.current = branch;
+    for (const job of jobs.filter((candidate) => candidate.status === "Queued")) {
+      void sendInstalledBridgeJob(job, profile, bridgeConfig, setJobs, onJobStatus);
+    }
+  }, [branch, bridgeConfig, jobs, onJobStatus, profile, setJobs]);
 
   const enqueue = (nextJobs: PrintJob[]): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
