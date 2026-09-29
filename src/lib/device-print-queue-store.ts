@@ -9,6 +9,32 @@ export type DevicePrintQueueSnapshot = {
 const emptySnapshot: DevicePrintQueueSnapshot = { jobs: [], reprints: [] };
 const snapshots = new Map<string, DevicePrintQueueSnapshot>();
 const listeners = new Map<string, Set<() => void>>();
+const hydrated = new Set<string>();
+const storageKey = (branchKey: string) => `seramet.print-queue.v1:${branchKey}`;
+
+function hydrate(branchKey: string) {
+  if (hydrated.has(branchKey) || typeof window === "undefined") return;
+  hydrated.add(branchKey);
+  try {
+    const raw = window.localStorage.getItem(storageKey(branchKey));
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as DevicePrintQueueSnapshot;
+    if (Array.isArray(parsed.jobs) && Array.isArray(parsed.reprints)) {
+      snapshots.set(branchKey, parsed);
+    }
+  } catch {
+    // Corrupt device-local queue must not crash POS startup.
+  }
+}
+
+function persist(branchKey: string, snapshot: DevicePrintQueueSnapshot) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(storageKey(branchKey), JSON.stringify(snapshot));
+  } catch {
+    // Authoritative print obligations remain the recovery source if local storage is unavailable.
+  }
+}
 
 function normalizedBranchKey(branchKey: string) {
   const key = branchKey.trim();
@@ -26,7 +52,9 @@ function updateList<T>(current: T[], update: SetStateAction<T[]>) {
 
 export const DevicePrintQueueStore = {
   snapshot(branchKey: string): DevicePrintQueueSnapshot {
-    return snapshots.get(normalizedBranchKey(branchKey)) ?? emptySnapshot;
+    const key = normalizedBranchKey(branchKey);
+    hydrate(key);
+    return snapshots.get(key) ?? emptySnapshot;
   },
 
   subscribe(branchKey: string, listener: () => void) {
@@ -43,17 +71,23 @@ export const DevicePrintQueueStore = {
 
   setJobs(branchKey: string, update: SetStateAction<PrintJob[]>) {
     const key = normalizedBranchKey(branchKey);
+    hydrate(key);
     const current = snapshots.get(key) ?? emptySnapshot;
     const jobs = updateList(current.jobs, update);
-    snapshots.set(key, { jobs, reprints: current.reprints });
+    const next = { jobs, reprints: current.reprints };
+    snapshots.set(key, next);
+    persist(key, next);
     notify(key);
   },
 
   setReprints(branchKey: string, update: SetStateAction<ReprintLogEntry[]>) {
     const key = normalizedBranchKey(branchKey);
+    hydrate(key);
     const current = snapshots.get(key) ?? emptySnapshot;
     const reprints = updateList(current.reprints, update);
-    snapshots.set(key, { jobs: current.jobs, reprints });
+    const next = { jobs: current.jobs, reprints };
+    snapshots.set(key, next);
+    persist(key, next);
     notify(key);
   },
 
