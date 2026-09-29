@@ -24,6 +24,7 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { dispatchDurableKitchenObligation } from "@/lib/durable-kot-client";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -219,7 +220,7 @@ function POS() {
     profile,
     configurationError,
     jobs: printJobs,
-    sendKitchenTickets,
+    deliverDurableKitchenTicket,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
 
@@ -876,6 +877,9 @@ function POS() {
 
   const createOrUpdateActiveOrder = async (targetStatus: "HELD" | "OPEN", tableNo = orderTable) => {
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
+    const knownObligationIds = new Set(
+      (transactionState.kitchenPrintObligations ?? []).map((obligation) => obligation.id),
+    );
     const draft = buildTransactionDraft(tableNo);
     const result = await mutateTransaction("upsertOrderDraft", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
@@ -1251,64 +1255,77 @@ function POS() {
       };
     }
 
-    // Staging laptop demo: never pretend a physical KOT has printed.
-    // The authoritative transaction above persists the kitchen work independently.
+    const newObligations = (resultState.state.kitchenPrintObligations ?? []).filter(
+      (obligation) =>
+        obligation.orderId === authoritativeOrder.id && !knownObligationIds.has(obligation.id),
+    );
+    if (!newObligations.length) {
+      setPrintNotice(
+        "Kitchen state saved, but no new durable KOT obligation was returned. " +
+          "Review the order's production stations before leaving the screen.",
+      );
+      setPrintNoticeType("warning");
+      return { order: authoritativeOrder, state: resultState.state, printResult: null };
+    }
+
+    // Staging exception: a digital kitchen order is NOT physical printer output.
+    // Record its digital handoff in the authoritative outbox for later auditing.
     if (printerlessStaging) {
+      for (const obligation of newObligations) {
+        const claimId = crypto.randomUUID();
+        const claim = await mutateTransaction("claimKitchenPrintObligation", {
+          obligationId: obligation.id,
+          claimId,
+        });
+        const accepted = claim?.state.kitchenPrintObligations?.find(
+          (candidate) => candidate.id === obligation.id,
+        );
+        if (accepted?.status !== "CLAIMED" || accepted.claimId !== claimId) {
+          throw new Error("Staging digital KOT handoff was not accepted.");
+        }
+        await mutateTransaction("finishKitchenPrintObligation", {
+          obligationId: obligation.id,
+          claimId,
+          status: "DIGITAL_QUEUED",
+          bridgeJobIds: [],
+        });
+      }
       setTrackedPrint(null);
       setActiveOrderId(authoritativeOrder.id);
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
       setPrintNotice(
-        "STAGING TEST: Kitchen order saved without physical printing. Open Kitchen " +
-          "and verify the digital ticket; physical KOT delivery is NOT confirmed. " +
-          "Standard printer routing resumes automatically when the test window expires.",
+        "STAGING: Authoritative digital KOT queued. Verify the items in Kitchen. " +
+          "No physical printer delivery has been confirmed.",
       );
       setPrintNoticeType("warning");
-      return {
-        order: authoritativeOrder,
-        state: resultState.state,
-        printResult: null,
-      };
+      return { order: authoritativeOrder, state: resultState.state, printResult: null };
     }
 
-    const printResult = sendKitchenTickets(
-      {
-        ...buildPrintOrder(tableNo),
-        orderId: authoritativeOrder.id,
-        lines: ticketLines.map((line) => ({
-          id: line.id,
-          name: line.name,
-          category: line.category,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          productionStation: line.productionStation ?? "NONE",
-          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-        })),
-      },
-      amendmentType,
-    );
+    const confirmedJobs = [];
+    for (const obligation of newObligations) {
+      const completed = await dispatchDurableKitchenObligation({
+        obligation,
+        terminalId: buildPrintOrder(tableNo).terminalId,
+        mutate: mutateTransaction,
+        deliver: deliverDurableKitchenTicket,
+      });
+      confirmedJobs.push(...completed.jobs);
+    }
     setTrackedPrint({
-      jobIds: printResult.jobs.map((job) => job.id),
+      jobIds: confirmedJobs.map((job) => job.id),
       label: amendmentType === "ADDITION" ? "Kitchen amendment" : "Kitchen ticket",
     });
     setActiveOrderId(authoritativeOrder.id);
     setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
-    if (printResult.jobs.length > 0) {
-      setPrintNotice(
-        amendmentType === "ADDITION"
-          ? "Kitchen amendment queued — waiting for delivery confirmation."
-          : "Kitchen ticket queued — waiting for delivery confirmation.",
-      );
-      setPrintNoticeType("idle");
-    } else {
-      setPrintNotice(
-        `Order reached kitchen state, but KOT delivery was not queued: ${printResult.skipped[0] ?? "check printer/KDS routing"}.`,
-      );
-      setPrintNoticeType("warning");
-    }
+    setPrintNotice(
+      `Durable KOT obligation accepted for ${authoritativeOrder.id}. ` +
+        "Printer bridge accepted the spool request; physical output is not confirmed.",
+    );
+    setPrintNoticeType("idle");
     return {
       order: authoritativeOrder,
       state: resultState.state,
-      printResult,
+      printResult: { jobs: confirmedJobs, skipped: [] as string[] },
     };
   };
 
@@ -1347,7 +1364,7 @@ function POS() {
           const notice = printerlessStaging
             ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
             : result.printResult?.jobs.length
-              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
+              ? `${result.order.id} dispatched with durable KOT spool acknowledgement. Physical output is not confirmed. Open Invoices to bill.`
               : `${result.order.id} is already in kitchen; no new KOT is required.`;
           clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
         } else if (!result.printResult && !printerlessStaging) {
