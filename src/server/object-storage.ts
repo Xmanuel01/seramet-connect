@@ -184,7 +184,8 @@ async function sha256(value: ArrayBuffer) {
 /** Lightweight content sniffing supplements, but does not replace, antivirus scanning. */
 function assertFileSignature(type: string, buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
-  const starts = (...signature: number[]) => signature.every((byte, index) => bytes[index] === byte);
+  const starts = (...signature: number[]) =>
+    signature.every((byte, index) => bytes[index] === byte);
   let valid = false;
   switch (type) {
     case "image/jpeg":
@@ -196,7 +197,9 @@ function assertFileSignature(type: string, buffer: ArrayBuffer) {
     case "image/webp":
       valid =
         starts(0x52, 0x49, 0x46, 0x46) &&
-        [8, 9, 10, 11].every((index, offset) => bytes[index] === [0x57, 0x45, 0x42, 0x50][offset]);
+        [8, 9, 10, 11].every(
+          (index, offset) => bytes[index] === [0x57, 0x45, 0x42, 0x50][offset],
+        );
       break;
     case "application/pdf":
       valid = starts(0x25, 0x50, 0x44, 0x46, 0x2d);
