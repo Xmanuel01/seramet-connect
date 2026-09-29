@@ -25,7 +25,6 @@ import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { dispatchDurableKitchenObligation } from "@/lib/durable-kot-client";
-import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -45,11 +44,7 @@ import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
-import {
-  SerametLocalPrintBridge,
-  SerametPrintService,
-  type OrderForPrint,
-} from "@/lib/seramet-print-service";
+import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { cn } from "@/lib/utils";
 import {
@@ -224,8 +219,8 @@ function POS() {
   const {
     profile,
     configurationError,
-    bridgeConfig,
     jobs: printJobs,
+    preflightDurableKitchenTicket,
     deliverDurableKitchenTicket,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
@@ -1186,26 +1181,6 @@ function POS() {
         `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
       );
     }
-    if (
-      !printerlessStaging &&
-      profile &&
-      profile.kitchenMode !== "KDS_ONLY" &&
-      !bridgeConfigReady(bridgeConfig)
-    ) {
-      throw new Error(
-        "Installed print bridge is unavailable. Reconnect it before dispatching a physical KOT.",
-      );
-    }
-
-    if (!printerlessStaging && profile?.kitchenMode !== "KDS_ONLY") {
-      const health = await SerametLocalPrintBridge.getInstalledBridgeHealth(bridgeConfig.endpoint);
-      if (!health.ok || health.dryRun) {
-        throw new Error(
-          "A genuine non-dry-run local print bridge is required before kitchen dispatch.",
-        );
-      }
-    }
-
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const knownObligationIds = new Set(
       (transactionState.kitchenPrintObligations ?? []).map((obligation) => obligation.id),
@@ -1338,6 +1313,7 @@ function POS() {
         obligation,
         terminalId: buildPrintOrder(tableNo).terminalId,
         mutate: mutateTransaction,
+        preflight: preflightDurableKitchenTicket,
         deliver: deliverDurableKitchenTicket,
       });
       confirmedJobs.push(...completed.jobs);
