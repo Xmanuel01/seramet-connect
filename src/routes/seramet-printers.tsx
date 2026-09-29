@@ -373,17 +373,13 @@ function SerametPrinters() {
                     {item.dispatchType} · {item.id} · {item.status}
                     {item.deviceId ? ` · ${item.deviceId}` : ""}
                   </div>
-                  {item.error ? (
-                    <div className="mt-1 text-warning">{item.error}</div>
-                  ) : null}
+                  {item.error ? <div className="mt-1 text-warning">{item.error}</div> : null}
                 </div>
                 <Status>{item.status}</Status>
               </div>
             ))
           )}
-          {durableKotObligations.some((item) =>
-            ["FAILED", "UNCERTAIN"].includes(item.status),
-          ) ? (
+          {durableKotObligations.some((item) => ["FAILED", "UNCERTAIN"].includes(item.status)) ? (
             <div className="rounded-lg border border-warning/40 bg-warning-soft p-3">
               <div className="text-[12px] font-bold">Manager-authorized retry</div>
               <div className="mt-1 text-[11px] text-muted-foreground">
