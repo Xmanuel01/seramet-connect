@@ -204,7 +204,8 @@ function Invoices() {
     try {
       const result = await mutate("prepareInvoiceForPayment", { orderId });
       const invoice = result?.state?.bills.find(
-        (bill) => bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+        (bill) =>
+          bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
       );
       if (!invoice) throw new Error("The server did not return an invoice for this kitchen order.");
       setStatusFilter("Open");
