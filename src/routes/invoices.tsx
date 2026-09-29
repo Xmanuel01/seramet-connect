@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { unbilledKitchenOrders } from "@/lib/pos-workflow";
 import { useState } from "react";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -145,6 +146,7 @@ function Invoices() {
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
+  const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
   const { state, mutate, syncFromBackend } = useTransactionEngine();
@@ -167,6 +169,10 @@ function Invoices() {
       error instanceof Error ? error.message : "Document identity is not configured";
   }
   const rows = state.bills.filter((bill) => matchesBranch(bill.branchId ?? bill.branch));
+  const awaitingBill = unbilledKitchenOrders(
+    state.orders.filter((order) => (order.branchId ?? branchId) === branchId),
+    state.bills,
+  );
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
     .filter((row) => !periodDate || row.issuedAt.slice(0, 10) === periodDate)
@@ -191,6 +197,27 @@ function Invoices() {
   };
 
   const selectedBills = activeRows.filter((row) => selectedIds.includes(row.id));
+
+  const createBillFromKitchen = async (orderId: string) => {
+    if (billingOrderId) return;
+    setBillingOrderId(orderId);
+    try {
+      const result = await mutate("prepareInvoiceForPayment", { orderId });
+      const invoice = result?.state?.bills.find(
+        (bill) =>
+          bill.orderIds.includes(orderId) &&
+          ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+      );
+      if (!invoice) throw new Error("The server did not return an invoice for this kitchen order.");
+      setStatusFilter("Open");
+      setPeriodDate("");
+      setWarning(`${orderId} is available in Invoices as ${invoice.id}.`);
+    } catch (error) {
+      setWarning(error instanceof Error ? error.message : "Could not create this invoice.");
+    } finally {
+      setBillingOrderId(null);
+    }
+  };
 
   const toggleInvoice = (invoiceId: string) => {
     setSelectedIds((current) =>
@@ -421,6 +448,32 @@ function Invoices() {
           value={activeRows.filter((row) => row.paymentStatus !== "PAID").length}
         />
       </div>
+      {awaitingBill.length > 0 && (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Kitchen orders awaiting billing"
+            sub="Dispatched kitchen orders remain available after leaving the POS pending queue."
+          />
+          <div className="divide-y divide-border">
+            {awaitingBill.map((order) => (
+              <div key={order.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0 text-[13px]">
+                  <div className="font-bold">{order.id} · {order.customer}</div>
+                  <div className="text-muted-foreground">
+                    {order.status.replaceAll("_", " ")} · {order.channel} · {ksh(order.total)}
+                  </div>
+                </div>
+                <Btn
+                  onClick={() => void createBillFromKitchen(order.id)}
+                  disabled={billingOrderId !== null}
+                >
+                  {billingOrderId === order.id ? "Preparing..." : "Create / open invoice"}
+                </Btn>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Bills and invoices"
