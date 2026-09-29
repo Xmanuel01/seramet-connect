@@ -23,6 +23,7 @@ export async function acceptSpoolJob({ dataDir, job, printerName, dryRun, spool 
       documentType: job.documentType,
       printerName: printerName ?? job.printerId,
       content: job.content,
+      dryRun,
     }),
   );
   const markerPath = join(dataDir, `claim-${identityHash(identity)}.json`);
