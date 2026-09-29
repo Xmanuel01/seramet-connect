@@ -1355,7 +1355,9 @@ export class OnboardingService {
     if (resolveRuntimeConfiguration(this.env).productionLike) {
       const report = parseJson<{ fileValidationPolicy?: string }>(record.report_json, {});
       if (report.fileValidationPolicy !== "validated-unscanned-v1") {
-        throw invalidTransition("Import preview predates the current file validation policy; create and review a fresh preview");
+        throw invalidTransition(
+          "Import preview predates the current file validation policy; create and review a fresh preview",
+        );
       }
     }
     if (record.status !== "VALIDATED" && !(options.worker && record.status === "COMMITTING")) {
