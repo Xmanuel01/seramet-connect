@@ -142,6 +142,42 @@ describe("atomic durable KOT obligation and crash reconciliation", () => {
     expect(state.auditEvents[0]?.action).toContain("Authorized KOT retry");
   });
 
+  it("covers direct kitchen amendments and cancellation VOID tickets in the same order payload", () => {
+    let state = TransactionEngine.createOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(state.orders[0]?.kotObligations).toHaveLength(2);
+    const added = {
+      id: "late-food",
+      productId: "p7",
+      name: "Chips",
+      category: "Sides",
+      quantity: 1,
+      unitPrice: 250,
+      productionStation: "MAIN KITCHEN",
+    };
+    state = TransactionEngine.amendKitchenOrder(
+      state,
+      orderId,
+      { ...draft, lines: [...state.orders[0]!.lines, added] },
+      "Manager",
+    );
+    expect(state.orders[0]?.kotObligations).toHaveLength(3);
+    expect(state.orders[0]?.kotObligations?.[2]?.kind).toBe("ADDITION");
+    expect(state.orders[0]?.kotObligations?.[2]?.lines.map((line) => line.id)).toEqual([
+      "late-food",
+    ]);
+    state = TransactionEngine.cancelOrder(state, orderId, {
+      user: "Manager",
+      reason: "Customer cancelled after preparation began",
+      affectedItems: [],
+    });
+    const obligations = state.orders[0]!.kotObligations!;
+    expect(obligations.filter((item) => item.kind === "VOID")).toHaveLength(2);
+    expect(new Set(obligations.map((item) => item.id)).size).toBe(obligations.length);
+    expect(obligations.slice(0, 3).every((item) => item.kind !== "VOID")).toBe(true);
+  });
+
   it("emits an addition obligation only for newly dispatched items", () => {
     let state = TransactionEngine.createOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
     const orderId = state.orders[0]!.id;
