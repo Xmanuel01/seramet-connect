@@ -24,6 +24,7 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -1445,7 +1446,15 @@ function POS() {
         throw new Error("The server did not confirm an invoice for this order.");
       }
       if (printBill) {
-        const result = printCustomerDocument(buildPrintOrder(), "BILL");
+        // Print only the exact, server-confirmed invoice number and line totals.
+        const result = printCustomerDocument(
+          billingRecordToPrintOrder(
+            confirmedBill,
+            billing.state.payments,
+            billing.state.orders,
+          ),
+          "BILL",
+        );
         if (result.jobs.length > 0) {
           setTrackedPrint({ jobIds: result.jobs.map((job) => job.id), label: "Customer bill" });
         }
