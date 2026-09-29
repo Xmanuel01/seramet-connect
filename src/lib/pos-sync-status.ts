@@ -23,13 +23,16 @@ export function syncActivityLabel(
   status: BackendStatus,
   activeMutationCount: number,
   pendingSyncCount: number,
+  offlineReplayInProgress = false,
 ) {
-  if (status === "reconnecting" && pendingSyncCount > 0) {
+  if (offlineReplayInProgress) {
     return `Replaying ${pendingSyncCount} offline command${pendingSyncCount === 1 ? "" : "s"}`;
   }
-  if (pendingSyncCount > 0) {
-    return `${pendingSyncCount} offline command${pendingSyncCount === 1 ? "" : "s"} pending`;
+  const pending = pendingSyncCount
+    ? `${pendingSyncCount} offline command${pendingSyncCount === 1 ? "" : "s"} pending`
+    : "";
+  if (activeMutationCount > 0 || status === "syncing") {
+    return pending ? `Saving · ${pending}` : "Saving";
   }
-  if (activeMutationCount > 0 || status === "syncing") return "Saving";
-  return null;
+  return pending || null;
 }
