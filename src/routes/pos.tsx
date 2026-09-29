@@ -1274,6 +1274,7 @@ function POS() {
     // Staging exception: a digital kitchen order is NOT physical printer output.
     // Record its digital handoff in the authoritative outbox for later auditing.
     if (printerlessStaging) {
+      let digitalState = resultState.state;
       for (const obligation of newObligations) {
         const claimId = crypto.randomUUID();
         const claim = await mutateTransaction("claimKitchenPrintObligation", {
@@ -1286,12 +1287,14 @@ function POS() {
         if (accepted?.status !== "CLAIMED" || accepted.claimId !== claimId) {
           throw new Error("Staging digital KOT handoff was not accepted.");
         }
-        await mutateTransaction("finishKitchenPrintObligation", {
+        const finished = await mutateTransaction("finishKitchenPrintObligation", {
           obligationId: obligation.id,
           claimId,
           status: "DIGITAL_QUEUED",
           bridgeJobIds: [],
         });
+        if (!finished?.state) throw new Error("Digital kitchen KOT acknowledgement is unconfirmed");
+        digitalState = finished.state;
       }
       setTrackedPrint(null);
       setActiveOrderId(authoritativeOrder.id);
@@ -1301,7 +1304,7 @@ function POS() {
           "No physical printer delivery has been confirmed.",
       );
       setPrintNoticeType("warning");
-      return { order: authoritativeOrder, state: resultState.state, printResult: null };
+      return { order: authoritativeOrder, state: digitalState, printResult: null };
     }
 
     const confirmedJobs = [];
@@ -1334,20 +1337,33 @@ function POS() {
 
   const kitchenDispatchHasDelivery = (
     result: NonNullable<Awaited<ReturnType<typeof queueKitchenTicketsForTable>>>,
-  ) =>
-    Boolean(
-      result.printResult?.jobs.length ||
-      isStagingPrinterlessTestingEnabled() ||
-      (result.printResult === null &&
-        printJobs.some(
-          (job) =>
-            job.orderId === result.order.id &&
-            ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
-            ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-              job.status,
-            ),
-        )),
+  ) => {
+    if (result.printResult?.jobs.length) return true;
+    const stations = new Set(
+      result.order.lines
+        .filter((line) => line.sentAt && line.productionStation && line.productionStation !== "NONE")
+        .map((line) => line.productionStation!),
     );
+    if (!stations.size) return false;
+    const obligations = (result.state.kitchenPrintObligations ?? []).filter(
+      (item) => item.orderId === result.order.id && item.branchId === branchId,
+    );
+    // A fresh browser must consult the authoritative outbox instead of relying
+    // on jobs that only existed in the previous tab's in-memory print queue.
+    if (obligations.length) {
+      return [...stations].every((station) =>
+        obligations.some(
+          (item) =>
+            item.station === station &&
+            (item.status === "SPOOLED" ||
+              (isStagingPrinterlessTestingEnabled() && item.status === "DIGITAL_QUEUED")),
+        ),
+      );
+    }
+    // Historical pre-upgrade orders require manual review; never infer
+    // physical ticket delivery from a vanished browser-only job.
+    return false;
+  };
 
   const queueKitchenTickets = () =>
     void runOrderAction(async () => {
