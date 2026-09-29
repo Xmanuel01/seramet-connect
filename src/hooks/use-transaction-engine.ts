@@ -118,9 +118,9 @@ export function useTransactionEngine() {
         if (hydrationScopeRef.current !== requestScope) {
           hydrationScopeRef.current = requestScope;
           // Browsers with unavailable IndexedDB can still use the authoritative POS.
-          const cached = await offlineStore.readCachedState(activeTenantId, branchId).catch(
-            () => null,
-          );
+          const cached = await offlineStore
+            .readCachedState(activeTenantId, branchId)
+            .catch(() => null);
           if (
             cached &&
             scopeRef.current === requestScope &&
