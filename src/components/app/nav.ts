@@ -277,6 +277,7 @@ export const navGroups: NavGroup[] = [
     group: "System",
     roles: opsRoles,
     items: [
+      { label: "Import Centre", to: "/data-import", icon: FileSpreadsheet },
       { label: "Design System", to: "/design-system", icon: Component },
       { label: "Seramet Printers", to: "/seramet-printers", icon: Printer },
       { label: "Hardware Setup", to: "/seramet-setup", icon: Settings2 },

@@ -34,6 +34,7 @@ import { Route as CrmRouteImport } from './routes/crm'
 import { Route as CrmPipelineRouteImport } from './routes/crm-pipeline'
 import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DailySalesJournalRouteImport } from './routes/daily-sales-journal'
+import { Route as DataImportRouteImport } from './routes/data-import'
 import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DepreciationRouteImport } from './routes/depreciation'
@@ -222,6 +223,11 @@ const CustomersRoute = CustomersRouteImport.update({
 const DailySalesJournalRoute = DailySalesJournalRouteImport.update({
   id: '/daily-sales-journal',
   path: '/daily-sales-journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DataImportRoute = DataImportRouteImport.update({
+  id: '/data-import',
+  path: '/data-import',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DecisionsRoute = DecisionsRouteImport.update({
@@ -571,6 +577,7 @@ export interface FileRoutesByFullPath {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
+  '/data-import': typeof DataImportRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/depreciation': typeof DepreciationRoute
@@ -662,6 +669,7 @@ export interface FileRoutesByTo {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
+  '/data-import': typeof DataImportRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/depreciation': typeof DepreciationRoute
@@ -754,6 +762,7 @@ export interface FileRoutesById {
   '/crm-pipeline': typeof CrmPipelineRoute
   '/customers': typeof CustomersRoute
   '/daily-sales-journal': typeof DailySalesJournalRoute
+  '/data-import': typeof DataImportRoute
   '/decisions': typeof DecisionsRoute
   '/delivery': typeof DeliveryRoute
   '/depreciation': typeof DepreciationRoute
@@ -847,6 +856,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
+    | '/data-import'
     | '/decisions'
     | '/delivery'
     | '/depreciation'
@@ -938,6 +948,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
+    | '/data-import'
     | '/decisions'
     | '/delivery'
     | '/depreciation'
@@ -1029,6 +1040,7 @@ export interface FileRouteTypes {
     | '/crm-pipeline'
     | '/customers'
     | '/daily-sales-journal'
+    | '/data-import'
     | '/decisions'
     | '/delivery'
     | '/depreciation'
@@ -1121,6 +1133,7 @@ export interface RootRouteChildren {
   CrmPipelineRoute: typeof CrmPipelineRoute
   CustomersRoute: typeof CustomersRoute
   DailySalesJournalRoute: typeof DailySalesJournalRoute
+  DataImportRoute: typeof DataImportRoute
   DecisionsRoute: typeof DecisionsRoute
   DeliveryRoute: typeof DeliveryRoute
   DepreciationRoute: typeof DepreciationRoute
@@ -1362,6 +1375,13 @@ declare module '@tanstack/react-router' {
       path: '/daily-sales-journal'
       fullPath: '/daily-sales-journal'
       preLoaderRoute: typeof DailySalesJournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/data-import': {
+      id: '/data-import'
+      path: '/data-import'
+      fullPath: '/data-import'
+      preLoaderRoute: typeof DataImportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/decisions': {
@@ -1841,6 +1861,7 @@ const rootRouteChildren: RootRouteChildren = {
   CrmPipelineRoute: CrmPipelineRoute,
   CustomersRoute: CustomersRoute,
   DailySalesJournalRoute: DailySalesJournalRoute,
+  DataImportRoute: DataImportRoute,
   DecisionsRoute: DecisionsRoute,
   DeliveryRoute: DeliveryRoute,
   DepreciationRoute: DepreciationRoute,
