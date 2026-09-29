@@ -100,7 +100,12 @@ export function claimKitchenPrintObligation(
   if (!claimId || claimId.length > 128) throw new Error("A stable claim identity is required");
   const target = existing.find((obligation) => obligation.id === obligationId);
   if (!target) throw new Error("Kitchen print obligation not found");
-  if (target.status === "CLAIMED" && target.claimId === claimId && target.claimedBy === actor.id) {
+  if (
+    target.status === "CLAIMED" &&
+    target.claimId === claimId &&
+    target.claimedBy === actor.id &&
+    (!target.claimedDeviceId || target.claimedDeviceId === actor.deviceId)
+  ) {
     return [...existing];
   }
   if (target.status !== "PENDING") {
