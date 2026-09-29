@@ -360,7 +360,7 @@ describe.sequential("commercial launch foundation", () => {
     errorSpy.mockRestore();
   });
 
-  it("stores clean files in tenant-scoped random R2 paths and removes orphan uploads", async () => {
+  it("stores validated files in tenant-scoped random R2 paths and removes orphan uploads", async () => {
     const provisioned = await new RestaurantRegistrationService(database).register(
       identity(),
       registration(),
@@ -381,9 +381,7 @@ describe.sequential("commercial launch foundation", () => {
         for (const entry of Array.isArray(key) ? key : [key]) objects.delete(entry);
       },
     };
-    const storage = new TenantObjectStorage(database, bucket, {
-      scan: async () => ({ status: "CLEAN" as const, reference: "scan-1" }),
-    });
+    const storage = new TenantObjectStorage(database, bucket);
     const stored = await storage.store({
       tenantId: provisioned.tenantId,
       branchId: provisioned.branchId,
@@ -391,7 +389,7 @@ describe.sequential("commercial launch foundation", () => {
       objectClass: "PUBLIC_ASSET",
       fileName: "menu photo.png",
       contentType: "image/png",
-      bytes: new TextEncoder().encode("image-fixture").buffer,
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]).buffer,
     });
     const row = await storage.findPrivate(provisioned.tenantId, stored.id);
     expect(row?.object_key).toMatch(
@@ -402,7 +400,7 @@ describe.sequential("commercial launch foundation", () => {
     expect(await storage.findPrivate("another-tenant", stored.id)).toBeNull();
   });
 
-  it("refuses infected and oversized uploads before object persistence", async () => {
+  it("rejects mismatched file signatures before object persistence", async () => {
     let writes = 0;
     const bucket = {
       head: async () => null,
@@ -413,9 +411,7 @@ describe.sequential("commercial launch foundation", () => {
       },
       delete: async () => undefined,
     };
-    const storage = new TenantObjectStorage(database, bucket, {
-      scan: async () => ({ status: "INFECTED" as const }),
-    });
+    const storage = new TenantObjectStorage(database, bucket);
     await expect(
       storage.store({
         tenantId: "tenant",
@@ -425,7 +421,7 @@ describe.sequential("commercial launch foundation", () => {
         contentType: "application/pdf",
         bytes: new TextEncoder().encode("unsafe").buffer,
       }),
-    ).rejects.toThrow(/security scanning/i);
+    ).rejects.toThrow(/signature/i);
     expect(writes).toBe(0);
   });
 
@@ -493,7 +489,7 @@ describe.sequential("commercial launch foundation", () => {
     expect(events.map((event) => event.entityId)).toEqual(["order-1"]);
   });
 
-  it("keeps core operational health available when only malware scanning is unavailable", async () => {
+  it("reports full readiness without any malware scanner dependency", async () => {
     const env = {
       SERAMET_ENVIRONMENT: "staging",
       SERAMET_DB: database,
@@ -533,14 +529,11 @@ describe.sequential("commercial launch foundation", () => {
       new Request("https://app.seramet.test/api/seramet/health/ready"),
       env,
     );
-    expect(fullReadiness.status).toBe(503);
-    const payload = (await fullReadiness.json()) as {
-      issues: Array<{ code: string }>;
-    };
-    expect(payload.issues.map((issue) => issue.code)).toContain("MALWARE_SCANNER_REQUIRED");
+    expect(fullReadiness.status).toBe(200);
+    await expect(fullReadiness.json()).resolves.toMatchObject({ ok: true });
   });
 
-  it("fails production readiness without real Hyperdrive, R2, queue and scanner bindings", () => {
+  it("fails production readiness without real Hyperdrive, R2 and queue bindings", () => {
     const issues = validateRuntimeConfiguration({
       SERAMET_ENVIRONMENT: "production",
       SERAMET_IDENTITY_PROVIDER: "supabase",
@@ -557,7 +550,6 @@ describe.sequential("commercial launch foundation", () => {
         "POSTGRES_HYPERDRIVE_REQUIRED",
         "QUEUE_REQUIRED",
         "OBJECT_STORAGE_REQUIRED",
-        "MALWARE_SCANNER_REQUIRED",
       ]),
     );
   });

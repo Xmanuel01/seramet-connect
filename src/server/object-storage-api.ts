@@ -21,11 +21,7 @@ export async function handleObjectStorageApi(request: Request, env: SerametEnv) 
       "Object storage is unavailable",
     );
   }
-  const storage = new TenantObjectStorage(
-    env.SERAMET_DB,
-    env.SERAMET_OBJECTS,
-    env.SERAMET_MALWARE_SCANNER,
-  );
+  const storage = new TenantObjectStorage(env.SERAMET_DB, env.SERAMET_OBJECTS);
   const publicMatch = /^\/api\/seramet\/public\/assets\/([^/]+)\/([^/]+)$/.exec(url.pathname);
   if (publicMatch && request.method === "GET") {
     const record = await storage.findPublic(

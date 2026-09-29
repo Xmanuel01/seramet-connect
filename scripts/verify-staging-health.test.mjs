@@ -6,10 +6,10 @@ test("HTTP 200 with failed readiness is never treated as a successful deployment
   assert.deepEqual(
     assessHealthPayload(
       "ready",
-      { ok: false, environment: "staging", issues: [{ code: "MALWARE_SCANNER_REQUIRED" }] },
+      { ok: false, environment: "staging", issues: [{ code: "DATABASE_REQUIRED" }] },
       26,
     ),
-    { ready: false, issues: ["MALWARE_SCANNER_REQUIRED"] },
+    { ready: false, issues: ["DATABASE_REQUIRED"] },
   );
 });
 
@@ -32,7 +32,7 @@ test("only the correct staging environment and schema pass", () => {
   );
 });
 
-test("a missing scanner fails immediately without retrying", async () => {
+test("an unready endpoint retries and ultimately blocks release", async () => {
   let calls = 0;
   await assert.rejects(
     verifyStagingEndpoint({
@@ -46,7 +46,7 @@ test("a missing scanner fails immediately without retrying", async () => {
           async json() {
             return {
               ok: false,
-              issues: [{ code: "MALWARE_SCANNER_REQUIRED" }],
+              issues: [{ code: "DATABASE_REQUIRED" }],
               schemaVersion: 26,
               environment: "staging",
             };
@@ -55,9 +55,9 @@ test("a missing scanner fails immediately without retrying", async () => {
       },
       retryMs: 0,
     }),
-    /MALWARE_SCANNER_REQUIRED/,
+    /did not reach full readiness/,
   );
-  assert.equal(calls, 1);
+  assert.equal(calls, 10);
 });
 
 test("temporary stale schema retries and eventually passes when reloaded", async () => {

@@ -15,7 +15,6 @@ const required = [
 
 if (!reuseExistingVars) {
   required.push(
-    "SERAMET_MALWARE_SCANNER_SERVICE",
     "SERAMET_SUPABASE_URL",
     "SERAMET_SUPABASE_PUBLISHABLE_KEY",
     "SERAMET_PUBLIC_ORIGIN",
@@ -54,15 +53,6 @@ if (!reuseExistingVars) {
     SERAMET_ALLOWED_ORIGINS: process.env.SERAMET_ALLOWED_ORIGINS ?? origin,
   });
 }
-
-const services = process.env.SERAMET_MALWARE_SCANNER_SERVICE?.trim()
-  ? [
-      {
-        binding: "SERAMET_MALWARE_SCANNER",
-        service: process.env.SERAMET_MALWARE_SCANNER_SERVICE.trim(),
-      },
-    ]
-  : [];
 
 const config = {
   $schema: "../node_modules/wrangler/config-schema.json",
@@ -111,7 +101,6 @@ const config = {
       },
     ],
   },
-  ...(services.length ? { services } : {}),
   triggers: { crons: ["*/1 * * * *"] },
   vars,
 };

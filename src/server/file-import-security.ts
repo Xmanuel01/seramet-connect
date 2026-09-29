@@ -11,13 +11,6 @@ export type ImportKind =
   | "CONFIGURATION"
   | "HISTORICAL_SALES";
 
-export type MalwareScanAdapter = {
-  scan(input: { bytes: Uint8Array; filename: string; contentType: string }): Promise<{
-    clean: boolean;
-    reference?: string;
-  }>;
-};
-
 const limits: Record<ImportKind, { maxBytes: number; maxRows: number; extensions: string[] }> = {
   BANK: { maxBytes: 10 * 1024 * 1024, maxRows: 50_000, extensions: ["csv", "ofx", "xlsx"] },
   SETTLEMENT: { maxBytes: 20 * 1024 * 1024, maxRows: 100_000, extensions: ["csv", "xlsx"] },
@@ -36,7 +29,6 @@ export async function validateImportFile(input: {
   contentType: string;
   bytes: Uint8Array;
   estimatedRows?: number;
-  scanner?: MalwareScanAdapter;
 }) {
   const policy = limits[input.kind];
   const filename = input.filename.trim();
@@ -76,17 +68,6 @@ export async function validateImportFile(input: {
   if (extension === "xlsx" && !(input.bytes[0] === 0x50 && input.bytes[1] === 0x4b)) {
     throw new ServerOperationError("VALIDATION_FAILED", 400, "Workbook signature is invalid");
   }
-  let scanReference: string | undefined;
-  if (input.scanner) {
-    const scan = await input.scanner.scan({
-      bytes: input.bytes,
-      filename,
-      contentType: normalizedType,
-    });
-    if (!scan.clean)
-      throw new ServerOperationError("VALIDATION_FAILED", 422, "Import failed malware screening");
-    scanReference = scan.reference;
-  }
   return {
     kind: input.kind,
     filename,
@@ -95,7 +76,6 @@ export async function validateImportFile(input: {
     maxRows: policy.maxRows,
     requiresPreview: true,
     digest: await sha256(input.bytes),
-    ...(scanReference ? { scanReference } : {}),
   };
 }
 

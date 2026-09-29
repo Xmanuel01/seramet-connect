@@ -160,15 +160,15 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
   });
 
-  it("requires verified malware scan on staging and rejects unscanned prior preview replay", async () => {
+  it("requires a fresh policy-validated staging preview before import commit", async () => {
     const bytes = new TextEncoder().encode(
-      "code,name,category,price,currency\nSEC-01,Scanner-verified item,MAIN,1250,KES",
+      "code,name,category,price,currency\nSEC-01,Validated item,MAIN,1250,KES",
     );
     const original = await service.previewImport({
       targetMode: "SELECTED_BRANCHES",
       targetBranchIds: [branchId],
       kind: "MENU",
-      originalName: "scanner-test.csv",
+      originalName: "validated.csv",
       mimeType: "text/csv",
       bytes,
       duplicateStrategy: "ERROR",
@@ -177,86 +177,25 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     const stagingEnv: SerametEnv = { ...env, SERAMET_ENVIRONMENT: "staging" };
     const staging = new OnboardingService(db, actor(), stagingEnv);
     await expect(staging.commitImport(original.id, original.commitKey)).rejects.toThrow(
-      /no verified current malware scan/,
+      /predates the current file validation policy/,
     );
-    await expect(
-      staging.previewImport({
-        targetMode: "SELECTED_BRANCHES",
-        targetBranchIds: [branchId],
-        kind: "MENU",
-        originalName: "scanner-test.csv",
-        mimeType: "text/csv",
-        bytes,
-        duplicateStrategy: "ERROR",
-        idempotencyKey: "staging-no-scanner",
-      }),
-    ).rejects.toThrow(/verified malware scanner is required/);
-
-    stagingEnv.SERAMET_MALWARE_SCANNER = {
-      async scan() {
-        return { status: "ERROR" };
-      },
-    };
-    await expect(
-      staging.previewImport({
-        targetMode: "SELECTED_BRANCHES",
-        targetBranchIds: [branchId],
-        kind: "MENU",
-        originalName: "scanner-test.csv",
-        mimeType: "text/csv",
-        bytes,
-        duplicateStrategy: "ERROR",
-        idempotencyKey: "staging-error-scanner",
-      }),
-    ).rejects.toThrow(/scanning could not be verified/);
-
-    stagingEnv.SERAMET_MALWARE_SCANNER = {
-      async scan() {
-        return { status: "INFECTED" };
-      },
-    };
-    await expect(
-      staging.previewImport({
-        targetMode: "SELECTED_BRANCHES",
-        targetBranchIds: [branchId],
-        kind: "MENU",
-        originalName: "scanner-test.csv",
-        mimeType: "text/csv",
-        bytes,
-        duplicateStrategy: "ERROR",
-        idempotencyKey: "staging-infected",
-      }),
-    ).rejects.toThrow(/Import failed malware screening/);
-
-    let scannedBytes = 0;
-    stagingEnv.SERAMET_MALWARE_SCANNER = {
-      async scan(input) {
-        scannedBytes = input.bytes.byteLength;
-        return { status: "CLEAN", reference: "isolated-clamav-fixture" };
-      },
-    };
-    const safe = await staging.previewImport({
+    const fresh = await staging.previewImport({
       targetMode: "SELECTED_BRANCHES",
       targetBranchIds: [branchId],
       kind: "MENU",
-      originalName: "scanner-test.csv",
+      originalName: "validated.csv",
       mimeType: "text/csv",
       bytes,
       duplicateStrategy: "ERROR",
-      idempotencyKey: "staging-scanned",
+      idempotencyKey: "staging-policy-v1",
     });
-    expect(scannedBytes).toBe(bytes.byteLength);
-    expect(safe.id).not.toBe(original.id);
+    expect(fresh.id).not.toBe(original.id);
     const report = await db
       .prepare("SELECT report_json FROM setup_imports WHERE tenant_id=? AND id=?")
-      .bind(tenantId, safe.id)
+      .bind(tenantId, fresh.id)
       .first<{ report_json: string }>();
-    expect(JSON.parse(report!.report_json).cleanScan).toMatchObject({
-      status: "CLEAN",
-      reference: "isolated-clamav-fixture",
-      policy: "verified-private-av-v1",
-    });
-    expect(await staging.commitImport(safe.id, safe.commitKey)).toMatchObject({
+    expect(JSON.parse(report!.report_json).fileValidationPolicy).toBe("validated-unscanned-v1");
+    expect(await staging.commitImport(fresh.id, fresh.commitKey)).toMatchObject({
       status: "COMMITTED",
     });
   });
