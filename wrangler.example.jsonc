@@ -19,7 +19,6 @@
       },
     ],
   },
-  "services": [{ "binding": "SERAMET_MALWARE_SCANNER", "service": "REPLACE_WITH_SCANNER_SERVICE" }],
   "triggers": { "crons": ["*/1 * * * *"] },
   "vars": {
     "SERAMET_ENVIRONMENT": "staging",
