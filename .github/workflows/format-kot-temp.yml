@@ -1,0 +1,51 @@
+name: Temporary KOT branch formatter
+on:
+  push:
+    branches:
+      - fix/durable-kot-outbox-20260929
+permissions:
+  contents: write
+jobs:
+  format-kot:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/durable-kot-outbox-20260929
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Format only new KOT changes
+        run: |
+          npx --no-install prettier --write \
+            src/lib/kot-obligations.ts \
+            src/lib/kot-obligations.test.ts \
+            src/lib/transaction-engine.ts \
+            src/lib/seramet-repository.ts \
+            src/lib/seramet-print-service.ts \
+            src/lib/device-print-queue-store.ts \
+            src/lib/device-print-queue-store.test.ts \
+            src/hooks/use-seramet-print-queue.ts \
+            src/hooks/use-kot-delivery-ack.ts \
+            src/components/app/KotOutboxRecovery.tsx \
+            src/routes/pos.tsx \
+            src/routes/seramet-printers.tsx \
+            src/platform/permissions.ts \
+            src/server/pass-5-production-foundation.test.ts \
+            src/lib/seramet-flows.test.ts
+      - name: Commit formatter-only result to this temporary branch
+        run: |
+          if git diff --quiet; then
+            echo "No formatting changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/
+          git commit -m "style(kot): format new durable printing code"
+          git push origin HEAD:fix/durable-kot-outbox-20260929
