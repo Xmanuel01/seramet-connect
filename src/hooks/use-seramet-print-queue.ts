@@ -139,7 +139,8 @@ export function useSerametPrintQueue(branch: string) {
     obligationId: string,
   ): Promise<KotDeliveryOutcome> => {
     if (!profile) throw new Error(configurationError ?? "No configured kitchen printer");
-    const ticketKind = kind === "AUDITED_REPRINT" ? "REPRINT" : kind === "ADDITION" ? "ADDITION" : "NEW";
+    const ticketKind =
+      kind === "AUDITED_REPRINT" ? "REPRINT" : kind === "ADDITION" ? "ADDITION" : "NEW";
     const plan = SerametPrintService.createProductionTicketJobs(
       profile,
       order,
