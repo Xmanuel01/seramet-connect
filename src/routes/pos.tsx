@@ -227,6 +227,7 @@ function POS() {
   } = useSerametPrintQueue(branchId);
 
   useEffect(() => {
+    if (printOutcomeRef.current.size > 0) return;
     const obligations = transactionState.productionPrintObligations ?? [];
     for (const obligation of obligations) {
       if (obligation.branchId !== branchId || obligation.status !== "ATTEMPTING") continue;
@@ -272,11 +273,13 @@ function POS() {
       })
         .catch(() => undefined)
         .finally(() => printOutcomeRef.current.delete(key));
+      break;
     }
   }, [branchId, mutateTransaction, printJobs, transactionState.productionPrintObligations]);
 
   useEffect(() => {
     if (!profile || backendStatus !== "synced" || isStagingPrinterlessTestingEnabled()) return;
+    if (printRecoveryRef.current.size > 0) return;
     const obligations = (transactionState.productionPrintObligations ?? []).filter(
       (item) => item.branchId === branchId && item.status === "PENDING",
     );
@@ -336,6 +339,7 @@ function POS() {
           setPrintNoticeType("warning");
         })
         .finally(() => printRecoveryRef.current.delete(obligation.id));
+      break;
     }
   }, [
     backendStatus,
