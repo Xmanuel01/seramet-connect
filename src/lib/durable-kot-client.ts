@@ -2,6 +2,24 @@ import type { KitchenPrintObligation } from "@/lib/kitchen-print-outbox";
 import type { TransactionState } from "@/lib/transaction-engine";
 import type { OrderForPrint, PrintJob } from "@/lib/seramet-print-service";
 
+const claimStoragePrefix = "seramet.kot.claim.v1:";
+
+function durableClaimId(obligationId: string) {
+  if (typeof window === "undefined") return crypto.randomUUID();
+  const key = `${claimStoragePrefix}${obligationId}`;
+  const existing = window.localStorage.getItem(key)?.trim();
+  if (existing && existing.length <= 128) return existing;
+  const created = crypto.randomUUID();
+  window.localStorage.setItem(key, created);
+  return created;
+}
+
+function clearDurableClaimId(obligationId: string, claimId: string) {
+  if (typeof window === "undefined") return;
+  const key = `${claimStoragePrefix}${obligationId}`;
+  if (window.localStorage.getItem(key) === claimId) window.localStorage.removeItem(key);
+}
+
 export type KitchenObligationMutation = (
   action: string,
   payload: unknown,
@@ -71,7 +89,10 @@ export async function dispatchDurableKitchenObligation(input: {
   // claim. If no printer attempt can occur, the obligation stays PENDING and
   // is safe to recover automatically later.
   if (preflight) await preflight(printable, obligation.kind, obligation.id);
-  const claimId = crypto.randomUUID();
+  // Persist this identity before the server claim. After a tab/browser crash,
+  // the same device can resume the same claim and the bridge's durable spool
+  // ledger will refuse a second OS-spool submission for the same job identity.
+  const claimId = durableClaimId(obligation.id);
   const claimed = await mutate("claimKitchenPrintObligation", {
     obligationId: obligation.id,
     claimId,
@@ -98,8 +119,10 @@ export async function dispatchDurableKitchenObligation(input: {
         bridgeJobIds: [],
         reason: message,
       });
+      clearDurableClaimId(obligation.id, claimId);
     } catch {
-      // The CLAIMED record survives; its original claim cannot auto-reprint.
+      // Keep the stable claim identity. A restart may safely resume the SAME
+      // bridge job; the local spool ledger prevents a second OS spool.
     }
     throw new Error(
       `Kitchen order remains saved, but KOT delivery is uncertain: ${message}. Review Printers.`,
@@ -123,6 +146,7 @@ export async function dispatchDurableKitchenObligation(input: {
     bridgeJobIds: delivered.jobs.map((job) => job.id),
     ...(reason ? { reason } : {}),
   });
+  clearDurableClaimId(obligation.id, claimId);
   if (status === "UNCERTAIN") {
     throw new Error("Kitchen order saved, but a ticket delivery is uncertain. Review Printers.");
   }
