@@ -27,7 +27,10 @@ import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
 
-export function useSerametPrintQueue(branch: string) {
+export function useSerametPrintQueue(
+  branch: string,
+  onJobStatus?: (job: PrintJob) => void,
+) {
   const profileState = useMemo<{
     profile: BranchHardwareProfile | null;
     configurationError: string | null;
@@ -99,7 +102,7 @@ export function useSerametPrintQueue(branch: string) {
     const queued = [...nextJobs, ...existingJobs];
     setJobs(queued);
     nextJobs.forEach((job) => {
-      void sendInstalledBridgeJob(job, targetProfile, bridgeConfig, setJobs);
+      void sendInstalledBridgeJob(job, targetProfile, bridgeConfig, setJobs, onJobStatus);
     });
     return queued;
   };
@@ -113,6 +116,7 @@ export function useSerametPrintQueue(branch: string) {
   const sendKitchenTickets = (
     order: OrderForPrint,
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
+    obligationIdsByStation: Record<string, string> = {},
   ): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
     const plan = SerametPrintService.createProductionTicketJobs(
@@ -120,6 +124,7 @@ export function useSerametPrintQueue(branch: string) {
       order,
       jobs,
       amendmentType,
+      obligationIdsByStation,
     );
     const queued = processJobs(plan.jobs, jobs, profile);
     return { ...plan, queue: queued };
@@ -234,13 +239,16 @@ async function sendInstalledBridgeJob(
   profile: BranchHardwareProfile,
   config: InstalledPrintBridgeConfig,
   setJobs: Dispatch<SetStateAction<PrintJob[]>>,
+  onJobStatus?: (job: PrintJob) => void,
 ) {
   if (job.printerId === "KDS-DISPLAY") {
-    updateJob(setJobs, job.id, {
-      status: "Displayed",
+    const displayed = {
+      ...job,
+      status: "Displayed" as const,
       printedAt: formatDateTime(new Date(), { hour12: false }),
-      failureReason: null,
-    });
+    };
+    updateJob(setJobs, job.id, { status: displayed.status, printedAt: displayed.printedAt, failureReason: null });
+    onJobStatus?.(displayed);
     return;
   }
 
@@ -253,36 +261,31 @@ async function sendInstalledBridgeJob(
       if (fallback) {
         result = await submitCopies({ ...job, printerId: fallback.id }, config, fallback.name);
         if (result.accepted) {
+          const printedAt = formatDateTime(new Date(), { hour12: false });
           updateJob(setJobs, job.id, {
-            status: "Fallback Printed",
-            printerId: fallback.id,
-            fallbackPrinterId: fallback.id,
-            printedAt: formatDateTime(new Date(), { hour12: false }),
-            failureReason: null,
+            status: "Fallback Printed", printerId: fallback.id, fallbackPrinterId: fallback.id,
+            printedAt, failureReason: null,
           });
+          onJobStatus?.({ ...job, status: "Fallback Printed", printerId: fallback.id, fallbackPrinterId: fallback.id, printedAt });
           return;
         }
       }
     }
 
     if (!result.accepted) {
-      updateJob(setJobs, job.id, {
-        status: "Failed",
-        failureReason: result.message,
-      });
+      updateJob(setJobs, job.id, { status: "Failed", failureReason: result.message });
+      onJobStatus?.({ ...job, status: "Failed", failureReason: result.message });
       return;
     }
 
-    updateJob(setJobs, job.id, {
-      status: "Printed",
-      printedAt: formatDateTime(new Date(), { hour12: false }),
-      failureReason: null,
-    });
+    const printedAt = formatDateTime(new Date(), { hour12: false });
+    updateJob(setJobs, job.id, { status: "Printed", printedAt, failureReason: null });
+    onJobStatus?.({ ...job, status: "Printed", printedAt });
   } catch (error) {
-    updateJob(setJobs, job.id, {
-      status: "Failed",
-      failureReason: error instanceof Error ? error.message : "Local print bridge request failed",
-    });
+    const failureReason =
+      error instanceof Error ? error.message : "Local print bridge request outcome is uncertain";
+    updateJob(setJobs, job.id, { status: "Uncertain", failureReason });
+    onJobStatus?.({ ...job, status: "Uncertain", failureReason });
   }
 }
 
