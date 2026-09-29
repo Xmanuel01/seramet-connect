@@ -675,6 +675,16 @@ async function replaceTransactions(request: Request, env: SerametEnv, repo: Tran
     throw new SerametHttpError(403, "Cross-tenant snapshot replace denied");
   }
   assertBranchSafeSnapshotReplace(current, body.state, actor);
+  if (
+    repo.authoritative &&
+    JSON.stringify(body.state.kitchenPrintObligations ?? []) !==
+      JSON.stringify(filterStateForActor(current, actor).kitchenPrintObligations ?? [])
+  ) {
+    throw new SerametHttpError(
+      403,
+      "Authoritative kitchen print obligations cannot be replaced from browser snapshots",
+    );
+  }
   const stateToSave = mergeSnapshotForActor(current, body.state, actor);
 
   const requestHash = await hashJson(body.state);
@@ -1003,10 +1013,13 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   const wastageId = String(input["wastageId"] ?? "");
   const breakageId = String(input["breakageId"] ?? "");
   const employeeId = String(input["employeeId"] ?? "");
+  const obligationId = String(input["obligationId"] ?? "");
   if (typeof input["branch"] === "string") branches.add(input["branch"]);
   if (invoiceId) addBranch(branches, state.bills.find((item) => item.id === invoiceId)?.branch);
   if (billId) addBranch(branches, state.bills.find((item) => item.id === billId)?.branch);
   if (orderId) addBranch(branches, state.orders.find((item) => item.id === orderId)?.branch);
+  if (obligationId)
+    addBranch(branches, state.kitchenPrintObligations?.find((item) => item.id === obligationId)?.branch);
   if (refundId) addBranch(branches, state.refunds.find((item) => item.id === refundId)?.branch);
   if (drawerId) addBranch(branches, state.cashDrawers.find((item) => item.id === drawerId)?.branch);
   if (externalTransactionId)
@@ -1077,6 +1090,7 @@ function assertBranchSafeSnapshotReplace(
     ...next.marketplaceReceivables,
     ...next.marketplaceCharges,
     ...next.productionAmendments,
+    ...(next.kitchenPrintObligations ?? []),
     ...next.auditEvents,
     ...next.inventory,
     ...next.stockMovements,
@@ -1127,6 +1141,8 @@ function mergeSnapshotForActor(
     marketplaceReceivables: merge(current.marketplaceReceivables, next.marketplaceReceivables),
     marketplaceCharges: merge(current.marketplaceCharges, next.marketplaceCharges),
     productionAmendments: merge(current.productionAmendments, next.productionAmendments),
+    // Browser snapshots must not erase server-created kitchen print obligations.
+    kitchenPrintObligations: current.kitchenPrintObligations ?? [],
     auditEvents: merge(current.auditEvents, next.auditEvents),
     inventory: merge(current.inventory, next.inventory),
     recipes: next.recipes,
@@ -1172,6 +1188,7 @@ function branchRestrictedSnapshot(
     marketplaceReceivables: keep(state.marketplaceReceivables),
     marketplaceCharges: keep(state.marketplaceCharges),
     productionAmendments: keep(state.productionAmendments),
+    kitchenPrintObligations: keep(state.kitchenPrintObligations ?? []),
     auditEvents: keep(state.auditEvents),
     inventory: keep(state.inventory),
     recipes: state.recipes,
