@@ -158,7 +158,7 @@ function Orders() {
             items={[
               {
                 label: "Period",
-                value: formatFilterDate(periodDate),
+                value: formatFilterDate(periodDate, currentDateKey(new Date(), timeZone)),
                 dateValue: periodDate,
                 onDateChange: setPeriodDate,
                 onClear: () => setPeriodDate(""),
