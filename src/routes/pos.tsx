@@ -991,8 +991,9 @@ function POS() {
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPreviouslyPaid(bill.paid ?? 0);
-      setTendered(Math.max(0, total - (bill.paid ?? 0)));
-      setCashReceived(Math.max(0, total - (bill.paid ?? 0)));
+      // Use the persisted invoice total: never collect using stale local cart pricing.
+      setTendered(Math.max(0, bill.total - (bill.paid ?? 0)));
+      setCashReceived(Math.max(0, bill.total - (bill.paid ?? 0)));
       setPaymentOpen(true);
     } catch (error) {
       setPrintNotice(cashierErrorMessage(error, "Payment could not be prepared."));
