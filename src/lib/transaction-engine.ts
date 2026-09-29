@@ -1941,7 +1941,7 @@ export const TransactionEngine = {
     next.productionPrintObligations ??= [];
     for (const obligation of next.productionPrintObligations) {
       if (!obligationIds.includes(obligation.id)) continue;
-      if (obligation.status !== "PENDING" && obligation.status !== "FAILED") continue;
+      if (obligation.status !== "PENDING") continue;
       obligation.status = "ATTEMPTING";
       obligation.attemptedAt = stamp;
       obligation.deviceId = deviceId;
