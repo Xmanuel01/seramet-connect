@@ -987,7 +987,7 @@ function POS() {
         }
         paymentState = customerUpdate.state;
       }
-      const { prepared, bill } = await preparePayableInvoice(orderId, paymentState);
+      const { bill } = await preparePayableInvoice(orderId, paymentState);
       setPaymentOrderId(orderId);
       setPaymentInvoiceId(bill.id);
       setPreviouslyPaid(bill.paid ?? 0);
@@ -1343,7 +1343,7 @@ function POS() {
   // Print bill. Once confirmed, printing failures are independent of billing.
   const completeInvoice = async (orderId: string, sourceState: TransactionState, print: boolean) => {
     const { prepared, bill } = await preparePayableInvoice(orderId, sourceState);
-    if (prepared.offline) {
+    if ("offline" in prepared && prepared.offline) {
       throw new Error(
         "Invoice queued offline. Keep this order selected and wait for synchronization before retrying.",
       );
