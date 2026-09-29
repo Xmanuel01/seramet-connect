@@ -122,12 +122,9 @@ describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
 
 describe("branch-correct invoice visibility", () => {
   it("shows late-night UTC invoices on the next Kenyan calendar day", () => {
-    expect(
-      invoiceBusinessDate(
-        { issuedAt: "2026-09-28T23:30:00.000Z" },
-        "Africa/Nairobi",
-      ),
-    ).toBe("2026-09-29");
+    expect(invoiceBusinessDate({ issuedAt: "2026-09-28T23:30:00.000Z" }, "Africa/Nairobi")).toBe(
+      "2026-09-29",
+    );
   });
   it("prefers the server business date when the restaurant uses an overnight cutoff", () => {
     expect(
