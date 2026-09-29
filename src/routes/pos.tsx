@@ -1257,7 +1257,10 @@ function POS() {
 
     const newObligations = (resultState.state.kitchenPrintObligations ?? []).filter(
       (obligation) =>
-        obligation.orderId === authoritativeOrder.id && !knownObligationIds.has(obligation.id),
+        obligation.orderId === authoritativeOrder.id &&
+        obligation.status === "PENDING" &&
+        !knownObligationIds.has(obligation.id) &&
+        obligation.lines.some((line) => ticketLines.some((sent) => sent.id === line.id)),
     );
     if (!newObligations.length) {
       setPrintNotice(
