@@ -330,7 +330,7 @@ function SerametPrinters() {
         branchId={selectedBranchId}
         branchName={branch}
         jobs={jobs}
-        canRoute={true}
+        canRoute={profile.kitchenMode === "KDS_ONLY" || bridgeConfigReady(bridgeConfig)}
         sendKitchenTickets={sendKitchenTickets}
       />
 
