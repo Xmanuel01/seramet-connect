@@ -49,8 +49,14 @@ export function KotOutboxRecovery({
       ({ obligation }) => obligation.id === obligationId && obligation.orderId === orderId,
     );
     if (!entry || entry.obligation.status !== "PENDING") return;
-    if (jobs.some((job) => job.kotObligationId === obligationId)) {
-      setNotice("This device already has this KOT: inspect its existing print job first.");
+    const existingJobs = jobs.filter((job) => job.kotObligationId === obligationId);
+    if (
+      existingJobs.some((job) => !["Failed", "Cancelled"].includes(job.status)) ||
+      (existingJobs.length > 0 && !entry.obligation.reviewReason)
+    ) {
+      setNotice(
+        "Existing KOT output is uncertain. Manager review is required before another attempt.",
+      );
       return;
     }
     if (
@@ -187,6 +193,10 @@ export function KotOutboxRecovery({
         )}
         {obligations.map(({ order, obligation }) => {
           const local = jobs.filter((job) => job.kotObligationId === obligation.id);
+          const reviewedFailedQueue =
+            local.length > 0 &&
+            local.every((job) => ["Failed", "Cancelled"].includes(job.status)) &&
+            Boolean(obligation.reviewReason);
           return (
             <div
               key={obligation.id}
@@ -207,7 +217,7 @@ export function KotOutboxRecovery({
                   : "No ticket is recorded on this device. Other terminals may have printed it."}
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {obligation.status === "PENDING" && local.length === 0 && (
+                {obligation.status === "PENDING" && (local.length === 0 || reviewedFailedQueue) && (
                   <Btn
                     disabled={!active || !canRoute || busyId !== null}
                     onClick={() => void recover(order.id, obligation.id)}
