@@ -216,6 +216,23 @@ export function applyServerMutation(
         throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
+    case "markProductionPrintAttempting":
+      return TransactionEngine.markProductionPrintAttempting(
+        state,
+        Array.isArray(input["obligationIds"])
+          ? input["obligationIds"].map((value) => String(value))
+          : [],
+        actor.name,
+        String(input["deviceId"] ?? actor.deviceId ?? "unknown-device"),
+      );
+    case "markProductionPrintOutcome":
+      return TransactionEngine.markProductionPrintOutcome(
+        state,
+        String(input["obligationId"]),
+        String(input["status"]) as "DELIVERED" | "FAILED" | "UNCERTAIN",
+        actor.name,
+        typeof input["detail"] === "string" ? input["detail"] : undefined,
+      );
     case "amendKitchenOrder": {
       const orderId = String(input["orderId"]);
       const draft = input["draft"] as Parameters<typeof TransactionEngine.amendKitchenOrder>[2];
