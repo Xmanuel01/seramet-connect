@@ -556,8 +556,9 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       requestRefresh("stream-unavailable");
     });
     stream.onerror = () => {
+      // The server routinely closes long-lived SSE responses for reconnect.
+      // A brief reconnect is not a reason to reload every transaction snapshot.
       streamHealthy = false;
-      requestRefresh("stream-error");
     };
     const focus = () => requestRefresh("focus");
     const online = () => requestRefresh("online");
