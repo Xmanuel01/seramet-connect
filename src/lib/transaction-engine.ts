@@ -1899,7 +1899,7 @@ export const TransactionEngine = {
     state: TransactionState,
     orderId: string,
     obligationIds: string[],
-    status: "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN",
+    status: "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED",
     user: string,
     owner: string,
   ) {
@@ -1911,13 +1911,25 @@ export const TransactionEngine = {
     if (!ids.size || ids.size !== obligationIds.length || selected.length !== ids.size) {
       throw new Error("KOT obligation selection is invalid");
     }
-    if (selected.some((item) => item.claimedBy !== owner || item.status !== "CLAIMED")) {
+    if (
+      selected.some(
+        (item) =>
+          item.claimedBy !== owner ||
+          (status === "BRIDGE_ACKNOWLEDGED"
+            ? item.status !== "QUEUED"
+            : item.status !== "CLAIMED"),
+      )
+    ) {
       throw new Error("KOT claim belongs to another device or needs manager review");
     }
     const stamp = now();
     for (const item of selected) {
+      const previous = item.status;
       item.status = status;
-      item.queuedAt = status === "QUEUED" || status === "DIGITAL_DISPLAYED" ? stamp : undefined;
+      if (status === "QUEUED" || status === "DIGITAL_DISPLAYED") item.queuedAt = stamp;
+      if (status === "BRIDGE_ACKNOWLEDGED" && previous === "QUEUED") {
+        item.acknowledgedAt = stamp;
+      }
     }
     order.updatedAt = stamp;
     audit(next, {
@@ -1927,7 +1939,7 @@ export const TransactionEngine = {
       module: "Orders",
       action: `Recorded KOT ${status.toLowerCase()} without asserting physical output`,
       record: order.id,
-      before: "CLAIMED",
+      before: status === "BRIDGE_ACKNOWLEDGED" ? "QUEUED" : "CLAIMED",
       after: selected.map((item) => item.id).join(","),
     });
     return next;
