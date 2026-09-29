@@ -7,6 +7,7 @@ import {
 import {
   createDefaultDemoPlatformState,
   DEMO_TENANT_ID,
+  DEMO_NGONG_BRANCH_ID,
   DEMO_WESTLANDS_BRANCH_ID,
 } from "@/platform/demo/default-demo-data";
 import {
@@ -210,5 +211,62 @@ describe("real three-order cashier-to-kitchen-to-payment acceptance", () => {
     expect(state.receipts).toHaveLength(1);
     expect(state.orders.find((o) => o.id === ids[2])?.status).toBe("PAID");
     expect(unbilledKitchenOrders(state.orders, state.bills).map((o) => o.id)).toEqual([ids[0]]);
+  });
+});
+
+describe("two-branch concurrent-order source isolation", () => {
+  beforeEach(() => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+  });
+
+  it("dispatches and bills Westlands without changing Ngong's held queue or invoice", () => {
+    const draft = (branchId: string, branch: string, lineId: string): OrderDraft => ({
+      tenantId: DEMO_TENANT_ID,
+      branchId,
+      branch,
+      table: "01",
+      customer: "Table 01",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: lineId,
+          productId: "p1",
+          name: "Chicken Biryani",
+          category: "Main Meals",
+          quantity: 1,
+          unitPrice: 1250,
+          productionStation: "MAIN KITCHEN",
+        },
+      ],
+    });
+    let state = createEmptyTransactionState(DEMO_TENANT_ID);
+    state = TransactionEngine.holdOrder(
+      state,
+      draft(DEMO_WESTLANDS_BRANCH_ID, "Westlands", "west-line"),
+    );
+    const westId = state.orders[0]!.id;
+    state = TransactionEngine.holdOrder(
+      state,
+      draft(DEMO_NGONG_BRANCH_ID, "Ngong Road", "ngong-line"),
+    );
+    const ngongId = state.orders[0]!.id;
+    const westOrders = () =>
+      state.orders.filter((order) => order.branchId === DEMO_WESTLANDS_BRANCH_ID);
+    const ngongOrders = () =>
+      state.orders.filter((order) => order.branchId === DEMO_NGONG_BRANCH_ID);
+
+    expect(pendingPosOrders(westOrders(), state.bills)).toHaveLength(1);
+    expect(pendingPosOrders(ngongOrders(), state.bills)).toHaveLength(1);
+    state = TransactionEngine.sendToKitchen(state, westId, "Westlands Cashier");
+    state = TransactionEngine.prepareInvoiceForPayment(state, westId, "Westlands Cashier");
+    expect(pendingPosOrders(westOrders(), state.bills)).toHaveLength(0);
+    expect(pendingPosOrders(ngongOrders(), state.bills)).toHaveLength(1);
+    expect(state.orders.find((order) => order.id === ngongId)?.status).toBe("HELD");
+    expect(state.bills).toHaveLength(1);
+    expect(state.bills[0]?.orderIds).toEqual([westId]);
+    expect(state.bills[0]?.branchId).toBe(DEMO_WESTLANDS_BRANCH_ID);
   });
 });
