@@ -1448,11 +1448,7 @@ function POS() {
       if (printBill) {
         // Print only the exact, server-confirmed invoice number and line totals.
         const result = printCustomerDocument(
-          billingRecordToPrintOrder(
-            confirmedBill,
-            billing.state.payments,
-            billing.state.orders,
-          ),
+          billingRecordToPrintOrder(confirmedBill, billing.state.payments, billing.state.orders),
           "BILL",
         );
         if (result.jobs.length > 0) {
