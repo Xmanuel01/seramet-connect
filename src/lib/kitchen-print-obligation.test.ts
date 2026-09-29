@@ -96,9 +96,7 @@ describe("durable server-side production ticket obligation", () => {
       "extra-line",
     ]);
     expect(state.productionAmendments).toHaveLength(1);
-    expect(state.productionAmendments[0]?.lines.map((line) => line.id)).toEqual([
-      "extra-line",
-    ]);
+    expect(state.productionAmendments[0]?.lines.map((line) => line.id)).toEqual(["extra-line"]);
   });
 
   it("normalizes old snapshots without creating false historic KOT acknowledgments", () => {
