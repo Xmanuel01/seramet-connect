@@ -1341,7 +1341,9 @@ function POS() {
     if (result.printResult?.jobs.length) return true;
     const stations = new Set(
       result.order.lines
-        .filter((line) => line.sentAt && line.productionStation && line.productionStation !== "NONE")
+        .filter(
+          (line) => line.sentAt && line.productionStation && line.productionStation !== "NONE",
+        )
         .map((line) => line.productionStation!),
     );
     if (!stations.size) return false;
