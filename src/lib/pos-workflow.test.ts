@@ -271,7 +271,6 @@ describe("two-branch concurrent-order source isolation", () => {
   });
 });
 
-
 describe("durable KOT delivery obligations", () => {
   beforeEach(() => {
     setConfigurationRepositoryForTests(
@@ -367,7 +366,6 @@ describe("durable KOT delivery obligations", () => {
   });
 });
 
-
 describe("durable KOT retry state machine", () => {
   beforeEach(() => {
     setConfigurationRepositoryForTests(
@@ -405,12 +403,7 @@ describe("durable KOT retry state machine", () => {
       TransactionEngine.markProductionPrintOutcome(state, id, "DELIVERED", "Cashier"),
     ).toThrow(/cannot move from PENDING/i);
 
-    state = TransactionEngine.markProductionPrintAttempting(
-      state,
-      [id],
-      "Cashier",
-      "WEST-POS-01",
-    );
+    state = TransactionEngine.markProductionPrintAttempting(state, [id], "Cashier", "WEST-POS-01");
     state = TransactionEngine.markProductionPrintOutcome(
       state,
       id,
