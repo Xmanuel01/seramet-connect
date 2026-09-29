@@ -337,6 +337,36 @@ export function applyServerMutation(
                 String(input["reason"] ?? ""),
                 stamp,
               );
+      if (action === "authorizeKitchenReprint") {
+        const created = obligations.find(
+          (candidate) =>
+            candidate.reprintOf === obligationId &&
+            candidate.kind === "AUDITED_REPRINT" &&
+            candidate.reviewedBy === actor.id,
+        );
+        if (!created) throw new Error("Audited kitchen reprint was not created");
+        return {
+          ...state,
+          kitchenPrintObligations: obligations,
+          auditEvents: [
+            {
+              id: `AUD-KOT-REPRINT-${crypto.randomUUID()}`,
+              tenantId: actor.tenantId,
+              branchId: actor.branchId,
+              time: stamp,
+              actor: actor.name,
+              role: actor.role,
+              branch: actor.branch,
+              module: "Kitchen Printing",
+              action: "Authorized kitchen ticket reprint",
+              record: created.id,
+              before: obligationId,
+              after: String(input["reason"] ?? "").trim(),
+            },
+            ...state.auditEvents,
+          ],
+        };
+      }
       return { ...state, kitchenPrintObligations: obligations };
     }
     case "setProductionStationStatus":
