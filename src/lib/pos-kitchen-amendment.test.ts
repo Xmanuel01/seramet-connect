@@ -49,6 +49,27 @@ function sentOrder() {
   state = TransactionEngine.createOrder(state, baseDraft, "OPEN");
   const orderId = state.orders[0]!.id;
   state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+  // Amendments in these scenarios occur after the original kitchen ticket
+  // has been routed. Editing an UNCLAIMED original is separately rejected,
+  // preventing stale quantities from reaching the printer after edits.
+  const original = state.orders[0]!.kotObligations!.map((item) => item.id);
+  state = TransactionEngine.claimKotObligations(state, orderId, original, "Cashier", "device-1");
+  state = TransactionEngine.markKotObligations(
+    state,
+    orderId,
+    original,
+    "QUEUED",
+    "Cashier",
+    "device-1",
+  );
+  state = TransactionEngine.markKotObligations(
+    state,
+    orderId,
+    original,
+    "BRIDGE_ACKNOWLEDGED",
+    "Cashier",
+    "device-1",
+  );
   return { state, orderId, branch, baseDraft };
 }
 
