@@ -1,3 +1,4 @@
+import { resolvePosTimeZone } from "@/lib/pos-workflow";
 import {
   createContext,
   useContext,
@@ -266,13 +267,7 @@ function ConfiguredAppProvider({
     actor?.id ?? readSessionValue(sessionUserStorageKey, developmentUserId ?? LOCAL_PILOT_USER_ID);
   const activeTenant = platformState.tenants.find((tenant) => tenant.id === activeTenantId);
   const [formattedTenantId, setFormattedTenantId] = useState("");
-  useLayoutEffect(() => {
-    if (!activeTenant || typeof document === "undefined") return;
-    document.documentElement.lang = activeTenant.locale;
-    document.documentElement.dataset["currency"] = activeTenant.defaultCurrency;
-    document.documentElement.dataset["timeZone"] = activeTenant.timezone;
-    setFormattedTenantId(activeTenant.id);
-  }, [activeTenant]);
+
   const session = actor
     ? authoritativeSession(actor, repository)
     : repository.getUserSession(activeTenantId, userId);
@@ -305,6 +300,24 @@ function ConfiguredAppProvider({
       canUseAllBranchScope,
     ),
   );
+
+  const displayBranch =
+    branchScope.type === "BRANCH"
+      ? branchRecords.find((item) => item.id === branchScope.branchId)
+      : branchRecords.find((item) => assignedBranchIds.includes(item.id));
+  const displayTimeZone = resolvePosTimeZone(
+    displayBranch?.timezone,
+    activeTenant?.timezone,
+    activeTenant?.countryCode,
+    activeTenant?.defaultCurrency,
+  );
+  useLayoutEffect(() => {
+    if (!activeTenant || typeof document === "undefined") return;
+    document.documentElement.lang = activeTenant.locale;
+    document.documentElement.dataset["currency"] = activeTenant.defaultCurrency;
+    document.documentElement.dataset["timeZone"] = displayTimeZone;
+    setFormattedTenantId(activeTenant.id);
+  }, [activeTenant, displayTimeZone]);
 
   useEffect(() => repository.subscribe(() => setRevision((value) => value + 1)), [repository]);
 
@@ -402,7 +415,7 @@ function ConfiguredAppProvider({
       platformState,
       currency: activeTenant?.defaultCurrency ?? "XXX",
       locale: activeTenant?.locale ?? "en",
-      timeZone: activeTenant?.timezone ?? "UTC",
+      timeZone: displayTimeZone,
       theme,
       branchLabel: isAllBranches ? "All branches" : `${fallbackBranch.name} Branch`,
       isAllBranches,
@@ -490,6 +503,7 @@ function ConfiguredAppProvider({
     activeTenant?.defaultCurrency,
     activeTenant?.locale,
     activeTenant?.timezone,
+    displayTimeZone,
     actor?.moduleAccess,
     assignedBranchIds,
     branchRecords,
