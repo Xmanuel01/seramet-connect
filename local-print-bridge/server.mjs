@@ -76,6 +76,13 @@ const server = createServer(async (request, response) => {
         sendJson(response, 400, { accepted: false, message: validation.message });
         return;
       }
+      if (dryRun && body.obligationId) {
+        sendJson(response, 409, {
+          accepted: false,
+          message: "Durable KOT printing cannot run with the local bridge in dry-run mode",
+        });
+        return;
+      }
       const result = await acceptSpoolJob({
         dataDir,
         job: body,
