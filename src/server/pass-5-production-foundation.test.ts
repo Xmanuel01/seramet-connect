@@ -268,6 +268,90 @@ describe.sequential("Pass 5 production foundation", () => {
     ]);
   });
 
+  it("atomically commits and recovers kitchen KOT obligations on a real transactional database adapter", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const created = await mutation(
+      repository,
+      "kot-atomic-order",
+      "kot-atomic-order",
+      "upsertOrderDraft",
+      { draft: orderDraft("Kitchen Obligation"), targetStatus: "OPEN" },
+    );
+    const orderId = created.state.orders[0]!.id;
+    expect(created.state.kitchenPrintObligations).toEqual([]);
+
+    const sent = await mutation(
+      repository,
+      "kot-atomic-dispatch",
+      "kot-atomic-dispatch",
+      "sendToKitchen",
+      { orderId },
+    );
+    expect(sent.state.orders[0]?.status).toBe("SENT_TO_KITCHEN");
+    expect(sent.state.kitchenPrintObligations).toHaveLength(1);
+    const outboxId = sent.state.kitchenPrintObligations![0]!.id;
+    const inSameCommit = await database
+      .prepare(
+        `SELECT branch_id,status,payload_json FROM authoritative_records
+         WHERE tenant_id=? AND entity_type='state:kitchenPrintObligations' AND entity_id=?`,
+      )
+      .bind(tenantA, outboxId)
+      .first<{ branch_id: string; status: string; payload_json: string }>();
+    expect(inSameCommit?.branch_id).toBe(branchA);
+    expect(inSameCommit?.status).toBe("PENDING");
+    expect(JSON.parse(inSameCommit!.payload_json).orderId).toBe(orderId);
+
+    // A newly constructed repository sees the durable ticket even if the
+    // original browser and in-memory print queue have been destroyed.
+    const restarted = new D1AuthoritativeTransactionRepository(database);
+    const reloaded = await restarted.loadState(tenantA);
+    expect(reloaded.kitchenPrintObligations?.[0]?.id).toBe(outboxId);
+    const duplicate = await mutation(
+      restarted,
+      "kot-atomic-dispatch",
+      "kot-atomic-dispatch",
+      "sendToKitchen",
+      { orderId },
+    );
+    expect(duplicate.duplicate).toBe(true);
+    expect(duplicate.state.kitchenPrintObligations).toHaveLength(1);
+
+    const revision = await restarted.revision(tenantA);
+    const claimA = restarted.commitMutation({
+      actor: actor(),
+      action: "claimKitchenPrintObligation",
+      payload: { obligationId: outboxId, claimId: "terminal-claim-a" },
+      idempotencyKey: "kot-claim-terminal-a",
+      requestHash: "kot-claim-terminal-a",
+      correlationId: "kot-claim-a",
+      expectedRevision: revision,
+    });
+    const claimB = restarted.commitMutation({
+      actor: actor(),
+      action: "claimKitchenPrintObligation",
+      payload: { obligationId: outboxId, claimId: "terminal-claim-b" },
+      idempotencyKey: "kot-claim-terminal-b",
+      requestHash: "kot-claim-terminal-b",
+      correlationId: "kot-claim-b",
+      expectedRevision: revision,
+    });
+    const results = await Promise.allSettled([claimA, claimB]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const claimed = await restarted.loadState(tenantA);
+    expect(claimed.kitchenPrintObligations?.[0]?.status).toBe("CLAIMED");
+    expect(claimed.kitchenPrintObligations?.[0]?.claimId).toMatch(/^terminal-claim-/);
+    expect(
+      (await database
+        .prepare(
+          `SELECT count(*) AS total FROM authoritative_records
+           WHERE tenant_id=? AND entity_type='state:kitchenPrintObligations'`,
+        )
+        .bind(tenantA)
+        .first<{ total: number }>())?.total,
+    ).toBe(1);
+  });
+
   it("allows only one concurrent mutation from the same base revision", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     const results = await Promise.allSettled([
