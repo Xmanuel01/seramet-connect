@@ -13,11 +13,12 @@ export type KotObligation = {
   station: string;
   kind: "NEW" | "ADDITION";
   lines: TransactionLine[];
-  status: "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN";
+  status: "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED";
   createdAt: string;
   claimedBy?: string;
   claimedAt?: string;
   queuedAt?: string;
+  acknowledgedAt?: string;
   reviewedBy?: string;
   reviewReason?: string;
 };
@@ -60,7 +61,11 @@ export function pendingKotObligations(
   return orders.flatMap((order) =>
     order.branchId === branchId
       ? (order.kotObligations ?? [])
-          .filter((obligation) => obligation.status !== "DIGITAL_DISPLAYED")
+          .filter(
+            (obligation) =>
+              obligation.status !== "DIGITAL_DISPLAYED" &&
+              obligation.status !== "BRIDGE_ACKNOWLEDGED",
+          )
           .map((obligation) => ({ order, obligation }))
       : [],
   );
