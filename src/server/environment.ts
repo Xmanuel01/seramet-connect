@@ -44,14 +44,6 @@ export type ObjectStoreBinding = {
   delete(key: string | string[]): Promise<void>;
 };
 
-export type MalwareScanner = {
-  scan(input: {
-    bytes: ArrayBuffer;
-    contentType: string;
-    fileName: string;
-  }): Promise<{ status: "CLEAN" | "INFECTED" | "ERROR"; reference?: string }>;
-};
-
 export type ProductionRuntimeEnv = {
   SERAMET_ENVIRONMENT?: string;
   NODE_ENV?: string;
@@ -59,7 +51,6 @@ export type ProductionRuntimeEnv = {
   SERAMET_HYPERDRIVE?: HyperdriveBinding;
   SERAMET_WORK_QUEUE?: DurableQueue;
   SERAMET_OBJECTS?: ObjectStoreBinding;
-  SERAMET_MALWARE_SCANNER?: MalwareScanner;
   SERAMET_DATABASE_PROVIDER?: string;
   SERAMET_IDENTITY_PROVIDER?: string;
   SERAMET_SUPABASE_URL?: string;
@@ -215,12 +206,6 @@ export function validateRuntimeConfiguration(
       message: "Production R2 object storage is required",
     });
   }
-  if (!env.SERAMET_MALWARE_SCANNER) {
-    issues.push({
-      code: "MALWARE_SCANNER_REQUIRED",
-      message: "Production uploads require a configured malware scanner",
-    });
-  }
   if (env.SERAMET_IDENTITY_PROVIDER !== "supabase") {
     issues.push({
       code: "IDENTITY_PROVIDER_REQUIRED",
@@ -258,9 +243,7 @@ export function assertProductionReady(env: ProductionRuntimeEnv) {
 }
 
 export function assertProductionOperationalReady(env: ProductionRuntimeEnv) {
-  const issues = validateRuntimeConfiguration(env).filter(
-    (issue) => issue.code !== "MALWARE_SCANNER_REQUIRED",
-  );
+  const issues = validateRuntimeConfiguration(env);
 
   if (issues.length > 0) {
     const error = new Error(issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "));
