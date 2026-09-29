@@ -263,12 +263,12 @@ describe("authoritative durable KOT outbox", () => {
       state.kitchenPrintObligations!.length - originalCount,
     );
     expect(newTickets.map((ticket) => ticket.kind).sort()).toEqual(["ADDITION", "VOID"]);
-    expect(newTickets.find((ticket) => ticket.kind === "ADDITION")?.lines.map((line) => line.id)).toEqual([
-      "chips-amendment",
-    ]);
-    expect(newTickets.find((ticket) => ticket.kind === "VOID")?.lines.map((line) => line.id)).toEqual([
-      "juice",
-    ]);
+    expect(
+      newTickets.find((ticket) => ticket.kind === "ADDITION")?.lines.map((line) => line.id),
+    ).toEqual(["chips-amendment"]);
+    expect(
+      newTickets.find((ticket) => ticket.kind === "VOID")?.lines.map((line) => line.id),
+    ).toEqual(["juice"]);
     expect(newTickets.every((ticket) => ticket.status === "PENDING")).toBe(true);
   });
 
