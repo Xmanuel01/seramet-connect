@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Reject accidental Lovable source integration
+        run: node --test scripts/assert-no-lovable-source.test.mjs && node scripts/assert-no-lovable-source.mjs
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck
