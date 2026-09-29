@@ -24,6 +24,7 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -214,6 +215,7 @@ function POS() {
     syncFromBackend,
     backendStatus,
     pendingSyncCount,
+    activeMutationCount,
   } = useTransactionEngine();
   const {
     profile,
@@ -227,6 +229,8 @@ function POS() {
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
+  const connectivity = connectionPresentation(backendStatus);
+  const syncActivity = syncActivityLabel(backendStatus, activeMutationCount, pendingSyncCount);
   const openCashDrawer = transactionState.paymentOperations?.drawerSessions.find(
     (drawer) =>
       drawer.tenantId === activeTenantId &&
@@ -1815,23 +1819,31 @@ function POS() {
           <span
             className={cn(
               "inline-flex items-center gap-1 text-[12px] font-medium",
-              backendStatus === "synced" ? "text-emerald-700" : "text-amber-700",
+              connectivity.health === "online" ? "text-emerald-700" : "text-amber-700",
             )}
-            title={
-              pendingSyncCount
-                ? `${pendingSyncCount} command(s) pending synchronization`
-                : undefined
-            }
+            aria-label={`Connection: ${connectivity.label}`}
           >
-            {backendStatus === "synced" ? (
+            {connectivity.health === "online" ? (
               <Wifi className="h-3.5 w-3.5" />
-            ) : backendStatus === "offline" || backendStatus === "error" ? (
+            ) : connectivity.health === "offline" || connectivity.health === "warning" ? (
               <WifiOff className="h-3.5 w-3.5" />
             ) : (
               <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
             )}
-            {connectionLabel(backendStatus, pendingSyncCount)}
+            {connectivity.label}
           </span>
+          {syncActivity && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+              aria-live="polite"
+              title={syncActivity}
+            >
+              {(backendStatus === "reconnecting" || activeMutationCount > 0) && (
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+              )}
+              {syncActivity}
+            </span>
+          )}
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
             <Clock className="h-3.5 w-3.5" /> <span title={clockTimeZone}>{clockLabel}</span>
           </span>
@@ -2840,12 +2852,4 @@ function cashierErrorMessage(error: unknown, fallback: string) {
   return message || fallback;
 }
 
-function connectionLabel(status: string, pending: number) {
-  if (status === "synced") return "Online";
-  if (status === "reconnecting") return "Reconnecting";
-  if (status === "conflict") return `Sync issues${pending ? ` (${pending})` : ""}`;
-  if (status === "offline" || status === "error") {
-    return `Offline${pending ? ` (${pending} pending)` : ""}`;
-  }
-  return "Syncing";
-}
+
