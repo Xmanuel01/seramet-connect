@@ -1049,7 +1049,10 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   if (billId) addBranch(branches, state.bills.find((item) => item.id === billId)?.branch);
   if (orderId) addBranch(branches, state.orders.find((item) => item.id === orderId)?.branch);
   if (obligationId)
-    addBranch(branches, state.kitchenPrintObligations?.find((item) => item.id === obligationId)?.branch);
+    addBranch(
+      branches,
+      state.kitchenPrintObligations?.find((item) => item.id === obligationId)?.branch,
+    );
   if (refundId) addBranch(branches, state.refunds.find((item) => item.id === refundId)?.branch);
   if (drawerId) addBranch(branches, state.cashDrawers.find((item) => item.id === drawerId)?.branch);
   if (externalTransactionId)
