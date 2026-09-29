@@ -86,9 +86,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     const runtime = resolveRuntimeConfiguration(env);
     if (url.pathname === "/api/seramet/health/operational" && request.method === "GET") {
-      const issues = validateRuntimeConfiguration(env).filter(
-        (issue) => issue.code !== "MALWARE_SCANNER_REQUIRED",
-      );
+      const issues = validateRuntimeConfiguration(env);
       if (env.SERAMET_DB) {
         try {
           await assertDatabaseAvailable(env.SERAMET_DB);
