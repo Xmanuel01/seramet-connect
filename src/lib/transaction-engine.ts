@@ -8,6 +8,7 @@ import { normalizePaymentOperations, emptyPaymentOperationsState } from "@/payme
 import type { PaymentOperationsState } from "@/payments/types";
 import type { CostControlSnapshot } from "@/cost-control/types";
 import { cashCount } from "@/payments/cash-count";
+import { createKotObligations, type KotObligation } from "@/lib/kot-obligations";
 
 export type OrderStatus =
   | "DRAFT"
@@ -97,6 +98,8 @@ export type TransactionOrder = {
   updatedAt: string;
   businessDate?: string;
   lines: TransactionLine[];
+  /** Immutable KOT snapshots committed atomically with their kitchen transition. */
+  kotObligations?: KotObligation[];
   subtotal: number;
   tax: number;
   total: number;
@@ -1808,7 +1811,15 @@ export const TransactionEngine = {
       line.sentAt = stamp;
       line.sentQuantity = line.quantity;
     });
-    if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
+    const addition = ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before);
+    const obligationWave = createKotObligations(
+      order,
+      unsentLines,
+      addition ? "ADDITION" : "NEW",
+      stamp,
+    );
+    order.kotObligations = [...(order.kotObligations ?? []), ...obligationWave];
+    if (addition) {
       next.productionAmendments.unshift({
         id: id("AMD", next, "productionAmendments"),
         tenantId: order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
@@ -1842,6 +1853,116 @@ export const TransactionEngine = {
       record: order.id,
       before,
       after: "SENT_TO_KITCHEN with KOT routing",
+    });
+    return next;
+  },
+
+  claimKotObligations(
+    state: TransactionState,
+    orderId: string,
+    obligationIds: string[],
+    user: string,
+    owner: string,
+  ) {
+    const next = clone(state);
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    const ids = new Set(obligationIds);
+    if (ids.size === 0 || ids.size !== obligationIds.length) {
+      throw new Error("Select unique durable KOT obligation IDs");
+    }
+    const selected = (order.kotObligations ?? []).filter((item) => ids.has(item.id));
+    if (selected.length !== ids.size || selected.some((item) => item.status !== "PENDING")) {
+      throw new Error("KOT was already claimed or is unavailable. Check printer history first.");
+    }
+    const stamp = now();
+    for (const item of selected) {
+      item.status = "CLAIMED";
+      item.claimedBy = owner;
+      item.claimedAt = stamp;
+    }
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Cashier",
+      branch: order.branch,
+      module: "Orders",
+      action: "Claimed durable kitchen print obligations",
+      record: order.id,
+      before: "PENDING",
+      after: selected.map((item) => item.id).join(","),
+    });
+    return next;
+  },
+
+  markKotObligations(
+    state: TransactionState,
+    orderId: string,
+    obligationIds: string[],
+    status: "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN",
+    user: string,
+    owner: string,
+  ) {
+    const next = clone(state);
+    const order = next.orders.find((item) => item.id === orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    const ids = new Set(obligationIds);
+    const selected = (order.kotObligations ?? []).filter((item) => ids.has(item.id));
+    if (!ids.size || ids.size !== obligationIds.length || selected.length !== ids.size) {
+      throw new Error("KOT obligation selection is invalid");
+    }
+    if (selected.some((item) => item.claimedBy !== owner || item.status !== "CLAIMED")) {
+      throw new Error("KOT claim belongs to another device or needs manager review");
+    }
+    const stamp = now();
+    for (const item of selected) {
+      item.status = status;
+      item.queuedAt = status === "QUEUED" || status === "DIGITAL_DISPLAYED" ? stamp : undefined;
+    }
+    order.updatedAt = stamp;
+    audit(next, {
+      actor: user,
+      role: "Cashier",
+      branch: order.branch,
+      module: "Orders",
+      action: `Recorded KOT ${status.toLowerCase()} without asserting physical output`,
+      record: order.id,
+      before: "CLAIMED",
+      after: selected.map((item) => item.id).join(","),
+    });
+    return next;
+  },
+
+  resetKotObligationAfterReview(
+    state: TransactionState,
+    orderId: string,
+    obligationId: string,
+    reason: string,
+    manager: string,
+  ) {
+    if (reason.trim().length < 15) throw new Error("Explain verified missing ticket in 15+ characters");
+    const next = clone(state);
+    const order = next.orders.find((item) => item.id === orderId);
+    const obligation = order?.kotObligations?.find((item) => item.id === obligationId);
+    if (!order || !obligation) throw new Error("Durable KOT obligation not found");
+    if (obligation.status === "PENDING") throw new Error("KOT is already pending");
+    const before = obligation.status;
+    obligation.status = "PENDING";
+    obligation.reviewedBy = manager;
+    obligation.reviewReason = reason.trim();
+    obligation.claimedBy = undefined;
+    obligation.claimedAt = undefined;
+    obligation.queuedAt = undefined;
+    order.updatedAt = now();
+    audit(next, {
+      actor: manager,
+      role: "Branch Manager",
+      branch: order.branch,
+      module: "Orders",
+      action: "Authorized KOT retry after physical output review",
+      record: order.id,
+      before,
+      after: `${obligation.id}: ${reason.trim()}`,
     });
     return next;
   },
