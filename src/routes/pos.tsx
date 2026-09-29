@@ -1317,16 +1317,16 @@ function POS() {
   ) =>
     Boolean(
       result.printResult?.jobs.length ||
-        isStagingPrinterlessTestingEnabled() ||
-        (result.printResult === null &&
-          printJobs.some(
-            (job) =>
-              job.orderId === result.order.id &&
-              ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
-              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-                job.status,
-              ),
-          )),
+      isStagingPrinterlessTestingEnabled() ||
+      (result.printResult === null &&
+        printJobs.some(
+          (job) =>
+            job.orderId === result.order.id &&
+            ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
+            ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
+              job.status,
+            ),
+        )),
     );
 
   const queueKitchenTickets = () =>
