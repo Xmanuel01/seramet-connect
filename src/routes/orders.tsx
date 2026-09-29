@@ -226,11 +226,11 @@ function Orders() {
                   <span className="text-muted-foreground">Created </span>
                   <span className="num font-semibold">
                     {formatTime(
-                        order.createdAt,
-                        { hour: "2-digit", minute: "2-digit" },
-                        undefined,
-                        timeZone,
-                      )}
+                      order.createdAt,
+                      { hour: "2-digit", minute: "2-digit" },
+                      undefined,
+                      timeZone,
+                    )}
                   </span>
                 </div>
                 <div className="rounded-md bg-secondary/60 px-2 py-1.5">
@@ -292,11 +292,11 @@ function Orders() {
                   </TD>
                   <TD className="num text-muted-foreground">
                     {formatTime(
-                    order.createdAt,
-                    { hour: "2-digit", minute: "2-digit" },
-                    undefined,
-                    timeZone,
-                  )}
+                      order.createdAt,
+                      { hour: "2-digit", minute: "2-digit" },
+                      undefined,
+                      timeZone,
+                    )}
                   </TD>
                   <TD className="font-medium">{order.customer}</TD>
                   <TD className="text-muted-foreground">{order.channel}</TD>
