@@ -107,7 +107,11 @@ describe("crash-safe KOT dispatch orchestration", () => {
     const harness = createHarness();
     const deliver = vi.fn(async () => {
       expect(harness.current().kitchenPrintObligations[0]?.status).toBe("CLAIMED");
-      return { jobs: [], outcomes: ["SPOOLED" as const], skipped: [] };
+      return {
+        jobs: [{ id: "bridge-job-1" } as never],
+        outcomes: ["SPOOLED" as const],
+        skipped: [],
+      };
     });
     await dispatchDurableKitchenObligation({
       obligation,
