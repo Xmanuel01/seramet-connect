@@ -4,23 +4,35 @@ import type { OfflineCommand } from "@/offline/types";
 const databaseName = "seramet-pos-offline-v1";
 const databaseVersion = 1;
 
+/** A branch-filtered snapshot must never be reused by another branch. */
+export const transactionCacheKey = (tenantId: string, branchId: string) =>
+  `transaction-state:${tenantId}:${branchId}`;
+
+/** Missing and unsuccessful per-command acknowledgements are not successful syncs. */
+export function acknowledgedSyncStatus(status: string | undefined): OfflineCommand["syncStatus"] {
+  if (status === "accepted" || status === "duplicate") return "SYNCED";
+  if (status === "conflict") return "CONFLICT";
+  return "FAILED";
+}
+
 export class OfflineStore {
-  async cacheState(tenantId: string, state: TransactionState, revision: number) {
+  async cacheState(tenantId: string, branchId: string, state: TransactionState, revision: number) {
     await this.put("read-cache", {
-      id: `transaction-state:${tenantId}`,
+      id: transactionCacheKey(tenantId, branchId),
       tenantId,
+      branchId,
       revision,
       state,
       cachedAt: new Date().toISOString(),
     });
   }
 
-  async readCachedState(tenantId: string) {
+  async readCachedState(tenantId: string, branchId: string) {
     const record = await this.get<{
       state: TransactionState;
       revision: number;
       cachedAt: string;
-    }>("read-cache", `transaction-state:${tenantId}`);
+    }>("read-cache", transactionCacheKey(tenantId, branchId));
     return record ?? null;
   }
 
@@ -42,6 +54,12 @@ export class OfflineStore {
           ["PENDING", "SYNCING", "FAILED", "CONFLICT"].includes(command.syncStatus),
       )
       .sort((a, b) => a.clientSequence - b.clientSequence);
+  }
+
+  async replayable(tenantId: string, deviceId: string) {
+    const unresolved = await this.pending(tenantId, deviceId);
+    // Conflicts require review; an automatic retry would repeatedly replay stale writes.
+    return unresolved.filter((command) => command.syncStatus !== "CONFLICT");
   }
 
   async nextSequence(deviceId: string) {
