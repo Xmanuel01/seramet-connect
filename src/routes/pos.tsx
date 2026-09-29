@@ -692,6 +692,7 @@ function POS() {
     branchRecord.timezone,
     tenant.timezone,
     tenant.countryCode,
+    tenant.defaultCurrency,
   );
   const clockLabel = formatPosClock(clockNow, tenant.locale || activeLocale(), clockTimeZone);
   const orderContextLabel = activeOrder
