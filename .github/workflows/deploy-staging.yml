@@ -196,7 +196,7 @@ jobs:
           set -euo pipefail
           # Scanner-disabled staging is intentionally operational, not fully ready.
           # The readiness endpoint must report the missing scanner explicitly.
-          node <<'NODE'
+          node --input-type=module <<'NODE'
           const origin = process.env.SERAMET_PUBLIC_ORIGIN;
           const response = await fetch(new URL('/api/seramet/health/ready', origin));
           const body = await response.json();
