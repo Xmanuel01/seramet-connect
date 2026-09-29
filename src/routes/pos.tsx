@@ -23,6 +23,7 @@ import {
 } from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
+import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -145,7 +146,14 @@ function POS() {
   const [searchQuery, setSearchQuery] = useState("");
   const [menuLimit, setMenuLimit] = useState(INITIAL_POS_MENU_ITEMS);
   const [clockNow, setClockNow] = useState(() => new Date());
-  const [orderSource, setOrderSource] = useState(() => orderChannels[0]?.id ?? "");
+  const channelPreferenceKey = `seramet.pos.channel:${activeTenantId}:${branchId}:${currentUser.id}`;
+  const [preferredChannelId, setPreferredChannelId] = useState<string>(() =>
+    typeof window !== "undefined" ? window.sessionStorage.getItem(channelPreferenceKey) ?? "" : "",
+  );
+  const [orderSource, setOrderSource] = useState(() => preferredChannelId || orderChannels[0]?.id || "");
+  const hydratedOrderIdRef = useRef<string | null>(null);
+  const orderActionRef = useRef(false);
+  const [orderActionBusy, setOrderActionBusy] = useState(false);
   const [lines, setLines] = useState<Record<string, number>>({});
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(() => paymentMethods[0]?.id ?? "");
@@ -299,10 +307,6 @@ function POS() {
       ),
     [activeTenantId, branchId, platformState.serviceAreas],
   );
-  const billedOrderIds = useMemo(
-    () => new Set(transactionState.bills.flatMap((bill) => bill.orderIds)),
-    [transactionState.bills],
-  );
   const branchOrders = useMemo(
     () =>
       transactionState.orders.filter(
@@ -313,15 +317,8 @@ function POS() {
     [activeTenantId, branchId, transactionState.orders],
   );
   const activePosOrders = useMemo(
-    () =>
-      branchOrders
-        .filter((order) =>
-          ["HELD", "OPEN", "SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
-            order.status,
-          ),
-        )
-        .filter((order) => !billedOrderIds.has(order.id)),
-    [billedOrderIds, branchOrders],
+    () => pendingPosOrders(branchOrders, transactionState.bills),
+    [branchOrders, transactionState.bills],
   );
   const openTableOrders = useMemo(
     () =>
@@ -437,8 +434,34 @@ function POS() {
   }, [configurationError]);
 
   useEffect(() => {
-    if (!selectedChannel && orderChannels[0]) setOrderSource(orderChannels[0].id);
-  }, [orderChannels, selectedChannel]);
+    const stored = window.sessionStorage.getItem(channelPreferenceKey);
+    if (stored && orderChannels.some((channel) => channel.id === stored)) {
+      setPreferredChannelId(stored);
+      if (!activeOrderId) setOrderSource(stored);
+    } else if (!activeOrderId && !orderChannels.some((channel) => channel.id === orderSource)) {
+      setPreferredChannelId("");
+      setOrderSource(orderChannels[0]?.id ?? "");
+    }
+  }, [activeOrderId, channelPreferenceKey, orderChannels, orderSource]);
+
+  const chooseChannel = (id: string) => {
+    if (channelLocked) return;
+    setPreferredChannelId(id);
+    setOrderSource(id);
+    window.sessionStorage.setItem(channelPreferenceKey, id);
+  };
+
+  const runOrderAction = async (action: () => Promise<void>) => {
+    if (orderActionRef.current) return;
+    orderActionRef.current = true;
+    setOrderActionBusy(true);
+    try {
+      await action();
+    } finally {
+      orderActionRef.current = false;
+      setOrderActionBusy(false);
+    }
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockNow(new Date()), 15_000);
@@ -525,7 +548,13 @@ function POS() {
   }, [paymentCurrencies, tenderCurrency, tenant.defaultCurrency]);
 
   useEffect(() => {
-    if (!activeOrder) return;
+    if (!activeOrder) {
+      hydratedOrderIdRef.current = null;
+      return;
+    }
+    // Background refresh must not overwrite a cashier's unsaved quantities or notes.
+    if (hydratedOrderIdRef.current === activeOrder.id || orderChannels.length === 0) return;
+    hydratedOrderIdRef.current = activeOrder.id;
     const channel = orderChannels.find(
       (item) =>
         item.id === activeOrder.channel ||
@@ -650,13 +679,8 @@ function POS() {
   const predictedNextInvoiceId = () => nextTransactionRecordId("INV", transactionState.bills);
   const predictedNextReceiptId = () => nextTransactionRecordId("RCP", transactionState.receipts);
   const currentOrderNumber = activeOrder?.id ?? paymentOrderId ?? predictedNextOrderId();
-  const clockLabel = new Intl.DateTimeFormat(tenant.locale || activeLocale(), {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    timeZone: branchRecord.timezone ?? tenant.timezone,
-  }).format(clockNow);
+  const clockTimeZone = resolvePosTimeZone(branchRecord.timezone, tenant.timezone, tenant.countryCode);
+  const clockLabel = formatPosClock(clockNow, tenant.locale || activeLocale(), clockTimeZone);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
@@ -807,6 +831,10 @@ function POS() {
     noticeType: "idle" | "success" | "warning" = "idle",
   ) => {
     setActiveOrderId(null);
+    hydratedOrderIdRef.current = null;
+    if (preferredChannelId && orderChannels.some((channel) => channel.id === preferredChannelId)) {
+      setOrderSource(preferredChannelId);
+    }
     setCustomerSelection(null);
     setLines({});
     setKitchenNote("");
@@ -1114,7 +1142,7 @@ function POS() {
     );
   };
 
-  const holdOrder = async () => {
+  const holdOrder = () => void runOrderAction(async () => {
     if (!items.length) return;
     try {
       await createOrUpdateActiveOrder("HELD");
@@ -1123,7 +1151,7 @@ function POS() {
       setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
       setPrintNoticeType("warning");
     }
-  };
+  });
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return null;
@@ -1269,7 +1297,7 @@ function POS() {
     };
   };
 
-  const queueKitchenTickets = () => {
+  const queueKitchenTickets = () => void runOrderAction(async () => {
     if (!items.length) return;
     if (selectedChannel?.requiresTable && !orderTable) {
       setTablePickerOpen(true);
@@ -1277,16 +1305,37 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
-    void queueKitchenTicketsForTable().catch((error: unknown) => {
+    try {
+      const result = await queueKitchenTicketsForTable();
+      if (!result) return;
+      if (
+        result.printResult?.jobs.length ||
+        isStagingPrinterlessTestingEnabled() ||
+        (result.printResult === null && result.order.lines.some((line) => line.sentAt))
+      ) {
+        const notice = isStagingPrinterlessTestingEnabled()
+          ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
+          : result.printResult?.jobs.length
+            ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
+            : `${result.order.id} is already in kitchen; no new KOT is required.`;
+        clearCurrentOrder(notice, isStagingPrinterlessTestingEnabled() ? "warning" : "success");
+      }
+      // If delivery was not queued, leave the order open and display the print warning.
+    } catch (error) {
       setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
       setPrintNoticeType("warning");
-    });
-  };
+    }
+  });
 
   const moveOrderToInvoice = async (printBill: boolean) => {
+    if (orderActionRef.current) return;
+    orderActionRef.current = true;
+    setOrderActionBusy(true);
     if (!activeOrder || !canPrintBill) {
       setPrintNotice("Send the order to kitchen before printing a bill or creating an invoice.");
       setPrintNoticeType("warning");
+      orderActionRef.current = false;
+      setOrderActionBusy(false);
       return;
     }
     try {
@@ -1315,6 +1364,9 @@ function POS() {
     } catch (error) {
       setPrintNotice(error instanceof Error ? error.message : "The invoice could not be created.");
       setPrintNoticeType("warning");
+    } finally {
+      orderActionRef.current = false;
+      setOrderActionBusy(false);
     }
   };
 
@@ -1695,7 +1747,7 @@ function POS() {
             {connectionLabel(backendStatus, pendingSyncCount)}
           </span>
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> {clockLabel}
+            <Clock className="h-3.5 w-3.5" /> <span title={clockTimeZone}>{clockLabel}</span>
           </span>
         </div>
       </div>
@@ -1733,7 +1785,7 @@ function POS() {
               <button
                 key={source.id}
                 onClick={() => {
-                  if (!channelLocked) setOrderSource(source.id);
+                  chooseChannel(source.id);
                 }}
                 disabled={channelLocked && orderSource !== source.id}
                 title={channelLocked ? "Order channel is locked after kitchen send" : undefined}
@@ -1785,6 +1837,7 @@ function POS() {
                       key={order.id}
                       type="button"
                       onClick={() => {
+                        hydratedOrderIdRef.current = null;
                         setActiveOrderId(order.id);
                         setActiveOrdersOpen(false);
                       }}
@@ -2105,13 +2158,13 @@ function POS() {
               </div>
             </dl>
             <div className="mt-3 grid grid-cols-3 gap-2">
-              <Btn onClick={holdOrder} disabled={!items.length || activeOrderHasSentLines}>
+              <Btn onClick={holdOrder} disabled={orderActionBusy || !items.length || activeOrderHasSentLines}>
                 Hold
               </Btn>
               {canPrintBill ? (
                 <>
-                  <Btn onClick={() => moveOrderToInvoice(true)}>Print bill</Btn>
-                  <Btn onClick={() => moveOrderToInvoice(false)}>
+                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>Print bill</Btn>
+                  <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
                     <FileText className="h-4 w-4" />
                     Invoice
                   </Btn>
@@ -2121,14 +2174,14 @@ function POS() {
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets} disabled={!items.length}>
+              <Btn onClick={queueKitchenTickets} disabled={orderActionBusy || !items.length}>
                 Send kitchen
               </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={paymentBusy || !items.length || !dineInPaymentReady}
+                disabled={orderActionBusy || paymentBusy || !items.length || !dineInPaymentReady}
                 title={
                   !dineInPaymentReady && selectedChannel?.requiresTable
                     ? "Select a table and send all items to kitchen first"
