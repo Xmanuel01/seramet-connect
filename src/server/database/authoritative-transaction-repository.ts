@@ -35,6 +35,7 @@ const transactionCollections = [
   "marketplaceReceivables",
   "marketplaceCharges",
   "productionAmendments",
+  "kitchenPrintObligations",
   "externalTransactions",
   "reconciliationMatches",
   "journalEntries",
@@ -3294,7 +3295,7 @@ function flattenState(state: TransactionState): PersistedEntity[] {
     },
   ];
   for (const key of transactionCollections) {
-    for (const value of state[key] as Array<Record<string, unknown>>) {
+    for (const value of (state[key] ?? []) as Array<Record<string, unknown>>) {
       entities.push(entityFromRecord(`state:${key}`, value, now));
     }
   }

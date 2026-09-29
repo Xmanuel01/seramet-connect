@@ -32,6 +32,8 @@ jobs:
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
       - run: node --test scripts/staging-recovery-cli-args.test.mjs
       - run: node --test scripts/assert-staging-api-posture.test.mjs
+      - name: Verify crash-safe local print spool idempotency
+        run: node --test local-print-bridge/spool-ledger.test.mjs
       - run: npm run build
       - name: Verify compiled Cloudflare Queue and Cron handlers
         run: node scripts/verify-cloudflare-events.mjs

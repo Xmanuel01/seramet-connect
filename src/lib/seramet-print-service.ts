@@ -26,6 +26,8 @@ export type PrintJobStatus =
   | "Failed"
   | "Retrying"
   | "Fallback Printed"
+  | "Spool Accepted"
+  | "Uncertain"
   | "Cancelled";
 export type KitchenTicketDelivery = "KDS_DISPLAY" | "PRODUCTION_PRINT" | "POS_FRONT_PRINT";
 export type PrinterConnection = "Connected" | "Offline" | "Degraded";
@@ -183,6 +185,8 @@ export type PrintJob = {
   content: string;
   duplicateKey: string;
   reprintOfJobId?: string;
+  /** Stable server-owned ticket identity for recoverable kitchen dispatch. */
+  obligationId?: string;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
@@ -229,6 +233,8 @@ export type PrintBridgeStatus = {
 
 export type BridgeSubmitResult = {
   accepted: boolean;
+  dryRun?: boolean;
+  physicalPrintConfirmed?: boolean;
   bridgeJobId?: string;
   spoolPath?: string;
   message: string;
@@ -744,6 +750,7 @@ export const SerametLocalPrintBridge = {
   createTrustedBridgePayload(job: PrintJob, printerName?: string) {
     return stripUndefined({
       id: job.id,
+      obligationId: job.obligationId,
       branch: job.branch,
       orderId: job.orderId,
       documentType: job.documentType,
