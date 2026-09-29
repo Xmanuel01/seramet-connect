@@ -54,13 +54,23 @@ export async function dispatchDurableKitchenObligation(input: {
   obligation: KitchenPrintObligation;
   terminalId: string;
   mutate: KitchenObligationMutation;
+  preflight?: (
+    order: OrderForPrint,
+    kind: KitchenPrintObligation["kind"],
+    obligationId: string,
+  ) => Promise<void>;
   deliver: (
     order: OrderForPrint,
     kind: KitchenPrintObligation["kind"],
     obligationId: string,
   ) => Promise<KotDeliveryOutcome>;
 }): Promise<KotDeliveryOutcome> {
-  const { obligation, terminalId, mutate, deliver } = input;
+  const { obligation, terminalId, mutate, preflight, deliver } = input;
+  const printable = obligationToPrintOrder(obligation, terminalId);
+  // Known configuration/offline failures are checked BEFORE the authoritative
+  // claim. If no printer attempt can occur, the obligation stays PENDING and
+  // is safe to recover automatically later.
+  if (preflight) await preflight(printable, obligation.kind, obligation.id);
   const claimId = crypto.randomUUID();
   const claimed = await mutate("claimKitchenPrintObligation", {
     obligationId: obligation.id,
@@ -75,11 +85,7 @@ export async function dispatchDurableKitchenObligation(input: {
 
   let delivered: KotDeliveryOutcome;
   try {
-    delivered = await deliver(
-      obligationToPrintOrder(obligation, terminalId),
-      obligation.kind,
-      obligation.id,
-    );
+    delivered = await deliver(printable, obligation.kind, obligation.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Print delivery outcome is unknown";
     // We deliberately do not retry a timeout: the bridge may already have
