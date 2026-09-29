@@ -1219,7 +1219,7 @@ function POS() {
         printJobs,
         amendmentType,
       );
-      if (!preflight.jobs.length) {
+      if (!preflight.jobs.length || preflight.jobs.some((job) => job.failureReason)) {
         throw new Error(
           `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
         );
@@ -1327,7 +1327,12 @@ function POS() {
         skipped.push(...result.skipped);
         const persisted = result.jobs.length > 0 && result.jobs.every((job) => {
           const current = result.queue.find((item) => item.id === job.id);
-          return current && ["Queued", "Sending", "Retrying", "Displayed"].includes(current.status);
+          return (
+            current &&
+            !current.failureReason &&
+            current.printerId !== "UNASSIGNED" &&
+            ["Queued", "Sending", "Retrying", "Displayed"].includes(current.status)
+          );
         });
         // Queue registration is never presented as proof of physical printing.
         const marked = await mutateTransaction("markKotObligations", {
@@ -1368,7 +1373,7 @@ function POS() {
     return {
       order: authoritativeOrder,
       state: resultState.state,
-      printResult: { jobs: queuedJobs, skipped, queue: printJobs },
+      printResult: { jobs: queuedJobs, skipped, queue: queuedJobs },
     };
   };
 
