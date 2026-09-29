@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -118,6 +118,7 @@ function configuredChargeMinor(
 }
 
 function POS() {
+  const navigate = useNavigate();
   const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
@@ -1361,6 +1362,7 @@ function POS() {
         return;
       }
       clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
+      await navigate({ to: "/invoices" });
     } catch (error) {
       setPrintNotice(error instanceof Error ? error.message : "The invoice could not be created.");
       setPrintNoticeType("warning");
@@ -2175,7 +2177,7 @@ function POS() {
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
               <Btn onClick={queueKitchenTickets} disabled={orderActionBusy || !items.length}>
-                Send kitchen
+                {orderActionBusy ? "Working..." : "Send kitchen"}
               </Btn>
               <Btn
                 variant="primary"
