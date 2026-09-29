@@ -619,6 +619,8 @@ export type ProductionPrintObligationRecord = {
   deliveredAt?: string;
   deviceId?: string;
   error?: string;
+  retryCount?: number;
+  lastRetryReason?: string;
 };
 
 export type TransactionState = {
@@ -1970,6 +1972,10 @@ export const TransactionEngine = {
     const obligation = next.productionPrintObligations.find((item) => item.id === obligationId);
     if (!obligation) throw new Error(`Print obligation ${obligationId} was not found`);
     const before = obligation.status;
+    if (before === status) return next;
+    if (before !== "ATTEMPTING") {
+      throw new Error(`Print obligation ${obligationId} cannot move from ${before} to ${status}`);
+    }
     obligation.status = status;
     if (status === "DELIVERED") obligation.deliveredAt = now();
     if (detail) obligation.error = detail;
@@ -1983,6 +1989,41 @@ export const TransactionEngine = {
       record: obligation.id,
       before,
       after: status,
+    });
+    return next;
+  },
+
+  authorizeProductionPrintRetry(
+    state: TransactionState,
+    obligationId: string,
+    user: string,
+    reason: string,
+  ) {
+    const next = clone(state);
+    next.productionPrintObligations ??= [];
+    const obligation = next.productionPrintObligations.find((item) => item.id === obligationId);
+    if (!obligation) throw new Error(`Print obligation ${obligationId} was not found`);
+    if (!["FAILED", "UNCERTAIN"].includes(obligation.status)) {
+      throw new Error("Only failed or uncertain KOT delivery can be authorized for retry");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 8) throw new Error("A meaningful retry reason is required");
+    const before = obligation.status;
+    obligation.status = "PENDING";
+    obligation.retryCount = (obligation.retryCount ?? 0) + 1;
+    obligation.lastRetryReason = cleanReason;
+    delete obligation.deviceId;
+    delete obligation.attemptedAt;
+    delete obligation.error;
+    audit(next, {
+      actor: user,
+      role: "Manager",
+      branch: obligation.branch,
+      module: "Printing",
+      action: "Authorized KOT delivery retry",
+      record: obligation.id,
+      before,
+      after: `PENDING retry ${obligation.retryCount}: ${cleanReason}`,
     });
     return next;
   },
