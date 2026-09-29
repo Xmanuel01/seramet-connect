@@ -18,11 +18,7 @@ export function checkLovableSource(files, read = (path) => readFileSync(path, "u
     if (FORBIDDEN_LOVABLE_PATHS.includes(path) && existsSync(path)) {
       violations.push(`${path}: accidental Lovable integration path`);
     }
-    if (
-      !path.startsWith("src/") &&
-      path !== "package.json" &&
-      path !== "vite.config.ts"
-    ) continue;
+    if (!path.startsWith("src/") && path !== "package.json" && path !== "vite.config.ts") continue;
     if (!/\.(?:ts|tsx|js|jsx|mjs|cjs|json)$/.test(path)) continue;
     const content = read(path);
     for (const marker of LOVABLE_SOURCE_MARKERS) {
@@ -36,9 +32,12 @@ export function checkLovableSource(files, read = (path) => readFileSync(path, "u
 
 if (process.argv[1]?.endsWith("assert-no-lovable-source.mjs")) {
   const files = execFileSync(
-    "git", ["ls-files", "-z", "--", "src", "package.json", "vite.config.ts", ".lovable"],
+    "git",
+    ["ls-files", "-z", "--", "src", "package.json", "vite.config.ts", ".lovable"],
     { encoding: "utf8" },
-  ).split("\0").filter(Boolean);
+  )
+    .split("\0")
+    .filter(Boolean);
   // Also detect untracked accidental integration when running locally.
   for (const path of FORBIDDEN_LOVABLE_PATHS) {
     if (existsSync(path) && !files.includes(path)) files.push(path);
@@ -48,6 +47,8 @@ if (process.argv[1]?.endsWith("assert-no-lovable-source.mjs")) {
     console.error("BLOCK: accidental Lovable implementation is present:\n" + violations.join("\n"));
     process.exitCode = 1;
   } else {
-    console.log("PASS: no Lovable implementation or integration markers in active application sources");
+    console.log(
+      "PASS: no Lovable implementation or integration markers in active application sources",
+    );
   }
 }
