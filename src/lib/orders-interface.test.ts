@@ -21,9 +21,9 @@ const bill = (changes: Partial<BillingRecord> = {}) =>
 
 describe("Orders Lite interaction safety", () => {
   it("resolves late-night events using the configured restaurant time zone", () => {
-    expect(
-      orderBusinessDate({ createdAt: "2026-09-29T22:30:00.000Z" }, "Africa/Nairobi"),
-    ).toBe("2026-09-30");
+    expect(orderBusinessDate({ createdAt: "2026-09-29T22:30:00.000Z" }, "Africa/Nairobi")).toBe(
+      "2026-09-30",
+    );
     expect(
       orderBusinessDate(
         { createdAt: "2026-09-29T22:30:00.000Z", businessDate: "2026-09-28" },
@@ -50,8 +50,8 @@ describe("Orders Lite interaction safety", () => {
   });
   it("retains multiple split invoices so the UI requires an explicit choice", () => {
     const records = [bill(), bill({ id: "BILL-2" })];
-    expect(invoiceCandidatesForOrder(records, order, (branch) => branch === "branch-1")).toHaveLength(
-      2,
-    );
+    expect(
+      invoiceCandidatesForOrder(records, order, (branch) => branch === "branch-1"),
+    ).toHaveLength(2);
   });
 });
