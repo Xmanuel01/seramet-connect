@@ -19,6 +19,8 @@ import {
   formatPosClock,
   invoiceBusinessDate,
   pendingPosOrders,
+  needsKitchenDispatch,
+  payableInvoiceForOrder,
   resolvePosTimeZone,
   unbilledKitchenOrders,
 } from "./pos-workflow";
@@ -57,6 +59,93 @@ describe("POS unbilled order continuity", () => {
     );
     expect(pendingPosOrders(finalPaid, bills).map((order) => order.id)).toEqual(["held-1"]);
     expect(finalPaid).toHaveLength(3); // Clearing the badge never destroys order history.
+  });
+});
+
+describe("shared POS dispatch and exact-order invoice guards", () => {
+  it("reuses sent orders and creates kitchen amendments only for unsent items", () => {
+    expect(needsKitchenDispatch(null, true)).toBe(true);
+    expect(needsKitchenDispatch({ status: "HELD" }, true)).toBe(true);
+    expect(needsKitchenDispatch({ status: "OPEN" }, true)).toBe(true);
+    for (const status of ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"] as const) {
+      expect(needsKitchenDispatch({ status }, false)).toBe(false);
+      expect(needsKitchenDispatch({ status }, true)).toBe(true);
+    }
+    expect(needsKitchenDispatch({ status: "BILL_REQUESTED" }, false)).toBe(false);
+  });
+
+  it("never selects the first invoice, a different branch, or a terminal invoice", () => {
+    const bills = [
+      {
+        id: "wrong-branch",
+        orderIds: ["order-1"],
+        status: "OPEN" as const,
+        tenantId: "tenant-1",
+        branchId: "ngong",
+      },
+      {
+        id: "wrong-order",
+        orderIds: ["order-2"],
+        status: "OPEN" as const,
+        tenantId: "tenant-1",
+        branchId: "westlands",
+      },
+      {
+        id: "paid",
+        orderIds: ["order-1"],
+        status: "PAID" as const,
+        tenantId: "tenant-1",
+        branchId: "westlands",
+      },
+      {
+        id: "correct",
+        orderIds: ["order-1"],
+        status: "OPEN" as const,
+        tenantId: "tenant-1",
+        branchId: "westlands",
+      },
+    ];
+    expect(payableInvoiceForOrder("order-1", "tenant-1", "westlands", bills)?.id).toBe(
+      "correct",
+    );
+    expect(payableInvoiceForOrder("order-1", "tenant-2", "westlands", bills)).toBeUndefined();
+    expect(payableInvoiceForOrder("unrelated", "tenant-1", "westlands", bills)).toBeUndefined();
+  });
+
+  it("preparing an exact dispatched order twice never creates duplicate bills", () => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+    const draft: OrderDraft = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      table: "05",
+      customer: "Table 05",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: "single-kot-line",
+          productId: "p1",
+          name: "Pilau",
+          category: "Main Meals",
+          quantity: 1,
+          unitPrice: 800,
+          productionStation: "MAIN KITCHEN",
+        },
+      ],
+    };
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const sentAt = state.orders[0]!.lines[0]!.sentAt;
+    state = TransactionEngine.prepareInvoiceForPayment(state, orderId, "Cashier");
+    const invoiceId = state.bills[0]!.id;
+    state = TransactionEngine.prepareInvoiceForPayment(state, orderId, "Cashier");
+    expect(state.bills).toHaveLength(1);
+    expect(state.bills[0]?.id).toBe(invoiceId);
+    expect(state.orders[0]?.lines[0]?.sentAt).toBe(sentAt);
   });
 });
 
