@@ -256,6 +256,22 @@ export function applyServerMutation(
         typeof input["detail"] === "string" ? input["detail"] : undefined,
       );
     }
+    case "authorizeProductionPrintRetry": {
+      const obligationId = String(input["obligationId"]);
+      const obligation = (state.productionPrintObligations ?? []).find(
+        (item) => item.id === obligationId,
+      );
+      if (!obligation) throw new Error("Print obligation was not found");
+      if (obligation.branchId !== actor.branchId) {
+        throw new Error("Print obligation belongs to another branch");
+      }
+      return TransactionEngine.authorizeProductionPrintRetry(
+        state,
+        obligationId,
+        actor.name,
+        String(input["reason"] ?? ""),
+      );
+    }
     case "amendKitchenOrder": {
       const orderId = String(input["orderId"]);
       const draft = input["draft"] as Parameters<typeof TransactionEngine.amendKitchenOrder>[2];
