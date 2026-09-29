@@ -46,8 +46,12 @@ export function resolvePosTimeZone(
   branchTimezone: string | undefined,
   tenantTimezone: string | undefined,
   tenantCountryCode: string | undefined,
+  tenantCurrency?: string,
 ): string {
-  if (tenantCountryCode?.toUpperCase() === "KE") {
+  const isKenyan =
+    tenantCountryCode?.toUpperCase() === "KE" ||
+    (!tenantCountryCode && tenantCurrency?.toUpperCase() === "KES");
+  if (isKenyan) {
     if (validTimeZone(branchTimezone) && branchTimezone !== "UTC") return branchTimezone;
     if (validTimeZone(tenantTimezone) && tenantTimezone !== "UTC") return tenantTimezone;
     return "Africa/Nairobi";
