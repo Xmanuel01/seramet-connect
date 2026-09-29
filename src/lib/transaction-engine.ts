@@ -2048,6 +2048,21 @@ export const TransactionEngine = {
         additions.push({ ...current });
     }
     if (additions.length === 0 && removals.length === 0) return next;
+    // Never amend quantities or cancel a line while its original durable
+    // ticket remains unclaimed. Otherwise the original paper ticket could
+    // print a stale quantity after a newer VOID/amendment.
+    const affectedIds = new Set(removals.map((line) => line.id));
+    const unresolvedOriginal = (order.kotObligations ?? []).find(
+      (item) =>
+        item.status === "PENDING" &&
+        item.kind !== "VOID" &&
+        item.lines.some((line) => affectedIds.has(line.id)),
+    );
+    if (unresolvedOriginal) {
+      throw new Error(
+        `Resolve pending kitchen ticket ${unresolvedOriginal.id} before changing dispatched items`,
+      );
+    }
 
     const stamp = now();
     const normalizedLines = desiredLines.map((line) => {
@@ -2090,7 +2105,17 @@ export const TransactionEngine = {
     if (removals.length) {
       const voidWave = createKotObligations(
         order,
-        removals.filter((line) => line.sentAt),
+        removals.filter(
+          (line) =>
+            line.sentAt &&
+            (!(order.kotObligations ?? []).length ||
+              (order.kotObligations ?? []).some(
+                (item) =>
+                  item.kind !== "VOID" &&
+                  item.status !== "SUPERSEDED" &&
+                  item.lines.some((sent) => sent.id === line.id),
+              )),
+        ),
         "VOID",
         stamp,
       );
@@ -3239,7 +3264,17 @@ export const TransactionEngine = {
       if (activeLines.length) {
         const voidWave = createKotObligations(
           order,
-          activeLines.filter((line) => line.sentAt),
+          activeLines.filter(
+            (line) =>
+              line.sentAt &&
+              (!(order.kotObligations ?? []).length ||
+                (order.kotObligations ?? []).some(
+                  (item) =>
+                    item.kind !== "VOID" &&
+                    item.status !== "SUPERSEDED" &&
+                    item.lines.some((sent) => sent.id === line.id),
+                )),
+          ),
           "VOID",
           stamp,
         );
