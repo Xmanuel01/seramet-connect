@@ -27,6 +27,7 @@ export function useTransactionEngine() {
   const [revision, setRevision] = useState(0);
   const revisionRef = useRef(0);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [activeMutationCount, setActiveMutationCount] = useState(0);
   const deviceIdRef = useRef("development-pos");
   const scopeKey = `${activeTenantId}:${branchId}`;
   const scopeRef = useRef(scopeKey);
@@ -372,8 +373,10 @@ export function useTransactionEngine() {
         await refreshPendingCount();
         return { state: nextState, revision, offline: true as const };
       }
-      setBackendStatus("syncing");
+      // A normal online save does not mean connectivity is lost or offline replay is running.
+      // The separate activity counter drives the unobtrusive "Saving" badge in POS.
       mutationInFlightRef.current += 1;
+      setActiveMutationCount((count) => count + 1);
       let receivedServerResponse = false;
       let serverConflict = false;
       try {
@@ -411,7 +414,10 @@ export function useTransactionEngine() {
         const nextRevision = body.revision ?? revisionRef.current + 1;
         setRevision(nextRevision);
         revisionRef.current = nextRevision;
-        await offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision);
+        // IndexedDB cache failures must never misreport a committed server save as failed.
+        void offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision).catch(
+          (cause) => console.warn("Unable to update the offline read cache", cause),
+        );
         setBackendStatus("synced");
         return body;
       } catch (error) {
@@ -435,6 +441,7 @@ export function useTransactionEngine() {
         throw error;
       } finally {
         mutationInFlightRef.current -= 1;
+        setActiveMutationCount((count) => Math.max(0, count - 1));
         if (mutationInFlightRef.current === 0 && refreshAfterMutationRef.current) {
           refreshAfterMutationRef.current = false;
           queueMicrotask(() => void syncFromBackend());
@@ -492,6 +499,7 @@ export function useTransactionEngine() {
     backendStatus,
     persistenceMode,
     pendingSyncCount,
+    activeMutationCount,
     syncFromBackend,
     flushOfflineCommands,
   };
