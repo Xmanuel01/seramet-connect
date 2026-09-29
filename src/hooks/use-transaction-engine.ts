@@ -163,7 +163,8 @@ export function useTransactionEngine() {
         const httpStatus = (error as { httpStatus?: number }).httpStatus;
         // HTTP rejections are NOT an internet outage and must not enable
         // offline mutations or overwrite a valid working state with stale cache.
-        setBackendStatus(httpStatus !== undefined || navigator.onLine ? "error" : "offline");
+        const transportFailure = error instanceof TypeError || !navigator.onLine;
+        setBackendStatus(httpStatus !== undefined ? "error" : transportFailure ? "offline" : "error");
         return undefined;
       }
     };
