@@ -45,7 +45,13 @@ test("spools each stable identity once, including after simulated restart", asyn
 test("concurrent submissions cannot spool the same KOT twice", async () => {
   await isolated(async (dataDir) => {
     let release;
-    const blocker = new Promise((resolve) => { release = resolve; });
+    let started;
+    const blocker = new Promise((resolve) => {
+      release = resolve;
+    });
+    const printingStarted = new Promise((resolve) => {
+      started = resolve;
+    });
     let prints = 0;
     const input = {
       dataDir,
@@ -54,23 +60,19 @@ test("concurrent submissions cannot spool the same KOT twice", async () => {
       dryRun: false,
       spool: async () => {
         prints += 1;
+        started();
         await blocker;
         return { printed: true };
       },
     };
     const first = acceptSpoolJob(input);
-    // Wait for the marker to exist without relying on fixed delays.
-    let concurrent;
-    for (let i = 0; i < 300; i += 1) {
-      concurrent = await acceptSpoolJob(input);
-      if (concurrent.status === 409) break;
-      if (concurrent.replayed) break;
-      await new Promise((resolve) => setTimeout(resolve, 2));
-    }
+    await printingStarted; // The durable claim is now present but OS spool remains in progress.
+    const concurrent = await acceptSpoolJob(input);
+    assert.equal(concurrent.status, 409);
+    assert.equal(concurrent.uncertain, true);
     release();
-    await first;
+    assert.equal((await first).status, 202);
     assert.equal(prints, 1);
-    assert.equal(concurrent?.accepted === false || concurrent?.replayed === true, true);
   });
 });
 
