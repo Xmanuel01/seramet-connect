@@ -231,9 +231,7 @@ function POS() {
     const obligations = transactionState.productionPrintObligations ?? [];
     for (const obligation of obligations) {
       if (obligation.branchId !== branchId || obligation.status !== "ATTEMPTING") continue;
-      const linkedJobs = printJobs.filter(
-        (job) => job.productionObligationId === obligation.id,
-      );
+      const linkedJobs = printJobs.filter((job) => job.productionObligationId === obligation.id);
       let outcome: "DELIVERED" | "FAILED" | "UNCERTAIN" | null = null;
       let detail = "";
       if (linkedJobs.length) {
@@ -248,12 +246,15 @@ function POS() {
           detail = "Printer acknowledgement was lost; inspect before any reprint.";
         } else if (
           linkedJobs.every((job) =>
-            ["Printed", "Displayed", "Fallback Printed", "Failed", "Cancelled"].includes(job.status),
+            ["Printed", "Displayed", "Fallback Printed", "Failed", "Cancelled"].includes(
+              job.status,
+            ),
           ) &&
           linkedJobs.some((job) => ["Failed", "Cancelled"].includes(job.status))
         ) {
           outcome = "FAILED";
-          detail = linkedJobs.find((job) => job.failureReason)?.failureReason ?? "KOT delivery failed";
+          detail =
+            linkedJobs.find((job) => job.failureReason)?.failureReason ?? "KOT delivery failed";
         }
       } else if (
         obligation.attemptedAt &&
