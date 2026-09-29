@@ -60,6 +60,17 @@ export class TenantObjectStorage {
         "File must be between 1 byte and 10 MB",
       );
     }
+    const permittedExtensions: Record<string, readonly string[]> = {
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+      "image/webp": [".webp"],
+      "application/pdf": [".pdf"],
+      "text/csv": [".csv"],
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+    };
+    if (!permittedExtensions[input.contentType]?.includes(safeExtension(input.fileName))) {
+      throw new ServerOperationError("VALIDATION_FAILED", 415, "Filename extension does not match file type");
+    }
     assertFileSignature(input.contentType, input.bytes);
     const id = crypto.randomUUID();
     const visibility = input.objectClass === "PUBLIC_ASSET" ? "public" : "private";
