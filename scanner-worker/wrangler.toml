@@ -1,4 +1,0 @@
-name = "seramet-staging-malware-scanner"
-main = "src/index.mjs"
-compatibility_date = "2026-09-28"
-workers_dev = false
