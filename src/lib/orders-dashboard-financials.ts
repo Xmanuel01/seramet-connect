@@ -23,7 +23,7 @@ export type OrdersDashboardFinancials = {
  * accounting revenue-recognition report; use Finance journals for those.
  */
 export function ordersDashboardFinancials(
-  state: Pick<TransactionState, "orders" | "bills" | "refunds">,
+  state: Pick<TransactionState, "orders" | "bills" | "refunds" | "marketplaceReceivables">,
   matchesBranch: BranchMatcher,
   periodDate: string,
   timeZone: string,
@@ -67,9 +67,20 @@ export function ordersDashboardFinancials(
   const paidInvoiceSalesMinor = sumMinor(
     bills.filter((bill) => bill.paymentStatus === "PAID").map((bill) => amount(bill.total)),
   );
-  // Platform-paid orders are not yet merchant cash; report this separately.
+  // Provider receivables are governed by their own settlement ledger, not
+  // an invoice's "paid" field, which does not reflect provider remittances.
+  const periodProviderInvoiceIds = new Set(
+    bills.filter((bill) => bill.paymentStatus === "PROVIDER_RECEIVABLE").map((bill) => bill.id),
+  );
   const providerReceivablesMinor = sumMinor(
-    bills.filter((bill) => bill.paymentStatus === "PROVIDER_RECEIVABLE").map(due),
+    state.marketplaceReceivables
+      .filter(
+        (receivable) =>
+          matchesBranch(receivable.branchId ?? receivable.branch) &&
+          periodProviderInvoiceIds.has(receivable.invoiceId) &&
+          !["CANCELLED", "SETTLED"].includes(receivable.status),
+      )
+      .map((receivable) => amount(Math.max(0, receivable.outstandingAmount))),
   );
   const completedRefundsMinor = sumMinor(
     state.refunds
