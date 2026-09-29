@@ -1174,6 +1174,7 @@ function POS() {
       } catch (error) {
         setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
         setPrintNoticeType("warning");
+        setWorkflowNextStep("Check existing POS Orders before submitting the hold again.");
       }
     });
 
@@ -1320,6 +1321,8 @@ function POS() {
     } catch (error) {
       // The database committed. Do not resend the order to recover a printer
       // error; the already-dispatched order remains selected and auditable.
+      setActiveOrderId(authoritativeOrder.id);
+      setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
       setTrackedPrint(null);
       setPrintNotice(
         `Order ${authoritativeOrder.id} saved to Kitchen, but print queuing failed: ${error instanceof Error ? error.message : "unknown printer error"}.`,
@@ -1521,6 +1524,7 @@ function POS() {
       } catch (error) {
         setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
         setPrintNoticeType("warning");
+        setWorkflowNextStep("Check POS Orders and Kitchen before trying again; never repeat an uncertain KOT.");
       }
     });
 
