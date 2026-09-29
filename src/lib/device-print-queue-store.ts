@@ -116,5 +116,14 @@ export const DevicePrintQueueStore = {
   resetForTests() {
     snapshots.clear();
     listeners.clear();
+    hydrated.clear();
+    if (typeof window !== "undefined") {
+      const remove: string[] = [];
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key?.startsWith("seramet.print-queue.v1:")) remove.push(key);
+      }
+      remove.forEach((key) => window.localStorage.removeItem(key));
+    }
   },
 };
