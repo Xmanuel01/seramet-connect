@@ -2005,6 +2005,33 @@ export const TransactionEngine = {
     order.total = total.total;
     if (additions.length) order.status = "SENT_TO_KITCHEN";
     order.updatedAt = stamp;
+    if (additions.length) {
+      next.kitchenPrintObligations = appendKitchenPrintObligations(
+        next.kitchenPrintObligations ?? [],
+        order,
+        additions.map((line) => ({
+          ...line,
+          sentAt: stamp,
+          sentQuantity: line.quantity,
+        })),
+        "ADDITION",
+        stamp,
+      );
+    }
+    if (removals.length) {
+      next.kitchenPrintObligations = appendKitchenPrintObligations(
+        next.kitchenPrintObligations ?? [],
+        order,
+        removals.map((line) => ({
+          ...line,
+          sentAt: line.sentAt ?? stamp,
+          sentQuantity: line.quantity,
+          productionStatus: "CANCELLED",
+        })),
+        "VOID",
+        stamp,
+      );
+    }
     audit(next, {
       actor: user,
       role: "Cashier",
