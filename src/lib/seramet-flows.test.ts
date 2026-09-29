@@ -284,16 +284,10 @@ describe("kitchen hardware modes", () => {
 
   it("links every planned station delivery to its authoritative KOT obligation", () => {
     const profile = profileForMode("KDS_AND_PRINTER");
-    const plan = SerametPrintService.createProductionTicketJobs(
-      profile,
-      order,
-      [],
-      "NEW",
-      {
-        "MAIN KITCHEN": "KOT-ORD-1-MAIN",
-        BAR: "KOT-ORD-1-BAR",
-      },
-    );
+    const plan = SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW", {
+      "MAIN KITCHEN": "KOT-ORD-1-MAIN",
+      BAR: "KOT-ORD-1-BAR",
+    });
 
     const kitchen = plan.jobs.filter((job) => job.productionStation === "MAIN KITCHEN");
     const bar = plan.jobs.filter((job) => job.productionStation === "BAR");
