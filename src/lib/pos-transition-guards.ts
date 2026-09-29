@@ -31,9 +31,7 @@ export function verifyOrderTransition(
 ): ConfirmedOrderTransition {
   if (!response?.state) throw new Error("Order mutation did not return a transaction state.");
   const matches = response.state.orders.filter((order) =>
-    input.previousOrderId
-      ? order.id === input.previousOrderId
-      : !input.knownOrderIds.has(order.id),
+    input.previousOrderId ? order.id === input.previousOrderId : !input.knownOrderIds.has(order.id),
   );
   if (matches.length !== 1) {
     throw new Error(
@@ -41,10 +39,7 @@ export function verifyOrderTransition(
     );
   }
   const order = matches[0]!;
-  if (
-    order.tenantId !== input.scope.tenantId ||
-    order.branchId !== input.scope.branchId
-  ) {
+  if (order.tenantId !== input.scope.tenantId || order.branchId !== input.scope.branchId) {
     throw new Error("Order response does not match the active restaurant and branch.");
   }
   const correctStatus =
@@ -89,8 +84,6 @@ export function kitchenJobsAcceptedForDelivery(
   ]);
   return (
     jobs.length > 0 &&
-    jobs.every((job) =>
-      queue.some((entry) => entry.id === job.id && actionable.has(entry.status)),
-    )
+    jobs.every((job) => queue.some((entry) => entry.id === job.id && actionable.has(entry.status)))
   );
 }
