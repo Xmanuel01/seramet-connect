@@ -57,6 +57,9 @@ jobs:
           const bucket = bindings.get("SERAMET_OBJECTS")?.bucket_name;
           const workQueue = bindings.get("SERAMET_WORK_QUEUE")?.queue_name;
           const publicOrigin = bindings.get("SERAMET_PUBLIC_ORIGIN")?.text;
+          if (bindings.has("SERAMET_MALWARE_SCANNER")) {
+            throw new Error("Remove the legacy scanner binding from the staging Worker before deploying the lite release");
+          }
           const queueRows = Array.isArray(queuesPayload.result)
             ? queuesPayload.result
             : Array.isArray(queuesPayload.result?.queues)
