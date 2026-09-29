@@ -105,9 +105,7 @@ describe("shared POS dispatch and exact-order invoice guards", () => {
         branchId: "westlands",
       },
     ];
-    expect(payableInvoiceForOrder("order-1", "tenant-1", "westlands", bills)?.id).toBe(
-      "correct",
-    );
+    expect(payableInvoiceForOrder("order-1", "tenant-1", "westlands", bills)?.id).toBe("correct");
     expect(payableInvoiceForOrder("order-1", "tenant-2", "westlands", bills)).toBeUndefined();
     expect(payableInvoiceForOrder("unrelated", "tenant-1", "westlands", bills)).toBeUndefined();
   });
