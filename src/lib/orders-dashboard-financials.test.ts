@@ -122,6 +122,7 @@ describe("Orders dashboard financial populations", () => {
         outstandingAmount: 750,
         status: "PARTIALLY_SETTLED",
         receivableAccount: "Marketplace Receivables",
+        metadata: {},
         createdAt: at,
         updatedAt: at,
       },
