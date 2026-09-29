@@ -4,7 +4,22 @@ import {
   requireServerConfirmation,
   verifyOrderTransition,
 } from "./pos-transition-guards";
-import { createEmptyTransactionState, type TransactionOrder } from "@/lib/transaction-engine";
+import {
+  createEmptyTransactionState,
+  TransactionEngine,
+  type TransactionOrder,
+  type OrderDraft,
+} from "@/lib/transaction-engine";
+import {
+  createDefaultDemoPlatformState,
+  DEMO_TENANT_ID,
+  DEMO_WESTLANDS_BRANCH_ID,
+} from "@/platform/demo/default-demo-data";
+import {
+  ConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
+import { applyServerMutation } from "@/lib/seramet-repository";
 
 const scope = { tenantId: "tenant-1", branchId: "branch-1" };
 const order = (status: TransactionOrder["status"], id = "order-1"): TransactionOrder => ({
@@ -80,6 +95,68 @@ describe("POS Phase 1 authoritative transitions", () => {
         { ...input("KITCHEN", "order-1"), knownOrderIds: new Set(["other"]) },
       ).order.id,
     ).toBe("order-1");
+  });
+
+  it("holds the exact existing open order atomically and rejects repeat hold after kitchen dispatch", () => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+    const draft: OrderDraft = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      customer: "Guest",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: "line-1",
+          productId: "pilau",
+          name: "Pilau",
+          category: "Main Meals",
+          quantity: 1,
+          unitPrice: 500,
+        },
+      ],
+    };
+    const actor = {
+      id: "cashier-1",
+      name: "Cashier",
+      role: "Cashier",
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+    };
+    const initial = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      draft,
+      "OPEN",
+    );
+    const originalId = initial.orders[0]!.id;
+    const first = applyServerMutation(
+      initial,
+      "upsertOrderDraft",
+      { orderId: originalId, draft, targetStatus: "HELD" },
+      actor,
+    );
+    expect(first.orders).toHaveLength(1);
+    expect(first.orders[0]).toMatchObject({ id: originalId, status: "HELD" });
+    const repeated = applyServerMutation(
+      first,
+      "upsertOrderDraft",
+      { orderId: originalId, draft, targetStatus: "HELD" },
+      actor,
+    );
+    expect(repeated.orders).toHaveLength(1);
+    expect(repeated.orders[0]).toMatchObject({ id: originalId, status: "HELD" });
+    const sent = TransactionEngine.sendToKitchen(repeated, originalId, "Cashier");
+    expect(() =>
+      applyServerMutation(
+        sent,
+        "upsertOrderDraft",
+        { orderId: originalId, draft, targetStatus: "HELD" },
+        actor,
+      ),
+    ).toThrow(/Only unsent/);
   });
 
   it("accepts only actionable jobs and rejects immediate device failures", () => {
