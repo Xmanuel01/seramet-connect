@@ -55,12 +55,9 @@ export function needsKitchenDispatch(
 }
 
 /** Billing must use a payable invoice explicitly linked to the selected order. */
-export function payableInvoiceForOrder<T extends Pick<BillingRecord, "id" | "orderIds" | "status" | "tenantId" | "branchId">>(
-  orderId: string,
-  tenantId: string,
-  branchId: string,
-  bills: readonly T[],
-) {
+export function payableInvoiceForOrder<
+  T extends Pick<BillingRecord, "id" | "orderIds" | "status" | "tenantId" | "branchId">,
+>(orderId: string, tenantId: string, branchId: string, bills: readonly T[]) {
   return bills.find(
     (bill) =>
       bill.orderIds.includes(orderId) &&
