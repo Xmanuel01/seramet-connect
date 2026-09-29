@@ -5,7 +5,7 @@
 1. Create separate Supabase projects or isolated databases for staging and production.
 2. Configure Supabase Auth, email verification, asymmetric JWT signing, allowed redirect URLs and
    SMTP suitable for transactional mail.
-3. Create Cloudflare Hyperdrive, R2, work queue, dead-letter queue and malware-scanner service.
+3. Create Cloudflare Hyperdrive, R2, work queue and dead-letter queue. This lean deployment intentionally has no antivirus scanner; allow only narrowly validated uploads.
 4. Configure staging and production DNS names and Cloudflare deployment credentials.
 5. Store the PostgreSQL migration URL and deployment credentials only in CI secrets.
 
