@@ -14,7 +14,7 @@ export type KotObligation = {
   kind: "NEW" | "ADDITION" | "VOID";
   lines: TransactionLine[];
   status:
-    "PENDING" | "CLAIMED" | "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED";
+    | "PENDING"\n    | "CLAIMED"\n    | "QUEUED"\n    | "DIGITAL_DISPLAYED"\n    | "UNCERTAIN"\n    | "BRIDGE_ACKNOWLEDGED"\n    | "SUPERSEDED";
   createdAt: string;
   claimedBy?: string;
   claimedAt?: string;
@@ -65,7 +65,7 @@ export function pendingKotObligations(
           .filter(
             (obligation) =>
               obligation.status !== "DIGITAL_DISPLAYED" &&
-              obligation.status !== "BRIDGE_ACKNOWLEDGED",
+              obligation.status !== "BRIDGE_ACKNOWLEDGED" &&\n              obligation.status !== "SUPERSEDED",
           )
           .map((obligation) => ({ order, obligation }))
       : [],
