@@ -6,18 +6,28 @@ const claimStoragePrefix = "seramet.kot.claim.v1:";
 
 function durableClaimId(obligationId: string) {
   if (typeof window === "undefined") return crypto.randomUUID();
-  const key = `${claimStoragePrefix}${obligationId}`;
-  const existing = window.localStorage.getItem(key)?.trim();
-  if (existing && existing.length <= 128) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(key, created);
-  return created;
+  try {
+    const key = `${claimStoragePrefix}${obligationId}`;
+    const existing = window.localStorage.getItem(key)?.trim();
+    if (existing && existing.length <= 128) return existing;
+    const created = crypto.randomUUID();
+    window.localStorage.setItem(key, created);
+    return created;
+  } catch {
+    // Storage is a recovery optimization, never a prerequisite for a kitchen
+    // write. The authoritative claim still prevents another automatic claim.
+    return crypto.randomUUID();
+  }
 }
 
 function clearDurableClaimId(obligationId: string, claimId: string) {
   if (typeof window === "undefined") return;
-  const key = `${claimStoragePrefix}${obligationId}`;
-  if (window.localStorage.getItem(key) === claimId) window.localStorage.removeItem(key);
+  try {
+    const key = `${claimStoragePrefix}${obligationId}`;
+    if (window.localStorage.getItem(key) === claimId) window.localStorage.removeItem(key);
+  } catch {
+    // The server/bridge records remain authoritative when browser storage fails.
+  }
 }
 
 export type KitchenObligationMutation = (
