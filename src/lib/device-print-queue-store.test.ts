@@ -80,3 +80,23 @@ describe("device print queue store", () => {
     );
   });
 });
+
+
+describe("durable device print queue", () => {
+  it("persists queued jobs before bridge delivery can begin", () => {
+    DevicePrintQueueStore.setJobs("branch-westlands", [job("PJ-DURABLE")]);
+    const raw = window.localStorage.getItem("seramet.print-queue.v1:branch-westlands");
+    expect(raw).toContain("PJ-DURABLE");
+    expect(raw).toContain('"status":"Queued"');
+  });
+
+  it("converts an interrupted in-flight delivery to Uncertain after a simulated restart", () => {
+    DevicePrintQueueStore.setJobs("branch-westlands", [
+      { ...job("PJ-UNCERTAIN"), status: "Sending" },
+    ]);
+    const raw = window.localStorage.getItem("seramet.print-queue.v1:branch-westlands")!;
+    DevicePrintQueueStore.resetForTests();
+    window.localStorage.setItem("seramet.print-queue.v1:branch-westlands", raw);
+    expect(DevicePrintQueueStore.snapshot("branch-westlands").jobs[0]?.status).toBe("Uncertain");
+  });
+});
