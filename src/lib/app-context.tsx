@@ -527,7 +527,16 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     if (typeof EventSource === "undefined") return;
     const endpoint = `/api/seramet/realtime/events?tenant=${encodeURIComponent(tenantId)}&branchId=${encodeURIComponent(branchId)}`;
     const stream = new EventSource(endpoint, { withCredentials: true });
+    let streamHealthy = false;
+    let lastFallbackRefresh = 0;
     const requestRefresh = (reason: string) => {
+      // A 25-second SSE stream reconnect should not trigger repeated competing
+      // full transaction refreshes on an otherwise healthy cashier terminal.
+      const now = Date.now();
+      if (reason !== "focus" && reason !== "online" && now - lastFallbackRefresh < 5_000) {
+        return;
+      }
+      lastFallbackRefresh = now;
       window.dispatchEvent(new CustomEvent("seramet:refresh", { detail: { reason } }));
     };
     const message = (event: MessageEvent<string>) => {
@@ -539,15 +548,26 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }
     };
     stream.addEventListener("seramet", message as EventListener);
-    stream.addEventListener("unavailable", () => requestRefresh("stream-unavailable"));
-    stream.onerror = () => requestRefresh("stream-error");
+    stream.onopen = () => { streamHealthy = true; };
+    stream.addEventListener("unavailable", () => {
+      streamHealthy = false;
+      requestRefresh("stream-unavailable");
+    });
+    stream.onerror = () => {
+      streamHealthy = false;
+      requestRefresh("stream-error");
+    };
     const focus = () => requestRefresh("focus");
     const online = () => requestRefresh("online");
     const visible = () => {
       if (document.visibilityState === "visible") requestRefresh("visible");
     };
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) requestRefresh("poll");
+      // Poll only when the realtime transport is unavailable, never alongside
+      // an established SSE connection.
+      if (!streamHealthy && document.visibilityState === "visible" && navigator.onLine) {
+        requestRefresh("fallback-poll");
+      }
     }, 30_000);
     window.addEventListener("focus", focus);
     window.addEventListener("online", online);
