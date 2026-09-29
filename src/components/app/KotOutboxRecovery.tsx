@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useKotDeliveryAcknowledgement } from "@/hooks/use-kot-delivery-ack";
 import { useAppContext } from "@/lib/app-context";
 import { pendingKotObligations } from "@/lib/kot-obligations";
 import type {
@@ -30,6 +31,7 @@ export function KotOutboxRecovery({
 }) {
   const { branchId: activeBranchId, currentUser, permissions } = useAppContext();
   const { state, mutate } = useTransactionEngine();
+  useKotDeliveryAcknowledgement(branchId, state.orders, jobs, mutate);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const active = branchId === activeBranchId;
