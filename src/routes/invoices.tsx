@@ -204,9 +204,7 @@ function Invoices() {
     try {
       const result = await mutate("prepareInvoiceForPayment", { orderId });
       const invoice = result?.state?.bills.find(
-        (bill) =>
-          bill.orderIds.includes(orderId) &&
-          ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+        (bill) => bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
       );
       if (!invoice) throw new Error("The server did not return an invoice for this kitchen order.");
       setStatusFilter("Open");
@@ -456,9 +454,14 @@ function Invoices() {
           />
           <div className="divide-y divide-border">
             {awaitingBill.map((order) => (
-              <div key={order.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div
+                key={order.id}
+                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+              >
                 <div className="min-w-0 text-[13px]">
-                  <div className="font-bold">{order.id} · {order.customer}</div>
+                  <div className="font-bold">
+                    {order.id} · {order.customer}
+                  </div>
                   <div className="text-muted-foreground">
                     {order.status.replaceAll("_", " ")} · {order.channel} · {ksh(order.total)}
                   </div>
