@@ -2269,12 +2269,6 @@ function POS() {
                 {orderActionBusy ? "Working..." : "Send kitchen"}
               </Btn>
               <Btn
-                onClick={sendKitchenAndBill}
-                disabled={orderActionBusy || !items.length}
-              >
-                {orderActionBusy ? "Working..." : "Send kitchen & bill"}
-              </Btn>
-              <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
@@ -2290,6 +2284,15 @@ function POS() {
                   : !dineInPaymentReady && selectedChannel?.requiresTable
                     ? "Send kitchen first"
                     : `Pay ${ksh(total)}`}
+              </Btn>
+            </div>
+            <div className="mt-2">
+              <Btn
+                className="w-full"
+                onClick={sendKitchenAndBill}
+                disabled={orderActionBusy || !items.length}
+              >
+                {orderActionBusy ? "Working..." : "Send kitchen & bill"}
               </Btn>
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
