@@ -135,7 +135,13 @@ export function useSerametPrintQueue(branch: string) {
   ) => {
     if (!profile) throw new Error(configurationError ?? "No configured kitchen printer");
     const ticketKind =
-      kind === "AUDITED_REPRINT" ? "REPRINT" : kind === "ADDITION" ? "ADDITION" : "NEW";
+      kind === "AUDITED_REPRINT"
+        ? "REPRINT"
+        : kind === "VOID"
+          ? "VOID"
+          : kind === "ADDITION"
+            ? "ADDITION"
+            : "NEW";
     const plan = SerametPrintService.createProductionTicketJobs(
       profile,
       order,
