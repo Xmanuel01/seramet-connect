@@ -38,7 +38,9 @@ test("spools each stable identity once, including after simulated restart", asyn
     assert.equal(afterRestart.replayed, true);
     assert.equal(prints, 1);
     assert.equal(first.bridgeJobId, afterRestart.bridgeJobId);
-    assert.ok((await readFile(join(dataDir, `${first.bridgeJobId}.txt`), "utf8")).includes("pilau"));
+    assert.ok(
+      (await readFile(join(dataDir, `${first.bridgeJobId}.txt`), "utf8")).includes("pilau"),
+    );
   });
 });
 
@@ -105,7 +107,9 @@ test("the same ID cannot silently print changed content or another printer targe
       job: ticket,
       printerName: "Kitchen 1",
       dryRun: true,
-      spool: async () => { throw new Error("dry-run must never call the physical printer"); },
+      spool: async () => {
+        throw new Error("dry-run must never call the physical printer");
+      },
     };
     await acceptSpoolJob(input);
     const mismatch = await acceptSpoolJob({
