@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/command";
 import { roleCanAccessPath } from "@/components/app/nav";
 import { useAppContext } from "@/lib/app-context";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 
 const goto: { label: string; to: string }[] = [
   { label: "Go to Home Dashboard", to: "/" },
@@ -40,7 +39,6 @@ const goto: { label: string; to: string }[] = [
   { label: "Open Schedule", to: "/schedule" },
   { label: "Open Payroll", to: "/payroll" },
   { label: "Go to Finance", to: "/finance" },
-  { label: "Go to Payment Control", to: "/payment-control" },
   { label: "Open Profit & Loss", to: "/profit-loss" },
   { label: "Open Balance Sheet", to: "/balance-sheet" },
   { label: "Open Cash Flow", to: "/cash-flow" },
@@ -70,43 +68,17 @@ export function CommandPalette({
   onOpenChange: (o: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const { activeTenantId, role, branch, permissions, matchesBranch } = useAppContext();
-  const { state } = useTransactionEngine();
-  const availableGoto = goto.filter((item) =>
-    roleCanAccessPath(role, item.to, branch, permissions, activeTenantId),
-  );
-  const recentOrders = state.orders
-    .filter((order) => matchesBranch(order.branchId ?? order.branch))
-    .slice(0, 2);
-  const recentReceipts = state.receipts
-    .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
-    .slice(0, 2);
-  const recentInvoices = state.bills
-    .filter((invoice) => matchesBranch(invoice.branchId ?? invoice.branch))
-    .slice(0, 2);
+  const { role, branch } = useAppContext();
+  const availableGoto = goto.filter((item) => roleCanAccessPath(role, item.to, branch));
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput placeholder="Search orders, receipts, customers, items... or type a command" />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
-        <CommandGroup heading={`Recent records - ${branch}`}>
-          {recentOrders.map((order) => (
-            <CommandItem key={order.id} onSelect={() => navigate({ to: "/orders" })}>
-              Order {order.id} - {order.customer} - {order.branch}
-            </CommandItem>
-          ))}
-          {recentReceipts.map((receipt) => (
-            <CommandItem key={receipt.id} onSelect={() => navigate({ to: "/receipts" })}>
-              Receipt {receipt.id} -{" "}
-              {receipt.paymentBreakdown.map((item) => item.method.replaceAll("_", " ")).join(" + ")}{" "}
-              - {receipt.branch}
-            </CommandItem>
-          ))}
-          {recentInvoices.map((invoice) => (
-            <CommandItem key={invoice.id} onSelect={() => navigate({ to: "/invoices" })}>
-              Invoice {invoice.id} - {invoice.customer}
-            </CommandItem>
-          ))}
+        <CommandGroup heading={`Records matching 1842 - ${branch}`}>
+          <CommandItem>Order #1842 - Table 12 - KSh 4,850</CommandItem>
+          <CommandItem>Receipt #1842 - M-Pesa - Westlands</CommandItem>
+          <CommandItem>Invoice INV-1842 - Kelvin Otieno</CommandItem>
         </CommandGroup>
         <CommandSeparator />
         <CommandGroup heading="Navigate">

@@ -1,5 +1,5 @@
-import { formatDateTime, ksh } from "@/lib/currency";
-import { SerametPrintService } from "@/lib/seramet-print-service";
+import { ksh } from "@/data/mock";
+import { branchHardwareProfiles } from "@/lib/seramet-print-service";
 
 export type InvoiceLine = {
   description: string;
@@ -42,7 +42,9 @@ export function createInvoicePdfBlob(invoice: InvoiceDeliveryRecord) {
 
 export function createInvoicePdfBytes(invoice: InvoiceDeliveryRecord) {
   const lines = renderInvoiceLines(invoice);
-  const identity = SerametPrintService.getBranchHardwareProfile(invoice.branch).printIdentity;
+  const identity =
+    branchHardwareProfiles[invoice.branch]?.printIdentity ??
+    branchHardwareProfiles.Westlands.printIdentity;
   const outstanding = invoice.amount - invoice.paid;
   const content = [
     "BT",
@@ -66,7 +68,10 @@ export function createInvoicePdfBytes(invoice: InvoiceDeliveryRecord) {
     `0 -16 Td (${pdfText(`OUTSTANDING                                   ${ksh(outstanding)}`)}) Tj`,
     `0 -16 Td (${pdfText(`STATUS                                        ${invoice.status}`)}) Tj`,
     `0 -28 Td (${pdfText("PAYMENT INFORMATION")}) Tj`,
-    ...identity.paymentInstructions.map((instruction) => `0 -15 Td (${pdfText(instruction)}) Tj`),
+    `0 -15 Td (${pdfText(`M-PESA TILL: ${identity.tillNumber}`)}) Tj`,
+    `0 -15 Td (${pdfText(`BANK: ${identity.bankName}`)}) Tj`,
+    `0 -15 Td (${pdfText(`A/C NAME: ${identity.bankAccountName}`)}) Tj`,
+    `0 -15 Td (${pdfText(`A/C NO: ${identity.bankAccountNumber}`)}) Tj`,
     `320 45 Td (${pdfText("THANK YOU")}) Tj`,
     `0 -32 Td (${pdfText("Authorised Signatory")}) Tj`,
     "ET",
@@ -75,8 +80,7 @@ export function createInvoicePdfBytes(invoice: InvoiceDeliveryRecord) {
 }
 
 export function invoiceEmailLink(invoice: InvoiceDeliveryRecord) {
-  const identity = SerametPrintService.getBranchHardwareProfile(invoice.branch).printIdentity;
-  const subject = encodeURIComponent(`Invoice ${invoice.id} from ${identity.businessName}`);
+  const subject = encodeURIComponent(`Invoice ${invoice.id} from Mona Swahili`);
   const body = encodeURIComponent(invoiceDeliveryMessage(invoice, "email"));
   return `mailto:${invoice.email ?? ""}?subject=${subject}&body=${body}`;
 }
@@ -116,7 +120,7 @@ export function createDeliveryLog(
     invoiceId: invoice.id,
     channel,
     destination,
-    createdAt: formatDateTime(new Date(), { hour12: false }),
+    createdAt: new Date().toLocaleString("en-KE", { hour12: false }),
     status: "Opened",
   };
 }

@@ -22,19 +22,19 @@ const channels = [
   {
     name: "Website",
     icon: Globe2,
-    status: "Not configured",
+    status: "Live",
     detail: "Menu, branch hours, table booking links and online ordering links.",
   },
   {
     name: "Social pages",
     icon: Instagram,
-    status: "Not configured",
+    status: "Scheduled",
     detail: "Instagram, Facebook and TikTok posts for offers, new dishes and events.",
   },
   {
     name: "WhatsApp Business",
     icon: MessageCircle,
-    status: "Not configured",
+    status: "Connected",
     detail: "Catalog, quick replies, customer broadcasts and click-to-chat links.",
   },
 ];
@@ -55,10 +55,10 @@ function Marketing() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Website status" value="Not configured" />
-        <Metric label="Scheduled posts" value={0} />
-        <Metric label="Customer chats" value={0} />
-        <Metric label="Menu sync" value="Not configured" />
+        <Metric label="Website status" value="Live" />
+        <Metric label="Scheduled posts" value={12} />
+        <Metric label="WhatsApp chats" value={84} delta={6.2} />
+        <Metric label="Menu sync" value="Ready" />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         {channels.map((channel) => {
@@ -111,8 +111,17 @@ function Marketing() {
           title="Approval queue"
           sub="Marketing changes can be prepared by a marketing operator and approved by management"
         />
-        <div className="p-4 text-[13px] text-muted-foreground">
-          No marketing changes are awaiting approval.
+        <div className="grid gap-2 p-4 md:grid-cols-3">
+          {["New Eid buffet hero image", "WhatsApp quick reply update", "Glovo offer banner"].map(
+            (item, index) => (
+              <div key={item} className="rounded-lg border border-border p-3">
+                <div className="text-[13px] font-semibold">{item}</div>
+                <div className="mt-2 text-[12px] text-muted-foreground">
+                  {index === 0 ? "Needs approval" : "Draft ready"}
+                </div>
+              </div>
+            ),
+          )}
         </div>
       </Panel>
     </AppShell>

@@ -8,7 +8,13 @@ export type ImportField = {
   hint?: string;
 };
 
-export type ImportDatasetId = "menu" | "inventory" | "accounting" | "finance" | "crm" | "hr";
+export type ImportDatasetId =
+  | "menu"
+  | "inventory"
+  | "accounting"
+  | "finance"
+  | "crm"
+  | "hr";
 
 export type ImportDataset = {
   id: ImportDatasetId;

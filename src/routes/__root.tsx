@@ -4,15 +4,14 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
-  useRouterState,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppProvider } from "@/lib/app-context";
-import { RouteAccessBoundary } from "@/components/app/RouteAccessBoundary";
 
 function NotFoundComponent() {
   return (
@@ -39,6 +38,9 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
+  useEffect(() => {
+    reportLovableError(error, { boundary: "tanstack_root_error_component" });
+  }, [error]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -89,8 +91,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "theme-color", content: "#f8fafb", media: "(prefers-color-scheme: light)" },
-      { name: "theme-color", content: "#151a1f", media: "(prefers-color-scheme: dark)" },
+      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {
@@ -103,21 +104,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
       },
-      {
-        rel: "icon",
-        href: "/brand/seramet-icon-light.png",
-        type: "image/png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        rel: "icon",
-        href: "/brand/seramet-icon-dark.png",
-        type: "image/png",
-        media: "(prefers-color-scheme: dark)",
-      },
-      { rel: "icon", href: "/favicon.ico", sizes: "any" },
-      { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png", sizes: "180x180" },
-      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
   }),
   shellComponent: RootShell,
@@ -131,9 +118,14 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
-        <script src="/theme-init.js" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('seramet.theme');document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.style.colorScheme=t==='dark'?'dark':'light'}catch(e){}",
+          }}
+        />
       </head>
-      <body suppressHydrationWarning>
+      <body>
         {children}
         <Scripts />
       </body>
@@ -143,29 +135,13 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  const isGuestRoute = useRouterState({
-    select: (state: { location: { pathname: string } }) =>
-      state.location.pathname.startsWith("/guest/"),
-  });
-  const isPublicAuthRoute = useRouterState({
-    select: (state: { location: { pathname: string } }) =>
-      state.location.pathname === "/login" ||
-      state.location.pathname === "/register" ||
-      state.location.pathname === "/pos-login",
-  });
 
   return (
     <QueryClientProvider client={queryClient}>
-      {isGuestRoute || isPublicAuthRoute ? (
+      <AppProvider>
+        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
-      ) : (
-        <AppProvider>
-          <RouteAccessBoundary>
-            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-            <Outlet />
-          </RouteAccessBoundary>
-        </AppProvider>
-      )}
+      </AppProvider>
     </QueryClientProvider>
   );
 }

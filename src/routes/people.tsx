@@ -1,9 +1,9 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { employees } from "@/data/mock";
 import { cn } from "@/lib/utils";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { branchMetric, useAppContext, useBranchRows } from "@/lib/app-context";
 
 export const Route = createFileRoute("/people")({
   head: () => ({
@@ -28,29 +28,16 @@ const shiftFor = (i: number, d: number) =>
   (i + d) % 4 === 0 ? "OFF" : (i + d) % 3 === 0 ? "12:00-21:30" : "09:30-21:30";
 
 function People() {
-  const { branchLabel } = useAppContext();
-  const { state } = useTransactionEngine();
-  const employees = useBranchRows(state.employees);
-  const rows = employees.map((employee) => {
-    const attendance = state.attendanceRecords.find((record) => record.employeeId === employee.id);
-    return {
-      ...employee,
-      dept: employee.department,
-      status: attendance?.status.replaceAll("_", " ") ?? "Not clocked in",
-    };
-  });
-  const present = rows.filter((employee) => employee.status === "PRESENT").length;
-  const absent = rows.filter((employee) => employee.status === "ABSENT").length;
-  const late = rows.filter((employee) => employee.status === "LATE").length;
-  const onLeave = rows.filter((employee) => employee.status === "ON LEAVE").length;
-  const overtime = state.attendanceRecords.reduce(
-    (total, record) => total + record.overtimeMinutes,
-    0,
-  );
+  const { branch, branchLabel } = useAppContext();
+  const rows = useBranchRows(employees);
+  const present = rows.filter((employee) => employee.status === "Present").length;
+  const absent = rows.filter((employee) => employee.status === "Absent").length;
+  const late = rows.filter((employee) => employee.status === "Late").length;
+  const onLeave = rows.filter((employee) => employee.status === "On Leave").length;
   return (
     <AppShell
       title="People"
-      subtitle={`${rows.length} employees - ${branchLabel}`}
+      subtitle={`${branch === "All Branches" ? 42 : rows.length * 5} employees  -  ${branchLabel}  -  week of 10 August`}
       actions={
         <>
           <Btn>Attendance</Btn>
@@ -59,18 +46,20 @@ function People() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Metric label="Employees" value={rows.length} />
-        <Metric label="Present" value={present} />
-        <Metric label="Absent" value={absent} />
-        <Metric label="Late" value={late} invert />
-        <Metric label="On leave" value={onLeave} />
-        <Metric label="Overtime hrs" value={(overtime / 60).toFixed(1)} />
+        <Metric label="Employees" value={branch === "All Branches" ? 42 : rows.length * 5} />
+        <Metric label="Present" value={branch === "All Branches" ? 34 : present * 5} />
+        <Metric label="Absent" value={branch === "All Branches" ? 2 : absent} />
+        <Metric label="Late" value={branch === "All Branches" ? 3 : late} delta={50} invert />
+        <Metric label="On leave" value={branch === "All Branches" ? 3 : onLeave} />
+        <Metric label="Overtime hrs" value={branchMetric(26, branch)} delta={12} invert />
         <Metric
           label="Payroll estimate"
-          value={rows.reduce((sum, row) => sum + row.netMonthlyPay, 0)}
+          value={branchMetric(1186400, branch)}
           money
+          delta={2.8}
+          invert
         />
-        <Metric label="Open positions" value={0} />
+        <Metric label="Open positions" value={branch === "All Branches" ? 4 : 2} />
       </div>
 
       <Panel className="mt-4">

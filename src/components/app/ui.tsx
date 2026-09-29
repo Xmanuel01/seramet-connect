@@ -1,6 +1,6 @@
-import { Children, isValidElement, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { Children, isValidElement, useRef, type ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { ksh } from "@/lib/currency";
+import { ksh } from "@/data/mock";
 import { cn } from "@/lib/utils";
 
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
@@ -277,12 +277,11 @@ export function Btn({
   variant = "default",
   className,
   onClick,
-  disabled = false,
-  type = "button",
-  ...buttonProps
-}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> & {
+}: {
   children: ReactNode;
   variant?: "default" | "primary" | "ghost" | "danger";
+  className?: string;
+  onClick?: () => void;
 }) {
   const v = {
     default: "border border-border bg-card hover:bg-secondary",
@@ -290,21 +289,21 @@ export function Btn({
     ghost: "text-muted-foreground hover:bg-secondary hover:text-foreground",
     danger: "bg-danger-soft text-danger hover:opacity-90",
   }[variant];
-  const missingAction = type === "button" && !onClick;
-  const isDisabled = disabled || missingAction;
-  const handleClick: ButtonHTMLAttributes<HTMLButtonElement>["onClick"] = (event) => {
-    if (isDisabled || !onClick) return;
-    onClick(event);
+  const handleClick = () => {
+    if (onClick) {
+      onClick();
+      return;
+    }
+    const label = getTextFromChildren(children).trim();
+    if (!label || typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent("seramet:workflow-action", { detail: { label } }));
   };
 
   return (
     <button
-      {...buttonProps}
-      type={type}
       onClick={handleClick}
-      disabled={isDisabled}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors",
         v,
         className,
       )}
@@ -312,6 +311,18 @@ export function Btn({
       {children}
     </button>
   );
+}
+
+function getTextFromChildren(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => {
+      if (typeof child === "string" || typeof child === "number") return String(child);
+      if (isValidElement<{ children?: ReactNode }>(child))
+        return getTextFromChildren(child.props.children);
+      return "";
+    })
+    .join(" ")
+    .replace(/\s+/g, " ");
 }
 
 export function Empty({ title, body, action }: { title: string; body: string; action: string }) {
@@ -342,7 +353,11 @@ export function TH({ children, className }: { children?: ReactNode; className?: 
   );
 }
 
-export function TD({ children, className, ...rest }: React.TdHTMLAttributes<HTMLTableCellElement>) {
+export function TD({
+  children,
+  className,
+  ...rest
+}: React.TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td
       {...rest}

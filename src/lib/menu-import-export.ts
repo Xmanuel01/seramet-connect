@@ -1,7 +1,4 @@
-import type { Product } from "@/lib/menu-product";
-import { formatDateTime } from "@/lib/currency";
-import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
+import type { Product } from "@/data/mock";
 
 export type MenuImportSource = "csv" | "xlsx";
 export type MenuImportSeverity = "error" | "warning";
@@ -27,20 +24,18 @@ export type MenuImportPreview = {
 type RawMenuRow = Record<string, string>;
 
 const requiredColumns = ["name", "category", "price"] as const;
+const productionStations = ["MAIN KITCHEN", "GRILL", "BAR", "DESSERT", "DISPATCH", "NONE"] as const;
 const truthy = new Set(["1", "yes", "true", "y", "on", "available"]);
 const falsy = new Set(["0", "no", "false", "n", "off", "unavailable"]);
 
-export async function parseMenuFile(
-  file: File,
-  branchNames = configuredBranchNames(),
-): Promise<MenuImportPreview> {
+export async function parseMenuFile(file: File): Promise<MenuImportPreview> {
   const name = file.name.toLowerCase();
   if (name.endsWith(".xlsx")) {
     const rows = await parseXlsxRows(await file.arrayBuffer());
-    return validateMenuRows(rows, file.name, "xlsx", branchNames);
+    return validateMenuRows(rows, file.name, "xlsx");
   }
   if (name.endsWith(".csv") || name.endsWith(".txt")) {
-    return validateMenuRows(parseCsvRows(await file.text()), file.name, "csv", branchNames);
+    return validateMenuRows(parseCsvRows(await file.text()), file.name, "csv");
   }
   return {
     sourceName: file.name,
@@ -57,12 +52,8 @@ export async function parseMenuFile(
   };
 }
 
-export function parseMenuText(
-  text: string,
-  sourceName = "Pasted CSV",
-  branchNames = configuredBranchNames(),
-): MenuImportPreview {
-  return validateMenuRows(parseCsvRows(text), sourceName, "csv", branchNames);
+export function parseMenuText(text: string, sourceName = "Pasted CSV"): MenuImportPreview {
+  return validateMenuRows(parseCsvRows(text), sourceName, "csv");
 }
 
 export function confirmMenuImport(currentProducts: Product[], preview: MenuImportPreview) {
@@ -90,7 +81,6 @@ export function confirmMenuImport(currentProducts: Product[], preview: MenuImpor
 }
 
 export function exportMenuToCsv(items: Product[], branch?: string) {
-  const branchNames = configuredBranchNames();
   const headers = [
     "itemCode",
     "sku",
@@ -101,8 +91,10 @@ export function exportMenuToCsv(items: Product[], branch?: string) {
     "productionStation",
     "popular",
     "out",
-    ...branchNames.map((name) => `${branchColumnPrefix(name)}Price`),
-    ...branchNames.map((name) => `${branchColumnPrefix(name)}Available`),
+    "westlandsPrice",
+    "ngongRoadPrice",
+    "westlandsAvailable",
+    "ngongRoadAvailable",
     "imageFilename",
     "imageUrl",
   ];
@@ -116,16 +108,68 @@ export function exportMenuToCsv(items: Product[], branch?: string) {
     item.productionStation ?? "NONE",
     item.popular ? "yes" : "no",
     item.out ? "yes" : "no",
-    ...branchNames.map((name) => String(item.branchPrices?.[name] ?? "")),
-    ...branchNames.map((name) => (item.branchAvailability?.[name] === false ? "no" : "yes")),
+    String(item.branchPrices?.Westlands ?? ""),
+    String(item.branchPrices?.["Ngong Road"] ?? ""),
+    item.branchAvailability?.Westlands === false ? "no" : "yes",
+    item.branchAvailability?.["Ngong Road"] === false ? "no" : "yes",
     item.imageFilename ?? "",
     item.imageUrl ?? "",
   ]);
   return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
-export function exportMenuImportTemplate(_branchNames = configuredBranchNames()) {
-  return createCanonicalMenuTemplate();
+export function exportMenuImportTemplate() {
+  const headers = [
+    "itemCode",
+    "name",
+    "category",
+    "menuSection",
+    "description",
+    "price",
+    "costPrice",
+    "taxCategory",
+    "unitOfMeasure",
+    "productionStation",
+    "kitchenPrinterGroup",
+    "modifierGroup",
+    "barcode",
+    "sku",
+    "westlandsAvailable",
+    "ngongRoadAvailable",
+    "channelAvailability",
+    "status",
+    "prep",
+    "par",
+    "imageFilename",
+    "westlandsPrice",
+    "ngongRoadPrice",
+  ];
+  const sample = [
+    "MS-001",
+    "Chicken Biryani",
+    "Main Meals",
+    "Lunch",
+    "Basmati rice with spiced chicken",
+    "1200",
+    "650",
+    "VAT16",
+    "plate",
+    "MAIN KITCHEN",
+    "Kitchen",
+    "Spice level",
+    "616000000001",
+    "FOOD-001",
+    "yes",
+    "yes",
+    "Dine-In|Takeaway",
+    "active",
+    "18",
+    "20",
+    "MS-001.jpg",
+    "1250",
+    "1200",
+  ];
+  return [headers, sample].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 export function exportMenuErrorReport(preview: MenuImportPreview) {
@@ -144,7 +188,6 @@ export function validateMenuRows(
   rows: RawMenuRow[],
   sourceName: string,
   sourceType: MenuImportSource,
-  branchNames = configuredBranchNames(),
 ): MenuImportPreview {
   const issues: MenuImportIssue[] = [];
   const products: Product[] = [];
@@ -164,13 +207,11 @@ export function validateMenuRows(
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
-    const name = clean(row["name"]);
-    const category = clean(row["category"]);
-    const price = parseMoney(row["price"]);
-    const prep = parseWholeNumber(row["prep"] || "0");
-    const station = normalizeStation(
-      row["productionstation"] || row["productionStation"] || row["station"],
-    );
+    const name = clean(row.name);
+    const category = clean(row.category);
+    const price = parseMoney(row.price);
+    const prep = parseWholeNumber(row.prep || "0");
+    const station = normalizeStation(row.productionstation || row.productionStation || row.station);
     const rowIssues: MenuImportIssue[] = [];
 
     if (!name)
@@ -206,7 +247,7 @@ export function validateMenuRows(
         row: rowNumber,
         field: "productionStation",
         severity: "error",
-        message: "Production station is required for this legacy local preview",
+        message: `Production station must be one of ${productionStations.join(", ")}`,
       });
 
     const duplicateKey = `${name.toLowerCase()}::${category.toLowerCase()}`;
@@ -218,6 +259,15 @@ export function validateMenuRows(
         message: "Duplicate item in this import",
       });
     }
+    if (station === "BAR" && !category.toLowerCase().includes("drink")) {
+      rowIssues.push({
+        row: rowNumber,
+        field: "productionStation",
+        severity: "warning",
+        message: "BAR station is usually used for drink categories",
+      });
+    }
+
     issues.push(...rowIssues);
     if (
       rowIssues.some((issue) => issue.severity === "error") ||
@@ -228,36 +278,30 @@ export function validateMenuRows(
       return;
 
     seen.add(duplicateKey);
-    const branchPrices = Object.fromEntries(
-      branchNames.flatMap((branchName) => {
-        const value = parseOptionalMoney(row[`${branchColumnPrefix(branchName)}Price`]);
-        return value === undefined ? [] : [[branchName, value]];
-      }),
-    ) as Record<string, number>;
-    const branchAvailability = Object.fromEntries(
-      branchNames.flatMap((branchName) => {
-        const value = parseAvailability(row[`${branchColumnPrefix(branchName)}Available`]);
-        return value === undefined ? [] : [[branchName, value]];
-      }),
-    ) as Record<string, boolean>;
     products.push(
       stripUndefined({
         id: slugify(`${category}-${name}`),
-        itemCode: clean(row["itemcode"] || row["itemCode"]),
-        sku: clean(row["sku"]),
+        itemCode: clean(row.itemcode || row.itemCode),
+        sku: clean(row.sku),
         name,
         category,
         price,
         prep,
-        imageFilename: clean(row["imagefilename"] || row["imageFilename"]),
-        imageUrl: clean(row["imageurl"] || row["imageUrl"]),
-        popular: parseBoolean(row["popular"]),
-        out: parseBoolean(row["out"]),
+        imageFilename: clean(row.imagefilename || row.imageFilename),
+        imageUrl: clean(row.imageurl || row.imageUrl),
+        popular: parseBoolean(row.popular),
+        out: parseBoolean(row.out),
         productionStation: station,
-        ...(Object.keys(branchPrices).length ? { branchPrices } : {}),
-        ...(Object.keys(branchAvailability).length ? { branchAvailability } : {}),
+        branchPrices: stripUndefined({
+          Westlands: parseOptionalMoney(row.westlandsprice || row.westlandsPrice),
+          "Ngong Road": parseOptionalMoney(row.ngongroadprice || row.ngongRoadPrice),
+        }),
+        branchAvailability: stripUndefined({
+          Westlands: parseAvailability(row.westlandsavailable || row.westlandsAvailable),
+          "Ngong Road": parseAvailability(row.ngongroadavailable || row.ngongRoadAvailable),
+        }),
         importSource: "menu-import" as const,
-      }) as Product,
+      }),
     );
   });
 
@@ -314,9 +358,6 @@ export function parseCsvRows(text: string): RawMenuRow[] {
 export async function parseXlsxRows(buffer: ArrayBuffer): Promise<RawMenuRow[]> {
   const files = await readZipEntries(buffer);
   const workbook = files.get("xl/workbook.xml") ?? "";
-  if ((workbook.match(/<sheet\b/g) ?? []).length > 10) {
-    throw new Error("Workbook has too many sheets");
-  }
   const rels = files.get("xl/_rels/workbook.xml.rels") ?? "";
   const firstSheetTarget =
     firstMatch(rels, /Target="([^"]*worksheets\/sheet\d+\.xml)"/) ??
@@ -343,10 +384,8 @@ async function readZipEntries(buffer: ArrayBuffer) {
   }
   if (eocd < 0) throw new Error("Invalid XLSX file: missing ZIP directory");
   const totalEntries = view.getUint16(eocd + 10, true);
-  if (totalEntries > 500) throw new Error("Workbook has too many archive entries");
   let cursor = view.getUint32(eocd + 16, true);
   const decoder = new TextDecoder();
-  let expandedBytes = 0;
 
   for (let count = 0; count < totalEntries; count += 1) {
     if (view.getUint32(cursor, true) !== 0x02014b50) break;
@@ -363,14 +402,9 @@ async function readZipEntries(buffer: ArrayBuffer) {
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = new Uint8Array(buffer, dataStart, compressedSize);
     if (method === 0) {
-      expandedBytes += compressed.byteLength;
-      if (expandedBytes > 50 * 1024 * 1024) throw new Error("Workbook is too large when expanded");
       entries.set(fileName, decoder.decode(compressed));
     } else if (method === 8) {
-      const expanded = await inflateRaw(compressed);
-      expandedBytes += expanded.byteLength;
-      if (expandedBytes > 50 * 1024 * 1024) throw new Error("Workbook is too large when expanded");
-      entries.set(fileName, decoder.decode(expanded));
+      entries.set(fileName, decoder.decode(await inflateRaw(compressed)));
     }
     cursor += 46 + nameLength + extraLength + commentLength;
   }
@@ -378,9 +412,7 @@ async function readZipEntries(buffer: ArrayBuffer) {
 }
 
 async function inflateRaw(bytes: Uint8Array) {
-  const stream = new Blob([bytes as BlobPart])
-    .stream()
-    .pipeThrough(new DecompressionStream("deflate-raw"));
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
@@ -433,7 +465,7 @@ function normalizeHeader(header: string) {
 
 function normalizeStation(value?: string) {
   const station = clean(value).replace(/-/g, " ").replace(/\s+/g, " ").toUpperCase();
-  return station || undefined;
+  return productionStations.find((item) => item === station);
 }
 
 function parseMoney(value?: string) {
@@ -479,8 +511,7 @@ function slugify(value: string) {
 }
 
 function csvCell(value: string) {
-  const safe = /^[=+@]/.test(value) || /^-\D/.test(value) ? `'${value}` : value;
-  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 function clean(value?: string) {
@@ -501,17 +532,7 @@ function firstMatch(value: string, pattern: RegExp) {
 }
 
 function timestamp() {
-  return formatDateTime(new Date(), { hour12: false });
-}
-
-function configuredBranchNames() {
-  const repository = getConfigurationRepository();
-  const tenant = repository.snapshot().tenants.find((candidate) => candidate.active);
-  return tenant ? repository.listBranches(tenant.id).map((branch) => branch.name) : [];
-}
-
-function branchColumnPrefix(branchName: string) {
-  return branchName.replace(/[^a-z0-9]/gi, "").replace(/^./, (char) => char.toLowerCase());
+  return new Date().toLocaleString("en-KE", { hour12: false });
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T) {

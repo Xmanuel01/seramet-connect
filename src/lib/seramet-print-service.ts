@@ -1,11 +1,4 @@
-import { activeLocale, ksh } from "@/lib/currency";
-import type { Product } from "@/lib/menu-product";
-import {
-  getConfiguredBranchHardwareProfile,
-  getConfiguredBranchHardwareProfiles,
-  getConfiguredPrintTemplates,
-  saveConfiguredBranchHardwareProfile,
-} from "@/platform/adapters/print-profile-adapter";
+import { ksh, type Product } from "@/data/mock";
 
 export type PrinterRole =
   "FRONT" | "RECEIPT" | "BILL" | "INVOICE" | "KITCHEN" | "BAR" | "DISPATCH" | "REPORT" | "KDS";
@@ -60,8 +53,6 @@ export type BranchPrintIdentity = {
   bankName: string;
   bankAccountName: string;
   bankAccountNumber: string;
-  paymentInstructions: string[];
-  timeZone: string;
   footerMessage: string;
 };
 
@@ -78,8 +69,6 @@ export type PrinterDevice = {
 };
 
 export type BranchHardwareProfile = {
-  tenantId: string;
-  branchId: string;
   branch: string;
   printIdentity: BranchPrintIdentity;
   posTerminals: number;
@@ -96,7 +85,6 @@ export type BranchHardwareProfile = {
       template: string;
     }
   >;
-  templateSettings: Record<"BILL" | "RECEIPT" | "INVOICE", PrintTemplateSettings>;
 };
 
 export type PrintTemplateSettings = {
@@ -153,15 +141,6 @@ export type OrderForPrint = {
   tillNumber?: string;
   paymentReference?: string;
   paymentBreakdown?: { method: string; amount: number; reference?: string }[];
-  loyaltySummary?: {
-    memberCode?: string;
-    tier?: string;
-    pointsBalance?: number;
-    pointsEarned?: number;
-    rewardUsed?: string;
-    voucherUsed?: string;
-    message?: string;
-  };
 };
 
 export type PrintJob = {
@@ -234,21 +213,6 @@ export type BridgeSubmitResult = {
   message: string;
 };
 
-export type InstalledBridgeHealth = {
-  id: string;
-  ok: boolean;
-  dryRun: boolean;
-  platform: string;
-  dataDir: string;
-  version: string;
-};
-
-export type InstalledPrinter = {
-  name: string;
-  status: string;
-  rawStatus?: string | number;
-};
-
 export type KitchenAnalyticsAdjustment = {
   mode: KitchenOperatingMode;
   label: string;
@@ -260,27 +224,92 @@ export type KitchenAnalyticsAdjustment = {
   notes: string[];
 };
 
-const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const nowStamp = (timeZone = localTimeZone) =>
-  new Date().toLocaleString(undefined, { timeZone, hour12: false });
+const nowStamp = () => new Date().toLocaleString("en-KE", { hour12: false });
 
 const makeId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
 
-const liveRecord = <T>(load: () => Record<string, T>) =>
-  new Proxy({} as Record<string, T>, {
-    get: (_target, property) => load()[String(property)],
-    ownKeys: () => Reflect.ownKeys(load()),
-    getOwnPropertyDescriptor: (_target, property) => {
-      const record = load();
-      if (!(property in record)) return undefined;
-      return { configurable: true, enumerable: true, value: record[String(property)] };
-    },
-  });
+const enabledCapabilities: Record<BranchCapability, boolean> = {
+  POS_ENABLED: true,
+  TABLE_SERVICE: true,
+  KDS_ENABLED: true,
+  KITCHEN_PRINTING: true,
+  BAR_PRINTING: true,
+  RESERVATIONS: true,
+  TAKEAWAY: true,
+  DELIVERY: true,
+  ONLINE_ORDERS: true,
+  LOYALTY: true,
+  CUSTOMER_DISPLAY: true,
+  BAR_MODULE: true,
+  RECEIPT_PRINTING: true,
+  INVOICE_PRINTING: true,
+};
 
-export const documentTemplates = liveRecord<PrintTemplateSettings>(
-  getConfiguredPrintTemplates,
-) as Record<"BILL" | "RECEIPT" | "INVOICE", PrintTemplateSettings>;
+const compactBranchCapabilities: Record<BranchCapability, boolean> = {
+  POS_ENABLED: true,
+  TABLE_SERVICE: true,
+  KDS_ENABLED: false,
+  KITCHEN_PRINTING: true,
+  BAR_PRINTING: true,
+  RESERVATIONS: false,
+  TAKEAWAY: true,
+  DELIVERY: false,
+  ONLINE_ORDERS: false,
+  LOYALTY: true,
+  CUSTOMER_DISPLAY: false,
+  BAR_MODULE: false,
+  RECEIPT_PRINTING: true,
+  INVOICE_PRINTING: true,
+};
+
+export const documentTemplates: Record<"BILL" | "RECEIPT" | "INVOICE", PrintTemplateSettings> = {
+  BILL: {
+    id: "thermal-bill-80mm",
+    label: "Customer bill",
+    documentType: "BILL",
+    width: "80mm",
+    copies: 1,
+    logoText: "SERAMET",
+    showBranch: true,
+    showCashier: true,
+    showCustomer: false,
+    showTax: true,
+    showPayment: false,
+    showQrCode: true,
+    footerMessage: "Thank you for your business!",
+  },
+  RECEIPT: {
+    id: "thermal-receipt-80mm",
+    label: "Paid receipt",
+    documentType: "RECEIPT",
+    width: "80mm",
+    copies: 1,
+    logoText: "SERAMET",
+    showBranch: true,
+    showCashier: true,
+    showCustomer: false,
+    showTax: true,
+    showPayment: true,
+    showQrCode: true,
+    footerMessage: "Thank you for dining with us.",
+  },
+  INVOICE: {
+    id: "invoice-a4",
+    label: "Tax invoice",
+    documentType: "INVOICE",
+    width: "A4",
+    copies: 1,
+    logoText: "SERAMET BUSINESS OS",
+    showBranch: true,
+    showCashier: true,
+    showCustomer: true,
+    showTax: true,
+    showPayment: true,
+    showQrCode: true,
+    footerMessage: "Formal invoice for accounting/legal use.",
+  },
+};
 
 let bridgeCounters = { acceptedJobs: 0, rejectedJobs: 0, authenticated: true };
 
@@ -297,9 +326,139 @@ export const serametPrintBridge: PrintBridgeStatus = {
   supportedConnections: ["USB", "LAN", "Bluetooth", "Windows spooler"],
 };
 
-export const branchHardwareProfiles = liveRecord<BranchHardwareProfile>(
-  getConfiguredBranchHardwareProfiles,
-);
+export const branchHardwareProfiles: Record<string, BranchHardwareProfile> = {
+  Westlands: {
+    branch: "Westlands",
+    printIdentity: {
+      businessName: "Mona Swahili",
+      receiptBrand: "SERAMET",
+      branchName: "Westlands",
+      address: "Kipro Centre, Sports Road",
+      phone: "0719 427 919",
+      email: "info@monaswahili.co.ke",
+      pin: "P051234567G",
+      tillNumber: "4235484",
+      bankName: "KCB Bank",
+      bankAccountName: "Mona Swahili Ltd",
+      bankAccountNumber: "1234567890",
+      footerMessage: "Different Flavours, One Promise.",
+    },
+    posTerminals: 2,
+    kitchenMode: "KDS_AND_PRINTER",
+    capabilities: enabledCapabilities,
+    printers: [
+      {
+        id: "WEST-FRONT-01",
+        name: "EPSON TM-T20 Front",
+        branch: "Westlands",
+        roles: ["FRONT", "RECEIPT", "BILL", "INVOICE", "BAR", "REPORT"],
+        connection: "Connected",
+        lastPrintAt: "2 min ago",
+        queue: 0,
+        failures: 0,
+      },
+      {
+        id: "WEST-KITCHEN-01",
+        name: "EPSON TM-U220 Kitchen",
+        branch: "Westlands",
+        roles: ["KITCHEN", "DISPATCH"],
+        connection: "Connected",
+        lastPrintAt: "4 min ago",
+        queue: 0,
+        failures: 0,
+        fallbackPrinterId: "WEST-FRONT-01",
+      },
+    ],
+    stationRoutes: {
+      "MAIN KITCHEN": "KITCHEN",
+      GRILL: "KITCHEN",
+      BAR: "BAR",
+      DESSERT: "KITCHEN",
+      DISPATCH: "DISPATCH",
+      NONE: "FRONT",
+    },
+    documentRoutes: {
+      BILL: { primaryRole: "BILL", copies: 1, template: "thermal-bill-80mm" },
+      RECEIPT: { primaryRole: "RECEIPT", copies: 1, template: "thermal-receipt-80mm" },
+      INVOICE: { primaryRole: "INVOICE", fallbackRole: "FRONT", copies: 1, template: "invoice-a4" },
+      FOOD_KOT: {
+        primaryRole: "KITCHEN",
+        fallbackRole: "FRONT",
+        copies: 1,
+        template: "kot-station-ticket",
+      },
+      BAR_TICKET: {
+        primaryRole: "BAR",
+        fallbackRole: "FRONT",
+        copies: 1,
+        template: "bar-station-ticket",
+      },
+      DISPATCH_TICKET: {
+        primaryRole: "DISPATCH",
+        fallbackRole: "FRONT",
+        copies: 1,
+        template: "dispatch-ticket",
+      },
+      KDS_TICKET: { primaryRole: "KDS", copies: 1, template: "kds-display-card" },
+      REPORT: {
+        primaryRole: "REPORT",
+        fallbackRole: "FRONT",
+        copies: 1,
+        template: "manager-report",
+      },
+    },
+  },
+  "Ngong Road": {
+    branch: "Ngong Road",
+    printIdentity: {
+      businessName: "Mona Swahili",
+      receiptBrand: "SERAMET",
+      branchName: "Ngong Road",
+      address: "Ngong Road Branch",
+      phone: "0719 427 919",
+      email: "info@monaswahili.co.ke",
+      pin: "P051234567G",
+      tillNumber: "4235484",
+      bankName: "KCB Bank",
+      bankAccountName: "Mona Swahili Ltd",
+      bankAccountNumber: "1234567890",
+      footerMessage: "Different Flavours, One Promise.",
+    },
+    posTerminals: 1,
+    kitchenMode: "PRINTER_ONLY",
+    capabilities: compactBranchCapabilities,
+    printers: [
+      {
+        id: "NGONG-THERMAL-01",
+        name: "Generic Thermal Printer",
+        branch: "Ngong Road",
+        roles: ["FRONT", "RECEIPT", "BILL", "INVOICE", "KITCHEN", "BAR", "DISPATCH", "REPORT"],
+        connection: "Connected",
+        lastPrintAt: "1 min ago",
+        queue: 0,
+        failures: 0,
+      },
+    ],
+    stationRoutes: {
+      "MAIN KITCHEN": "KITCHEN",
+      GRILL: "KITCHEN",
+      BAR: "BAR",
+      DESSERT: "KITCHEN",
+      DISPATCH: "DISPATCH",
+      NONE: "FRONT",
+    },
+    documentRoutes: {
+      BILL: { primaryRole: "BILL", copies: 1, template: "thermal-bill-58mm" },
+      RECEIPT: { primaryRole: "RECEIPT", copies: 1, template: "thermal-receipt-58mm" },
+      INVOICE: { primaryRole: "INVOICE", copies: 1, template: "invoice-a4" },
+      FOOD_KOT: { primaryRole: "KITCHEN", copies: 1, template: "kot-single-printer" },
+      BAR_TICKET: { primaryRole: "BAR", copies: 1, template: "bar-single-printer" },
+      DISPATCH_TICKET: { primaryRole: "DISPATCH", copies: 1, template: "dispatch-single-printer" },
+      KDS_TICKET: { primaryRole: "KDS", copies: 1, template: "kds-display-card" },
+      REPORT: { primaryRole: "REPORT", copies: 1, template: "manager-report" },
+    },
+  },
+};
 
 type RouteResolution = {
   destination: PrinterRole;
@@ -311,18 +470,8 @@ type RouteResolution = {
 };
 
 export const SerametPrintService = {
-  getBranchHardwareProfile(branch: string, tenantId?: string) {
-    return getConfiguredBranchHardwareProfile(branch, tenantId);
-  },
-
-  saveBranchHardwareProfile(profile: BranchHardwareProfile) {
-    const saved = saveConfiguredBranchHardwareProfile(profile);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("seramet:hardware-profile-change", { detail: { branch: profile.branch } }),
-      );
-    }
-    return saved;
+  getBranchHardwareProfile(branch: string) {
+    return branchHardwareProfiles[branch] ?? branchHardwareProfiles.Westlands;
   },
 
   getBranchCapabilities(branch: string) {
@@ -338,7 +487,7 @@ export const SerametPrintService = {
     const onePrinter =
       profile.printers.filter((printer) => printer.connection !== "Offline").length === 1;
     const destination = productionStation
-      ? (profile.stationRoutes[productionStation] ?? route.primaryRole)
+      ? profile.stationRoutes[productionStation]
       : route.primaryRole;
     const primaryRole = onePrinter
       ? (profile.printers.find((printer) => printer.connection !== "Offline")?.roles[0] ??
@@ -355,28 +504,16 @@ export const SerametPrintService = {
     const fallbackPrinter = fallbackByRoute ?? fallbackByDevice;
 
     if (primary?.connection === "Connected" || primary?.connection === "Degraded") {
-      return {
-        destination,
-        printer: primary,
-        ...(fallbackPrinter ? { fallbackPrinter } : {}),
-        routeMode: "primary",
-        route,
-      };
+      return { destination, printer: primary, fallbackPrinter, routeMode: "primary", route };
     }
     if (fallbackPrinter && fallbackPrinter.connection !== "Offline") {
-      return {
-        destination,
-        ...(primary ? { printer: primary } : {}),
-        fallbackPrinter,
-        routeMode: "fallback",
-        route,
-      };
+      return { destination, printer: primary, fallbackPrinter, routeMode: "fallback", route };
     }
     if (primary) {
       return {
         destination,
         printer: primary,
-        ...(fallbackPrinter ? { fallbackPrinter } : {}),
+        fallbackPrinter,
         routeMode: "failed",
         failureReason: `${primary.name} is ${primary.connection.toLowerCase()} and no fallback printer is available`,
         route,
@@ -404,7 +541,7 @@ export const SerametPrintService = {
       content: renderCustomerDocument(
         documentType,
         order,
-        profile.templateSettings[documentType],
+        documentTemplates[documentType],
         profile,
       ),
     });
@@ -462,7 +599,6 @@ export const SerametPrintService = {
               lines,
               amendmentType,
               profile,
-              kitchenTicketId,
             ),
             duplicateKey,
           }),
@@ -514,14 +650,18 @@ export const SerametPrintService = {
     );
     const assignedPrinter =
       resolution.routeMode === "fallback" ? resolution.fallbackPrinter : resolution.printer;
-    const reprint: PrintJob = {
+    const reprint = stripUndefined({
       ...original,
       id: makeId("RP"),
       createdAt: nowStamp(),
       requestedBy,
       printerId: assignedPrinter?.id ?? resolution.printer?.id ?? original.printerId,
+      fallbackPrinterId:
+        resolution.routeMode === "fallback" ? resolution.fallbackPrinter?.id : undefined,
       status: "Queued" as const,
       retryCount: 0,
+      printedAt: undefined,
+      failureReason: resolution.routeMode === "failed" ? resolution.failureReason : undefined,
       content: [
         "*** DUPLICATE COPY ***",
         `Original job: ${original.id}`,
@@ -531,20 +671,11 @@ export const SerametPrintService = {
       ].join("\n"),
       duplicateKey,
       reprintOfJobId: original.id,
-      ...(resolution.routeMode === "fallback" && resolution.fallbackPrinter?.id
-        ? { fallbackPrinterId: resolution.fallbackPrinter.id }
-        : {}),
-      ...(resolution.routeMode === "failed" && resolution.failureReason
-        ? { failureReason: resolution.failureReason }
-        : {}),
-      ...(original.kitchenTicketId
-        ? { kitchenTicketId: `${original.kitchenTicketId}-REPRINT-${Date.now().toString(36)}` }
-        : {}),
-      ...(original.amendmentType ? { amendmentType: "REPRINT" as const } : {}),
-    };
-    delete reprint.printedAt;
-    if (resolution.routeMode !== "fallback") delete reprint.fallbackPrinterId;
-    if (resolution.routeMode !== "failed") delete reprint.failureReason;
+      kitchenTicketId: original.kitchenTicketId
+        ? `${original.kitchenTicketId}-REPRINT-${Date.now().toString(36)}`
+        : undefined,
+      amendmentType: original.amendmentType ? ("REPRINT" as const) : undefined,
+    });
 
     return {
       job: reprint,
@@ -592,7 +723,7 @@ export const SerametPrintService = {
   },
 
   retryJob(profile: BranchHardwareProfile, jobs: PrintJob[], jobId: string) {
-    const next: PrintJob[] = jobs.map((job) => {
+    const next = jobs.map((job) => {
       if (job.id !== jobId || (job.status !== "Failed" && job.status !== "Cancelled")) return job;
       const resolution = this.resolvePrinter(profile, job.documentType, job.productionStation);
       const retried = {
@@ -604,7 +735,7 @@ export const SerametPrintService = {
           resolution.routeMode === "fallback" ? resolution.fallbackPrinter?.id : undefined,
         failureReason: resolution.routeMode === "failed" ? resolution.failureReason : undefined,
       };
-      return stripUndefined(retried) as PrintJob;
+      return stripUndefined(retried);
     });
     return this.processQueuedJobs(next);
   },
@@ -621,17 +752,16 @@ export const SerametPrintService = {
         if (!fallback || fallback.connection === "Offline") {
           return failJob(job, "Fallback printer is not available");
         }
-        const fallbackJob: PrintJob = {
+        return {
           ...job,
           fallbackPrinterId: fallback.id,
           status: "Fallback Printed" as const,
           printedAt: nowStamp(),
           retryCount: job.retryCount + 1,
+          failureReason: undefined,
         };
-        delete fallbackJob.failureReason;
-        return fallbackJob;
       })
-      .map((job) => stripUndefined(job) as PrintJob);
+      .map(stripUndefined);
   },
 
   cancelJob(jobs: PrintJob[], jobId: string) {
@@ -759,31 +889,10 @@ export const SerametLocalPrintBridge = {
     });
   },
 
-  async getInstalledBridgeHealth(
-    endpoint = "http://127.0.0.1:48777",
-  ): Promise<InstalledBridgeHealth> {
-    const response = await fetch(`${endpoint}/health`);
-    if (!response.ok) throw new Error(`Print bridge health check failed: ${response.status}`);
-    return (await response.json()) as InstalledBridgeHealth;
-  },
-
-  async discoverInstalledPrinters(
-    token: string,
-    endpoint = "http://127.0.0.1:48777",
-  ): Promise<InstalledPrinter[]> {
-    const response = await fetch(`${endpoint}/printers`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = (await response.json()) as { printers?: InstalledPrinter[]; message?: string };
-    if (!response.ok) throw new Error(payload.message ?? "Print bridge printer discovery failed");
-    return payload.printers ?? [];
-  },
-
   async submitToInstalledBridge(
     job: PrintJob,
     token: string,
     endpoint = "http://127.0.0.1:48777",
-    printerName?: string,
   ): Promise<BridgeSubmitResult> {
     const response = await fetch(`${endpoint}/jobs`, {
       method: "POST",
@@ -791,7 +900,7 @@ export const SerametLocalPrintBridge = {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(this.createTrustedBridgePayload(job, printerName)),
+      body: JSON.stringify(this.createTrustedBridgePayload(job)),
     });
     const payload = (await response.json()) as BridgeSubmitResult;
     if (!response.ok)
@@ -803,25 +912,17 @@ export const SerametLocalPrintBridge = {
   },
 };
 
-export function branchHasCapability(
-  branch: string | undefined,
-  capability: BranchCapability,
-  tenantId?: string,
-) {
-  try {
-    if (!branch || /^all(?:\s+branches)?$/i.test(branch.trim())) {
-      return Object.values(getConfiguredBranchHardwareProfiles()).some(
-        (profile) =>
-          (!tenantId || profile.tenantId === tenantId) && profile.capabilities[capability] === true,
-      );
-    }
-    return (
-      SerametPrintService.getBranchHardwareProfile(branch, tenantId).capabilities[capability] ===
-      true
+export function branchHasCapability(branch: string | undefined, capability: BranchCapability) {
+  if (!branch || branch === "All Branches") {
+    return Object.values(branchHardwareProfiles).some(
+      (profile) => profile.capabilities[capability] === true,
     );
-  } catch {
-    return false;
   }
+  return (
+    (branchHardwareProfiles[branch] ?? branchHardwareProfiles.Westlands).capabilities[
+      capability
+    ] === true
+  );
 }
 
 function findPrinterByRole(profile: BranchHardwareProfile, role: PrinterRole) {
@@ -886,7 +987,7 @@ function createJob({
     kitchenTicketRecordId,
     kitchenDelivery,
     amendmentType,
-  }) as PrintJob;
+  });
 }
 
 function productionDocumentType(station: ProductionStation): PrintDocumentType {
@@ -920,7 +1021,7 @@ function resolveFrontProductionPrinter(
   }
   return {
     destination: "FRONT",
-    ...(front ? { printer: front } : {}),
+    printer: front,
     routeMode: "failed",
     failureReason: front
       ? `${front.name} is ${front.connection.toLowerCase()}`
@@ -946,29 +1047,27 @@ function renderProductionTicket(
   lines: OrderLineForPrint[],
   amendmentType: NonNullable<PrintJob["amendmentType"]>,
   profile: BranchHardwareProfile,
-  kitchenTicketId?: string,
 ) {
-  const width = productionTicketWidth(profile, documentType);
+  const width = documentType === "KDS_TICKET" ? 42 : 32;
   const isBar = documentType === "BAR_TICKET";
   const title = documentType === "KDS_TICKET" ? "KDS ORDER" : isBar ? "BAR ORDER" : "KITCHEN ORDER";
   const ticketPrefix = isBar ? "BAR" : "KOT";
-  const showPrices = profile.templateSettings.BILL.showKotPrices === true;
+  const showPrices = documentTemplates.BILL.showKotPrices === true;
   const identity = profile.printIdentity;
-  const issued = documentDateTime(order.createdAt, identity.timeZone);
-  const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
+  const issued = documentDateTime(order.createdAt);
 
   if (amendmentType !== "NEW") {
-    return renderAmendmentTicket(amendmentType, order, lines, identity, width, ticketNumber);
+    return renderAmendmentTicket(amendmentType, order, lines, identity, width);
   }
 
   return [
     center(identity.receiptBrand, width),
     center(title, width),
-    ribbon(`${ticketPrefix} ${ticketNumber}`, width),
+    ribbon(`${ticketPrefix} ${cleanOrderId(order.orderId)}`, width),
     dotted(width),
     order.table ? serviceLine(order.orderType, order.table, width) : order.orderType.toUpperCase(),
-    `${issued.date.toUpperCase()} - ${issued.time}`,
-    `ORDER ${cleanOrderId(order.orderId)}`,
+    `${issued.date} - ${issued.time}`,
+    `ORDER ${order.orderId}`,
     `STATION: ${station}`,
     profile.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM" ? "ROUTE: POS FRONT PRINTER" : "",
     dotted(width),
@@ -977,7 +1076,7 @@ function renderProductionTicket(
     ...lines.flatMap((line) => productionLineRows(line, width, showPrices)),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
     `Requested by: ${order.requestedBy}`,
-    `Printed: ${timeOnly(nowStamp(identity.timeZone))}`,
+    `Printed: ${timeOnly(nowStamp())}`,
     ribbon("*** NEW ORDER ***", width),
   ]
     .filter(Boolean)
@@ -1001,15 +1100,16 @@ function renderCustomerDocument(
     documentType === "BILL"
       ? (order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`)
       : (order.receiptNumber ?? `RCP ${cleanOrderId(order.orderId)}`);
-  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const issued = documentDateTime(order.createdAt);
   const paymentRows = documentType === "RECEIPT" ? renderPaymentRows(order, width) : [];
-  const loyaltyRows = documentType === "RECEIPT" ? renderLoyaltyRows(order, width) : [];
   const settlementBanner =
     documentType === "BILL"
       ? boxText("PAYMENT PENDING", width)
-      : ribbon(`PAID  ${formatMoney(order.paid ?? order.total)}`, width);
+      : ribbon(row("PAID", formatMoney(order.paid ?? order.total), width), width);
   const qrBlock =
-    documentType === "BILL" ? ["", boxedPaymentPrompt(identity.paymentInstructions, width)] : [];
+    documentType === "BILL"
+      ? ["", boxedPaymentPrompt(order.tillNumber ?? identity.tillNumber, width)]
+      : [];
   const footer =
     documentType === "BILL"
       ? template.footerMessage
@@ -1041,7 +1141,6 @@ function renderCustomerDocument(
     row("TOTAL", formatMoney(order.total), width),
     settlementBanner,
     ...paymentRows,
-    ...loyaltyRows,
     ...qrBlock,
     dotted(width),
     footer,
@@ -1058,7 +1157,7 @@ function renderA4Invoice(
   const width = 78;
   const identity = profile.printIdentity;
   const invoiceNumber = order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`;
-  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const issued = documentDateTime(order.createdAt);
   return [
     row(identity.businessName, "TAX INVOICE", width),
     row(identity.branchName, invoiceNumber, width),
@@ -1086,7 +1185,10 @@ function renderA4Invoice(
     row("TOTAL", formatMoney(order.total), width),
     rule(width),
     "PAYMENT INFORMATION",
-    ...identity.paymentInstructions,
+    `M-PESA TILL: ${order.tillNumber ?? identity.tillNumber}`,
+    `BANK: ${identity.bankName}`,
+    `A/C NAME: ${identity.bankAccountName}`,
+    `A/C NO: ${identity.bankAccountNumber}`,
     "",
     row("THANK YOU", "Authorised Signatory", width),
     template.footerMessage,
@@ -1101,9 +1203,8 @@ function renderAmendmentTicket(
   lines: OrderLineForPrint[],
   identity: BranchPrintIdentity,
   width: number,
-  ticketNumber?: string,
 ) {
-  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const issued = documentDateTime(order.createdAt);
   const header =
     amendmentType === "VOID"
       ? "*** CANCEL ITEM ***"
@@ -1113,13 +1214,11 @@ function renderAmendmentTicket(
   return [
     center(identity.receiptBrand, width),
     ribbon(header, width),
-    amendmentType === "REPRINT" && ticketNumber ? `KOT ${ticketNumber}` : "",
-    `ORDER ${cleanOrderId(order.orderId)}`,
+    `ORDER ${order.orderId}`,
     order.table ? `TABLE ${order.table}` : order.orderType.toUpperCase(),
     `${issued.date} - ${issued.time}`,
     dotted(width),
-    ...lines.flatMap((line) => productionLineRows(line, width, false)),
-    boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
+    ...lines.map((line) => `${line.quantity} x ${line.name.toUpperCase()}`.slice(0, width)),
     dotted(width),
     amendmentType === "VOID" ? "Reason: Customer changed order." : "",
     amendmentType === "VOID" ? `Cancelled by: ${order.cashier}` : "",
@@ -1132,33 +1231,15 @@ function renderAmendmentTicket(
     .join("\n");
 }
 
-function boxedPaymentPrompt(paymentInstructions: string[], width: number) {
+function boxedPaymentPrompt(tillNumber: string, width: number) {
   const innerWidth = Math.max(10, width - 4);
-  const instructions = paymentInstructions.length
-    ? paymentInstructions
-    : ["Payment instructions not configured"];
   return [
     boxLine(width),
-    `| ${"PAYMENT OPTIONS".padEnd(Math.floor(innerWidth / 2))}${"SCAN TO PAY".padStart(Math.ceil(innerWidth / 2))} |`,
-    ...instructions.flatMap((instruction) =>
-      wrap(instruction, innerWidth).map((line) => `| ${line.padEnd(innerWidth)} |`),
-    ),
+    `| ${"PAY VIA M-PESA".padEnd(Math.floor(innerWidth / 2))}${"SCAN TO PAY".padStart(Math.ceil(innerWidth / 2))} |`,
+    `| ${`Till Number: ${tillNumber}`.padEnd(innerWidth)} |`,
+    `| ${"QR: use bill QR from provider".padEnd(innerWidth)} |`,
     boxLine(width),
   ].join("\n");
-}
-
-function productionTicketWidth(profile: BranchHardwareProfile, documentType: PrintDocumentType) {
-  if (documentType === "KDS_TICKET") return 42;
-  const template = profile.documentRoutes[documentType]?.template ?? "";
-  return template.includes("58mm") || template.includes("single-printer") ? 32 : 42;
-}
-
-function printableTicketNumber(kitchenTicketId: string | undefined, orderId: string) {
-  if (orderId.startsWith("#")) return orderId;
-  const source = kitchenTicketId ?? orderId;
-  const digits = source.replace(/\D/g, "");
-  if (digits) return `#${digits.slice(-5).padStart(5, "0")}`;
-  return cleanOrderId(orderId);
 }
 
 function productionLineRows(line: OrderLineForPrint, width: number, showPrices: boolean) {
@@ -1216,25 +1297,6 @@ function renderPaymentRows(order: OrderForPrint, width: number) {
       payment.reference ? `Ref: ${payment.reference}` : "",
     ])
     .filter(Boolean);
-}
-
-function renderLoyaltyRows(order: OrderForPrint, width: number) {
-  const summary = order.loyaltySummary;
-  if (!summary) return [];
-  return [
-    dotted(width),
-    summary.memberCode ? row("MEMBER", summary.memberCode, width) : "",
-    summary.tier ? row("TIER", summary.tier, width) : "",
-    summary.pointsEarned !== undefined
-      ? row("POINTS EARNED", summary.pointsEarned.toLocaleString(), width)
-      : "",
-    summary.pointsBalance !== undefined
-      ? row("POINTS BALANCE", summary.pointsBalance.toLocaleString(), width)
-      : "",
-    summary.rewardUsed ? `Reward: ${summary.rewardUsed}` : "",
-    summary.voucherUsed ? `Voucher: ${summary.voucherUsed}` : "",
-    ...(summary.message ? wrap(summary.message, width) : []),
-  ].filter(Boolean) as string[];
 }
 
 function boxedNote(label: string, note: string | undefined, width: number) {
@@ -1329,7 +1391,7 @@ function cleanOrderId(orderId: string) {
 }
 
 function formatMoney(amount: number) {
-  return ksh(amount);
+  return ksh(amount).replace("KSh", "KSh");
 }
 
 function timeOnly(value: string) {
@@ -1337,31 +1399,19 @@ function timeOnly(value: string) {
   return parts[1]?.trim() ?? value;
 }
 
-function documentDateTime(value: string, timeZone = localTimeZone) {
+function documentDateTime(value: string) {
   const parsed = new Date(value);
-  const dateOptions = {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone,
-  } as const;
-  const timeOptions = {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone,
-  } as const;
   const date = Number.isNaN(parsed.getTime())
-    ? new Date().toLocaleDateString(activeLocale(), dateOptions)
-    : parsed.toLocaleDateString(activeLocale(), dateOptions);
+    ? new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+    : parsed.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   const time = Number.isNaN(parsed.getTime())
     ? value
-    : parsed.toLocaleTimeString(activeLocale(), timeOptions);
+    : parsed.toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", hour12: false });
   return { date, time };
 }
 
 function documentDueDate(createdAt: string) {
-  return createdAt.includes("Due") ? createdAt : "-";
+  return createdAt.includes("Due") ? createdAt : "--";
 }
 
 function failJob(job: PrintJob, reason: string) {

@@ -11,13 +11,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ksh } from "@/lib/currency";
+import { ksh } from "@/data/mock";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
-import { type BillingRecord } from "@/lib/transaction-engine";
-import { SettlementService, settlementReferenceLabel } from "@/payments/settlement-service";
-import { getSerametAccessToken } from "@/lib/access-token";
+import {
+  TransactionEngine,
+  type BillingRecord,
+  type PaymentMethod,
+} from "@/lib/transaction-engine";
 
 export const Route = createFileRoute("/pending")({
   head: () => ({
@@ -38,29 +40,17 @@ function PendingInvoices() {
     "Pending",
   );
   const [settleInvoice, setSettleInvoice] = useState<BillingRecord | null>(null);
-  const [settlementMethod, setSettlementMethod] = useState("");
-  const [settlementReference, setSettlementReference] = useState("");
-  const [settlementCustomerPhone, setSettlementCustomerPhone] = useState("");
+  const [settlementMethod, setSettlementMethod] = useState<
+    "Credit" | "M-Pesa" | "Cash" | "Bank" | "Card" | "Pending"
+  >("M-Pesa");
+  const [mpesaReference, setMpesaReference] = useState("");
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [receiptPrompt, setReceiptPrompt] = useState<BillingRecord | null>(null);
   const [warning, setWarning] = useState("");
-  const {
-    activeTenantId,
-    branch,
-    branchId,
-    branchLabel,
-    currentUser,
-    isAllBranches,
-    matchesBranch,
-  } = useAppContext();
-  const { state, mutate, syncFromBackend } = useTransactionEngine();
-  const settlementService = new SettlementService();
-  const settlementMethods = settlementService.listMethods(activeTenantId);
-  const selectedSettlementMethod = settlementMethods.find(
-    (method) => method.id === settlementMethod,
-  );
+  const { branch, branchLabel } = useAppContext();
+  const { state, apply } = useTransactionEngine();
   const rows = state.bills
-    .filter((bill) => matchesBranch(bill.branchId ?? bill.branch))
+    .filter((bill) => branch === "All Branches" || bill.branch === branch)
     .filter((bill) => bill.status !== "MERGED" && bill.status !== "SPLIT")
     .filter((bill) => !periodDate || bill.issuedAt.slice(0, 10) === periodDate)
     .filter((bill) => {
@@ -127,19 +117,48 @@ function PendingInvoices() {
     }
     setSettleInvoice(invoice);
     setSettlementMethod(
-      settlementService.recommendMethod(activeTenantId, invoice, state)?.id ??
-        settlementMethods[0]?.id ??
-        "",
+      invoice.customer.includes("Glovo") ||
+        invoice.customer.includes("Bolt") ||
+        invoice.customer.includes("Uber")
+        ? "Credit"
+        : "M-Pesa",
     );
     setSettlementAmount(invoice.total - invoice.paid);
-    setSettlementReference("");
-    setSettlementCustomerPhone("");
+    setMpesaReference("");
   };
 
-  const confirmSettlement = async () => {
+  const paymentMethodForSettlement = (): PaymentMethod => {
+    if (settlementMethod === "Credit") return "CUSTOMER_CREDIT";
+    if (settlementMethod === "Cash") return "CASH";
+    if (settlementMethod === "Card") return "CARD";
+    if (settlementMethod === "Bank") return "BANK_TRANSFER";
+    return "MPESA_TILL_MANUAL";
+  };
+
+  const confirmSettlement = () => {
     if (!settleInvoice) return;
-    if (settlementMethod === "PENDING") {
-      await mutate("markBillPending", { invoiceId: settleInvoice.id, module: "Pending" });
+    if (settlementMethod === "Pending") {
+      apply((current) => ({
+        ...current,
+        bills: current.bills.map((bill) =>
+          bill.id === settleInvoice.id ? { ...bill, status: "PENDING" } : bill,
+        ),
+        auditEvents: [
+          {
+            id: `AUD-PENDING-${Date.now()}`,
+            time: new Date().toISOString(),
+            actor: "Amina W.",
+            role: "Cashier",
+            branch: settleInvoice.branch,
+            module: "Pending",
+            action: "Kept invoice pending",
+            record: settleInvoice.id,
+            before: settleInvoice.status,
+            after: "PENDING - settlement deferred",
+          },
+          ...current.auditEvents,
+        ],
+      }));
       setSettleInvoice(null);
       return;
     }
@@ -148,71 +167,53 @@ function PendingInvoices() {
       return;
     }
     const amount = Math.min(settlementAmount, settleInvoice.total - settleInvoice.paid);
-    const disposition = selectedSettlementMethod
-      ? settlementService.disposition(selectedSettlementMethod)
-      : undefined;
-    if (disposition === "PROVIDER_INITIATION_REQUIRED" && selectedSettlementMethod) {
-      if (selectedSettlementMethod.requiresCustomer && !settlementCustomerPhone.trim()) {
-        setWarning("Enter the customer phone before initiating this payment.");
-        return;
+    apply((current) => {
+      if (settlementMethod === "Cash") {
+        return TransactionEngine.recordCashPayment(current, settleInvoice.id, {
+          received: amount,
+          cashier: "Amina W.",
+          terminal: "WEST-POS-01",
+        });
       }
-      const operation =
-        selectedSettlementMethod.metadata["providerOperation"] === "QR_PAYMENT" ? "qr" : "prompt";
-      const response = await fetch(
-        `/api/seramet/payments/${encodeURIComponent(selectedSettlementMethod.code)}/${operation}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(getSerametAccessToken()
-              ? { Authorization: `Bearer ${getSerametAccessToken()}` }
-              : {}),
-            "x-seramet-user-id": currentUser.id,
-            "x-seramet-tenant-id": activeTenantId,
-            "x-seramet-branch-id": branchId,
-          },
-          body: JSON.stringify({
-            invoiceId: settleInvoice.id,
-            amount,
-            ...(settlementCustomerPhone.trim()
-              ? { customerPhone: settlementCustomerPhone.trim() }
-              : {}),
-            idempotencyKey: `pending:${settleInvoice.id}:${selectedSettlementMethod.id}:${amount}`,
-          }),
-        },
-      );
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { message?: string };
-        setWarning(body.message ?? "Provider payment could not be initiated.");
-        return;
-      }
-      await syncFromBackend();
-      setWarning("Payment request initiated. The invoice stays open until verified confirmation.");
-      setSettleInvoice(null);
-      return;
-    }
-    try {
-      await mutate("settleInvoice", {
-        input: {
-          tenantId: activeTenantId,
-          invoiceId: settleInvoice.id,
-          paymentMethodId: settlementMethod,
+      if (settlementMethod === "Card") {
+        return TransactionEngine.recordCardPayment(current, settleInvoice.id, {
           amount,
-          reference: settlementReference,
-          cashier: currentUser.name,
-        },
+          reference: `CARD-${Date.now()}`,
+          cashier: "Amina W.",
+          terminal: "CARD-WEST-01",
+          acquirer: "Card Acquirer",
+          batch: "BATCH-01",
+        });
+      }
+      if (settlementMethod === "Bank") {
+        return TransactionEngine.recordBankPayment(current, settleInvoice.id, {
+          amount,
+          reference: `BANK-${Date.now()}`,
+          cashier: "Amina W.",
+          bankAccount: "Mona Swahili Operating",
+          sender: settleInvoice.customer,
+        });
+      }
+      if (settlementMethod === "Credit") {
+        return TransactionEngine.applyPayment(current, settleInvoice.id, {
+          amount,
+          method: paymentMethodForSettlement(),
+          provider: "Partner Credit",
+          reference: `CREDIT-${settleInvoice.id}-${Date.now()}`,
+          cashier: "Amina W.",
+          terminal: "CHANNEL-CREDIT",
+          reconciliationStatus: "RECONCILED",
+          settlementStatus: "PENDING",
+        });
+      }
+      return TransactionEngine.recordManualTillPayment(current, settleInvoice.id, {
+        amount,
+        reference: `MPESA-${mpesaReference || Date.now()}`,
+        cashier: "Amina W.",
+        terminal: "WEST-POS-01",
       });
-    } catch (error) {
-      setWarning(error instanceof Error ? error.message : "Settlement could not be recorded.");
-      return;
-    }
-    if (disposition === "CONFIRMED") {
-      setReceiptPrompt(settleInvoice);
-    } else if (disposition === "AWAITING_VERIFICATION") {
-      setWarning("Payment reference recorded for verification. No paid receipt was generated.");
-    } else if (disposition === "ON_ACCOUNT") {
-      setWarning("Invoice posted to the configured customer receivable account.");
-    }
+    });
+    setReceiptPrompt(settleInvoice);
     setSettleInvoice(null);
   };
 
@@ -226,7 +227,7 @@ function PendingInvoices() {
         <Metric label="Pending invoices" value={rows.length} />
         <Metric label="Pending value" value={value} money invert />
         <Metric label="Paid in view" value={paidCount} />
-        <Metric label="Branch scope" value={isAllBranches ? "All" : branch} />
+        <Metric label="Branch scope" value={branch === "All Branches" ? "All" : branch} />
       </div>
       <Panel className="mt-4">
         <PanelHead
@@ -327,21 +328,17 @@ function PendingInvoices() {
                   Settlement method
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {settlementMethods.map((method) => (
-                    <button
-                      key={method.id}
-                      onClick={() => setSettlementMethod(method.id)}
-                      className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === method.id ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
-                    >
-                      {method.displayName}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => setSettlementMethod("PENDING")}
-                    className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === "PENDING" ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
-                  >
-                    Pending
-                  </button>
+                  {(["Credit", "M-Pesa", "Cash", "Bank", "Card", "Pending"] as const).map(
+                    (method) => (
+                      <button
+                        key={method}
+                        onClick={() => setSettlementMethod(method)}
+                        className={`rounded-md border px-3 py-2 text-[13px] font-semibold ${settlementMethod === method ? "border-primary bg-accent text-accent-foreground" : "border-border hover:bg-secondary"}`}
+                      >
+                        {method}
+                      </button>
+                    ),
+                  )}
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -355,49 +352,33 @@ function PendingInvoices() {
                     className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
                   />
                 </label>
-                {selectedSettlementMethod?.requiresReference && (
+                {settlementMethod === "M-Pesa" && (
                   <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                    {settlementReferenceLabel(selectedSettlementMethod)}
+                    M-Pesa transaction code
                     <input
-                      maxLength={64}
-                      value={settlementReference}
+                      maxLength={12}
+                      value={mpesaReference}
                       onChange={(event) =>
-                        setSettlementReference(
+                        setMpesaReference(
                           event.target.value
-                            .replace(/[^a-z0-9._/-]/gi, "")
+                            .replace(/[^a-z0-9]/gi, "")
                             .toUpperCase()
-                            .slice(0, 64),
+                            .slice(0, 12),
                         )
                       }
                       className="h-10 rounded-md border border-border bg-card px-3 text-[13px] uppercase text-foreground outline-none"
-                      placeholder="Enter provider reference"
+                      placeholder="TH7X8A1B2C"
                     />
                   </label>
                 )}
-                {selectedSettlementMethod?.requiresCustomer &&
-                  selectedSettlementMethod.metadata["providerOperation"] === "PAYMENT_PROMPT" && (
-                    <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                      Customer phone
-                      <input
-                        inputMode="tel"
-                        maxLength={16}
-                        value={settlementCustomerPhone}
-                        onChange={(event) =>
-                          setSettlementCustomerPhone(event.target.value.replace(/[^+0-9]/g, ""))
-                        }
-                        className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
-                        placeholder="2547XXXXXXXX"
-                      />
-                    </label>
-                  )}
               </div>
-              {selectedSettlementMethod?.category === "CREDIT" && (
+              {settlementMethod === "Credit" && (
                 <div className="rounded-md bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
                   Credit settlement posts this pending invoice to the customer or partner receivable
                   account.
                 </div>
               )}
-              {settlementMethod === "PENDING" && (
+              {settlementMethod === "Pending" && (
                 <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                   Pending keeps the invoice open for later settlement after restaurant close.
                 </div>
@@ -405,7 +386,7 @@ function PendingInvoices() {
               <div className="flex justify-end gap-2 border-t border-border pt-4">
                 <Btn onClick={() => setSettleInvoice(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={confirmSettlement}>
-                  {settlementMethod === "PENDING" ? "Keep pending" : "Settle invoice"}
+                  {settlementMethod === "Pending" ? "Keep pending" : "Settle invoice"}
                 </Btn>
               </div>
             </div>

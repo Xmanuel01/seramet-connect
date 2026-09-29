@@ -1,20 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  AlertTriangle,
-  BookOpenCheck,
-  ChefHat,
-  ClipboardCheck,
-  Factory,
-  RefreshCw,
-  Timer,
-} from "lucide-react";
-import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { type KitchenAnalyticsPeriod, useKitchenAnalytics } from "@/kitchen/use-kitchen-analytics";
+import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
+import { DataTable } from "@/components/app/Tabs";
 import { useAppContext } from "@/lib/app-context";
-import { formatDuration } from "@/management/ui";
+import { SerametPrintService } from "@/lib/seramet-print-service";
 
 export const Route = createFileRoute("/kitchen-analytics")({
   head: () => ({
@@ -22,325 +11,160 @@ export const Route = createFileRoute("/kitchen-analytics")({
       { title: "Kitchen Analytics - Seramet" },
       {
         name: "description",
-        content:
-          "Authoritative kitchen performance across stations, prep, production yield and Cookbook coverage.",
+        content: "Ticket times, station throughput, remakes and peak-hour kitchen pressure.",
       },
+      { property: "og:title", content: "Kitchen Analytics - Seramet" },
+      { property: "og:description", content: "Ticket times, throughput and remake analysis." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: KitchenAnalytics,
 });
 
+const dishes = [
+  { d: "Chicken Biryani", sold: 84, avg: 17.8, target: "18 min", remakes: 1, status: "Healthy" },
+  { d: "Beef Dry Fry", sold: 62, avg: 24.1, target: "20 min", remakes: 3, status: "Attention" },
+  { d: "Fish Curry", sold: 38, avg: 26.4, target: "22 min", remakes: 2, status: "Warning" },
+  { d: "Bhajia", sold: 96, avg: 8.4, target: "9 min", remakes: 0, status: "Healthy" },
+  { d: "Chips", sold: 112, avg: 7.2, target: "8 min", remakes: 1, status: "Healthy" },
+];
+
+const hours = [
+  ["11a", 34],
+  ["12p", 68],
+  ["1p", 92],
+  ["2p", 74],
+  ["6p", 58],
+  ["7p", 88],
+  ["8p", 96],
+  ["9p", 61],
+] as const;
+
 function KitchenAnalytics() {
-  const { branchLabel, isAllBranches } = useAppContext();
-  const { persistenceMode } = useTransactionEngine();
-  const authoritative = persistenceMode === "authoritative";
-  const [periodDays, setPeriodDays] = useState<KitchenAnalyticsPeriod>(7);
-  const analytics = useKitchenAnalytics(authoritative && !isAllBranches, periodDays);
-  const overview = analytics.overview;
+  const { branch, branchLabel } = useAppContext();
+  const profile = SerametPrintService.getBranchHardwareProfile(branch);
+  const adjustment = SerametPrintService.getKitchenAnalyticsAdjustment(profile);
+  const avgTicket = (14.2 * adjustment.ticketTimeMultiplier).toFixed(1);
+  const lateTickets = (9.1 * adjustment.lateTicketMultiplier).toFixed(1);
+  const confidenceTone =
+    adjustment.confidence === "High"
+      ? "Healthy"
+      : adjustment.confidence === "Medium"
+        ? "Warning"
+        : "Attention";
+  const adjustedDishes = dishes.map((dish) => ({
+    ...dish,
+    avgLabel: `${(dish.avg * adjustment.ticketTimeMultiplier).toFixed(1)} min`,
+    status: adjustment.confidence === "Low" ? "Warning" : dish.status,
+  }));
+  const adjustedHours = hours.map(
+    ([hour, value]) =>
+      [hour, Math.min(100, Math.round(value * adjustment.lateTicketMultiplier))] as const,
+  );
 
   return (
     <AppShell
       title="Kitchen analytics"
-      subtitle={
-        overview
-          ? `${overview.periodStart} → ${overview.periodEnd} · ${branchLabel}`
-          : `Kitchen execution intelligence · ${branchLabel}`
-      }
-      actions={
-        <>
-          <div className="flex rounded-md border border-border bg-card p-0.5">
-            {[1, 7, 30].map((days) => (
-              <button
-                key={days}
-                type="button"
-                onClick={() => setPeriodDays(days as KitchenAnalyticsPeriod)}
-                className={
-                  "rounded px-3 py-1.5 text-[11px] font-semibold " +
-                  (periodDays === days
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-secondary")
-                }
-              >
-                {days === 1 ? "Today" : days + " days"}
-              </button>
+      subtitle={`Last 7 days - ${branchLabel} - ${adjustment.label}`}
+      actions={<Btn>Export</Btn>}
+    >
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Metric label="Avg ticket time" value={avgTicket} suffix=" min" delta={18} invert />
+        <Metric label="Tickets served" value={2148} delta={6.4} />
+        <Metric label="Late tickets" value={lateTickets} suffix="%" delta={2.2} invert />
+        <Metric label="Remakes" value={17} delta={-12} invert />
+        <Metric label="Waste value" value={18400} money delta={4.1} invert />
+        <Metric label="Confidence" value={adjustment.confidence} />
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <Panel>
+          <PanelHead
+            title="Dish performance"
+            sub={`Preparation time adjusted by ${adjustment.captureMethod.toLowerCase()}`}
+            right={<Status>{confidenceTone}</Status>}
+          />
+          <DataTable
+            cols={[
+              "Dish",
+              { l: "Sold", r: true },
+              { l: "Avg time", r: true },
+              { l: "Target", r: true },
+              { l: "Remakes", r: true },
+              "Status",
+            ]}
+          >
+            {adjustedDishes.map((dish) => (
+              <tr key={dish.d} className="hover:bg-secondary/50">
+                <TD className="font-semibold">{dish.d}</TD>
+                <TD className="num text-right">{dish.sold}</TD>
+                <TD className="num text-right">{dish.avgLabel}</TD>
+                <TD className="num text-right text-muted-foreground">{dish.target}</TD>
+                <TD className="num text-right">{dish.remakes}</TD>
+                <TD>
+                  <Status>{dish.status}</Status>
+                </TD>
+              </tr>
+            ))}
+          </DataTable>
+        </Panel>
+        <Panel>
+          <PanelHead
+            title="Kitchen pressure by hour"
+            sub={`${adjustment.remakeVisibility} remake visibility`}
+          />
+          <div className="flex h-56 items-end gap-2 p-4">
+            {adjustedHours.map(([hour, value]) => (
+              <div key={hour} className="flex flex-1 flex-col items-center gap-1.5">
+                <div
+                  className="w-full rounded-t-sm bg-primary/80"
+                  style={{ height: `${value}%` }}
+                />
+                <span className="text-[10px] text-muted-foreground">{hour}</span>
+              </div>
             ))}
           </div>
-          <Btn
-            disabled={!authoritative || isAllBranches || analytics.status === "loading"}
-            onClick={() => void analytics.refresh()}
-          >
-            <RefreshCw className="h-4 w-4" /> Refresh
-          </Btn>
-        </>
-      }
-    >
-      {(analytics.error || !authoritative || isAllBranches) && (
-        <div className="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
-          {analytics.error ||
-            (!authoritative
-              ? "Kitchen Analytics requires the authoritative Seramet server."
-              : "Select one branch to view Kitchen Analytics.")}
-        </div>
-      )}
-
-      {analytics.status === "loading" && !overview ? (
-        <Panel>
-          <div className="p-10 text-center text-[12px] text-muted-foreground">
-            Loading authoritative kitchen metrics…
-          </div>
         </Panel>
-      ) : null}
-
-      {overview ? (
-        <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Metric label="Tickets" value={overview.summary.ticketCount} />
-            <Metric
-              label="Completed"
-              value={percentage(overview.summary.completionBps)}
-              suffix="%"
-            />
-            <Metric label="Late tickets" value={overview.summary.lateCount} />
-            <Metric
-              label="Late rate"
-              value={percentage(overview.summary.lateBps)}
-              suffix="%"
-              invert={overview.summary.lateBps > 1_000}
-            />
-            <Metric label="Average prep" value={formatDuration(overview.summary.averagePrepMs)} />
-            <Metric
-              label="Cookbook coverage"
-              value={percentage(overview.cookbook.coverageBps)}
-              suffix="%"
-              invert={overview.cookbook.missingCount > 0}
-            />
+      </div>
+      <Panel className="mt-4">
+        <PanelHead
+          title="Hardware-mode adjustment"
+          sub={`${profile.branch} uses ${profile.kitchenMode.replaceAll("_", " ")}`}
+          right={<Status>{adjustment.confidence}</Status>}
+        />
+        <div className="grid gap-3 p-4 md:grid-cols-3">
+          <div className="rounded-lg border border-border bg-secondary/40 p-3">
+            <div className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Capture method
+            </div>
+            <div className="mt-1 text-[14px] font-semibold">{adjustment.captureMethod}</div>
           </div>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <Panel>
-              <PanelHead
-                title="Prep execution"
-                sub="Authoritative prep recommendation lifecycle"
-                right={<ClipboardCheck className="h-4 w-4 text-primary" />}
-              />
-              <div className="grid grid-cols-2 gap-3 p-4">
-                <Info label="Tasks" value={overview.prep.taskCount} />
-                <Info label="Completion" value={percentage(overview.prep.completionBps) + "%"} />
-                <Info label="Started" value={overview.prep.startedCount} />
-                <Info label="Approved" value={overview.prep.approvedCount} />
-                <Info label="Awaiting approval" value={overview.prep.awaitingApprovalCount} />
-                <Info label="Dismissed" value={overview.prep.dismissedCount} />
-              </div>
-            </Panel>
-
-            <Panel>
-              <PanelHead
-                title="Production yield"
-                sub="Completed batch output versus planned standard"
-                right={<Factory className="h-4 w-4 text-primary" />}
-              />
-              <div className="grid grid-cols-2 gap-3 p-4">
-                <Info label="Batches" value={overview.production.batchCount} />
-                <Info label="Completed" value={overview.production.completedCount} />
-                <Info label="In progress" value={overview.production.inProgressCount} />
-                <Info label="Cancelled" value={overview.production.cancelledCount} />
-                <Info
-                  label="Avg yield variance"
-                  value={formatBps(overview.production.averageYieldVarianceBps)}
-                />
-                <Info
-                  label="Below target >5%"
-                  value={overview.production.belowTargetCount}
-                  warning={overview.production.belowTargetCount > 0}
-                />
-              </div>
-            </Panel>
-
-            <Panel>
-              <PanelHead
-                title="Kitchen standards"
-                sub="Current recipe versions with published Cookbook methods"
-                right={<BookOpenCheck className="h-4 w-4 text-primary" />}
-              />
-              <div className="grid grid-cols-2 gap-3 p-4">
-                <Info label="Active recipes" value={overview.cookbook.recipeCount} />
-                <Info label="Published methods" value={overview.cookbook.publishedCount} />
-                <Info
-                  label="Missing methods"
-                  value={overview.cookbook.missingCount}
-                  warning={overview.cookbook.missingCount > 0}
-                />
-                <Info label="Coverage" value={percentage(overview.cookbook.coverageBps) + "%"} />
-              </div>
-            </Panel>
+          <div className="rounded-lg border border-border bg-secondary/40 p-3">
+            <div className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Timing multiplier
+            </div>
+            <div className="num mt-1 text-[14px] font-semibold">
+              {adjustment.ticketTimeMultiplier.toFixed(2)}x
+            </div>
           </div>
-
-          <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Station performance"
-              sub="Period totals with weighted preparation and pickup timing"
-              right={<ChefHat className="h-4 w-4 text-primary" />}
-            />
-            <table className="w-full min-w-[980px]">
-              <thead>
-                <tr>
-                  <TH>Station</TH>
-                  <TH className="text-right">Tickets</TH>
-                  <TH className="text-right">Completed</TH>
-                  <TH className="text-right">Late</TH>
-                  <TH className="text-right">Late rate</TH>
-                  <TH className="text-right">Avg prep</TH>
-                  <TH className="text-right">Ready pickup</TH>
-                  <TH className="text-right">Throughput/hr</TH>
-                  <TH>Quality</TH>
-                </tr>
-              </thead>
-              <tbody>
-                {overview.stations.map((station) => (
-                  <tr key={station.stationId}>
-                    <TD className="font-semibold">{station.stationName}</TD>
-                    <TD className="num text-right">{station.ticketCount}</TD>
-                    <TD className="num text-right">{station.completedCount}</TD>
-                    <TD className="num text-right">{station.lateCount}</TD>
-                    <TD className="num text-right">{percentage(station.lateBps)}%</TD>
-                    <TD className="num text-right">{formatDuration(station.averagePrepMs)}</TD>
-                    <TD className="num text-right">
-                      {formatDuration(station.averageReadyPickupMs)}
-                    </TD>
-                    <TD className="num text-right">
-                      {station.throughputPerHourMilli === null
-                        ? "—"
-                        : (station.throughputPerHourMilli / 1_000).toFixed(1)}
-                    </TD>
-                    <TD>
-                      <Status>{station.quality}</Status>
-                    </TD>
-                  </tr>
-                ))}
-                {!overview.stations.length ? (
-                  <tr>
-                    <TD colSpan={9} className="py-8 text-center text-muted-foreground">
-                      No persisted station metrics exist for this period yet.
-                    </TD>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </Panel>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <Panel className="overflow-x-auto">
-              <PanelHead
-                title="Daily kitchen trend"
-                sub="Late-rate and preparation-time movement across the selected period"
-                right={<Timer className="h-4 w-4 text-primary" />}
-              />
-              <table className="w-full min-w-[700px]">
-                <thead>
-                  <tr>
-                    <TH>Date</TH>
-                    <TH className="text-right">Tickets</TH>
-                    <TH className="text-right">Completed</TH>
-                    <TH className="text-right">Late</TH>
-                    <TH className="text-right">Late rate</TH>
-                    <TH className="text-right">Avg prep</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {overview.daily.map((day) => (
-                    <tr key={day.businessDate}>
-                      <TD className="font-semibold">{day.businessDate}</TD>
-                      <TD className="num text-right">{day.ticketCount}</TD>
-                      <TD className="num text-right">{day.completedCount}</TD>
-                      <TD className="num text-right">{day.lateCount}</TD>
-                      <TD className="num text-right">{percentage(day.lateBps)}%</TD>
-                      <TD className="num text-right">{formatDuration(day.averagePrepMs)}</TD>
-                    </tr>
-                  ))}
-                  {!overview.daily.length ? (
-                    <tr>
-                      <TD colSpan={6} className="py-8 text-center text-muted-foreground">
-                        No daily timing history exists for this period.
-                      </TD>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </Panel>
-
-            <Panel>
-              <PanelHead
-                title="Today's prep blockers"
-                sub="Issues that prevent authoritative prep execution"
-                right={
-                  overview.currentPrep.blockerCount > 0 ? (
-                    <AlertTriangle className="h-4 w-4 text-warning" />
-                  ) : (
-                    <ClipboardCheck className="h-4 w-4 text-primary" />
-                  )
-                }
-              />
-              <div className="divide-y divide-border">
-                {overview.currentPrep.blockers.map((blocker) => (
-                  <div key={blocker.id} className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-[13px] font-semibold">{blocker.recipeName}</div>
-                        <div className="mt-1 text-[11px] text-muted-foreground">
-                          {blocker.reasons.map(formatRisk).join(" · ")}
-                        </div>
-                      </div>
-                      <Status>{blocker.status}</Status>
-                    </div>
-                  </div>
-                ))}
-                {!overview.currentPrep.blockers.length ? (
-                  <div className="p-8 text-center text-[12px] text-muted-foreground">
-                    No recipe-version or Cookbook blockers on today's active prep plan.
-                  </div>
-                ) : null}
-              </div>
-            </Panel>
+          <div className="rounded-lg border border-border bg-secondary/40 p-3">
+            <div className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Late-ticket multiplier
+            </div>
+            <div className="num mt-1 text-[14px] font-semibold">
+              {adjustment.lateTicketMultiplier.toFixed(2)}x
+            </div>
           </div>
-        </>
-      ) : null}
+          {adjustment.notes.map((note) => (
+            <div
+              key={note}
+              className="rounded-lg border border-border bg-card p-3 text-[13px] text-muted-foreground"
+            >
+              {note}
+            </div>
+          ))}
+        </div>
+      </Panel>
     </AppShell>
   );
-}
-
-function Info({
-  label,
-  value,
-  warning = false,
-}: {
-  label: string;
-  value: string | number;
-  warning?: boolean;
-}) {
-  return (
-    <div className="rounded-md border border-border px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground">
-        {label}
-      </div>
-      <div className={"mt-1 text-[14px] font-semibold " + (warning ? "text-warning" : "")}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function percentage(value: number) {
-  return Number((value / 100).toFixed(1));
-}
-
-function formatBps(value: number | null) {
-  if (value === null) return "—";
-  const percent = value / 100;
-  return (percent > 0 ? "+" : "") + percent.toFixed(1) + "%";
-}
-
-function formatRisk(value: string) {
-  if (value === "RECIPE_VERSION_CHANGED") return "Recipe version changed";
-  if (value === "COOKBOOK_NOT_PUBLISHED") return "Cookbook method missing";
-  return value.replaceAll("_", " ").toLowerCase();
 }

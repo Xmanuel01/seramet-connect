@@ -12,8 +12,6 @@ import {
   TH,
 } from "@/components/app/ui";
 import { SearchInput } from "@/components/app/Tabs";
-import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/design-system")({
   head: () => ({
@@ -47,7 +45,6 @@ const tokens = [
 ];
 
 function DS() {
-  const { branches } = useAppContext();
   return (
     <AppShell title="Seramet UI kit" subtitle="Tokens and components shared by every module">
       <div className="grid gap-4 lg:grid-cols-2">
@@ -74,7 +71,7 @@ function DS() {
             <p className="text-[13px] text-muted-foreground">
               Body text used across tables and panels.
             </p>
-            <p className="num text-[20px] font-bold">{ksh(0)}</p>
+            <p className="num text-[20px] font-bold">KSh 2,486,420</p>
           </div>
         </Panel>
         <Panel>
@@ -103,8 +100,8 @@ function DS() {
         <Panel>
           <PanelHead title="Metrics" />
           <div className="grid grid-cols-2 gap-3 p-4">
-            <Metric label="Net sales" value={0} money />
-            <Metric label="Food cost" value={0} suffix="%" invert />
+            <Metric label="Net sales" value={184420} money delta={8.4} />
+            <Metric label="Food cost" value={33.4} suffix="%" delta={3.1} invert />
           </div>
         </Panel>
         <Panel>
@@ -114,15 +111,14 @@ function DS() {
               Item name
               <input
                 className="h-9 rounded-md border border-border bg-card px-3 text-[13px] outline-none focus:ring-2 focus:ring-ring/40"
-                placeholder="Configured item name"
+                defaultValue="Beef Boneless"
               />
             </label>
             <label className="grid gap-1 text-[12px] font-semibold">
               Branch
               <select className="h-9 rounded-md border border-border bg-card px-3 text-[13px] outline-none focus:ring-2 focus:ring-ring/40">
-                {branches.map((branch) => (
-                  <option key={branch}>{branch}</option>
-                ))}
+                <option>Westlands</option>
+                <option>Ngong Road</option>
               </select>
             </label>
             <SearchInput placeholder="Search records..." />
@@ -162,11 +158,21 @@ function DS() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <TD colSpan={5} className="py-6 text-center text-muted-foreground">
-                    Authoritative records use this table presentation.
-                  </TD>
-                </tr>
+                {[
+                  ["PO-2026-0182", "Kelvin M.", "KSh 58,400", "Pending"],
+                  ["Till variance", "Amina W.", "KSh 850", "Critical"],
+                  ["Stock count", "Kelvin M.", "KSh -18,400", "Attention"],
+                ].map(([record, owner, value, status]) => (
+                  <tr key={record} className="hover:bg-secondary/50">
+                    <TD className="font-semibold">{record}</TD>
+                    <TD className="text-muted-foreground">{owner}</TD>
+                    <TD className="num text-right font-semibold">{value}</TD>
+                    <TD>
+                      <Status>{status}</Status>
+                    </TD>
+                    <TD className="text-right text-muted-foreground">...</TD>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

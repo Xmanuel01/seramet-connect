@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, Status } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
-import { emptyRecords } from "@/lib/empty-records";
+import { decisions, ksh } from "@/data/mock";
 
 export const Route = createFileRoute("/decisions")({
   head: () => ({
@@ -18,14 +17,6 @@ export const Route = createFileRoute("/decisions")({
 });
 
 function Decisions() {
-  const decisions = emptyRecords<{
-    title: string;
-    value: number;
-    ctx: string;
-    reason: string;
-    by: string;
-    time: string;
-  }>();
   const total = decisions.reduce((sum, decision) => sum + decision.value, 0);
   return (
     <AppShell
@@ -41,8 +32,8 @@ function Decisions() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Pending" value={decisions.length} invert />
         <Metric label="Value at stake" value={total} money invert />
-        <Metric label="Critical" value={0} invert />
-        <Metric label="Avg age" value="-" />
+        <Metric label="Critical" value={2} invert />
+        <Metric label="Avg age" value="48" suffix=" min" />
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {decisions.map((decision) => (

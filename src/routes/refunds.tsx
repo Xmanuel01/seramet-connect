@@ -3,7 +3,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, Timeline } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { ksh } from "@/data/mock";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -29,21 +29,21 @@ export const Route = createFileRoute("/refunds")({
 function Refunds() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { branchLabel, currentUser, matchesBranch } = useAppContext();
-  const { state, mutate } = useTransactionEngine();
+  const { branch, branchLabel } = useAppContext();
+  const { state, apply } = useTransactionEngine();
   const rows = state.refunds
-    .filter((refund) => matchesBranch(refund.branchId ?? refund.branch))
+    .filter((refund) => branch === "All Branches" || refund.branch === branch)
     .filter((refund) => statusFilter === "All" || refund.status === statusFilter)
     .filter((refund) => !periodDate || refund.createdAt.slice(0, 10) === periodDate);
-  const paidReceipt = state.receipts.find((receipt) =>
-    matchesBranch(receipt.branchId ?? receipt.branch),
+  const paidReceipt = state.receipts.find(
+    (receipt) => branch === "All Branches" || receipt.branch === branch,
   );
   const selected = rows[0];
 
   const requestRefund = () => {
     if (!paidReceipt) return;
-    void mutate("requestRefund", {
-      input: {
+    apply((current) =>
+      TransactionEngine.requestRefund(current, {
         orderId: paidReceipt.orderId,
         invoiceId: paidReceipt.invoiceId,
         receiptId: paidReceipt.id,
@@ -51,14 +51,14 @@ function Refunds() {
         amount: Math.min(1200, paidReceipt.total),
         method: paidReceipt.paymentBreakdown[0]?.method ?? "CASH",
         reason: "Customer complaint compensation with source receipt attached",
-        requestedBy: currentUser.name,
-      },
-    });
+        requestedBy: "Joan A.",
+      }),
+    );
   };
 
   const approveSelected = () => {
     if (!selected) return;
-    void mutate("approveRefund", { refundId: selected.id });
+    apply((current) => TransactionEngine.approveRefund(current, selected.id, "Emmanuel K."));
   };
 
   return (
@@ -76,14 +76,15 @@ function Refunds() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Refunds this month" value={rows.length} invert />
+        <Metric label="Refunds this month" value={rows.length} delta={-6} invert />
         <Metric
           label="Refund value"
           value={rows.reduce((sum, refund) => sum + refund.amount, 0)}
           money
+          delta={-11.4}
           invert
         />
-        <Metric label="Refund rate" value="Not available" />
+        <Metric label="Refund rate" value={rows.length ? "0.9" : "0"} suffix="% of sales" />
         <Metric
           label="Awaiting approval"
           value={rows.filter((refund) => refund.status === "REQUESTED").length}
