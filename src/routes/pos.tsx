@@ -898,7 +898,7 @@ function POS() {
   };
 
   const openPayment = async () => {
-    if (!items.length || paymentBusy) return;
+    if (!items.length || paymentBusy || orderActionRef.current) return;
     if (!paymentMethods.length) {
       setPrintNotice("No payment methods are configured for this restaurant.");
       setPrintNoticeType("warning");
@@ -945,6 +945,8 @@ function POS() {
     setPaymentConfirmed(false);
     setPaymentInvoiceId(null);
     setPaymentOrderId(null);
+    orderActionRef.current = true;
+    setOrderActionBusy(true);
     setPaymentBusy(true);
     try {
       let orderId = activeOrder?.id;
@@ -1000,6 +1002,8 @@ function POS() {
       setPrintNoticeType("warning");
     } finally {
       setPaymentBusy(false);
+      orderActionRef.current = false;
+      setOrderActionBusy(false);
     }
   };
 
