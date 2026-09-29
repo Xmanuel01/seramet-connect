@@ -295,7 +295,7 @@ async function sendInstalledBridgeJob(
   const primary = profile.printers.find((printer) => printer.id === job.printerId);
   try {
     let result = await submitCopies(job, config, primary?.name);
-    if (!result.accepted) {
+    if (!result.accepted && !durable) {
       const fallback = findRuntimeFallback(profile, job, primary?.id);
       if (fallback) {
         result = await submitCopies({ ...job, printerId: fallback.id }, config, fallback.name);
@@ -343,7 +343,7 @@ async function submitCopies(
   let last = { accepted: true, message: "Printed" };
   for (let copy = 0; copy < Math.max(1, job.copies); copy += 1) {
     last = await SerametLocalPrintBridge.submitToInstalledBridge(
-      { ...job, copies: 1 },
+      { ...job, id: `${job.id}:copy-${copy + 1}`, copies: 1 },
       config.token,
       config.endpoint,
       printerName,
