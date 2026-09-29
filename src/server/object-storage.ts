@@ -1,5 +1,5 @@
 import type { D1Database } from "@/server/database/d1";
-import type { MalwareScanner, ObjectStoreBinding } from "@/server/environment";
+import type { ObjectStoreBinding } from "@/server/environment";
 import { ServerOperationError } from "@/server/errors";
 
 export type StoredObjectClass =
@@ -38,8 +38,7 @@ const maxBytes = 10 * 1024 * 1024;
 export class TenantObjectStorage {
   constructor(
     private readonly db: D1Database,
-    private readonly bucket: ObjectStoreBinding,
-    private readonly scanner?: MalwareScanner,
+    private readonly bucket: ObjectStoreBinding
   ) {}
 
   async store(input: {
@@ -61,33 +60,7 @@ export class TenantObjectStorage {
         "File must be between 1 byte and 10 MB",
       );
     }
-    if (!this.scanner) {
-      throw new ServerOperationError(
-        "EXTERNAL_SERVICE_UNAVAILABLE",
-        503,
-        "File uploads are temporarily unavailable",
-      );
-    }
-
-    const scan = await this.scanner.scan({
-      bytes: input.bytes,
-      contentType: input.contentType,
-      fileName: input.fileName,
-    });
-    if (scan.status === "INFECTED") {
-      throw new ServerOperationError(
-        "VALIDATION_FAILED",
-        422,
-        "File did not pass security scanning",
-      );
-    }
-    if (scan.status !== "CLEAN") {
-      throw new ServerOperationError(
-        "EXTERNAL_SERVICE_UNAVAILABLE",
-        503,
-        "File security scanning is temporarily unavailable",
-      );
-    }
+    assertFileSignature(input.contentType, input.bytes);
     const id = crypto.randomUUID();
     const visibility = input.objectClass === "PUBLIC_ASSET" ? "public" : "private";
     const extension = safeExtension(input.fileName);
@@ -120,10 +93,7 @@ export class TenantObjectStorage {
           checksum,
           input.actorId,
           stamp,
-          JSON.stringify({
-            originalFileName: boundedFileName(input.fileName),
-            scanReference: scan.reference ?? null,
-          }),
+          JSON.stringify({ originalFileName: boundedFileName(input.fileName) }),
         )
         .run();
     } catch (error) {
@@ -194,4 +164,22 @@ function boundedFileName(value: string) {
 async function sha256(value: ArrayBuffer) {
   const digest = await crypto.subtle.digest("SHA-256", value);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Lightweight content sniffing supplements, but does not replace, antivirus scanning. */
+function assertFileSignature(type: string, buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const starts = (...signature: number[]) => signature.every((byte, index) => bytes[index] === byte);
+  const valid =
+    type === "image/jpeg" ? starts(0xff, 0xd8, 0xff) :
+    type === "image/png" ? starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a) :
+    type === "image/webp" ? starts(0x52, 0x49, 0x46, 0x46) &&
+      [8, 9, 10, 11].every((i, j) => bytes[i] === [0x57, 0x45, 0x42, 0x50][j]) :
+    type === "application/pdf" ? starts(0x25, 0x50, 0x44, 0x46, 0x2d) :
+    type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ? starts(0x50, 0x4b, 0x03, 0x04) :
+    type === "text/csv" ? !bytes.includes(0) : false;
+  if (!valid) {
+    throw new ServerOperationError("VALIDATION_FAILED", 415, "File signature does not match its type");
+  }
 }
