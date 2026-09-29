@@ -4,6 +4,9 @@ import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } f
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { dispatchDurableKitchenObligation } from "@/lib/durable-kot-client";
+import { permissions } from "@/platform/permissions";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
@@ -86,7 +89,9 @@ function SerametPrinters() {
   const {
     activeTenantId,
     branch: activeBranch,
+    branchId: activeBranchId,
     canSwitchBranch,
+    hasPermission,
     currentUser,
     switchableBranchRecords,
   } = useAppContext();
@@ -106,6 +111,11 @@ function SerametPrinters() {
     printers: [],
   });
   const [notice, setNotice] = useState("No test job sent in this session.");
+  const [kotNotice, setKotNotice] = useState("");
+  const [kotBusyId, setKotBusyId] = useState<string | null>(null);
+  const [reviewReason, setReviewReason] = useState("");
+  const { state: liveTransactions, mutate: mutateTicket, syncFromBackend } =
+    useTransactionEngine();
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
@@ -118,6 +128,7 @@ function SerametPrinters() {
     bridgeConfig,
     printCustomerDocument,
     sendKitchenTickets,
+    deliverDurableKitchenTicket,
     reprintJob,
   } = useSerametPrintQueue(selectedBranchId);
   const visiblePrinters = useMemo(
@@ -214,6 +225,90 @@ function SerametPrinters() {
     const result = reprintJob(latest.id, "Branch Manager", "Manager authorized duplicate copy");
     setBridgeStatus(SerametLocalPrintBridge.getStatus());
     setNotice(result?.skipped ?? `Reprint logged against ${latest.id}.`);
+  };
+
+  const outstandingTickets = (liveTransactions.kitchenPrintObligations ?? [])
+    .filter(
+      (ticket) =>
+        ticket.tenantId === activeTenantId &&
+        ticket.branchId === selectedBranchId &&
+        ["PENDING", "CLAIMED", "UNCERTAIN"].includes(ticket.status),
+    )
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const canReviewTickets = hasPermission(permissions.settingsHardwareManage);
+  const activeRecoveryBranch = selectedBranchId === activeBranchId;
+  const physicalBridgeRequired = profile?.kitchenMode !== "KDS_ONLY";
+  const canAttemptDelivery =
+    activeRecoveryBranch && (!physicalBridgeRequired || bridgeConfigReady(bridgeConfig));
+
+  const recoverTicket = async (ticketId: string) => {
+    if (!canAttemptDelivery || kotBusyId) return;
+    const ticket = outstandingTickets.find(
+      (item) => item.id === ticketId && item.status === "PENDING",
+    );
+    if (!ticket) {
+      setKotNotice("Only an unclaimed ticket can be delivered. Investigate older attempts first.");
+      return;
+    }
+    setKotBusyId(ticketId);
+    try {
+      const result = await dispatchDurableKitchenObligation({
+        obligation: ticket,
+        terminalId: `${activeBranchId}-POS-RECOVERY`,
+        mutate: mutateTicket,
+        deliver: deliverDurableKitchenTicket,
+      });
+      setKotNotice(
+        `${ticket.orderId} / ${ticket.station}: ${result.jobs.length} delivery job(s) accepted. ` +
+          "OS spool acknowledgement is not proof that paper printed.",
+      );
+      await syncFromBackend();
+    } catch (error) {
+      setKotNotice(
+        error instanceof Error ? error.message : "The ticket outcome requires investigation.",
+      );
+      await syncFromBackend().catch(() => undefined);
+    } finally {
+      setKotBusyId(null);
+    }
+  };
+
+  const authorizeReviewedReprint = async (ticketId: string) => {
+    if (!canReviewTickets || !activeRecoveryBranch || kotBusyId) return;
+    if (reviewReason.trim().length < 12) {
+      setKotNotice("Enter at least 12 characters documenting the manual printer check.");
+      return;
+    }
+    const ticket = outstandingTickets.find((item) => item.id === ticketId);
+    if (!ticket || !["CLAIMED", "UNCERTAIN"].includes(ticket.status)) return;
+    if (
+      ticket.status === "CLAIMED" &&
+      ticket.claimedAt &&
+      Date.now() - Date.parse(ticket.claimedAt) < 120_000
+    ) {
+      setKotNotice("This print claim is still recent. Investigate before authorizing a reprint.");
+      return;
+    }
+    setKotBusyId(ticket.id);
+    try {
+      const updated = await mutateTicket("authorizeKitchenReprint", {
+        obligationId: ticket.id,
+        reason: reviewReason.trim(),
+      });
+      const created = updated?.state.kitchenPrintObligations?.find(
+        (item) => item.reprintOf === ticket.id && item.status === "PENDING",
+      );
+      if (!created) throw new Error("Audited reprint was not confirmed by the server.");
+      setReviewReason("");
+      setKotNotice(
+        `Audited reprint ${created.id} created for ${ticket.orderId}. ` +
+          "Use Deliver outstanding KOT to dispatch it intentionally.",
+      );
+    } catch (error) {
+      setKotNotice(error instanceof Error ? error.message : "Cannot authorize reprint.");
+    } finally {
+      setKotBusyId(null);
+    }
   };
 
   const uploadLogo = async (event: ChangeEvent<HTMLInputElement>, scope: LogoScope) => {
@@ -317,6 +412,86 @@ function SerametPrinters() {
           invert
         />
       </div>
+
+      <Panel className="mt-4">
+        <PanelHead
+          title="Durable kitchen KOT recovery"
+          sub="Server-owned tickets survive a POS crash. Claimed or uncertain physical jobs never automatically reprint."
+          right={<Status>{outstandingTickets.length} require attention</Status>}
+        />
+        <div className="space-y-3 p-4">
+          {!activeRecoveryBranch && (
+            <p className="text-[12px] text-amber-700">
+              Switch your active working branch to {branch} before recovering its tickets.
+            </p>
+          )}
+          {physicalBridgeRequired && !bridgeConfigReady(bridgeConfig) && (
+            <p className="text-[12px] text-amber-700">
+              Configure the installed print bridge before claiming a physical KOT.
+            </p>
+          )}
+          {kotNotice && (
+            <div role="status" className="rounded-md border border-border p-3 text-[12px]">
+              {kotNotice}
+            </div>
+          )}
+          {outstandingTickets.length === 0 && (
+            <p className="text-[12px] text-muted-foreground">
+              No outstanding server-owned KOT obligations for this branch. Old pre-upgrade
+              kitchen orders are not automatically reprinted.
+            </p>
+          )}
+          {outstandingTickets.map((ticket) => (
+            <div key={ticket.id} className="rounded-lg border border-border p-3 text-[12px]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-bold">
+                  {ticket.orderId} / {ticket.station}
+                </div>
+                <Status>{ticket.status}</Status>
+              </div>
+              <p className="mt-1 text-muted-foreground">
+                {ticket.kind.replaceAll("_", " ")} / {ticket.lines.length} production line(s)
+                / {ticket.createdAt}
+              </p>
+              {ticket.status === "PENDING" ? (
+                <Btn
+                  onClick={() => void recoverTicket(ticket.id)}
+                  disabled={!canAttemptDelivery || kotBusyId !== null}
+                >
+                  {kotBusyId === ticket.id ? "Delivering..." : "Deliver outstanding KOT"}
+                </Btn>
+              ) : (
+                <div className="mt-2 space-y-2">
+                  <p className="text-amber-700">
+                    Previous printer output is uncertain. Check the local bridge spool and
+                    kitchen physically before authorizing a new copy.
+                  </p>
+                  {canReviewTickets && (
+                    <>
+                      <label className="block font-semibold" htmlFor={`kot-reason-${ticket.id}`}>
+                        Manager reprint reason
+                      </label>
+                      <input
+                        id={`kot-reason-${ticket.id}`}
+                        value={reviewReason}
+                        onChange={(event) => setReviewReason(event.target.value)}
+                        placeholder="What was checked and why is another ticket required?"
+                        className="w-full rounded-md border border-border bg-background p-2"
+                      />
+                      <Btn
+                        onClick={() => void authorizeReviewedReprint(ticket.id)}
+                        disabled={!activeRecoveryBranch || kotBusyId !== null}
+                      >
+                        Authorize audited reprint
+                      </Btn>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Panel>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.8fr)]">
         <Panel>
