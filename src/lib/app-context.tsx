@@ -548,7 +548,9 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }
     };
     stream.addEventListener("seramet", message as EventListener);
-    stream.onopen = () => { streamHealthy = true; };
+    stream.onopen = () => {
+      streamHealthy = true;
+    };
     stream.addEventListener("unavailable", () => {
       streamHealthy = false;
       requestRefresh("stream-unavailable");
