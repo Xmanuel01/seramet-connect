@@ -57,13 +57,13 @@ other site; do not rename or mutate existing linked branch rows blindly.
    administratively superseded audit-preserved jobs and one unexecuted
    pending recomputation. It also requires its own fresh plan digest, exact
    approvals and the verified isolated-restore evidence. Do not replay all 41.
-6. Provision a real internal malware-scanner Worker on the correct Cloudflare
-   account. It must expose the expected RPC `scan({bytes,contentType,fileName})`
-   contract and return `CLEAN`, `INFECTED`, or `ERROR`. A stub returning
-   `CLEAN` is forbidden. Verify clean and non-clean fixture behavior and fail
-   closed on timeouts, malformed output and service unavailability. Configure
-   the staging `SERAMET_MALWARE_SCANNER_SERVICE` variable to its deployed
-   script name; the pipeline independently checks that Worker exists.
+6. This Lite release intentionally removes the scanner service. Verify the old
+   `SERAMET_MALWARE_SCANNER` binding is absent from the staging Worker and
+   review the reduced-security file upload policy in
+   [LITE_FILE_UPLOAD_SECURITY.md](LITE_FILE_UPLOAD_SECURITY.md).
+   Legacy import previews still must never auto-replay. Create new
+   policy-validated previews only after the incident reconciliation and
+   correct branch mapping are independently approved.
 7. Independently review #53 hook wiring and compiled-event checks and #52
    durable import tests. Do not activate workers until the stale/duplicate
    job disposition is approved and replay-idempotency is checked.
@@ -94,17 +94,15 @@ other site; do not rename or mutate existing linked branch rows blindly.
 
 ## Source integration versus live staging
 
-The consolidated staging-recovery branch includes a private, fail-closed
-scanner RPC adapter and enforces a verified nonempty CLEAN scan reference
-on all production-like setup import previews and queued commits. Existing
-UNSCANNED_STAGING previews are specifically rejected, even if an old
-Queue message is delivered. The branch also includes durable >100-row
-queue routing and compiled Queue/Cron registration, but neither scanner
-provisioning nor real queue delivery is established merely by source tests.
+Historical recovery work included scanner-dependent checks. The Lite release removes
+that dependency and requires a fresh `validated-unscanned-v1` preview for
+production-like import commits. Existing `UNSCANNED_STAGING` previews are
+rejected even if an old Queue message is delivered. Durable >100-row queue
+routing and compiled Queue/Cron registration still require live acceptance.
 
 The proposed staging deployment is **manual-only**. Main-branch CI alone
 does not start the staging deployment; recovery operators must explicitly
-dispatch it after independent backup, API security, backlog, scanner and
+dispatch it after independent backup, API security, backlog and
 exact-commit approvals are complete.
 
 ## Release controls and rollback
@@ -116,8 +114,8 @@ exact-commit approvals are complete.
 - Migrations require a reviewed expand/contract compatibility and recovery
   strategy, not merely a green CI run. Staging-only data fixes need a distinct
   approved change and reversible plan.
-- The scanner service must actually work at the RPC boundary; naming an
-  unrelated Worker does not satisfy this requirement.
+- The legacy scanner binding must be absent, and file uploads must pass the
+  reduced but explicit allowlist and file-validation policy.
 - Keep real Daraja/Pesapal merchant transactions disabled until the internal
   POS→receipt→stock→GL→EOD test and duplicate-callback negative cases pass.
 
@@ -145,9 +143,7 @@ without reviewing legitimate external clients**. See
 [STAGING_SCHEMA_LOCKDOWN_RUNBOOK.md](STAGING_SCHEMA_LOCKDOWN_RUNBOOK.md)
 and the restore-gated [public-schema lockdown script](../ops/sql/staging-public-schema-lockdown.sql).
 
-The scanner implementation under scanner-worker requires a real privately
-hosted ClamAV gateway with authenticated HTTPS and valid signature updates.
-See [STAGING_SCANNER_PROVISIONING.md](STAGING_SCANNER_PROVISIONING.md).
-Scanner source, existing service name, mocked tests and HTTP 200 deploy
-responses do not prove real AV scanning. Full staging scanner RPC fixtures
-and operational approvals remain mandatory.
+The historical scanner implementation has been retired for the Lite release.
+The decision reduces costs and operational dependencies but removes malware
+detection. Apply the documented [Lite upload security restrictions](LITE_FILE_UPLOAD_SECURITY.md)
+and re-evaluate antivirus before accepting untrusted public uploads.
