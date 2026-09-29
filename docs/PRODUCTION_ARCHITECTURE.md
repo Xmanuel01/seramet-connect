@@ -11,7 +11,6 @@ Cloudflare Worker (TanStack Start / Nitro)
         |-- Hyperdrive --> Supabase PostgreSQL (authority)
         |-- Queue ------> Seramet durable workers --> dead-letter queue
         |-- R2 ---------> public assets and private tenant documents
-        |-- Service ----> malware scanner
         |-- HTTPS ------> configured payment, delivery, notification and AI providers
         `-- HTTPS ------> Supabase Auth
 
