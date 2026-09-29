@@ -251,7 +251,10 @@ async function sendInstalledBridgeJob(
   const primary = profile.printers.find((printer) => printer.id === job.printerId);
   try {
     let result = await submitCopies(job, config, primary?.name);
-    if (!result.accepted) {
+    // A rejected or timed-out primary KOT may already have produced paper.
+    // Never issue an uncontrolled duplicate to a fallback printer. Static
+    // preflight routing can still select the configured fallback beforehand.
+    if (!result.accepted && !job.kotObligationId) {
       const fallback = findRuntimeFallback(profile, job, primary?.id);
       if (fallback) {
         result = await submitCopies({ ...job, printerId: fallback.id }, config, fallback.name);
