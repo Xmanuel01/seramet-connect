@@ -35,7 +35,8 @@ export function obligationToPrintOrder(
       category: line.category,
       quantity: line.quantity,
       unitPrice: line.unitPrice,
-      productionStation: (line.productionStation ?? "NONE") as OrderForPrint["lines"][number]["productionStation"],
+      productionStation: (line.productionStation ??
+        "NONE") as OrderForPrint["lines"][number]["productionStation"],
       ...(line.itemNote ? { itemNote: line.itemNote } : {}),
     })),
     subtotal: obligation.snapshot.subtotal,
@@ -74,7 +75,11 @@ export async function dispatchDurableKitchenObligation(input: {
 
   let delivered: KotDeliveryOutcome;
   try {
-    delivered = await deliver(obligationToPrintOrder(obligation, terminalId), obligation.kind, obligation.id);
+    delivered = await deliver(
+      obligationToPrintOrder(obligation, terminalId),
+      obligation.kind,
+      obligation.id,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Print delivery outcome is unknown";
     // We deliberately do not retry a timeout: the bridge may already have
@@ -95,15 +100,12 @@ export async function dispatchDurableKitchenObligation(input: {
     );
   }
 
-  const allSpool = delivered.outcomes.length > 0 && delivered.outcomes.every((status) => status === "SPOOLED");
+  const allSpool =
+    delivered.outcomes.length > 0 && delivered.outcomes.every((status) => status === "SPOOLED");
   const allDigital =
     delivered.outcomes.length > 0 &&
     delivered.outcomes.every((status) => status === "DIGITAL_QUEUED");
-  const status = allSpool
-    ? "SPOOLED"
-    : allDigital
-      ? "DIGITAL_QUEUED"
-      : "UNCERTAIN";
+  const status = allSpool ? "SPOOLED" : allDigital ? "DIGITAL_QUEUED" : "UNCERTAIN";
   const reason =
     status === "UNCERTAIN"
       ? delivered.skipped.join("; ") || "One or more delivery routes could not be verified"
