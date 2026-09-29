@@ -1,4 +1,5 @@
 import type { TransactionOrder, BillingRecord } from "@/lib/transaction-engine";
+import { currentDateKey } from "@/lib/currency";
 
 /**
  * The POS Orders badge counts only orders that still require cashier dispatch.
@@ -69,4 +70,12 @@ export function formatPosClock(date: Date, locale: string, timezone: string) {
     hour12: false,
     timeZone: timezone,
   }).format(date);
+}
+
+/** Invoice lists use authoritative restaurant business dates, never raw UTC day slices. */
+export function invoiceBusinessDate(
+  invoice: Pick<BillingRecord, "businessDate" | "issuedAt">,
+  timezone: string,
+) {
+  return invoice.businessDate || currentDateKey(new Date(invoice.issuedAt), timezone);
 }
