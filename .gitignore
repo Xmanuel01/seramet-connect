@@ -8,6 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.seramet/
+.vite-cache
 dist
 dist-ssr
 .output
@@ -15,10 +17,23 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+.env.*
+!.env.example
 
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+wrangler.jsonc
+
+# Local diagnostics and temporary recovery copies
+login-live.html
+*.backup-before-*
+*.before-typefix
+scripts/trace-*.ts
+scripts/diagnose-*.mjs
+scripts/check-schema-migrations.mjs
+scripts/fix-schema-migrations-rls.mjs
+scripts/test-postgres-connection.mjs
 
 # Editor directories and files
 .vscode/*
@@ -30,3 +45,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+local-print-bridge/config.local.json

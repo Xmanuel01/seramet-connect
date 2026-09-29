@@ -6,31 +6,31 @@ and the decisions that are still owed by the business owner.
 
 ## 1. Already implemented (no change made)
 
-| Spec area | Where it lives |
-| --- | --- |
-| POS, order lifecycle, hold, send-to-kitchen | `src/routes/pos.tsx`, `src/lib/transaction-engine.ts` |
-| Bill / invoice / receipt distinction, merge, split | `src/routes/invoices.tsx`, `pending.tsx`, `receipts.tsx` |
-| Payments, split payment, refunds, reversal | `src/lib/payment-providers.ts`, `src/routes/refunds.tsx` |
-| Reconciliation (cash, till, bank, external) | `src/routes/reconciliation.tsx` |
-| Printer routing, KOT, reprint, fallback | `src/lib/seramet-print-service.ts`, `src/routes/seramet-printers.tsx` |
-| Inventory hierarchy, receiving, transfers, counts, wastage, breakage, PAR | Inventory routes |
-| Recipes, food cost, production, prep | Kitchen routes |
-| Procurement, requisitions, PO, supplier bills and performance | Procurement routes |
-| CRM, Customer 360, loyalty, complaints | Customer routes |
-| HR overview, employees, attendance, schedule, payroll | People routes |
-| Finance: P&L, balance sheet, cash flow, AP, AR, expenses, assets | Finance routes |
-| Approvals, audit trail, command centre, AI, reports | Management/Intelligence routes |
+| Spec area                                                                 | Where it lives                                                        |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| POS, order lifecycle, hold, send-to-kitchen                               | `src/routes/pos.tsx`, `src/lib/transaction-engine.ts`                 |
+| Bill / invoice / receipt distinction, merge, split                        | `src/routes/invoices.tsx`, `pending.tsx`, `receipts.tsx`              |
+| Payments, split payment, refunds, reversal                                | `src/lib/payment-providers.ts`, `src/routes/refunds.tsx`              |
+| Reconciliation (cash, till, bank, external)                               | `src/routes/reconciliation.tsx`                                       |
+| Printer routing, KOT, reprint, fallback                                   | `src/lib/seramet-print-service.ts`, `src/routes/seramet-printers.tsx` |
+| Inventory hierarchy, receiving, transfers, counts, wastage, breakage, PAR | Inventory routes                                                      |
+| Recipes, food cost, production, prep                                      | Kitchen routes                                                        |
+| Procurement, requisitions, PO, supplier bills and performance             | Procurement routes                                                    |
+| CRM, Customer 360, loyalty, complaints                                    | Customer routes                                                       |
+| HR overview, employees, attendance, schedule, payroll                     | People routes                                                         |
+| Finance: P&L, balance sheet, cash flow, AP, AR, expenses, assets          | Finance routes                                                        |
+| Approvals, audit trail, command centre, AI, reports                       | Management/Intelligence routes                                        |
 
 ## 2. Added in this pass (additive only — no existing screen changed)
 
-| Spec section | New screen |
-| --- | --- |
-| 55–60 Delivery engine, rider eligibility, status, assignment | `/delivery`, `/riders` |
-| 62 CRM campaigns and segments | `/campaigns`, `/segments` |
-| 79, 83 Leave, performance, recruitment | `/leave`, `/performance`, `/recruitment` |
-| 87 Chart of accounts, journals, trial balance | `/general-ledger` |
-| 104 Notification log | `/notifications` |
-| 115 Provider adapters | `/integrations` |
+| Spec section                                                 | New screen                               |
+| ------------------------------------------------------------ | ---------------------------------------- |
+| 55–60 Delivery engine, rider eligibility, status, assignment | `/delivery`, `/riders`                   |
+| 62 CRM campaigns and segments                                | `/campaigns`, `/segments`                |
+| 79, 83 Leave, performance, recruitment                       | `/leave`, `/performance`, `/recruitment` |
+| 87 Chart of accounts, journals, trial balance                | `/general-ledger`                        |
+| 104 Notification log                                         | `/notifications`                         |
+| 115 Provider adapters                                        | `/integrations`                          |
 
 All new screens are branch-scoped through `useAppContext` / `useBranchRows` and reuse the
 existing Seramet design system. No existing route, component, token or data file was altered

@@ -197,7 +197,12 @@ export function parseImportText(text: string, dataset: ImportDataset, sourceName
 export async function parseSpreadsheetImport(file: File, dataset: ImportDataset) {
   const kind = importSourceKind(file.name, file.type);
   if (kind === "xlsx") {
-    return validateImportRows(await parseXlsxRows(await file.arrayBuffer()), dataset, file.name, "xlsx");
+    return validateImportRows(
+      await parseXlsxRows(await file.arrayBuffer()),
+      dataset,
+      file.name,
+      "xlsx",
+    );
   }
   if (kind === "csv") {
     return validateImportRows(parseCsvRows(await file.text()), dataset, file.name, "csv");
@@ -238,6 +243,7 @@ export async function fileToDataUrl(file: File) {
   for (let index = 0; index < buffer.length; index += 8192) {
     binary += String.fromCharCode(...buffer.subarray(index, index + 8192));
   }
-  const mime = file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/png");
+  const mime =
+    file.type || (file.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/png");
   return `data:${mime};base64,${btoa(binary)}`;
 }

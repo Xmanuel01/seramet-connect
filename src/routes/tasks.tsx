@@ -1,3 +1,4 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
@@ -21,58 +22,7 @@ export const Route = createFileRoute("/tasks")({
   component: Tasks,
 });
 
-const tasks: Task[] = [
-  {
-    id: "TSK-001",
-    title: "Review beef supplier variance",
-    owner: "Kelvin M.",
-    due: "Today",
-    priority: "High",
-    module: "Inventory",
-    branch: "Westlands",
-    status: "Open",
-  },
-  {
-    id: "TSK-002",
-    title: "Approve overtime request",
-    owner: "Emmanuel K.",
-    due: "Today",
-    priority: "High",
-    module: "People",
-    branch: "Westlands",
-    status: "Review",
-  },
-  {
-    id: "TSK-003",
-    title: "Call complaint CMP-0114",
-    owner: "Joan A.",
-    due: "Tomorrow",
-    priority: "Medium",
-    module: "Customers",
-    branch: "Westlands",
-    status: "In Progress",
-  },
-  {
-    id: "TSK-004",
-    title: "Prepare Ngong stock count",
-    owner: "Kelvin M.",
-    due: "Fri",
-    priority: "Medium",
-    module: "Inventory",
-    branch: "Ngong Road",
-    status: "Open",
-  },
-  {
-    id: "TSK-005",
-    title: "Send weekly board pack",
-    owner: "Emmanuel K.",
-    due: "Fri",
-    priority: "Low",
-    module: "Management",
-    branch: "All",
-    status: "Done",
-  },
-];
+const tasks: Task[] = emptyRecords();
 
 const columns: EnterpriseColumn<Task>[] = [
   { key: "title", label: "Task", sortable: true },
@@ -121,7 +71,6 @@ function Tasks() {
         <Metric
           label="Completed week"
           value={scopedTasks.filter((task) => task.status === "Done").length}
-          delta={20}
         />
       </div>
 

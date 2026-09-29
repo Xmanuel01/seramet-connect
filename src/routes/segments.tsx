@@ -1,112 +1,269 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, type FormEvent } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
-
-type Segment = {
-  id: string;
-  name: string;
-  rule: string;
-  branch: string;
-  customers: number;
-  avgSpend: number;
-  lifetimeValue: number;
-  status: string;
-};
+import { CrmEmpty, CrmError, CrmLoading, readableStatus, shortDate } from "@/crm/crm-ui";
+import { crmErrorMessage, crmFieldClass, useCrmScreenQuery } from "@/crm/use-crm-screen";
+import { useCrmApi } from "@/crm/use-crm";
+import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/segments")({
-  head: () => ({
-    meta: [
-      { title: "Customer Segments - Seramet" },
-      {
-        name: "description",
-        content:
-          "Rule-based customer segments driving campaigns, loyalty tiers and service recovery priorities.",
-      },
-      { property: "og:title", content: "Customer Segments - Seramet" },
-      {
-        property: "og:description",
-        content: "Define and monitor customer segments by spend, frequency and recency.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Customer segments - Seramet" }] }),
   component: Segments,
 });
 
-const rows: Segment[] = [
-  { id: "SEG-01", name: "Frequent diners", rule: "4+ visits in 30 days", branch: "Westlands", customers: 412, avgSpend: 2180, lifetimeValue: 41200, status: "Healthy" },
-  { id: "SEG-02", name: "Corporate accounts", rule: "Invoiced customers with credit terms", branch: "Westlands", customers: 38, avgSpend: 18400, lifetimeValue: 312000, status: "Healthy" },
-  { id: "SEG-03", name: "Lapsed 60 days", rule: "No order in 60 days", branch: "Ngong Road", customers: 286, avgSpend: 1640, lifetimeValue: 12800, status: "Attention" },
-  { id: "SEG-04", name: "High value at risk", rule: "Top 10% spend, no visit in 30 days", branch: "Ngong Road", customers: 44, avgSpend: 6120, lifetimeValue: 98400, status: "Critical" },
-];
-
-const columns: EnterpriseColumn<Segment>[] = [
-  { key: "name", label: "Segment", sortable: true },
-  { key: "rule", label: "Rule" },
-  { key: "branch", label: "Branch", sortable: true },
-  { key: "customers", label: "Customers", align: "right", sortable: true },
-  {
-    key: "avgSpend",
-    label: "Avg spend",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num">{ksh(row.avgSpend)}</span>,
-  },
-  {
-    key: "lifetimeValue",
-    label: "Avg lifetime value",
-    align: "right",
-    sortable: true,
-    render: (row) => <span className="num font-semibold">{ksh(row.lifetimeValue)}</span>,
-  },
-  { key: "status", label: "Health", render: (row) => <Status>{row.status}</Status> },
-];
+type Segment = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  status: string;
+  definition_json: string;
+  latest_count: number | null;
+  latest_quality: string | null;
+};
+type SegmentResponse = { ok: boolean; segments: Segment[] };
+type SnapshotResponse = {
+  ok: boolean;
+  snapshot: { id: string; customerCount: number; quality: string };
+};
+type NumericField = "orderCount" | "daysSinceLastVisit" | "loyaltyPoints";
+type Operator = "GTE" | "LTE" | "GT" | "LT" | "EQ";
+const fieldLabels: Record<NumericField, string> = {
+  orderCount: "Completed order count",
+  daysSinceLastVisit: "Days since last visit",
+  loyaltyPoints: "Loyalty points",
+};
 
 function Segments() {
-  const { branch, branchLabel } = useAppContext();
-  const scopedRows = useBranchRows(rows);
+  const { branchId, branchLabel, hasPermission } = useAppContext();
+  const canView = hasPermission(permissions.crmView);
+  const canManage = hasPermission(permissions.campaignManage);
+  const { command } = useCrmApi();
+  const apiPath = "/api/seramet/crm/segments?branchId=" + encodeURIComponent(branchId);
+  const list = useCrmScreenQuery<SegmentResponse>(apiPath, canView);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [field, setField] = useState<NumericField>("orderCount");
+  const [operator, setOperator] = useState<Operator>("GTE");
+  const [threshold, setThreshold] = useState(2);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const rows = list.data?.segments ?? [];
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canManage || busy) return;
+    setBusy("create");
+    setError("");
+    try {
+      await command("/api/seramet/crm/segments", {
+        name: name.trim(),
+        code: code.trim(),
+        definition: { all: [{ field, operator, value: threshold }] },
+      });
+      setEditing(false);
+      setName("");
+      setCode("");
+      setMessage("Segment created. Build its branch snapshot to see members.");
+      list.refresh();
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function snapshot(id: string) {
+    if (!canView || busy) return;
+    setBusy(id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await command<SnapshotResponse>(
+        "/api/seramet/crm/segments/" +
+          encodeURIComponent(id) +
+          "/snapshot?branchId=" +
+          encodeURIComponent(branchId),
+        {},
+      );
+      setMessage(
+        "Snapshot recorded: " +
+          response.snapshot.customerCount +
+          " matched customers. Evidence: " +
+          readableStatus(response.snapshot.quality),
+      );
+      list.refresh();
+    } catch (cause) {
+      setError(crmErrorMessage(cause));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <AppShell
-      title="Segments"
-      subtitle={`Rule-based customer groups feeding campaigns and loyalty  -  ${branchLabel}`}
+      title="Customer segments"
+      subtitle={"Auditable, rule-based segments from completed orders - " + branchLabel}
       actions={
-        <>
-          <Btn>Export list</Btn>
-          <Btn variant="primary">New segment</Btn>
-        </>
+        canManage ? (
+          <Btn variant="primary" onClick={() => setEditing((value) => !value)}>
+            {editing ? "Cancel" : "Create segment"}
+          </Btn>
+        ) : undefined
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Segments" value={scopedRows.length} />
-        <Metric
-          label="Customers covered"
-          value={scopedRows.reduce((sum, row) => sum + row.customers, 0)}
-        />
-        <Metric
-          label="At risk"
-          value={scopedRows
-            .filter((row) => row.status !== "Healthy")
-            .reduce((sum, row) => sum + row.customers, 0)}
-          invert
-        />
-        <Metric
-          label="Top segment value"
-          value={Math.max(0, ...scopedRows.map((row) => row.lifetimeValue))}
-          money
-        />
-      </div>
-      <Panel className="mt-4">
-        <PanelHead title="Segment register" sub="Segments are recalculated from order and payment history" />
-        <EnterpriseTable
-          rows={scopedRows}
-          columns={columns}
-          filters={[`Branch: ${branch}`, "Refreshed: Today"]}
-        />
-      </Panel>
+      {!canView ? (
+        <Panel className="p-5">
+          <CrmEmpty title="Access restricted" body="CRM viewing permission is required." />
+        </Panel>
+      ) : (
+        <>
+          {message && (
+            <p role="status" className="mb-3 text-[12px] text-success">
+              {message}
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="mb-3 text-[12px] text-danger">
+              {error}
+            </p>
+          )}
+          {editing && canManage && (
+            <Panel className="mb-4">
+              <PanelHead
+                title="New segment"
+                sub="Only transparent behavior-based rules; monetary and protected-trait filters are excluded."
+              />
+              <form className="grid gap-3 p-4 md:grid-cols-2" onSubmit={create}>
+                <label className="grid gap-1 text-[12px]">
+                  Segment code
+                  <input
+                    className={crmFieldClass}
+                    required
+                    maxLength={40}
+                    value={code}
+                    onChange={(event) => setCode(event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Segment name
+                  <input
+                    className={crmFieldClass}
+                    required
+                    maxLength={120}
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Condition
+                  <select
+                    className={crmFieldClass}
+                    value={field}
+                    onChange={(event) => setField(event.target.value as NumericField)}
+                  >
+                    {Object.entries(fieldLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Comparison
+                  <select
+                    className={crmFieldClass}
+                    value={operator}
+                    onChange={(event) => setOperator(event.target.value as Operator)}
+                  >
+                    <option value="GTE">At least</option>
+                    <option value="LTE">At most</option>
+                    <option value="GT">Greater than</option>
+                    <option value="LT">Less than</option>
+                    <option value="EQ">Exactly</option>
+                  </select>
+                </label>
+                <label className="grid gap-1 text-[12px]">
+                  Threshold
+                  <input
+                    className={crmFieldClass}
+                    type="number"
+                    min={0}
+                    step={1}
+                    required
+                    value={threshold}
+                    onChange={(event) => setThreshold(Number(event.target.value))}
+                  />
+                </label>
+                <div className="md:col-span-2">
+                  <Btn variant="primary" type="submit" disabled={busy !== null}>
+                    {busy ? "Saving..." : "Create"}
+                  </Btn>
+                </div>
+              </form>
+            </Panel>
+          )}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Metric label="Configured segments" value={rows.length} />
+            <Metric
+              label="Segments with snapshots"
+              value={rows.filter((row) => row.latest_count !== null).length}
+            />
+            <Metric label="Snapshot coverage" value="Branch-specific" />
+          </div>
+          <Panel className="mt-4">
+            <PanelHead
+              title="Current segments"
+              sub="Snapshot counts are only from the selected branch; they are not live audience guarantees."
+              right={<Btn onClick={list.refresh}>Refresh</Btn>}
+            />
+            {list.status === "loading" ? (
+              <CrmLoading />
+            ) : list.status === "error" ? (
+              <CrmError message={list.error} retry={list.refresh} />
+            ) : rows.length === 0 ? (
+              <CrmEmpty
+                title="No segments configured"
+                body="Create a rule and build an evidence snapshot before scheduling a campaign."
+              />
+            ) : (
+              <div className="divide-y divide-border">
+                {rows.map((row) => (
+                  <article key={row.id} className="space-y-2 p-4 text-[13px]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <strong>{row.name}</strong>
+                      <Status>{readableStatus(row.status)}</Status>
+                    </div>
+                    <p className="text-[12px] text-muted-foreground">
+                      {row.description || row.definition_json}
+                    </p>
+                    <p>
+                      Last branch snapshot:{" "}
+                      {row.latest_count === null
+                        ? "Not calculated"
+                        : row.latest_count + " customers"}
+                      {" · "}Evidence: {readableStatus(row.latest_quality)}
+                    </p>
+                    <Btn onClick={() => void snapshot(row.id)} disabled={busy !== null}>
+                      {busy === row.id ? "Calculating..." : "Rebuild branch snapshot"}
+                    </Btn>
+                  </article>
+                ))}
+              </div>
+            )}
+            <p className="border-t border-border p-3 text-[12px] text-muted-foreground">
+              <Link to="/campaigns" className="font-semibold underline">
+                Campaigns
+              </Link>{" "}
+              only send to customers with recorded consent and eligible provider channels.
+            </p>
+          </Panel>
+        </>
+      )}
     </AppShell>
   );
 }

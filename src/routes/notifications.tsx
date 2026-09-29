@@ -1,3 +1,4 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
@@ -40,64 +41,7 @@ export const Route = createFileRoute("/notifications")({
   component: Notifications,
 });
 
-const rows: NotificationLog[] = [
-  {
-    id: "NTF-9001",
-    channel: "WhatsApp",
-    recipient: "+254712xxxx45",
-    provider: "WhatsApp Cloud",
-    messageType: "Invoice",
-    created: "13:02",
-    delivered: "13:02",
-    retries: 0,
-    externalId: "wamid.884",
-    branch: "Westlands",
-    status: "Delivered",
-    failureReason: "-",
-  },
-  {
-    id: "NTF-9002",
-    channel: "Email",
-    recipient: "accounts@kilimo.co.ke",
-    provider: "SMTP relay",
-    messageType: "Statement",
-    created: "12:41",
-    delivered: "12:41",
-    retries: 0,
-    externalId: "msg-2201",
-    branch: "Westlands",
-    status: "Sent",
-    failureReason: "-",
-  },
-  {
-    id: "NTF-9003",
-    channel: "SMS",
-    recipient: "+254733xxxx10",
-    provider: "Africa's Talking",
-    messageType: "Rider dispatch",
-    created: "12:18",
-    delivered: "-",
-    retries: 2,
-    externalId: "-",
-    branch: "Ngong Road",
-    status: "Failed",
-    failureReason: "Insufficient provider credit",
-  },
-  {
-    id: "NTF-9004",
-    channel: "Email",
-    recipient: "supplier@freshgrocers.co.ke",
-    provider: "SMTP relay",
-    messageType: "Purchase order",
-    created: "11:55",
-    delivered: "-",
-    retries: 1,
-    externalId: "msg-2198",
-    branch: "Ngong Road",
-    status: "Pending",
-    failureReason: "Awaiting provider callback",
-  },
-];
+const rows: NotificationLog[] = emptyRecords();
 
 const columns: EnterpriseColumn<NotificationLog>[] = [
   { key: "id", label: "Log", sortable: true },
@@ -133,7 +77,7 @@ function Notifications() {
           label="Delivered"
           value={scopedRows.filter((row) => row.status === "Delivered").length}
         />
-        <Metric label="Failed" value={failed.length} invert delta={failed.length} />
+        <Metric label="Failed" value={failed.length} invert />
         <Metric
           label="Retries"
           value={scopedRows.reduce((sum, row) => sum + row.retries, 0)}
@@ -153,7 +97,10 @@ function Notifications() {
       </Panel>
       {failed.length > 0 && (
         <Panel className="mt-4">
-          <PanelHead title="Failure reasons" sub="Nothing is retried silently - each attempt is logged" />
+          <PanelHead
+            title="Failure reasons"
+            sub="Nothing is retried silently - each attempt is logged"
+          />
           <ul className="space-y-2 px-4 py-4 text-[13px]">
             {failed.map((row) => (
               <li key={row.id} className="flex items-center justify-between gap-3">

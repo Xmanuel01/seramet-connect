@@ -3,10 +3,13 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { ksh } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -31,70 +34,72 @@ export const Route = createFileRoute("/receipts")({
 
 function Receipts() {
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { branch, branchLabel } = useAppContext();
-  const { state, apply } = useTransactionEngine();
+  const [printNotice, setPrintNotice] = useState("");
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { state, mutate } = useTransactionEngine();
+  const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);
+  const configuration = getConfigurationRepository();
+  const businessName = configuration.getTenant(activeTenantId).tradingName;
   const rows = state.receipts
-    .filter((receipt) => branch === "All Branches" || receipt.branch === branch)
+    .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
     .filter((receipt) => !periodDate || receipt.issuedAt.slice(0, 10) === periodDate);
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
   const reprints = rows.reduce((sum, receipt) => sum + receipt.reprints.length, 0);
 
-  const printReceipt = (receiptId: string) => {
-    window.dispatchEvent(
-      new CustomEvent("seramet:workflow-action", {
-        detail: { label: `Print receipt ${receiptId}` },
-      }),
-    );
+  const printReceipt = (receiptId: string, reason = "Receipt register print") => {
+    const receipt = state.receipts.find((item) => item.id === receiptId);
+    if (!receipt) return;
+    const order = receiptRecordToPrintOrder(receipt, state);
+    if (!order) return;
+
+    const result = printCustomerDocument(order, "RECEIPT");
+    if (result.jobs.length === 0) {
+      setPrintNotice(result.skipped[0] ?? "Printing is not configured for this branch.");
+      return;
+    }
+    setPrintNotice("");
+    void mutate("recordReceiptReprint", { receiptId: receipt.id, reason });
   };
 
   const sendWhatsApp = (receiptId: string) => {
     window.open(
-      `https://wa.me/?text=${encodeURIComponent(`Mona Swahili receipt ${receiptId} is ready.`)}`,
+      `https://wa.me/?text=${encodeURIComponent(`${businessName} receipt ${receiptId} is ready.`)}`,
       "_blank",
       "noopener,noreferrer",
     );
   };
 
   const sendEmail = (receiptId: string) => {
-    window.location.href = `mailto:?subject=${encodeURIComponent(`Receipt ${receiptId}`)}&body=${encodeURIComponent(`Mona Swahili receipt ${receiptId} is ready.`)}`;
+    window.location.href = `mailto:?subject=${encodeURIComponent(`Receipt ${receiptId}`)}&body=${encodeURIComponent(`${businessName} receipt ${receiptId} is ready.`)}`;
+  };
+
+  const exportRows = () => {
+    const csv = [
+      ["Receipt", "Order", "Invoice", "Issued", "Cashier", "Amount", "Methods"],
+      ...rows.map((receipt) => [
+        receipt.id,
+        receipt.orderId,
+        receipt.invoiceId,
+        receipt.issuedAt,
+        receipt.cashier,
+        String(receipt.paidAmount),
+        receipt.paymentBreakdown.map((payment) => payment.method).join(" + "),
+      ]),
+    ]
+      .map((line) => line.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `receipts-${periodDate || "all"}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const reprintFirst = () => {
     const receipt = rows[0];
     if (!receipt) return;
-    apply((current) => ({
-      ...current,
-      receipts: current.receipts.map((item) =>
-        item.id === receipt.id
-          ? {
-              ...item,
-              reprints: [
-                {
-                  requestedBy: "Amina W.",
-                  reason: "Customer requested duplicate copy",
-                  timestamp: "2026-08-14T12:58:00+03:00",
-                },
-                ...item.reprints,
-              ],
-            }
-          : item,
-      ),
-      auditEvents: [
-        {
-          id: `AUD-${String(current.auditEvents.length + 1).padStart(5, "0")}`,
-          time: "2026-08-14T12:58:00+03:00",
-          actor: "Amina W.",
-          role: "Cashier",
-          branch: receipt.branch,
-          module: "Receipts",
-          action: "Reprinted receipt",
-          record: receipt.id,
-          before: `${receipt.reprints.length} reprints`,
-          after: `${receipt.reprints.length + 1} reprints`,
-        },
-        ...current.auditEvents,
-      ],
-    }));
+    printReceipt(receipt.id, "Customer requested duplicate copy");
   };
 
   return (
@@ -103,7 +108,7 @@ function Receipts() {
       subtitle={`Immutable issued receipt register - ${branchLabel}`}
       actions={
         <>
-          <Btn>Export</Btn>
+          <Btn onClick={exportRows}>Export</Btn>
           <Btn variant="primary" onClick={reprintFirst}>
             Reprint with reason
           </Btn>
@@ -111,11 +116,16 @@ function Receipts() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Receipts" value={rows.length} delta={4.1} />
-        <Metric label="Value" value={value} money delta={8.4} />
+        <Metric label="Receipts" value={rows.length} />
+        <Metric label="Value" value={value} money />
         <Metric label="Reprints" value={reprints} note="requires reason" />
         <Metric label="Digital delivery" value="Ready" note="WhatsApp + email" />
       </div>
+      {(printNotice || configurationError) && (
+        <div className="mt-4 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+          Printing unavailable: {printNotice || configurationError}
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Receipt register"

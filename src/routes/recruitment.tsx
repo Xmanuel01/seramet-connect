@@ -1,3 +1,4 @@
+import { emptyRecords } from "@/lib/empty-records";
 import { createFileRoute } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
@@ -36,12 +37,7 @@ export const Route = createFileRoute("/recruitment")({
   component: Recruitment,
 });
 
-const rows: Applicant[] = [
-  { id: "APP-501", name: "Joyce M.", position: "Cashier", branch: "Westlands", source: "Referral", stage: "Interview", applied: "02 Aug", status: "In progress" },
-  { id: "APP-502", name: "Samuel N.", position: "Rider", branch: "Ngong Road", source: "Walk-in", stage: "Screening", applied: "06 Aug", status: "New" },
-  { id: "APP-503", name: "Grace K.", position: "Sous chef", branch: "Westlands", source: "Job board", stage: "Offer", applied: "28 Jul", status: "Approved" },
-  { id: "APP-504", name: "Elijah T.", position: "Storekeeper", branch: "Ngong Road", source: "Referral", stage: "Rejected", applied: "24 Jul", status: "Rejected" },
-];
+const rows: Applicant[] = emptyRecords();
 
 const columns: EnterpriseColumn<Applicant>[] = [
   { key: "name", label: "Applicant", sortable: true },
@@ -70,16 +66,19 @@ function Recruitment() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Open positions" value={3} />
+        <Metric label="Open positions" value={0} />
         <Metric label="Applicants" value={scopedRows.length} />
         <Metric
           label="In interview"
           value={scopedRows.filter((row) => row.stage === "Interview").length}
         />
-        <Metric label="Avg time to hire" value="18" suffix=" days" />
+        <Metric label="Avg time to hire" value="Not available" />
       </div>
       <Panel className="mt-4">
-        <PanelHead title="Pipeline stages" sub="Hiring approval follows the standard approval engine" />
+        <PanelHead
+          title="Pipeline stages"
+          sub="Hiring approval follows the standard approval engine"
+        />
         <div className="flex flex-wrap items-center gap-2 px-4 py-4">
           {stages.map((stage, index) => (
             <span key={stage} className="flex items-center gap-2">

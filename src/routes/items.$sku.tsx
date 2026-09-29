@@ -1,8 +1,12 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
+import { EmptyState } from "@/components/app/EmptyState";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, Tabs } from "@/components/app/Tabs";
-import { inventoryItems, ksh } from "@/data/mock";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { useInventoryItemDetail } from "@/inventory/use-inventory-item-detail";
+import { useAppContext } from "@/lib/app-context";
+import { ksh } from "@/lib/currency";
 
 export const Route = createFileRoute("/items/$sku")({
   head: () => ({
@@ -10,251 +14,302 @@ export const Route = createFileRoute("/items/$sku")({
       { title: "Item Detail - Seramet" },
       {
         name: "description",
-        content:
-          "Item overview, stock by warehouse, pricing, recipe usage, suppliers and movement history.",
+        content: "Authoritative item stock, valuation, recipes and immutable movement history.",
       },
-      { property: "og:title", content: "Item Detail - Seramet" },
-      {
-        property: "og:description",
-        content: "Stock, pricing, suppliers and movement for a single item.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: ItemDetail,
 });
 
-const stockByStore = [
-  { store: "Westlands Main Store", available: 12.6, reserved: 2.0, expected: 40, par: 30 },
-  { store: "Westlands Kitchen", available: 4.3, reserved: 0, expected: 0, par: 6 },
-  { store: "Ngong Main Store", available: 8.2, reserved: 1.5, expected: 0, par: 20 },
-];
-
-const movement = [
-  {
-    date: "13 Aug 09:12",
-    type: "Issue to kitchen",
-    qty: "-4.0 kg",
-    by: "Kelvin M.",
-    ref: "ISS-2211",
-  },
-  {
-    date: "12 Aug 16:40",
-    type: "Goods received",
-    qty: "+30.0 kg",
-    by: "Kelvin M.",
-    ref: "GRN-0912",
-  },
-  { date: "12 Aug 11:05", type: "Wastage", qty: "-0.8 kg", by: "Musa K.", ref: "WST-0182" },
-  { date: "11 Aug 08:22", type: "Transfer out", qty: "-6.0 kg", by: "Kelvin M.", ref: "TRF-0341" },
-];
-
 function ItemDetail() {
+  const navigate = useNavigate();
   const { sku } = Route.useParams();
-  const item = (inventoryItems.find((i) => i.sku === sku) ?? inventoryItems[0])!;
+  const { branchLabel, isAllBranches } = useAppContext();
+  const { persistenceMode } = useTransactionEngine();
+  const authoritative = persistenceMode === "authoritative";
+  const detail = useInventoryItemDetail(authoritative, sku);
+
+  if (!authoritative) {
+    return (
+      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+        <EmptyState
+          title="Authoritative inventory is unavailable"
+          description="Connect the server database to review live stock, valuation and movement history."
+        />
+      </AppShell>
+    );
+  }
+
+  if (detail.status === "loading" || detail.status === "idle") {
+    return (
+      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+        <div className="rounded-lg border border-border bg-secondary/30 px-4 py-8 text-center text-[12px] text-muted-foreground">
+          Loading authoritative inventory item...
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (detail.error || detail.data.length === 0) {
+    return (
+      <AppShell title="Item detail" subtitle={`Inventory item ${sku}`}>
+        <EmptyState
+          title="Inventory item not found"
+          description={
+            detail.error ||
+            "Create or import the item before opening its stock and costing history."
+          }
+        />
+      </AppShell>
+    );
+  }
+
+  const item = detail.data[0]!.item;
+  const balances = detail.data.flatMap((branch) =>
+    branch.balances.map((balance) => ({ ...balance, branchId: branch.branchId })),
+  );
+  const movements = detail.data
+    .flatMap((branch) =>
+      branch.movements.map((movement) => ({ ...movement, branchId: branch.branchId })),
+    )
+    .sort((a, b) =>
+      String(b.occurred_at ?? b.business_date ?? "").localeCompare(
+        String(a.occurred_at ?? a.business_date ?? ""),
+      ),
+    );
+  const recipes = [
+    ...new Map(
+      detail.data
+        .flatMap((branch) => branch.recipes)
+        .map((recipe) => [`${recipe.id}:${recipe.recipe_version_id}`, recipe]),
+    ).values(),
+  ];
+
+  const onHandMicro = balances.reduce((sum, row) => sum + row.quantity_minor, 0);
+  const availableMicro = balances.reduce((sum, row) => sum + row.quantity_available_minor, 0);
+  const reservedMicro = balances.reduce((sum, row) => sum + row.quantity_reserved_minor, 0);
+  const parMicro = balances.reduce(
+    (sum, row) => sum + Number(row.target_quantity_minor ?? row.reorder_point_minor ?? 0),
+    0,
+  );
+  const totalValueMinor = balances.reduce((sum, row) => sum + row.total_value_minor, 0);
+  const weightedUnitCostMinor =
+    onHandMicro > 0 ? Math.round((totalValueMinor * 1_000_000) / onHandMicro) : 0;
+  const unit = item.base_unit_symbol ?? "unit";
+
   return (
     <AppShell
       title={item.name}
-      subtitle={`${item.sku}  -  ${item.cat}  -  supplied by ${item.supplier}`}
+      subtitle={`${item.sku ?? item.code} - ${branchLabel}`}
       actions={
         <>
-          <Btn>Adjust stock</Btn>
-          <Btn>Transfer</Btn>
-          <Btn variant="primary">Edit item</Btn>
+          <Btn onClick={() => void navigate({ to: "/adjustments" })}>Adjust stock</Btn>
+          <Btn onClick={() => void navigate({ to: "/transfers" })}>Transfer</Btn>
+          <Btn variant="primary" onClick={() => void navigate({ to: "/inventory-items" })}>
+            Back to items
+          </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Metric label="On hand" value={`${item.stock} ${item.unit}`} />
-        <Metric label="PAR level" value={`${item.par} ${item.unit}`} />
-        <Metric label="Unit cost" value={item.cost} money delta={12} invert />
-        <Metric label="Stock value" value={Math.round(item.stock * item.cost)} money />
-        <Metric label="Weekly usage" value={`38 ${item.unit}`} delta={6.2} />
-        <Metric label="Days cover" value="2.3" suffix=" days" />
+        <Metric label="On hand" value={`${formatQuantity(onHandMicro)} ${unit}`} />
+        <Metric label="Available" value={`${formatQuantity(availableMicro)} ${unit}`} />
+        <Metric label="Reserved" value={`${formatQuantity(reservedMicro)} ${unit}`} />
+        <Metric label="PAR target" value={`${formatQuantity(parMicro)} ${unit}`} />
+        <Metric label="Unit cost" value={weightedUnitCostMinor / 100} money />
+        <Metric label="Stock value" value={totalValueMinor / 100} money />
       </div>
 
       <div className="mt-4">
-        <Tabs tabs={["Overview", "Stock", "Pricing", "Recipe", "Suppliers", "Movement", "History"]}>
+        <Tabs tabs={["Stock", "Movement", "Recipes", "Supplier"]}>
           {(tab) => (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-              <Panel>
-                {tab === "Movement" || tab === "History" ? (
-                  <>
-                    <PanelHead title="Stock movement" sub="Most recent transactions" />
-                    <DataTable
-                      cols={["Date", "Type", { l: "Quantity", r: true }, "User", "Reference"]}
-                    >
-                      {movement.map((m) => (
-                        <tr key={m.ref} className="hover:bg-secondary/50">
-                          <TD className="num text-muted-foreground">{m.date}</TD>
-                          <TD className="font-semibold">{m.type}</TD>
-                          <TD
-                            className={
-                              "num text-right font-semibold " +
-                              (m.qty.startsWith("+") ? "text-success" : "text-danger")
-                            }
-                          >
-                            {m.qty}
-                          </TD>
-                          <TD>{m.by}</TD>
-                          <TD className="num text-muted-foreground">{m.ref}</TD>
-                        </tr>
-                      ))}
-                    </DataTable>
-                  </>
-                ) : tab === "Pricing" ? (
-                  <>
-                    <PanelHead title="Cost history" sub="Purchase price movement" />
-                    <DataTable
-                      cols={[
-                        "Date",
-                        "Supplier",
-                        { l: "Unit cost", r: true },
-                        { l: "Change", r: true },
-                      ]}
-                    >
-                      {[
-                        ["12 Aug", "Main Meat Supplier", 620, "+12%"],
-                        ["28 Jul", "Main Meat Supplier", 554, "+3%"],
-                        ["09 Jul", "Main Meat Supplier", 538, "0%"],
-                      ].map((r) => (
-                        <tr key={String(r[0])}>
-                          <TD className="num text-muted-foreground">{r[0]}</TD>
-                          <TD>{r[1]}</TD>
-                          <TD className="num text-right">{ksh(Number(r[2]))}</TD>
-                          <TD className="num text-right font-semibold">{r[3]}</TD>
-                        </tr>
-                      ))}
-                    </DataTable>
-                  </>
-                ) : tab === "Recipe" ? (
-                  <>
-                    <PanelHead title="Used in recipes" sub="Consumption per portion" />
-                    <DataTable
-                      cols={[
-                        "Dish",
-                        { l: "Per portion", r: true },
-                        { l: "Portions sold (7d)", r: true },
-                        { l: "Usage", r: true },
-                      ]}
-                    >
-                      {[
-                        ["Beef Dry Fry", "0.22 kg", 62, "13.6 kg"],
-                        ["Beef Pilau", "0.18 kg", 74, "13.3 kg"],
-                        ["Beef Samosa", "0.05 kg", 140, "7.0 kg"],
-                      ].map((r) => (
-                        <tr key={String(r[0])}>
-                          <TD className="font-semibold">{r[0]}</TD>
-                          <TD className="num text-right">{r[1]}</TD>
-                          <TD className="num text-right">{r[2]}</TD>
-                          <TD className="num text-right font-semibold">{r[3]}</TD>
-                        </tr>
-                      ))}
-                    </DataTable>
-                  </>
-                ) : tab === "Suppliers" ? (
-                  <>
-                    <PanelHead title="Suppliers" sub="Preferred supplier listed first" />
-                    <DataTable
-                      cols={[
-                        "Supplier",
-                        "Lead time",
-                        { l: "Last price", r: true },
-                        "On-time",
-                        "Status",
-                      ]}
-                    >
-                      {[
-                        ["Main Meat Supplier", "1 day", 620, "88%", "Attention"],
-                        ["Samwest", "2 days", 648, "96%", "Healthy"],
-                      ].map((r) => (
-                        <tr key={String(r[0])}>
-                          <TD className="font-semibold">{r[0]}</TD>
-                          <TD className="text-muted-foreground">{r[1]}</TD>
-                          <TD className="num text-right">{ksh(Number(r[2]))}</TD>
-                          <TD className="num">{r[3]}</TD>
-                          <TD>
-                            <Status>{String(r[4])}</Status>
-                          </TD>
-                        </tr>
-                      ))}
-                    </DataTable>
-                  </>
-                ) : (
-                  <>
-                    <PanelHead title="Stock by warehouse" sub="Available, reserved and expected" />
-                    <DataTable
-                      cols={[
-                        "Warehouse",
-                        { l: "Available", r: true },
-                        { l: "Reserved", r: true },
-                        { l: "Expected", r: true },
-                        { l: "PAR", r: true },
-                        "Status",
-                      ]}
-                    >
-                      {stockByStore.map((s) => (
-                        <tr key={s.store} className="hover:bg-secondary/50">
-                          <TD className="font-semibold">{s.store}</TD>
-                          <TD className="num text-right">
-                            {s.available} {item.unit}
-                          </TD>
-                          <TD className="num text-right text-muted-foreground">
-                            {s.reserved} {item.unit}
-                          </TD>
-                          <TD className="num text-right text-muted-foreground">
-                            {s.expected} {item.unit}
-                          </TD>
-                          <TD className="num text-right">
-                            {s.par} {item.unit}
-                          </TD>
-                          <TD>
-                            <Status>
-                              {s.available < s.par * 0.5
-                                ? "Critical"
-                                : s.available < s.par
-                                  ? "Low"
-                                  : "Healthy"}
-                            </Status>
-                          </TD>
-                        </tr>
-                      ))}
-                    </DataTable>
-                  </>
-                )}
-              </Panel>
-              <Panel>
-                <PanelHead title="Item summary" right={<Status>{item.status}</Status>} />
-                <dl className="divide-y divide-border text-[13px]">
-                  {[
-                    ["SKU", item.sku],
-                    ["Category", item.cat],
-                    ["Unit", item.unit],
-                    ["Preferred supplier", item.supplier],
-                    ["Reorder level", `${Math.round(item.par * 0.5)} ${item.unit}`],
-                    [
-                      "Suggested order",
-                      `${Math.max(0, Math.round(item.par - item.stock))} ${item.unit}`,
-                    ],
-                    ["Last counted", "11 Aug 2026"],
-                  ].map(([k, v]) => (
-                    <div key={String(k)} className="flex items-center justify-between px-4 py-2.5">
-                      <dt className="text-muted-foreground">{k}</dt>
-                      <dd className="num font-semibold">{v}</dd>
+            <Panel>
+              {tab === "Movement" ? (
+                <>
+                  <PanelHead
+                    title="Stock movement"
+                    sub="Latest immutable inventory ledger entries"
+                  />
+                  <DataTable
+                    cols={[
+                      "Date",
+                      ...(isAllBranches ? ["Branch"] : []),
+                      "Type",
+                      { l: "Quantity", r: true },
+                      { l: "Value", r: true },
+                      "Reference",
+                      "Reason",
+                    ]}
+                  >
+                    {movements.map((movement) => (
+                      <tr
+                        key={`${movement.branchId}:${movement.id}`}
+                        className="hover:bg-secondary/50"
+                      >
+                        <TD className="num text-muted-foreground">
+                          {movement.occurred_at ?? movement.business_date ?? "—"}
+                        </TD>
+                        {isAllBranches && (
+                          <TD className="num text-muted-foreground">{movement.branchId}</TD>
+                        )}
+                        <TD className="font-semibold">{movement.movement_type}</TD>
+                        <TD className="num text-right font-semibold">
+                          {formatQuantity(movement.quantity_minor)} {unit}
+                        </TD>
+                        <TD className="num text-right">
+                          {movement.total_cost_minor == null
+                            ? "—"
+                            : ksh(movement.total_cost_minor / 100)}
+                        </TD>
+                        <TD className="num text-muted-foreground">
+                          {movement.source_type}:{movement.source_id}
+                        </TD>
+                        <TD className="text-muted-foreground">{movement.reason || "—"}</TD>
+                      </tr>
+                    ))}
+                  </DataTable>
+                </>
+              ) : tab === "Recipes" ? (
+                <>
+                  <PanelHead
+                    title="Recipe usage"
+                    sub="Active recipe versions using this inventory item"
+                  />
+                  <DataTable
+                    cols={["Recipe", "Version", "Yield", { l: "Ingredient qty", r: true }]}
+                  >
+                    {recipes.map((recipe) => (
+                      <tr key={`${recipe.id}:${recipe.recipe_version_id}`}>
+                        <TD className="font-semibold">{recipe.name}</TD>
+                        <TD className="num">v{recipe.version}</TD>
+                        <TD className="num">
+                          {formatQuantity(recipe.yield_quantity_minor)}{" "}
+                          {recipe.yield_unit_symbol ?? ""}
+                        </TD>
+                        <TD className="num text-right">
+                          {formatQuantity(recipe.quantity_minor)}{" "}
+                          {recipe.component_unit_symbol ?? unit}
+                        </TD>
+                      </tr>
+                    ))}
+                  </DataTable>
+                  {!recipes.length && (
+                    <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
+                      This item is not used by an active recipe version.
                     </div>
-                  ))}
-                </dl>
-                <div className="border-t border-border p-3">
-                  <Btn variant="primary" className="w-full">
-                    Add to purchase order
-                  </Btn>
-                </div>
-              </Panel>
-            </div>
+                  )}
+                </>
+              ) : tab === "Supplier" ? (
+                <>
+                  <PanelHead
+                    title="Supplier"
+                    sub="Preferred source and item-master configuration"
+                  />
+                  <div className="grid gap-3 p-4 md:grid-cols-2">
+                    <Info
+                      label="Preferred supplier"
+                      value={item.preferred_supplier_name || "Not assigned"}
+                    />
+                    <Info
+                      label="Purchase unit"
+                      value={item.purchase_unit_id || "Same as base / not configured"}
+                    />
+                    <Info label="Barcode" value={item.barcode || "Not configured"} />
+                    <Info
+                      label="Expiry tracking"
+                      value={item.track_expiry ? "Enabled" : "Disabled"}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <PanelHead
+                    title="Stock by warehouse"
+                    sub="Authoritative balance and PAR by storage location"
+                  />
+                  <DataTable
+                    cols={[
+                      ...(isAllBranches ? ["Branch"] : []),
+                      "Warehouse",
+                      { l: "On hand", r: true },
+                      { l: "Available", r: true },
+                      { l: "Reserved", r: true },
+                      { l: "Reorder", r: true },
+                      { l: "PAR", r: true },
+                      { l: "Unit cost", r: true },
+                      { l: "Value", r: true },
+                      "Status",
+                    ]}
+                  >
+                    {balances.map((row) => {
+                      const reorder = Number(row.reorder_point_minor ?? 0);
+                      const status =
+                        row.quantity_minor <= 0
+                          ? "Out of stock"
+                          : reorder > 0 && row.quantity_minor <= reorder
+                            ? "Low stock"
+                            : "Healthy";
+                      return (
+                        <tr key={`${row.branchId}:${row.warehouse_id}`}>
+                          {isAllBranches && (
+                            <TD className="num text-muted-foreground">{row.branchId}</TD>
+                          )}
+                          <TD className="font-semibold">{row.warehouse_name}</TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_available_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(row.quantity_reserved_minor)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(reorder)} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {formatQuantity(Number(row.target_quantity_minor ?? 0))} {unit}
+                          </TD>
+                          <TD className="num text-right">
+                            {ksh(row.average_unit_cost_minor / 100)}
+                          </TD>
+                          <TD className="num text-right font-semibold">
+                            {ksh(row.total_value_minor / 100)}
+                          </TD>
+                          <TD>
+                            <Status>{status}</Status>
+                          </TD>
+                        </tr>
+                      );
+                    })}
+                  </DataTable>
+                  {!balances.length && (
+                    <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
+                      This item exists in the catalogue but has no stock movement in the selected
+                      branch yet.
+                    </div>
+                  )}
+                </>
+              )}
+            </Panel>
           )}
         </Tabs>
       </div>
     </AppShell>
+  );
+}
+
+function formatQuantity(quantityMicro: number) {
+  return (quantityMicro / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-secondary/30 px-3 py-2">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-[13px] font-semibold">{value}</div>
+    </div>
   );
 }

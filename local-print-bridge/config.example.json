@@ -3,5 +3,9 @@
   "port": 48777,
   "token": "replace-with-a-random-secret-at-least-16-chars",
   "dryRun": false,
-  "dataDir": "C:\\Users\\USER\\.seramet-print-bridge"
+  "dataDir": "C:\\Users\\USER\\.seramet-print-bridge",
+  "allowedOrigins": [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173"
+  ]
 }

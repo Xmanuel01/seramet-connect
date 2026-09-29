@@ -1,10 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
+import { AddTableDialog } from "@/components/app/AddTableDialog";
+import { DiningAreaDialog } from "@/components/app/DiningAreaDialog";
+import { EditTableDialog } from "@/components/app/EditTableDialog";
 import { Btn, Chips, Panel, Status } from "@/components/app/ui";
-import { ksh, tables } from "@/data/mock";
+import { ksh } from "@/lib/currency";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { cn } from "@/lib/utils";
+import { useAppContext } from "@/lib/app-context";
 
 export const Route = createFileRoute("/tables")({
   head: () => ({
@@ -24,8 +28,6 @@ export const Route = createFileRoute("/tables")({
   component: Tables,
 });
 
-const areas = ["Main Dining", "Terrace", "Private Room"];
-
 const stateStyle: Record<string, string> = {
   Available: "border-border bg-card",
   Occupied: "border-primary/40 bg-accent/50",
@@ -35,12 +37,37 @@ const stateStyle: Record<string, string> = {
 };
 
 function Tables() {
-  const [area, setArea] = useState("Main Dining");
+  const { branchId, branchLabel, platformState } = useAppContext();
+  const serviceAreas = platformState.serviceAreas.filter(
+    (serviceArea) => serviceArea.branchId === branchId && serviceArea.active,
+  );
+  const areaOptions = serviceAreas.map((serviceArea) => serviceArea.name);
+  const [area, setArea] = useState("");
+  const activeArea = area || areaOptions[0] || "Dining";
   const [tableStatus, setTableStatus] = useState("All");
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
-  const visibleTables = tables
-    .filter((table) => table.area === area)
+  const configuredTables = platformState.tables
+    .filter((table) => table.branchId === branchId && table.active)
+    .map((configuredTable) => {
+      const configuredArea = serviceAreas.find(
+        (serviceArea) => serviceArea.id === configuredTable.serviceAreaId,
+      );
+      return {
+        id: configuredTable.id,
+        serviceAreaId: configuredTable.serviceAreaId ?? null,
+        no: configuredTable.code,
+        area: configuredArea?.name ?? activeArea,
+        seats: configuredTable.seats,
+        state: "Available",
+        guests: undefined as number | undefined,
+        waiter: undefined as string | undefined,
+        amount: undefined as number | undefined,
+        mins: undefined as number | undefined,
+      };
+    });
+  const visibleTables = configuredTables
+    .filter((table) => table.area === activeArea)
     .filter((table) => tableStatus === "All" || table.state === tableStatus);
   const occupied = visibleTables.filter((table) => table.state === "Occupied");
   const selectedTable =
@@ -49,22 +76,37 @@ function Tables() {
   return (
     <AppShell
       title="Table management"
-      subtitle="Westlands - 12 tables - 46% occupancy"
-      actions={<Btn variant="primary">New reservation</Btn>}
+      subtitle={`${branchLabel} - ${configuredTables.length} tables - ${configuredTables.length ? Math.round((configuredTables.filter((table) => table.state === "Occupied").length / configuredTables.length) * 100) : 0}% occupancy`}
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <DiningAreaDialog branchLabel={branchLabel} onCreated={setArea} />
+          <AddTableDialog
+            branchLabel={branchLabel}
+            existingCount={configuredTables.length}
+            areas={serviceAreas.map((area) => ({ id: area.id, name: area.name }))}
+            onCreated={(code, serviceAreaId) => {
+              setSelectedTableNo(code);
+              const newArea = serviceAreas.find((item) => item.id === serviceAreaId)?.name;
+              if (newArea) setArea(newArea);
+            }}
+          />
+          <Btn onClick={() => (window.location.href = "/reservations")}>New reservation</Btn>
+        </div>
+      }
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Panel className="p-4">
           <div className="mb-4">
             <Chips
               items={[
-                { label: "Scope", value: "Westlands Branch" },
+                { label: "Scope", value: branchLabel },
                 {
                   label: "Area",
-                  value: area,
-                  options: areas,
-                  selectedOption: area,
+                  value: activeArea,
+                  options: areaOptions,
+                  selectedOption: activeArea,
                   onOptionChange: setArea,
-                  onClear: () => setArea("Main Dining"),
+                  onClear: () => setArea(""),
                 },
                 {
                   label: "Status",
@@ -83,7 +125,7 @@ function Tables() {
                 },
               ]}
               onClear={() => {
-                setArea("Main Dining");
+                setArea("");
                 setTableStatus("All");
                 setPeriodDate("");
               }}
@@ -174,6 +216,23 @@ function Tables() {
               </div>
             </div>
           )}
+          {selectedTable && (
+            <div className="mt-3">
+              <EditTableDialog
+                key={selectedTable.id}
+                table={{
+                  id: selectedTable.id,
+                  code: selectedTable.no,
+                  seats: selectedTable.seats,
+                  serviceAreaId: selectedTable.serviceAreaId,
+                }}
+                areas={serviceAreas.map((item) => ({ id: item.id, name: item.name }))}
+                onSaved={(name) => {
+                  if (name) setArea(name);
+                }}
+              />
+            </div>
+          )}
           <h3 className="mt-4 text-[13px] font-semibold">Open bills</h3>
           <ul className="mt-3 divide-y divide-border">
             {occupied.map((table) => (
@@ -188,11 +247,11 @@ function Tables() {
               </li>
             ))}
           </ul>
-          <div className="mt-3 rounded-lg bg-secondary/60 p-3 text-[12px] text-muted-foreground">
-            Average table turn today is{" "}
-            <span className="num font-semibold text-foreground">54 min</span>, 9 minutes slower than
-            last Wednesday.
-          </div>
+          {occupied.length === 0 && (
+            <div className="mt-3 rounded-lg bg-secondary/60 p-3 text-[12px] text-muted-foreground">
+              No open table bills for this branch.
+            </div>
+          )}
         </Panel>
       </div>
     </AppShell>

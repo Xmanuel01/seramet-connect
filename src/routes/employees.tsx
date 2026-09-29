@@ -1,192 +1,407 @@
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { BadgeCheck, CalendarDays, IdCard, ShieldCheck } from "lucide-react";
+import { Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { DataTable, Tabs, Timeline } from "@/components/app/Tabs";
-import { employees, ksh } from "@/data/mock";
+import { getSerametAccessToken } from "@/lib/access-token";
+import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/employees")({
-  head: () => ({
-    meta: [
-      { title: "Employee 360 - Seramet" },
-      {
-        name: "description",
-        content: "Employee profile, attendance, shifts, leave, payroll, performance and documents.",
-      },
-      { property: "og:title", content: "Employee 360 - Seramet" },
-      { property: "og:description", content: "A role-aware employee profile for managers and HR." },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Employees - Seramet" }] }),
   component: Employees,
 });
 
-const attendance = [
-  {
-    day: "Mon",
-    scheduled: "09:30-21:30",
-    in: "09:24",
-    out: "21:35",
-    worked: "12.1h",
-    status: "Present",
-  },
-  {
-    day: "Tue",
-    scheduled: "09:30-21:30",
-    in: "09:32",
-    out: "21:26",
-    worked: "11.9h",
-    status: "Present",
-  },
-  { day: "Wed", scheduled: "OFF", in: "-", out: "-", worked: "-", status: "Approved" },
-  {
-    day: "Thu",
-    scheduled: "12:00-21:30",
-    in: "12:16",
-    out: "21:38",
-    worked: "9.4h",
-    status: "Late",
-  },
-];
+type EmployeeRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  employee_code: string | null;
+  phone: string | null;
+  job_title: string | null;
+  employment_status: string;
+  active: number;
+  primary_branch_id: string | null;
+  locked_until: string | null;
+  must_change: number | null;
+  credential_configured: number;
+};
+
+const emptyDraft = {
+  fullName: "",
+  email: "",
+  employeeCode: "",
+  phone: "",
+  jobTitle: "",
+  roleId: "",
+  pin: "",
+  pinConfirmation: "",
+  temporaryPin: true,
+};
 
 function Employees() {
-  const employee = employees[0]!;
+  const {
+    activeTenantId,
+    branchId,
+    branchRecords,
+    roleRecords,
+    currentUser,
+    hasPermission,
+    isAllBranches,
+  } = useAppContext();
+  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [draft, setDraft] = useState(emptyDraft);
+  const [assignedBranchIds, setAssignedBranchIds] = useState<string[]>([branchId]);
+  const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
+  const canManage =
+    hasPermission(permissions.usersManage) && hasPermission(permissions.employeeCredentialsManage);
+
+  const headers = useMemo(() => {
+    const token = getSerametAccessToken();
+    return {
+      "content-type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "x-seramet-tenant-id": activeTenantId,
+      "x-seramet-branch-id": branchId,
+      ...(isAllBranches ? { "x-seramet-branch-scope": "ALL" } : {}),
+    };
+  }, [activeTenantId, branchId, isAllBranches]);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/seramet/employees", { headers });
+      const body = (await response.json().catch(() => ({}))) as {
+        employees?: EmployeeRow[];
+        message?: string;
+      };
+      if (!response.ok) throw new Error(body.message ?? "Employees could not be loaded");
+      setEmployees(body.employees ?? []);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Employees could not be loaded");
+    } finally {
+      setBusy(false);
+    }
+  }, [headers]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/seramet/employees", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          idempotencyKey: employeeCreateKey,
+          ...draft,
+          assignedBranchIds,
+          primaryBranchId,
+          effectiveFrom: new Date().toISOString(),
+          ...(draft.email.trim() ? { email: draft.email.trim() } : {}),
+          ...(draft.phone.trim() ? { phone: draft.phone.trim() } : {}),
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) throw new Error(body.message ?? "Employee could not be created");
+      setDraft(emptyDraft);
+      setEmployeeCreateKey(crypto.randomUUID());
+      setAssignedBranchIds([branchId]);
+      setPrimaryBranchId(branchId);
+      setShowForm(false);
+      setNotice("Employee created. The temporary PIN must be changed before normal use.");
+      await load();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Employee could not be created");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const active = employees.filter(
+    (employee) => employee.active && employee.employment_status === "ACTIVE",
+  );
+  const locked = employees.filter(
+    (employee) => employee.locked_until && Date.parse(employee.locked_until) > Date.now(),
+  );
+
   return (
     <AppShell
-      title={employee.name}
-      subtitle={`${employee.role} - ${employee.dept} - ${employee.branch} - active employee`}
+      title="Employees"
+      subtitle="Authoritative employee identities, roles and branch access"
       actions={
-        <>
-          <Btn>Message</Btn>
-          <Btn>Request leave</Btn>
-          <Btn variant="primary">Edit employee</Btn>
-        </>
+        canManage ? (
+          <Btn variant="primary" onClick={() => setShowForm((value) => !value)}>
+            {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+            {showForm ? "Close" : "Add employee"}
+          </Btn>
+        ) : undefined
       }
     >
-      <Panel className="mb-4 p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="grid h-12 w-12 place-items-center rounded-full bg-accent text-[15px] font-extrabold text-accent-foreground">
-              CW
-            </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-[18px] font-bold">{employee.name}</h2>
-                <Status>{employee.status}</Status>
-              </div>
-              <div className="mt-1 flex flex-wrap gap-3 text-[12px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <IdCard className="h-3.5 w-3.5" /> EMP-0042
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <CalendarDays className="h-3.5 w-3.5" /> {employee.shift}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <ShieldCheck className="h-3.5 w-3.5" /> Service role
-                </span>
-              </div>
-            </div>
-          </div>
-          <div className="rounded-lg border border-border bg-secondary/50 px-3 py-2 text-[12px]">
-            Next review <span className="num font-semibold text-foreground">28 Aug 2026</span>
-          </div>
-        </div>
-      </Panel>
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-        <Metric label="Attendance" value={96} suffix="%" delta={2.1} />
-        <Metric label="Late arrivals" value={1} delta={-50} invert />
-        <Metric label="Overtime" value="5.4h" delta={8} invert />
-        <Metric label="Leave balance" value="14 days" />
-        <Metric label="Payroll est." value={42600} money />
-        <Metric label="Performance" value={4.6} suffix="/5" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Employees" value={employees.length} />
+        <Metric label="Active" value={active.length} />
+        <Metric label="Locked" value={locked.length} invert={locked.length > 0} />
+        <Metric
+          label="Branches"
+          value={new Set(active.map((employee) => employee.primary_branch_id)).size}
+        />
       </div>
 
-      <div className="mt-4">
-        <Tabs
-          tabs={[
-            "Overview",
-            "Attendance",
-            "Shifts",
-            "Leave",
-            "Payroll",
-            "Performance",
-            "Documents",
-            "Discipline",
-          ]}
-        >
-          {(tab) => (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <Panel>
-                <PanelHead
-                  title={tab === "Overview" ? "Attendance this week" : tab}
-                  sub="Manager-visible employee record"
-                />
-                <DataTable
-                  cols={["Day", "Scheduled", "Clock in", "Clock out", "Worked", "Status"]}
-                  mobileCards={attendance.map((a) => (
-                    <article
-                      key={a.day}
-                      className="rounded-lg border border-border bg-card p-3 shadow-card"
+      {showForm && canManage ? (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Create employee access"
+            sub="Role and branch access are explicit; the PIN is never displayed after submission"
+            right={<ShieldCheck className="h-4 w-4 text-primary" />}
+          />
+          <form onSubmit={submit} className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+            <Field
+              label="Full name"
+              value={draft.fullName}
+              onChange={(value) => setDraft({ ...draft, fullName: value })}
+              required
+            />
+            <Field
+              label="Employee code"
+              value={draft.employeeCode}
+              onChange={(value) => setDraft({ ...draft, employeeCode: value.toUpperCase() })}
+              required
+            />
+            <Field
+              label="Job title"
+              value={draft.jobTitle}
+              onChange={(value) => setDraft({ ...draft, jobTitle: value })}
+              required
+            />
+            <Field
+              label="Email (optional)"
+              type="email"
+              value={draft.email}
+              onChange={(value) => setDraft({ ...draft, email: value })}
+            />
+            <Field
+              label="Phone (optional)"
+              value={draft.phone}
+              onChange={(value) => setDraft({ ...draft, phone: value })}
+            />
+            <label className={labelClass}>
+              Operational role
+              <select
+                className={fieldClass}
+                required
+                value={draft.roleId}
+                onChange={(event) => setDraft({ ...draft, roleId: event.target.value })}
+              >
+                <option value="">Select role</option>
+                {roleRecords
+                  .filter(
+                    (role) =>
+                      role.active &&
+                      !role.permissions.some(
+                        (permission) => !currentUser.permissions.includes(permission),
+                      ),
+                  )
+                  .map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <fieldset className="grid gap-2 md:col-span-2 xl:col-span-3">
+              <legend className="text-xs font-semibold text-muted-foreground">
+                Assigned branches
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {branchRecords
+                  .filter((branch) => currentUser.assignedBranchIds.includes(branch.id))
+                  .map((branch) => (
+                    <label
+                      key={branch.id}
+                      className="flex min-h-11 items-center gap-3 rounded-md border border-border px-3 text-sm"
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="text-[13px] font-bold">{a.day}</div>
-                        <Status>{a.status}</Status>
-                      </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-                        <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                          <span className="text-muted-foreground">Scheduled </span>
-                          <span className="num font-semibold">{a.scheduled}</span>
-                        </div>
-                        <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                          <span className="text-muted-foreground">Worked </span>
-                          <span className="num font-semibold">{a.worked}</span>
-                        </div>
-                        <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                          <span className="text-muted-foreground">In </span>
-                          <span className="num font-semibold">{a.in}</span>
-                        </div>
-                        <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                          <span className="text-muted-foreground">Out </span>
-                          <span className="num font-semibold">{a.out}</span>
-                        </div>
-                      </div>
-                    </article>
+                      <input
+                        type="checkbox"
+                        checked={assignedBranchIds.includes(branch.id)}
+                        onChange={(event) => {
+                          const next = event.target.checked
+                            ? [...assignedBranchIds, branch.id]
+                            : assignedBranchIds.filter((id) => id !== branch.id);
+                          setAssignedBranchIds(next);
+                          if (!next.includes(primaryBranchId)) setPrimaryBranchId(next[0] ?? "");
+                        }}
+                      />
+                      <span>{branch.name}</span>
+                    </label>
                   ))}
-                >
-                  {attendance.map((a) => (
-                    <tr key={a.day} className="hover:bg-secondary/50">
-                      <TD className="font-semibold">{a.day}</TD>
-                      <TD className="num text-muted-foreground">{a.scheduled}</TD>
-                      <TD className="num">{a.in}</TD>
-                      <TD className="num">{a.out}</TD>
-                      <TD className="num font-semibold">{a.worked}</TD>
-                      <TD>
-                        <Status>{a.status}</Status>
-                      </TD>
-                    </tr>
+              </div>
+            </fieldset>
+            <label className={labelClass}>
+              Primary branch
+              <select
+                className={fieldClass}
+                required
+                value={primaryBranchId}
+                onChange={(event) => setPrimaryBranchId(event.target.value)}
+              >
+                <option value="">Select primary branch</option>
+                {branchRecords
+                  .filter((branch) => assignedBranchIds.includes(branch.id))
+                  .map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </option>
                   ))}
-                </DataTable>
-              </Panel>
-              <Panel>
-                <PanelHead
-                  title="Employee activity"
-                  right={<BadgeCheck className="h-4 w-4 text-success" />}
-                />
-                <Timeline
-                  items={[
-                    ["Shift confirmed", "Cecilia accepted the Saturday double shift."],
-                    ["Manager note", "High guest feedback score on private room service."],
-                    ["Document uploaded", "Food handler certificate renewed."],
-                  ]}
-                />
-                <div className="border-t border-border p-3">
-                  <Btn className="w-full">Open HR file</Btn>
-                </div>
-              </Panel>
+              </select>
+            </label>
+            <Field
+              label="Temporary PIN"
+              type="password"
+              inputMode="numeric"
+              value={draft.pin}
+              onChange={(value) =>
+                setDraft({ ...draft, pin: value.replace(/\D/g, "").slice(0, 6) })
+              }
+              required
+            />
+            <Field
+              label="Confirm PIN"
+              type="password"
+              inputMode="numeric"
+              value={draft.pinConfirmation}
+              onChange={(value) =>
+                setDraft({ ...draft, pinConfirmation: value.replace(/\D/g, "").slice(0, 6) })
+              }
+              required
+            />
+            <label className="flex items-center gap-3 text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={draft.temporaryPin}
+                onChange={(event) => setDraft({ ...draft, temporaryPin: event.target.checked })}
+              />
+              Require the employee to replace this temporary PIN
+            </label>
+            <div className="flex justify-end md:col-span-2 xl:col-span-3">
+              <Btn type="submit" variant="primary" disabled={busy || !assignedBranchIds.length}>
+                <Plus className="h-4 w-4" /> Create employee
+              </Btn>
             </div>
-          )}
-        </Tabs>
-      </div>
+          </form>
+        </Panel>
+      ) : null}
+
+      {notice ? (
+        <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
+          {notice}
+        </p>
+      ) : null}
+
+      <Panel className="mt-4 overflow-x-auto">
+        <PanelHead
+          title="Employee register"
+          sub="PIN hashes and credential metadata are never returned"
+          right={
+            <Btn onClick={() => void load()} disabled={busy} title="Refresh">
+              <RefreshCcw className="h-4 w-4" />
+            </Btn>
+          }
+        />
+        <table className="w-full min-w-[820px]">
+          <thead>
+            <tr>
+              <TH>Employee</TH>
+              <TH>Code</TH>
+              <TH>Job title</TH>
+              <TH>Primary branch</TH>
+              <TH>Credential</TH>
+              <TH>Status</TH>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((employee) => (
+              <tr key={employee.id}>
+                <TD>
+                  <div className="font-semibold">{employee.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {employee.email ?? "No email"}
+                  </div>
+                </TD>
+                <TD>{employee.employee_code ?? "Not assigned"}</TD>
+                <TD>{employee.job_title ?? "Not configured"}</TD>
+                <TD>
+                  {branchRecords.find((branch) => branch.id === employee.primary_branch_id)?.name ??
+                    "Not assigned"}
+                </TD>
+                <TD>
+                  <Status>
+                    {!employee.credential_configured
+                      ? "NOT CONFIGURED"
+                      : employee.locked_until && Date.parse(employee.locked_until) > Date.now()
+                        ? "LOCKED"
+                        : employee.must_change
+                          ? "RESET REQUIRED"
+                          : "READY"}
+                  </Status>
+                </TD>
+                <TD>
+                  <Status>{employee.employment_status}</Status>
+                </TD>
+              </tr>
+            ))}
+            {!employees.length && !busy ? (
+              <tr>
+                <TD colSpan={6}>No employees are configured in this branch scope.</TD>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </Panel>
     </AppShell>
+  );
+}
+
+const fieldClass =
+  "mt-1.5 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";
+const labelClass = "grid gap-1 text-xs font-semibold text-muted-foreground";
+
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+  inputMode,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  inputMode?: "numeric";
+  required?: boolean;
+}) {
+  return (
+    <label className={labelClass}>
+      {label}
+      <input
+        className={fieldClass}
+        type={type}
+        inputMode={inputMode}
+        required={required}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={254}
+        autoComplete="off"
+      />
+    </label>
   );
 }

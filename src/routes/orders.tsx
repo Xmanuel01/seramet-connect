@@ -2,11 +2,18 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/data/mock";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
-import { TransactionEngine } from "@/lib/transaction-engine";
 
 export const Route = createFileRoute("/orders")({
   head: () => ({
@@ -27,35 +34,71 @@ export const Route = createFileRoute("/orders")({
 });
 
 function Orders() {
-  const { branch, branchLabel } = useAppContext();
+  const { branchLabel, matchesBranch, currentUser } = useAppContext();
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { state, apply } = useTransactionEngine();
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [operationNotice, setOperationNotice] = useState("");
+  const [operationBusy, setOperationBusy] = useState(false);
+  const { state, mutate } = useTransactionEngine();
   const rows = state.orders
-    .filter((order) => branch === "All Branches" || order.branch === branch)
+    .filter((order) => matchesBranch(order.branchId ?? order.branch))
     .filter((order) => !periodDate || order.createdAt.slice(0, 10) === periodDate);
   const netSales = rows.reduce((sum, order) => sum + order.total, 0);
   const unpaid = rows
     .filter((order) => order.paymentStatus !== "PAID")
     .reduce((sum, order) => sum + order.total, 0);
   const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
-  const heldOrder = rows.find((order) => order.status === "HELD");
+  const selectedOrder =
+    selectedOrders.length === 1 ? rows.find((order) => order.id === selectedOrders[0]) : undefined;
 
-  const resumeHeld = () => {
-    if (!heldOrder) return;
-    apply((current) => TransactionEngine.releaseHeldOrder(current, heldOrder.id, "Amina W."));
+  const resumeHeld = async () => {
+    if (!selectedOrder || selectedOrder.status !== "HELD") {
+      setOperationNotice("Select exactly one held order to resume.");
+      return;
+    }
+    setOperationBusy(true);
+    try {
+      await mutate("releaseHeldOrder", { orderId: selectedOrder.id });
+      setSelectedOrders([]);
+      setOperationNotice(`${selectedOrder.id} resumed by ${currentUser.name}.`);
+    } catch (error) {
+      setOperationNotice(
+        error instanceof Error ? error.message : "The order could not be resumed.",
+      );
+    } finally {
+      setOperationBusy(false);
+    }
   };
 
-  const cancelOpen = () => {
-    const order = rows.find((item) => !["PAID", "CANCELLED"].includes(item.status));
-    if (!order) return;
-    apply((current) =>
-      TransactionEngine.cancelOrder(current, order.id, {
-        user: "Emmanuel K.",
-        reason: "Manager cancellation with reason captured",
-        affectedItems: order.lines.map((line) => line.name),
-      }),
-    );
+  const openCancellation = () => {
+    if (!selectedOrder || ["PAID", "REFUNDED", "CANCELLED"].includes(selectedOrder.status)) {
+      setOperationNotice("Select exactly one cancellable order.");
+      return;
+    }
+    setCancelReason("");
+    setCancelOpen(true);
+  };
+
+  const confirmCancellation = async () => {
+    if (!selectedOrder || !cancelReason.trim()) return;
+    setOperationBusy(true);
+    try {
+      await mutate("cancelOrder", {
+        orderId: selectedOrder.id,
+        input: { reason: cancelReason.trim() },
+      });
+      setCancelOpen(false);
+      setSelectedOrders([]);
+      setOperationNotice(`${selectedOrder.id} cancelled. The reason and actor were audited.`);
+    } catch (error) {
+      setOperationNotice(
+        error instanceof Error ? error.message : "The order could not be cancelled.",
+      );
+    } finally {
+      setOperationBusy(false);
+    }
   };
 
   const toggleOrder = (orderId: string) => {
@@ -72,19 +115,26 @@ function Orders() {
         <>
           <Btn>Saved views</Btn>
           <Btn>Print selected bill</Btn>
-          <Btn onClick={cancelOpen}>Cancel with reason</Btn>
-          <Btn variant="primary" onClick={resumeHeld}>
+          <Btn onClick={openCancellation} disabled={operationBusy}>
+            Cancel with reason
+          </Btn>
+          <Btn variant="primary" onClick={() => void resumeHeld()} disabled={operationBusy}>
             Resume held
           </Btn>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Orders" value={rows.length} delta={4.1} />
-        <Metric label="Net sales" value={netSales} money delta={8.4} />
+        <Metric label="Orders" value={rows.length} />
+        <Metric label="Net sales" value={netSales} money />
         <Metric label="Unpaid bills" value={unpaid} money />
-        <Metric label="Cancelled" value={cancelled} delta={-20} invert />
+        <Metric label="Cancelled" value={cancelled} invert />
       </div>
+      {operationNotice && (
+        <div className="mt-3 rounded-md border border-border bg-card px-3 py-2 text-[13px]">
+          {operationNotice}
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="All orders"
@@ -198,6 +248,39 @@ function Orders() {
           </table>
         </div>
       </Panel>
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel {selectedOrder?.id ?? "order"}</DialogTitle>
+            <DialogDescription>
+              Sent production lines are retained and receive a cancellation amendment.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="text-[13px] font-semibold" htmlFor="order-cancel-reason">
+            Reason
+          </label>
+          <textarea
+            id="order-cancel-reason"
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            maxLength={300}
+            rows={4}
+            className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-[13px] outline-none focus:border-primary"
+          />
+          <DialogFooter>
+            <Btn onClick={() => setCancelOpen(false)} disabled={operationBusy}>
+              Keep order
+            </Btn>
+            <Btn
+              variant="primary"
+              onClick={() => void confirmCancellation()}
+              disabled={operationBusy || !cancelReason.trim()}
+            >
+              {operationBusy ? "Cancelling..." : "Confirm cancellation"}
+            </Btn>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
