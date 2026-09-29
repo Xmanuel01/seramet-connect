@@ -9,7 +9,7 @@ import { activeTimeZone, ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { formatFilterDate } from "@/lib/date-filters";
 import { TransactionEngine, type BillingRecord } from "@/lib/transaction-engine";
 import { SerametPrintService } from "@/lib/seramet-print-service";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
