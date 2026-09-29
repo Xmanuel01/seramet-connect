@@ -233,6 +233,8 @@ export type PrintBridgeStatus = {
 
 export type BridgeSubmitResult = {
   accepted: boolean;
+  dryRun?: boolean;
+  physicalPrintConfirmed?: boolean;
   bridgeJobId?: string;
   spoolPath?: string;
   message: string;
@@ -748,6 +750,7 @@ export const SerametLocalPrintBridge = {
   createTrustedBridgePayload(job: PrintJob, printerName?: string) {
     return stripUndefined({
       id: job.id,
+      obligationId: job.obligationId,
       branch: job.branch,
       orderId: job.orderId,
       documentType: job.documentType,
