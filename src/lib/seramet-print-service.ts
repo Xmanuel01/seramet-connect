@@ -848,6 +848,7 @@ function createJob({
   kitchenDelivery,
   amendmentType,
   duplicateKey,
+  productionObligationId,
 }: {
   profile: BranchHardwareProfile;
   order: OrderForPrint;
@@ -860,6 +861,7 @@ function createJob({
   kitchenDelivery?: KitchenTicketDelivery;
   amendmentType?: PrintJob["amendmentType"];
   duplicateKey?: string;
+  productionObligationId?: string;
 }): PrintJob {
   const assignedPrinter =
     resolution.routeMode === "fallback" ? resolution.fallbackPrinter : resolution.printer;
@@ -893,6 +895,7 @@ function createJob({
     kitchenTicketRecordId,
     kitchenDelivery,
     amendmentType,
+    productionObligationId,
   }) as PrintJob;
 }
 
