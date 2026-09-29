@@ -11,7 +11,8 @@ describe("POS connectivity and synchronization display", () => {
   it("shows offline work separately even when the connection is healthy", () => {
     expect(connectionPresentation("synced").label).toBe("Online");
     expect(syncActivityLabel("synced", 0, 3)).toBe("3 offline commands pending");
-    expect(syncActivityLabel("reconnecting", 0, 1)).toBe("Replaying 1 offline command");
+    expect(syncActivityLabel("synced", 0, 1, true)).toBe("Replaying 1 offline command");
+    expect(syncActivityLabel("synced", 1, 2)).toBe("Saving · 2 offline commands pending");
   });
 
   it("never mislabels a server failure or conflict as an internet outage", () => {
