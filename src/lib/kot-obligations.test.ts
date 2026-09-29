@@ -173,9 +173,55 @@ describe("atomic durable KOT obligation and crash reconciliation", () => {
       affectedItems: [],
     });
     const obligations = state.orders[0]!.kotObligations!;
-    expect(obligations.filter((item) => item.kind === "VOID")).toHaveLength(2);
-    expect(new Set(obligations.map((item) => item.id)).size).toBe(obligations.length);
-    expect(obligations.slice(0, 3).every((item) => item.kind !== "VOID")).toBe(true);
+    // None of the original/new KOTs had been claimed or printed. Cancellation
+    // must retire those originals without confusing kitchen with fake VOID paper.
+    expect(obligations.filter((item) => item.kind === "VOID")).toHaveLength(0);
+    expect(obligations).toHaveLength(3);
+    expect(obligations.every((item) => item.status === "SUPERSEDED")).toBe(true);
+    expect(pendingKotObligations(state.orders, DEMO_WESTLANDS_BRANCH_ID)).toHaveLength(0);
+    expect(() =>
+      TransactionEngine.resetKotObligationAfterReview(
+        state,
+        orderId,
+        obligations[0]!.id,
+        "Tried to print a canceled ticket",
+        "Manager",
+      ),
+    ).toThrow(/superseded/);
+  });
+
+  it("blocks stale unclaimed quantity reductions but emits a VOID after successful claim", () => {
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), {
+      ...draft,
+      lines: [{ ...draft.lines[0]!, quantity: 2 }],
+    });
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const changed = {
+      ...draft,
+      lines: [{ ...state.orders[0]!.lines[0]!, quantity: 1 }],
+    };
+    expect(() =>
+      TransactionEngine.amendKitchenOrder(state, orderId, changed, "Manager"),
+    ).toThrow(/Resolve pending kitchen ticket/);
+    const id = state.orders[0]!.kotObligations![0]!.id;
+    state = TransactionEngine.claimKotObligations(state, orderId, [id], "Cashier", "device-1");
+    state = TransactionEngine.markKotObligations(
+      state,
+      orderId,
+      [id],
+      "QUEUED",
+      "Cashier",
+      "device-1",
+    );
+    state = TransactionEngine.amendKitchenOrder(state, orderId, changed, "Manager");
+    expect(state.orders[0]!.kotObligations).toHaveLength(2);
+    expect(state.orders[0]!.kotObligations![1]).toMatchObject({
+      kind: "VOID",
+      station: "MAIN KITCHEN",
+      status: "PENDING",
+    });
+    expect(state.orders[0]!.kotObligations![1]!.lines[0]!.quantity).toBe(1);
   });
 
   it("emits an addition obligation only for newly dispatched items", () => {
