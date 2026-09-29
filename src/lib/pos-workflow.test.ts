@@ -356,6 +356,7 @@ describe("durable KOT delivery obligations", () => {
       { ...draft, lines: [...originalLines, addition] },
       "Cashier",
     );
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
     expect(state.productionPrintObligations).toHaveLength(2);
     const amendment = state.productionPrintObligations!.find(
       (item) => item.id !== originalObligation,
