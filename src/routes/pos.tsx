@@ -216,6 +216,7 @@ function POS() {
     backendStatus,
     pendingSyncCount,
     activeMutationCount,
+    offlineReplayInProgress,
   } = useTransactionEngine();
   const {
     profile,
@@ -230,7 +231,12 @@ function POS() {
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
   const connectivity = connectionPresentation(backendStatus);
-  const syncActivity = syncActivityLabel(backendStatus, activeMutationCount, pendingSyncCount);
+  const syncActivity = syncActivityLabel(
+    backendStatus,
+    activeMutationCount,
+    pendingSyncCount,
+    offlineReplayInProgress,
+  );
   const openCashDrawer = transactionState.paymentOperations?.drawerSessions.find(
     (drawer) =>
       drawer.tenantId === activeTenantId &&
@@ -1838,7 +1844,7 @@ function POS() {
               aria-live="polite"
               title={syncActivity}
             >
-              {(backendStatus === "reconnecting" || activeMutationCount > 0) && (
+              {(offlineReplayInProgress || activeMutationCount > 0) && (
                 <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
               )}
               {syncActivity}
