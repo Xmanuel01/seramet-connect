@@ -796,7 +796,10 @@ function createProductionPrintObligations(
     byStation.set(station, ids);
   }
   for (const [station, lineIds] of byStation) {
-    const stationKey = station.replace(/[^A-Z0-9]+/gi, "-").replace(/^-|-$/g, "").toUpperCase();
+    const stationKey = station
+      .replace(/[^A-Z0-9]+/gi, "-")
+      .replace(/^-|-$/g, "")
+      .toUpperCase();
     const obligationId = `KOT-${dispatchRef}-${stationKey}`;
     if (state.productionPrintObligations.some((item) => item.id === obligationId)) continue;
     state.productionPrintObligations.unshift({
