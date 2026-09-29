@@ -50,7 +50,13 @@ function Orders() {
         !periodDate ||
         (order.businessDate ?? currentDateKey(new Date(order.createdAt), timeZone)) === periodDate,
     );
-  const financials = ordersDashboardFinancials(state, matchesBranch, periodDate, timeZone, currency);
+  const financials = ordersDashboardFinancials(
+    state,
+    matchesBranch,
+    periodDate,
+    timeZone,
+    currency,
+  );
   const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
   const selectedOrder =
     selectedOrders.length === 1 ? rows.find((order) => order.id === selectedOrders[0]) : undefined;
