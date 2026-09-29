@@ -26,6 +26,8 @@ export type PrintJobStatus =
   | "Failed"
   | "Retrying"
   | "Fallback Printed"
+  | "Spool Accepted"
+  | "Uncertain"
   | "Cancelled";
 export type KitchenTicketDelivery = "KDS_DISPLAY" | "PRODUCTION_PRINT" | "POS_FRONT_PRINT";
 export type PrinterConnection = "Connected" | "Offline" | "Degraded";
@@ -183,6 +185,8 @@ export type PrintJob = {
   content: string;
   duplicateKey: string;
   reprintOfJobId?: string;
+  /** Stable server-owned ticket identity for recoverable kitchen dispatch. */
+  obligationId?: string;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
