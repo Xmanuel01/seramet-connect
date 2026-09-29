@@ -1956,7 +1956,8 @@ export const TransactionEngine = {
     const order = next.orders.find((item) => item.id === orderId);
     const obligation = order?.kotObligations?.find((item) => item.id === obligationId);
     if (!order || !obligation) throw new Error("Durable KOT obligation not found");
-    if (obligation.status === "PENDING") throw new Error("KOT is already pending");\n    if (obligation.status === "SUPERSEDED") throw new Error("A superseded KOT cannot be reissued");
+    if (obligation.status === "PENDING") throw new Error("KOT is already pending");
+    if (obligation.status === "SUPERSEDED") throw new Error("A superseded KOT cannot be reissued");
     const before = obligation.status;
     obligation.status = "PENDING";
     obligation.reviewedBy = manager;
