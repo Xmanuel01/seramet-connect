@@ -1743,8 +1743,12 @@ export const TransactionEngine = {
       externalSource,
       guestContext,
       financialOverride: _financialOverride,
+      // Reject untrusted extra client fields: only the server can assign the
+      // order identity and durable KOT obligations.
+      id: _untrustedId,
+      kotObligations: _untrustedKotObligations,
       ...baseDraft
-    } = draft;
+    } = draft as OrderDraft & { id?: string; kotObligations?: unknown };
     const order: TransactionOrder = {
       id: id("ORD", next, "orders"),
       ...baseDraft,
