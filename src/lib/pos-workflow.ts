@@ -38,6 +38,38 @@ export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "s
   );
 }
 
+/** One routing decision for Send kitchen, combined billing, and payment preparation.
+ * An order with sent lines is never sent again unless new unsent quantities exist.
+ */
+export function needsKitchenDispatch(
+  order: Pick<TransactionOrder, "status"> | null,
+  hasUnsentItems: boolean,
+): boolean {
+  return (
+    !order ||
+    !["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED", "BILL_REQUESTED"].includes(
+      order.status,
+    ) ||
+    hasUnsentItems
+  );
+}
+
+/** Billing must use a payable invoice explicitly linked to the selected order. */
+export function payableInvoiceForOrder(
+  orderId: string,
+  tenantId: string,
+  branchId: string,
+  bills: readonly Pick<BillingRecord, "id" | "orderIds" | "status" | "tenantId" | "branchId">[],
+) {
+  return bills.find(
+    (bill) =>
+      bill.orderIds.includes(orderId) &&
+      ["OPEN", "PARTIAL", "PENDING"].includes(bill.status) &&
+      bill.tenantId === tenantId &&
+      bill.branchId === branchId,
+  );
+}
+
 function validTimeZone(value: string | undefined): value is string {
   if (!value) return false;
   try {
