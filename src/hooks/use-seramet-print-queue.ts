@@ -23,6 +23,8 @@ import {
 } from "@/lib/print-bridge-client-config";
 import { formatDateTime } from "@/lib/currency";
 import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
+import type { KitchenPrintObligation } from "@/lib/kitchen-print-outbox";
+import type { KotDeliveryOutcome } from "@/lib/durable-kot-client";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
@@ -46,21 +48,22 @@ export function useSerametPrintQueue(branch: string) {
     }
   }, [branch]);
   const { profile, configurationError } = profileState;
+  const queueScope = profile ? `${profile.tenantId}:${profile.branchId}` : branch;
   const subscribeToQueue = useCallback(
-    (listener: () => void) => DevicePrintQueueStore.subscribe(branch, listener),
-    [branch],
+    (listener: () => void) => DevicePrintQueueStore.subscribe(queueScope, listener),
+    [queueScope],
   );
-  const readQueue = useCallback(() => DevicePrintQueueStore.snapshot(branch), [branch]);
+  const readQueue = useCallback(() => DevicePrintQueueStore.snapshot(queueScope), [queueScope]);
   const queue = useSyncExternalStore(subscribeToQueue, readQueue, readQueue);
   const jobs = queue.jobs;
   const reprints = queue.reprints;
   const setJobs = useCallback<Dispatch<SetStateAction<PrintJob[]>>>(
-    (update) => DevicePrintQueueStore.setJobs(branch, update),
-    [branch],
+    (update) => DevicePrintQueueStore.setJobs(queueScope, update),
+    [queueScope],
   );
   const setReprints = useCallback<Dispatch<SetStateAction<ReprintLogEntry[]>>>(
-    (update) => DevicePrintQueueStore.setReprints(branch, update),
-    [branch],
+    (update) => DevicePrintQueueStore.setReprints(queueScope, update),
+    [queueScope],
   );
   const [bridgeConfig, setBridgeConfig] = useState<InstalledPrintBridgeConfig>(() =>
     loadInstalledPrintBridgeConfig(),
@@ -123,6 +126,48 @@ export function useSerametPrintQueue(branch: string) {
     );
     const queued = processJobs(plan.jobs, jobs, profile);
     return { ...plan, queue: queued };
+  };
+
+  /**
+   * Delivery runs only AFTER the authoritative KOT obligation has been claimed.
+   * PrintJob identities are stable per obligation and delivery route.
+   * Browser storage is not the source of truth for this operation.
+   */
+  const deliverDurableKitchenTicket = async (
+    order: OrderForPrint,
+    kind: KitchenPrintObligation["kind"],
+    obligationId: string,
+  ): Promise<KotDeliveryOutcome> => {
+    if (!profile) throw new Error(configurationError ?? "No configured kitchen printer");
+    const ticketKind = kind === "AUDITED_REPRINT" ? "REPRINT" : kind === "ADDITION" ? "ADDITION" : "NEW";
+    const plan = SerametPrintService.createProductionTicketJobs(
+      profile,
+      order,
+      jobs.filter((job) => job.obligationId !== obligationId),
+      ticketKind,
+    );
+    if (!plan.jobs.length || plan.skipped.length) {
+      throw new Error(plan.skipped.join("; ") || "No authorized kitchen delivery route");
+    }
+    const tracked = plan.jobs.map((job) => ({
+      ...job,
+      id: `${obligationId}:${job.kitchenDelivery ?? job.documentType}`,
+      obligationId,
+    }));
+    if (
+      tracked.some((job) => job.printerId !== "KDS-DISPLAY") &&
+      !bridgeConfigReady(bridgeConfig)
+    ) {
+      throw new Error("Local printer bridge is unavailable; no physical printing was attempted");
+    }
+    setJobs((existing) => [
+      ...tracked,
+      ...existing.filter((job) => !tracked.some((next) => next.id === job.id)),
+    ]);
+    const outcomes = await Promise.all(
+      tracked.map((job) => sendInstalledBridgeJob(job, profile, bridgeConfig, setJobs, true)),
+    );
+    return { jobs: tracked, outcomes, skipped: plan.skipped };
   };
 
   const printCustomerDocument = (
@@ -213,6 +258,7 @@ export function useSerametPrintQueue(branch: string) {
     reprints,
     bridgeConfig,
     sendKitchenTickets,
+    deliverDurableKitchenTicket,
     printCustomerDocument,
     retryJob,
     printAtFallback,
@@ -234,14 +280,15 @@ async function sendInstalledBridgeJob(
   profile: BranchHardwareProfile,
   config: InstalledPrintBridgeConfig,
   setJobs: Dispatch<SetStateAction<PrintJob[]>>,
-) {
+  durable = false,
+): Promise<"SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN"> {
   if (job.printerId === "KDS-DISPLAY") {
     updateJob(setJobs, job.id, {
-      status: "Displayed",
-      printedAt: formatDateTime(new Date(), { hour12: false }),
+      status: durable ? "Queued" : "Displayed",
+      ...(durable ? {} : { printedAt: formatDateTime(new Date(), { hour12: false }) }),
       failureReason: null,
     });
-    return;
+    return "DIGITAL_QUEUED";
   }
 
   updateJob(setJobs, job.id, { status: "Sending", failureReason: null });
@@ -254,35 +301,37 @@ async function sendInstalledBridgeJob(
         result = await submitCopies({ ...job, printerId: fallback.id }, config, fallback.name);
         if (result.accepted) {
           updateJob(setJobs, job.id, {
-            status: "Fallback Printed",
+            status: durable ? "Spool Accepted" : "Fallback Printed",
             printerId: fallback.id,
             fallbackPrinterId: fallback.id,
             printedAt: formatDateTime(new Date(), { hour12: false }),
             failureReason: null,
           });
-          return;
+          return "SPOOLED";
         }
       }
     }
 
     if (!result.accepted) {
       updateJob(setJobs, job.id, {
-        status: "Failed",
+        status: durable ? "Uncertain" : "Failed",
         failureReason: result.message,
       });
-      return;
+      return "UNCERTAIN";
     }
 
     updateJob(setJobs, job.id, {
-      status: "Printed",
+      status: durable ? "Spool Accepted" : "Printed",
       printedAt: formatDateTime(new Date(), { hour12: false }),
       failureReason: null,
     });
+    return "SPOOLED";
   } catch (error) {
     updateJob(setJobs, job.id, {
-      status: "Failed",
+      status: durable ? "Uncertain" : "Failed",
       failureReason: error instanceof Error ? error.message : "Local print bridge request failed",
     });
+    return "UNCERTAIN";
   }
 }
 
