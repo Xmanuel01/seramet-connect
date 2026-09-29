@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 import type { PrintJob, ReprintLogEntry } from "@/lib/seramet-print-service";
 
@@ -78,5 +78,52 @@ describe("device print queue store", () => {
     expect(DevicePrintQueueStore.snapshot("branch-westlands").reprints[0]?.reason).toBe(
       "Ticket damaged",
     );
+  });
+});
+
+afterEach(() => {
+  DevicePrintQueueStore.resetForTests();
+  vi.unstubAllGlobals();
+});
+
+describe("durable print queue persistence", () => {
+  it("persists accepted print jobs before dispatch and flags unconfirmed jobs after restart", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          stored.set(key, value);
+        },
+        removeItem: (key: string) => {
+          stored.delete(key);
+        },
+      },
+      addEventListener: () => undefined,
+    });
+    DevicePrintQueueStore.setJobs("branch-westlands", [job("PJ-PERSIST")]);
+    expect(stored.size).toBe(1);
+    DevicePrintQueueStore.simulateRestartForTests();
+    const restored = DevicePrintQueueStore.snapshot("branch-westlands").jobs;
+    expect(restored).toHaveLength(1);
+    expect(restored[0]?.status).toBe("Failed");
+    expect(restored[0]?.failureReason).toContain("UNCONFIRMED AFTER RESTART");
+  });
+
+  it("fails closed when the browser cannot persist the queued paper job", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error("quota exceeded");
+        },
+        removeItem: () => undefined,
+      },
+      addEventListener: () => undefined,
+    });
+    expect(() => DevicePrintQueueStore.setJobs("branch-westlands", [job("PJ-NOPERSIST")])).toThrow(
+      /Unable to persist/,
+    );
+    expect(DevicePrintQueueStore.snapshot("branch-westlands").jobs).toHaveLength(0);
   });
 });

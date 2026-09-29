@@ -278,6 +278,40 @@ export function applyServerMutation(
     }
     case "sendToKitchen":
       return TransactionEngine.sendToKitchen(state, String(input["orderId"]), actor.name);
+    case "claimKotObligations":
+      return TransactionEngine.claimKotObligations(
+        state,
+        String(input["orderId"]),
+        input["obligationIds"] as string[],
+        actor.name,
+        actor.deviceId ?? actor.sessionId ?? actor.id,
+      );
+    case "markKotObligations": {
+      const status = input["status"];
+      if (
+        !["QUEUED", "DIGITAL_DISPLAYED", "UNCERTAIN", "BRIDGE_ACKNOWLEDGED"].includes(
+          String(status),
+        )
+      ) {
+        throw new Error("Invalid KOT state; physical printing is never inferred");
+      }
+      return TransactionEngine.markKotObligations(
+        state,
+        String(input["orderId"]),
+        input["obligationIds"] as string[],
+        status as "QUEUED" | "DIGITAL_DISPLAYED" | "UNCERTAIN" | "BRIDGE_ACKNOWLEDGED",
+        actor.name,
+        actor.deviceId ?? actor.sessionId ?? actor.id,
+      );
+    }
+    case "resetKotObligationAfterReview":
+      return TransactionEngine.resetKotObligationAfterReview(
+        state,
+        String(input["orderId"]),
+        String(input["obligationId"]),
+        String(input["reason"] ?? ""),
+        actor.name,
+      );
     case "setProductionStationStatus":
       return TransactionEngine.setProductionStationStatus(
         state,

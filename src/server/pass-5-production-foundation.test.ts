@@ -202,6 +202,51 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(secondBody.nextCursor).toBeNull();
   });
 
+  it("commits a recoverable KOT obligation atomically with authoritative kitchen dispatch", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const created = await mutation(repository, "kot-order", "kot-order", "upsertOrderDraft", {
+      draft: orderDraft("Durable KOT"),
+      targetStatus: "HELD",
+    });
+    const orderId = created.state.orders[0]!.id;
+    const sent = await mutation(repository, "kot-send", "kot-send", "sendToKitchen", {
+      orderId,
+    });
+    const outbox = sent.state.orders[0]!.kotObligations ?? [];
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]).toMatchObject({
+      status: "PENDING",
+      branchId: branchA,
+      kind: "NEW",
+      station: "MAIN KITCHEN",
+    });
+    const row = await database
+      .prepare("SELECT status,payload_json FROM orders WHERE tenant_id=? AND id=?")
+      .bind(tenantA, orderId)
+      .first<{ status: string; payload_json: string }>();
+    const persisted = JSON.parse(row!.payload_json) as { kotObligations?: typeof outbox };
+    expect(row?.status).toBe("SENT_TO_KITCHEN");
+    expect(persisted.kotObligations).toEqual(outbox);
+
+    const claim = await mutation(repository, "kot-claim", "kot-claim", "claimKotObligations", {
+      orderId,
+      obligationIds: [outbox[0]!.id],
+    });
+    expect(claim.state.orders[0]?.kotObligations?.[0]?.status).toBe("CLAIMED");
+    await expect(
+      mutation(repository, "kot-duplicate-claim", "kot-duplicate-claim", "claimKotObligations", {
+        orderId,
+        obligationIds: [outbox[0]!.id],
+      }),
+    ).rejects.toThrow(/already claimed/);
+    const replay = await mutation(repository, "kot-claim", "kot-claim", "claimKotObligations", {
+      orderId,
+      obligationIds: [outbox[0]!.id],
+    });
+    expect(replay.duplicate).toBe(true);
+    expect((await repository.loadState(tenantA)).orders[0]?.kotObligations).toHaveLength(1);
+  });
+
   it("deduplicates the same mutation and preserves one order effect", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     const commit = mutation(repository, "same-key", "same-hash", "upsertOrderDraft", {

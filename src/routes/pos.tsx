@@ -32,6 +32,7 @@ import {
   visiblePosMenuItems,
 } from "@/lib/pos-menu-view";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useKotDeliveryAcknowledgement } from "@/hooks/use-kot-delivery-ack";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import {
@@ -222,6 +223,7 @@ function POS() {
     sendKitchenTickets,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
+  useKotDeliveryAcknowledgement(branchId, transactionState.orders, printJobs, mutateTransaction);
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
@@ -1219,7 +1221,7 @@ function POS() {
         printJobs,
         amendmentType,
       );
-      if (!preflight.jobs.length) {
+      if (!preflight.jobs.length || preflight.jobs.some((job) => job.failureReason)) {
         throw new Error(
           `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
         );
@@ -1236,6 +1238,15 @@ function POS() {
     if (!authoritativeOrder || !resultState?.state) {
       throw new Error("Kitchen order did not receive an authoritative identity.");
     }
+    // Offline acceptance is not authoritative. Hold the local work for replay,
+    // never issue an irreversible physical ticket for an uncommitted command.
+    if ("offline" in resultState && resultState.offline) {
+      setPrintNotice(
+        "Kitchen submission is awaiting server synchronization. Do not print or resend until confirmed.",
+      );
+      setPrintNoticeType("warning");
+      return null;
+    }
     const ticketLines = authoritativeOrder.lines.filter(
       (line) => line.sentAt && !sentLineIds.has(line.id),
     );
@@ -1250,65 +1261,123 @@ function POS() {
         printResult: null,
       };
     }
-
-    // Staging laptop demo: never pretend a physical KOT has printed.
-    // The authoritative transaction above persists the kitchen work independently.
+    const newlySentLineIds = new Set(ticketLines.map((line) => line.id));
+    const obligations = (authoritativeOrder.kotObligations ?? []).filter(
+      (obligation) =>
+        obligation.status === "PENDING" &&
+        obligation.lines.some((line) => newlySentLineIds.has(line.id)),
+    );
+    if (!obligations.length) {
+      throw new Error(
+        "Kitchen accepted the order but did not return its durable KOT obligations. " +
+          "Open Seramet Printers for recovery; do not submit the order twice.",
+      );
+    }
+    // One server-side claim prevents two cashier devices from printing the same
+    // obligation concurrently. The claim remains visible if this browser crashes.
+    const claimed = await mutateTransaction("claimKotObligations", {
+      orderId: authoritativeOrder.id,
+      obligationIds: obligations.map((item) => item.id),
+    });
+    if (!claimed || ("offline" in claimed && claimed.offline)) {
+      throw new Error("KOT claim was not confirmed; review the server KOT outbox.");
+    }
     if (printerlessStaging) {
+      const displayed = await mutateTransaction("markKotObligations", {
+        orderId: authoritativeOrder.id,
+        obligationIds: obligations.map((item) => item.id),
+        status: "DIGITAL_DISPLAYED",
+      });
+      if (!displayed) throw new Error("Staging digital ticket state was not confirmed.");
       setTrackedPrint(null);
       setActiveOrderId(authoritativeOrder.id);
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
       setPrintNotice(
-        "STAGING TEST: Kitchen order saved without physical printing. Open Kitchen " +
-          "and verify the digital ticket; physical KOT delivery is NOT confirmed. " +
-          "Standard printer routing resumes automatically when the test window expires.",
+        "STAGING TEST: authoritative Kitchen holds the durable digital ticket. " +
+          "No physical KOT delivery has been confirmed.",
       );
       setPrintNoticeType("warning");
       return {
         order: authoritativeOrder,
-        state: resultState.state,
+        state: displayed.state,
         printResult: null,
       };
     }
 
-    const printResult = sendKitchenTickets(
-      {
-        ...buildPrintOrder(tableNo),
-        orderId: authoritativeOrder.id,
-        lines: ticketLines.map((line) => ({
-          id: line.id,
-          name: line.name,
-          category: line.category,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          productionStation: line.productionStation ?? "NONE",
-          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-        })),
-      },
-      amendmentType,
-    );
+    const queuedJobs: typeof printJobs = [];
+    const skipped: string[] = [];
+    for (const obligation of obligations) {
+      try {
+        const result = sendKitchenTickets(
+          {
+            ...buildPrintOrder(tableNo),
+            orderId: authoritativeOrder.id,
+            kotObligationId: obligation.id,
+            lines: obligation.lines.map((line) => ({
+              id: line.id,
+              name: line.name,
+              category: line.category,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              productionStation: line.productionStation ?? "NONE",
+              ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+            })),
+          },
+          obligation.kind,
+        );
+        queuedJobs.push(...result.jobs);
+        skipped.push(...result.skipped);
+        const persisted =
+          result.jobs.length > 0 &&
+          result.jobs.every((job) => {
+            const current = result.queue.find((item) => item.id === job.id);
+            return (
+              current &&
+              !current.failureReason &&
+              current.printerId !== "UNASSIGNED" &&
+              ["Queued", "Sending", "Retrying", "Displayed"].includes(current.status)
+            );
+          });
+        // Queue registration is never presented as proof of physical printing.
+        const marked = await mutateTransaction("markKotObligations", {
+          orderId: authoritativeOrder.id,
+          obligationIds: [obligation.id],
+          status: persisted ? "QUEUED" : "UNCERTAIN",
+        });
+        if (!marked || !persisted) {
+          throw new Error(
+            `${obligation.station} KOT was not safely queued. Review printer output before retrying.`,
+          );
+        }
+      } catch (error) {
+        // A crash or lost acknowledgement after claiming is deliberately left
+        // for operator reconciliation, not auto-replayed with a new ticket ID.
+        try {
+          await mutateTransaction("markKotObligations", {
+            orderId: authoritativeOrder.id,
+            obligationIds: [obligation.id],
+            status: "UNCERTAIN",
+          });
+        } catch {
+          // An already-marked claim cannot be rewritten. Keep the server audit.
+        }
+        throw error;
+      }
+    }
     setTrackedPrint({
-      jobIds: printResult.jobs.map((job) => job.id),
-      label: amendmentType === "ADDITION" ? "Kitchen amendment" : "Kitchen ticket",
+      jobIds: queuedJobs.map((job) => job.id),
+      label: obligations.some((item) => item.kind === "ADDITION")
+        ? "Kitchen amendment"
+        : "Kitchen ticket",
     });
     setActiveOrderId(authoritativeOrder.id);
     setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
-    if (printResult.jobs.length > 0) {
-      setPrintNotice(
-        amendmentType === "ADDITION"
-          ? "Kitchen amendment queued — waiting for delivery confirmation."
-          : "Kitchen ticket queued — waiting for delivery confirmation.",
-      );
-      setPrintNoticeType("idle");
-    } else {
-      setPrintNotice(
-        `Order reached kitchen state, but KOT delivery was not queued: ${printResult.skipped[0] ?? "check printer/KDS routing"}.`,
-      );
-      setPrintNoticeType("warning");
-    }
+    setPrintNotice("Durable kitchen ticket queued; physical output is not yet confirmed.");
+    setPrintNoticeType("idle");
     return {
       order: authoritativeOrder,
       state: resultState.state,
-      printResult,
+      printResult: { jobs: queuedJobs, skipped, queue: queuedJobs },
     };
   };
 
