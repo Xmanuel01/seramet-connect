@@ -252,6 +252,15 @@ describe("kitchen hardware modes", () => {
     expect(
       SerametPrintService.createProductionTicketJobs(profile, original, first.jobs, "NEW").jobs,
     ).toHaveLength(0);
+    // A failed local device record can be replaced only after the server
+    // authorizes a manager-reviewed reset and a fresh KOT claim.
+    const reviewedRetry = SerametPrintService.createProductionTicketJobs(
+      profile,
+      original,
+      first.jobs.map((job) => ({ ...job, status: "Failed" as const })),
+      "NEW",
+    );
+    expect(reviewedRetry.jobs).toHaveLength(2);
     const addition = { ...original, kotObligationId: "KOT-ORD-1-2" };
     const amended = SerametPrintService.createProductionTicketJobs(
       profile,
