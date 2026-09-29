@@ -25,6 +25,7 @@ import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { dispatchDurableKitchenObligation } from "@/lib/durable-kot-client";
+import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -219,6 +220,7 @@ function POS() {
   const {
     profile,
     configurationError,
+    bridgeConfig,
     jobs: printJobs,
     deliverDurableKitchenTicket,
     printCustomerDocument,
@@ -1178,6 +1180,16 @@ function POS() {
     if (!profile && !printerlessStaging) {
       throw new Error(
         `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
+      );
+    }
+    if (
+      !printerlessStaging &&
+      profile &&
+      profile.kitchenMode !== "KDS_ONLY" &&
+      !bridgeConfigReady(bridgeConfig)
+    ) {
+      throw new Error(
+        "Installed print bridge is unavailable. Reconnect it before dispatching a physical KOT.",
       );
     }
 
