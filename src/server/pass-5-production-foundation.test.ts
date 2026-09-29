@@ -50,6 +50,40 @@ describe.sequential("Pass 5 production foundation", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("retains durable KOT obligations across authoritative repository loads without cross-tenant leakage", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const state = await repository.loadState(tenantA);
+    state.kitchenPrintObligations = [
+      {
+        id: "KOT-durable-test",
+        tenantId: tenantA,
+        branchId: branchA,
+        branch: branchA,
+        orderId: "ORD-fixture",
+        type: "NEW",
+        lines: [
+          {
+            id: "line-fixture",
+            name: "Test pilau",
+            category: "Main",
+            quantity: 1,
+            unitPrice: 500,
+            productionStation: "MAIN KITCHEN",
+            sentAt: new Date().toISOString(),
+          },
+        ],
+        requestedBy: userA,
+        createdAt: new Date().toISOString(),
+        status: "PENDING",
+      },
+    ];
+    await repository.saveState(state, actor(), "Test durable kitchen ticket recording");
+    const refreshed = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    expect(refreshed.kitchenPrintObligations).toEqual(state.kitchenPrintObligations);
+    const otherTenant = await repository.loadState(tenantB);
+    expect(otherTenant.kitchenPrintObligations).toEqual([]);
+  });
+
   it("persists the entered physical cash count exactly and rejects invalid counts without closing", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     const initial = await repository.loadState(tenantA);

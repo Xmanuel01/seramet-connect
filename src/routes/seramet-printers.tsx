@@ -4,6 +4,7 @@ import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } f
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
@@ -91,6 +92,7 @@ function SerametPrinters() {
     switchableBranchRecords,
   } = useAppContext();
   const [branch, setBranch] = useState(activeBranch);
+  const { state: transactionState } = useTransactionEngine();
   const branchOptions = switchableBranchRecords.map((item) => item.name);
   const selectedBranchId =
     switchableBranchRecords.find((item) => item.name === branch)?.id ?? branch;
@@ -134,6 +136,9 @@ function SerametPrinters() {
   const previewOrderType =
     getConfigurationRepository().listOrderChannels(activeTenantId, true)[0]?.displayName ??
     "Configured channel";
+  const unresolvedTickets = (transactionState.kitchenPrintObligations ?? []).filter(
+    (ticket) => ticket.branchId === selectedBranchId && ticket.status !== "DELIVERED",
+  );
   const previewOrder = useMemo(
     () => diagnosticOrder(branch, previewPaymentMethod, previewOrderType, currentUser.name),
     [branch, currentUser.name, previewOrderType, previewPaymentMethod],
@@ -307,6 +312,39 @@ function SerametPrinters() {
         </>
       }
     >
+      {unresolvedTickets.length > 0 && (
+        <Panel className="mb-4">
+          <PanelHead
+            title="Server-recorded kitchen ticket obligations"
+            sub="These are durable dispatch records, not proof that a physical ticket printed."
+            right={<Status>{unresolvedTickets.length} need review</Status>}
+          />
+          <div className="divide-y divide-border">
+            {unresolvedTickets.map((ticket) => {
+              const localJobs = jobs.filter(
+                (job) =>
+                  job.orderId === ticket.orderId &&
+                  ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType),
+              );
+              return (
+                <div key={ticket.id} className="px-4 py-3 text-[12px]">
+                  <div className="font-bold">
+                    {ticket.orderId} · {ticket.type} · {ticket.id}
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    {ticket.lines.length} production line(s) · server: {ticket.status} · local
+                    device jobs: {localJobs.length}
+                  </p>
+                  <p className="mt-1 text-muted-foreground">
+                    If no device job exists, check Kitchen and print history before an audited
+                    reprint. Do not assume this ticket was physically delivered.
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Printers" value={profile.printers.length} />
         <Metric label="Connected" value={connected} />
