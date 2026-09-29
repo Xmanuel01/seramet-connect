@@ -59,9 +59,7 @@ export function ordersDashboardFinancials(
 
   const invoiceOutstandingMinor = sumMinor(
     bills
-      .filter((bill) =>
-        ["UNPAID", "PARTIAL"].includes(bill.paymentStatus),
-      )
+      .filter((bill) => ["UNPAID", "PARTIAL"].includes(bill.paymentStatus))
       .map(due),
   );
   const paidInvoiceSalesMinor = sumMinor(
