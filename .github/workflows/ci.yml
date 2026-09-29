@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  kot-format-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TEMP diagnostic - format KOT changes without pushing
+        run: node scripts/temporary-kot-formatter-diagnostic.mjs
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
