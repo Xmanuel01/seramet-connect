@@ -1,4 +1,9 @@
 import {
+  authorizeKitchenReprint,
+  claimKitchenPrintObligation,
+  finishKitchenPrintObligation,
+} from "@/lib/kitchen-print-outbox";
+import {
   TransactionEngine,
   createEmptyTransactionState,
   normalizeTransactionState,
@@ -170,8 +175,17 @@ export function applyServerMutation(
 ) {
   const input = payload as Record<string, unknown>;
   switch (action) {
-    case "replaceState":
-      return input["state"] as TransactionState;
+    case "replaceState": {
+      const incoming = input["state"] as TransactionState;
+      if (
+        actor.authLevel !== "DEVELOPMENT" &&
+        JSON.stringify(incoming.kitchenPrintObligations ?? []) !==
+          JSON.stringify(state.kitchenPrintObligations ?? [])
+      ) {
+        throw new Error("Authoritative kitchen print obligations cannot be replaced by snapshots");
+      }
+      return incoming;
+    }
     case "holdOrder":
       return TransactionEngine.holdOrder(
         state,
@@ -278,6 +292,53 @@ export function applyServerMutation(
     }
     case "sendToKitchen":
       return TransactionEngine.sendToKitchen(state, String(input["orderId"]), actor.name);
+    case "claimKitchenPrintObligation":
+    case "finishKitchenPrintObligation":
+    case "authorizeKitchenReprint": {
+      const obligationId = String(input["obligationId"] ?? "");
+      const target = (state.kitchenPrintObligations ?? []).find(
+        (obligation) => obligation.id === obligationId,
+      );
+      if (
+        !target ||
+        target.tenantId !== actor.tenantId ||
+        target.branchId !== actor.branchId ||
+        !actor.assignedBranchIds.includes(target.branchId)
+      ) {
+        throw new Error("Kitchen print obligation is outside the authenticated branch");
+      }
+      const stamp = new Date().toISOString();
+      const obligations =
+        action === "claimKitchenPrintObligation"
+          ? claimKitchenPrintObligation(
+              state.kitchenPrintObligations ?? [],
+              obligationId,
+              String(input["claimId"] ?? ""),
+              actor,
+              stamp,
+            )
+          : action === "finishKitchenPrintObligation"
+            ? finishKitchenPrintObligation(
+                state.kitchenPrintObligations ?? [],
+                obligationId,
+                String(input["claimId"] ?? ""),
+                actor.id,
+                String(input["status"]) as "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN",
+                Array.isArray(input["bridgeJobIds"])
+                  ? (input["bridgeJobIds"] as string[]).slice(0, 16)
+                  : [],
+                stamp,
+                String(input["reason"] ?? ""),
+              )
+            : authorizeKitchenReprint(
+                state.kitchenPrintObligations ?? [],
+                obligationId,
+                actor.id,
+                String(input["reason"] ?? ""),
+                stamp,
+              );
+      return { ...state, kitchenPrintObligations: obligations };
+    }
     case "setProductionStationStatus":
       return TransactionEngine.setProductionStationStatus(
         state,
