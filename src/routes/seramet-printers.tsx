@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { KotOutboxRecovery } from "@/components/app/KotOutboxRecovery";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
@@ -280,6 +281,13 @@ function SerametPrinters() {
             </a>
           </div>
         </Panel>
+        <KotOutboxRecovery
+          branchId={selectedBranchId}
+          branchName={branch}
+          jobs={jobs}
+          canRoute={false}
+          sendKitchenTickets={sendKitchenTickets}
+        />
       </AppShell>
     );
   }
@@ -317,6 +325,14 @@ function SerametPrinters() {
           invert
         />
       </div>
+
+      <KotOutboxRecovery
+        branchId={selectedBranchId}
+        branchName={branch}
+        jobs={jobs}
+        canRoute={true}
+        sendKitchenTickets={sendKitchenTickets}
+      />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.8fr)]">
         <Panel>
