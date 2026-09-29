@@ -1,10 +1,10 @@
-import type { Order, BillingRecord } from "@/lib/transaction-engine";
+import type { TransactionOrder, BillingRecord } from "@/lib/transaction-engine";
 
 /**
  * The POS Orders badge counts only orders that still require cashier dispatch.
  * Kitchen work and billing remain authoritative, but live in their own screens.
  */
-export function pendingPosOrders<T extends Pick<Order, "id" | "status">>(
+export function pendingPosOrders<T extends Pick<TransactionOrder, "id" | "status">>(
   orders: readonly T[],
   bills: readonly Pick<BillingRecord, "orderIds">[],
 ): T[] {
@@ -15,7 +15,7 @@ export function pendingPosOrders<T extends Pick<Order, "id" | "status">>(
 }
 
 /** Kitchen orders can be billed even after leaving the POS entry queue. */
-export function unbilledKitchenOrders<T extends Pick<Order, "id" | "status">>(
+export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "status">>(
   orders: readonly T[],
   bills: readonly Pick<BillingRecord, "orderIds">[],
 ): T[] {
