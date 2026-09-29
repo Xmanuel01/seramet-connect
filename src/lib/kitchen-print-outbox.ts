@@ -193,7 +193,11 @@ export function authorizeKitchenReprint(
   if (previous.status === "CLAIMED") {
     const claimedAt = previous.claimedAt ? Date.parse(previous.claimedAt) : Number.NaN;
     const reviewedAt = Date.parse(stamp);
-    if (!Number.isFinite(claimedAt) || !Number.isFinite(reviewedAt) || reviewedAt - claimedAt < 120_000) {
+    if (
+      !Number.isFinite(claimedAt) ||
+      !Number.isFinite(reviewedAt) ||
+      reviewedAt - claimedAt < 120_000
+    ) {
       throw new Error(
         "A recently claimed ticket may already be printing; wait two minutes before authorizing a reprint",
       );
