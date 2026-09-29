@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { TransactionEngine, createEmptyTransactionState, type OrderDraft } from "@/lib/transaction-engine";
+import { createDefaultDemoPlatformState, DEMO_TENANT_ID, DEMO_WESTLANDS_BRANCH_ID } from "@/platform/demo/default-demo-data";
+import { ConfigurationRepository, setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 import { acknowledgedSyncStatus, transactionCacheKey } from "@/offline/offline-store";
 import {
   formatPosClock,
@@ -60,5 +63,45 @@ describe("offline isolation and acknowledgement safety", () => {
     expect(acknowledgedSyncStatus("conflict")).toBe("CONFLICT");
     expect(acknowledgedSyncStatus(undefined)).toBe("FAILED");
     expect(acknowledgedSyncStatus("rejected")).toBe("FAILED");
+  });
+});
+
+describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
+  beforeEach(() => {
+    setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+  });
+  it("moves the exact held order out of entry pending without deleting the kitchen or invoice record", () => {
+    const draft: OrderDraft = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      table: "04",
+      customer: "Table 04",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: "held-line",
+          productId: "p1",
+          name: "Chicken Biryani",
+          category: "Main Meals",
+          quantity: 1,
+          unitPrice: 1250,
+          productionStation: "MAIN KITCHEN",
+        },
+      ],
+    };
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
+    const orderId = state.orders[0]!.id;
+    expect(pendingPosOrders(state.orders, state.bills).map((order) => order.id)).toEqual([orderId]);
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(0);
+    expect(unbilledKitchenOrders(state.orders, state.bills)[0]?.id).toBe(orderId);
+    expect(state.orders[0]?.lines[0]?.sentAt).toBeTruthy();
+    state = TransactionEngine.prepareInvoiceForPayment(state, orderId, "Cashier");
+    expect(unbilledKitchenOrders(state.orders, state.bills)).toHaveLength(0);
+    expect(state.bills).toHaveLength(1);
+    expect(state.bills[0]?.orderIds).toEqual([orderId]);
+    expect(state.orders).toHaveLength(1);
   });
 });
