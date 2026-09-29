@@ -444,9 +444,9 @@ export function useTransactionEngine() {
         setRevision(nextRevision);
         revisionRef.current = nextRevision;
         // IndexedDB cache failures must never misreport a committed server save as failed.
-        void offlineStore.cacheState(activeTenantId, branchId, body.state, nextRevision).catch(
-          (cause) => console.warn("Unable to update the offline read cache", cause),
-        );
+        void offlineStore
+          .cacheState(activeTenantId, branchId, body.state, nextRevision)
+          .catch((cause) => console.warn("Unable to update the offline read cache", cause));
         setBackendStatus("synced");
         return body;
       } catch (error) {
