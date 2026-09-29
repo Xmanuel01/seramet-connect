@@ -28,6 +28,7 @@ export function useTransactionEngine() {
   const revisionRef = useRef(0);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [activeMutationCount, setActiveMutationCount] = useState(0);
+  const [offlineReplayInProgress, setOfflineReplayInProgress] = useState(false);
   const deviceIdRef = useRef("development-pos");
   const scopeKey = `${activeTenantId}:${branchId}`;
   const scopeRef = useRef(scopeKey);
@@ -187,7 +188,7 @@ export function useTransactionEngine() {
     const run = async () => {
       const commands = await offlineStore.replayable(activeTenantId, deviceIdRef.current);
       if (!commands.length) return;
-      setBackendStatus("reconnecting");
+      setOfflineReplayInProgress(true);
       for (const command of commands) {
         await offlineStore.updateCommand({ ...command, syncStatus: "SYNCING" });
       }
@@ -229,6 +230,7 @@ export function useTransactionEngine() {
     try {
       await promise;
     } finally {
+      setOfflineReplayInProgress(false);
       if (flushInFlightRef.current === promise) flushInFlightRef.current = null;
     }
   }, [activeTenantId, headers, refreshPendingCount, syncFromBackend]);
@@ -527,6 +529,7 @@ export function useTransactionEngine() {
     persistenceMode,
     pendingSyncCount,
     activeMutationCount,
+    offlineReplayInProgress,
     syncFromBackend,
     flushOfflineCommands,
   };
