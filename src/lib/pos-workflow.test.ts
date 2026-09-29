@@ -270,3 +270,99 @@ describe("two-branch concurrent-order source isolation", () => {
     expect(state.bills[0]?.branchId).toBe(DEMO_WESTLANDS_BRANCH_ID);
   });
 });
+
+
+describe("durable KOT delivery obligations", () => {
+  beforeEach(() => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+  });
+
+  const draft: OrderDraft = {
+    tenantId: DEMO_TENANT_ID,
+    branchId: DEMO_WESTLANDS_BRANCH_ID,
+    branch: "Westlands",
+    table: "07",
+    customer: "Table 07",
+    channel: "Dine-In",
+    cashier: "Cashier",
+    lines: [
+      {
+        id: "durable-kot-line",
+        productId: "p1",
+        name: "Chicken Biryani",
+        category: "Main Meals",
+        quantity: 1,
+        unitPrice: 1250,
+        productionStation: "MAIN KITCHEN",
+      },
+    ],
+  };
+
+  it("commits one logical KOT obligation with the kitchen state and never duplicates it", () => {
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(state.orders[0]?.status).toBe("SENT_TO_KITCHEN");
+    expect(state.productionPrintObligations).toHaveLength(1);
+    const obligation = state.productionPrintObligations![0]!;
+    expect(obligation.orderId).toBe(orderId);
+    expect(obligation.station).toBe("MAIN KITCHEN");
+    expect(obligation.lineIds).toEqual(["durable-kot-line"]);
+    expect(obligation.status).toBe("PENDING");
+
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(state.productionPrintObligations).toHaveLength(1);
+
+    state = TransactionEngine.markProductionPrintAttempting(
+      state,
+      [obligation.id],
+      "Cashier",
+      "WEST-POS-01",
+    );
+    expect(state.productionPrintObligations?.[0]?.status).toBe("ATTEMPTING");
+    state = TransactionEngine.markProductionPrintOutcome(
+      state,
+      obligation.id,
+      "DELIVERED",
+      "Cashier",
+    );
+    expect(state.productionPrintObligations?.[0]?.status).toBe("DELIVERED");
+    expect(state.productionPrintObligations?.[0]?.deliveredAt).toBeTruthy();
+  });
+
+  it("creates a separate durable obligation only for new kitchen amendment lines", () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      draft,
+      "OPEN",
+    );
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const originalObligation = state.productionPrintObligations![0]!.id;
+    const originalLines = state.orders[0]!.lines.map((line) => ({ ...line }));
+    const addition = {
+      id: "durable-addition",
+      productId: "p7",
+      name: "Chips",
+      category: "Sides",
+      quantity: 1,
+      unitPrice: 250,
+      productionStation: "MAIN KITCHEN",
+    };
+    state = TransactionEngine.updateOrderDraft(
+      state,
+      orderId,
+      { ...draft, lines: [...originalLines, addition] },
+      "Cashier",
+    );
+    expect(state.productionPrintObligations).toHaveLength(2);
+    const amendment = state.productionPrintObligations!.find(
+      (item) => item.id !== originalObligation,
+    )!;
+    expect(amendment.dispatchType).toBe("ADDITION");
+    expect(amendment.lineIds).toEqual(["durable-addition"]);
+    expect(amendment.status).toBe("PENDING");
+  });
+});
