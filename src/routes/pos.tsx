@@ -31,7 +31,7 @@ import {
   resolvePosTimeZone,
 } from "@/lib/pos-workflow";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
-import { verifyOrderTransition } from "@/lib/pos-transition-guards";
+import { kitchenJobsAcceptedForDelivery, verifyOrderTransition } from "@/lib/pos-transition-guards";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -1365,16 +1365,7 @@ function POS() {
   ) =>
     Boolean(
       (result.printResult &&
-        result.printResult.jobs.length > 0 &&
-        result.printResult.jobs.every((job) =>
-          result.printResult!.queue.some(
-            (queued) =>
-              queued.id === job.id &&
-              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-                queued.status,
-              ),
-          ),
-        )) ||
+        kitchenJobsAcceptedForDelivery(result.printResult.jobs, result.printResult.queue)) ||
       isStagingPrinterlessTestingEnabled() ||
       (result.printResult === null &&
         printJobs.some(
