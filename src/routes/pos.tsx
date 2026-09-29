@@ -967,7 +967,9 @@ function POS() {
         const kitchen = await ensureKitchenDispatched(orderTable);
         if (!kitchen) throw new Error("The order could not be routed to kitchen.");
         if (kitchen.persistence === "queued-offline") {
-          throw new Error("Kitchen dispatch is queued locally. Reconnect and verify the order before payment.");
+          throw new Error(
+            "Kitchen dispatch is queued locally. Reconnect and verify the order before payment.",
+          );
         }
         // Production must not proceed silently with a local-only order.
         if (!kitchenDispatchHasDelivery(kitchen)) {
@@ -1157,7 +1159,9 @@ function POS() {
       if (!items.length) return;
       try {
         if (pendingSyncCount > 0 && backendStatus !== "synced") {
-          setPrintNotice("Previous offline commands are pending. Wait for synchronization before holding again.");
+          setPrintNotice(
+            "Previous offline commands are pending. Wait for synchronization before holding again.",
+          );
           setPrintNoticeType("warning");
           return;
         }
@@ -1166,10 +1170,15 @@ function POS() {
           setActiveOrderId(result.order.id);
           setPrintNotice(`${result.order.id} queued locally. It is NOT confirmed by the server.`);
           setPrintNoticeType("warning");
-          setWorkflowNextStep("Reconnect, wait for synchronization, then verify this order in POS Orders.");
+          setWorkflowNextStep(
+            "Reconnect, wait for synchronization, then verify this order in POS Orders.",
+          );
           return;
         }
-        clearCurrentOrder(`${result.order.id} held and confirmed. Resume it from POS Orders.`, "success");
+        clearCurrentOrder(
+          `${result.order.id} held and confirmed. Resume it from POS Orders.`,
+          "success",
+        );
         setWorkflowNextStep("Open POS Orders to resume the held order or start a new order.");
       } catch (error) {
         setPrintNotice(error instanceof Error ? error.message : "The order could not be held.");
@@ -1218,7 +1227,8 @@ function POS() {
         order: activeOrder,
         state: transactionState,
         printResult: null,
-        persistence: backendStatus === "offline" ? "queued-offline" as const : "confirmed" as const,
+        persistence:
+          backendStatus === "offline" ? ("queued-offline" as const) : ("confirmed" as const),
       };
     }
     // The temporary staging exception only removes the physical delivery preflight.
@@ -1328,7 +1338,9 @@ function POS() {
         `Order ${authoritativeOrder.id} saved to Kitchen, but print queuing failed: ${error instanceof Error ? error.message : "unknown printer error"}.`,
       );
       setPrintNoticeType("warning");
-      setWorkflowNextStep("Check the existing kitchen ticket and Printers; do not resend sent items.");
+      setWorkflowNextStep(
+        "Check the existing kitchen ticket and Printers; do not resend sent items.",
+      );
       return {
         order: authoritativeOrder,
         state: transition.state,
@@ -1389,7 +1401,8 @@ function POS() {
         order: activeOrder,
         state: transactionState,
         printResult: null,
-        persistence: backendStatus === "offline" ? "queued-offline" as const : "confirmed" as const,
+        persistence:
+          backendStatus === "offline" ? ("queued-offline" as const) : ("confirmed" as const),
       };
     }
     return queueKitchenTicketsForTable(tableNo);
@@ -1437,7 +1450,9 @@ function POS() {
       throw new Error("The server did not return a payable invoice for this order and branch.");
     }
     if ("offline" in prepared && prepared.offline) {
-      throw new Error(`Invoice for ${orderId} queued locally. Wait for synchronization, then verify Invoices before retrying.`);
+      throw new Error(
+        `Invoice for ${orderId} queued locally. Wait for synchronization, then verify Invoices before retrying.`,
+      );
     }
     return { prepared, bill };
   };
@@ -1478,9 +1493,13 @@ function POS() {
     void runOrderAction(async () => {
       if (!items.length) return;
       if (pendingSyncCount > 0) {
-        setPrintNotice("Pending offline commands must synchronize before another kitchen dispatch.");
+        setPrintNotice(
+          "Pending offline commands must synchronize before another kitchen dispatch.",
+        );
         setPrintNoticeType("warning");
-        setWorkflowNextStep("Verify earlier offline commands before sending another kitchen ticket.");
+        setWorkflowNextStep(
+          "Verify earlier offline commands before sending another kitchen ticket.",
+        );
         return;
       }
       if (selectedChannel?.requiresTable && !orderTable) {
@@ -1519,12 +1538,16 @@ function POS() {
             `${result.order.id} saved to Kitchen, but KOT delivery is unconfirmed. Verify Printers before billing.`,
           );
           setPrintNoticeType("warning");
-          setWorkflowNextStep("Check Kitchen and Printers before invoicing; do not resend sent items.");
+          setWorkflowNextStep(
+            "Check Kitchen and Printers before invoicing; do not resend sent items.",
+          );
         }
       } catch (error) {
         setPrintNotice(cashierErrorMessage(error, "The kitchen order could not be sent."));
         setPrintNoticeType("warning");
-        setWorkflowNextStep("Check POS Orders and Kitchen before trying again; never repeat an uncertain KOT.");
+        setWorkflowNextStep(
+          "Check POS Orders and Kitchen before trying again; never repeat an uncertain KOT.",
+        );
       }
     });
 
@@ -1532,7 +1555,9 @@ function POS() {
     void runOrderAction(async () => {
       if (!items.length) return;
       if (pendingSyncCount > 0 || backendStatus === "offline") {
-        setPrintNotice("Offline changes are unconfirmed. Reconnect and verify Orders before billing.");
+        setPrintNotice(
+          "Offline changes are unconfirmed. Reconnect and verify Orders before billing.",
+        );
         setPrintNoticeType("warning");
         return;
       }
@@ -1557,7 +1582,9 @@ function POS() {
             "Order saved to Kitchen, but KOT delivery is unconfirmed. Verify Printers before billing.",
           );
           setPrintNoticeType("warning");
-          setWorkflowNextStep("Check Kitchen and Printers, then select Invoice without resending the KOT.");
+          setWorkflowNextStep(
+            "Check Kitchen and Printers, then select Invoice without resending the KOT.",
+          );
           return;
         }
         // If the kitchen mutation committed but invoice preparation failed,
@@ -1568,14 +1595,18 @@ function POS() {
           cashierErrorMessage(error, "Check Kitchen and Invoices before retrying this order."),
         );
         setPrintNoticeType("warning");
-        setWorkflowNextStep("Reopen the exact existing order in POS Orders and select Invoice after verifying Kitchen.");
+        setWorkflowNextStep(
+          "Reopen the exact existing order in POS Orders and select Invoice after verifying Kitchen.",
+        );
       }
     });
 
   const moveOrderToInvoice = (printBill: boolean) =>
     void runOrderAction(async () => {
       if (backendStatus === "offline" || pendingSyncCount > 0) {
-        setPrintNotice("Offline changes are unconfirmed. Reconnect and verify Orders before invoicing.");
+        setPrintNotice(
+          "Offline changes are unconfirmed. Reconnect and verify Orders before invoicing.",
+        );
         setPrintNoticeType("warning");
         return;
       }
