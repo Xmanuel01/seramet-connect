@@ -54,7 +54,9 @@ export async function handleRealtimeApi(request: Request, env: SerametEnv) {
           });
           for (const event of events) {
             controller.enqueue(
-              encoder.encode(`id: ${event.createdAt}|${event.id}\nevent: seramet\ndata: ${JSON.stringify(event)}\n\n`),
+              encoder.encode(
+                `id: ${event.createdAt}|${event.id}\nevent: seramet\ndata: ${JSON.stringify(event)}\n\n`,
+              ),
             );
             after = event.createdAt;
             afterId = event.id;
