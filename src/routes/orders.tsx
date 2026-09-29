@@ -50,11 +50,7 @@ function Orders() {
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
   const rows = state.orders
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
-    .filter(
-      (order) =>
-        !periodDate ||
-        orderBusinessDate(order, timeZone) === periodDate,
-    );
+    .filter((order) => !periodDate || orderBusinessDate(order, timeZone) === periodDate);
   const financials = ordersDashboardFinancials(
     state,
     matchesBranch,
@@ -191,11 +187,7 @@ function Orders() {
         </div>
       )}
       <Panel className="mt-4">
-        <PanelHead
-          title="All orders"
-          sub="Permanent order history - no hard deletion"
-
-        />
+        <PanelHead title="All orders" sub="Permanent order history - no hard deletion" />
         <div className="border-b border-border px-4 py-3">
           <Chips
             items={[
@@ -233,7 +225,12 @@ function Orders() {
                 <div className="rounded-md bg-secondary/60 px-2 py-1.5">
                   <span className="text-muted-foreground">Created </span>
                   <span className="num font-semibold">
-                    {formatTime(order.createdAt, { hour: "2-digit", minute: "2-digit" }, undefined, timeZone)}
+                    {formatTime(
+                        order.createdAt,
+                        { hour: "2-digit", minute: "2-digit" },
+                        undefined,
+                        timeZone,
+                      )}
                   </span>
                 </div>
                 <div className="rounded-md bg-secondary/60 px-2 py-1.5">
@@ -294,7 +291,12 @@ function Orders() {
                     </button>
                   </TD>
                   <TD className="num text-muted-foreground">
-                    {formatTime(order.createdAt, { hour: "2-digit", minute: "2-digit" }, undefined, timeZone)}
+                    {formatTime(
+                    order.createdAt,
+                    { hour: "2-digit", minute: "2-digit" },
+                    undefined,
+                    timeZone,
+                  )}
                   </TD>
                   <TD className="font-medium">{order.customer}</TD>
                   <TD className="text-muted-foreground">{order.channel}</TD>
@@ -345,7 +347,15 @@ function Orders() {
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Created</dt>
-                  <dd>{orderBusinessDate(detailsOrder, timeZone)} · {formatTime(detailsOrder.createdAt, { hour: "2-digit", minute: "2-digit" }, undefined, timeZone)}</dd>
+                  <dd>
+                    {orderBusinessDate(detailsOrder, timeZone)} ·{" "}
+                    {formatTime(
+                      detailsOrder.createdAt,
+                      { hour: "2-digit", minute: "2-digit" },
+                      undefined,
+                      timeZone,
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Cashier</dt>
@@ -362,7 +372,9 @@ function Orders() {
                 <div className="mb-2 font-semibold">Order items</div>
                 {detailsOrder.lines.map((line) => (
                   <div key={line.id} className="flex justify-between gap-3 py-1">
-                    <span>{line.quantity} × {line.name}</span>
+                    <span>
+                      {line.quantity} × {line.name}
+                    </span>
                     <span className="num">{ksh(line.quantity * line.unitPrice)}</span>
                   </div>
                 ))}
