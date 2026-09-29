@@ -25,6 +25,12 @@ lost. Never automatically print again because a status is old.
 - `DIGITAL_DISPLAYED`: specifically permitted printerless staging uses
   digital Kitchen, not a claim of physical paper.
 - `UNCERTAIN`: dispatch/storage failed or its outcome cannot be established.
+- `SUPERSEDED`: an order was canceled before this unclaimed ticket was
+  printed. The original obligation remains audited but must never be dispatched.
+  A VOID ticket is necessary only when an original could actually have been
+  sent or displayed. Reducing or removing an item with an unclaimed original
+  ticket is blocked until that original is reconciled, preventing stale
+  quantities from being printed after later amendments.
 
 KOT IDs survive retries and separate NEW, ADDITION and VOID waves. A duplicate
 claim fails; the operation ID and server revision prevent racing terminals
