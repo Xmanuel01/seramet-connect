@@ -46,18 +46,10 @@ export async function verifyStagingEndpoint({
           return;
         }
         status = check.issues.join(", ") || "HEALTH_NOT_READY";
-        if (check.issues.includes("MALWARE_SCANNER_REQUIRED")) {
-          throw new Error(
-            "MALWARE_SCANNER_REQUIRED: configure the real Cloudflare scanner service binding",
-          );
-        }
       } else {
         status = "HTTP_" + response.status;
       }
     } catch (cause) {
-      if (cause instanceof Error && cause.message.startsWith("MALWARE_SCANNER_REQUIRED:")) {
-        throw cause;
-      }
       status = cause instanceof Error ? cause.name : "HEALTH_REQUEST_FAILED";
     }
     console.log("Staging " + endpoint + " check " + attempt + "/" + attempts + ": " + status);
