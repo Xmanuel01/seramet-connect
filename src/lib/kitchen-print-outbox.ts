@@ -125,7 +125,7 @@ export function finishKitchenPrintObligation(
   existing: readonly KitchenPrintObligation[],
   obligationId: string,
   claimId: string,
-  actorId: string,
+  actor: { id: string; deviceId?: string },
   status: "SPOOLED" | "DIGITAL_QUEUED" | "UNCERTAIN",
   bridgeJobIds: readonly string[],
   stamp: string,
@@ -142,10 +142,17 @@ export function finishKitchenPrintObligation(
   ) {
     throw new Error("Invalid printer bridge job evidence");
   }
-  if (target.claimId !== claimId || target.claimedBy !== actorId) {
+  if (target.claimId !== claimId || target.claimedBy !== actor.id) {
     throw new Error("Only the operator who claimed this ticket can report its outcome");
   }
-  if (target.status === status && target.bridgeJobIds?.join("|") === bridgeJobIds.join("|")) {
+  if (target.claimedDeviceId && target.claimedDeviceId !== actor.deviceId) {
+    throw new Error("Only the device that claimed this ticket can report its outcome");
+  }
+  const uniqueBridgeJobIds = [...new Set(bridgeJobIds)];
+  if (status === "SPOOLED" && uniqueBridgeJobIds.length === 0) {
+    throw new Error("OS-spool acceptance requires durable bridge job evidence");
+  }
+  if (target.status === status && target.bridgeJobIds?.join("|") === uniqueBridgeJobIds.join("|")) {
     return [...existing];
   }
   if (target.status !== "CLAIMED") {
@@ -159,7 +166,7 @@ export function finishKitchenPrintObligation(
       ? {
           ...obligation,
           status,
-          bridgeJobIds: [...bridgeJobIds],
+          bridgeJobIds: uniqueBridgeJobIds,
           ...(reason ? { failureReason: reason.trim() } : {}),
           updatedAt: stamp,
         }
@@ -182,6 +189,15 @@ export function authorizeKitchenReprint(
   if (!previous) throw new Error("Original kitchen ticket not found");
   if (!["CLAIMED", "UNCERTAIN", "SPOOLED", "DIGITAL_QUEUED"].includes(previous.status)) {
     throw new Error("An unattempted ticket cannot be reprinted");
+  }
+  if (previous.status === "CLAIMED") {
+    const claimedAt = previous.claimedAt ? Date.parse(previous.claimedAt) : Number.NaN;
+    const reviewedAt = Date.parse(stamp);
+    if (!Number.isFinite(claimedAt) || !Number.isFinite(reviewedAt) || reviewedAt - claimedAt < 120_000) {
+      throw new Error(
+        "A recently claimed ticket may already be printing; wait two minutes before authorizing a reprint",
+      );
+    }
   }
   if (reason.trim().length < 12 || reason.length > 500) {
     throw new Error("Reprint requires a specific review reason (12–500 characters)");
