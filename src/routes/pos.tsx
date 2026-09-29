@@ -1347,8 +1347,8 @@ function POS() {
           const notice = printerlessStaging
             ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
             : result.printResult?.jobs.length
-              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
-              : `${result.order.id} is already in kitchen; no new KOT is required.`;
+              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Reopen it from POS Orders to invoice.`
+              : `${result.order.id} is already in kitchen. Reopen it from POS Orders to invoice.`;
           clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
         } else if (!result.printResult && !printerlessStaging) {
           setPrintNotice(
@@ -1374,9 +1374,14 @@ function POS() {
         return;
       }
       try {
-        const result = await queueKitchenTicketsForTable();
+        // Do not resend an already-dispatched order merely to prepare its bill.
+        // Only newly added items require another kitchen amendment.
+        const alreadyDispatched = activeOrderKitchenSent && !hasUnsentItems && activeOrder;
+        const result = alreadyDispatched
+          ? { order: activeOrder, state: transactionState, printResult: null }
+          : await queueKitchenTicketsForTable();
         if (!result) return;
-        if (!kitchenDispatchHasDelivery(result)) {
+        if (!alreadyDispatched && !kitchenDispatchHasDelivery(result)) {
           setPrintNotice(
             "Order saved in Kitchen, but KOT delivery is unconfirmed. " +
               "Check Printers before creating the customer bill.",
@@ -1416,39 +1421,46 @@ function POS() {
     if (orderActionRef.current) return;
     orderActionRef.current = true;
     setOrderActionBusy(true);
-    if (!activeOrder || !canPrintBill) {
-      setPrintNotice("Send the order to kitchen before printing a bill or creating an invoice.");
+    if (!activeOrder || !canPrintBill || hasUnsentItems) {
+      setPrintNotice(
+        hasUnsentItems
+          ? "Send newly added items to kitchen before creating the invoice."
+          : "Send the order to kitchen before printing a bill or creating an invoice.",
+      );
       setPrintNoticeType("warning");
       orderActionRef.current = false;
       setOrderActionBusy(false);
       return;
     }
     try {
-      const orderForPrint = buildPrintOrder();
-      await mutateTransaction("requestBillWithDraft", {
-        orderId: activeOrder.id,
-        draft: buildTransactionDraft(),
-      });
+      const orderId = activeOrder.id;
+      // Both the direct Invoice and combined Send kitchen & bill actions use
+      // the same idempotent, exact-order invoice preparation command.
+      const billing = await mutateTransaction("prepareInvoiceForPayment", { orderId });
+      const confirmedBill = billing?.state.bills.find(
+        (bill) =>
+          bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
+      );
+      if (!confirmedBill) {
+        throw new Error("The server did not confirm an invoice for this order.");
+      }
       if (printBill) {
-        const result = printCustomerDocument(orderForPrint, "BILL");
+        const result = printCustomerDocument(buildPrintOrder(), "BILL");
+        if (result.jobs.length > 0) {
+          setTrackedPrint({ jobIds: result.jobs.map((job) => job.id), label: "Customer bill" });
+        }
         clearCurrentOrder(
           result.jobs.length > 0
-            ? "Customer bill queued for the configured printer. Delivery is not yet confirmed."
-            : `Invoice created without a bill print job. ${result.skipped[0] ?? "Printing is not configured."}`,
-          result.jobs.length > 0 ? "idle" : "warning",
+            ? `${orderId} invoiced as ${confirmedBill.id}. Customer bill queued; delivery is not yet confirmed.`
+            : `${orderId} invoiced as ${confirmedBill.id}. ${result.skipped[0] ?? "Printing is not configured."}`,
+          result.jobs.length > 0 ? "success" : "warning",
         );
-        if (result.jobs.length > 0) {
-          setTrackedPrint({
-            jobIds: result.jobs.map((job) => job.id),
-            label: "Customer bill",
-          });
-        }
-        return;
+      } else {
+        clearCurrentOrder(`${orderId} invoiced as ${confirmedBill.id}.`, "success");
       }
-      clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
       await navigate({ to: "/invoices" });
     } catch (error) {
-      setPrintNotice(error instanceof Error ? error.message : "The invoice could not be created.");
+      setPrintNotice(cashierErrorMessage(error, "The invoice could not be created."));
       setPrintNoticeType("warning");
     } finally {
       orderActionRef.current = false;
@@ -1915,7 +1927,7 @@ function POS() {
                 <div className="max-h-80 space-y-1 overflow-y-auto">
                   {activePosOrders.length === 0 && (
                     <div className="rounded-md border border-dashed border-border px-3 py-4 text-[12px] text-muted-foreground">
-                      No held or kitchen orders waiting in POS.
+                      No unbilled POS orders. Kitchen orders stay here until invoiced.
                     </div>
                   )}
                   {activePosOrders.map((order) => (
@@ -2252,10 +2264,16 @@ function POS() {
               </Btn>
               {canPrintBill ? (
                 <>
-                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(true)}
+                    disabled={orderActionBusy || hasUnsentItems}
+                  >
                     Print bill
                   </Btn>
-                  <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(false)}
+                    disabled={orderActionBusy || hasUnsentItems}
+                  >
                     <FileText className="h-4 w-4" />
                     Invoice
                   </Btn>
