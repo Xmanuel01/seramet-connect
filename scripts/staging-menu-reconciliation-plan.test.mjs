@@ -151,7 +151,7 @@ test("identifies the exact duplicate, superseded V1 and unscanned canonical V3",
     plan.dispositions.map((item) => item.reason),
     [
       "SUPERSEDED_V1_TEMPLATE",
-      "CANONICAL_V3_REFERENCE_ONLY_REQUIRES_FRESH_MALWARE_SCAN",
+      "CANONICAL_V3_REFERENCE_ONLY_REQUIRES_FRESH_VALIDATION",
       "EXACT_V3_DUPLICATE",
     ],
   );
