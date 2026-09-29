@@ -80,7 +80,8 @@ describe("device print queue store", () => {
     );
   });
 });
-\nafterEach(() => {
+
+afterEach(() => {
   DevicePrintQueueStore.resetForTests();
   vi.unstubAllGlobals();
 });
