@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createEmptyTransactionState, TransactionEngine, type OrderDraft } from "@/lib/transaction-engine";
+import {
+  createEmptyTransactionState,
+  TransactionEngine,
+  type OrderDraft,
+} from "@/lib/transaction-engine";
 import {
   createDefaultDemoPlatformState,
   DEMO_NGONG_BRANCH_ID,
@@ -55,7 +59,10 @@ describe("authoritative durable KOT outbox", () => {
   });
 
   it("atomically creates exactly two separate immutable station obligations on initial dispatch", () => {
-    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), createDraft());
+    let state = TransactionEngine.holdOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      createDraft(),
+    );
     const orderId = state.orders[0]!.id;
     expect(state.kitchenPrintObligations).toEqual([]);
     state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
@@ -66,32 +73,59 @@ describe("authoritative durable KOT outbox", () => {
     );
     expect(state.kitchenPrintObligations?.every((item) => item.status === "PENDING")).toBe(true);
     expect(
-      state.kitchenPrintObligations?.every((item) => item.orderId === orderId && item.kind === "ORIGINAL"),
+      state.kitchenPrintObligations?.every(
+        (item) => item.orderId === orderId && item.kind === "ORIGINAL",
+      ),
     ).toBe(true);
-    expect(state.kitchenPrintObligations?.find((item) => item.station === "BAR")?.lines[0]?.id).toBe(
-      "juice",
-    );
-    expect(pendingUnclaimedKitchenTickets(state.kitchenPrintObligations ?? [], DEMO_NGONG_BRANCH_ID)).toHaveLength(0);
+    expect(
+      state.kitchenPrintObligations?.find((item) => item.station === "BAR")?.lines[0]?.id,
+    ).toBe("juice");
+    expect(
+      pendingUnclaimedKitchenTickets(state.kitchenPrintObligations ?? [], DEMO_NGONG_BRANCH_ID),
+    ).toHaveLength(0);
     const repeated = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
     expect(repeated.kitchenPrintObligations).toEqual(state.kitchenPrintObligations);
   });
 
   it("claims once, tracks OS spool acceptance separately from physical print, and requires audited reprint", () => {
-    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), createDraft());
+    let state = TransactionEngine.holdOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      createDraft(),
+    );
     state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Cashier");
     const original = state.kitchenPrintObligations![0]!;
     const claimId = "claim-test-original";
     const actor = { id: "cashier-1", deviceId: "pos-1" };
-    let claims = claimKitchenPrintObligation(state.kitchenPrintObligations!, original.id, claimId, actor, "2026-09-29T01:00:00.000Z");
+    let claims = claimKitchenPrintObligation(
+      state.kitchenPrintObligations!,
+      original.id,
+      claimId,
+      actor,
+      "2026-09-29T01:00:00.000Z",
+    );
     expect(claims.find((item) => item.id === original.id)?.status).toBe("CLAIMED");
     expect(
       claimKitchenPrintObligation(claims, original.id, claimId, actor, "2026-09-29T01:00:01.000Z"),
     ).toEqual(claims);
     expect(() =>
-      claimKitchenPrintObligation(claims, original.id, "second-device-claim", { id: "cashier-2" }, "2026-09-29T01:00:02.000Z"),
+      claimKitchenPrintObligation(
+        claims,
+        original.id,
+        "second-device-claim",
+        { id: "cashier-2" },
+        "2026-09-29T01:00:02.000Z",
+      ),
     ).toThrow(/already claimed/i);
     expect(() =>
-      finishKitchenPrintObligation(claims, original.id, "wrong-claim", actor.id, "SPOOLED", [], "2026-09-29T01:00:03.000Z"),
+      finishKitchenPrintObligation(
+        claims,
+        original.id,
+        "wrong-claim",
+        actor.id,
+        "SPOOLED",
+        [],
+        "2026-09-29T01:00:03.000Z",
+      ),
     ).toThrow(/claimed this ticket/i);
     claims = finishKitchenPrintObligation(
       claims,
@@ -104,7 +138,13 @@ describe("authoritative durable KOT outbox", () => {
     );
     expect(claims.find((item) => item.id === original.id)?.status).toBe("SPOOLED");
     expect(() =>
-      claimKitchenPrintObligation(claims, original.id, "automatic-retry", actor, "2026-09-29T01:00:05.000Z"),
+      claimKitchenPrintObligation(
+        claims,
+        original.id,
+        "automatic-retry",
+        actor,
+        "2026-09-29T01:00:05.000Z",
+      ),
     ).toThrow(/already claimed/i);
     const audited = authorizeKitchenReprint(
       claims,
@@ -120,7 +160,10 @@ describe("authoritative durable KOT outbox", () => {
   });
 
   it("a lost bridge acknowledgement stays claimed and cannot be automatically replayed", () => {
-    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), createDraft());
+    let state = TransactionEngine.holdOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      createDraft(),
+    );
     state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Cashier");
     const obligation = state.kitchenPrintObligations![0]!;
     const claimed = claimKitchenPrintObligation(
@@ -134,12 +177,21 @@ describe("authoritative durable KOT outbox", () => {
     expect(restarted.find((item) => item.id === obligation.id)?.status).toBe("CLAIMED");
     expect(pendingUnclaimedKitchenTickets(restarted, DEMO_WESTLANDS_BRANCH_ID)).toHaveLength(1);
     expect(() =>
-      claimKitchenPrintObligation(restarted, obligation.id, "restarted-device", { id: "cashier-1" }, "2026-09-29T01:01:00.000Z"),
+      claimKitchenPrintObligation(
+        restarted,
+        obligation.id,
+        "restarted-device",
+        { id: "cashier-1" },
+        "2026-09-29T01:01:00.000Z",
+      ),
     ).toThrow();
   });
 
   it("only new line snapshots generate an amendment ticket after original kitchen dispatch", () => {
-    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), createDraft());
+    let state = TransactionEngine.holdOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      createDraft(),
+    );
     const orderId = state.orders[0]!.id;
     state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
     const originalIds = state.kitchenPrintObligations!.map((item) => item.id);
@@ -163,6 +215,8 @@ describe("authoritative durable KOT outbox", () => {
     expect(state.kitchenPrintObligations).toHaveLength(3);
     const amendment = state.kitchenPrintObligations!.find((item) => item.kind === "ADDITION")!;
     expect(amendment.lines.map((line) => line.id)).toEqual(["chips"]);
-    expect(originalIds.every((id) => state.kitchenPrintObligations!.some((item) => item.id === id))).toBe(true);
+    expect(
+      originalIds.every((id) => state.kitchenPrintObligations!.some((item) => item.id === id)),
+    ).toBe(true);
   });
 });
