@@ -9,7 +9,7 @@ export type KitchenPrintObligation = {
   branch: string;
   orderId: string;
   station: string;
-  kind: "ORIGINAL" | "ADDITION" | "AUDITED_REPRINT";
+  kind: "ORIGINAL" | "ADDITION" | "VOID" | "AUDITED_REPRINT";
   status: KitchenPrintStatus;
   lines: TransactionLine[];
   snapshot: {
@@ -45,7 +45,7 @@ export function appendKitchenPrintObligations(
   existing: readonly KitchenPrintObligation[],
   order: TransactionOrder,
   newlySentLines: readonly TransactionLine[],
-  kind: "ORIGINAL" | "ADDITION",
+  kind: "ORIGINAL" | "ADDITION" | "VOID",
   stamp: string,
 ): KitchenPrintObligation[] {
   const groups = new Map<string, TransactionLine[]>();
