@@ -121,17 +121,41 @@ describe("authoritative durable KOT outbox", () => {
         claims,
         original.id,
         "wrong-claim",
-        actor.id,
+        actor,
         "SPOOLED",
         [],
         "2026-09-29T01:00:03.000Z",
       ),
     ).toThrow(/claimed this ticket/i);
+
+    expect(() =>
+      finishKitchenPrintObligation(
+        claims,
+        original.id,
+        claimId,
+        { id: actor.id, deviceId: "different-device" },
+        "SPOOLED",
+        ["stable-bridge-copy-1"],
+        "2026-09-29T01:00:03.500Z",
+      ),
+    ).toThrow(/device that claimed/i);
+    expect(() =>
+      finishKitchenPrintObligation(
+        claims,
+        original.id,
+        claimId,
+        actor,
+        "SPOOLED",
+        [],
+        "2026-09-29T01:00:03.750Z",
+      ),
+    ).toThrow(/bridge job evidence/i);
+
     claims = finishKitchenPrintObligation(
       claims,
       original.id,
       claimId,
-      actor.id,
+      actor,
       "SPOOLED",
       ["stable-bridge-copy-1"],
       "2026-09-29T01:00:04.000Z",
@@ -176,6 +200,23 @@ describe("authoritative durable KOT outbox", () => {
     const restarted = structuredClone(claimed);
     expect(restarted.find((item) => item.id === obligation.id)?.status).toBe("CLAIMED");
     expect(pendingUnclaimedKitchenTickets(restarted, DEMO_WESTLANDS_BRANCH_ID)).toHaveLength(1);
+    expect(() =>
+      authorizeKitchenReprint(
+        restarted,
+        obligation.id,
+        "manager-1",
+        "Manager reviewed an apparent missing ticket",
+        "2026-09-29T01:01:00.000Z",
+      ),
+    ).toThrow(/wait two minutes/i);
+    const reviewed = authorizeKitchenReprint(
+      restarted,
+      obligation.id,
+      "manager-1",
+      "Manager reviewed the kitchen and confirmed no ticket after the wait",
+      "2026-09-29T01:02:01.000Z",
+    );
+    expect(reviewed[0]?.kind).toBe("AUDITED_REPRINT");
     expect(() =>
       claimKitchenPrintObligation(
         restarted,
