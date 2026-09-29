@@ -1774,6 +1774,33 @@ export const TransactionEngine = {
     return this.createOrder(state, draft, "HELD");
   },
 
+  /** Atomically save and hold an existing open order without creating another ID.
+   * A sent or invoiced order may never return to Held.
+   */
+  holdExistingOrder(state: TransactionState, orderId: string, draft: OrderDraft, user: string) {
+    const previous = state.orders.find((item) => item.id === orderId);
+    if (!previous || !["OPEN", "HELD"].includes(previous.status) || previous.lines.some((line) => line.sentAt)) {
+      throw new Error("Only unsent open or held orders can be held again.");
+    }
+    const next = this.updateOrderDraft(state, orderId, draft, user);
+    const order = next.orders.find((item) => item.id === orderId)!;
+    if (order.status === "OPEN") {
+      order.status = "HELD";
+      order.updatedAt = now();
+      audit(next, {
+        actor: user,
+        role: "Cashier",
+        branch: order.branch,
+        module: "Orders",
+        action: "Held existing order",
+        record: order.id,
+        before: "OPEN",
+        after: "HELD",
+      });
+    }
+    return next;
+  },
+
   releaseHeldOrder(state: TransactionState, orderId: string, user: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
