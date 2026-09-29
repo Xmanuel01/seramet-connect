@@ -2068,23 +2068,34 @@ export const TransactionEngine = {
       };
     });
     if (additions.length) {
+      const amendmentId = id("AMD", next, "productionAmendments");
+      const amendmentLines = additions.map((line) => ({
+        ...line,
+        sentAt: stamp,
+        sentQuantity: line.quantity,
+      }));
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: amendmentId,
         tenantId: scope.tenantId,
         branchId: scope.branchId,
         branch: scope.branch,
         orderId,
         type: "ADDITION",
-        lines: additions.map((line) => ({
-          ...line,
-          sentAt: stamp,
-          sentQuantity: line.quantity,
-        })),
+        lines: amendmentLines,
         reason: "POS order amended after the original kitchen ticket",
         requestedBy: user,
         printStatus: "PENDING",
         createdAt: stamp,
       });
+      createProductionPrintObligations(
+        next,
+        { ...order, tenantId: scope.tenantId, branchId: scope.branchId, branch: scope.branch },
+        amendmentLines,
+        "ADDITION",
+        amendmentId,
+        user,
+        stamp,
+      );
     }
     if (removals.length) {
       next.productionAmendments.unshift({
