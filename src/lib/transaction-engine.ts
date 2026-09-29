@@ -1779,7 +1779,11 @@ export const TransactionEngine = {
    */
   holdExistingOrder(state: TransactionState, orderId: string, draft: OrderDraft, user: string) {
     const previous = state.orders.find((item) => item.id === orderId);
-    if (!previous || !["OPEN", "HELD"].includes(previous.status) || previous.lines.some((line) => line.sentAt)) {
+    if (
+      !previous ||
+      !["OPEN", "HELD"].includes(previous.status) ||
+      previous.lines.some((line) => line.sentAt)
+    ) {
       throw new Error("Only unsent open or held orders can be held again.");
     }
     const next = this.updateOrderDraft(state, orderId, draft, user);
