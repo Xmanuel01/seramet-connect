@@ -1324,8 +1324,31 @@ function POS() {
   // Every invoice entry path resolves the exact authoritative order and branch.
   // Preserve the resulting snapshot for permitted offline payment preparation.
   const preparePayableInvoice = async (orderId: string, sourceState: TransactionState) => {
+    let authoritativeSource = sourceState;
+    const selectedOrder = sourceState.orders.find((candidate) => candidate.id === orderId);
+    // Save an explicitly changed customer before billing, without editing sent
+    // kitchen lines or issuing an unnecessary extra command on the common path.
+    if (
+      selectedOrder &&
+      activeOrder?.id === orderId &&
+      (linkedCustomer?.id ?? null) !== (selectedOrder.customerId ?? null)
+    ) {
+      const update = await mutateTransaction(
+        "upsertOrderDraft",
+        { orderId, draft: buildTransactionDraft(), targetStatus: "OPEN" },
+        () =>
+          TransactionEngine.updateOrderDraft(
+            authoritativeSource,
+            orderId,
+            buildTransactionDraft(),
+            currentUser.name,
+          ),
+      );
+      if (!update?.state) throw new Error("Customer details were not confirmed before billing.");
+      authoritativeSource = update.state;
+    }
     const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
-      TransactionEngine.prepareInvoiceForPayment(sourceState, orderId, currentUser.name),
+      TransactionEngine.prepareInvoiceForPayment(authoritativeSource, orderId, currentUser.name),
     );
     const order = prepared?.state.orders.find(
       (candidate) =>
