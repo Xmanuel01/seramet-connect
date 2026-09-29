@@ -135,3 +135,80 @@ describe("branch-correct invoice visibility", () => {
     ).toBe("2026-09-28");
   });
 });
+
+describe("real three-order cashier-to-kitchen-to-payment acceptance", () => {
+  beforeEach(() => {
+    setConfigurationRepositoryForTests(
+      new ConfigurationRepository(createDefaultDemoPlatformState()),
+    );
+  });
+
+  it("decrements pending 3→2→1→0 without deleting kitchen history or duplicating paid receipts", () => {
+    const makeDraft = (number: number): OrderDraft => ({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      table: String(number).padStart(2, "0"),
+      customer: `Table ${number}`,
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: `test-line-${number}`,
+          productId: "p1",
+          name: "Chicken Biryani",
+          category: "Main Meals",
+          quantity: 1,
+          unitPrice: 1250,
+          productionStation: "MAIN KITCHEN",
+        },
+      ],
+    });
+    let state = createEmptyTransactionState(DEMO_TENANT_ID);
+    const ids: string[] = [];
+    for (const number of [1, 2, 3]) {
+      state = TransactionEngine.holdOrder(state, makeDraft(number));
+      ids.push(state.orders[0]!.id);
+    }
+    expect(new Set(ids).size).toBe(3);
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(3);
+    expect(state.bills).toHaveLength(0);
+
+    // Send the first held order to the kitchen, but do not bill it yet.
+    state = TransactionEngine.sendToKitchen(state, ids[0]!, "Cashier");
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(2);
+    expect(unbilledKitchenOrders(state.orders, state.bills).map((o) => o.id)).toContain(ids[0]);
+
+    // A separate held order must dispatch and produce only its own invoice.
+    state = TransactionEngine.sendToKitchen(state, ids[1]!, "Cashier");
+    state = TransactionEngine.prepareInvoiceForPayment(state, ids[1]!, "Cashier");
+    state = TransactionEngine.prepareInvoiceForPayment(state, ids[1]!, "Cashier");
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(1);
+    expect(state.bills).toHaveLength(1);
+    expect(state.bills[0]?.orderIds).toEqual([ids[1]]);
+    expect(state.bills[0]?.orderIds).not.toContain(ids[0]);
+
+    // Dispatch and settle the third using a simulated confirmed provider event.
+    state = TransactionEngine.sendToKitchen(state, ids[2]!, "Cashier");
+    state = TransactionEngine.prepareInvoiceForPayment(state, ids[2]!, "Cashier");
+    const thirdInvoice = state.bills.find((bill) => bill.orderIds.includes(ids[2]!))!;
+    const result = TransactionEngine.createPaymentIntent(state, thirdInvoice.id, {
+      amount: thirdInvoice.total,
+      method: "MPESA_PROMPT",
+      provider: "M-Pesa STK",
+      customerPhone: "0700000000",
+      createdBy: "Cashier",
+    });
+    expect(result.intent?.status).toBe("AWAITING_CUSTOMER");
+    state = TransactionEngine.confirmPaymentIntent(result.state, result.intent!.id, "TEST-REF-3");
+    state = TransactionEngine.confirmPaymentIntent(state, result.intent!.id, "TEST-REF-3");
+
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(0);
+    expect(state.orders).toHaveLength(3);
+    expect(state.bills).toHaveLength(2);
+    expect(state.payments).toHaveLength(1);
+    expect(state.receipts).toHaveLength(1);
+    expect(state.orders.find((o) => o.id === ids[2])?.status).toBe("PAID");
+    expect(unbilledKitchenOrders(state.orders, state.bills).map((o) => o.id)).toEqual([ids[0]]);
+  });
+});
