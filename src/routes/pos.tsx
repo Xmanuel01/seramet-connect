@@ -45,7 +45,7 @@ import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
-import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
+import { SerametLocalPrintBridge, SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { cn } from "@/lib/utils";
 import {
@@ -1191,6 +1191,15 @@ function POS() {
       throw new Error(
         "Installed print bridge is unavailable. Reconnect it before dispatching a physical KOT.",
       );
+    }
+
+    if (!printerlessStaging && profile?.kitchenMode !== "KDS_ONLY") {
+      const health = await SerametLocalPrintBridge.getInstalledBridgeHealth(
+        bridgeConfig.endpoint,
+      );
+      if (!health.ok || health.dryRun) {
+        throw new Error("A genuine non-dry-run local print bridge is required before kitchen dispatch.");
+      }
     }
 
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
