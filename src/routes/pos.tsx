@@ -122,6 +122,7 @@ function POS() {
   const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
+  const terminalId = `${branchRecord.code}-POS-01`;
   const orderChannels = useMemo(
     () =>
       platformState.orderChannels
@@ -430,7 +431,6 @@ function POS() {
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
   const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
-  const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
       platformState.serviceAreas.filter(
