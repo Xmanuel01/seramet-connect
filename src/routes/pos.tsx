@@ -1324,10 +1324,8 @@ function POS() {
   // Every invoice entry path resolves the exact authoritative order and branch.
   // Preserve the resulting snapshot for permitted offline payment preparation.
   const preparePayableInvoice = async (orderId: string, sourceState: TransactionState) => {
-    const prepared = await mutateTransaction(
-      "prepareInvoiceForPayment",
-      { orderId },
-      () => TransactionEngine.prepareInvoiceForPayment(sourceState, orderId, currentUser.name),
+    const prepared = await mutateTransaction("prepareInvoiceForPayment", { orderId }, () =>
+      TransactionEngine.prepareInvoiceForPayment(sourceState, orderId, currentUser.name),
     );
     const order = prepared?.state.orders.find(
       (candidate) =>
@@ -1346,7 +1344,11 @@ function POS() {
 
   // Invoicing is a single terminal path for the combined action and Invoice /
   // Print bill. Once confirmed, printing failures are independent of billing.
-  const completeInvoice = async (orderId: string, sourceState: TransactionState, print: boolean) => {
+  const completeInvoice = async (
+    orderId: string,
+    sourceState: TransactionState,
+    print: boolean,
+  ) => {
     const { prepared, bill } = await preparePayableInvoice(orderId, sourceState);
     if ("offline" in prepared && prepared.offline) {
       throw new Error(
