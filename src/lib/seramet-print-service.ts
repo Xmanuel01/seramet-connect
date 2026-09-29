@@ -26,7 +26,8 @@ export type PrintJobStatus =
   | "Failed"
   | "Retrying"
   | "Fallback Printed"
-  | "Cancelled";
+  | "Cancelled"
+  | "Uncertain";
 export type KitchenTicketDelivery = "KDS_DISPLAY" | "PRODUCTION_PRINT" | "POS_FRONT_PRINT";
 export type PrinterConnection = "Connected" | "Offline" | "Degraded";
 export type KitchenOperatingMode =
@@ -188,6 +189,7 @@ export type PrintJob = {
   kitchenTicketRecordId?: string;
   kitchenDelivery?: KitchenTicketDelivery;
   amendmentType?: "NEW" | "ADDITION" | "VOID" | "REPRINT";
+  productionObligationId?: string;
 };
 
 export type PrintPlanResult = {
@@ -415,6 +417,7 @@ export const SerametPrintService = {
     order: OrderForPrint,
     existingJobs: PrintJob[],
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
+    obligationIdsByStation: Record<string, string> = {},
   ): PrintPlanResult {
     const groups = groupProductionLines(order.lines);
     const jobs: PrintJob[] = [];
@@ -423,7 +426,10 @@ export const SerametPrintService = {
     groups.forEach((lines, station) => {
       const ticketId = `KT-${order.orderId.replace(/[^A-Z0-9]/gi, "")}-${station.replace(/[^A-Z0-9]/gi, "")}`;
       const ticketRecordId = `KTR-${order.branch.replace(/[^A-Z0-9]/gi, "")}-${ticketId}`;
-      const duplicateKey = `PRODUCTION:${order.branch}:${ticketId}:${amendmentType}`;
+      const obligationId = obligationIdsByStation[station];
+      const duplicateKey = obligationId
+        ? `PRODUCTION_OBLIGATION:${obligationId}`
+        : `PRODUCTION:${order.branch}:${ticketId}:${amendmentType}`;
       const duplicate = existingJobs.some(
         (job) => job.duplicateKey === duplicateKey && job.amendmentType === amendmentType,
       );
@@ -465,6 +471,7 @@ export const SerametPrintService = {
               kitchenTicketId,
             ),
             duplicateKey,
+            ...(obligationId ? { productionObligationId: obligationId } : {}),
           }),
         );
       });
@@ -841,6 +848,7 @@ function createJob({
   kitchenDelivery,
   amendmentType,
   duplicateKey,
+  productionObligationId,
 }: {
   profile: BranchHardwareProfile;
   order: OrderForPrint;
@@ -853,6 +861,7 @@ function createJob({
   kitchenDelivery?: KitchenTicketDelivery;
   amendmentType?: PrintJob["amendmentType"];
   duplicateKey?: string;
+  productionObligationId?: string;
 }): PrintJob {
   const assignedPrinter =
     resolution.routeMode === "fallback" ? resolution.fallbackPrinter : resolution.printer;
@@ -886,6 +895,7 @@ function createJob({
     kitchenTicketRecordId,
     kitchenDelivery,
     amendmentType,
+    productionObligationId,
   }) as PrintJob;
 }
 

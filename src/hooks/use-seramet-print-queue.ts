@@ -113,6 +113,7 @@ export function useSerametPrintQueue(branch: string) {
   const sendKitchenTickets = (
     order: OrderForPrint,
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
+    obligationIdsByStation: Record<string, string> = {},
   ): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
     const plan = SerametPrintService.createProductionTicketJobs(
@@ -120,6 +121,7 @@ export function useSerametPrintQueue(branch: string) {
       order,
       jobs,
       amendmentType,
+      obligationIdsByStation,
     );
     const queued = processJobs(plan.jobs, jobs, profile);
     return { ...plan, queue: queued };
@@ -280,8 +282,11 @@ async function sendInstalledBridgeJob(
     });
   } catch (error) {
     updateJob(setJobs, job.id, {
-      status: "Failed",
-      failureReason: error instanceof Error ? error.message : "Local print bridge request failed",
+      status: "Uncertain",
+      failureReason:
+        error instanceof Error
+          ? error.message
+          : "Local print bridge request ended without a trustworthy delivery acknowledgement",
     });
   }
 }

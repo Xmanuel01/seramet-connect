@@ -122,6 +122,7 @@ function POS() {
   const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
+  const terminalId = `${branchRecord.code}-POS-01`;
   const orderChannels = useMemo(
     () =>
       platformState.orderChannels
@@ -208,6 +209,8 @@ function POS() {
     jobIds: string[];
     label: string;
   } | null>(null);
+  const printRecoveryRef = useRef(new Set<string>());
+  const printOutcomeRef = useRef(new Set<string>());
   const {
     state: transactionState,
     mutate: mutateTransaction,
@@ -222,6 +225,135 @@ function POS() {
     sendKitchenTickets,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
+
+  useEffect(() => {
+    if (printOutcomeRef.current.size > 0) return;
+    const obligations = transactionState.productionPrintObligations ?? [];
+    for (const obligation of obligations) {
+      if (obligation.branchId !== branchId || obligation.status !== "ATTEMPTING") continue;
+      const linkedJobs = printJobs.filter((job) => job.productionObligationId === obligation.id);
+      let outcome: "DELIVERED" | "FAILED" | "UNCERTAIN" | null = null;
+      let detail = "";
+      if (linkedJobs.length) {
+        if (
+          linkedJobs.every((job) =>
+            ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
+          )
+        ) {
+          outcome = "DELIVERED";
+        } else if (linkedJobs.some((job) => job.status === "Uncertain")) {
+          outcome = "UNCERTAIN";
+          detail = "Printer acknowledgement was lost; inspect before any reprint.";
+        } else if (
+          linkedJobs.every((job) =>
+            ["Printed", "Displayed", "Fallback Printed", "Failed", "Cancelled"].includes(
+              job.status,
+            ),
+          ) &&
+          linkedJobs.some((job) => ["Failed", "Cancelled"].includes(job.status))
+        ) {
+          outcome = "FAILED";
+          detail =
+            linkedJobs.find((job) => job.failureReason)?.failureReason ?? "KOT delivery failed";
+        }
+      } else if (
+        obligation.attemptedAt &&
+        Date.now() - Date.parse(obligation.attemptedAt) > 30_000
+      ) {
+        outcome = "UNCERTAIN";
+        detail = "KOT was claimed for delivery but no device job survived; manual review required.";
+      }
+      if (!outcome) continue;
+      const key = `${obligation.id}:${outcome}`;
+      if (printOutcomeRef.current.has(key)) continue;
+      printOutcomeRef.current.add(key);
+      void mutateTransaction("markProductionPrintOutcome", {
+        obligationId: obligation.id,
+        status: outcome,
+        detail,
+      })
+        .catch(() => undefined)
+        .finally(() => printOutcomeRef.current.delete(key));
+      break;
+    }
+  }, [branchId, mutateTransaction, printJobs, transactionState.productionPrintObligations]);
+
+  useEffect(() => {
+    if (!profile || backendStatus !== "synced" || isStagingPrinterlessTestingEnabled()) return;
+    if (printRecoveryRef.current.size > 0) return;
+    const obligations = (transactionState.productionPrintObligations ?? []).filter(
+      (item) => item.branchId === branchId && item.status === "PENDING",
+    );
+    for (const obligation of obligations) {
+      if (printRecoveryRef.current.has(obligation.id)) continue;
+      if (printJobs.some((job) => job.productionObligationId === obligation.id)) continue;
+      const order = transactionState.orders.find((item) => item.id === obligation.orderId);
+      if (!order) continue;
+      const obligationLines = order.lines.filter((line) => obligation.lineIds.includes(line.id));
+      if (!obligationLines.length) continue;
+      printRecoveryRef.current.add(obligation.id);
+      void (async () => {
+        await mutateTransaction("markProductionPrintAttempting", {
+          obligationIds: [obligation.id],
+          deviceId: terminalId,
+        });
+        sendKitchenTickets(
+          {
+            orderId: order.id,
+            branch: order.branch,
+            terminalId,
+            ...(order.table ? { table: order.table } : {}),
+            orderType: order.channel,
+            requestedBy: currentUser.name,
+            cashier: order.cashier,
+            waiter: order.waiter ?? order.cashier,
+            createdAt: order.createdAt,
+            customer: order.customer,
+            ...(order.kitchenNote ? { kitchenNote: order.kitchenNote } : {}),
+            lines: obligationLines.map((line) => ({
+              id: line.id,
+              name: line.name,
+              category: line.category,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              productionStation: line.productionStation ?? "NONE",
+              ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+            })),
+            subtotal: order.subtotal,
+            tax: order.tax,
+            total: order.total,
+          },
+          obligation.dispatchType === "VOID"
+            ? "VOID"
+            : obligation.dispatchType === "ADDITION"
+              ? "ADDITION"
+              : "NEW",
+          { [obligation.station]: obligation.id },
+        );
+      })()
+        .catch((error) => {
+          setPrintNotice(
+            error instanceof Error
+              ? error.message
+              : "A pending KOT could not be recovered for delivery.",
+          );
+          setPrintNoticeType("warning");
+        })
+        .finally(() => printRecoveryRef.current.delete(obligation.id));
+      break;
+    }
+  }, [
+    backendStatus,
+    branchId,
+    currentUser.name,
+    mutateTransaction,
+    printJobs,
+    profile,
+    sendKitchenTickets,
+    terminalId,
+    transactionState.orders,
+    transactionState.productionPrintObligations,
+  ]);
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
@@ -304,7 +436,6 @@ function POS() {
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
   const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
-  const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
       platformState.serviceAreas.filter(
@@ -1239,6 +1370,13 @@ function POS() {
     const ticketLines = authoritativeOrder.lines.filter(
       (line) => line.sentAt && !sentLineIds.has(line.id),
     );
+    const ticketLineIds = new Set(ticketLines.map((line) => line.id));
+    const printObligations = (resultState.state.productionPrintObligations ?? []).filter(
+      (obligation) =>
+        obligation.orderId === authoritativeOrder.id &&
+        obligation.status === "PENDING" &&
+        obligation.lineIds.some((lineId) => ticketLineIds.has(lineId)),
+    );
     if (ticketLines.length === 0) {
       setActiveOrderId(authoritativeOrder.id);
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
@@ -1270,6 +1408,28 @@ function POS() {
       };
     }
 
+    const expectedStations = new Set(
+      ticketLines
+        .map((line) => line.productionStation ?? "NONE")
+        .filter((station) => station !== "NONE"),
+    );
+    const obligationByStation = Object.fromEntries(
+      printObligations.map((obligation) => [obligation.station, obligation.id]),
+    );
+    if (
+      expectedStations.size > 0 &&
+      [...expectedStations].some((station) => !obligationByStation[station])
+    ) {
+      throw new Error(
+        "Kitchen dispatch was saved, but its durable KOT obligation is incomplete. Do not resend the order; open Printers for recovery.",
+      );
+    }
+    if (printObligations.length) {
+      await mutateTransaction("markProductionPrintAttempting", {
+        obligationIds: printObligations.map((obligation) => obligation.id),
+        deviceId: terminalId,
+      });
+    }
     const printResult = sendKitchenTickets(
       {
         ...buildPrintOrder(tableNo),
@@ -1285,6 +1445,7 @@ function POS() {
         })),
       },
       amendmentType,
+      obligationByStation,
     );
     setTrackedPrint({
       jobIds: printResult.jobs.map((job) => job.id),

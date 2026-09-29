@@ -4,6 +4,7 @@ import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } f
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
@@ -106,6 +107,7 @@ function SerametPrinters() {
     printers: [],
   });
   const [notice, setNotice] = useState("No test job sent in this session.");
+  const [retryReason, setRetryReason] = useState("");
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
@@ -120,6 +122,34 @@ function SerametPrinters() {
     sendKitchenTickets,
     reprintJob,
   } = useSerametPrintQueue(selectedBranchId);
+  const { state: transactionState, mutate: mutateTransaction } = useTransactionEngine();
+  const durableKotObligations = useMemo(
+    () =>
+      (transactionState.productionPrintObligations ?? [])
+        .filter((item) => item.branchId === selectedBranchId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [selectedBranchId, transactionState.productionPrintObligations],
+  );
+  const unresolvedKotObligations = durableKotObligations.filter(
+    (item) => item.status !== "DELIVERED",
+  );
+
+  const authorizeKotRetry = async (obligationId: string) => {
+    const reason = retryReason.trim();
+    if (reason.length < 8) {
+      setNotice("Enter a clear retry reason before authorizing another KOT delivery attempt.");
+      return;
+    }
+    try {
+      await mutateTransaction("authorizeProductionPrintRetry", { obligationId, reason });
+      setRetryReason("");
+      setNotice(
+        `${obligationId} retry authorized. The next active POS session will claim it before delivery.`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "KOT retry could not be authorized.");
+    }
+  };
   const visiblePrinters = useMemo(
     () => (profile ? SerametLocalPrintBridge.discoverPrinters(profile) : []),
     [profile],
@@ -317,6 +347,69 @@ function SerametPrinters() {
           invert
         />
       </div>
+
+      <Panel className="mt-4">
+        <PanelHead
+          title="Durable kitchen ticket obligations"
+          sub="Authoritative KOT delivery state survives refreshes and device crashes. Uncertain delivery is never reprinted automatically."
+          right={<Status>{unresolvedKotObligations.length} unresolved</Status>}
+        />
+        <div className="space-y-3 p-4">
+          {durableKotObligations.length === 0 ? (
+            <div className="text-[12px] text-muted-foreground">
+              No authoritative KOT delivery obligations for this branch yet.
+            </div>
+          ) : (
+            durableKotObligations.slice(0, 20).map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-secondary/30 p-3"
+              >
+                <div className="min-w-0 text-[12px]">
+                  <div className="font-bold">
+                    {item.orderId} · {item.station}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {item.dispatchType} · {item.id} · {item.status}
+                    {item.deviceId ? ` · ${item.deviceId}` : ""}
+                  </div>
+                  {item.error ? <div className="mt-1 text-warning">{item.error}</div> : null}
+                </div>
+                <Status>{item.status}</Status>
+              </div>
+            ))
+          )}
+          {durableKotObligations.some((item) => ["FAILED", "UNCERTAIN"].includes(item.status)) ? (
+            <div className="rounded-lg border border-warning/40 bg-warning-soft p-3">
+              <div className="text-[12px] font-bold">Manager-authorized retry</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Confirm the kitchen did not already receive the ticket. Retrying an uncertain
+                delivery can create a physical duplicate.
+              </div>
+              <input
+                value={retryReason}
+                onChange={(event) => setRetryReason(event.target.value)}
+                placeholder="Reason for retry after physical check"
+                className="mt-2 w-full rounded-md border border-border bg-card px-3 py-2 text-[12px]"
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                {durableKotObligations
+                  .filter((item) => ["FAILED", "UNCERTAIN"].includes(item.status))
+                  .slice(0, 5)
+                  .map((item) => (
+                    <Btn
+                      key={item.id}
+                      onClick={() => void authorizeKotRetry(item.id)}
+                      disabled={retryReason.trim().length < 8}
+                    >
+                      Authorize retry · {item.orderId} · {item.station}
+                    </Btn>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Panel>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(340px,0.8fr)]">
         <Panel>

@@ -282,6 +282,24 @@ describe("kitchen hardware modes", () => {
     ).toBe(true);
   });
 
+  it("links every planned station delivery to its authoritative KOT obligation", () => {
+    const profile = profileForMode("KDS_AND_PRINTER");
+    const plan = SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW", {
+      "MAIN KITCHEN": "KOT-ORD-1-MAIN",
+      BAR: "KOT-ORD-1-BAR",
+    });
+
+    const kitchen = plan.jobs.filter((job) => job.productionStation === "MAIN KITCHEN");
+    const bar = plan.jobs.filter((job) => job.productionStation === "BAR");
+    expect(kitchen.length).toBeGreaterThan(0);
+    expect(bar.length).toBeGreaterThan(0);
+    expect(kitchen.every((job) => job.productionObligationId === "KOT-ORD-1-MAIN")).toBe(true);
+    expect(bar.every((job) => job.productionObligationId === "KOT-ORD-1-BAR")).toBe(true);
+    expect(new Set(kitchen.map((job) => job.duplicateKey))).toEqual(
+      new Set(["PRODUCTION_OBLIGATION:KOT-ORD-1-MAIN"]),
+    );
+  });
+
   it("prints production copies at the POS/front printer when no dedicated kitchen system is configured", () => {
     const profile = profileForMode("NO_DEDICATED_KITCHEN_SYSTEM");
     const plan = SerametPrintService.createProductionTicketJobs(profile, order, []);

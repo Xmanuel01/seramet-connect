@@ -602,6 +602,27 @@ export type AuditEvent = {
   after: string;
 };
 
+export type ProductionPrintObligationRecord = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branch: string;
+  orderId: string;
+  dispatchRef: string;
+  dispatchType: "NEW" | "ADDITION" | "VOID";
+  station: string;
+  lineIds: string[];
+  status: "PENDING" | "ATTEMPTING" | "DELIVERED" | "FAILED" | "UNCERTAIN";
+  requestedBy: string;
+  createdAt: string;
+  attemptedAt?: string;
+  deliveredAt?: string;
+  deviceId?: string;
+  error?: string;
+  retryCount?: number;
+  lastRetryReason?: string;
+};
+
 export type TransactionState = {
   schemaVersion?: 2 | 3;
   tenantId?: string;
@@ -614,6 +635,7 @@ export type TransactionState = {
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
   productionAmendments: ProductionAmendmentRecord[];
+  productionPrintObligations?: ProductionPrintObligationRecord[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
   journalEntries: JournalEntry[];
@@ -755,6 +777,53 @@ function id(prefix: string, state: TransactionState, collection: keyof Transacti
   );
 }
 
+function createProductionPrintObligations(
+  state: TransactionState,
+  order: TransactionOrder,
+  lines: TransactionLine[],
+  dispatchType: ProductionPrintObligationRecord["dispatchType"],
+  dispatchRef: string,
+  requestedBy: string,
+  stamp: string,
+) {
+  state.productionPrintObligations ??= [];
+  const byStation = new Map<string, string[]>();
+  for (const line of lines) {
+    const station = (line.productionStation ?? "NONE").trim() || "NONE";
+    if (station === "NONE") continue;
+    const ids = byStation.get(station) ?? [];
+    ids.push(line.id);
+    byStation.set(station, ids);
+  }
+  for (const [station, lineIds] of byStation) {
+    const stationKey = station
+      .replace(/[^A-Z0-9]+/gi, "-")
+      .replace(/^-|-$/g, "")
+      .toUpperCase();
+    const obligationId = `KOT-${dispatchRef}-${stationKey}`;
+    if (state.productionPrintObligations.some((item) => item.id === obligationId)) continue;
+    state.productionPrintObligations.unshift({
+      id: obligationId,
+      tenantId: order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID,
+      branchId:
+        order.branchId ??
+        configurationRepository.resolveBranch(
+          order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID,
+          order.branch,
+        ).id,
+      branch: order.branch,
+      orderId: order.id,
+      dispatchRef,
+      dispatchType,
+      station,
+      lineIds,
+      status: "PENDING",
+      requestedBy,
+      createdAt: stamp,
+    });
+  }
+}
+
 function totals(lines: TransactionLine[]) {
   const subtotal = money(lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0));
   return { subtotal, tax: 0, total: subtotal };
@@ -891,6 +960,9 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
     ).map((record) => ({ ...record, tenantId: record.tenantId ?? tenantId })),
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
+    ),
+    productionPrintObligations: scoped(
+      Array.isArray(state.productionPrintObligations) ? state.productionPrintObligations : [],
     ),
     externalTransactions: (Array.isArray(state.externalTransactions)
       ? state.externalTransactions
@@ -1050,6 +1122,7 @@ export function createEmptyTransactionState(tenantId: string): TransactionState 
     marketplaceReceivables: [],
     marketplaceCharges: [],
     productionAmendments: [],
+    productionPrintObligations: [],
     externalTransactions: [],
     reconciliationMatches: [],
     journalEntries: [],
@@ -1804,13 +1877,18 @@ export const TransactionEngine = {
     const stamp = now();
     const unsentLines = order.lines.filter((line) => !line.sentAt);
     if (unsentLines.length === 0 && before !== "OPEN" && before !== "HELD") return next;
+    let dispatchRef = order.id;
+    let dispatchType: ProductionPrintObligationRecord["dispatchType"] = "NEW";
     unsentLines.forEach((line) => {
       line.sentAt = stamp;
       line.sentQuantity = line.quantity;
     });
     if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
+      const amendmentId = id("AMD", next, "productionAmendments");
+      dispatchRef = amendmentId;
+      dispatchType = "ADDITION";
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: amendmentId,
         tenantId: order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
         branchId:
           order.branchId ??
@@ -1828,6 +1906,15 @@ export const TransactionEngine = {
         createdAt: stamp,
       });
     }
+    createProductionPrintObligations(
+      next,
+      order,
+      unsentLines,
+      dispatchType,
+      dispatchRef,
+      user,
+      stamp,
+    );
     order.status = "SENT_TO_KITCHEN";
     if (order.externalSource && !order.externalSource.preparationStartedAt) {
       order.externalSource.preparationStartedAt = now();
@@ -1842,6 +1929,104 @@ export const TransactionEngine = {
       record: order.id,
       before,
       after: "SENT_TO_KITCHEN with KOT routing",
+    });
+    return next;
+  },
+
+  markProductionPrintAttempting(
+    state: TransactionState,
+    obligationIds: string[],
+    user: string,
+    deviceId: string,
+  ) {
+    const next = clone(state);
+    const stamp = now();
+    next.productionPrintObligations ??= [];
+    for (const obligation of next.productionPrintObligations) {
+      if (!obligationIds.includes(obligation.id)) continue;
+      if (obligation.status !== "PENDING") continue;
+      obligation.status = "ATTEMPTING";
+      obligation.attemptedAt = stamp;
+      obligation.deviceId = deviceId;
+      delete obligation.error;
+      audit(next, {
+        actor: user,
+        role: "Cashier",
+        branch: obligation.branch,
+        module: "Printing",
+        action: "Claimed durable KOT delivery obligation",
+        record: obligation.id,
+        before: "PENDING",
+        after: `ATTEMPTING on ${deviceId}`,
+      });
+    }
+    return next;
+  },
+
+  markProductionPrintOutcome(
+    state: TransactionState,
+    obligationId: string,
+    status: "DELIVERED" | "FAILED" | "UNCERTAIN",
+    user: string,
+    detail?: string,
+  ) {
+    const next = clone(state);
+    next.productionPrintObligations ??= [];
+    const obligation = next.productionPrintObligations.find((item) => item.id === obligationId);
+    if (!obligation) throw new Error(`Print obligation ${obligationId} was not found`);
+    const before = obligation.status;
+    if (before === status) return next;
+    if (before !== "ATTEMPTING") {
+      throw new Error(`Print obligation ${obligationId} cannot move from ${before} to ${status}`);
+    }
+    obligation.status = status;
+    if (status === "DELIVERED") obligation.deliveredAt = now();
+    if (detail) obligation.error = detail;
+    else delete obligation.error;
+    audit(next, {
+      actor: user,
+      role: "Cashier",
+      branch: obligation.branch,
+      module: "Printing",
+      action: "Updated durable KOT delivery obligation",
+      record: obligation.id,
+      before,
+      after: status,
+    });
+    return next;
+  },
+
+  authorizeProductionPrintRetry(
+    state: TransactionState,
+    obligationId: string,
+    user: string,
+    reason: string,
+  ) {
+    const next = clone(state);
+    next.productionPrintObligations ??= [];
+    const obligation = next.productionPrintObligations.find((item) => item.id === obligationId);
+    if (!obligation) throw new Error(`Print obligation ${obligationId} was not found`);
+    if (!["FAILED", "UNCERTAIN"].includes(obligation.status)) {
+      throw new Error("Only failed or uncertain KOT delivery can be authorized for retry");
+    }
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 8) throw new Error("A meaningful retry reason is required");
+    const before = obligation.status;
+    obligation.status = "PENDING";
+    obligation.retryCount = (obligation.retryCount ?? 0) + 1;
+    obligation.lastRetryReason = cleanReason;
+    delete obligation.deviceId;
+    delete obligation.attemptedAt;
+    delete obligation.error;
+    audit(next, {
+      actor: user,
+      role: "Manager",
+      branch: obligation.branch,
+      module: "Printing",
+      action: "Authorized KOT delivery retry",
+      record: obligation.id,
+      before,
+      after: `PENDING retry ${obligation.retryCount}: ${cleanReason}`,
     });
     return next;
   },
@@ -1927,23 +2112,34 @@ export const TransactionEngine = {
       };
     });
     if (additions.length) {
+      const amendmentId = id("AMD", next, "productionAmendments");
+      const amendmentLines = additions.map((line) => ({
+        ...line,
+        sentAt: stamp,
+        sentQuantity: line.quantity,
+      }));
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: amendmentId,
         tenantId: scope.tenantId,
         branchId: scope.branchId,
         branch: scope.branch,
         orderId,
         type: "ADDITION",
-        lines: additions.map((line) => ({
-          ...line,
-          sentAt: stamp,
-          sentQuantity: line.quantity,
-        })),
+        lines: amendmentLines,
         reason: "POS order amended after the original kitchen ticket",
         requestedBy: user,
         printStatus: "PENDING",
         createdAt: stamp,
       });
+      createProductionPrintObligations(
+        next,
+        { ...order, tenantId: scope.tenantId, branchId: scope.branchId, branch: scope.branch },
+        amendmentLines,
+        "ADDITION",
+        amendmentId,
+        user,
+        stamp,
+      );
     }
     if (removals.length) {
       next.productionAmendments.unshift({

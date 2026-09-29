@@ -216,6 +216,62 @@ export function applyServerMutation(
         throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
+    case "markProductionPrintAttempting": {
+      const obligationIds = Array.isArray(input["obligationIds"])
+        ? input["obligationIds"].map((value) => String(value))
+        : [];
+      const obligations = state.productionPrintObligations ?? [];
+      if (
+        obligations.some(
+          (item) => obligationIds.includes(item.id) && item.branchId !== actor.branchId,
+        )
+      ) {
+        throw new Error("Print obligation belongs to another branch");
+      }
+      return TransactionEngine.markProductionPrintAttempting(
+        state,
+        obligationIds,
+        actor.name,
+        String(input["deviceId"] ?? actor.deviceId ?? "unknown-device"),
+      );
+    }
+    case "markProductionPrintOutcome": {
+      const obligationId = String(input["obligationId"]);
+      const obligation = (state.productionPrintObligations ?? []).find(
+        (item) => item.id === obligationId,
+      );
+      if (!obligation) throw new Error("Print obligation was not found");
+      if (obligation.branchId !== actor.branchId) {
+        throw new Error("Print obligation belongs to another branch");
+      }
+      const status = String(input["status"]);
+      if (!["DELIVERED", "FAILED", "UNCERTAIN"].includes(status)) {
+        throw new Error("Unsupported print obligation outcome");
+      }
+      return TransactionEngine.markProductionPrintOutcome(
+        state,
+        obligationId,
+        status as "DELIVERED" | "FAILED" | "UNCERTAIN",
+        actor.name,
+        typeof input["detail"] === "string" ? input["detail"] : undefined,
+      );
+    }
+    case "authorizeProductionPrintRetry": {
+      const obligationId = String(input["obligationId"]);
+      const obligation = (state.productionPrintObligations ?? []).find(
+        (item) => item.id === obligationId,
+      );
+      if (!obligation) throw new Error("Print obligation was not found");
+      if (obligation.branchId !== actor.branchId) {
+        throw new Error("Print obligation belongs to another branch");
+      }
+      return TransactionEngine.authorizeProductionPrintRetry(
+        state,
+        obligationId,
+        actor.name,
+        String(input["reason"] ?? ""),
+      );
+    }
     case "amendKitchenOrder": {
       const orderId = String(input["orderId"]);
       const draft = input["draft"] as Parameters<typeof TransactionEngine.amendKitchenOrder>[2];
