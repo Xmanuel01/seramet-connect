@@ -201,9 +201,9 @@ describe("atomic durable KOT obligation and crash reconciliation", () => {
       ...draft,
       lines: [{ ...state.orders[0]!.lines[0]!, quantity: 1 }],
     };
-    expect(() =>
-      TransactionEngine.amendKitchenOrder(state, orderId, changed, "Manager"),
-    ).toThrow(/Resolve pending kitchen ticket/);
+    expect(() => TransactionEngine.amendKitchenOrder(state, orderId, changed, "Manager")).toThrow(
+      /Resolve pending kitchen ticket/,
+    );
     const id = state.orders[0]!.kotObligations![0]!.id;
     state = TransactionEngine.claimKotObligations(state, orderId, [id], "Cashier", "device-1");
     state = TransactionEngine.markKotObligations(
