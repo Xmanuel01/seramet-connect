@@ -332,8 +332,8 @@ function SerametPrinters() {
                     {ticket.orderId} · {ticket.type} · {ticket.id}
                   </div>
                   <p className="mt-1 text-muted-foreground">
-                    {ticket.lines.length} production line(s) · server: {ticket.status} ·
-                    local device jobs: {localJobs.length}
+                    {ticket.lines.length} production line(s) · server: {ticket.status} · local
+                    device jobs: {localJobs.length}
                   </p>
                   <p className="mt-1 text-muted-foreground">
                     If no device job exists, check Kitchen and print history before an audited
