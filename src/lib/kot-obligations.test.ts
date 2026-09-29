@@ -70,6 +70,26 @@ describe("atomic durable KOT obligation and crash reconciliation", () => {
     expect(JSON.stringify(state.orders[0]?.kotObligations)).toBe(originalPayload);
   });
 
+  it("rejects forged order identities and KOT obligations in an untrusted order draft", () => {
+    const polluted = {
+      ...draft,
+      id: "ORD-FORGED",
+      kotObligations: [{ id: "KOT-FORGED", status: "BRIDGE_ACKNOWLEDGED" }],
+    };
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(DEMO_TENANT_ID),
+      polluted,
+    );
+    const orderId = state.orders[0]!.id;
+    expect(orderId).not.toBe("ORD-FORGED");
+    expect(state.orders[0]!.kotObligations).toBeUndefined();
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(state.orders[0]!.kotObligations).toHaveLength(2);
+    expect(state.orders[0]!.kotObligations!.every((item) => item.status === "PENDING")).toBe(
+      true,
+    );
+  });
+
   it("keeps a claimed outbox entry visible after a simulated browser crash", () => {
     let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft);
     const orderId = state.orders[0]!.id;
