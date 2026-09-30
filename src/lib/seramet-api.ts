@@ -695,6 +695,12 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
   const body = await readJson<MutationRequest>(request);
   assertKnownFields(body, ["action", "payload", "idempotencyKey", "expectedRevision"]);
   if (!body.action) throw new SerametHttpError(400, "Missing transaction action");
+  if (repo.authoritative && body.action === "replaceState") {
+    throw new SerametHttpError(
+      405,
+      "Authoritative records and durable kitchen obligations cannot be replaced by a browser snapshot",
+    );
+  }
   if (!body.idempotencyKey)
     throw new SerametHttpError(400, "Production mutations require an idempotencyKey");
   if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
