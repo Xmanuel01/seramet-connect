@@ -159,6 +159,81 @@ describe.sequential("Pass 5 production foundation", () => {
     expect((await repository.loadState(tenantA)).orders).toHaveLength(1);
   });
 
+  it("commits original KOT outbox atomically and survives a new repository instance", async () => {
+    const firstRepository = new D1AuthoritativeTransactionRepository(database);
+    const accepted = await mutation(
+      firstRepository,
+      "durable-kot-submit",
+      "durable-kot-submit",
+      "upsertAndSendKitchen",
+      { draft: orderDraft("Durable KOT") },
+    );
+    const id = accepted.state.orders[0]!.id;
+    expect(accepted.state.kitchenPrintObligations).toHaveLength(1);
+    const obligation = accepted.state.kitchenPrintObligations![0]!;
+    expect(obligation).toMatchObject({
+      orderId: id,
+      tenantId: tenantA,
+      branchId: branchA,
+      station: "MAIN KITCHEN",
+      sourceId: "ORIGINAL",
+      status: "PENDING",
+    });
+    const persisted = await database
+      .prepare(
+        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(tenantA, "state:kitchenPrintObligations", obligation.id)
+      .first<{ payload_json: string }>();
+    expect(JSON.parse(persisted!.payload_json)).toMatchObject({
+      id: obligation.id,
+      status: "PENDING",
+    });
+    // A different Worker instance reconstructs the exact pending delivery
+    // obligation even if the dispatching browser closed before queuing paper.
+    const restarted = new D1AuthoritativeTransactionRepository(database);
+    expect((await restarted.loadState(tenantA)).kitchenPrintObligations).toHaveLength(1);
+    const duplicate = await mutation(
+      restarted,
+      "durable-kot-submit",
+      "durable-kot-submit",
+      "upsertAndSendKitchen",
+      { draft: orderDraft("Durable KOT") },
+    );
+    expect(duplicate.duplicate).toBe(true);
+    expect((await restarted.loadState(tenantA)).kitchenPrintObligations).toHaveLength(1);
+
+    await mutation(restarted, "durable-kot-claim", "claim", "claimKitchenPrintObligation", {
+      obligationId: obligation.id,
+      claimToken: "first-device-attempt",
+    });
+    await expect(
+      mutation(restarted, "durable-kot-claim-other", "other", "claimKitchenPrintObligation", {
+        obligationId: obligation.id,
+        claimToken: "other-terminal-attempt",
+      }),
+    ).rejects.toThrow(/review before retry/i);
+    expect((await restarted.loadState(tenantA)).kitchenPrintObligations![0]?.status).toBe(
+      "CLAIMED",
+    );
+    await mutation(
+      restarted,
+      "durable-kot-uncertain",
+      "uncertain",
+      "settleKitchenPrintObligation",
+      {
+        obligationId: obligation.id,
+        claimToken: "first-device-attempt",
+        outcome: "UNCERTAIN",
+        failureReason: "Test printer response was lost",
+      },
+    );
+    expect((await restarted.loadState(tenantA)).kitchenPrintObligations![0]?.status).toBe(
+      "UNCERTAIN",
+    );
+    expect(await count("mutation_commits", tenantA)).toBe(3);
+  });
+
   it("paginates authoritative history with server tenant and branch scope", async () => {
     for (let index = 0; index < 3; index += 1) {
       const updatedAt = new Date(
