@@ -25,6 +25,7 @@ import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
+import { shouldHydratePosOrder } from "@/lib/transaction-refresh-coordinator";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -567,13 +568,24 @@ function POS() {
   }, [paymentCurrencies, tenderCurrency, tenant.defaultCurrency]);
 
   useEffect(() => {
-    if (!activeOrder) {
+    // A transiently missing row during remote refresh is NOT an explicit order
+    // change. Preserve the hydration key and the cashier's local quantities/notes.
+    if (!activeOrderId) {
       hydratedOrderIdRef.current = null;
       return;
     }
-    // Background refresh must not overwrite a cashier's unsaved quantities or notes.
-    if (hydratedOrderIdRef.current === activeOrder.id || orderChannels.length === 0) return;
-    hydratedOrderIdRef.current = activeOrder.id;
+    if (
+      !shouldHydratePosOrder({
+        selectedOrderId: activeOrderId,
+        availableOrderId: activeOrder?.id ?? null,
+        hydratedScopeOrderKey: hydratedOrderIdRef.current,
+        currentScope: `${activeTenantId}:${branchId}`,
+      }) ||
+      orderChannels.length === 0
+    ) {
+      return;
+    }
+    hydratedOrderIdRef.current = `${activeTenantId}:${branchId}:${activeOrderId}`;
     const channel = orderChannels.find(
       (item) =>
         item.id === activeOrder.channel ||
@@ -599,7 +611,7 @@ function POS() {
     );
     setPrintNotice(`${activeOrder.id} loaded. Print routing is running in the background.`);
     setPrintNoticeType("idle");
-  }, [activeOrder, orderChannels]);
+  }, [activeOrder, activeOrderId, activeTenantId, branchId, orderChannels]);
 
   const sentQuantities = useMemo(
     () =>
