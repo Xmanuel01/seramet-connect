@@ -479,8 +479,8 @@ function SerametPrinters() {
                     {obligation.orderId} · {obligation.station} · {obligation.kind}
                   </div>
                   <p className="mt-1 text-muted-foreground">
-                    {obligation.status.replaceAll("_", " ")} — {obligation.lines.length} line(s).
-                    A previous claim may have physically printed even without an acknowledgement.
+                    {obligation.status.replaceAll("_", " ")} — {obligation.lines.length} line(s). A
+                    previous claim may have physically printed even without an acknowledgement.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {obligation.status === "PENDING" && (
@@ -488,7 +488,9 @@ function SerametPrinters() {
                         onClick={() => void recoverPendingKot(obligation)}
                         disabled={kotRecoveryBusy || !mayDeliverKot}
                       >
-                        {obligation.reviewReason ? "Audited recovery print" : "Deliver pending ticket"}
+                        {obligation.reviewReason
+                          ? "Audited recovery print"
+                          : "Deliver pending ticket"}
                       </Btn>
                     )}
                     {obligation.status !== "PENDING" && mayReviewKot && (
