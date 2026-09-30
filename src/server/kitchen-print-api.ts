@@ -196,7 +196,7 @@ export async function handleKitchenPrintApi(
         `SELECT entity_id,branch_id,status,version,payload_json
          FROM authoritative_records
          WHERE tenant_id=? AND entity_type=? AND branch_id=? AND status <> 'DELIVERED'
-         ORDER BY CASE WHEN status='QUEUED' THEN 0 ELSE 1 END, created_at ASC LIMIT 100`,
+         ORDER BY CASE WHEN status='QUEUED' THEN 0 ELSE 1 END, updated_at DESC LIMIT 100`,
       )
       .bind(actor.tenantId, KITCHEN_OUTBOX_ENTITY, branchId)
       .all<OutboxRow>();
