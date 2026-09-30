@@ -35,6 +35,7 @@ const transactionCollections = [
   "marketplaceReceivables",
   "marketplaceCharges",
   "productionAmendments",
+  "kitchenPrintObligations",
   "externalTransactions",
   "reconciliationMatches",
   "journalEntries",

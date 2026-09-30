@@ -45,6 +45,7 @@ import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-cur
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
+import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -158,6 +159,9 @@ function POS() {
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
+  // Bridge callbacks may complete out of order. Persist their acknowledgements
+  // sequentially; failure leaves an inspectable CLAIMED obligation on the server.
+  const kotAcknowledgeRef = useRef<Promise<void>>(Promise.resolve());
   const [orderActionBusy, setOrderActionBusy] = useState(false);
   const [lines, setLines] = useState<Record<string, number>>({});
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -219,6 +223,7 @@ function POS() {
     profile,
     configurationError,
     jobs: printJobs,
+    bridgeConfig,
     sendKitchenTickets,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
@@ -1219,9 +1224,15 @@ function POS() {
         printJobs,
         amendmentType,
       );
-      if (!preflight.jobs.length) {
+      const physicalJobs = preflight.jobs.filter((job) => job.printerId !== "KDS-DISPLAY");
+      if (
+        !preflight.jobs.length ||
+        preflight.jobs.some((job) => job.printerId === "UNASSIGNED") ||
+        (physicalJobs.length > 0 && !bridgeConfigReady(bridgeConfig))
+      ) {
         throw new Error(
-          `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
+          "Kitchen dispatch requires a configured printer/KDS route and an installed " +
+            "print bridge for physical jobs. Check Seramet Printers before dispatching.",
         );
       }
     }
@@ -1230,6 +1241,13 @@ function POS() {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
     });
+    if (resultState && "offline" in resultState && resultState.offline) {
+      throw new Error(
+        "Kitchen command is queued for offline reconciliation. No authoritative " +
+          "KOT has been accepted or printed yet. Do not submit it again; recover " +
+          "the original ticket in Printers after reconnecting.",
+      );
+    }
     const authoritativeOrder = activeOrder?.id
       ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
       : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
@@ -1270,24 +1288,134 @@ function POS() {
       };
     }
 
-    const printResult = sendKitchenTickets(
-      {
-        ...buildPrintOrder(tableNo),
-        orderId: authoritativeOrder.id,
-        lines: ticketLines.map((line) => ({
-          id: line.id,
-          name: line.name,
-          category: line.category,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          productionStation: line.productionStation ?? "NONE",
-          ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-        })),
-      },
-      amendmentType,
+    const obligations = (resultState.state.kitchenPrintObligations ?? []).filter(
+      (item) =>
+        item.orderId === authoritativeOrder.id &&
+        item.branchId === branchId &&
+        item.status === "PENDING" &&
+        item.lines.some((line) => ticketLines.some((sent) => sent.id === line.id)),
     );
+    if (!obligations.length) {
+      throw new Error(
+        "Kitchen accepted the order but did not expose a durable KOT obligation. " +
+          "Review the server KOT outbox before attempting another dispatch.",
+      );
+    }
+    // Claim every station before initiating any asynchronous bridge operation.
+    // This prevents a fast first-station ACK racing a later-station claim and
+    // producing a false revision conflict on a healthy terminal.
+    const claimed = [];
+    for (const obligation of obligations) {
+      const claimToken = crypto.randomUUID();
+      await mutateTransaction("claimKitchenPrintObligation", {
+        obligationId: obligation.id,
+        claimToken,
+      });
+      claimed.push({ obligation, claimToken });
+    }
+    let printResult: ReturnType<typeof sendKitchenTickets> | null = null;
+    const queuedJobIds: string[] = [];
+    const rejected: string[] = [];
+    for (const { obligation, claimToken } of claimed) {
+      const completed = new Map<string, "BRIDGE_ACCEPTED" | "UNCERTAIN">();
+      let expected = 0;
+      let reported = false;
+      const recordOutcome = (jobId: string, outcome: "BRIDGE_ACCEPTED" | "UNCERTAIN") => {
+        completed.set(jobId, outcome);
+        if (reported || !expected || completed.size !== expected) return;
+        reported = true;
+        const finalOutcome = [...completed.values()].every((item) => item === "BRIDGE_ACCEPTED")
+          ? "BRIDGE_ACCEPTED"
+          : "UNCERTAIN";
+        kotAcknowledgeRef.current = kotAcknowledgeRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            // Do not let an asynchronous printer ACK race the cashier's
+            // Send Kitchen & Bill invoice write from the same terminal.
+            await new Promise<void>((resolve) => {
+              const waitForCashier = () => {
+                if (!orderActionRef.current) resolve();
+                else window.setTimeout(waitForCashier, 40);
+              };
+              waitForCashier();
+            });
+            await mutateTransaction("settleKitchenPrintObligation", {
+              obligationId: obligation.id,
+              claimToken,
+              outcome: finalOutcome,
+              ...(finalOutcome === "UNCERTAIN"
+                ? { failureReason: "One or more bridge routes could not confirm delivery" }
+                : {}),
+            });
+          })
+          .catch(() => {
+            setPrintNotice(
+              "Kitchen dispatch was recorded, but its print acknowledgement could not be " +
+                "saved. Review the durable KOT status in Seramet Printers.",
+            );
+            setPrintNoticeType("warning");
+          });
+      };
+      const next = sendKitchenTickets(
+        {
+          ...buildPrintOrder(tableNo),
+          orderId: authoritativeOrder.id,
+          lines: obligation.lines.map((line) => ({
+            id: line.id,
+            name: line.name,
+            category: line.category,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            productionStation: line.productionStation ?? "NONE",
+            ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+          })),
+        },
+        obligation.kind === "ORIGINAL" ? "NEW" : "ADDITION",
+        (job, outcome) => {
+          completed.set(job.id, outcome);
+          queueMicrotask(() => recordOutcome(job.id, outcome));
+        },
+      );
+      expected = next.jobs.length;
+      if (!next.jobs.length) {
+        rejected.push(...next.skipped);
+        // Claimed but no local job: deliberately UNKNOWN. Operator review
+        // establishes whether the bridge printed before any later retry.
+        recordOutcome(obligation.id, "UNCERTAIN");
+        kotAcknowledgeRef.current = kotAcknowledgeRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            await mutateTransaction("settleKitchenPrintObligation", {
+              obligationId: obligation.id,
+              claimToken,
+              outcome: "UNCERTAIN",
+              failureReason: "Print route was unavailable after authoritative claim",
+            });
+          })
+          .catch(() => undefined);
+        break;
+      }
+      queuedJobIds.push(...next.jobs.map((job) => job.id));
+      printResult = printResult
+        ? {
+            jobs: [...printResult.jobs, ...next.jobs],
+            skipped: [...printResult.skipped, ...next.skipped],
+            queue: next.queue,
+          }
+        : next;
+    }
+    if (rejected.length) {
+      throw new Error(
+        "Kitchen accepted the order but one KOT route was not queued. " +
+          "Inspect the durable obligation in Printers. " +
+          rejected.join("; "),
+      );
+    }
+    if (!printResult?.jobs.length) {
+      throw new Error("No durable KOT claim produced a delivery job; inspect Printers");
+    }
     setTrackedPrint({
-      jobIds: printResult.jobs.map((job) => job.id),
+      jobIds: queuedJobIds,
       label: amendmentType === "ADDITION" ? "Kitchen amendment" : "Kitchen ticket",
     });
     setActiveOrderId(authoritativeOrder.id);

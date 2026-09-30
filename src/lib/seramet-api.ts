@@ -695,6 +695,12 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
   const body = await readJson<MutationRequest>(request);
   assertKnownFields(body, ["action", "payload", "idempotencyKey", "expectedRevision"]);
   if (!body.action) throw new SerametHttpError(400, "Missing transaction action");
+  if (repo.authoritative && body.action === "replaceState") {
+    throw new SerametHttpError(
+      405,
+      "Authoritative records and durable kitchen obligations cannot be replaced by a browser snapshot",
+    );
+  }
   if (!body.idempotencyKey)
     throw new SerametHttpError(400, "Production mutations require an idempotencyKey");
   if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
@@ -1001,6 +1007,13 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   const wastageId = String(input["wastageId"] ?? "");
   const breakageId = String(input["breakageId"] ?? "");
   const employeeId = String(input["employeeId"] ?? "");
+  const obligationId = String(input["obligationId"] ?? "");
+  if (obligationId) {
+    addBranch(
+      branches,
+      state.kitchenPrintObligations?.find((item) => item.id === obligationId)?.branch,
+    );
+  }
   if (typeof input["branch"] === "string") branches.add(input["branch"]);
   if (invoiceId) addBranch(branches, state.bills.find((item) => item.id === invoiceId)?.branch);
   if (billId) addBranch(branches, state.bills.find((item) => item.id === billId)?.branch);
@@ -1075,6 +1088,7 @@ function assertBranchSafeSnapshotReplace(
     ...next.marketplaceReceivables,
     ...next.marketplaceCharges,
     ...next.productionAmendments,
+    ...(next.kitchenPrintObligations ?? []),
     ...next.auditEvents,
     ...next.inventory,
     ...next.stockMovements,
@@ -1125,6 +1139,10 @@ function mergeSnapshotForActor(
     marketplaceReceivables: merge(current.marketplaceReceivables, next.marketplaceReceivables),
     marketplaceCharges: merge(current.marketplaceCharges, next.marketplaceCharges),
     productionAmendments: merge(current.productionAmendments, next.productionAmendments),
+    kitchenPrintObligations: merge(
+      current.kitchenPrintObligations ?? [],
+      next.kitchenPrintObligations ?? [],
+    ),
     auditEvents: merge(current.auditEvents, next.auditEvents),
     inventory: merge(current.inventory, next.inventory),
     recipes: next.recipes,
@@ -1170,6 +1188,7 @@ function branchRestrictedSnapshot(
     marketplaceReceivables: keep(state.marketplaceReceivables),
     marketplaceCharges: keep(state.marketplaceCharges),
     productionAmendments: keep(state.productionAmendments),
+    kitchenPrintObligations: keep(state.kitchenPrintObligations ?? []),
     auditEvents: keep(state.auditEvents),
     inventory: keep(state.inventory),
     recipes: state.recipes,

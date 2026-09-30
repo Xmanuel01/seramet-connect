@@ -373,6 +373,33 @@ export type MarketplaceCharge = {
   createdAt: string;
 };
 
+/**
+ * Persisted with the order in the same authoritative transaction. A physical
+ * printer acknowledgement is never inferred from HTTP acceptance alone.
+ */
+export type KitchenPrintObligation = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branch: string;
+  orderId: string;
+  station: string;
+  sourceId: string;
+  kind: "ORIGINAL" | "ADDITION" | "REPRINT";
+  parentObligationId?: string;
+  lines: TransactionLine[];
+  status: "PENDING" | "CLAIMED" | "BRIDGE_ACCEPTED" | "UNCERTAIN";
+  createdAt: string;
+  updatedAt: string;
+  claimedBy?: string;
+  claimToken?: string;
+  claimedAt?: string;
+  completedAt?: string;
+  failureReason?: string;
+  reviewedBy?: string;
+  reviewReason?: string;
+};
+
 export type ProductionAmendmentRecord = {
   id: string;
   tenantId: string;
@@ -614,6 +641,8 @@ export type TransactionState = {
   marketplaceReceivables: MarketplaceReceivable[];
   marketplaceCharges: MarketplaceCharge[];
   productionAmendments: ProductionAmendmentRecord[];
+  /** Optional for compatibility with historical test snapshots and prior data. */
+  kitchenPrintObligations?: KitchenPrintObligation[];
   externalTransactions: ExternalTransaction[];
   reconciliationMatches: ReconciliationMatch[];
   journalEntries: JournalEntry[];
@@ -892,6 +921,9 @@ export function normalizeTransactionState(state: TransactionState): TransactionS
     productionAmendments: scoped(
       Array.isArray(state.productionAmendments) ? state.productionAmendments : [],
     ),
+    kitchenPrintObligations: scoped(
+      Array.isArray(state.kitchenPrintObligations) ? state.kitchenPrintObligations : [],
+    ),
     externalTransactions: (Array.isArray(state.externalTransactions)
       ? state.externalTransactions
       : []
@@ -1050,6 +1082,7 @@ export function createEmptyTransactionState(tenantId: string): TransactionState 
     marketplaceReceivables: [],
     marketplaceCharges: [],
     productionAmendments: [],
+    kitchenPrintObligations: [],
     externalTransactions: [],
     reconciliationMatches: [],
     journalEntries: [],
@@ -1793,6 +1826,212 @@ export const TransactionEngine = {
     return next;
   },
 
+  /**
+   * Creates one immutable station-specific obligation per accepted batch. This
+   * runs before authoritative state persistence; a browser crash after commit
+   * cannot erase the print obligation or invent a second original ticket.
+   */
+  queueKitchenPrintObligations(
+    state: TransactionState,
+    order: TransactionOrder,
+    lines: TransactionLine[],
+    sourceId: string,
+    kind: KitchenPrintObligation["kind"],
+    stamp: string,
+  ) {
+    const tenantId = order.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID;
+    const branchId =
+      order.branchId ?? configurationRepository.resolveBranch(tenantId, order.branch).id;
+    const groups = new Map<string, TransactionLine[]>();
+    for (const line of lines) {
+      if (!line.productionStation || line.productionStation === "NONE") continue;
+      groups.set(line.productionStation, [...(groups.get(line.productionStation) ?? []), line]);
+    }
+    state.kitchenPrintObligations ??= [];
+    for (const [station, stationLines] of groups) {
+      const stableId = `KOT:${order.id}:${sourceId}:${station}`;
+      if (state.kitchenPrintObligations.some((item) => item.id === stableId)) continue;
+      state.kitchenPrintObligations.unshift({
+        id: stableId,
+        tenantId,
+        branchId,
+        branch: order.branch,
+        orderId: order.id,
+        station,
+        sourceId,
+        kind,
+        lines: stationLines.map((line) => ({ ...line })),
+        status: "PENDING",
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    }
+  },
+
+  claimKitchenPrintObligation(
+    state: TransactionState,
+    obligationId: string,
+    branchId: string,
+    user: string,
+    claimToken: string,
+  ) {
+    if (!claimToken || claimToken.length > 128) throw new Error("Invalid KOT claim identity");
+    const next = clone(state);
+    const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
+    if (item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user) {
+      return next;
+    }
+    if (item.status !== "PENDING") {
+      throw new Error(
+        "KOT delivery outcome is uncertain or already accepted. Review before retry.",
+      );
+    }
+    item.status = "CLAIMED";
+    item.claimedBy = user;
+    item.claimToken = claimToken;
+    item.claimedAt = now();
+    item.updatedAt = item.claimedAt;
+    return next;
+  },
+
+  settleKitchenPrintObligation(
+    state: TransactionState,
+    obligationId: string,
+    branchId: string,
+    user: string,
+    claimToken: string,
+    outcome: "BRIDGE_ACCEPTED" | "UNCERTAIN",
+    failureReason?: string,
+  ) {
+    if (outcome !== "BRIDGE_ACCEPTED" && outcome !== "UNCERTAIN") {
+      throw new Error("Invalid KOT delivery outcome");
+    }
+    const next = clone(state);
+    const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
+    if (item.status === outcome && item.claimToken === claimToken && item.claimedBy === user) {
+      return next;
+    }
+    if (item.status !== "CLAIMED" || item.claimToken !== claimToken || item.claimedBy !== user) {
+      throw new Error("KOT claim owner changed; do not reprint or overwrite delivery status");
+    }
+    item.status = outcome;
+    item.completedAt = now();
+    item.updatedAt = item.completedAt;
+    if (outcome === "UNCERTAIN")
+      item.failureReason = (failureReason ?? "Delivery unconfirmed").slice(0, 240);
+    return next;
+  },
+
+  /**
+   * An explicitly authorized operator must inspect the kitchen and printer
+   * before retrying an uncertain physical delivery. Audit the decision.
+   */
+  reviewKitchenPrintObligation(
+    state: TransactionState,
+    obligationId: string,
+    branchId: string,
+    user: string,
+    decision: "CONFIRM_DELIVERED" | "RETRY",
+    reason: string,
+  ) {
+    if (typeof reason !== "string" || reason.trim().length < 12) {
+      throw new Error("A specific KOT recovery reason is required");
+    }
+    if (!["CONFIRM_DELIVERED", "RETRY"].includes(decision)) throw new Error("Invalid KOT review");
+    const next = clone(state);
+    const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
+    if (item.status === "PENDING") throw new Error("New KOT has not been claimed");
+    // A manager may never release a currently active device claim. After a
+    // crash it becomes reviewable, but NEVER automatically retried.
+    if (
+      item.status === "CLAIMED" &&
+      (!item.claimedAt || Date.now() - Date.parse(item.claimedAt) < 5 * 60_000)
+    ) {
+      throw new Error("KOT delivery claim is still active; review after five minutes");
+    }
+    if (decision === "RETRY" && item.status === "BRIDGE_ACCEPTED") {
+      throw new Error("Previously accepted KOT needs an audited reprint, not another original KOT");
+    }
+    const prior = item.status;
+    item.status = decision === "RETRY" ? "PENDING" : "BRIDGE_ACCEPTED";
+    item.reviewedBy = user;
+    item.reviewReason = reason.trim();
+    item.updatedAt = now();
+    if (decision === "RETRY") {
+      delete item.claimToken;
+      delete item.claimedBy;
+      delete item.claimedAt;
+      delete item.completedAt;
+    }
+    audit(next, {
+      actor: user,
+      role: "Branch Manager",
+      branch: item.branch,
+      module: "Kitchen",
+      action: `Reviewed KOT ${decision}`,
+      record: item.id,
+      before: prior,
+      after: `${item.status}: ${reason.trim()}`,
+    });
+    return next;
+  },
+
+  requestKitchenReprint(
+    state: TransactionState,
+    obligationId: string,
+    branchId: string,
+    user: string,
+    reason: string,
+  ) {
+    if (typeof reason !== "string" || reason.trim().length < 12) {
+      throw new Error("An audited KOT reprint requires a specific manager reason");
+    }
+    const next = clone(state);
+    const original = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
+    if (!original || original.branchId !== branchId) {
+      throw new Error("Original KOT obligation not available in branch");
+    }
+    if (original.status !== "BRIDGE_ACCEPTED") {
+      throw new Error("Only bridge-accepted KOTs may create an additional audited reprint");
+    }
+    const stamp = now();
+    const duplicate: KitchenPrintObligation = {
+      id: `KOT-REPRINT:${crypto.randomUUID()}`,
+      tenantId: original.tenantId,
+      branchId: original.branchId,
+      branch: original.branch,
+      orderId: original.orderId,
+      station: original.station,
+      sourceId: original.sourceId,
+      kind: "REPRINT",
+      parentObligationId: original.id,
+      lines: original.lines.map((line) => ({ ...line })),
+      status: "PENDING",
+      createdAt: stamp,
+      updatedAt: stamp,
+      reviewedBy: user,
+      reviewReason: reason.trim(),
+    };
+    next.kitchenPrintObligations!.unshift(duplicate);
+    audit(next, {
+      actor: user,
+      role: "Authorized manager",
+      branch: original.branch,
+      module: "Kitchen",
+      action: "Approved audited KOT reprint",
+      record: original.id,
+      before: original.status,
+      after: `New delivery obligation ${duplicate.id}: ${reason.trim()}`,
+    });
+    return next;
+  },
+
   sendToKitchen(state: TransactionState, orderId: string, user: string) {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
@@ -1808,9 +2047,13 @@ export const TransactionEngine = {
       line.sentAt = stamp;
       line.sentQuantity = line.quantity;
     });
+    let sourceId = "ORIGINAL";
+    let obligationKind: KitchenPrintObligation["kind"] = "ORIGINAL";
     if (["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(before)) {
+      sourceId = id("AMD", next, "productionAmendments");
+      obligationKind = "ADDITION";
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: sourceId,
         tenantId: order.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
         branchId:
           order.branchId ??
@@ -1828,6 +2071,7 @@ export const TransactionEngine = {
         createdAt: stamp,
       });
     }
+    this.queueKitchenPrintObligations(next, order, unsentLines, sourceId, obligationKind, stamp);
     order.status = "SENT_TO_KITCHEN";
     if (order.externalSource && !order.externalSource.preparationStartedAt) {
       order.externalSource.preparationStartedAt = now();
@@ -1926,9 +2170,10 @@ export const TransactionEngine = {
         sentQuantity: line.quantity,
       };
     });
+    const additionAmendmentId = additions.length ? id("AMD", next, "productionAmendments") : null;
     if (additions.length) {
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: additionAmendmentId!,
         tenantId: scope.tenantId,
         branchId: scope.branchId,
         branch: scope.branch,
@@ -1983,6 +2228,16 @@ export const TransactionEngine = {
     order.tax = total.tax;
     order.total = total.total;
     if (additions.length) order.status = "SENT_TO_KITCHEN";
+    if (additionAmendmentId) {
+      this.queueKitchenPrintObligations(
+        next,
+        order,
+        additions.map((line) => ({ ...line, sentAt: stamp, sentQuantity: line.quantity })),
+        additionAmendmentId,
+        "ADDITION",
+        stamp,
+      );
+    }
     order.updatedAt = stamp;
     audit(next, {
       actor: user,
