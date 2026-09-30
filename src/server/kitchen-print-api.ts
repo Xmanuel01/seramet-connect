@@ -53,26 +53,27 @@ const respond = (body: unknown, status = 200) =>
 
 function assertPrinterPermission(actor: ServerActor) {
   if (
-    ![permissions.ordersUpdate, permissions.kitchenOperate, permissions.settingsHardwareManage].some(
-      (permission) => actor.permissions.includes(permission),
-    )
+    ![
+      permissions.ordersUpdate,
+      permissions.kitchenOperate,
+      permissions.settingsHardwareManage,
+    ].some((permission) => actor.permissions.includes(permission))
   ) {
-    throw new SerametHttpError(403, "An authorized cashier, kitchen operator or printer manager is required");
+    throw new SerametHttpError(
+      403,
+      "An authorized cashier, kitchen operator or printer manager is required",
+    );
   }
 }
 
 function deviceIdentity(actor: ServerActor) {
   const device = actor.deviceId ?? actor.sessionId;
-  if (!device) throw new SerametHttpError(403, "A verified device or authenticated session is required");
+  if (!device)
+    throw new SerametHttpError(403, "A verified device or authenticated session is required");
   return device;
 }
 
-async function findOutboxRow(
-  db: D1Database,
-  actor: ServerActor,
-  branchId: string,
-  id: string,
-) {
+async function findOutboxRow(db: D1Database, actor: ServerActor, branchId: string, id: string) {
   const row = await db
     .prepare(
       `SELECT entity_id,branch_id,status,version,payload_json
@@ -81,7 +82,8 @@ async function findOutboxRow(
     )
     .bind(actor.tenantId, KITCHEN_OUTBOX_ENTITY, id, branchId)
     .first<OutboxRow>();
-  if (!row) throw new SerametHttpError(404, "The requested kitchen ticket was not found in this branch");
+  if (!row)
+    throw new SerametHttpError(404, "The requested kitchen ticket was not found in this branch");
   return row;
 }
 
@@ -203,7 +205,8 @@ export async function handleKitchenPrintApi(
       if (record.status === "CLAIMED" && record.claimExpiresAt) {
         if (Date.parse(record.claimExpiresAt) <= Date.now()) {
           record.status = "UNCERTAIN";
-          record.failureReason = "The device claim expired; inspect printer output before an audited reprint";
+          record.failureReason =
+            "The device claim expired; inspect printer output before an audited reprint";
         }
       }
       return publicKitchenObligation(record);
@@ -211,14 +214,16 @@ export async function handleKitchenPrintApi(
     return respond({ ok: true, obligations });
   }
 
-  const match = /^\/api\/seramet\/kitchen\/print-obligations\/(kot-[0-9a-f]{64})\/(claim|ack|review)$/.exec(
-    url.pathname,
-  );
+  const match =
+    /^\/api\/seramet\/kitchen\/print-obligations\/(kot-[0-9a-f]{64})\/(claim|ack|review)$/.exec(
+      url.pathname,
+    );
   if (!match || request.method !== "POST") return null;
   const id = match[1]!;
   const operation = match[2]!;
   const parsed = bodyJson(request);
-  const schema = operation === "claim" ? claimSchema : operation === "ack" ? ackSchema : reviewSchema;
+  const schema =
+    operation === "claim" ? claimSchema : operation === "ack" ? ackSchema : reviewSchema;
   const result = schema.safeParse(await parsed);
   if (!result.success) {
     throw new SerametHttpError(400, result.error.issues.map((issue) => issue.message).join("; "));
@@ -253,10 +258,7 @@ export async function handleKitchenPrintApi(
 
   if (operation === "ack") {
     const ack = data as z.infer<typeof ackSchema>;
-    if (
-      current.claimToken !== ack.claimToken ||
-      current.claimedBy !== deviceIdentity(actor)
-    ) {
+    if (current.claimToken !== ack.claimToken || current.claimedBy !== deviceIdentity(actor)) {
       throw new SerametHttpError(403, "This device does not hold the ticket's claim");
     }
     if (current.status === ack.status) return respond({ ok: true, duplicate: true });
