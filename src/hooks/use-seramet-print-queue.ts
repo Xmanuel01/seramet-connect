@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type Dispatch,
@@ -23,11 +24,43 @@ import {
 } from "@/lib/print-bridge-client-config";
 import { formatDateTime } from "@/lib/currency";
 import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
+import { getSerametAccessToken } from "@/lib/access-token";
+import type { KitchenPrintObligation } from "@/server/kitchen-print-outbox";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
 
-export function useSerametPrintQueue(branch: string) {
+type ClaimedTicket = {
+  token: string;
+  jobIds: string[];
+  submitted: boolean;
+};
+
+function kitchenHeaders() {
+  const token = getSerametAccessToken();
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function kitchenApi(url: string, body?: unknown) {
+  const response = await fetch(url, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "same-origin",
+    headers: kitchenHeaders(),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!response.ok) {
+    throw new Error(`Kitchen print service rejected request (HTTP ${response.status})`);
+  }
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+export function useSerametPrintQueue(
+  branch: string,
+  options: { durableRecovery?: boolean } = {},
+) {
   const profileState = useMemo<{
     profile: BranchHardwareProfile | null;
     configurationError: string | null;
@@ -54,6 +87,9 @@ export function useSerametPrintQueue(branch: string) {
   const queue = useSyncExternalStore(subscribeToQueue, readQueue, readQueue);
   const jobs = queue.jobs;
   const reprints = queue.reprints;
+  const [durableTicketWarning, setDurableTicketWarning] = useState("");
+  const claimedTickets = useRef(new Map<string, ClaimedTicket>());
+  const recoveryRunning = useRef(false);
   const setJobs = useCallback<Dispatch<SetStateAction<PrintJob[]>>>(
     (update) => DevicePrintQueueStore.setJobs(branch, update),
     [branch],
@@ -124,6 +160,149 @@ export function useSerametPrintQueue(branch: string) {
     const queued = processJobs(plan.jobs, jobs, profile);
     return { ...plan, queue: queued };
   };
+
+  /**
+   * A server claim is always obtained before any bridge submission. A second
+   * terminal receives HTTP 409 and MUST NOT issue a second physical KOT.
+   * The server retains every obligation across browser restarts.
+   */
+  const deliverDurableKitchenPrints = async (orderId?: string) => {
+    if (recoveryRunning.current || !profile || !navigator.onLine) return 0;
+    recoveryRunning.current = true;
+    let started = 0;
+    try {
+      const base = "/api/seramet/kitchen/print-obligations";
+      const listing = await kitchenApi(`${base}?branchId=${encodeURIComponent(branch)}`);
+      const obligations = (listing["obligations"] ?? []) as KitchenPrintObligation[];
+      const unresolved = obligations.filter((item) =>
+        ["UNCERTAIN", "FAILED", "NEEDS_ROUTING"].includes(item.status),
+      );
+      setDurableTicketWarning(
+        unresolved.length
+          ? `${unresolved.length} kitchen ticket(s) require printer-manager review. Do not auto-reprint.`
+          : "",
+      );
+      for (const obligation of obligations.slice(0, 50)) {
+        if (obligation.status !== "QUEUED" || (orderId && obligation.orderId !== orderId)) {
+          continue;
+        }
+        const preview = SerametPrintService.createProductionTicketJobs(
+          profile,
+          obligation.snapshot,
+          [],
+          obligation.amendmentType,
+        );
+        if (
+          !preview.jobs.length ||
+          preview.skipped.length ||
+          preview.jobs.some(
+            (job) =>
+              job.printerId === "UNASSIGNED" ||
+              (job.printerId !== "KDS-DISPLAY" && !bridgeConfigReady(bridgeConfig)),
+          )
+        ) {
+          setDurableTicketWarning(
+            `KOT for ${obligation.orderId} is safely queued on the server, but this device needs printer/KDS configuration.`,
+          );
+          continue;
+        }
+        // A recovered local job from a prior claim must be reviewed rather than
+        // silently generating a second original KOT.
+        if (jobs.some((job) => job.serverObligationId === obligation.id)) {
+          setDurableTicketWarning(
+            `KOT ${obligation.id} has prior local delivery work. Review delivery status.`,
+          );
+          continue;
+        }
+        let claimed: Record<string, unknown>;
+        try {
+          claimed = await kitchenApi(`${base}/${obligation.id}/claim`, { branchId: branch });
+        } catch {
+          // Another device may have claimed it; never print without our own claim.
+          continue;
+        }
+        const token = claimed["claimToken"];
+        if (typeof token !== "string") {
+          throw new Error("Kitchen print server returned no valid claim token");
+        }
+        const printJobs = preview.jobs.map((job) => ({
+          ...job,
+          serverObligationId: obligation.id,
+        }));
+        claimedTickets.current.set(obligation.id, {
+          token,
+          jobIds: printJobs.map((job) => job.id),
+          submitted: false,
+        });
+        // Device queue state is updated before the bridge receives any ticket.
+        processJobs(printJobs, jobs, profile);
+        started += 1;
+      }
+    } catch (error) {
+      setDurableTicketWarning(
+        error instanceof Error ? error.message : "Kitchen ticket recovery unavailable",
+      );
+    } finally {
+      recoveryRunning.current = false;
+    }
+    return started;
+  };
+
+  // The source of truth is the server obligation, never the React hook lifetime.
+  // A crash after claiming may have physically printed: mark it UNCERTAIN and
+  // require audited human review instead of automatically resending.
+  useEffect(() => {
+    for (const [id, claimed] of claimedTickets.current) {
+      if (claimed.submitted) continue;
+      const matching = jobs.filter((job) => claimed.jobIds.includes(job.id));
+      if (matching.length !== claimed.jobIds.length) continue;
+      const delivered = matching.every((job) =>
+        ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
+      );
+      const uncertain = matching.some((job) =>
+        ["Failed", "Cancelled"].includes(job.status),
+      );
+      if (!delivered && !uncertain) continue;
+      claimed.submitted = true;
+      const kdsOnly = matching.every((job) => job.status === "Displayed");
+      void kitchenApi(`/api/seramet/kitchen/print-obligations/${id}/ack`, {
+        branchId: branch,
+        claimToken: claimed.token,
+        status: delivered ? "DELIVERED" : "UNCERTAIN",
+        evidence: delivered
+          ? kdsOnly
+            ? "KDS_RENDER_ACK"
+            : "PRINT_BRIDGE_ACK"
+          : "AMBIGUOUS_TRANSPORT",
+        ...(!delivered ? { reason: "Delivery result is uncertain; verify before reprinting" } : {}),
+      })
+        .then(() => {
+          claimedTickets.current.delete(id);
+        })
+        .catch(() => {
+          // Keep the local claim for another acknowledgement attempt;
+          // never start another physical print to solve an ACK timeout.
+          claimed.submitted = false;
+          setDurableTicketWarning("Kitchen ticket acknowledgement is pending; do not reprint.");
+        });
+    }
+  }, [jobs, branch]);
+
+  // POS and printer screens can recover any unclaimed ticket after a crash.
+  // Expired claims are never reprinted automatically by this polling loop.
+  const durableRecovery = options.durableRecovery === true;
+  const recoveryCallback = useRef(deliverDurableKitchenPrints);
+  recoveryCallback.current = deliverDurableKitchenPrints;
+  useEffect(() => {
+    if (!durableRecovery) return;
+    void recoveryCallback.current();
+    const interval = window.setInterval(() => {
+      if (navigator.onLine && document.visibilityState === "visible") {
+        void recoveryCallback.current();
+      }
+    }, 20_000);
+    return () => window.clearInterval(interval);
+  }, [branch, durableRecovery]);
 
   const printCustomerDocument = (
     order: OrderForPrint,
@@ -213,6 +392,8 @@ export function useSerametPrintQueue(branch: string) {
     reprints,
     bridgeConfig,
     sendKitchenTickets,
+    deliverDurableKitchenPrints,
+    durableTicketWarning,
     printCustomerDocument,
     retryJob,
     printAtFallback,
