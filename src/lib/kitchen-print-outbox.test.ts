@@ -97,11 +97,9 @@ describe("durable original and amendment kitchen print obligations", () => {
   });
 
   it("permits one branch-scoped claim, never auto-retries an uncertain bridge response", () => {
-    let state = TransactionEngine.sendToKitchen(
-      TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft()),
-      "ORD-0001",
-      "Cashier One",
-    );
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft());
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier One");
     const obligationId = state.kitchenPrintObligations![0]!.id;
     const initialSnapshot = structuredClone(state);
 
