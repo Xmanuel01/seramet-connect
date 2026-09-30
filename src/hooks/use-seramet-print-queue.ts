@@ -98,10 +98,7 @@ export function useSerametPrintQueue(branch: string) {
       setJobs(processed);
       if (onKitchenDelivery) {
         processedNext.forEach((job) =>
-          onKitchenDelivery(
-            job,
-            job.status === "Displayed" ? "BRIDGE_ACCEPTED" : "UNCERTAIN",
-          ),
+          onKitchenDelivery(job, job.status === "Displayed" ? "BRIDGE_ACCEPTED" : "UNCERTAIN"),
         );
       }
       return processed;
@@ -250,48 +247,37 @@ async function sendInstalledBridgeJob(
 ) {
   let outcome: "BRIDGE_ACCEPTED" | "UNCERTAIN" = "UNCERTAIN";
   try {
-  if (job.printerId === "KDS-DISPLAY") {
-    updateJob(setJobs, job.id, {
-      status: "Displayed",
-      printedAt: formatDateTime(new Date(), { hour12: false }),
-      failureReason: null,
-    });
-    outcome = "BRIDGE_ACCEPTED";
-    return;
-  }
-
-  updateJob(setJobs, job.id, { status: "Sending", failureReason: null });
-  const primary = profile.printers.find((printer) => printer.id === job.printerId);
-  try {
-    let result = await submitCopies(job, config, primary?.name);
-    if (!result.accepted) {
-      const fallback = findRuntimeFallback(profile, job, primary?.id);
-      if (fallback) {
-        result = await submitCopies({ ...job, printerId: fallback.id }, config, fallback.name);
-        if (result.accepted) {
-          updateJob(setJobs, job.id, {
-            status: "Fallback Printed",
-            printerId: fallback.id,
-            fallbackPrinterId: fallback.id,
-            printedAt: formatDateTime(new Date(), { hour12: false }),
-            failureReason: null,
-          });
-          outcome = "BRIDGE_ACCEPTED";
-          return;
-        }
-      }
-    }
-
-    if (!result.accepted) {
+    if (job.printerId === "KDS-DISPLAY") {
       updateJob(setJobs, job.id, {
-        status: "Failed",
-        failureReason: result.message,
+        status: "Displayed",
+        printedAt: formatDateTime(new Date(), { hour12: false }),
+        failureReason: null,
       });
+      outcome = "BRIDGE_ACCEPTED";
       return;
     }
 
+    updateJob(setJobs, job.id, { status: "Sending", failureReason: null });
+    const primary = profile.printers.find((printer) => printer.id === job.printerId);
+    // Fallback is safe only before the first submission, when a known offline
+    // primary could not have produced paper. NEVER resend after an ambiguous
+    // bridge rejection or timeout, including partially accepted multi-copies.
+    const fallback =
+      primary?.connection === "Offline"
+        ? findRuntimeFallback(profile, job, primary.id)
+        : undefined;
+    const target = fallback ? { ...job, printerId: fallback.id } : job;
+    const response = await submitCopies(target, config, fallback?.name ?? primary?.name);
+    if (!response.accepted) {
+      updateJob(setJobs, job.id, {
+        status: "Failed",
+        failureReason: response.message,
+      });
+      return;
+    }
     updateJob(setJobs, job.id, {
-      status: "Printed",
+      status: fallback ? "Fallback Printed" : "Printed",
+      ...(fallback ? { printerId: fallback.id, fallbackPrinterId: fallback.id } : {}),
       printedAt: formatDateTime(new Date(), { hour12: false }),
       failureReason: null,
     });
@@ -301,10 +287,9 @@ async function sendInstalledBridgeJob(
       status: "Failed",
       failureReason: error instanceof Error ? error.message : "Local print bridge request failed",
     });
-  }
   } finally {
-    // A bridge timeout may occur after actual paper delivery. Preserve that
-    // uncertainty centrally; do not trigger an automatic duplicate ticket.
+    // Local HTTP success is bridge acceptance only. Ambiguous outcomes remain
+    // server-side until a manager inspects the actual production station.
     onKitchenDelivery?.(job, outcome);
   }
 }
