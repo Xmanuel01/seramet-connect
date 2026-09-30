@@ -107,17 +107,16 @@ describe.sequential("Pass 5 production foundation", () => {
     });
     await mutation(repository, "station-kot", "station-kot", "upsertAndSendKitchen", { draft });
     const rows = await database
-      .prepare(
-        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
-      )
+      .prepare("SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
       .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
       .all<{ payload_json: string }>();
     const tickets = (rows.results ?? []).map(
-      (row) => JSON.parse(row.payload_json) as {
-        station: string;
-        amendmentType: string;
-        snapshot: { lines: Array<{ id: string }> };
-      },
+      (row) =>
+        JSON.parse(row.payload_json) as {
+          station: string;
+          amendmentType: string;
+          snapshot: { lines: Array<{ id: string }> };
+        },
     );
     expect(tickets).toHaveLength(2);
     expect(tickets.map((ticket) => ticket.station).sort()).toEqual(["BAR", "MAIN KITCHEN"]);
@@ -150,22 +149,19 @@ describe.sequential("Pass 5 production foundation", () => {
     );
     expect(amendedResult.state.productionAmendments).toHaveLength(1);
     const rows = await database
-      .prepare(
-        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
-      )
+      .prepare("SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
       .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
       .all<{ payload_json: string }>();
     const tickets = (rows.results ?? []).map(
-      (row) => JSON.parse(row.payload_json) as {
-        amendmentType: string;
-        snapshot: { lines: Array<{ id: string; quantity: number }> };
-      },
+      (row) =>
+        JSON.parse(row.payload_json) as {
+          amendmentType: string;
+          snapshot: { lines: Array<{ id: string; quantity: number }> };
+        },
     );
     expect(tickets).toHaveLength(2);
     const amendment = tickets.find((ticket) => ticket.amendmentType === "ADDITION");
-    expect(amendment?.snapshot.lines).toMatchObject([
-      { id: order.lines[0]!.id, quantity: 1 },
-    ]);
+    expect(amendment?.snapshot.lines).toMatchObject([{ id: order.lines[0]!.id, quantity: 1 }]);
     const duplicate = await mutation(
       repository,
       "additional-qty-kot",
