@@ -257,6 +257,104 @@ describe.sequential("Pass 5 production foundation", () => {
     });
   });
 
+  it("never reprints an expired claim automatically and requires an audited manager decision", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    await mutation(repository, "expired-kot", "expired-kot", "upsertAndSendKitchen", {
+      draft: orderDraft("Expired"),
+    });
+    const row = await database
+      .prepare(
+        "SELECT entity_id,payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ entity_id: string; payload_json: string }>();
+    expect(row).toBeTruthy();
+    const bearer = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const base = `https://seramet.example/api/seramet/kitchen/print-obligations/${row!.entity_id}`;
+    const claim = await handleKitchenPrintApi(
+      new Request(`${base}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: branchA }),
+      }),
+      testEnv(),
+    );
+    expect(claim?.status).toBe(200);
+    const stored = await database
+      .prepare(
+        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY, row!.entity_id)
+      .first<{ payload_json: string }>();
+    const prior = JSON.parse(stored!.payload_json) as Record<string, unknown>;
+    await database
+      .prepare(
+        "UPDATE authoritative_records SET payload_json=? WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(
+        JSON.stringify({ ...prior, claimExpiresAt: "2025-01-01T00:00:00.000Z" }),
+        tenantA,
+        KITCHEN_OUTBOX_ENTITY,
+        row!.entity_id,
+      )
+      .run();
+    const listing = await handleKitchenPrintApi(
+      new Request(`https://seramet.example/api/seramet/kitchen/print-obligations?branchId=${branchA}`, {
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
+      testEnv(),
+    );
+    const pending = (await listing!.json()) as {
+      obligations: Array<{ id: string; status: string }>;
+    };
+    expect(pending.obligations.find((item) => item.id === row!.entity_id)?.status).toBe(
+      "UNCERTAIN",
+    );
+    const duplicateClaim = new Request(`${base}/claim`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ branchId: branchA }),
+    });
+    await expect(handleKitchenPrintApi(duplicateClaim, testEnv())).rejects.toMatchObject({
+      status: 409,
+    });
+    const review = await handleKitchenPrintApi(
+      new Request(`${base}/review`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchId: branchA,
+          action: "REQUEUE",
+          reason: "Checked physical printer paper, approved audited duplicate",
+        }),
+      }),
+      testEnv(),
+    );
+    expect(review?.status).toBe(200);
+    const verified = await database
+      .prepare(
+        "SELECT status,payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY, row!.entity_id)
+      .first<{ status: string; payload_json: string }>();
+    expect(verified?.status).toBe("QUEUED");
+    const recovered = JSON.parse(verified!.payload_json) as {
+      reviewCount: number;
+      reviewedBy: string;
+      lastApprovedAt: string;
+    };
+    expect(recovered.reviewCount).toBe(1);
+    expect(recovered.reviewedBy).toBe(userA);
+    expect(Date.parse(recovered.lastApprovedAt)).toBeGreaterThan(0);
+    const audits = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=? AND entity_id=?",
+      )
+      .bind(tenantA, "KOT_MANUAL_REQUEUE", row!.entity_id)
+      .first<{ count: number }>();
+    expect(audits?.count).toBe(1);
+  });
+
   it("persists the entered physical cash count exactly and rejects invalid counts without closing", async () => {
     const repository = new D1AuthoritativeTransactionRepository(database);
     const initial = await repository.loadState(tenantA);
