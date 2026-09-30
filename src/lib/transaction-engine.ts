@@ -1941,8 +1941,7 @@ export const TransactionEngine = {
     if (typeof reason !== "string" || reason.trim().length < 12) {
       throw new Error("A specific KOT recovery reason is required");
     }
-    if (!["CONFIRM_DELIVERED", "RETRY"].includes(decision))
-      throw new Error("Invalid KOT review");
+    if (!["CONFIRM_DELIVERED", "RETRY"].includes(decision)) throw new Error("Invalid KOT review");
     const next = clone(state);
     const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
     if (!item || item.branchId !== branchId)
@@ -1957,9 +1956,7 @@ export const TransactionEngine = {
       throw new Error("KOT delivery claim is still active; review after five minutes");
     }
     if (decision === "RETRY" && item.status === "BRIDGE_ACCEPTED") {
-      throw new Error(
-        "Previously accepted KOT needs an audited reprint, not another original KOT",
-      );
+      throw new Error("Previously accepted KOT needs an audited reprint, not another original KOT");
     }
     const prior = item.status;
     item.status = decision === "RETRY" ? "PENDING" : "BRIDGE_ACCEPTED";
