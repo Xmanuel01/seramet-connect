@@ -95,6 +95,8 @@ async function updateOutbox(
   reason: string,
 ) {
   const now = new Date().toISOString();
+  const transitionId = crypto.randomUUID();
+  const payload = { ...obligation, transitionId };
   const update = db
     .prepare(
       `UPDATE authoritative_records
@@ -104,7 +106,7 @@ async function updateOutbox(
     )
     .bind(
       obligation.status,
-      JSON.stringify(obligation),
+      JSON.stringify(payload),
       now,
       actor.tenantId,
       KITCHEN_OUTBOX_ENTITY,
@@ -118,7 +120,9 @@ async function updateOutbox(
       `INSERT INTO audit_events
         (tenant_id,id,branch_id,actor_id,device_id,action,entity_type,entity_id,
          reason,correlation_id,metadata_json,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,? FROM authoritative_records
+        WHERE tenant_id=? AND entity_type=? AND entity_id=? AND branch_id=?
+          AND version=? AND payload_json LIKE ?`,
     )
     .bind(
       actor.tenantId,
@@ -137,6 +141,12 @@ async function updateOutbox(
         reviewCount: obligation.reviewCount,
       }),
       now,
+      actor.tenantId,
+      KITCHEN_OUTBOX_ENTITY,
+      row.entity_id,
+      row.branch_id,
+      row.version + 1,
+      `%"transitionId":"${transitionId}"%`,
     );
   // A single optimistic update and its audit are committed atomically.
   // A lost race is a conflict, never an additional print authorization.
@@ -184,7 +194,7 @@ export async function handleKitchenPrintApi(
         `SELECT entity_id,branch_id,status,version,payload_json
          FROM authoritative_records
          WHERE tenant_id=? AND entity_type=? AND branch_id=? AND status <> 'DELIVERED'
-         ORDER BY created_at ASC LIMIT 100`,
+         ORDER BY CASE WHEN status='QUEUED' THEN 0 ELSE 1 END, created_at ASC LIMIT 100`,
       )
       .bind(actor.tenantId, KITCHEN_OUTBOX_ENTITY, branchId)
       .all<OutboxRow>();
