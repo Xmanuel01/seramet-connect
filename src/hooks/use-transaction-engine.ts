@@ -9,6 +9,10 @@ import {
 } from "@/lib/transaction-engine";
 import { acknowledgedSyncStatus, offlineStore } from "@/offline/offline-store";
 import {
+  createTransactionRefreshCoordinator,
+  mayApplyRemoteSnapshot,
+} from "@/lib/transaction-refresh-coordinator";
+import {
   offlineAllowedCommands,
   type OfflineAllowedCommand,
   type OfflineCommand,
@@ -42,6 +46,7 @@ export function useTransactionEngine() {
   } | null>(null);
   const mutationInFlightRef = useRef(0);
   const refreshAfterMutationRef = useRef(false);
+  const localMutationGenerationRef = useRef(0);
   const flushInFlightRef = useRef<Promise<void> | null>(null);
 
   const headers = useMemo(() => {
@@ -118,12 +123,14 @@ export function useTransactionEngine() {
         if (hydrationScopeRef.current !== requestScope) {
           hydrationScopeRef.current = requestScope;
           // Browsers with unavailable IndexedDB can still use the authoritative POS.
+          const hydrationGeneration = localMutationGenerationRef.current;
           const cached = await offlineStore
             .readCachedState(activeTenantId, branchId)
             .catch(() => null);
           if (
             cached &&
             scopeRef.current === requestScope &&
+            localMutationGenerationRef.current === hydrationGeneration &&
             serverScopeRef.current !== requestScope
           ) {
             setState(cached.state);
@@ -144,12 +151,39 @@ export function useTransactionEngine() {
         if (!body.state) throw new Error("Transaction refresh did not return state");
         if (scopeRef.current !== requestScope) return undefined;
         const nextRevision = body.revision ?? 0;
+        // Never replace optimistic offline changes with a server snapshot before
+        // all local commands for this branch have been acknowledged. Resolve the
+        // queue before comparing revisions, since queued edits share the base revision.
+        const unresolved =
+          typeof indexedDB === "undefined"
+            ? []
+            : await offlineStore.pending(activeTenantId, deviceIdRef.current);
+        if (scopeRef.current !== requestScope) return undefined;
         if (mutationInFlightRef.current > 0) {
           refreshAfterMutationRef.current = true;
           return undefined;
         }
-        if (nextRevision < revisionRef.current) {
-          // A slower read must not roll back a later committed write.
+        const branchPending = unresolved.filter((command) => command.branchId === branchId);
+        if (branchPending.length > 0) {
+          setPendingSyncCount(unresolved.length);
+          setBackendStatus(
+            branchPending.some((command) => command.syncStatus === "CONFLICT")
+              ? "conflict"
+              : "synced",
+          );
+          // Return readiness to the startup/reconnect caller so it can replay,
+          // without replacing the locally edited snapshot in the UI.
+          return { state: body.state, revision: nextRevision };
+        }
+        if (
+          !mayApplyRemoteSnapshot({
+            sameScope: scopeRef.current === requestScope,
+            inFlightMutations: mutationInFlightRef.current,
+            pendingLocalCommands: branchPending.length,
+            nextRevision,
+            currentRevision: revisionRef.current,
+          })
+        ) {
           return undefined;
         }
         if (nextRevision !== revisionRef.current || serverScopeRef.current !== requestScope) {
@@ -260,42 +294,20 @@ export function useTransactionEngine() {
   }, [activeTenantId, flushOfflineCommands, scopeKey, syncFromBackend]);
 
   useEffect(() => {
-    // Many events can arrive during one write. Coalesce bursts and retain one
-    // trailing refresh so we never lose the latest revision or spin on every event.
-    let timer: number | undefined;
-    let inFlight = false;
-    let queued = false;
-    let disposed = false;
-    let lastStarted = 0;
-    const run = async () => {
-      timer = undefined;
-      if (disposed || inFlight || !queued) return;
-      queued = false;
-      inFlight = true;
-      lastStarted = Date.now();
-      try {
-        await syncFromBackend();
-      } finally {
-        inFlight = false;
-        if (queued && !disposed) schedule();
-      }
-    };
-    const schedule = () => {
-      if (disposed || inFlight || timer !== undefined) return;
-      const delay = Math.max(300, 2_000 - (Date.now() - lastStarted));
-      timer = window.setTimeout(() => void run(), delay);
-    };
+    const coordinator = createTransactionRefreshCoordinator({
+      refresh: syncFromBackend,
+      now: Date.now,
+      schedule: (run, delay) => window.setTimeout(run, delay),
+      cancel: (timer) => window.clearTimeout(timer),
+    });
     const refresh = () => {
-      // Visibility/focus refresh catches up after background tabs are paused.
-      if (document.visibilityState === "hidden") return;
-      queued = true;
-      schedule();
+      if (document.visibilityState !== "hidden") coordinator.request();
     };
+    // No per-event full reload: one bounded, trailing refresh per event burst.
     window.addEventListener("seramet:realtime", refresh);
     window.addEventListener("seramet:refresh", refresh);
     return () => {
-      disposed = true;
-      window.clearTimeout(timer);
+      coordinator.stop();
       window.removeEventListener("seramet:realtime", refresh);
       window.removeEventListener("seramet:refresh", refresh);
     };
@@ -370,6 +382,7 @@ export function useTransactionEngine() {
       localEffects?: OfflineCommand["localEffects"],
     ) => {
       const idempotencyKey = `command:${crypto.randomUUID()}`;
+      localMutationGenerationRef.current += 1;
       const applyOptimistic = () => {
         const next = optimistic
           ? optimistic(state)
