@@ -304,7 +304,11 @@ export async function handleKitchenPrintApi(
   const oldQueued =
     row.status === "QUEUED" &&
     Date.now() - Date.parse(current.lastApprovedAt ?? current.createdAt) > 15 * 60 * 1000;
-  if (!["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(row.status) && !leaseExpired && !oldQueued) {
+  if (
+    !["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(row.status) &&
+    !leaseExpired &&
+    !oldQueued
+  ) {
     throw new SerametHttpError(409, "Only failed, unresolved or expired tickets can be reviewed");
   }
   const updated: KitchenPrintObligation = {
