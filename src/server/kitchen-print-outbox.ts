@@ -30,6 +30,7 @@ export type KitchenPrintObligation = {
   reviewCount: number;
   reviewReason?: string;
   reviewedBy?: string;
+  lastApprovedAt?: string;
   transitionId?: string;
 };
 
