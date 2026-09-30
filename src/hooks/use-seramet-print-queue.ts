@@ -110,7 +110,7 @@ export function useSerametPrintQueue(
 
   const processJobs = (
     nextJobs: PrintJob[],
-    existingJobs: PrintJob[],
+    _existingJobs: PrintJob[],
     targetProfile: BranchHardwareProfile,
   ) => {
     if (!bridgeConfigReady(bridgeConfig)) {
@@ -127,13 +127,21 @@ export function useSerametPrintQueue(
               failureReason: "Installed print bridge is not configured on this POS device",
             },
       );
-      const processed = [...processedNext, ...existingJobs];
-      setJobs(processed);
+      let processed: PrintJob[] = [];
+      setJobs((current) => {
+        processed = [...processedNext, ...current];
+        return processed;
+      });
       return processed;
     }
 
-    const queued = [...nextJobs, ...existingJobs];
-    setJobs(queued);
+    let queued: PrintJob[] = [];
+    // Functional update: multiple station obligations may be claimed in the same
+    // recovery batch. A stale render snapshot must not drop the first station.
+    setJobs((current) => {
+      queued = [...nextJobs, ...current];
+      return queued;
+    });
     nextJobs.forEach((job) => {
       void sendInstalledBridgeJob(job, targetProfile, bridgeConfig, setJobs);
     });
