@@ -191,6 +191,15 @@ export function useSerametPrintQueue(branch: string, options: { durableRecovery?
         if (obligation.status !== "QUEUED" || (orderId && obligation.orderId !== orderId)) {
           continue;
         }
+        // Old unresolved tickets may already have been produced outside this
+        // browser session. Never drain an aged backlog without manager review.
+        const approvedAt = obligation.lastApprovedAt ?? obligation.createdAt;
+        if (Date.now() - Date.parse(approvedAt) > 15 * 60 * 1000) {
+          setDurableTicketWarning(
+            `KOT for ${obligation.orderId} is over 15 minutes old. Printer-manager review is required before delivery.`,
+          );
+          continue;
+        }
         const preview = SerametPrintService.createProductionTicketJobs(
           profile,
           obligation.snapshot,
