@@ -301,7 +301,10 @@ export async function handleKitchenPrintApi(
     row.status === "CLAIMED" &&
     !!current.claimExpiresAt &&
     Date.parse(current.claimExpiresAt) <= Date.now();
-  if (!["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(row.status) && !leaseExpired) {
+  const oldQueued =
+    row.status === "QUEUED" &&
+    Date.now() - Date.parse(current.lastApprovedAt ?? current.createdAt) > 15 * 60 * 1000;
+  if (!["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(row.status) && !leaseExpired && !oldQueued) {
     throw new SerametHttpError(409, "Only failed, unresolved or expired tickets can be reviewed");
   }
   const updated: KitchenPrintObligation = {
@@ -311,6 +314,7 @@ export async function handleKitchenPrintApi(
     reviewCount: current.reviewCount + 1,
     reviewReason: review.reason,
     reviewedBy: actor.id,
+    ...(review.action === "REQUEUE" ? { lastApprovedAt: now } : {}),
     ...(review.action === "CONFIRM_DELIVERED" ? { deliveredAt: now } : {}),
   };
   // A manual requeue generates a new attempt for the SAME logical KOT,
