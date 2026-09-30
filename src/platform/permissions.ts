@@ -210,6 +210,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   claimKitchenPrintObligation: permissions.ordersUpdate,
   settleKitchenPrintObligation: permissions.ordersUpdate,
   reviewKitchenPrintObligation: permissions.settingsBranchManage,
+  requestKitchenReprint: permissions.settingsBranchManage,
   createGuestOrder: permissions.guestOrderAccept,
   requestBillWithDraft: permissions.invoicesManage,
   prepareInvoiceForPayment: permissions.invoicesManage,
