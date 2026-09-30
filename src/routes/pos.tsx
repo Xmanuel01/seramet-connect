@@ -575,6 +575,7 @@ function POS() {
       return;
     }
     if (
+      !activeOrder ||
       !shouldHydratePosOrder({
         selectedOrderId: activeOrderId,
         availableOrderId: activeOrder?.id ?? null,
