@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -112,6 +112,7 @@ function SerametPrinters() {
   });
   const [notice, setNotice] = useState("No test job sent in this session.");
   const [kotRecoveryBusy, setKotRecoveryBusy] = useState(false);
+  const kotActionRef = useRef(false);
   const [kotRecoveryReason, setKotRecoveryReason] = useState("");
   const { state: transactions, mutate: mutateTransaction } = useTransactionEngine();
   const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
@@ -139,7 +140,7 @@ function SerametPrinters() {
     reprintJob,
   } = useSerametPrintQueue(selectedBranchId);
   const recoverPendingKot = async (obligation: KitchenPrintObligation) => {
-    if (kotRecoveryBusy || !mayDeliverKot) return;
+    if (kotActionRef.current || !mayDeliverKot) return;
     const original = transactions.orders.find(
       (order) => order.id === obligation.orderId && order.branchId === selectedBranchId,
     );
@@ -147,6 +148,7 @@ function SerametPrinters() {
       setNotice("Authoritative order is not visible for this KOT. Switch to its assigned branch.");
       return;
     }
+    kotActionRef.current = true;
     setKotRecoveryBusy(true);
     const token = crypto.randomUUID();
     try {
@@ -230,6 +232,7 @@ function SerametPrinters() {
           " Inspect the durable server status before trying again.",
       );
     } finally {
+      kotActionRef.current = false;
       setKotRecoveryBusy(false);
     }
   };
@@ -238,7 +241,8 @@ function SerametPrinters() {
     obligation: KitchenPrintObligation,
     decision: "CONFIRM_DELIVERED" | "RETRY",
   ) => {
-    if (kotRecoveryBusy || !mayReviewKot || !kotRecoveryReason.trim()) return;
+    if (kotActionRef.current || !mayReviewKot || kotRecoveryReason.trim().length < 12) return;
+    kotActionRef.current = true;
     setKotRecoveryBusy(true);
     try {
       await mutateTransaction("reviewKitchenPrintObligation", {
@@ -255,12 +259,14 @@ function SerametPrinters() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "KOT review failed");
     } finally {
+      kotActionRef.current = false;
       setKotRecoveryBusy(false);
     }
   };
 
   const requestAuditedReprint = async (obligation: KitchenPrintObligation) => {
-    if (kotRecoveryBusy || !mayReviewKot || kotRecoveryReason.trim().length < 12) return;
+    if (kotActionRef.current || !mayReviewKot || kotRecoveryReason.trim().length < 12) return;
+    kotActionRef.current = true;
     setKotRecoveryBusy(true);
     try {
       await mutateTransaction("requestKitchenReprint", {
@@ -274,6 +280,7 @@ function SerametPrinters() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "KOT reprint approval failed");
     } finally {
+      kotActionRef.current = false;
       setKotRecoveryBusy(false);
     }
   };
