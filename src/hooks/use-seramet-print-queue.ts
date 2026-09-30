@@ -26,6 +26,8 @@ import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
+/** Bridge acceptance is NOT proof of physical printing. */
+type OnKitchenDelivery = (job: PrintJob, result: "BRIDGE_ACCEPTED" | "UNCERTAIN") => void;
 
 export function useSerametPrintQueue(branch: string) {
   const profileState = useMemo<{
@@ -76,6 +78,7 @@ export function useSerametPrintQueue(branch: string) {
     nextJobs: PrintJob[],
     existingJobs: PrintJob[],
     targetProfile: BranchHardwareProfile,
+    onKitchenDelivery?: OnKitchenDelivery,
   ) => {
     if (!bridgeConfigReady(bridgeConfig)) {
       const processedNext = nextJobs.map((job) =>
@@ -93,13 +96,21 @@ export function useSerametPrintQueue(branch: string) {
       );
       const processed = [...processedNext, ...existingJobs];
       setJobs(processed);
+      if (onKitchenDelivery) {
+        processedNext.forEach((job) =>
+          onKitchenDelivery(
+            job,
+            job.status === "Displayed" ? "BRIDGE_ACCEPTED" : "UNCERTAIN",
+          ),
+        );
+      }
       return processed;
     }
 
     const queued = [...nextJobs, ...existingJobs];
     setJobs(queued);
     nextJobs.forEach((job) => {
-      void sendInstalledBridgeJob(job, targetProfile, bridgeConfig, setJobs);
+      void sendInstalledBridgeJob(job, targetProfile, bridgeConfig, setJobs, onKitchenDelivery);
     });
     return queued;
   };
@@ -113,6 +124,7 @@ export function useSerametPrintQueue(branch: string) {
   const sendKitchenTickets = (
     order: OrderForPrint,
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
+    onKitchenDelivery?: OnKitchenDelivery,
   ): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
     const plan = SerametPrintService.createProductionTicketJobs(
@@ -121,7 +133,7 @@ export function useSerametPrintQueue(branch: string) {
       jobs,
       amendmentType,
     );
-    const queued = processJobs(plan.jobs, jobs, profile);
+    const queued = processJobs(plan.jobs, jobs, profile, onKitchenDelivery);
     return { ...plan, queue: queued };
   };
 
@@ -234,13 +246,17 @@ async function sendInstalledBridgeJob(
   profile: BranchHardwareProfile,
   config: InstalledPrintBridgeConfig,
   setJobs: Dispatch<SetStateAction<PrintJob[]>>,
+  onKitchenDelivery?: OnKitchenDelivery,
 ) {
+  let outcome: "BRIDGE_ACCEPTED" | "UNCERTAIN" = "UNCERTAIN";
+  try {
   if (job.printerId === "KDS-DISPLAY") {
     updateJob(setJobs, job.id, {
       status: "Displayed",
       printedAt: formatDateTime(new Date(), { hour12: false }),
       failureReason: null,
     });
+    outcome = "BRIDGE_ACCEPTED";
     return;
   }
 
@@ -260,6 +276,7 @@ async function sendInstalledBridgeJob(
             printedAt: formatDateTime(new Date(), { hour12: false }),
             failureReason: null,
           });
+          outcome = "BRIDGE_ACCEPTED";
           return;
         }
       }
@@ -278,11 +295,17 @@ async function sendInstalledBridgeJob(
       printedAt: formatDateTime(new Date(), { hour12: false }),
       failureReason: null,
     });
+    outcome = "BRIDGE_ACCEPTED";
   } catch (error) {
     updateJob(setJobs, job.id, {
       status: "Failed",
       failureReason: error instanceof Error ? error.message : "Local print bridge request failed",
     });
+  }
+  } finally {
+    // A bridge timeout may occur after actual paper delivery. Preserve that
+    // uncertainty centrally; do not trigger an automatic duplicate ticket.
+    onKitchenDelivery?.(job, outcome);
   }
 }
 
