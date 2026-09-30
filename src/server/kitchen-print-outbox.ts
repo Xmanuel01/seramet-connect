@@ -9,12 +9,7 @@ import type { OrderForPrint, ProductionStation } from "@/lib/seramet-print-servi
 export const KITCHEN_OUTBOX_ENTITY = "print:kitchen-obligation";
 
 export type KitchenObligationStatus =
-  | "QUEUED"
-  | "NEEDS_ROUTING"
-  | "CLAIMED"
-  | "DELIVERED"
-  | "FAILED"
-  | "UNCERTAIN";
+  "QUEUED" | "NEEDS_ROUTING" | "CLAIMED" | "DELIVERED" | "FAILED" | "UNCERTAIN";
 
 export type KitchenPrintObligation = {
   id: string;
