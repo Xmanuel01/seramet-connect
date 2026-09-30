@@ -43,17 +43,21 @@ export function newlyDispatchedKitchenGroups(
     previous?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
   );
   const dispatched = current.lines.filter((line) => line.sentAt && !previousSent.has(line.id));
-  const groups = new Map<ProductionStation, typeof dispatched>();
-  for (const line of dispatched) {
+  return {
+    amendmentType: (previousSent.size ? "ADDITION" : "NEW") as "ADDITION" | "NEW",
+    groups: groupKitchenLines(dispatched),
+  };
+}
+
+export function groupKitchenLines(lines: readonly TransactionOrder["lines"][number][]) {
+  const groups = new Map<ProductionStation, TransactionOrder["lines"]>();
+  for (const line of lines) {
     const station = line.productionStation ?? "NONE";
     const group = groups.get(station) ?? [];
     group.push(line);
     groups.set(station, group);
   }
-  return {
-    amendmentType: (previousSent.size ? "ADDITION" : "NEW") as "ADDITION" | "NEW",
-    groups,
-  };
+  return groups;
 }
 
 export function obligationPrintSnapshot(
