@@ -1286,17 +1286,22 @@ function POS() {
           "Review the server KOT outbox before attempting another dispatch.",
       );
     }
-    let printResult: ReturnType<typeof sendKitchenTickets> | null = null;
-    const queuedJobIds: string[] = [];
-    const rejected: string[] = [];
+    // Claim every station before initiating any asynchronous bridge operation.
+    // This prevents a fast first-station ACK racing a later-station claim and
+    // producing a false revision conflict on a healthy terminal.
+    const claimed = [];
     for (const obligation of obligations) {
-      // The claim is a separate revision-guarded server command. Competing
-      // terminals cannot automatically deliver the same original KOT.
       const claimToken = crypto.randomUUID();
       await mutateTransaction("claimKitchenPrintObligation", {
         obligationId: obligation.id,
         claimToken,
       });
+      claimed.push({ obligation, claimToken });
+    }
+    let printResult: ReturnType<typeof sendKitchenTickets> | null = null;
+    const queuedJobIds: string[] = [];
+    const rejected: string[] = [];
+    for (const { obligation, claimToken } of claimed) {
       const completed = new Map<string, "BRIDGE_ACCEPTED" | "UNCERTAIN">();
       let expected = 0;
       let reported = false;
