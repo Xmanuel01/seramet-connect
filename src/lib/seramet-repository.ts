@@ -234,6 +234,14 @@ export function applyServerMutation(
         String(input["outcome"]) as "BRIDGE_ACCEPTED" | "UNCERTAIN",
         typeof input["failureReason"] === "string" ? input["failureReason"] : undefined,
       );
+    case "requestKitchenReprint":
+      return TransactionEngine.requestKitchenReprint(
+        state,
+        String(input["obligationId"]),
+        actor.branchId ?? "",
+        actor.id,
+        String(input["reason"] ?? ""),
+      );
     case "reviewKitchenPrintObligation":
       return TransactionEngine.reviewKitchenPrintObligation(
         state,
