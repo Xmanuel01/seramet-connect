@@ -158,6 +158,7 @@ export function useTransactionEngine() {
           typeof indexedDB === "undefined"
             ? []
             : await offlineStore.pending(activeTenantId, deviceIdRef.current);
+        if (scopeRef.current !== requestScope) return undefined;
         if (mutationInFlightRef.current > 0) {
           refreshAfterMutationRef.current = true;
           return undefined;
