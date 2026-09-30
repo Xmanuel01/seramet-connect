@@ -385,7 +385,8 @@ export type KitchenPrintObligation = {
   orderId: string;
   station: string;
   sourceId: string;
-  kind: "ORIGINAL" | "ADDITION";
+  kind: "ORIGINAL" | "ADDITION" | "REPRINT";
+  parentObligationId?: string;
   lines: TransactionLine[];
   status: "PENDING" | "CLAIMED" | "BRIDGE_ACCEPTED" | "UNCERTAIN";
   createdAt: string;
@@ -1980,6 +1981,56 @@ export const TransactionEngine = {
       record: item.id,
       before: prior,
       after: `${item.status}: ${reason.trim()}`,
+    });
+    return next;
+  },
+
+  requestKitchenReprint(
+    state: TransactionState,
+    obligationId: string,
+    branchId: string,
+    user: string,
+    reason: string,
+  ) {
+    if (typeof reason !== "string" || reason.trim().length < 12) {
+      throw new Error("An audited KOT reprint requires a specific manager reason");
+    }
+    const next = clone(state);
+    const original = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
+    if (!original || original.branchId !== branchId) {
+      throw new Error("Original KOT obligation not available in branch");
+    }
+    if (original.status !== "BRIDGE_ACCEPTED") {
+      throw new Error("Only bridge-accepted KOTs may create an additional audited reprint");
+    }
+    const stamp = now();
+    const duplicate: KitchenPrintObligation = {
+      id: `KOT-REPRINT:${crypto.randomUUID()}`,
+      tenantId: original.tenantId,
+      branchId: original.branchId,
+      branch: original.branch,
+      orderId: original.orderId,
+      station: original.station,
+      sourceId: original.sourceId,
+      kind: "REPRINT",
+      parentObligationId: original.id,
+      lines: original.lines.map((line) => ({ ...line })),
+      status: "PENDING",
+      createdAt: stamp,
+      updatedAt: stamp,
+      reviewedBy: user,
+      reviewReason: reason.trim(),
+    };
+    next.kitchenPrintObligations!.unshift(duplicate);
+    audit(next, {
+      actor: user,
+      role: "Authorized manager",
+      branch: original.branch,
+      module: "Kitchen",
+      action: "Approved audited KOT reprint",
+      record: original.id,
+      before: original.status,
+      after: `New delivery obligation ${duplicate.id}: ${reason.trim()}`,
     });
     return next;
   },
