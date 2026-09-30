@@ -1241,6 +1241,13 @@ function POS() {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
     });
+    if (resultState && "offline" in resultState && resultState.offline) {
+      throw new Error(
+        "Kitchen command is queued for offline reconciliation. No authoritative " +
+          "KOT has been accepted or printed yet. Do not submit it again; recover " +
+          "the original ticket in Printers after reconnecting.",
+      );
+    }
     const authoritativeOrder = activeOrder?.id
       ? resultState?.state.orders.find((candidate) => candidate.id === activeOrder.id)
       : resultState?.state.orders.find((candidate) => !knownOrderIds.has(candidate.id));
