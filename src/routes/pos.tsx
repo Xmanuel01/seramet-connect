@@ -225,8 +225,7 @@ function POS() {
     durableTicketWarning,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId, {
-    durableRecovery:
-      persistenceMode === "authoritative" && !isStagingPrinterlessTestingEnabled(),
+    durableRecovery: persistenceMode === "authoritative" && !isStagingPrinterlessTestingEnabled(),
   });
 
   const selectedChannel =
