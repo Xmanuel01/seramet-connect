@@ -4,6 +4,9 @@ import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } f
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
+import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { permissions } from "@/platform/permissions";
+import type { KitchenPrintObligation } from "@/lib/transaction-engine";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
@@ -86,6 +89,8 @@ function SerametPrinters() {
   const {
     activeTenantId,
     branch: activeBranch,
+    branchId: activeBranchId,
+    hasPermission,
     canSwitchBranch,
     currentUser,
     switchableBranchRecords,
@@ -106,6 +111,17 @@ function SerametPrinters() {
     printers: [],
   });
   const [notice, setNotice] = useState("No test job sent in this session.");
+  const [kotRecoveryBusy, setKotRecoveryBusy] = useState(false);
+  const [kotRecoveryReason, setKotRecoveryReason] = useState("");
+  const { state: transactions, mutate: mutateTransaction } = useTransactionEngine();
+  const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
+    (item) =>
+      item.branchId === selectedBranchId &&
+      item.status !== "BRIDGE_ACCEPTED",
+  );
+  const mayReviewKot = hasPermission(permissions.kitchenOperate);
+  const mayDeliverKot =
+    selectedBranchId === activeBranchId && hasPermission(permissions.ordersUpdate);
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
@@ -120,6 +136,131 @@ function SerametPrinters() {
     sendKitchenTickets,
     reprintJob,
   } = useSerametPrintQueue(selectedBranchId);
+  const recoverPendingKot = async (obligation: KitchenPrintObligation) => {
+    if (kotRecoveryBusy || !mayDeliverKot) return;
+    const original = transactions.orders.find(
+      (order) => order.id === obligation.orderId && order.branchId === selectedBranchId,
+    );
+    if (!original) {
+      setNotice("Authoritative order is not visible for this KOT. Switch to its assigned branch.");
+      return;
+    }
+    setKotRecoveryBusy(true);
+    const token = crypto.randomUUID();
+    try {
+      await mutateTransaction("claimKitchenPrintObligation", {
+        obligationId: obligation.id,
+        claimToken: token,
+      });
+      const outcomes = new Map<string, "BRIDGE_ACCEPTED" | "UNCERTAIN">();
+      let expectedJobs = 0;
+      let finalized = false;
+      const callback = (jobId: string, outcome: "BRIDGE_ACCEPTED" | "UNCERTAIN") => {
+        outcomes.set(jobId, outcome);
+        if (!expectedJobs || outcomes.size !== expectedJobs || finalized) return;
+        finalized = true;
+        const overall = [...outcomes.values()].every((value) => value === "BRIDGE_ACCEPTED")
+          ? "BRIDGE_ACCEPTED"
+          : "UNCERTAIN";
+        void mutateTransaction("settleKitchenPrintObligation", {
+          obligationId: obligation.id,
+          claimToken: token,
+          outcome: overall,
+          ...(overall === "UNCERTAIN"
+            ? { failureReason: "One or more recovery delivery routes were unconfirmed" }
+            : {}),
+        }).catch(() =>
+          setNotice(
+            "Recovery was attempted, but its server acknowledgement was not saved. " +
+              "Verify the KOT status before any further printing.",
+          ),
+        );
+      };
+      const result = sendKitchenTickets(
+        {
+          orderId: original.id,
+          branch: original.branch,
+          terminalId: "MANUAL-KOT-RECOVERY",
+          ...(original.table ? { table: original.table } : {}),
+          orderType: original.channel,
+          requestedBy: currentUser.name,
+          cashier: original.cashier,
+          waiter: original.waiter ?? original.cashier,
+          createdAt: obligation.createdAt,
+          lines: obligation.lines.map((line) => ({
+            id: line.id,
+            name: line.name,
+            category: line.category,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            productionStation: (line.productionStation ??
+              "NONE") as OrderForPrint["lines"][number]["productionStation"],
+            ...(line.itemNote ? { itemNote: line.itemNote } : {}),
+          })),
+          subtotal: original.subtotal,
+          tax: original.tax,
+          total: original.total,
+          customer: original.customer,
+          ...(original.kitchenNote ? { kitchenNote: original.kitchenNote } : {}),
+        },
+        obligation.reviewReason
+          ? "REPRINT"
+          : obligation.kind === "ORIGINAL"
+            ? "NEW"
+            : "ADDITION",
+        (job, outcome) => {
+          queueMicrotask(() => callback(job.id, outcome));
+        },
+      );
+      expectedJobs = result.jobs.length;
+      if (!expectedJobs) {
+        await mutateTransaction("settleKitchenPrintObligation", {
+          obligationId: obligation.id,
+          claimToken: token,
+          outcome: "UNCERTAIN",
+          failureReason: "No recovery delivery route was queued",
+        });
+        throw new Error("No recovery delivery route was queued. Reinspect the printer setup.");
+      }
+      setNotice(
+        `Recovery started for ${obligation.orderId} / ${obligation.station}. ` +
+          "Check the physical output. Bridge acceptance does not prove printing.",
+      );
+    } catch (error) {
+      setNotice(
+        (error instanceof Error ? error.message : "KOT recovery could not start") +
+          " Inspect the durable server status before trying again.",
+      );
+    } finally {
+      setKotRecoveryBusy(false);
+    }
+  };
+
+  const reviewKot = async (
+    obligation: KitchenPrintObligation,
+    decision: "CONFIRM_DELIVERED" | "RETRY",
+  ) => {
+    if (kotRecoveryBusy || !mayReviewKot || !kotRecoveryReason.trim()) return;
+    setKotRecoveryBusy(true);
+    try {
+      await mutateTransaction("reviewKitchenPrintObligation", {
+        obligationId: obligation.id,
+        decision,
+        reason: kotRecoveryReason,
+      });
+      setNotice(
+        decision === "RETRY"
+          ? "Manager released the uncertain KOT. Use its Recover action only after checking paper."
+          : "Manager recorded confirmed KOT delivery with a review reason.",
+      );
+      setKotRecoveryReason("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "KOT review failed");
+    } finally {
+      setKotRecoveryBusy(false);
+    }
+  };
+
   const visiblePrinters = useMemo(
     () => (profile ? SerametLocalPrintBridge.discoverPrinters(profile) : []),
     [profile],
@@ -307,6 +448,79 @@ function SerametPrinters() {
         </>
       }
     >
+      <Panel className="mb-4">
+        <PanelHead
+          title="Durable kitchen ticket recovery"
+          sub="Server-backed KOT obligations survive browser crashes. Uncertain paper delivery needs a manual check."
+          right={<Status>{recoveryItems.length} outstanding</Status>}
+        />
+        <div className="space-y-3 p-4 text-[13px]">
+          {!mayDeliverKot && (
+            <p className="text-muted-foreground">
+              Select this branch as your active session branch to recover its KOT tickets.
+            </p>
+          )}
+          {recoveryItems.length === 0 ? (
+            <p className="text-muted-foreground">
+              No outstanding original or amendment KOT obligations in this branch.
+            </p>
+          ) : (
+            <>
+              {mayReviewKot && (
+                <label className="block">
+                  <span className="font-semibold">Manager review reason (at least 12 characters)</span>
+                  <input
+                    value={kotRecoveryReason}
+                    onChange={(event) => setKotRecoveryReason(event.target.value)}
+                    className="mt-2 w-full rounded-md border bg-card px-3 py-2"
+                    placeholder="Paper checked at kitchen station, reason and outcome..."
+                  />
+                </label>
+              )}
+              {recoveryItems.map((obligation) => (
+                <div
+                  key={obligation.id}
+                  className="rounded-lg border p-3"
+                >
+                  <div className="font-semibold">
+                    {obligation.orderId} · {obligation.station} · {obligation.kind}
+                  </div>
+                  <p className="mt-1 text-muted-foreground">
+                    {obligation.status.replaceAll("_", " ")} — {obligation.lines.length} line(s).
+                    A previous claim may have physically printed even without an acknowledgement.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {obligation.status === "PENDING" && (
+                      <Btn
+                        onClick={() => void recoverPendingKot(obligation)}
+                        disabled={kotRecoveryBusy || !mayDeliverKot}
+                      >
+                        {obligation.reviewReason ? "Audited recovery print" : "Deliver pending ticket"}
+                      </Btn>
+                    )}
+                    {obligation.status !== "PENDING" && mayReviewKot && (
+                      <>
+                        <Btn
+                          onClick={() => void reviewKot(obligation, "CONFIRM_DELIVERED")}
+                          disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                        >
+                          Confirm after checking output
+                        </Btn>
+                        <Btn
+                          onClick={() => void reviewKot(obligation, "RETRY")}
+                          disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                        >
+                          Approve one recovery attempt
+                        </Btn>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </Panel>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Printers" value={profile.printers.length} />
         <Metric label="Connected" value={connected} />
