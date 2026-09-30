@@ -45,6 +45,7 @@ import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-cur
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
+import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -222,6 +223,7 @@ function POS() {
     profile,
     configurationError,
     jobs: printJobs,
+    bridgeConfig,
     sendKitchenTickets,
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
@@ -1222,9 +1224,15 @@ function POS() {
         printJobs,
         amendmentType,
       );
-      if (!preflight.jobs.length) {
+      const physicalJobs = preflight.jobs.filter((job) => job.printerId !== "KDS-DISPLAY");
+      if (
+        !preflight.jobs.length ||
+        preflight.jobs.some((job) => job.printerId === "UNASSIGNED") ||
+        (physicalJobs.length > 0 && !bridgeConfigReady(bridgeConfig))
+      ) {
         throw new Error(
-          `No KOT/KDS route is available for these items. ${preflight.skipped[0] ?? "Check Seramet Printers before sending."}`,
+          "Kitchen dispatch requires a configured printer/KDS route and an installed " +
+            "print bridge for physical jobs. Check Seramet Printers before dispatching.",
         );
       }
     }
