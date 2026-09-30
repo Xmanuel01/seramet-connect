@@ -1940,6 +1940,14 @@ export const TransactionEngine = {
     const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
     if (!item || item.branchId !== branchId) throw new Error("KOT obligation not available in branch");
     if (item.status === "PENDING") throw new Error("New KOT has not been claimed");
+    // A manager may never release a currently active device claim. After a
+    // crash it becomes reviewable, but NEVER automatically retried.
+    if (
+      item.status === "CLAIMED" &&
+      (!item.claimedAt || Date.now() - Date.parse(item.claimedAt) < 5 * 60_000)
+    ) {
+      throw new Error("KOT delivery claim is still active; review after five minutes");
+    }
     if (decision === "RETRY" && item.status === "BRIDGE_ACCEPTED") {
       throw new Error("Previously accepted KOT needs an audited reprint, not another original KOT");
     }
