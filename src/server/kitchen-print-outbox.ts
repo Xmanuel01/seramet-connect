@@ -86,7 +86,6 @@ export function obligationPrintSnapshot(
       unitPrice: line.unitPrice,
       productionStation: line.productionStation ?? "NONE",
       ...(line.itemNote ? { itemNote: line.itemNote } : {}),
-      ...(line.modifiers?.length ? { modifiers: [...line.modifiers] } : {}),
     })),
     subtotal: order.subtotal,
     tax: order.tax,
