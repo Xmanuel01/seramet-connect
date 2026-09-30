@@ -672,7 +672,9 @@ function SerametPrinters() {
                         Approve audited retry
                       </Btn>
                       <Btn
-                        disabled={(reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null}
+                        disabled={
+                          (reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null
+                        }
                         onClick={() => void reviewDurableTicket(ticket, "CONFIRM_DELIVERED")}
                       >
                         Confirm inspected delivery
