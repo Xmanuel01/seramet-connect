@@ -7,6 +7,8 @@ import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
+import { getSerametAccessToken } from "@/lib/access-token";
+import type { KitchenPrintObligation } from "@/server/kitchen-print-outbox";
 import {
   SerametPrintService,
   SerametLocalPrintBridge,
@@ -108,6 +110,10 @@ function SerametPrinters() {
   const [notice, setNotice] = useState("No test job sent in this session.");
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
   const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
+  const [durableTickets, setDurableTickets] = useState<KitchenPrintObligation[]>([]);
+  const [durableError, setDurableError] = useState("");
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
 
   useEffect(() => setBranch(activeBranch), [activeBranch]);
   const {
@@ -119,6 +125,7 @@ function SerametPrinters() {
     printCustomerDocument,
     sendKitchenTickets,
     reprintJob,
+    deliverDurableKitchenPrints,
   } = useSerametPrintQueue(selectedBranchId);
   const visiblePrinters = useMemo(
     () => (profile ? SerametLocalPrintBridge.discoverPrinters(profile) : []),
@@ -201,6 +208,73 @@ function SerametPrinters() {
     setNotice(
       `${result.jobs.length} ${type.toLowerCase()} test job${result.jobs.length === 1 ? "" : "s"} accepted. ${result.skipped.length} duplicate blocked.`,
     );
+  };
+
+  const refreshDurableTickets = useCallback(async () => {
+    try {
+      const token = getSerametAccessToken();
+      const response = await fetch(
+        `/api/seramet/kitchen/print-obligations?branchId=${encodeURIComponent(selectedBranchId)}`,
+        {
+          credentials: "same-origin",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      );
+      if (!response.ok) throw new Error(`Server ticket list unavailable (HTTP ${response.status})`);
+      const payload = (await response.json()) as {
+        obligations: KitchenPrintObligation[];
+      };
+      setDurableTickets(payload.obligations);
+      setDurableError("");
+    } catch (error) {
+      setDurableError(error instanceof Error ? error.message : "Ticket review unavailable");
+    }
+  }, [selectedBranchId]);
+
+  useEffect(() => {
+    void refreshDurableTickets();
+    const interval = window.setInterval(() => void refreshDurableTickets(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [refreshDurableTickets]);
+
+  const reviewDurableTicket = async (
+    ticket: KitchenPrintObligation,
+    action: "REQUEUE" | "CONFIRM_DELIVERED",
+  ) => {
+    const reason = reviewReasons[ticket.id]?.trim() ?? "";
+    if (reason.length < 12 || reviewBusy) return;
+    const warning =
+      action === "REQUEUE"
+        ? "Confirm the previous KOT was not produced or explicitly approve an audited duplicate. Requeueing may print again."
+        : "Confirm you have inspected the kitchen/KDS or physical ticket before marking delivered.";
+    if (!window.confirm(warning)) return;
+    setReviewBusy(ticket.id);
+    try {
+      const token = getSerametAccessToken();
+      const response = await fetch(
+        `/api/seramet/kitchen/print-obligations/${ticket.id}/review`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ branchId: selectedBranchId, action, reason }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Review refused (HTTP ${response.status}). Manager permission and full authentication are required.`,
+        );
+      }
+      setReviewReasons((current) => ({ ...current, [ticket.id]: "" }));
+      await refreshDurableTickets();
+    } catch (error) {
+      setDurableError(error instanceof Error ? error.message : "Ticket review failed");
+    } finally {
+      setReviewBusy(null);
+    }
   };
 
   const reprintLatest = () => {
@@ -527,6 +601,101 @@ function SerametPrinters() {
           </div>
         </Panel>
       </div>
+
+      <Panel className="mt-4">
+        <PanelHead
+          title="Authoritative kitchen ticket recovery"
+          sub="Server-owned obligations survive browser restarts. Uncertain printing requires manager inspection."
+          right={
+            <Btn onClick={() => void refreshDurableTickets()}>
+              <RotateCcw className="h-4 w-4" />
+              Refresh
+            </Btn>
+          }
+        />
+        <div className="space-y-3 p-4">
+          {durableError && (
+            <div role="alert" className="rounded-md border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning">
+              {durableError}
+            </div>
+          )}
+          {durableTickets.length === 0 && (
+            <p className="text-[12px] text-muted-foreground">
+              No unresolved server-side kitchen tickets are currently listed.
+            </p>
+          )}
+          {durableTickets.map((ticket) => {
+            const oldQueue =
+              ticket.status === "QUEUED" &&
+              Date.now() - Date.parse(ticket.lastApprovedAt ?? ticket.createdAt) >
+                15 * 60 * 1000;
+            const reviewable =
+              ["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(ticket.status) || oldQueue;
+            return (
+              <article key={ticket.id} className="rounded-lg border border-border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
+                  <div>
+                    <strong>{ticket.orderId}</strong> · {ticket.station} · {ticket.amendmentType}
+                  </div>
+                  <Status>{oldQueue ? "AGED: MANAGER REVIEW" : ticket.status}</Status>
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Original obligation: {ticket.id} · {ticket.createdAt}
+                  {ticket.reviewCount ? ` · Reviewed ${ticket.reviewCount} time(s)` : ""}
+                </p>
+                {ticket.failureReason && (
+                  <p className="mt-1 text-[12px] text-warning">{ticket.failureReason}</p>
+                )}
+                {reviewable && (
+                  <div className="mt-3 space-y-2">
+                    <label className="block text-[11px] font-bold">
+                      Manager review reason (minimum 12 characters)
+                      <input
+                        aria-label={`Recovery review reason for ${ticket.orderId}`}
+                        value={reviewReasons[ticket.id] ?? ""}
+                        onChange={(event) =>
+                          setReviewReasons((current) => ({
+                            ...current,
+                            [ticket.id]: event.target.value,
+                          }))
+                        }
+                        className="mt-1 w-full rounded-md border border-border bg-card p-2 text-[12px]"
+                        placeholder="State what was checked on printer/KDS"
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <Btn
+                        disabled={(reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null}
+                        onClick={() => void reviewDurableTicket(ticket, "REQUEUE")}
+                      >
+                        Approve audited retry
+                      </Btn>
+                      <Btn
+                        disabled={(reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null}
+                        onClick={() => void reviewDurableTicket(ticket, "CONFIRM_DELIVERED")}
+                      >
+                        Confirm inspected delivery
+                      </Btn>
+                    </div>
+                    <p className="text-[11px] text-warning">
+                      Inspect physical output before retrying. Never assume an expired claim failed to print.
+                    </p>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+          <div className="flex justify-end">
+            <Btn
+              onClick={() =>
+                void deliverDurableKitchenPrints().then(() => refreshDurableTickets())
+              }
+            >
+              Process eligible queued tickets on this device
+            </Btn>
+          </div>
+        </div>
+      </Panel>
 
       <Panel className="mt-4">
         <PanelHead
