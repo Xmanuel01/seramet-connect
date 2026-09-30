@@ -2105,9 +2105,12 @@ export const TransactionEngine = {
         sentQuantity: line.quantity,
       };
     });
+    const additionAmendmentId = additions.length
+      ? id("AMD", next, "productionAmendments")
+      : null;
     if (additions.length) {
       next.productionAmendments.unshift({
-        id: id("AMD", next, "productionAmendments"),
+        id: additionAmendmentId!,
         tenantId: scope.tenantId,
         branchId: scope.branchId,
         branch: scope.branch,
@@ -2162,6 +2165,16 @@ export const TransactionEngine = {
     order.tax = total.tax;
     order.total = total.total;
     if (additions.length) order.status = "SENT_TO_KITCHEN";
+    if (additionAmendmentId) {
+      this.queueKitchenPrintObligations(
+        next,
+        order,
+        additions.map((line) => ({ ...line, sentAt: stamp, sentQuantity: line.quantity })),
+        additionAmendmentId,
+        "ADDITION",
+        stamp,
+      );
+    }
     order.updatedAt = stamp;
     audit(next, {
       actor: user,
