@@ -1330,6 +1330,15 @@ function POS() {
         kotAcknowledgeRef.current = kotAcknowledgeRef.current
           .catch(() => undefined)
           .then(async () => {
+            // Do not let an asynchronous printer ACK race the cashier's
+            // Send Kitchen & Bill invoice write from the same terminal.
+            await new Promise<void>((resolve) => {
+              const waitForCashier = () => {
+                if (!orderActionRef.current) resolve();
+                else window.setTimeout(waitForCashier, 40);
+              };
+              waitForCashier();
+            });
             await mutateTransaction("settleKitchenPrintObligation", {
               obligationId: obligation.id,
               claimToken,
