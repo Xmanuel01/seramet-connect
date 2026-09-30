@@ -93,6 +93,96 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(count?.count).toBe(1);
   });
 
+  it("creates one durable obligation per station without merging kitchen and bar", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const draft = orderDraft("Separate Stations");
+    draft.lines.push({
+      id: "bar-station-line",
+      productId: "bar-product",
+      name: "Passion Juice",
+      category: "Drinks",
+      quantity: 2,
+      unitPrice: 300,
+      productionStation: "BAR",
+    });
+    await mutation(repository, "station-kot", "station-kot", "upsertAndSendKitchen", { draft });
+    const rows = await database
+      .prepare(
+        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .all<{ payload_json: string }>();
+    const tickets = (rows.results ?? []).map(
+      (row) => JSON.parse(row.payload_json) as {
+        station: string;
+        amendmentType: string;
+        snapshot: { lines: Array<{ id: string }> };
+      },
+    );
+    expect(tickets).toHaveLength(2);
+    expect(tickets.map((ticket) => ticket.station).sort()).toEqual(["BAR", "MAIN KITCHEN"]);
+    expect(tickets.every((ticket) => ticket.amendmentType === "NEW")).toBe(true);
+    expect(tickets.find((ticket) => ticket.station === "BAR")?.snapshot.lines).toMatchObject([
+      { id: "bar-station-line" },
+    ]);
+  });
+
+  it("creates an exact new obligation for increased quantity on a previously sent line", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const accepted = await mutation(
+      repository,
+      "initial-qty-kot",
+      "initial-qty-kot",
+      "upsertAndSendKitchen",
+      { draft: orderDraft("Quantity Increase") },
+    );
+    const order = accepted.state.orders[0]!;
+    const amended = {
+      ...orderDraft("Quantity Increase"),
+      lines: [{ ...order.lines[0]!, quantity: 2 }],
+    };
+    const amendedResult = await mutation(
+      repository,
+      "additional-qty-kot",
+      "additional-qty-kot",
+      "amendKitchenOrder",
+      { orderId: order.id, draft: amended },
+    );
+    expect(amendedResult.state.productionAmendments).toHaveLength(1);
+    const rows = await database
+      .prepare(
+        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .all<{ payload_json: string }>();
+    const tickets = (rows.results ?? []).map(
+      (row) => JSON.parse(row.payload_json) as {
+        amendmentType: string;
+        snapshot: { lines: Array<{ id: string; quantity: number }> };
+      },
+    );
+    expect(tickets).toHaveLength(2);
+    const amendment = tickets.find((ticket) => ticket.amendmentType === "ADDITION");
+    expect(amendment?.snapshot.lines).toMatchObject([
+      { id: order.lines[0]!.id, quantity: 1 },
+    ]);
+    const duplicate = await mutation(
+      repository,
+      "additional-qty-kot",
+      "additional-qty-kot",
+      "amendKitchenOrder",
+      { orderId: order.id, draft: amended },
+    );
+    expect(duplicate.duplicate).toBe(true);
+    const sameCount = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ count: number }>();
+    expect(sameCount?.count).toBe(2);
+  });
+
   it("rolls back the kitchen order if creating its durable ticket fails", async () => {
     await database.exec(
       `CREATE TRIGGER reject_kot_insert BEFORE INSERT ON authoritative_records
