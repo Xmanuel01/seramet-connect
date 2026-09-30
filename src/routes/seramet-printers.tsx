@@ -117,7 +117,8 @@ function SerametPrinters() {
   const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
     (item) => item.branchId === selectedBranchId && item.status !== "BRIDGE_ACCEPTED",
   );
-  const mayReviewKot = hasPermission(permissions.settingsBranchManage);
+  const mayReviewKot =
+    selectedBranchId === activeBranchId && hasPermission(permissions.settingsBranchManage);
   const mayDeliverKot =
     selectedBranchId === activeBranchId && hasPermission(permissions.ordersUpdate);
   const [logoNotice, setLogoNotice] = useState("No receipt logo uploaded in this session.");
