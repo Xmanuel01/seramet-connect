@@ -14,6 +14,8 @@ import { validateImportFile } from "@/server/file-import-security";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
+import { handleKitchenPrintApi } from "@/server/kitchen-print-api";
+import { KITCHEN_OUTBOX_ENTITY } from "@/server/kitchen-print-outbox";
 
 const tenantA = "tenant-a";
 const tenantB = "tenant-b";
@@ -48,6 +50,309 @@ describe.sequential("Pass 5 production foundation", () => {
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();
+  });
+
+  it("atomically persists a durable original KOT with kitchen acceptance, without duplicate retries", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const command = {
+      actor: actor(),
+      action: "upsertAndSendKitchen",
+      payload: { draft: orderDraft("Durable Original") },
+      idempotencyKey: "original-kot-1",
+      requestHash: "original-kot-1",
+      correlationId: "original-kot-1",
+      deviceId: deviceA,
+    };
+    const result = await repository.commitMutation(command);
+    const order = result.state.orders[0]!;
+    const before = await database
+      .prepare(
+        "SELECT entity_id,branch_id,status,payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .all<{ entity_id: string; branch_id: string; status: string; payload_json: string }>();
+    expect(before.results).toHaveLength(1);
+    expect(before.results![0]?.status).toBe("QUEUED");
+    expect(before.results![0]?.branch_id).toBe(branchA);
+    const ticket = JSON.parse(before.results![0]!.payload_json) as {
+      orderId: string;
+      amendmentType: string;
+      snapshot: { lines: Array<{ id: string }> };
+    };
+    expect(ticket.orderId).toBe(order.id);
+    expect(ticket.amendmentType).toBe("NEW");
+    expect(ticket.snapshot.lines.map((line) => line.id)).toEqual([order.lines[0]!.id]);
+    const duplicate = await repository.commitMutation(command);
+    expect(duplicate.duplicate).toBe(true);
+    const count = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ count: number }>();
+    expect(count?.count).toBe(1);
+  });
+
+  it("creates one durable obligation per station without merging kitchen and bar", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const draft = orderDraft("Separate Stations");
+    draft.lines.push({
+      id: "bar-station-line",
+      productId: "bar-product",
+      name: "Passion Juice",
+      category: "Drinks",
+      quantity: 2,
+      unitPrice: 300,
+      productionStation: "BAR",
+    });
+    await mutation(repository, "station-kot", "station-kot", "upsertAndSendKitchen", { draft });
+    const rows = await database
+      .prepare("SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .all<{ payload_json: string }>();
+    const tickets = (rows.results ?? []).map(
+      (row) =>
+        JSON.parse(row.payload_json) as {
+          station: string;
+          amendmentType: string;
+          snapshot: { lines: Array<{ id: string }> };
+        },
+    );
+    expect(tickets).toHaveLength(2);
+    expect(tickets.map((ticket) => ticket.station).sort()).toEqual(["BAR", "MAIN KITCHEN"]);
+    expect(tickets.every((ticket) => ticket.amendmentType === "NEW")).toBe(true);
+    expect(tickets.find((ticket) => ticket.station === "BAR")?.snapshot.lines).toMatchObject([
+      { id: "bar-station-line" },
+    ]);
+  });
+
+  it("creates an exact new obligation for increased quantity on a previously sent line", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const accepted = await mutation(
+      repository,
+      "initial-qty-kot",
+      "initial-qty-kot",
+      "upsertAndSendKitchen",
+      { draft: orderDraft("Quantity Increase") },
+    );
+    const order = accepted.state.orders[0]!;
+    const amended = {
+      ...orderDraft("Quantity Increase"),
+      lines: [{ ...order.lines[0]!, quantity: 2 }],
+    };
+    const amendedResult = await mutation(
+      repository,
+      "additional-qty-kot",
+      "additional-qty-kot",
+      "amendKitchenOrder",
+      { orderId: order.id, draft: amended },
+    );
+    expect(amendedResult.state.productionAmendments).toHaveLength(1);
+    const rows = await database
+      .prepare("SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .all<{ payload_json: string }>();
+    const tickets = (rows.results ?? []).map(
+      (row) =>
+        JSON.parse(row.payload_json) as {
+          amendmentType: string;
+          snapshot: { lines: Array<{ id: string; quantity: number }> };
+        },
+    );
+    expect(tickets).toHaveLength(2);
+    const amendment = tickets.find((ticket) => ticket.amendmentType === "ADDITION");
+    expect(amendment?.snapshot.lines).toMatchObject([{ id: order.lines[0]!.id, quantity: 1 }]);
+    const duplicate = await mutation(
+      repository,
+      "additional-qty-kot",
+      "additional-qty-kot",
+      "amendKitchenOrder",
+      { orderId: order.id, draft: amended },
+    );
+    expect(duplicate.duplicate).toBe(true);
+    const sameCount = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ count: number }>();
+    expect(sameCount?.count).toBe(2);
+  });
+
+  it("rolls back the kitchen order if creating its durable ticket fails", async () => {
+    await database.exec(
+      `CREATE TRIGGER reject_kot_insert BEFORE INSERT ON authoritative_records
+       WHEN NEW.entity_type='print:kitchen-obligation'
+       BEGIN SELECT RAISE(ABORT, 'TEST_OUTBOX_ATOMICITY'); END;`,
+    );
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    await expect(
+      mutation(repository, "rollback-kot", "rollback-kot", "upsertAndSendKitchen", {
+        draft: orderDraft("Rollback"),
+      }),
+    ).rejects.toThrow(/TEST_OUTBOX_ATOMICITY/);
+    expect((await repository.loadState(tenantA)).orders).toHaveLength(0);
+    expect(await repository.revision(tenantA)).toBe(0);
+    const committed = await database
+      .prepare("SELECT COUNT(*) AS count FROM mutation_commits WHERE tenant_id=?")
+      .bind(tenantA)
+      .first<{ count: number }>();
+    expect(committed?.count).toBe(0);
+  });
+
+  it("claims an exact server KOT once and acknowledges only the claiming device", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    await mutation(repository, "claim-kot", "claim-kot", "upsertAndSendKitchen", {
+      draft: orderDraft("Claim"),
+    });
+    const listing = await database
+      .prepare("SELECT entity_id FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ entity_id: string }>();
+    const id = listing!.entity_id;
+    const bearer = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const endpoint = `https://seramet.example/api/seramet/kitchen/print-obligations/${id}`;
+    const request = (suffix: string, body: object) =>
+      new Request(`${endpoint}/${suffix}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: branchA, ...body }),
+      });
+    const first = await handleKitchenPrintApi(request("claim", {}), testEnv());
+    expect(first?.status).toBe(200);
+    const claimed = (await first!.json()) as { claimToken: string };
+    expect(claimed.claimToken).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(handleKitchenPrintApi(request("claim", {}), testEnv())).rejects.toMatchObject({
+      status: 409,
+    });
+    const ack = await handleKitchenPrintApi(
+      request("ack", {
+        claimToken: claimed.claimToken,
+        status: "DELIVERED",
+        evidence: "KDS_RENDER_ACK",
+      }),
+      testEnv(),
+    );
+    expect(ack?.status).toBe(200);
+    const repeat = await handleKitchenPrintApi(
+      request("ack", {
+        claimToken: claimed.claimToken,
+        status: "DELIVERED",
+        evidence: "KDS_RENDER_ACK",
+      }),
+      testEnv(),
+    );
+    expect((await repeat!.json()) as { duplicate?: boolean }).toMatchObject({ duplicate: true });
+    const observed = await database
+      .prepare("SELECT status FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ status: string }>();
+    expect(observed?.status).toBe("DELIVERED");
+    const foreign = new Request(
+      "https://seramet.example/api/seramet/kitchen/print-obligations?branchId=branch-b",
+      { headers: { Authorization: `Bearer ${bearer}` } },
+    );
+    await expect(handleKitchenPrintApi(foreign, testEnv())).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it("never reprints an expired claim automatically and requires an audited manager decision", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    await mutation(repository, "expired-kot", "expired-kot", "upsertAndSendKitchen", {
+      draft: orderDraft("Expired"),
+    });
+    const row = await database
+      .prepare(
+        "SELECT entity_id,payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
+      .first<{ entity_id: string; payload_json: string }>();
+    expect(row).toBeTruthy();
+    const bearer = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const base = `https://seramet.example/api/seramet/kitchen/print-obligations/${row!.entity_id}`;
+    const claim = await handleKitchenPrintApi(
+      new Request(`${base}/claim`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ branchId: branchA }),
+      }),
+      testEnv(),
+    );
+    expect(claim?.status).toBe(200);
+    const stored = await database
+      .prepare(
+        "SELECT payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY, row!.entity_id)
+      .first<{ payload_json: string }>();
+    const prior = JSON.parse(stored!.payload_json) as Record<string, unknown>;
+    await database
+      .prepare(
+        "UPDATE authoritative_records SET payload_json=? WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(
+        JSON.stringify({ ...prior, claimExpiresAt: "2025-01-01T00:00:00.000Z" }),
+        tenantA,
+        KITCHEN_OUTBOX_ENTITY,
+        row!.entity_id,
+      )
+      .run();
+    const listing = await handleKitchenPrintApi(
+      new Request(`https://seramet.example/api/seramet/kitchen/print-obligations?branchId=${branchA}`, {
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
+      testEnv(),
+    );
+    const pending = (await listing!.json()) as {
+      obligations: Array<{ id: string; status: string }>;
+    };
+    expect(pending.obligations.find((item) => item.id === row!.entity_id)?.status).toBe(
+      "UNCERTAIN",
+    );
+    const duplicateClaim = new Request(`${base}/claim`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ branchId: branchA }),
+    });
+    await expect(handleKitchenPrintApi(duplicateClaim, testEnv())).rejects.toMatchObject({
+      status: 409,
+    });
+    const review = await handleKitchenPrintApi(
+      new Request(`${base}/review`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branchId: branchA,
+          action: "REQUEUE",
+          reason: "Checked physical printer paper, approved audited duplicate",
+        }),
+      }),
+      testEnv(),
+    );
+    expect(review?.status).toBe(200);
+    const verified = await database
+      .prepare(
+        "SELECT status,payload_json FROM authoritative_records WHERE tenant_id=? AND entity_type=? AND entity_id=?",
+      )
+      .bind(tenantA, KITCHEN_OUTBOX_ENTITY, row!.entity_id)
+      .first<{ status: string; payload_json: string }>();
+    expect(verified?.status).toBe("QUEUED");
+    const recovered = JSON.parse(verified!.payload_json) as {
+      reviewCount: number;
+      reviewedBy: string;
+      lastApprovedAt: string;
+    };
+    expect(recovered.reviewCount).toBe(1);
+    expect(recovered.reviewedBy).toBe(userA);
+    expect(Date.parse(recovered.lastApprovedAt)).toBeGreaterThan(0);
+    const audits = await database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=? AND entity_id=?",
+      )
+      .bind(tenantA, "KOT_MANUAL_REQUEUE", row!.entity_id)
+      .first<{ count: number }>();
+    expect(audits?.count).toBe(1);
   });
 
   it("persists the entered physical cash count exactly and rejects invalid counts without closing", async () => {

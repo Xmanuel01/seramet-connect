@@ -213,6 +213,7 @@ function POS() {
     mutate: mutateTransaction,
     syncFromBackend,
     backendStatus,
+    persistenceMode,
     pendingSyncCount,
   } = useTransactionEngine();
   const {
@@ -220,8 +221,12 @@ function POS() {
     configurationError,
     jobs: printJobs,
     sendKitchenTickets,
+    deliverDurableKitchenPrints,
+    durableTicketWarning,
     printCustomerDocument,
-  } = useSerametPrintQueue(branchId);
+  } = useSerametPrintQueue(branchId, {
+    durableRecovery: persistenceMode === "authoritative" && !isStagingPrinterlessTestingEnabled(),
+  });
 
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
@@ -1251,8 +1256,35 @@ function POS() {
       };
     }
 
-    // Staging laptop demo: never pretend a physical KOT has printed.
-    // The authoritative transaction above persists the kitchen work independently.
+    // In an authoritative deployment the KOT obligation was committed inside
+    // the same server transaction as the kitchen order. Only a server-claimed
+    // worker/device may submit it. Never create a second browser-only KOT.
+    if (persistenceMode === "authoritative") {
+      setTrackedPrint(null);
+      setActiveOrderId(authoritativeOrder.id);
+      setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
+      if (!printerlessStaging) {
+        // Best effort immediate delivery; safe recovery polls the durable
+        // outbox after a browser crash, offline interval or device handoff.
+        void deliverDurableKitchenPrints(authoritativeOrder.id);
+      }
+      setPrintNotice(
+        printerlessStaging
+          ? "STAGING: Kitchen dispatch committed and digital kitchen order available. " +
+              "Physical KOT was not attempted; server ticket remains pending."
+          : "Kitchen dispatch and KOT obligation committed together. " +
+              "Server ticket is queued; physical delivery is not yet confirmed.",
+      );
+      setPrintNoticeType("warning");
+      return {
+        order: authoritativeOrder,
+        state: resultState.state,
+        printResult: null,
+        serverQueued: true,
+      };
+    }
+
+    // Legacy development-only memory repository does not support the server outbox.
     if (printerlessStaging) {
       setTrackedPrint(null);
       setActiveOrderId(authoritativeOrder.id);
@@ -1316,6 +1348,7 @@ function POS() {
     result: NonNullable<Awaited<ReturnType<typeof queueKitchenTicketsForTable>>>,
   ) =>
     Boolean(
+      ("serverQueued" in result && result.serverQueued) ||
       result.printResult?.jobs.length ||
       isStagingPrinterlessTestingEnabled() ||
       (result.printResult === null &&
@@ -1346,9 +1379,11 @@ function POS() {
         if (dispatched) {
           const notice = printerlessStaging
             ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
-            : result.printResult?.jobs.length
-              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
-              : `${result.order.id} is already in kitchen; no new KOT is required.`;
+            : "serverQueued" in result && result.serverQueued
+              ? `${result.order.id} dispatched. Durable KOT queued on server; physical delivery pending.`
+              : result.printResult?.jobs.length
+                ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
+                : `${result.order.id} is already in kitchen; no new KOT is required.`;
           clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
         } else if (!result.printResult && !printerlessStaging) {
           setPrintNotice(
@@ -2314,6 +2349,14 @@ function POS() {
               })}
               <span className="rounded border border-border px-1.5 py-0.5">Split</span>
             </div>
+            {durableTicketWarning && (
+              <div
+                role="alert"
+                className="mt-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning"
+              >
+                {durableTicketWarning} Open Seramet Printers for review.
+              </div>
+            )}
             <div
               className={cn(
                 "mt-3 rounded-lg border p-3",

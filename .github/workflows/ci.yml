@@ -70,5 +70,7 @@ jobs:
         run: node scripts/verify-crm-postgres.mjs
       - name: Execute authoritative CRM pipeline and campaign queries on PostgreSQL
         run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
+      - name: Verify atomic restaurant kitchen KOT and exclusive printer claims on PostgreSQL
+        run: ./node_modules/.bin/vite-node scripts/verify-kot-postgres-runtime.ts
       - name: Validate public schema lockdown on disposable PostgreSQL
         run: node scripts/verify-staging-data-api-lockdown-postgres.mjs

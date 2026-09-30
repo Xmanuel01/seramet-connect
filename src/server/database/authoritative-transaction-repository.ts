@@ -21,6 +21,15 @@ import { parseMajorAmount } from "@/payments/money";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
+import {
+  KITCHEN_OUTBOX_ENTITY,
+  kitchenObligationId,
+  groupKitchenLines,
+  newlyDispatchedKitchenGroups,
+  obligationPrintSnapshot,
+  type KitchenPrintObligation,
+} from "@/server/kitchen-print-outbox";
+import type { TransactionOrder } from "@/lib/transaction-engine";
 
 const ROOT_ENTITY = "state:root";
 const IDEMPOTENCY_ENTITY = "system:api-idempotency";
@@ -346,6 +355,10 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       )),
     );
     statements.push(...this.fxPaymentBridgeStatements(tenantId, nextEntities, currentByKey, stamp));
+    // Atomic transactional outbox: order dispatch + original/amendment KOT
+    // obligation either BOTH commit or BOTH roll back. Browser code is never
+    // responsible for creating the only copy of a production ticket.
+    statements.push(...(await this.kitchenPrintOutboxStatements(input, currentByKey, stamp)));
 
     statements.push(
       this.db
@@ -460,6 +473,151 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
 
     await this.db.batch(statements);
     return newRevision;
+  }
+
+  private async kitchenPrintOutboxStatements(
+    input: {
+      state: TransactionState;
+      actor: ServerActor;
+      action: string;
+      deviceId?: string;
+    },
+    currentByKey: Map<string, AuthoritativeRow>,
+    stamp: string,
+  ): Promise<D1PreparedStatement[]> {
+    if (
+      !["upsertAndSendKitchen", "sendToKitchen", "amendKitchenOrder", "createGuestOrder"].includes(
+        input.action,
+      )
+    ) {
+      return [];
+    }
+    const statements: D1PreparedStatement[] = [];
+    // amendKitchenOrder can increase the quantity of an ALREADY-SENT line ID.
+    // In that case its new immutable production amendment, not line.sentAt,
+    // is the authoritative delta. Handle it separately to prevent omissions.
+    if (input.action === "amendKitchenOrder") {
+      for (const amendment of input.state.productionAmendments) {
+        if (
+          amendment.type !== "ADDITION" ||
+          currentByKey.has(`state:productionAmendments:${amendment.id}`)
+        )
+          continue;
+        const order = input.state.orders.find((item) => item.id === amendment.orderId);
+        if (!order || !order.branchId) {
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            400,
+            "Amendment lacks a valid authoritative kitchen order",
+          );
+        }
+        for (const [station, lines] of groupKitchenLines(amendment.lines)) {
+          const id = await kitchenObligationId(
+            amendment.id,
+            station,
+            lines.map((line) => line.id),
+          );
+          const obligation: KitchenPrintObligation = {
+            id,
+            tenantId: input.actor.tenantId,
+            branchId: order.branchId,
+            orderId: order.id,
+            station,
+            amendmentType: "ADDITION",
+            snapshot: obligationPrintSnapshot(
+              order,
+              lines,
+              input.actor.name,
+              input.deviceId ?? input.actor.deviceId ?? "UNKNOWN_DEVICE",
+            ),
+            status: station === "NONE" ? "NEEDS_ROUTING" : "QUEUED",
+            createdAt: stamp,
+            updatedAt: stamp,
+            reviewCount: 0,
+          };
+          statements.push(
+            this.db
+              .prepare(
+                `INSERT INTO authoritative_records
+                   (tenant_id,entity_type,entity_id,branch_id,status,payload_json,version,created_at,updated_at)
+                 VALUES (?,?,?,?,?,?,1,?,?)
+                 ON CONFLICT(tenant_id,entity_type,entity_id) DO NOTHING`,
+              )
+              .bind(
+                input.actor.tenantId,
+                KITCHEN_OUTBOX_ENTITY,
+                id,
+                order.branchId,
+                obligation.status,
+                JSON.stringify(obligation),
+                stamp,
+                stamp,
+              ),
+          );
+        }
+      }
+      return statements;
+    }
+    for (const order of input.state.orders) {
+      const priorRow = currentByKey.get(`state:orders:${order.id}`);
+      const previous = priorRow
+        ? (JSON.parse(priorRow.payload_json) as TransactionOrder)
+        : undefined;
+      const { amendmentType, groups } = newlyDispatchedKitchenGroups(previous, order);
+      if (!groups.size) continue;
+      if (!order.branchId || (order.tenantId && order.tenantId !== input.actor.tenantId)) {
+        throw new ServerOperationError(
+          "TENANT_SCOPE_VIOLATION",
+          403,
+          "Kitchen dispatch requires an authoritative tenant and branch identity",
+        );
+      }
+      for (const [station, lines] of groups) {
+        const id = await kitchenObligationId(
+          order.id,
+          station,
+          lines.map((line) => line.id),
+        );
+        const obligation: KitchenPrintObligation = {
+          id,
+          tenantId: input.actor.tenantId,
+          branchId: order.branchId,
+          orderId: order.id,
+          station,
+          amendmentType,
+          snapshot: obligationPrintSnapshot(
+            order,
+            lines,
+            input.actor.name,
+            input.deviceId ?? input.actor.deviceId ?? "UNKNOWN_DEVICE",
+          ),
+          status: station === "NONE" ? "NEEDS_ROUTING" : "QUEUED",
+          createdAt: stamp,
+          updatedAt: stamp,
+          reviewCount: 0,
+        };
+        statements.push(
+          this.db
+            .prepare(
+              `INSERT INTO authoritative_records
+                 (tenant_id,entity_type,entity_id,branch_id,status,payload_json,version,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,1,?,?)
+               ON CONFLICT(tenant_id,entity_type,entity_id) DO NOTHING`,
+            )
+            .bind(
+              input.actor.tenantId,
+              KITCHEN_OUTBOX_ENTITY,
+              id,
+              order.branchId,
+              obligation.status,
+              JSON.stringify(obligation),
+              stamp,
+              stamp,
+            ),
+        );
+      }
+    }
+    return statements;
   }
 
   private async loadStateAtStableRevision(tenantId: string) {
