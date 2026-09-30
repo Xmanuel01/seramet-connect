@@ -1877,12 +1877,15 @@ export const TransactionEngine = {
     if (!claimToken || claimToken.length > 128) throw new Error("Invalid KOT claim identity");
     const next = clone(state);
     const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
-    if (!item || item.branchId !== branchId) throw new Error("KOT obligation not available in branch");
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
     if (item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user) {
       return next;
     }
     if (item.status !== "PENDING") {
-      throw new Error("KOT delivery outcome is uncertain or already accepted. Review before retry.");
+      throw new Error(
+        "KOT delivery outcome is uncertain or already accepted. Review before retry.",
+      );
     }
     item.status = "CLAIMED";
     item.claimedBy = user;
@@ -1906,7 +1909,8 @@ export const TransactionEngine = {
     }
     const next = clone(state);
     const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
-    if (!item || item.branchId !== branchId) throw new Error("KOT obligation not available in branch");
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
     if (item.status === outcome && item.claimToken === claimToken && item.claimedBy === user) {
       return next;
     }
@@ -1916,7 +1920,8 @@ export const TransactionEngine = {
     item.status = outcome;
     item.completedAt = now();
     item.updatedAt = item.completedAt;
-    if (outcome === "UNCERTAIN") item.failureReason = (failureReason ?? "Delivery unconfirmed").slice(0, 240);
+    if (outcome === "UNCERTAIN")
+      item.failureReason = (failureReason ?? "Delivery unconfirmed").slice(0, 240);
     return next;
   },
 
@@ -1935,10 +1940,12 @@ export const TransactionEngine = {
     if (typeof reason !== "string" || reason.trim().length < 12) {
       throw new Error("A specific KOT recovery reason is required");
     }
-    if (!["CONFIRM_DELIVERED", "RETRY"].includes(decision)) throw new Error("Invalid KOT review");
+    if (!["CONFIRM_DELIVERED", "RETRY"].includes(decision))
+      throw new Error("Invalid KOT review");
     const next = clone(state);
     const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
-    if (!item || item.branchId !== branchId) throw new Error("KOT obligation not available in branch");
+    if (!item || item.branchId !== branchId)
+      throw new Error("KOT obligation not available in branch");
     if (item.status === "PENDING") throw new Error("New KOT has not been claimed");
     // A manager may never release a currently active device claim. After a
     // crash it becomes reviewable, but NEVER automatically retried.
@@ -1949,7 +1956,9 @@ export const TransactionEngine = {
       throw new Error("KOT delivery claim is still active; review after five minutes");
     }
     if (decision === "RETRY" && item.status === "BRIDGE_ACCEPTED") {
-      throw new Error("Previously accepted KOT needs an audited reprint, not another original KOT");
+      throw new Error(
+        "Previously accepted KOT needs an audited reprint, not another original KOT",
+      );
     }
     const prior = item.status;
     item.status = decision === "RETRY" ? "PENDING" : "BRIDGE_ACCEPTED";
@@ -2113,9 +2122,7 @@ export const TransactionEngine = {
         sentQuantity: line.quantity,
       };
     });
-    const additionAmendmentId = additions.length
-      ? id("AMD", next, "productionAmendments")
-      : null;
+    const additionAmendmentId = additions.length ? id("AMD", next, "productionAmendments") : null;
     if (additions.length) {
       next.productionAmendments.unshift({
         id: additionAmendmentId!,
