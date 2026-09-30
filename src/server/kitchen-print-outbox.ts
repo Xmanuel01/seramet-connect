@@ -35,6 +35,7 @@ export type KitchenPrintObligation = {
   reviewCount: number;
   reviewReason?: string;
   reviewedBy?: string;
+  transitionId?: string;
 };
 
 /** Pure diff: persist ONLY lines first sent in the accepted kitchen mutation. */
