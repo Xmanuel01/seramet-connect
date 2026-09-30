@@ -85,7 +85,9 @@ describe.sequential("Pass 5 production foundation", () => {
     const duplicate = await repository.commitMutation(command);
     expect(duplicate.duplicate).toBe(true);
     const count = await database
-      .prepare("SELECT COUNT(*) AS count FROM authoritative_records WHERE tenant_id=? AND entity_type=?")
+      .prepare(
+        "SELECT COUNT(*) AS count FROM authoritative_records WHERE tenant_id=? AND entity_type=?",
+      )
       .bind(tenantA, KITCHEN_OUTBOX_ENTITY)
       .first<{ count: number }>();
     expect(count?.count).toBe(1);
