@@ -2350,7 +2350,10 @@ function POS() {
               <span className="rounded border border-border px-1.5 py-0.5">Split</span>
             </div>
             {durableTicketWarning && (
-              <div role="alert" className="mt-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning">
+              <div
+                role="alert"
+                className="mt-3 rounded-lg border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning"
+              >
                 {durableTicketWarning} Open Seramet Printers for review.
               </div>
             )}
