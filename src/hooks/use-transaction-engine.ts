@@ -46,6 +46,7 @@ export function useTransactionEngine() {
   } | null>(null);
   const mutationInFlightRef = useRef(0);
   const refreshAfterMutationRef = useRef(false);
+  const localMutationGenerationRef = useRef(0);
   const flushInFlightRef = useRef<Promise<void> | null>(null);
 
   const headers = useMemo(() => {
@@ -122,12 +123,14 @@ export function useTransactionEngine() {
         if (hydrationScopeRef.current !== requestScope) {
           hydrationScopeRef.current = requestScope;
           // Browsers with unavailable IndexedDB can still use the authoritative POS.
+          const hydrationGeneration = localMutationGenerationRef.current;
           const cached = await offlineStore
             .readCachedState(activeTenantId, branchId)
             .catch(() => null);
           if (
             cached &&
             scopeRef.current === requestScope &&
+            localMutationGenerationRef.current === hydrationGeneration &&
             serverScopeRef.current !== requestScope
           ) {
             setState(cached.state);
@@ -151,7 +154,10 @@ export function useTransactionEngine() {
         // Never replace optimistic offline changes with a server snapshot before
         // all local commands for this branch have been acknowledged. Resolve the
         // queue before comparing revisions, since queued edits share the base revision.
-        const unresolved = await offlineStore.pending(activeTenantId, deviceIdRef.current);
+        const unresolved =
+          typeof indexedDB === "undefined"
+            ? []
+            : await offlineStore.pending(activeTenantId, deviceIdRef.current);
         if (mutationInFlightRef.current > 0) {
           refreshAfterMutationRef.current = true;
           return undefined;
@@ -159,7 +165,11 @@ export function useTransactionEngine() {
         const branchPending = unresolved.filter((command) => command.branchId === branchId);
         if (branchPending.length > 0) {
           setPendingSyncCount(unresolved.length);
-          setBackendStatus("synced");
+          setBackendStatus(
+            branchPending.some((command) => command.syncStatus === "CONFLICT")
+              ? "conflict"
+              : "synced",
+          );
           // Return readiness to the startup/reconnect caller so it can replay,
           // without replacing the locally edited snapshot in the UI.
           return { state: body.state, revision: nextRevision };
@@ -371,6 +381,7 @@ export function useTransactionEngine() {
       localEffects?: OfflineCommand["localEffects"],
     ) => {
       const idempotencyKey = `command:${crypto.randomUUID()}`;
+      localMutationGenerationRef.current += 1;
       const applyOptimistic = () => {
         const next = optimistic
           ? optimistic(state)
