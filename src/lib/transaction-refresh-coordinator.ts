@@ -80,7 +80,7 @@ export function shouldHydratePosOrder(input: {
 }): boolean {
   return Boolean(
     input.selectedOrderId &&
-      input.availableOrderId === input.selectedOrderId &&
-      input.hydratedScopeOrderKey !== `${input.currentScope}:${input.selectedOrderId}`,
+    input.availableOrderId === input.selectedOrderId &&
+    input.hydratedScopeOrderKey !== `${input.currentScope}:${input.selectedOrderId}`,
   );
 }
