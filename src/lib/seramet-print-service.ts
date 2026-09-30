@@ -183,6 +183,8 @@ export type PrintJob = {
   content: string;
   duplicateKey: string;
   reprintOfJobId?: string;
+  /** Authoritative server obligation authorizing this local print attempt. */
+  serverObligationId?: string;
   productionStation?: ProductionStation;
   kitchenTicketId?: string;
   kitchenTicketRecordId?: string;
