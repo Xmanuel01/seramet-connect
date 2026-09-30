@@ -57,10 +57,7 @@ async function kitchenApi(url: string, body?: unknown) {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
-export function useSerametPrintQueue(
-  branch: string,
-  options: { durableRecovery?: boolean } = {},
-) {
+export function useSerametPrintQueue(branch: string, options: { durableRecovery?: boolean } = {}) {
   const profileState = useMemo<{
     profile: BranchHardwareProfile | null;
     configurationError: string | null;
@@ -267,9 +264,7 @@ export function useSerametPrintQueue(
       const delivered = matching.every((job) =>
         ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
       );
-      const uncertain = matching.some((job) =>
-        ["Failed", "Cancelled"].includes(job.status),
-      );
+      const uncertain = matching.some((job) => ["Failed", "Cancelled"].includes(job.status));
       if (!delivered && !uncertain) continue;
       claimed.submitted = true;
       const kdsOnly = matching.every((job) => job.status === "Displayed");
