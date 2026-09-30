@@ -485,7 +485,11 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     currentByKey: Map<string, AuthoritativeRow>,
     stamp: string,
   ): Promise<D1PreparedStatement[]> {
-    if (!["upsertAndSendKitchen", "sendToKitchen", "amendKitchenOrder", "createGuestOrder"].includes(input.action)) {
+    if (
+      !["upsertAndSendKitchen", "sendToKitchen", "amendKitchenOrder", "createGuestOrder"].includes(
+        input.action,
+      )
+    ) {
       return [];
     }
     const statements: D1PreparedStatement[] = [];
@@ -497,7 +501,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         if (
           amendment.type !== "ADDITION" ||
           currentByKey.has(`state:productionAmendments:${amendment.id}`)
-        ) continue;
+        )
+          continue;
         const order = input.state.orders.find((item) => item.id === amendment.orderId);
         if (!order || !order.branchId) {
           throw new ServerOperationError(
