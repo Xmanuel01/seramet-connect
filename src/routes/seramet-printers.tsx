@@ -115,9 +115,7 @@ function SerametPrinters() {
   const [kotRecoveryReason, setKotRecoveryReason] = useState("");
   const { state: transactions, mutate: mutateTransaction } = useTransactionEngine();
   const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
-    (item) =>
-      item.branchId === selectedBranchId &&
-      item.status !== "BRIDGE_ACCEPTED",
+    (item) => item.branchId === selectedBranchId && item.status !== "BRIDGE_ACCEPTED",
   );
   const mayReviewKot = hasPermission(permissions.settingsBranchManage);
   const mayDeliverKot =
@@ -203,11 +201,7 @@ function SerametPrinters() {
           customer: original.customer,
           ...(original.kitchenNote ? { kitchenNote: original.kitchenNote } : {}),
         },
-        obligation.reviewReason
-          ? "REPRINT"
-          : obligation.kind === "ORIGINAL"
-            ? "NEW"
-            : "ADDITION",
+        obligation.reviewReason ? "REPRINT" : obligation.kind === "ORIGINAL" ? "NEW" : "ADDITION",
         (job, outcome) => {
           queueMicrotask(() => callback(job.id, outcome));
         },
@@ -468,7 +462,9 @@ function SerametPrinters() {
             <>
               {mayReviewKot && (
                 <label className="block">
-                  <span className="font-semibold">Manager review reason (at least 12 characters)</span>
+                  <span className="font-semibold">
+                    Manager review reason (at least 12 characters)
+                  </span>
                   <input
                     value={kotRecoveryReason}
                     onChange={(event) => setKotRecoveryReason(event.target.value)}
@@ -478,10 +474,7 @@ function SerametPrinters() {
                 </label>
               )}
               {recoveryItems.map((obligation) => (
-                <div
-                  key={obligation.id}
-                  className="rounded-lg border p-3"
-                >
+                <div key={obligation.id} className="rounded-lg border p-3">
                   <div className="font-semibold">
                     {obligation.orderId} · {obligation.station} · {obligation.kind}
                   </div>
