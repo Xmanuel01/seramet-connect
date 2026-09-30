@@ -57,9 +57,7 @@ describe("durable original and amendment kitchen print obligations", () => {
     state = TransactionEngine.sendToKitchen(state, orderId, "Cashier One");
     const initial = state.kitchenPrintObligations ?? [];
     expect(initial).toHaveLength(2);
-    expect(new Set(initial.map((item) => item.station))).toEqual(
-      new Set(["MAIN KITCHEN", "BAR"]),
-    );
+    expect(new Set(initial.map((item) => item.station))).toEqual(new Set(["MAIN KITCHEN", "BAR"]));
     expect(initial.every((item) => item.sourceId === "ORIGINAL")).toBe(true);
     expect(initial.every((item) => item.status === "PENDING")).toBe(true);
     expect(initial.every((item) => item.branchId === DEMO_WESTLANDS_BRANCH_ID)).toBe(true);
