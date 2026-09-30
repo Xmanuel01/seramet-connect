@@ -3,15 +3,15 @@
  * The injected clock and scheduler make event storms, slow servers and teardown
  * deterministically testable without network requests.
  */
-export function createTransactionRefreshCoordinator(options: {
+export function createTransactionRefreshCoordinator<Timer>(options: {
   refresh: () => Promise<unknown>;
   now: () => number;
-  schedule: (run: () => void, delay: number) => ReturnType<typeof setTimeout>;
-  cancel: (timer: ReturnType<typeof setTimeout>) => void;
+  schedule: (run: () => void, delay: number) => Timer;
+  cancel: (timer: Timer) => void;
   minIntervalMs?: number;
 }) {
   const minInterval = options.minIntervalMs ?? 2_000;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: Timer | undefined;
   let lastStarted = Number.NEGATIVE_INFINITY;
   let running = false;
   let queued = false;
