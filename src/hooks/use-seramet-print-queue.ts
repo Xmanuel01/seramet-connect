@@ -263,9 +263,7 @@ async function sendInstalledBridgeJob(
     // primary could not have produced paper. NEVER resend after an ambiguous
     // bridge rejection or timeout, including partially accepted multi-copies.
     const fallback =
-      primary?.connection === "Offline"
-        ? findRuntimeFallback(profile, job, primary.id)
-        : undefined;
+      primary?.connection === "Offline" ? findRuntimeFallback(profile, job, primary.id) : undefined;
     const target = fallback ? { ...job, printerId: fallback.id } : job;
     const response = await submitCopies(target, config, fallback?.name ?? primary?.name);
     if (!response.accepted) {
