@@ -201,6 +201,25 @@ describe("durable original and amendment kitchen print obligations", () => {
       "BRIDGE_ACCEPTED",
     );
     expect(state.kitchenPrintObligations![0]?.status).toBe("BRIDGE_ACCEPTED");
+    const audited = TransactionEngine.requestKitchenReprint(
+      state,
+      item.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "Branch manager",
+      "Paper was missing after verifying the production printer",
+    );
+    expect(audited.kitchenPrintObligations).toHaveLength(3);
+    const reprint = audited.kitchenPrintObligations![0]!;
+    expect(reprint).toMatchObject({
+      kind: "REPRINT",
+      status: "PENDING",
+      parentObligationId: item.id,
+      sourceId: item.sourceId,
+    });
+    expect(reprint.lines).toEqual(item.lines);
+    expect(audited.kitchenPrintObligations!.find((row) => row.id === item.id)?.status).toBe(
+      "BRIDGE_ACCEPTED",
+    );
     expect(() =>
       TransactionEngine.reviewKitchenPrintObligation(
         state,
