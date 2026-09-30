@@ -251,18 +251,15 @@ function SerametPrinters() {
     setReviewBusy(ticket.id);
     try {
       const token = getSerametAccessToken();
-      const response = await fetch(
-        `/api/seramet/kitchen/print-obligations/${ticket.id}/review`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ branchId: selectedBranchId, action, reason }),
+      const response = await fetch(`/api/seramet/kitchen/print-obligations/${ticket.id}/review`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-      );
+        body: JSON.stringify({ branchId: selectedBranchId, action, reason }),
+      });
       if (!response.ok) {
         throw new Error(
           `Review refused (HTTP ${response.status}). Manager permission and full authentication are required.`,
@@ -615,7 +612,10 @@ function SerametPrinters() {
         />
         <div className="space-y-3 p-4">
           {durableError && (
-            <div role="alert" className="rounded-md border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning">
+            <div
+              role="alert"
+              className="rounded-md border border-warning/30 bg-warning-soft p-3 text-[12px] text-warning"
+            >
               {durableError}
             </div>
           )}
@@ -627,8 +627,7 @@ function SerametPrinters() {
           {durableTickets.map((ticket) => {
             const oldQueue =
               ticket.status === "QUEUED" &&
-              Date.now() - Date.parse(ticket.lastApprovedAt ?? ticket.createdAt) >
-                15 * 60 * 1000;
+              Date.now() - Date.parse(ticket.lastApprovedAt ?? ticket.createdAt) > 15 * 60 * 1000;
             const reviewable =
               ["FAILED", "UNCERTAIN", "NEEDS_ROUTING"].includes(ticket.status) || oldQueue;
             return (
@@ -665,7 +664,9 @@ function SerametPrinters() {
                     </label>
                     <div className="flex flex-wrap gap-2">
                       <Btn
-                        disabled={(reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null}
+                        disabled={
+                          (reviewReasons[ticket.id]?.trim().length ?? 0) < 12 || reviewBusy !== null
+                        }
                         onClick={() => void reviewDurableTicket(ticket, "REQUEUE")}
                       >
                         Approve audited retry
@@ -678,7 +679,8 @@ function SerametPrinters() {
                       </Btn>
                     </div>
                     <p className="text-[11px] text-warning">
-                      Inspect physical output before retrying. Never assume an expired claim failed to print.
+                      Inspect physical output before retrying. Never assume an expired claim failed
+                      to print.
                     </p>
                   </div>
                 )}
@@ -687,9 +689,7 @@ function SerametPrinters() {
           })}
           <div className="flex justify-end">
             <Btn
-              onClick={() =>
-                void deliverDurableKitchenPrints().then(() => refreshDurableTickets())
-              }
+              onClick={() => void deliverDurableKitchenPrints().then(() => refreshDurableTickets())}
             >
               Process eligible queued tickets on this device
             </Btn>
