@@ -117,6 +117,9 @@ function SerametPrinters() {
   const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
     (item) => item.branchId === selectedBranchId && item.status !== "BRIDGE_ACCEPTED",
   );
+  const recentlyAccepted = (transactions.kitchenPrintObligations ?? [])
+    .filter((item) => item.branchId === selectedBranchId && item.status === "BRIDGE_ACCEPTED")
+    .slice(0, 12);
   const mayReviewKot =
     selectedBranchId === activeBranchId && hasPermission(permissions.settingsBranchManage);
   const mayDeliverKot =
@@ -251,6 +254,25 @@ function SerametPrinters() {
       setKotRecoveryReason("");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "KOT review failed");
+    } finally {
+      setKotRecoveryBusy(false);
+    }
+  };
+
+  const requestAuditedReprint = async (obligation: KitchenPrintObligation) => {
+    if (kotRecoveryBusy || !mayReviewKot || kotRecoveryReason.trim().length < 12) return;
+    setKotRecoveryBusy(true);
+    try {
+      await mutateTransaction("requestKitchenReprint", {
+        obligationId: obligation.id,
+        reason: kotRecoveryReason.trim(),
+      });
+      setNotice(
+        "Separate auditable KOT reprint authorized. Inspect the new pending ticket before delivery.",
+      );
+      setKotRecoveryReason("");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "KOT reprint approval failed");
     } finally {
       setKotRecoveryBusy(false);
     }
@@ -517,6 +539,39 @@ function SerametPrinters() {
           )}
         </div>
       </Panel>
+      {recentlyAccepted.length > 0 && (
+        <Panel className="mb-4">
+          <PanelHead
+            title="Recent bridge-accepted KOT tickets"
+            sub="Bridge acknowledgement alone cannot prove physical paper delivery."
+          />
+          <div className="space-y-2 p-4 text-[13px]">
+            {recentlyAccepted.map((obligation) => (
+              <div
+                key={obligation.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
+              >
+                <div>
+                  <div className="font-semibold">
+                    {obligation.orderId} · {obligation.station}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {obligation.kind} · {obligation.createdAt}
+                  </div>
+                </div>
+                {mayReviewKot && (
+                  <Btn
+                    onClick={() => void requestAuditedReprint(obligation)}
+                    disabled={kotRecoveryBusy || kotRecoveryReason.trim().length < 12}
+                  >
+                    Approve separate audited reprint
+                  </Btn>
+                )}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Printers" value={profile.printers.length} />
         <Metric label="Connected" value={connected} />
