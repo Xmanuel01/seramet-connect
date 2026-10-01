@@ -24,6 +24,8 @@ import {
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
+import { permissions } from "@/platform/permissions";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -120,7 +122,8 @@ function configuredChargeMinor(
 
 function POS() {
   const navigate = useNavigate();
-  const { activeTenantId, branch, branchId, currentUser, platformState, role } = useAppContext();
+  const { activeTenantId, branch, branchId, currentUser, platformState, role, hasPermission } =
+    useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
   const orderChannels = useMemo(
@@ -228,6 +231,10 @@ function POS() {
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
 
+  const unresolvedKitchenTickets = kitchenPrintRecoveryItems(
+    transactionState.kitchenPrintObligations ?? [],
+    branchId,
+  );
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const selectedPaymentMethod =
@@ -1965,6 +1972,30 @@ function POS() {
           </span>
         </div>
       </div>
+
+      {unresolvedKitchenTickets.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-foreground"
+        >
+          <Printer className="h-4 w-4 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <span className="font-bold">
+              {unresolvedKitchenTickets.length} kitchen print obligation(s) require attention.
+            </span>{" "}
+            {isStagingPrinterlessTestingEnabled()
+              ? "Printerless staging is active: verify these orders in the digital kitchen. Physical tickets are not confirmed."
+              : "Orders are saved, but ticket delivery is pending or uncertain. Check the actual kitchen output before any retry."}
+          </div>
+          {hasPermission(permissions.settingsHardwareView) ? (
+            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>
+              Review tickets
+            </Btn>
+          ) : (
+            <span className="font-semibold">Notify a manager to review Seramet Printers.</span>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-0 lg:grid-cols-[132px_minmax(0,1fr)_360px]">
         <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-[calc(100vh-8rem)] lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
