@@ -297,9 +297,7 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(
       persisted.kitchenPrintObligations
         ?.filter((item) => obligations.some((expected) => expected.id === item.id))
-        .every(
-          (item) => item.status === "CLAIMED" && item.claimToken === "atomic-station-token",
-        ),
+        .every((item) => item.status === "CLAIMED" && item.claimToken === "atomic-station-token"),
     ).toBe(true);
   });
 
