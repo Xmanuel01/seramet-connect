@@ -1170,7 +1170,7 @@ function POS() {
     void runOrderAction(async () => {
       if (!items.length) return;
       try {
-        if (pendingSyncCount > 0 && backendStatus !== "synced") {
+        if (pendingSyncCount > 0) {
           setPrintNotice(
             "Previous offline commands are pending. Wait for synchronization before holding again.",
           );
