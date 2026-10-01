@@ -208,6 +208,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   upsertAndSendKitchen: permissions.ordersUpdate,
   amendKitchenOrder: permissions.ordersUpdate,
   claimKitchenPrintObligation: permissions.ordersUpdate,
+  claimKitchenPrintObligations: permissions.ordersUpdate,
   settleKitchenPrintObligation: permissions.ordersUpdate,
   reviewKitchenPrintObligation: permissions.settingsBranchManage,
   requestKitchenReprint: permissions.settingsBranchManage,
