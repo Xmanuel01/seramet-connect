@@ -3185,4 +3185,3 @@ function cashierErrorMessage(error: unknown, fallback: string) {
   }
   return message || fallback;
 }
-

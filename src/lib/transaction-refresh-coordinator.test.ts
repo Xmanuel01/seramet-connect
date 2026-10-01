@@ -91,25 +91,31 @@ describe("Phase 2 optimistic state and cashier draft safety", () => {
     const terminalOneRevision = 12;
     // Terminal B's authoritative commit is newer, but terminal A owns an
     // unacknowledged local order edit and cannot replace it automatically.
-    expect(mayApplyRemoteSnapshot({
-      ...valid,
-      currentRevision: terminalOneRevision,
-      nextRevision: 13,
-      pendingLocalCommands: 1,
-    })).toBe(false);
+    expect(
+      mayApplyRemoteSnapshot({
+        ...valid,
+        currentRevision: terminalOneRevision,
+        nextRevision: 13,
+        pendingLocalCommands: 1,
+      }),
+    ).toBe(false);
     // After replay acknowledgement the queued edit can be replaced only by
     // a fresh response started after the latest local mutation.
-    expect(mayApplyRemoteSnapshot({
-      ...valid,
-      currentRevision: 13,
-      nextRevision: 14,
-      sameMutationGeneration: false,
-    })).toBe(false);
-    expect(mayApplyRemoteSnapshot({
-      ...valid,
-      currentRevision: 13,
-      nextRevision: 14,
-    })).toBe(true);
+    expect(
+      mayApplyRemoteSnapshot({
+        ...valid,
+        currentRevision: 13,
+        nextRevision: 14,
+        sameMutationGeneration: false,
+      }),
+    ).toBe(false);
+    expect(
+      mayApplyRemoteSnapshot({
+        ...valid,
+        currentRevision: 13,
+        nextRevision: 14,
+      }),
+    ).toBe(true);
   });
 
   it("never rehydrates an existing cashier draft just because realtime hides and restores the row", () => {
