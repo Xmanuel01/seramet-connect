@@ -32,9 +32,14 @@ export async function handleRealtimeApi(request: Request, env: SerametEnv) {
 
   const database = env.SERAMET_DB;
   const encoder = new TextEncoder();
+  // A 25-second SSE reconnect resumes from the last delivered event rather than
+  // replaying an arbitrary five-second window (or missing a longer outage).
+  const resume = parseRealtimeCursor(request.headers.get("last-event-id"));
   let after =
-    validTimestamp(url.searchParams.get("after")) ?? new Date(Date.now() - 5_000).toISOString();
-  let afterId = "";
+    resume?.after ??
+    validTimestamp(url.searchParams.get("after")) ??
+    new Date(Date.now() - 5_000).toISOString();
+  let afterId = resume?.afterId ?? "";
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const started = Date.now();
@@ -49,7 +54,9 @@ export async function handleRealtimeApi(request: Request, env: SerametEnv) {
           });
           for (const event of events) {
             controller.enqueue(
-              encoder.encode(`id: ${event.id}\nevent: seramet\ndata: ${JSON.stringify(event)}\n\n`),
+              encoder.encode(
+                `id: ${event.createdAt}|${event.id}\nevent: seramet\ndata: ${JSON.stringify(event)}\n\n`,
+              ),
             );
             after = event.createdAt;
             afterId = event.id;
@@ -81,4 +88,17 @@ function validTimestamp(value: string | null) {
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/** Reject malformed/untrusted Last-Event-ID values before using a SQL cursor. */
+export function parseRealtimeCursor(value: string | null) {
+  if (!value || value.length > 128) return null;
+  const separator = value.indexOf("|");
+  if (separator < 1) return null;
+  const after = validTimestamp(value.slice(0, separator));
+  const afterId = value.slice(separator + 1);
+  if (!after || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(afterId)) {
+    return null;
+  }
+  return { after, afterId };
 }
