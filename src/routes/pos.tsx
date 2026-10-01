@@ -1988,9 +1988,7 @@ function POS() {
               : "Orders are saved, but ticket delivery is pending or uncertain. Check the actual kitchen output before any retry."}
           </div>
           {hasPermission(permissions.settingsHardwareView) ? (
-            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>
-              Review tickets
-            </Btn>
+            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Review tickets</Btn>
           ) : (
             <span className="font-semibold">Notify a manager to review Seramet Printers.</span>
           )}
