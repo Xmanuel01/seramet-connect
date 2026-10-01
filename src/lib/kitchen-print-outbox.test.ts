@@ -313,5 +313,4 @@ describe("durable original and amendment kitchen print obligations", () => {
     });
     expect(state.kitchenPrintObligations![0]!.id).not.toBe(firstReprint.id);
   });
-
 });
