@@ -33,6 +33,8 @@ export function useTransactionEngine() {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [activeMutationCount, setActiveMutationCount] = useState(0);
   const [offlineReplayInProgress, setOfflineReplayInProgress] = useState(false);
+  const [offlineStoreAvailable, setOfflineStoreAvailable] = useState(true);
+  const offlineStoreHealthyRef = useRef(true);
   const deviceIdRef = useRef("development-pos");
   const scopeKey = `${activeTenantId}:${branchId}`;
   const scopeRef = useRef(scopeKey);
@@ -71,8 +73,17 @@ export function useTransactionEngine() {
     }
     // An unexpected lookup failure is NOT proof of an empty queue. Fail closed:
     // the cashier must not treat an unreadable store as safely synchronized.
-    const pending = await offlineStore.pending(activeTenantId, deviceIdRef.current);
-    setPendingSyncCount(pending.length);
+    try {
+      const pending = await offlineStore.pending(activeTenantId, deviceIdRef.current);
+      offlineStoreHealthyRef.current = true;
+      setOfflineStoreAvailable(true);
+      setPendingSyncCount(pending.length);
+    } catch (error) {
+      offlineStoreHealthyRef.current = false;
+      setOfflineStoreAvailable(false);
+      setBackendStatus("error");
+      throw error;
+    }
   }, [activeTenantId]);
 
   // Refresh is a silent read once the POS is online. An in-flight background
@@ -160,10 +171,18 @@ export function useTransactionEngine() {
         // Never replace optimistic offline changes with a server snapshot before
         // all local commands for this branch have been acknowledged. Resolve the
         // queue before comparing revisions, since queued edits share the base revision.
-        const unresolved =
-          typeof indexedDB === "undefined"
-            ? []
-            : await offlineStore.pending(activeTenantId, deviceIdRef.current);
+        let unresolved: OfflineCommand[] = [];
+        if (typeof indexedDB !== "undefined") {
+          try {
+            unresolved = await offlineStore.pending(activeTenantId, deviceIdRef.current);
+            offlineStoreHealthyRef.current = true;
+            setOfflineStoreAvailable(true);
+          } catch (error) {
+            offlineStoreHealthyRef.current = false;
+            setOfflineStoreAvailable(false);
+            throw error;
+          }
+        }
         if (scopeRef.current !== requestScope) return undefined;
         if (mutationInFlightRef.current > 0) {
           refreshAfterMutationRef.current = true;
@@ -233,7 +252,16 @@ export function useTransactionEngine() {
   const flushOfflineCommands = useCallback(async () => {
     if (flushInFlightRef.current) return flushInFlightRef.current;
     const run = async () => {
-      const commands = await offlineStore.replayable(activeTenantId, deviceIdRef.current);
+      let commands: OfflineCommand[];
+      try {
+        commands = await offlineStore.replayable(activeTenantId, deviceIdRef.current);
+        offlineStoreHealthyRef.current = true;
+        setOfflineStoreAvailable(true);
+      } catch (error) {
+        offlineStoreHealthyRef.current = false;
+        setOfflineStoreAvailable(false);
+        throw error;
+      }
       if (!commands.length) return;
       setOfflineReplayInProgress(true);
       for (const command of commands) {
@@ -389,6 +417,11 @@ export function useTransactionEngine() {
       optimistic?: (current: TransactionState) => TransactionState,
       localEffects?: OfflineCommand["localEffects"],
     ) => {
+      if (persistenceMode === "authoritative" && !offlineStoreHealthyRef.current) {
+        throw new Error(
+          "Offline command storage cannot be verified. Stop new orders and restore local storage before proceeding.",
+        );
+      }
       const idempotencyKey = `command:${crypto.randomUUID()}`;
       localMutationGenerationRef.current += 1;
       const applyOptimistic = () => {
@@ -558,6 +591,7 @@ export function useTransactionEngine() {
     pendingSyncCount,
     activeMutationCount,
     offlineReplayInProgress,
+    offlineStoreAvailable,
     syncFromBackend,
     flushOfflineCommands,
   };

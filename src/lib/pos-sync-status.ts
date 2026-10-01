@@ -1,7 +1,12 @@
 import type { BackendStatus } from "@/hooks/use-transaction-engine";
 
 /** Connection health is independent of saves and persisted offline commands. */
-export function connectionPresentation(status: BackendStatus, internetOnline = true) {
+export function connectionPresentation(
+  status: BackendStatus,
+  internetOnline = true,
+  offlineStoreAvailable = true,
+) {
+  if (!offlineStoreAvailable) return { label: "Offline storage issue", health: "warning" as const };
   // Browser connectivity and verified server availability are different facts.
   if (!internetOnline) return { label: "Internet offline", health: "offline" as const };
   switch (status) {

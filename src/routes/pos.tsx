@@ -236,6 +236,7 @@ function POS() {
     pendingSyncCount,
     activeMutationCount,
     offlineReplayInProgress,
+    offlineStoreAvailable,
   } = useTransactionEngine();
   const {
     profile,
@@ -257,6 +258,7 @@ function POS() {
   const connectivity = connectionPresentation(
     backendStatus,
     typeof navigator === "undefined" ? true : navigator.onLine,
+    offlineStoreAvailable,
   );
   const syncActivity = syncActivityLabel(
     backendStatus,

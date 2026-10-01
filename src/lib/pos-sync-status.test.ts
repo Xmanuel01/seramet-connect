@@ -21,6 +21,7 @@ describe("POS connectivity and synchronization display", () => {
     expect(connectionPresentation("offline").label).toBe("Connection lost");
     expect(connectionPresentation("synced", false).label).toBe("Internet offline");
     expect(connectionPresentation("error", true).label).toBe("Server issue");
+    expect(connectionPresentation("synced", true, false).label).toBe("Offline storage issue");
     expect(connectionPresentation("loading").label).toBe("Connecting");
   });
 });
