@@ -7,6 +7,7 @@ import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { permissions } from "@/platform/permissions";
 import type { KitchenPrintObligation } from "@/lib/transaction-engine";
+import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
@@ -115,8 +116,9 @@ function SerametPrinters() {
   const kotActionRef = useRef(false);
   const [kotRecoveryReason, setKotRecoveryReason] = useState("");
   const { state: transactions, mutate: mutateTransaction } = useTransactionEngine();
-  const recoveryItems = (transactions.kitchenPrintObligations ?? []).filter(
-    (item) => item.branchId === selectedBranchId && item.status !== "BRIDGE_ACCEPTED",
+  const recoveryItems = kitchenPrintRecoveryItems(
+    transactions.kitchenPrintObligations ?? [],
+    selectedBranchId,
   );
   const recentlyAccepted = (transactions.kitchenPrintObligations ?? [])
     .filter((item) => item.branchId === selectedBranchId && item.status === "BRIDGE_ACCEPTED")
