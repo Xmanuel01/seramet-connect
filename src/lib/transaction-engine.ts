@@ -1903,11 +1903,7 @@ export const TransactionEngine = {
 
     const claimedAt = now();
     for (const item of selected) {
-      if (
-        item.status === "CLAIMED" &&
-        item.claimToken === claimToken &&
-        item.claimedBy === user
-      ) {
+      if (item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user) {
         continue;
       }
       item.status = "CLAIMED";
@@ -1926,13 +1922,7 @@ export const TransactionEngine = {
     user: string,
     claimToken: string,
   ) {
-    return this.claimKitchenPrintObligations(
-      state,
-      [obligationId],
-      branchId,
-      user,
-      claimToken,
-    );
+    return this.claimKitchenPrintObligations(state, [obligationId], branchId, user, claimToken);
   },
 
   settleKitchenPrintObligation(
