@@ -194,7 +194,9 @@ export function applyServerMutation(
       const orderId = typeof input["orderId"] === "string" ? input["orderId"] : undefined;
       const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
       if (orderId && state.orders.some((order) => order.id === orderId)) {
-        return TransactionEngine.updateOrderDraft(state, orderId, draft, actor.name);
+        return input["targetStatus"] === "HELD"
+          ? TransactionEngine.holdExistingOrder(state, orderId, draft, actor.name)
+          : TransactionEngine.updateOrderDraft(state, orderId, draft, actor.name);
       }
       return input["targetStatus"] === "HELD"
         ? TransactionEngine.holdOrder(state, draft)
