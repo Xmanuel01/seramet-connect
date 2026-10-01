@@ -2000,6 +2000,20 @@ export const TransactionEngine = {
     if (original.status !== "BRIDGE_ACCEPTED") {
       throw new Error("Only bridge-accepted KOTs may create an additional audited reprint");
     }
+    // Manager clicks are deliberate, but an unanswered or uncertain reprint may
+    // already have generated physical paper. Do not authorize a second copy
+    // until the first attempt has been conclusively reviewed.
+    const unresolved = next.kitchenPrintObligations?.find(
+      (row) =>
+        row.parentObligationId === original.id &&
+        ["PENDING", "CLAIMED", "UNCERTAIN"].includes(row.status),
+    );
+    if (unresolved) {
+      throw new Error(
+        `An existing KOT reprint (${unresolved.id}) is still ${unresolved.status}. ` +
+          "Review that delivery before authorizing another copy.",
+      );
+    }
     const stamp = now();
     const duplicate: KitchenPrintObligation = {
       id: `KOT-REPRINT:${crypto.randomUUID()}`,

@@ -231,4 +231,86 @@ describe("durable original and amendment kitchen print obligations", () => {
       ),
     ).toThrow(/audited reprint/i);
   });
+
+  it("blocks duplicate active reprints across pending and uncertain delivery, then allows audited follow-up", () => {
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft());
+    state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Cashier One");
+    const original = state.kitchenPrintObligations![0]!;
+    state = TransactionEngine.claimKitchenPrintObligation(
+      state,
+      original.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "first-device",
+      "original-claim",
+    );
+    state = TransactionEngine.settleKitchenPrintObligation(
+      state,
+      original.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "first-device",
+      "original-claim",
+      "BRIDGE_ACCEPTED",
+    );
+    state = TransactionEngine.requestKitchenReprint(
+      state,
+      original.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "Manager",
+      "Kitchen reported the original receipt paper was damaged",
+    );
+    const firstReprint = state.kitchenPrintObligations![0]!;
+    const blocked = () =>
+      TransactionEngine.requestKitchenReprint(
+        state,
+        original.id,
+        DEMO_WESTLANDS_BRANCH_ID,
+        "Manager",
+        "Another copy requested after kitchen paper inspection",
+      );
+    expect(blocked).toThrow(/existing KOT reprint.*PENDING/);
+    expect(state.kitchenPrintObligations).toHaveLength(3);
+
+    state = TransactionEngine.claimKitchenPrintObligation(
+      state,
+      firstReprint.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "reprint-device",
+      "first-reprint-claim",
+    );
+    expect(blocked).toThrow(/existing KOT reprint.*CLAIMED/);
+    state = TransactionEngine.settleKitchenPrintObligation(
+      state,
+      firstReprint.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "reprint-device",
+      "first-reprint-claim",
+      "UNCERTAIN",
+      "Printer accepted connection then lost acknowledgement",
+    );
+    expect(blocked).toThrow(/existing KOT reprint.*UNCERTAIN/);
+    expect(state.kitchenPrintObligations).toHaveLength(3);
+
+    state = TransactionEngine.reviewKitchenPrintObligation(
+      state,
+      firstReprint.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "Manager",
+      "CONFIRM_DELIVERED",
+      "Verified first reprint paper was produced at kitchen",
+    );
+    state = TransactionEngine.requestKitchenReprint(
+      state,
+      original.id,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "Manager",
+      "Independent new replacement authorized after paper inspection",
+    );
+    expect(state.kitchenPrintObligations).toHaveLength(4);
+    expect(state.kitchenPrintObligations![0]).toMatchObject({
+      kind: "REPRINT",
+      parentObligationId: original.id,
+      status: "PENDING",
+    });
+    expect(state.kitchenPrintObligations![0]!.id).not.toBe(firstReprint.id);
+  });
 });
