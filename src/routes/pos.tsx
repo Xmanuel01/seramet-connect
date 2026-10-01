@@ -1308,18 +1308,15 @@ function POS() {
           "Review the server KOT outbox before attempting another dispatch.",
       );
     }
-    // Claim every station before initiating any asynchronous bridge operation.
-    // This prevents a fast first-station ACK racing a later-station claim and
-    // producing a false revision conflict on a healthy terminal.
-    const claimed = [];
-    for (const obligation of obligations) {
-      const claimToken = crypto.randomUUID();
-      await mutateTransaction("claimKitchenPrintObligation", {
-        obligationId: obligation.id,
-        claimToken,
-      });
-      claimed.push({ obligation, claimToken });
-    }
+    // Claim the entire multi-station dispatch in one authoritative mutation.
+    // A partial claim could strand one station in CLAIMED if another station
+    // conflicts before any printer handoff, so this is intentionally all-or-none.
+    const claimToken = crypto.randomUUID();
+    await mutateTransaction("claimKitchenPrintObligations", {
+      obligationIds: obligations.map((obligation) => obligation.id),
+      claimToken,
+    });
+    const claimed = obligations.map((obligation) => ({ obligation, claimToken }));
     let printResult: ReturnType<typeof sendKitchenTickets> | null = null;
     const queuedJobIds: string[] = [];
     const rejected: string[] = [];

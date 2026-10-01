@@ -94,6 +94,62 @@ describe("durable original and amendment kitchen print obligations", () => {
     expect(additions[0]?.sourceId).toBe(state.productionAmendments[0]?.id);
   });
 
+  it("claims a multi-station dispatch atomically and leaves no partial claim on failure", () => {
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft());
+    state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Cashier One");
+    const ids = state.kitchenPrintObligations!.map((item) => item.id);
+    expect(ids).toHaveLength(2);
+
+    const before = structuredClone(state);
+    expect(() =>
+      TransactionEngine.claimKitchenPrintObligations(
+        state,
+        [ids[0]!, "missing-obligation"],
+        DEMO_WESTLANDS_BRANCH_ID,
+        "device-user",
+        "batch-claim-1",
+      ),
+    ).toThrow(/not available in branch/i);
+    expect(state).toEqual(before);
+
+    state = TransactionEngine.claimKitchenPrintObligations(
+      state,
+      ids,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "device-user",
+      "batch-claim-1",
+    );
+    expect(
+      state
+        .kitchenPrintObligations!.filter((item) => ids.includes(item.id))
+        .map((item) => item.status),
+    ).toEqual(["CLAIMED", "CLAIMED"]);
+    expect(
+      state
+        .kitchenPrintObligations!.filter((item) => ids.includes(item.id))
+        .map((item) => item.claimToken),
+    ).toEqual(["batch-claim-1", "batch-claim-1"]);
+
+    const idempotent = TransactionEngine.claimKitchenPrintObligations(
+      state,
+      ids,
+      DEMO_WESTLANDS_BRANCH_ID,
+      "device-user",
+      "batch-claim-1",
+    );
+    expect(idempotent).toEqual(state);
+
+    expect(() =>
+      TransactionEngine.claimKitchenPrintObligations(
+        state,
+        ids,
+        DEMO_WESTLANDS_BRANCH_ID,
+        "other-device",
+        "batch-claim-2",
+      ),
+    ).toThrow(/review before retry/i);
+  });
+
   it("permits one branch-scoped claim, never auto-retries an uncertain bridge response", () => {
     let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), draft());
     const orderId = state.orders[0]!.id;

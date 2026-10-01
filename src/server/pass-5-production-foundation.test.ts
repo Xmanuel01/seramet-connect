@@ -234,6 +234,73 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(await count("mutation_commits", tenantA)).toBe(3);
   });
 
+  it("claims all multi-station KOT obligations in one persisted mutation", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const multiStationDraft = orderDraft("Atomic station claim");
+    multiStationDraft.lines.push({
+      id: "atomic-bar-line",
+      productId: "product-bar",
+      name: "Fresh Juice",
+      category: "Drinks",
+      quantity: 1,
+      unitPrice: 350,
+      productionStation: "BAR",
+    });
+    const dispatched = await mutation(
+      repository,
+      "atomic-station-submit",
+      "atomic-station-submit",
+      "upsertAndSendKitchen",
+      { draft: multiStationDraft },
+    );
+    const obligations = dispatched.state.kitchenPrintObligations ?? [];
+    expect(obligations).toHaveLength(2);
+    const revisionBeforeClaim = dispatched.revision;
+
+    const claimed = await repository.commitMutation({
+      actor: actor(),
+      action: "claimKitchenPrintObligations",
+      payload: {
+        obligationIds: obligations.map((item) => item.id),
+        claimToken: "atomic-station-token",
+      },
+      idempotencyKey: "atomic-station-claim",
+      requestHash: "atomic-station-claim",
+      correlationId: "atomic-station-claim",
+      expectedRevision: revisionBeforeClaim,
+      deviceId: deviceA,
+    });
+    expect(claimed.revision).toBe(revisionBeforeClaim + 1);
+    expect(
+      claimed.state.kitchenPrintObligations?.map((item) => ({
+        id: item.id,
+        status: item.status,
+        claimToken: item.claimToken,
+      })),
+    ).toEqual(
+      expect.arrayContaining(
+        obligations.map((item) => ({
+          id: item.id,
+          status: "CLAIMED",
+          claimToken: "atomic-station-token",
+        })),
+      ),
+    );
+
+    const restarted = new D1AuthoritativeTransactionRepository(database);
+    const persisted = await restarted.loadState(tenantA);
+    expect(
+      persisted.kitchenPrintObligations?.filter((item) =>
+        obligations.some((expected) => expected.id === item.id),
+      ),
+    ).toHaveLength(2);
+    expect(
+      persisted.kitchenPrintObligations
+        ?.filter((item) => obligations.some((expected) => expected.id === item.id))
+        .every((item) => item.status === "CLAIMED" && item.claimToken === "atomic-station-token"),
+    ).toBe(true);
+  });
+
   it("paginates authoritative history with server tenant and branch scope", async () => {
     for (let index = 0; index < 3; index += 1) {
       const updatedAt = new Date(

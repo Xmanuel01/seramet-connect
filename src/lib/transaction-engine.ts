@@ -1868,6 +1868,53 @@ export const TransactionEngine = {
     }
   },
 
+  claimKitchenPrintObligations(
+    state: TransactionState,
+    obligationIds: string[],
+    branchId: string,
+    user: string,
+    claimToken: string,
+  ) {
+    if (!claimToken || claimToken.length > 128) throw new Error("Invalid KOT claim identity");
+    if (!Array.isArray(obligationIds) || obligationIds.length === 0 || obligationIds.length > 16) {
+      throw new Error("KOT claim batch must contain between 1 and 16 obligations");
+    }
+    const uniqueIds = [...new Set(obligationIds.map((id) => String(id).trim()).filter(Boolean))];
+    if (uniqueIds.length !== obligationIds.length) {
+      throw new Error("KOT claim batch contains duplicate or empty obligation IDs");
+    }
+
+    const next = clone(state);
+    const obligations = next.kitchenPrintObligations ?? [];
+    const selected = uniqueIds.map((obligationId) => {
+      const item = obligations.find((row) => row.id === obligationId);
+      if (!item || item.branchId !== branchId) {
+        throw new Error("KOT obligation not available in branch");
+      }
+      const sameClaim =
+        item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user;
+      if (!sameClaim && item.status !== "PENDING") {
+        throw new Error(
+          "KOT delivery outcome is uncertain or already accepted. Review before retry.",
+        );
+      }
+      return item;
+    });
+
+    const claimedAt = now();
+    for (const item of selected) {
+      if (item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user) {
+        continue;
+      }
+      item.status = "CLAIMED";
+      item.claimedBy = user;
+      item.claimToken = claimToken;
+      item.claimedAt = claimedAt;
+      item.updatedAt = claimedAt;
+    }
+    return next;
+  },
+
   claimKitchenPrintObligation(
     state: TransactionState,
     obligationId: string,
@@ -1875,25 +1922,7 @@ export const TransactionEngine = {
     user: string,
     claimToken: string,
   ) {
-    if (!claimToken || claimToken.length > 128) throw new Error("Invalid KOT claim identity");
-    const next = clone(state);
-    const item = next.kitchenPrintObligations?.find((row) => row.id === obligationId);
-    if (!item || item.branchId !== branchId)
-      throw new Error("KOT obligation not available in branch");
-    if (item.status === "CLAIMED" && item.claimToken === claimToken && item.claimedBy === user) {
-      return next;
-    }
-    if (item.status !== "PENDING") {
-      throw new Error(
-        "KOT delivery outcome is uncertain or already accepted. Review before retry.",
-      );
-    }
-    item.status = "CLAIMED";
-    item.claimedBy = user;
-    item.claimToken = claimToken;
-    item.claimedAt = now();
-    item.updatedAt = item.claimedAt;
-    return next;
+    return this.claimKitchenPrintObligations(state, [obligationId], branchId, user, claimToken);
   },
 
   settleKitchenPrintObligation(

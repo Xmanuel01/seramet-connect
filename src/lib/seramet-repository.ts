@@ -216,6 +216,14 @@ export function applyServerMutation(
         throw new Error("Kitchen order did not receive an authoritative identity");
       return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
     }
+    case "claimKitchenPrintObligations":
+      return TransactionEngine.claimKitchenPrintObligations(
+        state,
+        Array.isArray(input["obligationIds"]) ? input["obligationIds"].map(String) : [],
+        actor.branchId ?? "",
+        actor.id,
+        String(input["claimToken"] ?? ""),
+      );
     case "claimKitchenPrintObligation":
       return TransactionEngine.claimKitchenPrintObligation(
         state,
