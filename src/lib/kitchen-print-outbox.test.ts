@@ -120,10 +120,14 @@ describe("durable original and amendment kitchen print obligations", () => {
       "batch-claim-1",
     );
     expect(
-      state.kitchenPrintObligations!.filter((item) => ids.includes(item.id)).map((item) => item.status),
+      state
+        .kitchenPrintObligations!.filter((item) => ids.includes(item.id))
+        .map((item) => item.status),
     ).toEqual(["CLAIMED", "CLAIMED"]);
     expect(
-      state.kitchenPrintObligations!.filter((item) => ids.includes(item.id)).map((item) => item.claimToken),
+      state
+        .kitchenPrintObligations!.filter((item) => ids.includes(item.id))
+        .map((item) => item.claimToken),
     ).toEqual(["batch-claim-1", "batch-claim-1"]);
 
     const idempotent = TransactionEngine.claimKitchenPrintObligations(
