@@ -543,6 +543,9 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     const stream = new EventSource(endpoint, { withCredentials: true });
     let streamHealthy = false;
     let lastFallbackRefresh = 0;
+    // SSE reconnects can repeat recent events: dispatch each server event once
+    // per active branch stream, without a separate expensive transaction fetch.
+    const seenEventIds = new Set<string>();
     const requestRefresh = (reason: string) => {
       // A 25-second SSE stream reconnect should not trigger repeated competing
       // full transaction refreshes on an otherwise healthy cashier terminal.
@@ -556,6 +559,15 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     const message = (event: MessageEvent<string>) => {
       try {
         const detail = JSON.parse(event.data) as Record<string, unknown>;
+        const eventId = typeof detail["id"] === "string" ? detail["id"] : "";
+        if (eventId) {
+          if (seenEventIds.has(eventId)) return;
+          seenEventIds.add(eventId);
+          if (seenEventIds.size > 256) {
+            const oldest = seenEventIds.values().next().value;
+            if (oldest) seenEventIds.delete(oldest);
+          }
+        }
         window.dispatchEvent(new CustomEvent("seramet:realtime", { detail }));
       } catch {
         // Ignore malformed transport data; authoritative refresh remains available.
