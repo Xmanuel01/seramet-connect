@@ -46,7 +46,7 @@ function Orders() {
   const [cancelReason, setCancelReason] = useState("");
   const [operationNotice, setOperationNotice] = useState("");
   const [operationBusy, setOperationBusy] = useState(false);
-  const { state, mutate } = useTransactionEngine();
+  const { state, mutate, backendStatus, pendingSyncCount } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
   const rows = state.orders
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
@@ -69,6 +69,12 @@ function Orders() {
       setOperationNotice("Select exactly one invoiced order to print.");
       return;
     }
+    if (backendStatus !== "synced" || pendingSyncCount > 0) {
+      setOperationNotice(
+        "Connection or offline commands are unresolved. Reconnect and verify the active invoice before printing.",
+      );
+      return;
+    }
     const bills = invoiceCandidatesForOrder(state.bills, selectedOrder, matchesBranch);
     if (bills.length !== 1) {
       setOperationNotice(
@@ -83,10 +89,20 @@ function Orders() {
         billingRecordToPrintOrder(bills[0]!, state.payments, state.orders),
         "BILL",
       );
+      const queued = result.jobs.length > 0 &&
+        result.jobs.every((job) =>
+          result.queue.some(
+            (entry) =>
+              entry.id === job.id &&
+              ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
+                entry.status,
+              ),
+          ),
+        );
       setOperationNotice(
-        result.jobs.length
-          ? `Bill ${bills[0]!.id} queued. Physical delivery is not yet confirmed; check Printers.`
-          : `Bill not queued: ${result.skipped[0] ?? "Configure your branch printer."}`,
+        queued
+          ? `Bill ${bills[0]!.id} accepted by the print queue. Physical delivery is not yet confirmed; check Printers.`
+          : `Bill not queued: ${result.skipped[0] ?? "The printer route failed. Review Printers."}`,
       );
     } catch (error) {
       setOperationNotice(error instanceof Error ? error.message : "Bill printing failed.");
@@ -153,7 +169,10 @@ function Orders() {
       subtitle={`${rows.length} orders in selected period - ${branchLabel}`}
       actions={
         <>
-          <Btn onClick={printSelectedBill} disabled={operationBusy || !selectedOrder}>
+          <Btn
+            onClick={printSelectedBill}
+            disabled={operationBusy || !selectedOrder}
+          >
             Print selected bill
           </Btn>
           <Btn onClick={openCancellation} disabled={operationBusy}>
@@ -182,7 +201,11 @@ function Orders() {
         Refunds use their completion date. See Finance for recognized revenue.
       </p>
       {operationNotice && (
-        <div className="mt-3 rounded-md border border-border bg-card px-3 py-2 text-[13px]">
+        <div
+          role="status"
+          aria-live="polite"
+          className="mt-3 rounded-md border border-border bg-card px-3 py-2 text-[13px]"
+        >
           {operationNotice}
         </div>
       )}
@@ -213,12 +236,21 @@ function Orders() {
               className="rounded-lg border border-border bg-card p-3 shadow-card"
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="num text-[13px] font-bold">{order.id}</div>
-                  <div className="truncate text-[12px] text-muted-foreground">
-                    {order.customer} - {order.channel}
-                  </div>
-                </div>
+                <label className="flex min-w-0 items-start gap-2">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select order ${order.id}`}
+                    checked={selectedOrders.includes(order.id)}
+                    onChange={() => toggleOrder(order.id)}
+                    className="mt-1 h-4 w-4 accent-primary"
+                  />
+                  <span className="min-w-0">
+                    <span className="num block text-[13px] font-bold">{order.id}</span>
+                    <span className="block truncate text-[12px] text-muted-foreground">
+                      {order.customer} - {order.channel}
+                    </span>
+                  </span>
+                </label>
                 <div className="num shrink-0 text-[14px] font-bold">{ksh(order.total)}</div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
