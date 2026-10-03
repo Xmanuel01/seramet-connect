@@ -19,6 +19,7 @@ import {
   formatPosClock,
   invoiceBusinessDate,
   pendingPosOrders,
+  recordBusinessDate,
   resolvePosTimeZone,
   unbilledKitchenOrders,
 } from "./pos-workflow";
@@ -134,6 +135,12 @@ describe("branch-correct invoice visibility", () => {
         "Africa/Nairobi",
       ),
     ).toBe("2026-09-28");
+  });
+  it("uses branch local time and cutoff only for legacy records without a server date", () => {
+    const timestamp = "2026-10-02T22:30:00.000Z";
+    expect(recordBusinessDate(undefined, timestamp, "Africa/Nairobi")).toBe("2026-10-03");
+    expect(recordBusinessDate(undefined, timestamp, "Africa/Nairobi", 240)).toBe("2026-10-02");
+    expect(recordBusinessDate("2026-10-01", timestamp, "Africa/Nairobi", 240)).toBe("2026-10-01");
   });
 });
 

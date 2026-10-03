@@ -10,6 +10,7 @@ import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { recordBusinessDate } from "@/lib/pos-workflow";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -35,14 +36,31 @@ export const Route = createFileRoute("/receipts")({
 function Receipts() {
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const [printNotice, setPrintNotice] = useState("");
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    branchLabel,
+    branchRecords,
+    currentUser,
+    matchesBranch,
+    timeZone,
+  } = useAppContext();
   const { state, mutate } = useTransactionEngine();
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);
   const configuration = getConfigurationRepository();
   const businessName = configuration.getTenant(activeTenantId).tradingName;
+  const receiptBusinessDate = (receipt: (typeof state.receipts)[number]) => {
+    const record = branchRecords.find((candidate) => candidate.id === receipt.branchId);
+    return recordBusinessDate(
+      receipt.businessDate,
+      receipt.issuedAt,
+      record?.timezone ?? timeZone,
+      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
+  };
   const rows = state.receipts
     .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
-    .filter((receipt) => !periodDate || receipt.issuedAt.slice(0, 10) === periodDate);
+    .filter((receipt) => !periodDate || receiptBusinessDate(receipt) === periodDate);
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
   const reprints = rows.reduce((sum, receipt) => sum + receipt.reprints.length, 0);
 
