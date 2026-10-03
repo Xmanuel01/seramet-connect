@@ -1,0 +1,31 @@
+name: Pilot Staging Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authenticated-staging:
+    environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SERAMET_E2E_BASE_URL: ${{ secrets.SERAMET_STAGING_URL }}
+      SERAMET_STAGING_OWNER_EMAIL: ${{ secrets.SERAMET_STAGING_OWNER_EMAIL }}
+      SERAMET_STAGING_OWNER_PASSWORD: ${{ secrets.SERAMET_STAGING_OWNER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify real staging owner session lifecycle
+        run: npx playwright test tests/e2e/staging-auth.spec.ts
+      - name: Record required operator-only acceptance
+        run: |
+          echo "M-Pesa sandbox callback and physical printer evidence remain manual protected-environment gates."
+          echo "This workflow does not deploy and does not touch production data."
