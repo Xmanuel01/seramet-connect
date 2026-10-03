@@ -26,6 +26,8 @@ import { activeLocale, ksh } from "@/lib/currency";
 import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { permissions } from "@/platform/permissions";
+import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
+import { shouldHydratePosOrder } from "@/lib/transaction-refresh-coordinator";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -221,6 +223,8 @@ function POS() {
     syncFromBackend,
     backendStatus,
     pendingSyncCount,
+    activeMutationCount,
+    offlineReplayInProgress,
   } = useTransactionEngine();
   const {
     profile,
@@ -239,6 +243,13 @@ function POS() {
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
+  const connectivity = connectionPresentation(backendStatus);
+  const syncActivity = syncActivityLabel(
+    backendStatus,
+    activeMutationCount,
+    pendingSyncCount,
+    offlineReplayInProgress,
+  );
   const openCashDrawer = transactionState.paymentOperations?.drawerSessions.find(
     (drawer) =>
       drawer.tenantId === activeTenantId &&
@@ -569,13 +580,25 @@ function POS() {
   }, [paymentCurrencies, tenderCurrency, tenant.defaultCurrency]);
 
   useEffect(() => {
-    if (!activeOrder) {
+    // A transiently missing row during remote refresh is NOT an explicit order
+    // change. Preserve the hydration key and the cashier's local quantities/notes.
+    if (!activeOrderId) {
       hydratedOrderIdRef.current = null;
       return;
     }
-    // Background refresh must not overwrite a cashier's unsaved quantities or notes.
-    if (hydratedOrderIdRef.current === activeOrder.id || orderChannels.length === 0) return;
-    hydratedOrderIdRef.current = activeOrder.id;
+    if (
+      !activeOrder ||
+      !shouldHydratePosOrder({
+        selectedOrderId: activeOrderId,
+        availableOrderId: activeOrder?.id ?? null,
+        hydratedScopeOrderKey: hydratedOrderIdRef.current,
+        currentScope: `${activeTenantId}:${branchId}`,
+      }) ||
+      orderChannels.length === 0
+    ) {
+      return;
+    }
+    hydratedOrderIdRef.current = `${activeTenantId}:${branchId}:${activeOrderId}`;
     const channel = orderChannels.find(
       (item) =>
         item.id === activeOrder.channel ||
@@ -601,7 +624,7 @@ function POS() {
     );
     setPrintNotice(`${activeOrder.id} loaded. Print routing is running in the background.`);
     setPrintNoticeType("idle");
-  }, [activeOrder, orderChannels]);
+  }, [activeOrder, activeOrderId, activeTenantId, branchId, orderChannels]);
 
   const sentQuantities = useMemo(
     () =>
@@ -1947,23 +1970,31 @@ function POS() {
           <span
             className={cn(
               "inline-flex items-center gap-1 text-[12px] font-medium",
-              backendStatus === "synced" ? "text-emerald-700" : "text-amber-700",
+              connectivity.health === "online" ? "text-emerald-700" : "text-amber-700",
             )}
-            title={
-              pendingSyncCount
-                ? `${pendingSyncCount} command(s) pending synchronization`
-                : undefined
-            }
+            aria-label={`Connection: ${connectivity.label}`}
           >
-            {backendStatus === "synced" ? (
+            {connectivity.health === "online" ? (
               <Wifi className="h-3.5 w-3.5" />
-            ) : backendStatus === "offline" || backendStatus === "error" ? (
+            ) : connectivity.health === "offline" || connectivity.health === "warning" ? (
               <WifiOff className="h-3.5 w-3.5" />
             ) : (
               <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
             )}
-            {connectionLabel(backendStatus, pendingSyncCount)}
+            {connectivity.label}
           </span>
+          {syncActivity && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+              aria-live="polite"
+              title={syncActivity}
+            >
+              {(offlineReplayInProgress || activeMutationCount > 0) && (
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+              )}
+              {syncActivity}
+            </span>
+          )}
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
             <Clock className="h-3.5 w-3.5" /> <span title={clockTimeZone}>{clockLabel}</span>
           </span>
@@ -2992,14 +3023,4 @@ function cashierErrorMessage(error: unknown, fallback: string) {
     return message;
   }
   return message || fallback;
-}
-
-function connectionLabel(status: string, pending: number) {
-  if (status === "synced") return "Online";
-  if (status === "reconnecting") return "Reconnecting";
-  if (status === "conflict") return `Sync issues${pending ? ` (${pending})` : ""}`;
-  if (status === "offline" || status === "error") {
-    return `Offline${pending ? ` (${pending} pending)` : ""}`;
-  }
-  return "Syncing";
 }
