@@ -448,9 +448,27 @@ async function seed(db: PostgresD1Database) {
     .prepare("INSERT INTO user_branches VALUES (?,?,?)")
     .bind(tenantId, userId, branchId)
     .run();
+  for (const account of [
+    { id: "cash-on-hand", code: "1100", name: "Cash on hand" },
+    { id: "accounts-receivable", code: "1200", name: "Customer receivables" },
+  ]) {
+    await db
+      .prepare(
+        "INSERT INTO accounts (tenant_id,id,branch_id,code,name,account_type,currency,active,payload_json) VALUES (?,?,?,?,?,'ASSET','KES',1,?)",
+      )
+      .bind(
+        tenantId,
+        account.id,
+        branchId,
+        account.code,
+        account.name,
+        JSON.stringify({ ...account, tenantId, branchId, type: "ASSET", currency: "KES" }),
+      )
+      .run();
+  }
   await db
     .prepare(
-      "INSERT INTO payment_methods (tenant_id,id,code,category,cash_account_id,active,payload_json) VALUES (?,?,?,'CASH','cash-on-hand',1,?)",
+      "INSERT INTO payment_methods (tenant_id,id,code,category,settlement_account_id,receivable_account_id,cash_account_id,active,payload_json) VALUES (?,?,?,'CASH','cash-on-hand','accounts-receivable','cash-on-hand',1,?)",
     )
     .bind(
       tenantId,
@@ -468,6 +486,8 @@ async function seed(db: PostgresD1Database) {
         requiresCustomer: false,
         supportsRefund: true,
         supportsSplit: true,
+        settlementAccountId: "cash-on-hand",
+        receivableAccountId: "accounts-receivable",
         cashAccountId: "cash-on-hand",
         metadata: {},
       }),
