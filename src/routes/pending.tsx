@@ -18,6 +18,7 @@ import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { type BillingRecord } from "@/lib/transaction-engine";
 import { SettlementService, settlementReferenceLabel } from "@/payments/settlement-service";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { recordBusinessDate } from "@/lib/pos-workflow";
 
 export const Route = createFileRoute("/pending")({
   head: () => ({
@@ -49,9 +50,11 @@ function PendingInvoices() {
     branch,
     branchId,
     branchLabel,
+    branchRecords,
     currentUser,
     isAllBranches,
     matchesBranch,
+    timeZone,
   } = useAppContext();
   const { state, mutate, syncFromBackend } = useTransactionEngine();
   const settlementService = new SettlementService();
@@ -59,10 +62,19 @@ function PendingInvoices() {
   const selectedSettlementMethod = settlementMethods.find(
     (method) => method.id === settlementMethod,
   );
+  const billBusinessDate = (bill: BillingRecord) => {
+    const record = branchRecords.find((candidate) => candidate.id === bill.branchId);
+    return recordBusinessDate(
+      bill.businessDate,
+      bill.issuedAt,
+      record?.timezone ?? timeZone,
+      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
+  };
   const rows = state.bills
     .filter((bill) => matchesBranch(bill.branchId ?? bill.branch))
     .filter((bill) => bill.status !== "MERGED" && bill.status !== "SPLIT")
-    .filter((bill) => !periodDate || bill.issuedAt.slice(0, 10) === periodDate)
+    .filter((bill) => !periodDate || billBusinessDate(bill) === periodDate)
     .filter((bill) => {
       if (statusFilter === "Paid") return bill.paymentStatus === "PAID";
       if (statusFilter === "Unpaid")
@@ -77,7 +89,7 @@ function PendingInvoices() {
       );
     });
   const value = rows.reduce((sum, bill) => sum + bill.total - bill.paid, 0);
-  const oldest = rows.at(-1)?.issuedAt.slice(0, 10) ?? "None";
+  const oldest = rows.at(-1) ? billBusinessDate(rows.at(-1)!) : "None";
   const paidCount = rows.filter((bill) => bill.paymentStatus === "PAID").length;
 
   const settlementLabel = (invoice: BillingRecord) => {
@@ -103,7 +115,7 @@ function PendingInvoices() {
       row.id,
       row.orderIds.join(" "),
       row.customer,
-      row.issuedAt.slice(0, 10),
+      billBusinessDate(row),
       String(row.total - row.paid),
       settlementLabel(row),
       row.paymentStatus === "PAID" ? "Paid" : row.status,
@@ -278,7 +290,7 @@ function PendingInvoices() {
               <TD className="num font-semibold">{row.id}</TD>
               <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
               <TD>{row.customer}</TD>
-              <TD className="text-muted-foreground">{row.issuedAt.slice(0, 10)}</TD>
+              <TD className="text-muted-foreground">{billBusinessDate(row)}</TD>
               <TD className="num text-right font-semibold">{ksh(row.total - row.paid)}</TD>
               <TD>
                 <Status>{settlementLabel(row)}</Status>

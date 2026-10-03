@@ -48,7 +48,6 @@ import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money"
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
-import { isStagingPrinterlessTestingEnabled } from "@/lib/staging-printerless-testing";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { cn } from "@/lib/utils";
 import {
@@ -986,7 +985,7 @@ function POS() {
           orderId = kitchen.order.id;
           optimisticPaymentState = kitchen.state;
           kitchenOrderUpdated = true;
-          if (!kitchen.printResult?.jobs.length && !isStagingPrinterlessTestingEnabled()) {
+          if (!kitchen.printResult?.jobs.length) {
             throw new Error(
               "Payment was not opened because no KOT/KDS delivery job was created for this order.",
             );
@@ -1208,8 +1207,7 @@ function POS() {
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Select a table before sending a dine-in order to kitchen.");
     }
-    const printerlessStaging = isStagingPrinterlessTestingEnabled();
-    if (!profile && !printerlessStaging) {
+    if (!profile) {
       throw new Error(
         `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
       );
@@ -1245,9 +1243,7 @@ function POS() {
         printResult: null,
       };
     }
-    // The temporary staging exception only removes the physical delivery preflight.
-    // Normal backend order validation and authoritative kitchen-ticket creation still run.
-    if (!printerlessStaging && profile) {
+    if (profile) {
       const preflight = SerametPrintService.createProductionTicketJobs(
         profile,
         { ...buildPrintOrder(tableNo), lines: previewLines },
@@ -1292,25 +1288,6 @@ function POS() {
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
       setPrintNotice("No new kitchen items require a KOT amendment.");
       setPrintNoticeType("idle");
-      return {
-        order: authoritativeOrder,
-        state: resultState.state,
-        printResult: null,
-      };
-    }
-
-    // Staging laptop demo: never pretend a physical KOT has printed.
-    // The authoritative transaction above persists the kitchen work independently.
-    if (printerlessStaging) {
-      setTrackedPrint(null);
-      setActiveOrderId(authoritativeOrder.id);
-      setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
-      setPrintNotice(
-        "STAGING TEST: Kitchen order saved without physical printing. Open Kitchen " +
-          "and verify the digital ticket; physical KOT delivery is NOT confirmed. " +
-          "Standard printer routing resumes automatically when the test window expires.",
-      );
-      setPrintNoticeType("warning");
       return {
         order: authoritativeOrder,
         state: resultState.state,
@@ -1472,7 +1449,6 @@ function POS() {
   ) =>
     Boolean(
       result.printResult?.jobs.length ||
-      isStagingPrinterlessTestingEnabled() ||
       (result.printResult === null &&
         printJobs.some(
           (job) =>
@@ -1496,16 +1472,13 @@ function POS() {
       try {
         const result = await queueKitchenTicketsForTable();
         if (!result) return;
-        const printerlessStaging = isStagingPrinterlessTestingEnabled();
         const dispatched = kitchenDispatchHasDelivery(result);
         if (dispatched) {
-          const notice = printerlessStaging
-            ? `${result.order.id} dispatched to digital kitchen. Physical KOT not confirmed.`
-            : result.printResult?.jobs.length
-              ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
-              : `${result.order.id} is already in kitchen; no new KOT is required.`;
-          clearCurrentOrder(notice, printerlessStaging ? "warning" : "success");
-        } else if (!result.printResult && !printerlessStaging) {
+          const notice = result.printResult?.jobs.length
+            ? `${result.order.id} dispatched. KOT queued; delivery not yet confirmed. Open Invoices to bill.`
+            : `${result.order.id} is already in kitchen; no new KOT is required.`;
+          clearCurrentOrder(notice, "success");
+        } else if (!result.printResult) {
           setPrintNotice(
             "This order has reached kitchen state, but no existing KOT delivery job is confirmed. " +
               "Verify the ticket in Printers before leaving this order.",
@@ -2011,9 +1984,8 @@ function POS() {
             <span className="font-bold">
               {unresolvedKitchenTickets.length} kitchen print obligation(s) require attention.
             </span>{" "}
-            {isStagingPrinterlessTestingEnabled()
-              ? "Printerless staging is active: verify these orders in the digital kitchen. Physical tickets are not confirmed."
-              : "Orders are saved, but ticket delivery is pending or uncertain. Check the actual kitchen output before any retry."}
+            Orders are saved, but ticket delivery is pending or uncertain. Check the actual kitchen
+            output before any retry.
           </div>
           {hasPermission(permissions.settingsHardwareView) ? (
             <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Review tickets</Btn>
