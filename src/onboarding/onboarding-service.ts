@@ -5492,7 +5492,7 @@ export class OnboardingService {
           `INSERT INTO setup_import_reference_aliases
             (tenant_id,id,reference_type,source_value_normalized,branch_id,target_id,active,
              created_by,created_at,updated_at)
-           SELECT tenant_id,reference_alias_id,'STATION',source_station_normalized,branch_id,
+           SELECT DISTINCT tenant_id,reference_alias_id,'STATION',source_station_normalized,branch_id,
                   station_id,1,?,?,?
            FROM menu_import_staged_branch_settings
            WHERE tenant_id=? AND import_id=? AND station_id IS NOT NULL
