@@ -20,6 +20,7 @@ import {
   goLiveRequestSchema,
   importCommitRequestSchema,
   importPreviewRequestSchema,
+  manualMenuItemRequestSchema,
   historicalSalesPreviewRequestSchema,
   historicalSalesSkipRequestSchema,
   openingStockSchema,
@@ -31,6 +32,7 @@ import {
   subscriptionLifecycleSchema,
   taxServiceRuleSchema,
 } from "@/onboarding/schemas";
+import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
 import type { ManualFxRateInput, OnboardingStepInput } from "@/onboarding/location-currency-types";
 import type {
   AccountingMappingInput,
@@ -49,6 +51,7 @@ import type {
 import { ServerOperationError } from "@/server/errors";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
+import { scannerConfigured } from "@/server/malware-scanner";
 import type { ZodTypeAny } from "zod";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
 
@@ -68,7 +71,7 @@ export async function handleOnboardingApi(
     );
   }
   const service = new OnboardingService(env.SERAMET_DB, actor, env);
-  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor);
+  const historicalSales = new HistoricalSalesMigrationService(env.SERAMET_DB, actor, env);
   const locationCurrency = new LocationCurrencyService(env.SERAMET_DB, actor);
 
   if (
@@ -190,9 +193,24 @@ export async function handleOnboardingApi(
       ),
     });
   }
-  if (url.pathname === "/api/seramet/setup/imports/preview" && request.method === "POST") {
+  if (url.pathname === "/api/seramet/setup/manual-menu-items" && request.method === "POST") {
     await new DatabaseRateLimiter(env.SERAMET_DB).consume(
-      `setup-import-preview:${actor.tenantId}:${actor.id}`,
+      `manual-menu-item:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.configuration,
+    );
+    return json(
+      {
+        ok: true,
+        item: await service.createManualMenuItem(
+          await parse<ManualMenuItemCreateInput>(request, manualMenuItemRequestSchema),
+        ),
+      },
+      201,
+    );
+  }
+  if (url.pathname === "/api/seramet/setup/imports/uploads" && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `setup-import-upload:${actor.tenantId}:${actor.id}`,
       sensitiveRateLimits.fileImport,
     );
     const body = await parse<{
@@ -208,26 +226,53 @@ export async function handleOnboardingApi(
       columnMap?: Record<string, string>;
       referenceMap?: { stations?: Record<string, string> };
     }>(request, importPreviewRequestSchema, 30 * 1024 * 1024);
-    const bytes = decodeBase64(body.base64);
     return json(
       {
         ok: true,
-        preview: await service.previewImport({
+        job: await service.queueImportPreparation({
           ...(body.branchId ? { branchId: body.branchId } : {}),
           ...(body.targetMode ? { targetMode: body.targetMode } : {}),
           ...(body.targetBranchIds ? { targetBranchIds: body.targetBranchIds } : {}),
           kind: body.kind,
           originalName: body.originalName,
           mimeType: body.mimeType,
-          bytes,
+          bytes: decodeBase64(body.base64),
           duplicateStrategy: body.duplicateStrategy,
           idempotencyKey: body.idempotencyKey,
           ...(body.columnMap ? { columnMap: body.columnMap } : {}),
           ...(body.referenceMap ? { referenceMap: body.referenceMap } : {}),
         }),
       },
-      201,
+      202,
     );
+  }
+  if (url.pathname === "/api/seramet/setup/imports/preview" && request.method === "POST") {
+    throw new SerametHttpError(
+      410,
+      "Synchronous import preview is unavailable; submit a quarantined import upload",
+    );
+  }
+  const preparationStatus = /^\/api\/seramet\/setup\/imports\/jobs\/([^/]+)$/.exec(url.pathname);
+  if (preparationStatus && request.method === "GET") {
+    return json({
+      ok: true,
+      job: await service.importPreparationStatus(decodeURIComponent(preparationStatus[1]!)),
+    });
+  }
+  if (url.pathname === "/api/seramet/setup/imports/capability" && request.method === "GET") {
+    const available =
+      scannerConfigured(env.SERAMET_MALWARE_SCANNER) &&
+      Boolean(env.SERAMET_OBJECTS) &&
+      Boolean(env.SERAMET_WORK_QUEUE);
+    return json({
+      ok: true,
+      capability: {
+        available,
+        reason: available
+          ? null
+          : "File imports are unavailable until security scanning, quarantine storage and durable workers are configured",
+      },
+    });
   }
   if (url.pathname === "/api/seramet/setup/imports/recent" && request.method === "GET") {
     return json({ ok: true, imports: await service.recentMenuImports() });
@@ -304,6 +349,21 @@ export async function handleOnboardingApi(
     return json({
       ok: true,
       result: await service.commitImport(decodeURIComponent(commitImport[1]!), body.idempotencyKey),
+    });
+  }
+  const publishImport = /^\/api\/seramet\/setup\/imports\/([^/]+)\/publish$/.exec(url.pathname);
+  if (publishImport && request.method === "POST") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `setup-import-publish:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.configuration,
+    );
+    const body = await parse<{ idempotencyKey: string }>(request, importCommitRequestSchema);
+    return json({
+      ok: true,
+      result: await service.publishImport(
+        decodeURIComponent(publishImport[1]!),
+        body.idempotencyKey,
+      ),
     });
   }
   if (url.pathname === "/api/seramet/setup/opening-stock" && request.method === "POST") {

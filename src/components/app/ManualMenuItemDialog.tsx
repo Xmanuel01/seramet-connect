@@ -10,7 +10,7 @@ import {
 import { Btn } from "@/components/app/ui";
 import { SetupStatus } from "@/onboarding/ui";
 import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
-import type { ImportPreview } from "@/onboarding/types";
+import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
 
 type Station = { id: string; code: string; name: string; branch_id: string };
 type Props = {
@@ -21,14 +21,7 @@ type Props = {
   currency: string;
   categoryCodes: string[];
   stations: Station[];
-  previewImport: (file: File, targetBranchId: string) => Promise<ImportPreview>;
-  commitImport: (preview: ImportPreview) => Promise<{
-    result: {
-      queued: boolean;
-      jobId?: string;
-      verification?: ImportPreview["verification"];
-    };
-  }>;
+  createItem: (input: ManualMenuItemCreateInput) => Promise<unknown>;
   onCommitted: () => void;
 };
 
@@ -40,8 +33,7 @@ export function ManualMenuItemDialog({
   currency,
   categoryCodes,
   stations,
-  previewImport,
-  commitImport,
+  createItem,
   onCommitted,
 }: Props) {
   const [selectedBranchId, setSelectedBranchId] = useState(initialBranchId);
@@ -62,7 +54,7 @@ export function ManualMenuItemDialog({
   const [unitOfMeasure, setUnitOfMeasure] = useState("");
   const [recipeCode, setRecipeCode] = useState("");
   const [serviceChargeApplicable, setServiceChargeApplicable] = useState(false);
-  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -89,7 +81,7 @@ export function ManualMenuItemDialog({
       setAdvancedOpen(false);
       setDraftRevision(0);
     }
-    setPreview(null);
+    setRequestKey(crypto.randomUUID());
     setError("");
     setNotice("");
     setPreviewRevision(-1);
@@ -98,7 +90,7 @@ export function ManualMenuItemDialog({
   function edit(change: () => void) {
     change();
     setDraftRevision((value) => value + 1);
-    setPreview(null);
+    setRequestKey(crypto.randomUUID());
     setError("");
     setNotice("");
   }
@@ -116,7 +108,7 @@ export function ManualMenuItemDialog({
           "Select the kitchen/bar station, or explicitly confirm this is a counter-only item.",
         );
       }
-      const csv = createManualMenuCsv({
+      createManualMenuCsv({
         code,
         name,
         categoryCode,
@@ -132,19 +124,8 @@ export function ManualMenuItemDialog({
         recipeCode,
         serviceChargeApplicable,
       });
-      const file = new File([csv], "seramet-manual-" + code.trim() + ".csv", {
-        type: "text/csv",
-        lastModified: Date.now(),
-      });
-      const checked = await previewImport(file, selectedBranchId);
-      setPreview(checked);
       setPreviewRevision(draftRevision);
-      if (!checked.canCommit) {
-        setError(
-          checked.rows.flatMap((row) => row.errors.map((issue) => issue.message)).join("; ") ||
-            "The server did not approve this item. Review its configuration.",
-        );
-      }
+      setNotice("Local format checks passed. The server will authorize and validate the save.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Manual item could not be validated");
     } finally {
@@ -153,29 +134,34 @@ export function ManualMenuItemDialog({
   }
 
   async function save() {
-    if (!preview || !preview.canCommit || previewRevision !== draftRevision || busy) return;
+    if (previewRevision !== draftRevision || busy) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const result = await commitImport(preview);
-      if (result.result.queued) {
-        setPreview({ ...preview, canCommit: false, status: "COMMITTING" });
-        setNotice(
-          "Item import queued as " +
-            (result.result.jobId ?? "a durable worker job") +
-            ". Refresh the catalogue after verification; this is not yet a saved item.",
-        );
-      } else if (result.result.verification?.status === "VERIFIED") {
-        onCommitted();
-        onOpenChange(false);
-      } else {
-        setPreview({ ...preview, canCommit: false });
-        setError("Server commit was not verified. Refresh the catalogue before retrying.");
-      }
+      await createItem({
+        branchId: selectedBranchId,
+        requestKey,
+        code,
+        name,
+        categoryCode,
+        basePrice: price,
+        currency,
+        description,
+        sku,
+        stationCode,
+        branchPrice,
+        onlinePrice,
+        taxCode,
+        unitOfMeasure,
+        recipeCode,
+        serviceChargeApplicable,
+      });
+      onCommitted();
+      onOpenChange(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Item could not be saved");
-      setPreview(null);
+      setPreviewRevision(-1);
     } finally {
       setBusy(false);
     }
@@ -409,23 +395,15 @@ export function ManualMenuItemDialog({
               className="rounded-md border border-border bg-background p-3 text-[13px]"
             />
           </label>
-          {preview && (
+          {previewRevision === draftRevision && previewRevision >= 0 && (
             <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px]">
               <div className="flex items-center justify-between">
-                <strong>Server validation</strong>
-                <SetupStatus value={preview.canCommit ? "READY" : "BLOCKED"} />
+                <strong>Ready for server validation</strong>
+                <SetupStatus value="READY" />
               </div>
               <p>
-                {preview.validCount} valid · {preview.warningCount} warnings · {preview.errorCount}{" "}
-                errors
+                The authoritative server will enforce branch, station, category and duplicate rules.
               </p>
-              {preview.rows
-                .flatMap((row) => row.warnings)
-                .map((issue, index) => (
-                  <p className="mt-1 text-warning" key={issue.code + index}>
-                    {issue.message}
-                  </p>
-                ))}
             </div>
           )}
           {notice && (
@@ -448,11 +426,15 @@ export function ManualMenuItemDialog({
             form="manual-menu-item-form"
             disabled={busy || !currency || !selectedBranchId}
           >
-            {busy ? "Validating..." : preview ? "Revalidate" : "Validate item"}
+            {busy
+              ? "Validating..."
+              : previewRevision === draftRevision && previewRevision >= 0
+                ? "Revalidate"
+                : "Validate item"}
           </Btn>
           <Btn
             variant="primary"
-            disabled={!preview?.canCommit || previewRevision !== draftRevision || busy}
+            disabled={previewRevision !== draftRevision || busy}
             onClick={() => void save()}
           >
             {busy ? "Saving..." : "Add item"}

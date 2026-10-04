@@ -19,6 +19,8 @@ export type StoredObjectRecord = {
   content_type: string;
   size_bytes: number;
   checksum_sha256: string;
+  object_version: string;
+  scan_evidence_id: string | null;
   status: "PENDING_SCAN" | "ACTIVE" | "QUARANTINED" | "DELETED";
   created_by: string;
   created_at: string;
@@ -82,20 +84,22 @@ export class TenantObjectStorage {
     const objectKey = `${input.tenantId}/${visibility}/${id}${extension}`;
     const checksum = await sha256(input.bytes);
     const stamp = new Date().toISOString();
-    await this.bucket.put(objectKey, input.bytes, {
+    const status = input.objectClass === "IMPORT_QUARANTINE" ? "PENDING_SCAN" : "ACTIVE";
+    const storedObject = await this.bucket.put(objectKey, input.bytes, {
       httpMetadata: {
         contentType: input.contentType,
         cacheControl: visibility === "public" ? "public, max-age=3600" : "private, no-store",
       },
       customMetadata: { tenantId: input.tenantId, objectId: id, visibility, checksum },
     });
+    const objectVersion = objectStoreVersion(storedObject, checksum);
     try {
       await this.db
         .prepare(
           `INSERT INTO stored_objects
             (tenant_id,id,branch_id,object_key,object_class,content_type,size_bytes,
-             checksum_sha256,status,created_by,created_at,deleted_at,metadata_json)
-           VALUES (?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL,?)`,
+             checksum_sha256,status,created_by,created_at,deleted_at,metadata_json,object_version)
+           VALUES (?,?,?,?,?,?,?,?, ?,?,?,NULL,?,?)`,
         )
         .bind(
           input.tenantId,
@@ -106,9 +110,11 @@ export class TenantObjectStorage {
           input.contentType,
           input.bytes.byteLength,
           checksum,
+          status,
           input.actorId,
           stamp,
           JSON.stringify({ originalFileName: boundedFileName(input.fileName) }),
+          objectVersion,
         )
         .run();
     } catch (error) {
@@ -120,15 +126,66 @@ export class TenantObjectStorage {
       objectClass: input.objectClass,
       contentType: input.contentType,
       sizeBytes: input.bytes.byteLength,
+      checksum,
+      objectKey,
+      objectVersion,
+      status,
     };
+  }
+
+  async findQuarantine(tenantId: string, id: string) {
+    return this.db
+      .prepare(
+        `SELECT tenant_id,id,branch_id,object_key,object_class,content_type,size_bytes,
+                checksum_sha256,status,created_by,created_at,metadata_json,object_version,
+                scan_evidence_id
+         FROM stored_objects WHERE tenant_id=? AND id=? AND object_class='IMPORT_QUARANTINE'
+           AND status IN ('PENDING_SCAN','QUARANTINED','ACTIVE')`,
+      )
+      .bind(tenantId, id)
+      .first<StoredObjectRecord>();
+  }
+
+  async recordScan(input: {
+    tenantId: string;
+    id: string;
+    clean: boolean;
+    evidence: Record<string, unknown>;
+  }) {
+    await this.db
+      .prepare(
+        `UPDATE stored_objects SET status=?,scan_evidence_json=?,scan_evidence_id=?
+         WHERE tenant_id=? AND id=? AND object_class='IMPORT_QUARANTINE'`,
+      )
+      .bind(
+        input.clean ? "ACTIVE" : "QUARANTINED",
+        JSON.stringify(input.evidence),
+        typeof input.evidence["evidenceId"] === "string" ? input.evidence["evidenceId"] : null,
+        input.tenantId,
+        input.id,
+      )
+      .run();
+  }
+
+  async remove(tenantId: string, id: string) {
+    const record = await this.findQuarantine(tenantId, id);
+    if (!record) return;
+    await this.bucket.delete(record.object_key);
+    await this.db
+      .prepare("UPDATE stored_objects SET status='DELETED',deleted_at=? WHERE tenant_id=? AND id=?")
+      .bind(new Date().toISOString(), tenantId, id)
+      .run();
   }
 
   async findPrivate(tenantId: string, id: string) {
     return this.db
       .prepare(
         `SELECT tenant_id,id,branch_id,object_key,object_class,content_type,size_bytes,
-                checksum_sha256,status,created_by,created_at,metadata_json
-         FROM stored_objects WHERE tenant_id=? AND id=? AND status='ACTIVE'`,
+                checksum_sha256,status,created_by,created_at,metadata_json,object_version,
+                scan_evidence_id
+         FROM stored_objects
+         WHERE tenant_id=? AND id=? AND status='ACTIVE'
+           AND object_class<>'IMPORT_QUARANTINE'`,
       )
       .bind(tenantId, id)
       .first<StoredObjectRecord>();
@@ -138,7 +195,8 @@ export class TenantObjectStorage {
     return this.db
       .prepare(
         `SELECT o.tenant_id,o.id,o.branch_id,o.object_key,o.object_class,o.content_type,
-                o.size_bytes,o.checksum_sha256,o.status,o.created_by,o.created_at,o.metadata_json
+                o.size_bytes,o.checksum_sha256,o.status,o.created_by,o.created_at,o.metadata_json,
+                o.object_version,o.scan_evidence_id
          FROM stored_objects o JOIN tenants t ON t.id=o.tenant_id
          WHERE t.slug=? AND t.active=1 AND o.id=? AND o.object_class='PUBLIC_ASSET'
            AND o.status='ACTIVE'`,
@@ -150,15 +208,58 @@ export class TenantObjectStorage {
   async read(record: StoredObjectRecord) {
     const object = await this.bucket.get(record.object_key);
     if (!object) throw new ServerOperationError("DATABASE_UNAVAILABLE", 404, "File is unavailable");
-    const body = object.body ?? (object.arrayBuffer ? await object.arrayBuffer() : undefined);
+    if (
+      object.customMetadata?.["tenantId"] !== record.tenant_id ||
+      object.customMetadata?.["objectId"] !== record.id ||
+      object.customMetadata?.["checksum"] !== record.checksum_sha256
+    ) {
+      throw new ServerOperationError(
+        "DATABASE_UNAVAILABLE",
+        409,
+        "Stored file identity no longer matches its quarantine record",
+      );
+    }
+    const remoteVersion = object.version ?? object.etag;
+    if (remoteVersion && record.object_version !== remoteVersion) {
+      throw new ServerOperationError(
+        "DATABASE_UNAVAILABLE",
+        409,
+        "Stored file version no longer matches its quarantine record",
+      );
+    }
+    const source = object.body ?? (object.arrayBuffer ? await object.arrayBuffer() : undefined);
+    const body =
+      source instanceof ArrayBuffer
+        ? source
+        : source
+          ? await new Response(source).arrayBuffer()
+          : undefined;
     if (!body)
       throw new ServerOperationError(
         "DATABASE_UNAVAILABLE",
         503,
         "Stored file body is unavailable",
       );
+    if ((await sha256(body)) !== record.checksum_sha256) {
+      throw new ServerOperationError(
+        "DATABASE_UNAVAILABLE",
+        409,
+        "Stored file content no longer matches its quarantine fingerprint",
+      );
+    }
     return { body, contentType: object.httpMetadata?.contentType ?? record.content_type };
   }
+}
+
+function objectStoreVersion(value: unknown, checksum: string) {
+  if (value && typeof value === "object") {
+    const candidate = value as { version?: unknown; etag?: unknown };
+    if (typeof candidate.version === "string" && candidate.version) return candidate.version;
+    if (typeof candidate.etag === "string" && candidate.etag) return candidate.etag;
+  }
+  // The key is immutable and randomly generated. A checksum-derived version preserves
+  // exact-object binding for compatible stores that do not expose native version IDs.
+  return `sha256:${checksum}`;
 }
 
 function safeExtension(fileName: string) {

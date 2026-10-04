@@ -44,6 +44,16 @@ export async function resolveEnvironmentFromBindings(bindingsInput: unknown): Pr
 
       resolved.SERAMET_DB = await localDevelopmentDatabase;
     }
+
+    if (
+      resolved.SERAMET_ENVIRONMENT === "development" &&
+      resolved.SERAMET_ENABLE_DEV_AUTH === "true" &&
+      resolved.SERAMET_E2E_IMPORTS === "true" &&
+      processEnvironment.CI === "true"
+    ) {
+      const { installE2EImportBindings } = await import("./e2e-import-bindings");
+      installE2EImportBindings(resolved);
+    }
   }
 
   return resolved;
