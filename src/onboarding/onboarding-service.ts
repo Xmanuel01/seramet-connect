@@ -1618,6 +1618,9 @@ export class OnboardingService {
     for (const targetBranchId of targetBranchIds) await this.assertImportBranch(targetBranchId);
     if (record.branch_id && record.import_kind !== "MENU")
       await this.assertBranch(record.branch_id);
+    if (idempotencyKey !== `commit:${record.idempotency_key}`) {
+      throw validation("Commit idempotency key does not match the preview");
+    }
     if (record.status === "COMMITTED") {
       return {
         id: importId,
@@ -1647,9 +1650,6 @@ export class OnboardingService {
     }
     if (record.status !== "VALIDATED" && !(options.worker && record.status === "COMMITTING")) {
       throw validation("Import has validation errors or is already being committed");
-    }
-    if (idempotencyKey !== `commit:${record.idempotency_key}`) {
-      throw validation("Commit idempotency key does not match the preview");
     }
     if (record.expires_at && Date.parse(record.expires_at) <= Date.now()) {
       throw invalidTransition("Import preview expired; create a new preview before committing");

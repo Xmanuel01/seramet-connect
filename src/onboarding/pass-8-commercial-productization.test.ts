@@ -813,6 +813,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
     const queued = await service.commitImport(preview.id, preview.commitKey);
     expect(queued).toMatchObject({ status: "QUEUED", queued: true, rows: 343 });
+    await expect(service.commitImport(preview.id, `${preview.commitKey}:altered`)).rejects.toThrow(
+      "Commit idempotency key does not match the preview",
+    );
     await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_COMMIT");
     expect(await service.importStatus(preview.id)).toMatchObject({
       status: "COMMITTED",
@@ -825,6 +828,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       },
       worker: { status: "SUCCEEDED" },
     });
+    await expect(service.commitImport(preview.id, `${preview.commitKey}:altered`)).rejects.toThrow(
+      "Commit idempotency key does not match the preview",
+    );
     expect(await createMenuCatalogReader(db)(tenantId, branchId)).toHaveLength(0);
     const staged = await service.inspectImport(preview.id);
     expect(await service.publishImport(preview.id, staged.publishKey!)).toMatchObject({
