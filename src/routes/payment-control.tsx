@@ -20,6 +20,7 @@ import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { cn } from "@/lib/utils";
 import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
+import { recordBusinessDate } from "@/lib/pos-workflow";
 
 export const Route = createFileRoute("/payment-control")({
   head: () => ({
@@ -56,6 +57,7 @@ function PaymentControlCentre() {
     currentUser,
     hasPermission,
     isAllBranches,
+    timeZone,
   } = useAppContext();
   const [tab, setTab] = useState<Tab>("Payments");
   const [periodDate, setPeriodDate] = useState(todayInputValue);
@@ -84,10 +86,26 @@ function PaymentControlCentre() {
       ),
     [activeTenantId, branchId, isAllBranches],
   );
+  const operationBusinessDate = useCallback(
+    (timestamp: string, operationBranchId: string) => {
+      const record = branchRecords.find((candidate) => candidate.id === operationBranchId);
+      return recordBusinessDate(
+        undefined,
+        timestamp,
+        record?.timezone ?? timeZone,
+        Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
+      );
+    },
+    [branchRecords, timeZone],
+  );
   const transactions = useMemo(
     () =>
       scoped(operations?.transactions ?? [])
-        .filter((transaction) => !periodDate || transaction.occurredAt.slice(0, 10) === periodDate)
+        .filter(
+          (transaction) =>
+            !periodDate ||
+            operationBusinessDate(transaction.occurredAt, transaction.branchId) === periodDate,
+        )
         .filter((transaction) => {
           const term = query.trim().toLowerCase();
           return (
@@ -99,13 +117,15 @@ function PaymentControlCentre() {
           );
         })
         .slice(0, 100),
-    [operations?.transactions, periodDate, query, scoped],
+    [operationBusinessDate, operations?.transactions, periodDate, query, scoped],
   );
   const selectedTransaction = transactions.find(
     (transaction) => transaction.id === selectedTransactionId,
   );
   const collections = scoped(operations?.collections ?? []).filter(
-    (collection) => !periodDate || collection.collectedAt.slice(0, 10) === periodDate,
+    (collection) =>
+      !periodDate ||
+      operationBusinessDate(collection.collectedAt, collection.branchId) === periodDate,
   );
   const drawers = scoped(operations?.drawerSessions ?? []);
   const bankTransactions = scoped(operations?.bankTransactions ?? []);

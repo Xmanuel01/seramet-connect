@@ -1,0 +1,53 @@
+name: Verify POS PostgreSQL
+
+on:
+  pull_request:
+    paths:
+      - "src/lib/transaction-engine.ts"
+      - "src/lib/seramet-repository.ts"
+      - "src/server/database/**"
+      - "src/payments/**"
+      - "scripts/verify-pos-postgres.ts"
+      - "scripts/pilot-gate-contract.test.mjs"
+      - "scripts/run-pilot-e2e.mjs"
+      - "tests/e2e/pilot-two-terminal.spec.ts"
+      - ".github/workflows/pos-postgres.yml"
+      - "migrations/**"
+      - "package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pos-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: seramet_pos_ci
+          POSTGRES_USER: pos_ci
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pos_ci -d seramet_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      SERAMET_POSTGRES_URL: postgresql://pos_ci:isolated_ci_only@127.0.0.1:5432/seramet_pos_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run migrate:postgres
+      - name: Run aggregate pilot engineering gate
+        run: npm run test:pilot

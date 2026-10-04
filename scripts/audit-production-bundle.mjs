@@ -12,6 +12,8 @@ const forbidden = [
   /branch-ngong-road/,
   /createLocalDevelopmentDatabase/,
   /createDefaultDemoPlatformState/,
+  /stagingPrinterlessTestingEnabled/,
+  /isStagingPrinterlessTestingEnabled/,
 ];
 const findings = [];
 for (const root of roots) await scan(root);

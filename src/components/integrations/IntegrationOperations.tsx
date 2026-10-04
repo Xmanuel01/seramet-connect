@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, RotateCcw, Unplug } from "lucide-react";
+import { AlertTriangle, RefreshCw, RotateCcw } from "lucide-react";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import {
   Dialog,
@@ -39,14 +39,12 @@ export function IntegrationOperations({
   branches,
   userId,
   tenantId,
-  onConnectionChanged,
 }: {
   connections: IntegrationConnection[];
   providers: ProviderDefinition[];
   branches: Branch[];
   userId: string;
   tenantId: string;
-  onConnectionChanged: (connection: IntegrationConnection) => void;
 }) {
   const [tab, setTab] = useState<"OVERVIEW" | "EVENTS" | "MAPPINGS" | "DEAD_LETTERS">("OVERVIEW");
   const [data, setData] = useState<Diagnostics>(emptyDiagnostics);
@@ -113,28 +111,6 @@ export function IntegrationOperations({
         : (payload.message ?? "Connection test failed"),
     );
     await load();
-  };
-  const toggleConnection = (connection: IntegrationConnection) => {
-    const next = {
-      ...connection,
-      status:
-        connection.status === "DISABLED"
-          ? connection.secretReference
-            ? ("CONFIGURED" as const)
-            : ("CREDENTIALS_REQUIRED" as const)
-          : ("DISABLED" as const),
-      statusMessage:
-        connection.status === "DISABLED"
-          ? "Connection requires a successful test before activation"
-          : "Disabled by an integration manager",
-      updatedAt: new Date().toISOString(),
-    };
-    onConnectionChanged(next);
-    setNotice(
-      next.status === "DISABLED"
-        ? `${next.displayName} disabled`
-        : `${next.displayName} enabled for testing`,
-    );
   };
   const replay = async (eventId: string) => {
     const response = await fetch(
@@ -288,14 +264,6 @@ export function IntegrationOperations({
                     }}
                   >
                     Event log
-                  </Btn>
-                  <Btn onClick={() => toggleConnection(connection)}>
-                    {connection.status === "DISABLED" ? (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                    ) : (
-                      <Unplug className="h-3.5 w-3.5" />
-                    )}
-                    {connection.status === "DISABLED" ? "Enable" : "Disable"}
                   </Btn>
                 </div>
               </div>

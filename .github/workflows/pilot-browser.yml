@@ -1,0 +1,30 @@
+name: Verify Pilot Browser Workflows
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/e2e/**"
+      - "playwright.config.ts"
+      - "scripts/seed-pilot-e2e.ts"
+      - "scripts/run-pilot-e2e.mjs"
+      - ".github/workflows/pilot-browser.yml"
+      - "package*.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  two-terminal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

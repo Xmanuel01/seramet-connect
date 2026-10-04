@@ -111,9 +111,8 @@ function SetupCentre() {
   });
   const [providerId, setProviderId] = useState("");
   const [providerBranchId, setProviderBranchId] = useState("");
-  const [providerEnvironment, setProviderEnvironment] = useState("SANDBOX");
+  const providerEnvironment = "SANDBOX";
   const [providerConfiguration, setProviderConfiguration] = useState<Record<string, string>>({});
-  const [providerCredentials, setProviderCredentials] = useState<Record<string, string>>({});
   const [mapping, setMapping] = useState({
     connectionId: "",
     resourceType: "STORE",
@@ -270,12 +269,8 @@ function SetupCentre() {
         ...(providerBranchId ? { branchId: providerBranchId } : {}),
         environment: providerEnvironment,
         configuration,
-        ...(Object.values(providerCredentials).some(Boolean)
-          ? { credentials: providerCredentials }
-          : {}),
         enabled: true,
       });
-      setProviderCredentials({});
     }, `${provider.displayName} configuration stored. Credential values were not returned.`);
   };
   const saveMapping = (event: FormEvent) => {
@@ -948,16 +943,12 @@ function SetupCentre() {
                 setProviderId={(value) => {
                   setProviderId(value);
                   setProviderConfiguration({});
-                  setProviderCredentials({});
                 }}
                 providerBranchId={providerBranchId}
                 setProviderBranchId={setProviderBranchId}
                 environment={providerEnvironment}
-                setEnvironment={setProviderEnvironment}
                 configuration={providerConfiguration}
                 setConfiguration={setProviderConfiguration}
-                credentials={providerCredentials}
-                setCredentials={setProviderCredentials}
                 onSubmit={saveProvider}
                 busy={busy}
               />
@@ -1460,11 +1451,8 @@ function ProviderPanel({
   providerBranchId,
   setProviderBranchId,
   environment,
-  setEnvironment,
   configuration,
   setConfiguration,
-  credentials,
-  setCredentials,
   onSubmit,
   busy,
 }: {
@@ -1475,22 +1463,44 @@ function ProviderPanel({
   providerBranchId: string;
   setProviderBranchId: (value: string) => void;
   environment: string;
-  setEnvironment: (value: string) => void;
   configuration: Record<string, string>;
   setConfiguration: (value: Record<string, string>) => void;
-  credentials: Record<string, string>;
-  setCredentials: (value: Record<string, string>) => void;
   onSubmit: (event: FormEvent) => void;
   busy: boolean;
 }) {
-  const providers = centre.providers.filter((item) => item.category === category && item.enabled);
+  const providers = centre.providers.filter(
+    (item) => item.category === category && item.enabled && item.id === "provider-daraja",
+  );
   const provider = providers.find((item) => item.id === providerId);
+  const restaurantConfigurationFields = provider
+    ? Object.entries(provider.configurationSchema).filter(([key]) =>
+        ["shortcode", "transactionType"].includes(key),
+      )
+    : [];
+  const integrations = centre.integrations.filter(
+    (item) => item.category === category && item.providerId === "provider-daraja",
+  );
+  if (category !== "PAYMENT") {
+    return (
+      <Panel>
+        <PanelHead
+          title="Delivery integrations"
+          sub="Unavailable during the controlled pilot"
+          right={<Link2 className="h-4 w-4 text-muted-foreground" />}
+        />
+        <p className="p-4 text-[13px] text-muted-foreground">
+          Delivery providers are disabled until their credentials, webhooks, reconciliation and
+          failure recovery have completed staging certification.
+        </p>
+      </Panel>
+    );
+  }
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <Panel>
         <PanelHead
           title={`${category === "PAYMENT" ? "Payment" : "Delivery"} connections`}
-          sub={`${centre.integrations.filter((item) => item.category === category).length} configured`}
+          sub={`${integrations.length} configured`}
         />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[620px]">
@@ -1504,29 +1514,27 @@ function ProviderPanel({
               </tr>
             </thead>
             <tbody>
-              {centre.integrations
-                .filter((item) => item.category === category)
-                .map((item) => (
-                  <tr key={item.connectionId}>
-                    <TD className="font-semibold">{item.displayName}</TD>
-                    <TD>{item.environment}</TD>
-                    <TD>
-                      <Status>{item.status}</Status>
-                    </TD>
-                    <TD>
-                      <Status>{item.health}</Status>
-                    </TD>
-                    <TD className="num text-right">{item.pendingQueue}</TD>
-                  </tr>
-                ))}
+              {integrations.map((item) => (
+                <tr key={item.connectionId}>
+                  <TD className="font-semibold">{item.displayName}</TD>
+                  <TD>{item.environment}</TD>
+                  <TD>
+                    <Status>{item.status}</Status>
+                  </TD>
+                  <TD>
+                    <Status>{item.health}</Status>
+                  </TD>
+                  <TD className="num text-right">{item.pendingQueue}</TD>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </Panel>
       <Panel>
         <PanelHead
-          title="Configure connection"
-          sub="Adapter-declared fields and capabilities"
+          title="Configure M-Pesa sandbox"
+          sub="Restaurant identifiers only; platform credentials remain server-side"
           right={<Link2 className="h-4 w-4 text-primary" />}
         />
         <form onSubmit={onSubmit} className="space-y-3 p-4">
@@ -1563,53 +1571,39 @@ function ProviderPanel({
           </label>
           <label className={labelClass}>
             Environment
-            <select
-              value={environment}
-              onChange={(event) => setEnvironment(event.target.value)}
-              className={inputClass}
-            >
-              <option value="SANDBOX">Sandbox</option>
-              <option value="PRODUCTION">Production</option>
-            </select>
+            <input value={environment} className={inputClass} readOnly aria-readonly="true" />
           </label>
-          {provider &&
-            Object.entries(provider.configurationSchema).map(([key, schema]) => (
-              <label className={labelClass} key={key}>
-                {humanize(key)}
-                {schema.type === "boolean" ? (
-                  <select
-                    value={configuration[key] ?? "false"}
-                    onChange={(event) =>
-                      setConfiguration({ ...configuration, [key]: event.target.value })
-                    }
-                    className={inputClass}
-                  >
-                    <option value="false">Disabled</option>
-                    <option value="true">Enabled</option>
-                  </select>
-                ) : (
-                  <input
-                    value={configuration[key] ?? ""}
-                    onChange={(event) =>
-                      setConfiguration({ ...configuration, [key]: event.target.value })
-                    }
-                    className={inputClass}
-                  />
-                )}
-              </label>
-            ))}
-          {provider?.credentialFields.map((key) => (
+          {restaurantConfigurationFields.map(([key, schema]) => (
             <label className={labelClass} key={key}>
               {humanize(key)}
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={credentials[key] ?? ""}
-                onChange={(event) => setCredentials({ ...credentials, [key]: event.target.value })}
-                className={inputClass}
-              />
+              {schema.type === "boolean" ? (
+                <select
+                  value={configuration[key] ?? "false"}
+                  onChange={(event) =>
+                    setConfiguration({ ...configuration, [key]: event.target.value })
+                  }
+                  className={inputClass}
+                >
+                  <option value="false">Disabled</option>
+                  <option value="true">Enabled</option>
+                </select>
+              ) : (
+                <input
+                  value={configuration[key] ?? ""}
+                  onChange={(event) =>
+                    setConfiguration({ ...configuration, [key]: event.target.value })
+                  }
+                  className={inputClass}
+                />
+              )}
             </label>
           ))}
+          {provider && provider.credentialFields.length > 0 && (
+            <p className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] text-muted-foreground">
+              Platform credentials are configured by an authorized deployer in protected server
+              secrets. This form stores only restaurant-specific account settings.
+            </p>
+          )}
           {provider && (
             <div className="flex flex-wrap gap-1.5">
               {provider.capabilities.slice(0, 8).map((item) => (
