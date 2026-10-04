@@ -49,7 +49,18 @@ disabled until separately certified.
 
 - `npm run test:pos-postgres`: two independent PostgreSQL connections and atomic losing-race proof.
 - `npm run test:e2e`: two isolated browser contexts, draft/realtime/offline/auth workflow checks.
-- `npm run test:pilot`: local automated gate; real staging auth/M-Pesa and physical printing are
-  recorded separately because they require protected credentials and hardware.
+- `npm run test:pilot:local`: workstation-safe source policy, typecheck, lint, unit, concurrency,
+  offline, build, bundle audit and two-terminal Playwright gate.
+- `npm run test:pilot`: full engineering gate. It runs `test:pilot:local` and then the real
+  PostgreSQL verifier. CI supplies its disposable PostgreSQL 16 database; a developer workstation
+  must supply the verifier's isolated `SERAMET_POSTGRES_URL` contract.
+- `Pilot Staging Acceptance`: protected, manually dispatched workflow covering public signup,
+  verification-state enforcement, verified owner login, authenticated reload, device activation,
+  branch-bound staff PIN login, logout, reload and back-button behavior. Missing protected inputs
+  fail the workflow instead of producing skipped green tests. Supabase administrator confirmation
+  is used only by the test process to exercise the verified/unverified boundary; receiving and
+  clicking the actual email remains a human staging sign-off because CI has no mailbox access.
+- M-Pesa sandbox and physical printing are recorded separately because they require protected
+  provider credentials, external callbacks and restaurant hardware.
 - Physical printer sign-off must record KOT, bar, bill, receipt, fallback, paper-out/offline,
   uncertain acknowledgement, audited reprint, and restart recovery on actual paper.

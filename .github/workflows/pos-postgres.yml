@@ -8,6 +8,9 @@ on:
       - "src/server/database/**"
       - "src/payments/**"
       - "scripts/verify-pos-postgres.ts"
+      - "scripts/pilot-gate-contract.test.mjs"
+      - "scripts/run-pilot-e2e.mjs"
+      - "tests/e2e/pilot-two-terminal.spec.ts"
       - ".github/workflows/pos-postgres.yml"
       - "migrations/**"
       - "package*.json"
@@ -19,7 +22,7 @@ permissions:
 jobs:
   pos-concurrency:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -44,5 +47,7 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm run migrate:postgres
-      - run: npm run test:pos-postgres
+      - name: Run aggregate pilot engineering gate
+        run: npm run test:pilot
