@@ -12,9 +12,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
+      SERAMET_STAGING_AUTH_CERTIFICATION: "true"
       SERAMET_E2E_BASE_URL: ${{ secrets.SERAMET_STAGING_URL }}
       SERAMET_STAGING_OWNER_EMAIL: ${{ secrets.SERAMET_STAGING_OWNER_EMAIL }}
       SERAMET_STAGING_OWNER_PASSWORD: ${{ secrets.SERAMET_STAGING_OWNER_PASSWORD }}
+      SERAMET_STAGING_RESTAURANT_NAME: ${{ secrets.SERAMET_STAGING_RESTAURANT_NAME }}
+      SERAMET_STAGING_SIGNUP_EMAIL: ${{ secrets.SERAMET_STAGING_SIGNUP_EMAIL }}
+      SERAMET_STAGING_SIGNUP_PASSWORD: ${{ secrets.SERAMET_STAGING_SIGNUP_PASSWORD }}
+      SERAMET_STAGING_SUPABASE_URL: ${{ secrets.SERAMET_STAGING_SUPABASE_URL }}
+      SERAMET_STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SERAMET_STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+      SERAMET_STAGING_DEVICE_ID: ${{ secrets.SERAMET_STAGING_DEVICE_ID }}
+      SERAMET_STAGING_DEVICE_NAME: ${{ secrets.SERAMET_STAGING_DEVICE_NAME }}
+      SERAMET_STAGING_STAFF_IDENTIFIER: ${{ secrets.SERAMET_STAGING_STAFF_IDENTIFIER }}
+      SERAMET_STAGING_STAFF_PIN: ${{ secrets.SERAMET_STAGING_STAFF_PIN }}
+      SERAMET_STAGING_BRANCH_NAME: ${{ secrets.SERAMET_STAGING_BRANCH_NAME }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,9 +34,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Verify real staging owner session lifecycle
+      - name: Verify real staging signup, owner, device and staff session lifecycle
         run: npx playwright test tests/e2e/staging-auth.spec.ts
       - name: Record required operator-only acceptance
         run: |
+          echo "The protected test proves verification-state enforcement through Supabase admin confirmation."
+          echo "Human receipt and use of the actual verification email link remains a staging sign-off item."
           echo "M-Pesa sandbox callback and physical printer evidence remain manual protected-environment gates."
           echo "This workflow does not deploy and does not touch production data."
