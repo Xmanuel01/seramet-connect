@@ -7,7 +7,7 @@ import {
   createMigratedTestDatabase,
   type SqliteD1TestDatabase,
 } from "@/server/database/sqlite-test-adapter";
-import type { DurableQueueMessage } from "@/server/environment";
+import type { DurableQueueMessage, ObjectStoreBinding } from "@/server/environment";
 import {
   handleWorkerQueue,
   scheduleDurableWork,
@@ -17,6 +17,7 @@ import { handleOnboardingApi } from "@/server/onboarding-api";
 import { createMenuCatalogReader } from "@/integrations/marketplace/menu-catalog-reader";
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
 import { ManagementIntelligenceService } from "@/management/management-intelligence-service";
+import type { ImportPreview } from "@/onboarding/types";
 
 const tenantId = "tenant-setup-a";
 const secondTenantId = "tenant-setup-b";
@@ -24,6 +25,9 @@ const branchId = "branch-setup-a";
 const secondBranchId = "branch-setup-b";
 const warehouseId = "warehouse-setup-a";
 const stamp = "2026-09-01T08:00:00.000Z";
+const jwtSecret = "pass-eight-menu-import-signing-secret-32-bytes";
+const jwtIssuer = "https://identity.seramet.test";
+const jwtAudience = "seramet-pass-eight";
 
 describe.sequential("Pass 8 commercial productization and onboarding", () => {
   let db: SqliteD1TestDatabase;
@@ -44,7 +48,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("applies schema version 9 and the commercial onboarding tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(26);
+    ).toBe(27);
     for (const table of [
       "tenant_onboarding_profiles",
       "branch_operating_profiles",
@@ -154,13 +158,13 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(preview.rows[0]?.warnings.some((issue) => issue.code === "UNSUPPORTED_COLUMN")).toBe(
       false,
     );
-    await service.commitImport(preview.id, preview.commitKey);
+    await completeMenuImport(service, db, env, preview);
     expect(await service.listMenuCatalog(branchId)).toContainEqual(
       expect.objectContaining({ code: "CUTE-001", selling_price_minor: 47000 }),
     );
   });
 
-  it("requires a fresh policy-validated staging preview before import commit", async () => {
+  it("requires authenticated CLEAN evidence tied to the exact file before preview or commit", async () => {
     const bytes = new TextEncoder().encode(
       "code,name,category,price,currency\nSEC-01,Validated item,MAIN,1250,KES",
     );
@@ -174,30 +178,182 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       duplicateStrategy: "ERROR",
       idempotencyKey: "legacy-unscanned-preview",
     });
-    const stagingEnv: SerametEnv = { ...env, SERAMET_ENVIRONMENT: "staging" };
-    const staging = new OnboardingService(db, actor(), stagingEnv);
-    await expect(staging.commitImport(original.id, original.commitKey)).rejects.toThrow(
-      /predates the current file validation policy/,
+    await db
+      .prepare(
+        "UPDATE setup_imports SET scan_status='PENDING',scan_evidence_json='{}' WHERE tenant_id=? AND id=?",
+      )
+      .bind(tenantId, original.id)
+      .run();
+    await expect(service.commitImport(original.id, original.commitKey)).rejects.toThrow(
+      /no valid file security scan/,
     );
-    const fresh = await staging.previewImport({
+    const report = await db
+      .prepare("SELECT report_json FROM setup_imports WHERE tenant_id=? AND id=?")
+      .bind(tenantId, original.id)
+      .first<{ report_json: string }>();
+    expect(JSON.parse(report!.report_json).fileValidationPolicy).toBe("authenticated-clean-v1");
+  });
+
+  it("fails closed before persisting menu or historical previews when scanning is unavailable", async () => {
+    const unavailableEnv = { ...env, SERAMET_MALWARE_SCANNER: undefined };
+    const unavailableMenu = new OnboardingService(db, actor(), unavailableEnv);
+    const bytes = new TextEncoder().encode(
+      "code,name,category,price,currency\nNO-SCAN-01,Unsafe preview,MAIN,1250,KES",
+    );
+
+    await expect(
+      unavailableMenu.previewImport({
+        branchId,
+        kind: "MENU",
+        originalName: "unscanned.csv",
+        mimeType: "text/csv",
+        bytes,
+        duplicateStrategy: "ERROR",
+        idempotencyKey: "unscanned-menu-preview",
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    await expect(
+      new HistoricalSalesMigrationService(db, actor(), unavailableEnv).preview({
+        sourceSystem: "Previous POS",
+        originalName: "unscanned-history.csv",
+        mimeType: "text/csv",
+        bytes: new TextEncoder().encode(
+          "externalSaleReference,branchCode,businessDate,currency,grossSales,netSales,orderCount\n" +
+            "HIST-01,A,2026-08-01,KES,1250,1250,1",
+        ),
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+
+    expect(await rowCount(db, "setup_imports")).toBe(0);
+    expect(await rowCount(db, "setup_import_rows")).toBe(0);
+    expect(await rowCount(db, "historical_sales_migrations")).toBe(0);
+    expect(await rowCount(db, "historical_sales_migration_rows")).toBe(0);
+  });
+
+  it("quarantines an upload and creates no preview until the clean-scanned worker runs", async () => {
+    const queuedMessages: unknown[] = [];
+    const pipelineEnv: SerametEnv = {
+      ...env,
+      SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_WORK_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
+    };
+    const pipeline = new OnboardingService(db, actor(), pipelineEnv);
+    const upload = await pipeline.queueImportPreparation({
       targetMode: "SELECTED_BRANCHES",
       targetBranchIds: [branchId],
       kind: "MENU",
-      originalName: "validated.csv",
+      originalName: "queued-menu.csv",
       mimeType: "text/csv",
-      bytes,
+      bytes: new TextEncoder().encode(
+        "code,name,category,price,currency\nQUEUED-01,Queued meal,MAIN,1250,KES",
+      ),
       duplicateStrategy: "ERROR",
-      idempotencyKey: "staging-policy-v1",
+      idempotencyKey: "queued-menu-upload",
     });
-    expect(fresh.id).not.toBe(original.id);
-    const report = await db
-      .prepare("SELECT report_json FROM setup_imports WHERE tenant_id=? AND id=?")
-      .bind(tenantId, fresh.id)
-      .first<{ report_json: string }>();
-    expect(JSON.parse(report!.report_json).fileValidationPolicy).toBe("validated-unscanned-v1");
-    expect(await staging.commitImport(fresh.id, fresh.commitKey)).toMatchObject({
-      status: "COMMITTED",
+
+    expect(upload).toMatchObject({ status: "PENDING", duplicate: false });
+    expect(queuedMessages).toHaveLength(1);
+    expect(await rowCount(db, "setup_imports")).toBe(0);
+    expect(await rowCount(db, "setup_import_rows")).toBe(0);
+    expect(
+      await db
+        .prepare(
+          "SELECT status FROM stored_objects WHERE tenant_id=? AND object_class='IMPORT_QUARANTINE'",
+        )
+        .bind(tenantId)
+        .first("status"),
+    ).toBe("PENDING_SCAN");
+
+    await processWorkerJob(db, pipelineEnv, upload.jobId, true);
+    const preparation = await pipeline.importPreparationStatus(upload.jobId);
+    expect(preparation).toMatchObject({ status: "SUCCEEDED" });
+    const importId = String((preparation.result as { importId?: string }).importId ?? "");
+    expect(importId).toBeTruthy();
+    expect(await pipeline.inspectImport(importId)).toMatchObject({
+      canCommit: true,
+      scanStatus: "CLEAN",
+      rowCount: 1,
     });
+    expect(await rowCount(db, "menu_catalog_items")).toBe(0);
+  });
+
+  it("accepts authenticated menu uploads only through the queued quarantine route", async () => {
+    const queuedMessages: unknown[] = [];
+    const routeEnv: SerametEnv = {
+      ...env,
+      SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_WORK_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
+      SERAMET_JWT_SECRET: jwtSecret,
+      SERAMET_JWT_ISSUER: jwtIssuer,
+      SERAMET_JWT_AUDIENCE: jwtAudience,
+    };
+    const sessionId = "session-menu-import-route";
+    const issuedAt = new Date(Date.now() - 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    await db
+      .prepare(
+        `INSERT INTO auth_sessions
+          (tenant_id,id,user_id,device_id,issued_at,expires_at,revoked_at,last_seen_at,
+           token_version,ip_hash,metadata_json)
+         VALUES (?,?,?,NULL,?,?,NULL,?,1,NULL,'{}')`,
+      )
+      .bind(tenantId, sessionId, `setup-user-${tenantId}`, issuedAt, expiresAt, issuedAt)
+      .run();
+    const token = await signTestToken({
+      tid: tenantId,
+      sub: `setup-user-${tenantId}`,
+      sid: sessionId,
+    });
+    const headers = {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-seramet-branch-id": branchId,
+    };
+    const payload = {
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "route-menu.csv",
+      mimeType: "text/csv",
+      base64: Buffer.from(
+        "code,name,category,price,currency\nROUTE-01,Route meal,MAIN,1250,KES",
+      ).toString("base64"),
+      duplicateStrategy: "ERROR",
+      idempotencyKey: "route-menu-upload",
+    };
+    const response = await handleOnboardingApi(
+      new Request("https://seramet.test/api/seramet/setup/imports/uploads", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      }),
+      routeEnv,
+    );
+    if (!response) throw new Error("Queued import upload route was not handled");
+    const result = (await response.json()) as { job: { jobId: string; status: string } };
+
+    expect(response.status).toBe(202);
+    expect(result.job.status).toBe("PENDING");
+    expect(queuedMessages).toHaveLength(1);
+    expect(await rowCount(db, "setup_imports")).toBe(0);
+    await expect(
+      handleOnboardingApi(
+        new Request("https://seramet.test/api/seramet/setup/imports/preview", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        }),
+        routeEnv,
+      ),
+    ).rejects.toMatchObject({ status: 410 });
   });
 
   it("previews menu files without mutation, commits explicitly and deduplicates commit retries", async () => {
@@ -209,9 +365,9 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
     expect(preview).toMatchObject({ rowCount: 1, validCount: 1, errorCount: 0, canCommit: true });
     expect(await rowCount(db, "menu_catalog_items")).toBe(0);
-    expect(await service.commitImport(preview.id, preview.commitKey)).toMatchObject({
-      duplicate: false,
-      rows: 1,
+    expect(await completeMenuImport(service, db, env, preview)).toMatchObject({
+      status: "COMMITTED",
+      publishStatus: "PUBLISHED",
     });
     expect(await service.commitImport(preview.id, preview.commitKey)).toMatchObject({
       duplicate: true,
@@ -285,8 +441,8 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     await expect(otherTenant.importStatus(preview.id)).rejects.toThrow("Import not found");
   });
 
-  it("follows the manual-item popup contract through preview, verified commit and real POS visibility", async () => {
-    const bytes = new TextEncoder().encode(
+  it("follows the structured manual-item contract without bypassing file scanning", async () => {
+    expect(
       createManualMenuCsv({
         code: "PILAU-001",
         name: "Beef Pilau",
@@ -295,25 +451,34 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         currency: "KES",
         stationCode: "MAIN",
       }),
-    );
-    const preview = await service.previewImport({
-      targetMode: "SELECTED_BRANCHES",
-      targetBranchIds: [branchId],
-      kind: "MENU",
-      originalName: "manual-beef-pilau.csv",
-      mimeType: "text/csv",
-      bytes,
-      duplicateStrategy: "ERROR",
-      idempotencyKey: "manual-item-pilau-001",
-    });
-    expect(preview).toMatchObject({ rowCount: 1, validCount: 1, errorCount: 0, canCommit: true });
+    ).toContain("PILAU-001");
     expect(await service.listMenuCatalog(branchId)).toHaveLength(0);
-    const saved = await service.commitImport(preview.id, preview.commitKey);
-    expect(saved).toMatchObject({
-      status: "COMMITTED",
-      queued: false,
-      verification: { status: "VERIFIED", catalogueVerified: true, branchSettings: 1 },
+    const saved = await service.createManualMenuItem({
+      branchId,
+      requestKey: "manual-item-pilau-001",
+      code: "PILAU-001",
+      name: "Beef Pilau",
+      categoryCode: "MAIN",
+      basePrice: "450.00",
+      currency: "KES",
+      stationCode: "MAIN",
     });
+    expect(saved).toMatchObject({
+      status: "ACTIVE",
+      duplicate: false,
+    });
+    expect(
+      await service.createManualMenuItem({
+        branchId,
+        requestKey: "manual-item-pilau-001",
+        code: "PILAU-001",
+        name: "Beef Pilau",
+        categoryCode: "MAIN",
+        basePrice: "450.00",
+        currency: "KES",
+        stationCode: "MAIN",
+      }),
+    ).toMatchObject({ duplicate: true });
     const branchCatalog = await service.listMenuCatalog(branchId);
     expect(branchCatalog).toContainEqual(
       expect.objectContaining({
@@ -358,14 +523,14 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       targetMode: "ROW_BRANCHES",
     });
     expect(preview).toMatchObject({ rowCount: 1, errorCount: 0, canCommit: true });
-    await service.commitImport(preview.id, preview.commitKey);
+    await completeMenuImport(service, db, env, preview);
     expect(await service.listMenuCatalog(branchId)).toContainEqual(
       expect.objectContaining({ code: "XLSX-01", selling_price_minor: 87_500 }),
     );
   });
 
   it("previews and commits a one-time previous POS sales migration without replaying live flows", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const preview = await migration.preview({
       sourceSystem: "Previous POS",
       originalName: "historical-sales.csv",
@@ -424,7 +589,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows the optional previous POS migration to be skipped without permanently disabling it", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     await expect(migration.skip("No export is available yet")).resolves.toMatchObject({
       status: "SKIPPED",
       canImportLater: true,
@@ -441,7 +606,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("allows only one simultaneous previous POS migration commit", async () => {
-    const migration = new HistoricalSalesMigrationService(db, actor());
+    const migration = new HistoricalSalesMigrationService(db, actor(), env);
     const first = await migration.preview({
       sourceSystem: "Previous POS A",
       originalName: "history-a.csv",
@@ -513,10 +678,10 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       duplicateStrategy: "CREATE",
       idempotencyKey: "tenant-master-preview",
     });
-    const committed = await service.commitImport(preview.id, preview.commitKey);
+    const committed = await completeMenuImport(service, db, env, preview);
     expect(committed).toMatchObject({
       status: "COMMITTED",
-      queued: false,
+      publishStatus: "PUBLISHED",
       verification: { status: "VERIFIED", catalogueVerified: true, branchSettings: 0 },
     });
     expect(await service.listMenuCatalog()).toContainEqual(
@@ -543,7 +708,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       referenceMap: { stations: { KITCHEN: "MAIN" } },
     });
     expect(preview).toMatchObject({ errorCount: 0, targetBranchIds: [branchId, secondBranchId] });
-    const committed = await service.commitImport(preview.id, preview.commitKey);
+    const committed = await completeMenuImport(service, db, env, preview);
     expect(committed).toMatchObject({
       verification: { status: "VERIFIED", branchSettings: 2 },
     });
@@ -585,7 +750,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       duplicateStrategy: "CREATE",
       idempotencyKey: "unavailable-preview",
     });
-    await service.commitImport(preview.id, preview.commitKey);
+    await completeMenuImport(service, db, env, preview);
     expect(await service.listMenuCatalog(branchId)).toContainEqual(
       expect.objectContaining({ code: "UNAVAILABLE-1", available: 0 }),
     );
@@ -611,7 +776,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       idempotencyKey: "row-branch-preview",
     });
     expect(preview).toMatchObject({ rowCount: 2, errorCount: 0 });
-    const committed = await service.commitImport(preview.id, preview.commitKey);
+    const committed = await completeMenuImport(service, db, env, preview);
     expect(committed).toMatchObject({
       verification: { created: 1, updated: 0, branchSettings: 2, catalogueVerified: true },
     });
@@ -648,9 +813,13 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
     const queued = await service.commitImport(preview.id, preview.commitKey);
     expect(queued).toMatchObject({ status: "QUEUED", queued: true, rows: 343 });
-    await processWorkerJob(db, env, String(queued.jobId), true);
+    await expect(service.commitImport(preview.id, `${preview.commitKey}:altered`)).rejects.toThrow(
+      "Commit idempotency key does not match the preview",
+    );
+    await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_COMMIT");
     expect(await service.importStatus(preview.id)).toMatchObject({
       status: "COMMITTED",
+      publishStatus: "READY",
       verification: {
         created: 343,
         failed: 0,
@@ -659,6 +828,17 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       },
       worker: { status: "SUCCEEDED" },
     });
+    await expect(service.commitImport(preview.id, `${preview.commitKey}:altered`)).rejects.toThrow(
+      "Commit idempotency key does not match the preview",
+    );
+    expect(await createMenuCatalogReader(db)(tenantId, branchId)).toHaveLength(0);
+    const staged = await service.inspectImport(preview.id);
+    expect(await service.publishImport(preview.id, staged.publishKey!)).toMatchObject({
+      status: "PUBLISHING",
+      queued: true,
+    });
+    await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_PUBLISH");
+    expect(await service.importStatus(preview.id)).toMatchObject({ publishStatus: "PUBLISHED" });
     const operational = await createMenuCatalogReader(db)(tenantId, branchId);
     expect(operational).toHaveLength(343);
     expect(operational[0]).toMatchObject({
@@ -763,7 +943,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "code,name,category,price\nMENU-02,First name,MAIN,100",
       "duplicate-first",
     );
-    await service.commitImport(first.id, first.commitKey);
+    await completeMenuImport(service, db, env, first);
     const duplicate = await previewCsv(
       service,
       "MENU",
@@ -782,7 +962,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "duplicate-update",
       "UPDATE",
     );
-    await service.commitImport(update.id, update.commitKey);
+    await completeMenuImport(service, db, env, update);
     expect((await service.listMenuCatalog())[0]).toMatchObject({
       name: "Second name",
       selling_price_minor: 12000,
@@ -894,7 +1074,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "code,name,category,price\nMENU-03,Recipe required,MAIN,500",
       "recipe-menu",
     );
-    await service.commitImport(preview.id, preview.commitKey);
+    await completeMenuImport(service, db, env, preview);
     const result = await service.validateRecipes();
     expect(result.quality).toBe("LOW");
     expect(result.issues).toContainEqual(expect.objectContaining({ code: "MISSING_RECIPE" }));
@@ -1237,7 +1417,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("returns redacted diagnostics and never includes secrets or session material", async () => {
     const diagnostics = await service.diagnostics();
     expect(diagnostics).toMatchObject({
-      schema: { current: 26, required: 26, pending: 0 },
+      schema: { current: 27, required: 27, pending: 0 },
       redaction: { secrets: "EXCLUDED", tokens: "EXCLUDED", credentials: "EXCLUDED" },
     });
     expect(JSON.stringify(diagnostics)).not.toContain("sensitive-secret");
@@ -1250,7 +1430,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       "code,name,category,price\nEXPORT-1,Export item,MAIN,100",
       "export-menu",
     );
-    await service.commitImport(menu.id, menu.commitKey);
+    await completeMenuImport(service, db, env, menu);
     const requested = await service.requestDataExport({
       entityTypes: ["menu"],
       rowLimit: 50,
@@ -1443,6 +1623,67 @@ async function processWorkerJob(
   expect(state).toEqual({ acknowledged: 1, retries: 0 });
 }
 
+async function drainImportJobs(
+  db: SqliteD1TestDatabase,
+  env: SerametEnv,
+  importId: string,
+  jobType: "SETUP_IMPORT_COMMIT" | "SETUP_IMPORT_PUBLISH",
+) {
+  for (let batch = 0; batch < 2_000; batch += 1) {
+    const job = await db
+      .prepare(
+        `SELECT id FROM worker_jobs WHERE tenant_id=? AND job_type=? AND status='PENDING'
+           AND idempotency_key LIKE ? ORDER BY created_at,id LIMIT 1`,
+      )
+      .bind(tenantId, jobType, `setup-import-%:${importId}:%`)
+      .first<{ id: string }>();
+    if (!job) return;
+    await processWorkerJob(db, env, job.id, true);
+  }
+  throw new Error("Import worker chain exceeded its bounded test limit");
+}
+
+async function completeMenuImport(
+  service: OnboardingService,
+  db: SqliteD1TestDatabase,
+  env: SerametEnv,
+  preview: ImportPreview,
+) {
+  await service.commitImport(preview.id, preview.commitKey);
+  await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_COMMIT");
+  const staged = await service.inspectImport(preview.id);
+  if (!staged.publishKey) throw new Error("Verified import did not expose its publish identity");
+  await service.publishImport(staged.id, staged.publishKey);
+  await drainImportJobs(db, env, staged.id, "SETUP_IMPORT_PUBLISH");
+  return service.inspectImport(staged.id);
+}
+
+async function signTestToken(input: { tid: string; sub: string; sid: string }) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "HS256", typ: "JWT" });
+  const payload = encode({
+    ...input,
+    iss: jwtIssuer,
+    aud: jwtAudience,
+    iat: issuedAt,
+    exp: issuedAt + 3600,
+  });
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(jwtSecret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${header}.${payload}`),
+  );
+  return `${header}.${payload}.${Buffer.from(signature).toString("base64url")}`;
+}
+
 function actor(
   branches: string[] | undefined = [branchId, secondBranchId],
   permissionCodes = allPermissionCodes,
@@ -1473,6 +1714,24 @@ function testEnvironment(
   return {
     SERAMET_ENVIRONMENT: "test",
     SERAMET_DB: database,
+    SERAMET_MALWARE_SCANNER: {
+      async fetch(_input, init) {
+        const headers = new Headers(init?.headers);
+        const sha256 = headers.get("x-seramet-content-sha256") ?? "";
+        return Response.json({
+          verdict: "CLEAN",
+          sha256,
+          evidenceId: `test-clean-${headers.get("x-seramet-scan-job-id")}-${sha256.slice(0, 12)}`,
+          scannerId: "seramet-test-scanner",
+          engine: "seramet-test-scanner",
+          signatureVersion: "test-signatures-1",
+          scannedAt: new Date().toISOString(),
+          jobId: headers.get("x-seramet-scan-job-id"),
+          objectKey: headers.get("x-seramet-object-key"),
+          objectVersion: headers.get("x-seramet-object-version"),
+        });
+      },
+    },
     SERAMET_CALLBACK_BASE_URL: "https://callbacks.example.test",
     SERAMET_MANAGED_SECRET_STORE: {
       async get(reference: string) {
@@ -1483,6 +1742,53 @@ function testEnvironment(
         secrets.set(reference, { value, version });
         return { version };
       },
+    },
+  };
+}
+
+function memoryObjectStore(): ObjectStoreBinding {
+  const objects = new Map<
+    string,
+    {
+      bytes: ArrayBuffer;
+      httpMetadata?: { contentType?: string; cacheControl?: string };
+      customMetadata?: Record<string, string>;
+    }
+  >();
+  return {
+    async head(key) {
+      return objects.get(key) ?? null;
+    },
+    async get(key) {
+      const object = objects.get(key);
+      if (!object) return null;
+      return {
+        arrayBuffer: async () => object.bytes.slice(0),
+        ...(object.httpMetadata ? { httpMetadata: object.httpMetadata } : {}),
+        ...(object.customMetadata ? { customMetadata: object.customMetadata } : {}),
+      };
+    },
+    async put(key, value, options) {
+      let bytes: ArrayBuffer;
+      if (typeof value === "string") {
+        bytes = new TextEncoder().encode(value).buffer as ArrayBuffer;
+      } else if (value instanceof ArrayBuffer) {
+        bytes = value.slice(0);
+      } else if (ArrayBuffer.isView(value)) {
+        bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
+          .buffer as ArrayBuffer;
+      } else {
+        throw new Error("The test object store does not accept streaming values");
+      }
+      objects.set(key, {
+        bytes,
+        ...(options?.httpMetadata ? { httpMetadata: options.httpMetadata } : {}),
+        ...(options?.customMetadata ? { customMetadata: options.customMetadata } : {}),
+      });
+      return { version: `memory:${key}` };
+    },
+    async delete(key) {
+      for (const objectKey of Array.isArray(key) ? key : [key]) objects.delete(objectKey);
     },
   };
 }

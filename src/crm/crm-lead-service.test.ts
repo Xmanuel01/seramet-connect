@@ -64,7 +64,7 @@ describe("CRM lead pipeline real workflow", () => {
 
   it("migrates independently with immutable tenant and branch-scoped lead events", () => {
     expect(db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get()).toEqual({
-      version: 26,
+      version: 27,
     });
     const tables = db.sqlite
       .prepare(

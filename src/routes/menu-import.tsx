@@ -59,11 +59,18 @@ const PAGE_SIZE = 50;
 
 function MenuImport() {
   const centre = useSetupCentre();
-  const { recentMenuImports, inspectImport, importStatus, refreshMenuCatalog, commitImport } =
-    centre;
+  const {
+    recentMenuImports,
+    inspectImport,
+    importStatus,
+    refreshMenuCatalog,
+    commitImport,
+    publishImport,
+  } = centre;
   const { activeTenantId, branchId, isAllBranches, currency, hasPermission } = useAppContext();
   const pendingImportKey = `seramet.menu-import.pending:${activeTenantId}`;
-  const canImport = hasPermission(permissions.setupImport);
+  const canManageMenu = hasPermission(permissions.setupImport);
+  const canImport = canManageMenu && centre.fileImportCapability.available;
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -188,7 +195,17 @@ function MenuImport() {
       if (restored.status === "COMMITTING") {
         window.sessionStorage.setItem(pendingImportKey, restored.id);
       }
-      setNotice("Existing import recovered without uploading or creating a new commit.");
+      if (
+        restored.status === "COMMITTED" &&
+        restored.verification?.status === "VERIFIED" &&
+        restored.publishStatus === "READY"
+      ) {
+        setImportOpen(false);
+        setCompletionOpen(true);
+        setNotice("Verified import recovered without uploading or creating a new commit.");
+      } else {
+        setNotice("Existing import recovered without uploading or creating a new commit.");
+      }
       setNoticeTone("success");
     } catch (error) {
       setNotice(
@@ -212,7 +229,21 @@ function MenuImport() {
         if (!active) return;
         setPreview((current) => current ?? restored);
         setImportOpen(true);
-        if (restored.status === "COMMITTED" || restored.status === "FAILED") {
+        if (
+          restored.status === "COMMITTED" &&
+          restored.verification?.status === "VERIFIED" &&
+          restored.publishStatus === "READY"
+        ) {
+          setNotice("Import plan is verified and staged. Review it, then publish explicitly.");
+          setNoticeTone("success");
+          setImportOpen(false);
+          setCompletionOpen(true);
+          window.sessionStorage.removeItem(pendingImportKey);
+        } else if (restored.publishStatus === "PUBLISHED") {
+          setNotice("Menu import published and verified in the authoritative catalogue.");
+          setNoticeTone("success");
+          window.sessionStorage.removeItem(pendingImportKey);
+        } else if (restored.status === "FAILED") {
           window.sessionStorage.removeItem(pendingImportKey);
         }
       })
@@ -230,7 +261,7 @@ function MenuImport() {
   }, [inspectImport, pendingImportKey]);
 
   useEffect(() => {
-    if (preview?.status !== "COMMITTING") return;
+    if (preview?.status !== "COMMITTING" && preview?.publishStatus !== "PUBLISHING") return;
     const importId = preview.id;
     if (currentProgressImport.current !== importId) {
       currentProgressImport.current = importId;
@@ -278,24 +309,22 @@ function MenuImport() {
         ) {
           lastProgressSample.current = sample;
         }
-        if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
-          setPreview((current) =>
-            current?.id === importId
-              ? {
-                  ...current,
-                  status: "COMMITTED",
-                  canCommit: false,
-                  verification: result.verification,
-                }
-              : current,
-          );
+        if (result.publishStatus === "PUBLISHED") {
+          const published = await inspectImport(importId);
+          if (!active) return;
+          setPreview(published);
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice(
-            "Menu import committed and independently verified in the authoritative catalogue.",
-          );
+          setNotice("Menu import published and verified in the authoritative catalogue.");
           setNoticeTone("success");
-          setCompletionOpen(true);
           void refreshMenuCatalog();
+        } else if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+          const staged = await inspectImport(importId);
+          if (!active) return;
+          setPreview(staged);
+          setNotice("Import plan is verified and staged. Review it, then publish explicitly.");
+          setNoticeTone("success");
+          setImportOpen(false);
+          setCompletionOpen(true);
         } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
           setPreview((current) =>
             current?.id === importId ? { ...current, status: "FAILED", canCommit: false } : current,
@@ -350,6 +379,7 @@ function MenuImport() {
     refreshMenuCatalog,
     pendingImportKey,
     preview?.id,
+    preview?.publishStatus,
     preview?.status,
   ]);
 
@@ -464,9 +494,9 @@ function MenuImport() {
           canCommit: false,
           verification: response.result.verification,
         });
-        window.sessionStorage.removeItem(pendingImportKey);
-        setNotice("Menu import committed and verified in the authoritative catalogue.");
+        setNotice("Menu import plan committed and verified in staging. Publish it explicitly.");
         setNoticeTone("success");
+        setImportOpen(false);
         setCompletionOpen(true);
       })
       .catch(async (error: unknown) => {
@@ -478,10 +508,10 @@ function MenuImport() {
             canCommit: false,
             verification: result.verification,
           });
-          window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Menu import was verified despite a lost commit response.");
+          setNotice("Menu import plan was verified despite a lost commit response.");
           setNoticeTone("success");
-          void refreshMenuCatalog();
+          setImportOpen(false);
+          setCompletionOpen(true);
           return;
         }
         if (result?.status === "FAILED") {
@@ -501,6 +531,38 @@ function MenuImport() {
               " Revalidate the existing file only after reviewing this result.",
           );
         }
+        setNoticeTone("warning");
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const publish = () => {
+    if (!preview?.publishKey || preview.publishStatus !== "READY" || busy) return;
+    const staged = preview;
+    setBusy(true);
+    setNotice(
+      "Verifying the immutable plan in bounded batches before atomic menu activation. Completed rows will not be replayed.",
+    );
+    setNoticeTone("warning");
+    window.sessionStorage.setItem(pendingImportKey, staged.id);
+    void publishImport(staged)
+      .then((response) => {
+        setCompletionOpen(false);
+        if (response.result?.status === "PUBLISHED") {
+          setPreview({ ...staged, publishStatus: "PUBLISHED" });
+          window.sessionStorage.removeItem(pendingImportKey);
+          setNotice("Menu import published and verified in the authoritative catalogue.");
+          setNoticeTone("success");
+          void refreshMenuCatalog();
+          return;
+        }
+        setPreview({ ...staged, publishStatus: "PUBLISHING" });
+        setNotice(
+          `Menu publication queued as ${response.result?.jobId ?? "a durable worker job"}.`,
+        );
+      })
+      .catch((error: unknown) => {
+        setNotice(error instanceof Error ? error.message : "Menu publication failed");
         setNoticeTone("warning");
       })
       .finally(() => setBusy(false));
@@ -534,7 +596,7 @@ function MenuImport() {
       subtitle="Secure preview, validation and explicit server commit"
       actions={
         <>
-          <Btn onClick={() => setManualOpen(true)} disabled={!canImport || busy}>
+          <Btn onClick={() => setManualOpen(true)} disabled={!canManageMenu || busy}>
             <Plus className="h-4 w-4" />
             Add item
           </Btn>
@@ -571,8 +633,9 @@ function MenuImport() {
           role="alert"
           className="mt-3 rounded-md border border-warning/30 p-3 text-[12px] text-warning"
         >
-          Your current role cannot create or import menu items. An authorized account owner must
-          grant the menu import permission; do not use a different employee login to bypass it.
+          {canManageMenu
+            ? centre.fileImportCapability.reason
+            : "Your current role cannot create or import menu items. An authorized account owner must grant the menu import permission; do not use a different employee login to bypass it."}
         </p>
       )}
       {notice && (
@@ -769,6 +832,11 @@ function MenuImport() {
               </div>
             ) : (
               <>
+                {!centre.fileImportCapability.available && (
+                  <div className="rounded-md border border-warning/30 bg-warning-soft p-3 text-[12px] font-medium text-warning">
+                    {centre.fileImportCapability.reason}
+                  </div>
+                )}
                 <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
                   Previous POS name
                   <input
@@ -782,7 +850,13 @@ function MenuImport() {
                     className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
                   />
                 </label>
-                <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-4 text-center text-[12px] font-semibold hover:bg-secondary/60">
+                <label
+                  className={`flex min-h-28 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-4 text-center text-[12px] font-semibold ${
+                    centre.fileImportCapability.available
+                      ? "cursor-pointer hover:bg-secondary/60"
+                      : "cursor-not-allowed opacity-60"
+                  }`}
+                >
                   <Upload className="h-5 w-5 text-primary" />
                   Choose previous POS sales file
                   <span className="font-normal text-muted-foreground">
@@ -793,7 +867,7 @@ function MenuImport() {
                     accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     onChange={(event) => void uploadHistoricalSales(event)}
                     className="hidden"
-                    disabled={busy}
+                    disabled={busy || !centre.fileImportCapability.available}
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-2">
@@ -1283,10 +1357,10 @@ function MenuImport() {
       <Dialog open={completionOpen} onOpenChange={setCompletionOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Menu import completed</DialogTitle>
+            <DialogTitle>Publish verified menu import</DialogTitle>
             <DialogDescription>
-              Seramet has independently verified the imported records in the authoritative
-              catalogue. Review any skipped or previously existing items before opening sales.
+              The immutable plan is verified in bounded server-side batches. Final menu and branch
+              activation is atomic, so a partially verified plan cannot become orderable.
             </DialogDescription>
           </DialogHeader>
           {progressSummary && (
@@ -1298,12 +1372,15 @@ function MenuImport() {
           <DialogFooter>
             <Btn
               variant="primary"
-              onClick={() => {
-                setCompletionOpen(false);
-                setImportOpen(false);
-              }}
+              onClick={publish}
+              disabled={busy || preview?.publishStatus !== "READY" || !preview?.publishKey}
             >
-              View menu
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              Publish menu
             </Btn>
           </DialogFooter>
         </DialogContent>
@@ -1326,13 +1403,7 @@ function MenuImport() {
           code: stringValue(station["code"]),
           branch_id: stringValue(station["branch_id"]),
         }))}
-        previewImport={(file, targetBranchId) =>
-          centre.previewImport(file, "MENU", "ERROR", {
-            targetMode: "SELECTED_BRANCHES",
-            targetBranchIds: [targetBranchId],
-          })
-        }
-        commitImport={centre.commitImport}
+        createItem={centre.createManualMenuItem}
         onCommitted={() => {
           setNotice("Menu item saved and verified. Check the authoritative catalogue.");
           setNoticeTone("success");

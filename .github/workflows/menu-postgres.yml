@@ -5,9 +5,15 @@ on:
     paths:
       - "src/onboarding/**"
       - "src/server/onboarding-api.ts"
+      - "src/server/malware-scanner.ts"
+      - "src/server/object-storage.ts"
+      - "src/server/workers.ts"
       - "src/routes/menu-import.tsx"
       - "src/components/app/ManualMenuItemDialog.tsx"
       - "scripts/verify-menu-postgres.ts"
+      - "scripts/verify-menu-import-postgres.ts"
+      - "migrations/0027_menu_import_pipeline.sql"
+      - "package*.json"
       - ".github/workflows/menu-postgres.yml"
   workflow_dispatch:
 
@@ -33,6 +39,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      CI: "true"
       SERAMET_POSTGRES_URL: postgresql://seramet_test:isolated_ci_only@127.0.0.1:5432/seramet_test
     steps:
       - uses: actions/checkout@v4
@@ -45,3 +52,5 @@ jobs:
         run: npm run migrate:postgres
       - name: Verify real menu catalogue query and branch isolation
         run: ./node_modules/.bin/vite-node scripts/verify-menu-postgres.ts
+      - name: Certify durable menu import concurrency and publication
+        run: npm run test:menu-import-postgres

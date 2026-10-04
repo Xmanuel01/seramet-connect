@@ -22,6 +22,11 @@ export type ManualMenuItemInput = {
   serviceChargeApplicable?: boolean;
 };
 
+export type ManualMenuItemCreateInput = ManualMenuItemInput & {
+  branchId: string;
+  requestKey: string;
+};
+
 export function createManualMenuCsv(input: ManualMenuItemInput) {
   const code = input.code.trim().toUpperCase();
   const name = input.name.trim();

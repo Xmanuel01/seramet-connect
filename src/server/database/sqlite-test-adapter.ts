@@ -10,6 +10,10 @@ export class SqliteD1TestDatabase implements D1Database {
   constructor(path = ":memory:") {
     this.sqlite = new DatabaseSync(path);
     this.sqlite.exec("PRAGMA foreign_keys = ON");
+    // The loopback E2E server and its inspection client intentionally share one
+    // disposable SQLite file. Wait briefly for an active writer instead of
+    // turning normal lock contention into a false-negative browser failure.
+    this.sqlite.exec("PRAGMA busy_timeout = 5000");
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -107,6 +111,7 @@ export const migrationFiles = [
   "0024_inventory_operations_control.sql",
   "0025_supplier_invoice_receipt_uniqueness.sql",
   "0026_crm_lead_pipeline.sql",
+  "0027_menu_import_pipeline.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

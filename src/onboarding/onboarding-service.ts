@@ -1,10 +1,17 @@
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
+import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
 import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { validateImportFile } from "@/server/file-import-security";
+import {
+  requireCleanMalwareScan,
+  scannerConfigured,
+  type CleanScanEvidence,
+} from "@/server/malware-scanner";
+import { TenantObjectStorage } from "@/server/object-storage";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { ServerOperationError } from "@/server/errors";
 import { createSecretStore } from "@/server/secrets";
@@ -1151,15 +1158,251 @@ export class OnboardingService {
     };
   }
 
-  async previewImport(input: ImportPreviewInput): Promise<ImportPreview> {
+  async queueImportPreparation(input: ImportPreviewInput) {
     this.require(permissions.setupImport);
-    const runtime = resolveRuntimeConfiguration(this.env);
+    if (
+      !scannerConfigured(this.env.SERAMET_MALWARE_SCANNER) ||
+      !this.env.SERAMET_OBJECTS ||
+      !this.env.SERAMET_WORK_QUEUE
+    ) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "File imports are unavailable until security scanning, quarantine storage and durable workers are configured",
+      );
+    }
     const file = await validateImportFile({
       kind: input.kind,
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
     });
+    const target =
+      input.kind === "MENU"
+        ? await this.resolveMenuImportTarget(input)
+        : {
+            mode: (input.branchId ? "SELECTED_BRANCHES" : "TENANT_MASTER") as ImportTargetMode,
+            branchIds: input.branchId ? [input.branchId] : [],
+          };
+    if (input.kind !== "MENU" && input.branchId) await this.assertBranch(input.branchId);
+    const jobKey = `setup-import-prepare:${input.idempotencyKey}`;
+    const existing = await this.db
+      .prepare(
+        `SELECT id,payload_json,status,result_json FROM worker_jobs
+         WHERE tenant_id=? AND idempotency_key=? AND job_type='SETUP_IMPORT_PREPARE'`,
+      )
+      .bind(this.actor.tenantId, jobKey)
+      .first<{ id: string; payload_json: string; status: string; result_json: string }>();
+    if (existing) {
+      const payload = parseJson<{ fileChecksum?: string }>(existing.payload_json, {});
+      if (payload.fileChecksum !== file.digest) {
+        throw invalidTransition("Import upload identity was reused with different file content");
+      }
+      return {
+        jobId: existing.id,
+        status: existing.status,
+        duplicate: true,
+        result: parseJson(existing.result_json, {}),
+      };
+    }
+
+    const storage = new TenantObjectStorage(this.db, this.env.SERAMET_OBJECTS);
+    const stored = await storage.store({
+      tenantId: this.actor.tenantId,
+      ...(target.branchIds.length === 1 ? { branchId: target.branchIds[0] } : {}),
+      actorId: this.actor.id,
+      objectClass: "IMPORT_QUARANTINE",
+      fileName: file.filename,
+      contentType: input.mimeType,
+      bytes: input.bytes.slice().buffer as ArrayBuffer,
+    });
+    const correlationId = crypto.randomUUID();
+    const jobId = stableId("worker", jobKey);
+    try {
+      await this.db.batch([
+        this.enqueueJobStatement(
+          "SETUP_IMPORT_PREPARE",
+          input.branchId ?? "",
+          jobKey,
+          correlationId,
+          {
+            objectId: stored.id,
+            objectKey: stored.objectKey,
+            objectVersion: stored.objectVersion,
+            fileChecksum: file.digest,
+            kind: input.kind,
+            originalName: file.filename,
+            mimeType: input.mimeType,
+            duplicateStrategy: input.duplicateStrategy,
+            idempotencyKey: input.idempotencyKey,
+            targetMode: target.mode,
+            targetBranchIds: target.branchIds,
+            columnMap: normalizeStringRecord(input.columnMap),
+            referenceMap: normalizeReferenceMap(input.referenceMap),
+            actorId: this.actor.id,
+            ...(input.branchId ? { branchId: input.branchId } : {}),
+          },
+        ),
+        this.audit("SETUP_IMPORT_UPLOAD_QUARANTINED", "WORKER_JOB", jobId, {
+          objectId: stored.id,
+          fileChecksum: file.digest,
+          correlationId,
+        }),
+        this.importStateEvent("QUARANTINED", {
+          jobId,
+          objectId: stored.id,
+          evidence: {
+            objectKey: stored.objectKey,
+            objectVersion: stored.objectVersion,
+            fileChecksum: file.digest,
+          },
+        }),
+      ]);
+    } catch (error) {
+      await storage.remove(this.actor.tenantId, stored.id).catch(() => undefined);
+      throw error;
+    }
+    await this.dispatchWorkerJob(jobId, correlationId);
+    return { jobId, status: "PENDING" as const, duplicate: false, result: {} };
+  }
+
+  async createManualMenuItem(input: ManualMenuItemCreateInput) {
+    this.require(permissions.setupImport);
+    await this.assertImportBranch(input.branchId);
+    const payloadDigest = await sha256Text(
+      stableJson({
+        branchId: input.branchId,
+        code: input.code.trim().toUpperCase(),
+        name: input.name.trim(),
+        categoryCode: input.categoryCode.trim().toUpperCase(),
+        basePrice: input.basePrice.trim(),
+        currency: input.currency.trim().toUpperCase(),
+        description: input.description?.trim() ?? "",
+        sku: input.sku?.trim() ?? "",
+        stationCode: input.stationCode?.trim() ?? "",
+        branchPrice: input.branchPrice?.trim() ?? "",
+        onlinePrice: input.onlinePrice?.trim() ?? "",
+        taxCode: input.taxCode?.trim() ?? "",
+        unitOfMeasure: input.unitOfMeasure?.trim() ?? "",
+        recipeCode: input.recipeCode?.trim() ?? "",
+        serviceChargeApplicable: Boolean(input.serviceChargeApplicable),
+      }),
+    );
+    const prior = await this.db
+      .prepare(
+        `SELECT payload_digest,result_json FROM manual_menu_item_requests
+         WHERE tenant_id=? AND request_key=?`,
+      )
+      .bind(this.actor.tenantId, input.requestKey)
+      .first<{ payload_digest: string; result_json: string }>();
+    if (prior) {
+      if (prior.payload_digest !== payloadDigest) {
+        throw invalidTransition("Manual menu request identity was reused with different values");
+      }
+      return { ...parseJson<Record<string, unknown>>(prior.result_json, {}), duplicate: true };
+    }
+    const raw = {
+      templateVersion: String(MENU_IMPORT_TEMPLATE_VERSION),
+      itemCode: input.code,
+      name: input.name,
+      categoryCode: input.categoryCode,
+      menuSection: input.categoryCode,
+      description: input.description ?? "",
+      basePrice: input.basePrice,
+      currency: input.currency,
+      stationCode: input.stationCode ?? "",
+      branchPrice: input.branchPrice ?? "",
+      onlinePrice: input.onlinePrice ?? "",
+      taxCode: input.taxCode ?? "",
+      unitOfMeasure: input.unitOfMeasure ?? "",
+      recipeCode: input.recipeCode ?? "",
+      serviceChargeApplicable: input.serviceChargeApplicable ? "true" : "false",
+      sku: input.sku?.trim() || input.code,
+      sellable: "true",
+      available: "true",
+      prepMinutes: "0",
+      parLevel: "0",
+    };
+    const rows = await this.validateRows("MENU", [raw], input.branchId, undefined, {
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [input.branchId],
+      referenceMap: undefined,
+      templateVersion: MENU_IMPORT_TEMPLATE_VERSION,
+      unsupportedColumns: [],
+      duplicateStrategy: "ERROR",
+    });
+    const row = rows[0];
+    if (!row || row.status === "ERROR") {
+      throw validation(
+        row?.errors.map((issue) => issue.message).join("; ") || "Manual menu item is invalid",
+      );
+    }
+    const built = await this.buildImportStatements("MENU", "ERROR", null, row.normalized, {});
+    const result = {
+      id: built.entityId,
+      code: string(row.normalized["code"]),
+      branchId: input.branchId,
+      status: "ACTIVE" as const,
+      duplicate: false,
+    };
+    const stamp = now();
+    await this.db.batch([
+      ...built.statements,
+      this.db
+        .prepare(
+          `INSERT INTO manual_menu_item_requests
+            (tenant_id,request_key,payload_digest,menu_item_id,result_json,created_by,created_at)
+           VALUES (?,?,?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          input.requestKey,
+          payloadDigest,
+          built.entityId,
+          json(result),
+          this.actor.id,
+          stamp,
+        ),
+      this.audit("MANUAL_MENU_ITEM_CREATED", "MENU", built.entityId, {
+        branchId: input.branchId,
+        requestKey: input.requestKey,
+      }),
+    ]);
+    return result;
+  }
+
+  async previewImport(
+    input: ImportPreviewInput,
+    options: {
+      cleanEvidence?: CleanScanEvidence;
+      sourceObjectId?: string;
+      createdBy?: string;
+    } = {},
+  ): Promise<ImportPreview> {
+    this.require(permissions.setupImport);
+    const file = await validateImportFile({
+      kind: input.kind,
+      filename: input.originalName,
+      contentType: input.mimeType,
+      bytes: input.bytes,
+    });
+    const scanEvidence = options.cleanEvidence
+      ? options.cleanEvidence
+      : await requireCleanMalwareScan({
+          scanner: this.env.SERAMET_MALWARE_SCANNER,
+          bytes: input.bytes,
+          sha256: file.digest,
+          contentType: input.mimeType,
+          fileName: file.filename,
+          subject: {
+            jobId: `inline-preview:${file.digest}`,
+            objectKey: `inline://${this.actor.tenantId}/${file.digest}`,
+            objectVersion: file.digest,
+          },
+        });
+    if (scanEvidence.sha256 !== file.digest || scanEvidence.verdict !== "CLEAN") {
+      throw invalidTransition("File security evidence does not match the uploaded file");
+    }
     let rawRows: Array<Record<string, string>>;
     try {
       rawRows = await parseRows(input.bytes, file.extension);
@@ -1187,7 +1430,7 @@ export class OnboardingService {
         fileDigest: file.digest,
         templateVersion: template.version,
         importerVersion: input.kind === "MENU" ? MENU_IMPORTER_VERSION : "setup-import-v1",
-        ...(runtime.productionLike ? { fileValidationPolicy: "validated-unscanned-v1" } : {}),
+        scanEvidenceId: scanEvidence.evidenceId,
         columnMap: normalizeStringRecord(input.columnMap),
         duplicateStrategy: input.duplicateStrategy,
         targetMode: target.mode,
@@ -1255,13 +1498,14 @@ export class OnboardingService {
           json({
             requiresPreview: true,
             extension: file.extension,
-            ...(runtime.productionLike ? { fileValidationPolicy: "validated-unscanned-v1" } : {}),
+            fileValidationPolicy: "authenticated-clean-v1",
+            scanEvidenceId: scanEvidence.evidenceId,
             legacyTemplate: template.legacy,
             unsupportedColumns:
               input.kind === "MENU" ? unsupportedPopulatedMenuColumns(rawRows) : [],
           }),
           effectiveKey,
-          this.actor.id,
+          options.createdBy ?? this.actor.id,
           stamp,
           stamp,
           template.version,
@@ -1298,6 +1542,19 @@ export class OnboardingService {
             json(row.normalized),
           ),
       ),
+      this.db
+        .prepare(
+          `UPDATE setup_imports SET scan_status='CLEAN',scan_evidence_json=?,source_object_id=?,
+             pipeline_state=?
+           WHERE tenant_id=? AND id=?`,
+        )
+        .bind(
+          json(scanEvidence),
+          options.sourceObjectId ?? null,
+          errorCount ? "VALIDATION_FAILED" : "STAGED",
+          this.actor.tenantId,
+          id,
+        ),
       this.audit("SETUP_IMPORT_PREVIEWED", "SETUP_IMPORT", id, {
         kind: input.kind,
         rows: rows.length,
@@ -1312,10 +1569,16 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const record = await this.db
       .prepare(
-        `SELECT branch_id,import_kind,duplicate_strategy,status,idempotency_key,row_count,
-                target_mode,target_branch_ids_json,catalogue_revision,expires_at,verification_json,
-                report_json,created_by
-         FROM setup_imports WHERE tenant_id=? AND id=?`,
+        `SELECT i.branch_id,i.import_kind,i.duplicate_strategy,i.status,i.idempotency_key,i.row_count,
+                i.target_mode,i.target_branch_ids_json,i.catalogue_revision,i.expires_at,
+                i.verification_json,i.report_json,i.created_by,i.file_checksum,i.scan_status,
+                i.scan_evidence_json,i.approved_plan_digest,i.approved_by,i.approved_at,
+                i.batch_size,i.publish_status,i.publish_idempotency_key,i.source_object_id,
+                o.object_key,o.object_version,
+                o.scan_evidence_id,o.status object_status
+         FROM setup_imports i
+         LEFT JOIN stored_objects o ON o.tenant_id=i.tenant_id AND o.id=i.source_object_id
+         WHERE i.tenant_id=? AND i.id=?`,
       )
       .bind(this.actor.tenantId, importId)
       .first<{
@@ -1332,6 +1595,20 @@ export class OnboardingService {
         verification_json: string;
         report_json: string;
         created_by: string;
+        file_checksum: string;
+        scan_status: string;
+        scan_evidence_json: string;
+        approved_plan_digest: string | null;
+        approved_by: string | null;
+        approved_at: string | null;
+        batch_size: number;
+        publish_status: string;
+        publish_idempotency_key: string | null;
+        source_object_id: string | null;
+        object_key: string | null;
+        object_version: string | null;
+        scan_evidence_id: string | null;
+        object_status: string | null;
       }>();
     if (!record) throw notFound("Import preview not found");
     const targetBranchIds = parseJson<string[]>(record.target_branch_ids_json, []);
@@ -1341,6 +1618,9 @@ export class OnboardingService {
     for (const targetBranchId of targetBranchIds) await this.assertImportBranch(targetBranchId);
     if (record.branch_id && record.import_kind !== "MENU")
       await this.assertBranch(record.branch_id);
+    if (idempotencyKey !== `commit:${record.idempotency_key}`) {
+      throw validation("Commit idempotency key does not match the preview");
+    }
     if (record.status === "COMMITTED") {
       return {
         id: importId,
@@ -1350,21 +1630,26 @@ export class OnboardingService {
         verification: parseJson(record.verification_json, {}),
       };
     }
-    // Previously created previews are never promoted to the unscanned policy automatically.
-    // A new validation preview is required, preserving the incident replay guard.
-    if (resolveRuntimeConfiguration(this.env).productionLike) {
-      const report = parseJson<{ fileValidationPolicy?: string }>(record.report_json, {});
-      if (report.fileValidationPolicy !== "validated-unscanned-v1") {
-        throw invalidTransition(
-          "Import preview predates the current file validation policy; create and review a fresh preview",
-        );
-      }
+    const productionLike = resolveRuntimeConfiguration(this.env).productionLike;
+    if (
+      (productionLike && !record.source_object_id) ||
+      !hasValidCleanEvidence(record.file_checksum, record.scan_status, record.scan_evidence_json, {
+        ...(record.source_object_id
+          ? {
+              objectKey: record.object_key,
+              objectVersion: record.object_version,
+              evidenceId: record.scan_evidence_id,
+              objectStatus: record.object_status,
+            }
+          : {}),
+      })
+    ) {
+      throw invalidTransition(
+        "Import preview has no valid file security scan; upload the file again",
+      );
     }
     if (record.status !== "VALIDATED" && !(options.worker && record.status === "COMMITTING")) {
       throw validation("Import has validation errors or is already being committed");
-    }
-    if (idempotencyKey !== `commit:${record.idempotency_key}`) {
-      throw validation("Commit idempotency key does not match the preview");
     }
     if (record.expires_at && Date.parse(record.expires_at) <= Date.now()) {
       throw invalidTransition("Import preview expired; create a new preview before committing");
@@ -1377,35 +1662,49 @@ export class OnboardingService {
         );
       }
     }
-    // Menu rows expand into multiple item/branch/audit SQL statements. Avoid a long
-    // synchronous Cloudflare request even for a medium-sized restaurant menu.
-    if (
-      (record.row_count > 500 || (record.import_kind === "MENU" && record.row_count > 100)) &&
-      !options.worker
-    ) {
-      const jobId = stableId("worker", `setup-import-commit:${importId}`);
+    // Every menu import uses the same durable path. Approval freezes the exact
+    // server-side plan; workers then apply bounded batches without replaying rows.
+    if (record.import_kind === "MENU" && !options.worker) {
+      const planDigest = await this.importPlanDigest(importId, record.file_checksum);
+      if (record.approved_plan_digest && record.approved_plan_digest !== planDigest) {
+        throw invalidTransition("Approved import plan no longer matches its staged rows");
+      }
+      const jobKey = `setup-import-commit:${importId}:0`;
+      const jobId = stableId("worker", jobKey);
       const correlationId = crypto.randomUUID();
       const stamp = now();
       await this.db.batch([
         this.db
           .prepare(
-            `UPDATE setup_imports SET status='COMMITTING',updated_at=?
-             WHERE tenant_id=? AND id=? AND status='VALIDATED'`,
+            `UPDATE setup_imports SET status='COMMITTING',pipeline_state='COMMITTING',
+               approved_plan_digest=?,approved_by=?,approved_at=COALESCE(approved_at,?),
+               plan_revision=CASE WHEN approved_plan_digest IS NULL THEN plan_revision+1 ELSE plan_revision END,
+               updated_at=?
+             WHERE tenant_id=? AND id=? AND status IN ('VALIDATED','COMMITTING')
+               AND (approved_plan_digest IS NULL OR approved_plan_digest=?)`,
           )
-          .bind(stamp, this.actor.tenantId, importId),
-        this.enqueueJobStatement(
-          "SETUP_IMPORT_COMMIT",
+          .bind(planDigest, this.actor.id, stamp, stamp, this.actor.tenantId, importId, planDigest),
+        this.enqueueJobStatement("SETUP_IMPORT_COMMIT", importId, jobKey, correlationId, {
           importId,
-          `setup-import-commit:${importId}`,
-          correlationId,
-          { importId, commitKey: idempotencyKey },
-        ),
-        this.audit("SETUP_IMPORT_COMMIT_QUEUED", "SETUP_IMPORT", importId, {
+          commitKey: idempotencyKey,
+          planDigest,
+        }),
+        this.audit("SETUP_IMPORT_PLAN_APPROVED", "SETUP_IMPORT", importId, {
           rows: record.row_count,
           jobId,
           correlationId,
+          planDigest,
+        }),
+        this.importStateEvent("APPROVED", {
+          importId,
+          evidence: { planDigest, approvedBy: this.actor.id },
+        }),
+        this.importStateEvent("COMMITTING", {
+          importId,
+          evidence: { jobId, batchSize: record.batch_size },
         }),
       ]);
+      await this.dispatchWorkerJob(jobId, correlationId);
       return {
         id: importId,
         duplicate: false,
@@ -1415,10 +1714,22 @@ export class OnboardingService {
         rows: record.row_count,
       };
     }
+    if (
+      options.worker &&
+      record.import_kind === "MENU" &&
+      (!record.approved_plan_digest ||
+        record.approved_plan_digest !==
+          (await this.importPlanDigest(importId, record.file_checksum)))
+    ) {
+      throw invalidTransition("Worker rejected a changed or unapproved import plan");
+    }
+    const rowLimit =
+      record.import_kind === "MENU" ? Math.max(10, Math.min(25, record.batch_size)) : 100000;
     const rows = await this.db
       .prepare(
         `SELECT row_number,row_key,normalized_json,action FROM setup_import_rows
-         WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING') ORDER BY row_number`,
+         WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING')
+         ORDER BY row_number LIMIT ${rowLimit}`,
       )
       .bind(this.actor.tenantId, importId)
       .all<{ row_number: number; row_key: string; normalized_json: string; action: string }>();
@@ -1452,17 +1763,26 @@ export class OnboardingService {
         record.import_kind === "MENU"
           ? stableId("menu", string(value["code"]).toUpperCase())
           : undefined;
-      const committed = await this.buildImportStatements(
-        record.import_kind,
-        record.duplicate_strategy,
-        record.branch_id,
-        value,
-        {
-          masterAlreadyPlanned: Boolean(
-            plannedMenuEntityId && expectedEntityIds.has(plannedMenuEntityId),
-          ),
-        },
-      );
+      const committed =
+        record.import_kind === "MENU"
+          ? this.buildMenuStageStatements(
+              importId,
+              row.row_number,
+              row.action,
+              value,
+              record.approved_plan_digest!,
+            )
+          : await this.buildImportStatements(
+              record.import_kind,
+              record.duplicate_strategy,
+              record.branch_id,
+              value,
+              {
+                masterAlreadyPlanned: Boolean(
+                  plannedMenuEntityId && expectedEntityIds.has(plannedMenuEntityId),
+                ),
+              },
+            );
       expectedEntityIds.add(committed.entityId);
       for (const key of committed.branchSettingKeys ?? []) expectedBranchSettings.add(key);
       if (committed.created) created += 1;
@@ -1483,18 +1803,32 @@ export class OnboardingService {
             row.row_number,
           ),
       );
+      if (record.import_kind === "MENU") {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE setup_import_rows SET materialized_at=?
+               WHERE tenant_id=? AND import_id=? AND row_number=?`,
+            )
+            .bind(now(), this.actor.tenantId, importId, row.row_number),
+        );
+      }
     }
     const stamp = now();
     statements.push(
       this.db
         .prepare(
-          `UPDATE setup_imports SET status='COMMITTING',updated_at=?
+          `UPDATE setup_imports SET status='COMMITTING',pipeline_state='COMMITTING',updated_at=?
            WHERE tenant_id=? AND id=? AND status IN ('VALIDATED','COMMITTING')`,
         )
         .bind(stamp, this.actor.tenantId, importId),
       this.audit("SETUP_IMPORT_APPLIED", "SETUP_IMPORT", importId, {
         kind: record.import_kind,
         rows: rows.results?.length ?? 0,
+      }),
+      this.importStateEvent("COMMITTING", {
+        importId,
+        evidence: { rows: rows.results?.length ?? 0 },
       }),
     );
     try {
@@ -1514,7 +1848,8 @@ export class OnboardingService {
       await this.db.batch([
         this.db
           .prepare(
-            `UPDATE setup_imports SET status='FAILED',verification_status='FAILED',
+            `UPDATE setup_imports SET status='FAILED',pipeline_state='COMMIT_FAILED',
+               verification_status='FAILED',
                verification_json=?,updated_at=? WHERE tenant_id=? AND id=?`,
           )
           .bind(json(failedVerification), failedAt, this.actor.tenantId, importId),
@@ -1522,16 +1857,73 @@ export class OnboardingService {
           kind: record.import_kind,
           errorCode: error instanceof Error ? error.name : "DATABASE_ERROR",
         }),
+        this.importStateEvent("COMMIT_FAILED", {
+          importId,
+          evidence: { errorCode: error instanceof Error ? error.name : "DATABASE_ERROR" },
+        }),
       ]);
       throw invalidTransition("Import commit failed; no synchronous changes were committed");
     }
+    if (record.import_kind === "MENU") {
+      const remaining = await count(
+        this.db,
+        `SELECT COUNT(*) count FROM setup_import_rows
+         WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING')`,
+        this.actor.tenantId,
+        importId,
+      );
+      if (remaining > 0) {
+        const processed = record.row_count - remaining;
+        const nextKey = `setup-import-commit:${importId}:${processed}`;
+        const correlationId = crypto.randomUUID();
+        await this.db.batch([
+          this.enqueueJobStatement("SETUP_IMPORT_COMMIT", importId, nextKey, correlationId, {
+            importId,
+            commitKey: idempotencyKey,
+            planDigest: record.approved_plan_digest,
+          }),
+          this.audit("SETUP_IMPORT_BATCH_COMMITTED", "SETUP_IMPORT", importId, {
+            processed,
+            remaining,
+            batchSize: rows.results?.length ?? 0,
+            correlationId,
+          }),
+        ]);
+        await this.dispatchWorkerJob(stableId("worker", nextKey), correlationId);
+        return {
+          id: importId,
+          duplicate: false,
+          queued: true,
+          status: "QUEUED" as const,
+          jobId: stableId("worker", nextKey),
+          rows: rows.results?.length ?? 0,
+        };
+      }
+    }
+    await this.db.batch([
+      this.db
+        .prepare(
+          "UPDATE setup_imports SET pipeline_state='VERIFYING',updated_at=? WHERE tenant_id=? AND id=? AND status='COMMITTING'",
+        )
+        .bind(now(), this.actor.tenantId, importId),
+      this.importStateEvent("VERIFYING", { importId, evidence: {} }),
+    ]);
+    const completion =
+      record.import_kind === "MENU"
+        ? await this.menuImportCompletionContext(importId)
+        : { expectedEntityIds, expectedBranchSettings, created, updated, skipped };
     const verification =
       record.import_kind === "MENU"
-        ? await this.verifyMenuImport(expectedEntityIds, expectedBranchSettings, {
-            created,
-            updated,
-            skipped,
-          })
+        ? await this.verifyStagedMenuImport(
+            importId,
+            completion.expectedEntityIds,
+            completion.expectedBranchSettings,
+            {
+              created: completion.created,
+              updated: completion.updated,
+              skipped: completion.skipped,
+            },
+          )
         : {
             status: "VERIFIED" as const,
             created,
@@ -1546,13 +1938,16 @@ export class OnboardingService {
     await this.db.batch([
       this.db
         .prepare(
-          `UPDATE setup_imports SET status=?,verification_status=?,verification_json=?,
-             committed_at=?,updated_at=? WHERE tenant_id=? AND id=? AND status='COMMITTING'`,
+          `UPDATE setup_imports SET status=?,pipeline_state=?,verification_status=?,verification_json=?,
+             publish_status=?,committed_at=?,updated_at=?
+           WHERE tenant_id=? AND id=? AND status='COMMITTING'`,
         )
         .bind(
           verification.status === "VERIFIED" ? "COMMITTED" : "FAILED",
+          verification.status === "VERIFIED" ? "READY_TO_PUBLISH" : "VERIFICATION_FAILED",
           verification.status,
           json(verification),
+          verification.status === "VERIFIED" ? "READY" : "FAILED",
           verification.status === "VERIFIED" ? committedAt : null,
           committedAt,
           this.actor.tenantId,
@@ -1566,6 +1961,10 @@ export class OnboardingService {
         importId,
         { kind: record.import_kind, ...verification },
       ),
+      this.importStateEvent(
+        verification.status === "VERIFIED" ? "READY_TO_PUBLISH" : "VERIFICATION_FAILED",
+        { importId, evidence: verification },
+      ),
     ]);
     if (verification.status !== "VERIFIED") {
       throw invalidTransition("Import data could not be verified in the authoritative catalogue");
@@ -1576,6 +1975,279 @@ export class OnboardingService {
       queued: false,
       status: "COMMITTED" as const,
       rows: rows.results?.length ?? 0,
+      verification,
+    };
+  }
+
+  async publishImport(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean } = {},
+  ) {
+    this.require(permissions.setupImport);
+    const record = await this.db
+      .prepare(
+        `SELECT status,verification_status,approved_plan_digest,publish_status,
+                publish_idempotency_key,duplicate_strategy,target_branch_ids_json,created_by,
+                batch_size
+         FROM setup_imports WHERE tenant_id=? AND id=? AND import_kind='MENU'`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .first<{
+        status: string;
+        verification_status: string;
+        approved_plan_digest: string | null;
+        publish_status: string;
+        publish_idempotency_key: string | null;
+        duplicate_strategy: string;
+        target_branch_ids_json: string;
+        created_by: string;
+        batch_size: number;
+      }>();
+    if (!record) throw notFound("Menu import not found");
+    const branchIds = parseJson<string[]>(record.target_branch_ids_json, []);
+    if (options.worker) await this.assertQueuedImportAuthority(record.created_by, branchIds);
+    for (const branchId of branchIds) await this.assertImportBranch(branchId);
+    if (!record.approved_plan_digest || record.verification_status !== "VERIFIED") {
+      throw invalidTransition("Menu import plan is not approved and verified for publication");
+    }
+    const expectedKey = `publish:${record.approved_plan_digest}`;
+    if (idempotencyKey !== expectedKey) {
+      throw validation("Publish idempotency key does not match the approved import plan");
+    }
+    if (record.publish_status === "PUBLISHED") {
+      return { id: importId, duplicate: true, queued: false, status: "PUBLISHED" as const };
+    }
+    if (record.publish_idempotency_key && record.publish_idempotency_key !== idempotencyKey) {
+      throw invalidTransition("Menu import publication identity has already been assigned");
+    }
+    if (!options.worker) {
+      if (
+        record.status !== "COMMITTED" ||
+        !["READY", "PUBLISHING"].includes(record.publish_status)
+      ) {
+        throw invalidTransition("Menu import is not ready to publish");
+      }
+      const key = `setup-import-publish:${importId}:0`;
+      const correlationId = crypto.randomUUID();
+      const stamp = now();
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE setup_imports SET publish_status='PUBLISHING',pipeline_state='PUBLISHING',
+               publish_idempotency_key=?,updated_at=?
+             WHERE tenant_id=? AND id=? AND publish_status IN ('READY','PUBLISHING')`,
+          )
+          .bind(idempotencyKey, stamp, this.actor.tenantId, importId),
+        this.enqueueJobStatement("SETUP_IMPORT_PUBLISH", importId, key, correlationId, {
+          importId,
+          publishKey: idempotencyKey,
+          planDigest: record.approved_plan_digest,
+        }),
+        this.audit("SETUP_IMPORT_PUBLISH_QUEUED", "SETUP_IMPORT", importId, {
+          correlationId,
+          planDigest: record.approved_plan_digest,
+        }),
+        this.importStateEvent("PUBLISHING", {
+          importId,
+          evidence: { planDigest: record.approved_plan_digest },
+        }),
+      ]);
+      await this.dispatchWorkerJob(stableId("worker", key), correlationId);
+      return {
+        id: importId,
+        duplicate: false,
+        queued: true,
+        status: "PUBLISHING" as const,
+        jobId: stableId("worker", key),
+      };
+    }
+    if (record.publish_status !== "PUBLISHING") {
+      throw invalidTransition("Menu import publication is not active");
+    }
+
+    const rowLimit = Math.max(10, Math.min(25, record.batch_size));
+    const rows = await this.db
+      .prepare(
+        `SELECT row_number,committed_entity_id
+         FROM setup_import_rows WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+           AND publication_verified_at IS NULL ORDER BY row_number LIMIT ${rowLimit}`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .all<{
+        row_number: number;
+        committed_entity_id: string;
+      }>();
+    const statements: D1PreparedStatement[] = [];
+    for (const row of rows.results ?? []) {
+      const staged = await count(
+        this.db,
+        `SELECT COUNT(*) count FROM menu_import_staged_items
+         WHERE tenant_id=? AND import_id=? AND menu_item_id=? AND plan_digest=?`,
+        this.actor.tenantId,
+        importId,
+        row.committed_entity_id,
+        record.approved_plan_digest,
+      );
+      if (staged !== 1) {
+        throw invalidTransition("Approved menu import plan changed before publication");
+      }
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE setup_import_rows SET publication_verified_at=?
+             WHERE tenant_id=? AND import_id=? AND row_number=?
+               AND publication_verified_at IS NULL`,
+          )
+          .bind(now(), this.actor.tenantId, importId, row.row_number),
+      );
+    }
+    if (statements.length) await this.db.batch(statements);
+
+    const remaining = await count(
+      this.db,
+      `SELECT COUNT(*) count FROM setup_import_rows
+       WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+         AND publication_verified_at IS NULL`,
+      this.actor.tenantId,
+      importId,
+    );
+    if (remaining > 0) {
+      const published = await count(
+        this.db,
+        `SELECT COUNT(*) count FROM setup_import_rows
+         WHERE tenant_id=? AND import_id=? AND publication_verified_at IS NOT NULL`,
+        this.actor.tenantId,
+        importId,
+      );
+      const key = `setup-import-publish:${importId}:${published}`;
+      const correlationId = crypto.randomUUID();
+      await this.db.batch([
+        this.enqueueJobStatement("SETUP_IMPORT_PUBLISH", importId, key, correlationId, {
+          importId,
+          publishKey: idempotencyKey,
+          planDigest: record.approved_plan_digest,
+        }),
+        this.audit("SETUP_IMPORT_PUBLISH_BATCH_COMPLETED", "SETUP_IMPORT", importId, {
+          published,
+          remaining,
+          correlationId,
+        }),
+      ]);
+      await this.dispatchWorkerJob(stableId("worker", key), correlationId);
+      return {
+        id: importId,
+        duplicate: false,
+        queued: true,
+        status: "PUBLISHING" as const,
+        jobId: stableId("worker", key),
+      };
+    }
+
+    const completion = await this.menuImportCompletionContext(importId);
+    const approvedPlanRows = await count(
+      this.db,
+      `SELECT COUNT(*) count FROM setup_import_rows
+       WHERE tenant_id=? AND import_id=? AND status='COMMITTED'`,
+      this.actor.tenantId,
+      importId,
+    );
+    const verifiedCommittedRows = await count(
+      this.db,
+      `SELECT COUNT(*) count FROM setup_import_rows
+       WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+         AND publication_verified_at IS NOT NULL`,
+      this.actor.tenantId,
+      importId,
+    );
+    const stagedVerification = await this.verifyStagedMenuImport(
+      importId,
+      completion.expectedEntityIds,
+      completion.expectedBranchSettings,
+      {
+        created: completion.created,
+        updated: completion.updated,
+        skipped: completion.skipped,
+      },
+    );
+    const publicationInvariant = {
+      ...stagedVerification,
+      approvedPlanRows,
+      verifiedCommittedRows,
+      requiredBranchActivations: completion.expectedBranchSettings.size,
+      verifiedBranchActivations: stagedVerification.branchSettings,
+    };
+    const stamp = now();
+    if (
+      stagedVerification.status !== "VERIFIED" ||
+      approvedPlanRows !== verifiedCommittedRows ||
+      stagedVerification.branchSettings !== completion.expectedBranchSettings.size
+    ) {
+      await this.db
+        .prepare(
+          `UPDATE setup_imports SET publish_status='FAILED',pipeline_state='VERIFICATION_FAILED',
+             verification_status='FAILED',
+             verification_json=?,updated_at=? WHERE tenant_id=? AND id=?`,
+        )
+        .bind(json(publicationInvariant), stamp, this.actor.tenantId, importId)
+        .run();
+      throw invalidTransition("Complete menu import plan could not be verified for publication");
+    }
+    await this.db.batch([
+      ...this.publishMenuPlanStatements(importId, stamp),
+      this.db
+        .prepare(
+          `UPDATE setup_import_rows SET published_at=?
+           WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+             AND publication_verified_at IS NOT NULL`,
+        )
+        .bind(stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `UPDATE setup_imports SET publish_status='PUBLISHED',pipeline_state='PUBLISHED',
+             published_at=?,verification_json=?,updated_at=?
+           WHERE tenant_id=? AND id=? AND publish_status='PUBLISHING'`,
+        )
+        .bind(stamp, json(publicationInvariant), stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `INSERT INTO realtime_events
+            (tenant_id,id,branch_id,topic,entity_type,entity_id,event_type,correlation_id,
+             payload_json,created_at,expires_at)
+           VALUES (?,?,NULL,'menu','SETUP_IMPORT',?,'MENU_IMPORT_PUBLISHED',?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          importId,
+          crypto.randomUUID(),
+          json({ importId, branchIds }),
+          stamp,
+          new Date(Date.parse(stamp) + 24 * 60 * 60 * 1000).toISOString(),
+        ),
+      this.audit("SETUP_IMPORT_PUBLISHED", "SETUP_IMPORT", importId, publicationInvariant),
+      this.importStateEvent("PUBLISHED", {
+        importId,
+        evidence: publicationInvariant,
+      }),
+    ]);
+    const verification = await this.verifyMenuImport(
+      completion.expectedEntityIds,
+      completion.expectedBranchSettings,
+      {
+        created: completion.created,
+        updated: completion.updated,
+        skipped: completion.skipped,
+      },
+    );
+    if (verification.status !== "VERIFIED") {
+      throw invalidTransition("Published menu failed authoritative post-write verification");
+    }
+    return {
+      id: importId,
+      duplicate: false,
+      queued: false,
+      status: "PUBLISHED" as const,
       verification,
     };
   }
@@ -1635,7 +2307,8 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const record = await this.db
       .prepare(
-        `SELECT status,row_count,verification_json,updated_at,target_branch_ids_json
+        `SELECT status,row_count,verification_json,updated_at,target_branch_ids_json,publish_status,
+                published_at
          FROM setup_imports WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, importId)
@@ -1645,6 +2318,8 @@ export class OnboardingService {
         verification_json: string;
         updated_at: string;
         target_branch_ids_json: string;
+        publish_status: ImportPreview["publishStatus"];
+        published_at: string | null;
       }>();
     if (!record) throw notFound("Import not found");
     for (const id of parseJson<string[]>(record.target_branch_ids_json, [])) {
@@ -1653,9 +2328,11 @@ export class OnboardingService {
     const worker = await this.db
       .prepare(
         `SELECT status,attempt_count,updated_at FROM worker_jobs
-         WHERE tenant_id=? AND idempotency_key=? AND job_type='SETUP_IMPORT_COMMIT'`,
+         WHERE tenant_id=? AND idempotency_key LIKE ?
+           AND job_type IN ('SETUP_IMPORT_COMMIT','SETUP_IMPORT_PUBLISH')
+         ORDER BY updated_at DESC LIMIT 1`,
       )
-      .bind(this.actor.tenantId, `setup-import-commit:${importId}`)
+      .bind(this.actor.tenantId, `setup-import-%:${importId}:%`)
       .first<{ status: string; attempt_count: number; updated_at: string }>();
     const counts = await this.db
       .prepare(
@@ -1691,6 +2368,8 @@ export class OnboardingService {
       status: record.status,
       rowCount: record.row_count,
       updatedAt: record.updated_at,
+      publishStatus: record.publish_status,
+      publishedAt: record.published_at,
       verification,
       progress: {
         total: record.row_count,
@@ -1707,6 +2386,35 @@ export class OnboardingService {
       worker: worker
         ? { status: worker.status, attempts: worker.attempt_count, updatedAt: worker.updated_at }
         : null,
+    };
+  }
+
+  async importPreparationStatus(jobId: string) {
+    this.require(permissions.setupImport);
+    const job = await this.db
+      .prepare(
+        `SELECT id,status,attempt_count,last_error,result_json,updated_at
+         FROM worker_jobs WHERE tenant_id=? AND id=? AND job_type='SETUP_IMPORT_PREPARE'`,
+      )
+      .bind(this.actor.tenantId, jobId)
+      .first<{
+        id: string;
+        status: string;
+        attempt_count: number;
+        last_error: string | null;
+        result_json: string;
+        updated_at: string;
+      }>();
+    if (!job) throw notFound("Import preparation job not found");
+    return {
+      id: job.id,
+      status: job.status,
+      attempts: job.attempt_count,
+      updatedAt: job.updated_at,
+      ...(job.status === "SUCCEEDED" ? { result: parseJson(job.result_json, {}) } : {}),
+      ...(job.status === "FAILED" || job.status === "DEAD_LETTER"
+        ? { error: "File preparation failed; the quarantined file was not parsed" }
+        : {}),
     };
   }
 
@@ -4229,6 +4937,147 @@ export class OnboardingService {
     return results;
   }
 
+  private buildMenuStageStatements(
+    importId: string,
+    rowNumber: number,
+    action: string,
+    value: ImportValue,
+    planDigest: string,
+  ) {
+    const itemId = stableId("menu", string(value.code).toUpperCase());
+    const stamp = now();
+    const menuPayload = {
+      imported: true,
+      importId,
+      templateVersion: value.templateVersion,
+      menuSection: value.menuSection,
+      costPriceMinor: value.costPriceMinor,
+      unitOfMeasure: value.unitOfMeasure,
+      prepMinutes: value.prepMinutes,
+      parLevel: value.parLevel,
+      imageFilename: value.imageFilename,
+      onlinePriceMinor: value.onlinePriceMinor,
+      onlinePriceChannelCodes: Array.isArray(value.onlinePriceChannelCodes)
+        ? value.onlinePriceChannelCodes
+        : [],
+      recipePending: Boolean(value.recipePending),
+    };
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO menu_import_staged_items
+            (tenant_id,import_id,menu_item_id,source_row_number,action,before_json,after_json,
+             plan_digest,code,sku,name,category_code,description,selling_price_minor,currency,
+             tax_rule_id,service_charge_applicable,recipe_reference,modifier_group_reference,
+             barcode,sellable,payload_json,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(tenant_id,import_id,menu_item_id) DO UPDATE SET
+             after_json=excluded.after_json,plan_digest=excluded.plan_digest,
+             code=excluded.code,sku=excluded.sku,name=excluded.name,
+             category_code=excluded.category_code,description=excluded.description,
+             selling_price_minor=excluded.selling_price_minor,currency=excluded.currency,
+             tax_rule_id=excluded.tax_rule_id,
+             service_charge_applicable=excluded.service_charge_applicable,
+             recipe_reference=excluded.recipe_reference,
+             modifier_group_reference=excluded.modifier_group_reference,
+             barcode=excluded.barcode,sellable=excluded.sellable,payload_json=excluded.payload_json`,
+        )
+        .bind(
+          this.actor.tenantId,
+          importId,
+          itemId,
+          rowNumber,
+          action,
+          json(value.before ?? {}),
+          json(value),
+          planDigest,
+          string(value.code).toUpperCase(),
+          optionalString(value.sku),
+          string(value.name),
+          string(value.categoryCode),
+          optionalString(value.description),
+          number(value.sellingPriceMinor),
+          string(value.currency),
+          optionalString(value.taxRuleId),
+          bool(Boolean(value.serviceChargeApplicable)),
+          optionalString(value.recipeReference),
+          optionalString(value.modifierGroupReference),
+          optionalString(value.barcode),
+          bool(value.sellable !== false),
+          json(menuPayload),
+          stamp,
+        ),
+    ];
+    const branchSettingKeys: string[] = [];
+    const targetBranchIds = Array.isArray(value.targetBranchIds)
+      ? [...new Set(value.targetBranchIds.map(string).filter(Boolean))]
+      : [];
+    for (const branchId of targetBranchIds) {
+      branchSettingKeys.push(`${branchId}:${itemId}`);
+      const stationIdsByBranch =
+        value.stationIdsByBranch && typeof value.stationIdsByBranch === "object"
+          ? (value.stationIdsByBranch as Record<string, unknown>)
+          : {};
+      const stationId = optionalString(stationIdsByBranch[branchId]);
+      const sourceStation = string(value.stationCode).trim();
+      const normalizedSource = sourceStation ? normalizeReferenceValue(sourceStation) : null;
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO menu_import_staged_branch_settings
+              (tenant_id,import_id,branch_id,menu_item_id,source_row_number,after_json,
+               plan_digest,selling_price_minor,available,channel_availability_json,station_id,
+               kitchen_printer_group,payload_json,source_station_normalized,reference_alias_id,
+               created_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(tenant_id,import_id,branch_id,menu_item_id) DO UPDATE SET
+               after_json=excluded.after_json,plan_digest=excluded.plan_digest,
+               selling_price_minor=excluded.selling_price_minor,available=excluded.available,
+               channel_availability_json=excluded.channel_availability_json,
+               station_id=excluded.station_id,
+               kitchen_printer_group=excluded.kitchen_printer_group,
+               payload_json=excluded.payload_json,
+               source_station_normalized=excluded.source_station_normalized,
+               reference_alias_id=excluded.reference_alias_id`,
+          )
+          .bind(
+            this.actor.tenantId,
+            importId,
+            branchId,
+            itemId,
+            rowNumber,
+            json(value),
+            planDigest,
+            value.branchPriceMinor === undefined ? null : number(value.branchPriceMinor),
+            bool(value.available !== false),
+            json(value.channelAvailability ?? {}),
+            stationId,
+            optionalString(value.kitchenPrinterGroup),
+            json({
+              imported: true,
+              importId,
+              templateVersion: value.templateVersion,
+              onlinePriceChannelCodes: Array.isArray(value.onlinePriceChannelCodes)
+                ? value.onlinePriceChannelCodes
+                : [],
+            }),
+            normalizedSource,
+            normalizedSource ? stableId("station-alias", `${branchId}:${normalizedSource}`) : null,
+            stamp,
+          ),
+      );
+    }
+    return {
+      statements,
+      entityType: "MENU",
+      entityId: itemId,
+      skipped: false,
+      created: action === "CREATE",
+      masterChanged: action === "UPDATE",
+      branchSettingKeys,
+    };
+  }
+
   private async buildImportStatements(
     kind: string,
     strategy: string,
@@ -4260,7 +5109,7 @@ export class OnboardingService {
       .bind(this.actor.tenantId, code)
       .first<{ id: string }>();
     if (exists && strategy === "ERROR") throw validation(`${kind} ${code} already exists`);
-    if (exists && strategy === "CREATE")
+    if (exists && strategy === "CREATE" && !options.masterAlreadyPlanned)
       throw validation(`${kind} ${code} already exists and cannot be created twice`);
     if (exists && strategy === "SKIP")
       return {
@@ -4596,6 +5445,163 @@ export class OnboardingService {
     };
   }
 
+  private publishMenuPlanStatements(importId: string, stamp: string) {
+    return [
+      this.db
+        .prepare(
+          `INSERT INTO menu_catalog_items
+            (tenant_id,id,code,sku,name,category_code,description,selling_price_minor,currency,
+             tax_rule_id,service_charge_applicable,station_id,recipe_reference,
+             modifier_group_reference,barcode,sellable,active,payload_json,created_at,updated_at)
+           SELECT tenant_id,menu_item_id,code,sku,name,category_code,description,
+                  selling_price_minor,currency,tax_rule_id,service_charge_applicable,NULL,
+                  recipe_reference,modifier_group_reference,barcode,sellable,1,payload_json,?,?
+           FROM menu_import_staged_items
+           WHERE tenant_id=? AND import_id=?
+           ON CONFLICT(tenant_id,id) DO UPDATE SET
+             code=excluded.code,sku=excluded.sku,name=excluded.name,
+             category_code=excluded.category_code,description=excluded.description,
+             selling_price_minor=excluded.selling_price_minor,currency=excluded.currency,
+             tax_rule_id=excluded.tax_rule_id,
+             service_charge_applicable=excluded.service_charge_applicable,
+             recipe_reference=excluded.recipe_reference,
+             modifier_group_reference=excluded.modifier_group_reference,
+             barcode=excluded.barcode,sellable=excluded.sellable,active=1,
+             payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+        )
+        .bind(stamp, stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `INSERT INTO menu_item_branch_settings
+            (tenant_id,branch_id,menu_item_id,selling_price_minor,available,
+             channel_availability_json,updated_at,station_id,kitchen_printer_group,payload_json)
+           SELECT tenant_id,branch_id,menu_item_id,selling_price_minor,available,
+                  channel_availability_json,?,station_id,kitchen_printer_group,payload_json
+           FROM menu_import_staged_branch_settings
+           WHERE tenant_id=? AND import_id=?
+           ON CONFLICT(tenant_id,branch_id,menu_item_id) DO UPDATE SET
+             selling_price_minor=excluded.selling_price_minor,available=excluded.available,
+             channel_availability_json=excluded.channel_availability_json,
+             station_id=excluded.station_id,
+             kitchen_printer_group=excluded.kitchen_printer_group,
+             payload_json=excluded.payload_json,updated_at=excluded.updated_at`,
+        )
+        .bind(stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `INSERT INTO setup_import_reference_aliases
+            (tenant_id,id,reference_type,source_value_normalized,branch_id,target_id,active,
+             created_by,created_at,updated_at)
+           SELECT DISTINCT tenant_id,reference_alias_id,'STATION',source_station_normalized,branch_id,
+                  station_id,1,?,?,?
+           FROM menu_import_staged_branch_settings
+           WHERE tenant_id=? AND import_id=? AND station_id IS NOT NULL
+             AND source_station_normalized IS NOT NULL AND reference_alias_id IS NOT NULL
+           ON CONFLICT(tenant_id,reference_type,source_value_normalized,branch_id)
+           DO UPDATE SET target_id=excluded.target_id,active=1,updated_at=excluded.updated_at`,
+        )
+        .bind(this.actor.id, stamp, stamp, this.actor.tenantId, importId),
+    ];
+  }
+
+  private async importPlanDigest(importId: string, fileChecksum: string) {
+    const plan = await this.db
+      .prepare(
+        `SELECT row_number,row_key,action,after_json,errors_json,warnings_json
+         FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .all<Record<string, unknown>>();
+    return sha256Text(
+      stableJson({
+        tenantId: this.actor.tenantId,
+        importId,
+        fileChecksum,
+        rows: (plan.results ?? []).map((row) => ({
+          rowNumber: number(row["row_number"]),
+          rowKey: string(row["row_key"]),
+          action: string(row["action"]),
+          after: parseJson(string(row["after_json"]), {}),
+          errors: parseJson(string(row["errors_json"]), []),
+          warnings: parseJson(string(row["warnings_json"]), []),
+        })),
+      }),
+    );
+  }
+
+  private async menuImportCompletionContext(importId: string) {
+    const rows = await this.db
+      .prepare(
+        `SELECT status,action,normalized_json FROM setup_import_rows
+         WHERE tenant_id=? AND import_id=? ORDER BY row_number`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .all<{ status: string; action: string; normalized_json: string }>();
+    const expectedEntityIds = new Set<string>();
+    const expectedBranchSettings = new Set<string>();
+    const createdEntityIds = new Set<string>();
+    const updatedEntityIds = new Set<string>();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const row of rows.results ?? []) {
+      const value = parseJson<ImportValue>(row.normalized_json, {});
+      const itemId = stableId("menu", string(value.code).toUpperCase());
+      if (row.status === "SKIPPED") {
+        skipped += 1;
+        continue;
+      }
+      if (row.status !== "COMMITTED") continue;
+      expectedEntityIds.add(itemId);
+      for (const branchId of Array.isArray(value.targetBranchIds)
+        ? value.targetBranchIds.map(string).filter(Boolean)
+        : []) {
+        expectedBranchSettings.add(`${branchId}:${itemId}`);
+      }
+      if (row.action === "UPDATE") updatedEntityIds.add(itemId);
+      else createdEntityIds.add(itemId);
+    }
+    created = createdEntityIds.size;
+    updated = updatedEntityIds.size;
+    return { expectedEntityIds, expectedBranchSettings, created, updated, skipped };
+  }
+
+  private async verifyStagedMenuImport(
+    importId: string,
+    entityIds: Set<string>,
+    branchSettingKeys: Set<string>,
+    counts: { created: number; updated: number; skipped: number },
+  ): Promise<NonNullable<ImportPreview["verification"]>> {
+    const stagedItems = await count(
+      this.db,
+      `SELECT COUNT(*) count FROM menu_import_staged_items
+       WHERE tenant_id=? AND import_id=?`,
+      this.actor.tenantId,
+      importId,
+    );
+    const stagedBranches = await count(
+      this.db,
+      `SELECT COUNT(*) count FROM menu_import_staged_branch_settings
+       WHERE tenant_id=? AND import_id=?`,
+      this.actor.tenantId,
+      importId,
+    );
+    const catalogueVerified = stagedItems === entityIds.size;
+    const branchesVerified = stagedBranches === branchSettingKeys.size;
+    const warnings = [
+      ...(catalogueVerified ? [] : ["The immutable item plan could not be verified"]),
+      ...(branchesVerified ? [] : ["The immutable branch activation plan could not be verified"]),
+    ];
+    return {
+      status: warnings.length ? "FAILED" : "VERIFIED",
+      ...counts,
+      failed: warnings.length ? 1 : 0,
+      branchSettings: stagedBranches,
+      catalogueVerified: catalogueVerified && branchesVerified,
+      warnings,
+    };
+  }
+
   private async verifyMenuImport(
     entityIds: Set<string>,
     branchSettingKeys: Set<string>,
@@ -4653,22 +5659,42 @@ export class OnboardingService {
   private async getImport(id: string): Promise<ImportPreview> {
     const record = await this.db
       .prepare(
-        `SELECT id,import_kind,status,original_name,duplicate_strategy,row_count,valid_count,
-                warning_count,error_count,idempotency_key,created_at,template_version,
-                preview_fingerprint,importer_version,target_mode,target_branch_ids_json,expires_at,
-                verification_status,verification_json
-         FROM setup_imports WHERE tenant_id=? AND id=?`,
+        `SELECT i.id,i.import_kind,i.status,i.original_name,i.duplicate_strategy,i.row_count,i.valid_count,
+                i.warning_count,i.error_count,i.idempotency_key,i.created_at,i.template_version,
+                i.preview_fingerprint,i.importer_version,i.target_mode,i.target_branch_ids_json,
+                i.expires_at,i.verification_status,i.verification_json,i.file_checksum,i.scan_status,
+                i.scan_evidence_json,i.approved_plan_digest,i.approved_at,i.publish_status,
+                i.published_at,i.source_object_id,
+                o.object_key,o.object_version,o.scan_evidence_id,o.status object_status
+         FROM setup_imports i
+         LEFT JOIN stored_objects o ON o.tenant_id=i.tenant_id AND o.id=i.source_object_id
+         WHERE i.tenant_id=? AND i.id=?`,
       )
       .bind(this.actor.tenantId, id)
       .first<Record<string, unknown>>();
     if (!record) throw notFound("Import not found");
-    const rows = await this.db
-      .prepare(
-        `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json,action
+    const cleanEvidence = hasValidCleanEvidence(
+      string(record["file_checksum"]),
+      string(record["scan_status"]),
+      string(record["scan_evidence_json"]),
+      optionalString(record["source_object_id"])
+        ? {
+            objectKey: optionalString(record["object_key"]),
+            objectVersion: optionalString(record["object_version"]),
+            evidenceId: optionalString(record["scan_evidence_id"]),
+            objectStatus: optionalString(record["object_status"]),
+          }
+        : {},
+    );
+    const rows = cleanEvidence
+      ? await this.db
+          .prepare(
+            `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json,action
          FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number LIMIT 1000`,
-      )
-      .bind(this.actor.tenantId, id)
-      .all<Record<string, unknown>>();
+          )
+          .bind(this.actor.tenantId, id)
+          .all<Record<string, unknown>>()
+      : { results: [] as Record<string, unknown>[] };
     const parsedVerification = parseJson<ImportPreview["verification"]>(
       string(record["verification_json"]),
       undefined,
@@ -4685,6 +5711,14 @@ export class OnboardingService {
       targetMode: string(record["target_mode"]) as ImportTargetMode,
       targetBranchIds: parseJson<string[]>(string(record["target_branch_ids_json"]), []),
       expiresAt: string(record["expires_at"]),
+      scanStatus: string(record["scan_status"]) as ImportPreview["scanStatus"],
+      approved: Boolean(record["approved_plan_digest"]),
+      approvedAt: optionalString(record["approved_at"]) ?? undefined,
+      publishStatus: string(record["publish_status"]) as ImportPreview["publishStatus"],
+      ...(record["approved_plan_digest"]
+        ? { publishKey: `publish:${string(record["approved_plan_digest"])}` }
+        : {}),
+      publishedAt: optionalString(record["published_at"]) ?? undefined,
       ...(verification ? { verification } : {}),
       originalName: string(record["original_name"]),
       duplicateStrategy: string(record["duplicate_strategy"]) as ImportPreview["duplicateStrategy"],
@@ -4692,7 +5726,7 @@ export class OnboardingService {
       validCount: number(record["valid_count"]),
       warningCount: number(record["warning_count"]),
       errorCount: number(record["error_count"]),
-      canCommit: string(record["status"]) === "VALIDATED",
+      canCommit: cleanEvidence && string(record["status"]) === "VALIDATED",
       rows: (rows.results ?? []).map((row) => ({
         rowNumber: number(row["row_number"]),
         rowKey: string(row["row_key"]),
@@ -4808,6 +5842,63 @@ export class OnboardingService {
         stamp,
         stamp,
         stamp,
+      );
+  }
+  private async dispatchWorkerJob(jobId: string, correlationId: string) {
+    if (!this.env.SERAMET_WORK_QUEUE) return;
+    await this.env.SERAMET_WORK_QUEUE.send(
+      {
+        kind: "worker-job",
+        tenantId: this.actor.tenantId,
+        jobId,
+        correlationId,
+      },
+      { contentType: "json" },
+    ).catch(() => undefined);
+  }
+  private importStateEvent(
+    state:
+      | "QUARANTINED"
+      | "SCAN_PENDING"
+      | "SCANNED_CLEAN"
+      | "PARSING"
+      | "STAGED"
+      | "APPROVED"
+      | "COMMITTING"
+      | "VERIFYING"
+      | "READY_TO_PUBLISH"
+      | "PUBLISHING"
+      | "PUBLISHED"
+      | "REJECTED_INFECTED"
+      | "SCAN_FAILED"
+      | "VALIDATION_FAILED"
+      | "COMMIT_FAILED"
+      | "VERIFICATION_FAILED"
+      | "CANCELLED",
+    input: {
+      jobId?: string;
+      importId?: string;
+      objectId?: string;
+      attempt?: number;
+      evidence: Record<string, unknown>;
+    },
+  ) {
+    return this.db
+      .prepare(
+        `INSERT INTO file_import_state_events
+          (tenant_id,id,job_id,import_id,object_id,state,attempt,evidence_json,created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .bind(
+        this.actor.tenantId,
+        crypto.randomUUID(),
+        input.jobId ?? null,
+        input.importId ?? null,
+        input.objectId ?? null,
+        state,
+        input.attempt ?? 1,
+        json(input.evidence),
+        now(),
       );
   }
   private audit(
@@ -5371,6 +6462,39 @@ function parseJson<T>(value: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+function hasValidCleanEvidence(
+  checksum: string,
+  status: string,
+  encoded: string,
+  subject: {
+    objectKey?: string | null;
+    objectVersion?: string | null;
+    evidenceId?: string | null;
+    objectStatus?: string | null;
+  } = {},
+) {
+  if (status !== "CLEAN") return false;
+  const evidence = parseJson<Partial<CleanScanEvidence>>(encoded, {});
+  return (
+    evidence.verdict === "CLEAN" &&
+    evidence.sha256 === checksum &&
+    evidence.authenticatedOrigin === "cloudflare-service-binding" &&
+    (!subject.objectKey || evidence.objectKey === subject.objectKey) &&
+    (!subject.objectVersion || evidence.objectVersion === subject.objectVersion) &&
+    (!subject.evidenceId || evidence.evidenceId === subject.evidenceId) &&
+    (!subject.objectStatus || subject.objectStatus === "ACTIVE") &&
+    Boolean(
+      evidence.evidenceId &&
+      evidence.scannerId &&
+      evidence.engine &&
+      evidence.signatureVersion &&
+      evidence.scannedAt &&
+      evidence.jobId &&
+      evidence.objectKey &&
+      evidence.objectVersion,
+    )
+  );
 }
 function now() {
   return new Date().toISOString();
