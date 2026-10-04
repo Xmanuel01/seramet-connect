@@ -30,6 +30,8 @@ export type ObjectStoreBinding = {
   get(key: string): Promise<{
     body?: ReadableStream<Uint8Array>;
     arrayBuffer?: () => Promise<ArrayBuffer>;
+    version?: string;
+    etag?: string;
     httpMetadata?: { contentType?: string };
     customMetadata?: Record<string, string>;
   } | null>;
@@ -40,8 +42,12 @@ export type ObjectStoreBinding = {
       httpMetadata?: { contentType?: string; cacheControl?: string };
       customMetadata?: Record<string, string>;
     },
-  ): Promise<unknown>;
+  ): Promise<{ version?: string; etag?: string } | unknown>;
   delete(key: string | string[]): Promise<void>;
+};
+
+export type MalwareScannerBinding = {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 };
 
 export type ProductionRuntimeEnv = {
@@ -51,6 +57,7 @@ export type ProductionRuntimeEnv = {
   SERAMET_HYPERDRIVE?: HyperdriveBinding;
   SERAMET_WORK_QUEUE?: DurableQueue;
   SERAMET_OBJECTS?: ObjectStoreBinding;
+  SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;
   SERAMET_DATABASE_PROVIDER?: string;
   SERAMET_IDENTITY_PROVIDER?: string;
   SERAMET_SUPABASE_URL?: string;
@@ -64,6 +71,7 @@ export type ProductionRuntimeEnv = {
   SERAMET_CALLBACK_BASE_URL?: string;
   SERAMET_ENABLE_DEV_AUTH?: string;
   SERAMET_ENABLE_LOCAL_DATABASE?: string;
+  SERAMET_E2E_IMPORTS?: string;
   SERAMET_REQUIRE_BEARER?: string;
   SERAMET_SECRET_STORE?: string;
   SERAMET_MANAGED_SECRET_STORE?: unknown;

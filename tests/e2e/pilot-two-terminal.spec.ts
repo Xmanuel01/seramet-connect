@@ -52,6 +52,7 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   const managerPage = await manager.newPage();
 
   await cashierPage.goto("/pos");
+  await cashierPage.getByPlaceholder("Search dishes or scan barcode").fill("Pilot meal");
   await expect(cashierPage.getByRole("button", { name: "Add Pilot meal to order" })).toBeVisible();
   await cashierPage.getByRole("button", { name: "Add Pilot meal to order" }).click();
   await cashierPage.getByPlaceholder("Item note").fill("No onion - keep this draft");

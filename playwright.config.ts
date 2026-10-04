@@ -23,6 +23,11 @@ export default defineConfig({
           SERAMET_ENVIRONMENT: "development",
           SERAMET_ENABLE_DEV_AUTH: "true",
           SERAMET_ENABLE_LOCAL_DATABASE: "true",
+          SERAMET_E2E_IMPORTS: "true",
+          CI: "true",
+          SERAMET_JWT_SECRET: "seramet-e2e-disposable-jwt-secret",
+          SERAMET_JWT_ISSUER: "seramet-e2e",
+          SERAMET_JWT_AUDIENCE: "seramet-e2e-browser",
         },
       },
 });

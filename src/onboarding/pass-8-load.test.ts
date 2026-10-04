@@ -20,7 +20,28 @@ describe.sequential("Pass 8 realistic onboarding load foundation", () => {
   beforeAll(() => {
     db = createMigratedTestDatabase();
     seedScaleFixture(db);
-    env = { SERAMET_ENVIRONMENT: "test", SERAMET_DB: db };
+    env = {
+      SERAMET_ENVIRONMENT: "test",
+      SERAMET_DB: db,
+      SERAMET_MALWARE_SCANNER: {
+        async fetch(_input, init) {
+          const headers = new Headers(init?.headers);
+          const sha256 = headers.get("x-seramet-content-sha256") ?? "";
+          return Response.json({
+            verdict: "CLEAN",
+            sha256,
+            evidenceId: `load-clean-${headers.get("x-seramet-scan-job-id")}-${sha256.slice(0, 12)}`,
+            scannerId: "seramet-load-test-scanner",
+            engine: "seramet-load-test-scanner",
+            signatureVersion: "load-test-signatures-1",
+            scannedAt: new Date().toISOString(),
+            jobId: headers.get("x-seramet-scan-job-id"),
+            objectKey: headers.get("x-seramet-object-key"),
+            objectVersion: headers.get("x-seramet-object-version"),
+          });
+        },
+      },
+    };
     service = new OnboardingService(db, loadActor(), env);
   }, 120_000);
 
@@ -69,7 +90,7 @@ describe.sequential("Pass 8 realistic onboarding load foundation", () => {
         .first("status"),
     ).toBe("COMMITTING");
     await measure(metrics, "menuImportCommitWorkerMs", () =>
-      processJob(db, env, String(commit.jobId)),
+      drainImportJobs(db, env, menuPreview.id, "SETUP_IMPORT_COMMIT"),
     );
     expect(
       await db
@@ -77,6 +98,13 @@ describe.sequential("Pass 8 realistic onboarding load foundation", () => {
         .bind(tenantId, menuPreview.id)
         .first("status"),
     ).toBe("COMMITTED");
+    expect(await count(db, "menu_catalog_items")).toBe(5_000);
+    const staged = await service.inspectImport(menuPreview.id);
+    if (!staged.publishKey) throw new Error("Verified import did not expose a publish identity");
+    await service.publishImport(staged.id, staged.publishKey);
+    await measure(metrics, "menuImportPublishWorkerMs", () =>
+      drainImportJobs(db, env, menuPreview.id, "SETUP_IMPORT_PUBLISH"),
+    );
 
     const inventoryCsv = csv(
       "code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator",
@@ -146,6 +174,26 @@ async function processJob(db: SqliteD1TestDatabase, env: SerametEnv, jobId: stri
     retry() {},
   };
   await handleWorkerQueue({ queue: "seramet-load", messages: [message] }, env);
+}
+
+async function drainImportJobs(
+  db: SqliteD1TestDatabase,
+  env: SerametEnv,
+  importId: string,
+  jobType: "SETUP_IMPORT_COMMIT" | "SETUP_IMPORT_PUBLISH",
+) {
+  for (let batch = 0; batch < 2_000; batch += 1) {
+    const job = await db
+      .prepare(
+        `SELECT id FROM worker_jobs WHERE tenant_id=? AND job_type=? AND status='PENDING'
+         AND idempotency_key LIKE ? ORDER BY created_at,id LIMIT 1`,
+      )
+      .bind(tenantId, jobType, `setup-import-%:${importId}:%`)
+      .first<{ id: string }>();
+    if (!job) return;
+    await processJob(db, env, job.id);
+  }
+  throw new Error("Import worker chain exceeded its bounded test limit");
 }
 
 function seedScaleFixture(db: SqliteD1TestDatabase) {

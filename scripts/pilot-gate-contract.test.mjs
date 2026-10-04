@@ -11,7 +11,11 @@ const postgresWorkflow = await readFile(
 test("the full pilot gate includes the local gate and PostgreSQL certification", () => {
   assert.equal(
     packageJson.scripts["test:pilot"],
-    "npm run test:pilot:local && npm run test:pos-postgres",
+    "npm run test:pilot:local && npm run test:pos-postgres && npm run test:menu-import-postgres",
+  );
+  assert.equal(
+    packageJson.scripts["test:menu-import-postgres"],
+    "vite-node scripts/verify-menu-import-postgres.ts",
   );
   assert.match(packageJson.scripts["test:pilot:local"], /npm run test:e2e/);
   assert.match(postgresWorkflow, /run: npm run test:pilot/);

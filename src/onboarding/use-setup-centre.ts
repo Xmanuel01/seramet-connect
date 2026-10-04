@@ -18,6 +18,7 @@ import type {
   OnboardingWizardState,
 } from "@/onboarding/location-currency-types";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
+import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
 
 export type RecentMenuImport = {
   id: string;
@@ -131,6 +132,8 @@ export type HistoricalSalesMigrationState = {
   latest: Record<string, unknown> | null;
 };
 
+export type FileImportCapability = { available: boolean; reason: string | null };
+
 export function useSetupCentre() {
   const { activeTenantId, branchId, currentUser, isAllBranches, role } = useAppContext();
   const headers = useMemo(() => {
@@ -174,6 +177,10 @@ export function useSetupCentre() {
   const [currencies, setCurrencies] = useState<CurrencyReference[]>([]);
   const [historicalSalesState, setHistoricalSalesState] =
     useState<HistoricalSalesMigrationState | null>(null);
+  const [fileImportCapability, setFileImportCapability] = useState<FileImportCapability>({
+    available: false,
+    reason: "Checking file-import security configuration",
+  });
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
 
@@ -212,6 +219,7 @@ export function useSetupCentre() {
       onboardingState,
       referenceState,
       historicalSales,
+      importCapability,
     ] = await Promise.allSettled([
       get<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`),
       get<{ integrations: IntegrationHealthRow[] }>("/api/seramet/setup/integration-health"),
@@ -229,6 +237,7 @@ export function useSetupCentre() {
         "/api/seramet/setup/reference/location-currency",
       ),
       get<{ state: HistoricalSalesMigrationState }>("/api/seramet/setup/historical-sales"),
+      get<{ capability: FileImportCapability }>("/api/seramet/setup/imports/capability"),
     ] as const);
     if (summary.status === "fulfilled") setSetup(summary.value.setup);
     if (providerHealth.status === "fulfilled") setIntegrations(providerHealth.value.integrations);
@@ -250,6 +259,8 @@ export function useSetupCentre() {
     }
     if (historicalSales.status === "fulfilled")
       setHistoricalSalesState(historicalSales.value.state);
+    if (importCapability.status === "fulfilled")
+      setFileImportCapability(importCapability.value.capability);
     if (catalog.status === "fulfilled") {
       setMenuCatalog(catalog.value.items);
       setMenuCatalogStatus("ready");
@@ -274,6 +285,7 @@ export function useSetupCentre() {
       ["onboarding", onboardingState],
       ["location and currency references", referenceState],
       ["historical sales migration", historicalSales],
+      ["file import capability", importCapability],
     ] as const;
     const failures = resources.flatMap(([name, result]) =>
       result.status === "rejected"
@@ -343,9 +355,10 @@ export function useSetupCentre() {
     ) => {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const base64 = bytesToBase64(bytes);
-      const result = await command<{ preview: ImportPreview }>(
-        "/api/seramet/setup/imports/preview",
-        {
+      const response = await authenticatedFetch("/api/seramet/setup/imports/uploads", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
           ...(!options?.targetMode && !isAllBranches ? { branchId } : {}),
           ...options,
           kind,
@@ -354,11 +367,38 @@ export function useSetupCentre() {
           base64,
           duplicateStrategy,
           idempotencyKey: `setup-import:${kind}:${activeTenantId}:${file.name}:${file.size}:${file.lastModified}`,
-        },
-      );
-      return result.preview;
+        }),
+      });
+      const submitted = (await response.json().catch(() => ({}))) as {
+        job?: { jobId: string; status: string; result?: { importId?: string } };
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok || !submitted.job) {
+        throw new Error(
+          submitted.message ?? submitted.error ?? `Import upload failed (${response.status})`,
+        );
+      }
+      let importId = submitted.job.result?.importId;
+      for (let attempt = 0; !importId && attempt < 120; attempt += 1) {
+        await delay(1_000);
+        const status = await get<{
+          job: { status: string; result?: { importId?: string }; error?: string };
+        }>(`/api/seramet/setup/imports/jobs/${encodeURIComponent(submitted.job.jobId)}`);
+        if (["FAILED", "DEAD_LETTER"].includes(status.job.status)) {
+          throw new Error(status.job.error ?? "File preparation failed before preview");
+        }
+        importId = status.job.result?.importId;
+      }
+      if (!importId)
+        throw new Error("File preparation is still running; inspect the queued import later");
+      return (
+        await get<{ preview: ImportPreview }>(
+          `/api/seramet/setup/imports/${encodeURIComponent(importId)}`,
+        )
+      ).preview;
     },
-    [activeTenantId, branchId, command, isAllBranches],
+    [activeTenantId, branchId, get, headers, isAllBranches],
   );
 
   const recentMenuImports = useCallback(
@@ -386,6 +426,8 @@ export function useSetupCentre() {
           rowCount: number;
           updatedAt: string;
           verification?: ImportPreview["verification"];
+          publishStatus?: ImportPreview["publishStatus"];
+          publishedAt?: string | null;
           progress: PersistedImportProgress & {
             pending: number;
             processed: number;
@@ -432,6 +474,50 @@ export function useSetupCentre() {
       return payload;
     },
     [headers, refreshMenuCatalog],
+  );
+
+  const publishImport = useCallback(
+    async (preview: ImportPreview) => {
+      if (!preview.publishKey) throw new Error("Approved import plan has no publish identity");
+      const response = await authenticatedFetch(
+        `/api/seramet/setup/imports/${encodeURIComponent(preview.id)}/publish`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ idempotencyKey: preview.publishKey }),
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        result?: {
+          duplicate: boolean;
+          queued: boolean;
+          status: "PUBLISHING" | "PUBLISHED";
+          jobId?: string;
+          verification?: ImportPreview["verification"];
+        };
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.result) {
+        throw new Error(
+          payload.message ?? payload.error ?? `Import publication failed (${response.status})`,
+        );
+      }
+      if (payload.result.status === "PUBLISHED") void refreshMenuCatalog();
+      return payload;
+    },
+    [headers, refreshMenuCatalog],
+  );
+
+  const createManualMenuItem = useCallback(
+    async (input: ManualMenuItemCreateInput) => {
+      const result = await command<{
+        item: { id: string; code: string; branchId: string; status: "ACTIVE"; duplicate: boolean };
+      }>("/api/seramet/setup/manual-menu-items", input);
+      await refreshMenuCatalog();
+      return result.item;
+    },
+    [command, refreshMenuCatalog],
   );
 
   const runTest = useCallback(
@@ -503,6 +589,7 @@ export function useSetupCentre() {
     countries,
     currencies,
     historicalSalesState,
+    fileImportCapability,
     status,
     error,
     refresh,
@@ -513,6 +600,8 @@ export function useSetupCentre() {
     importStatus,
     refreshMenuCatalog,
     commitImport,
+    publishImport,
+    createManualMenuItem,
     runTest,
     transitionGoLive,
     previewHistoricalSales,
@@ -528,6 +617,10 @@ function bytesToBase64(bytes: Uint8Array) {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
   }
   return btoa(binary);
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function failureMessage(reason: unknown, fallback: string) {

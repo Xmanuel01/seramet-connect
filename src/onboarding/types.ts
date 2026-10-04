@@ -169,6 +169,12 @@ export type ImportPreview = {
   commitKey: string;
   kind: ImportKind;
   status: "PREVIEW" | "VALIDATED" | "COMMITTING" | "COMMITTED" | "REJECTED" | "FAILED";
+  scanStatus?: "PENDING" | "CLEAN" | "INFECTED" | "FAILED";
+  approved?: boolean;
+  approvedAt?: string;
+  publishStatus?: "NOT_READY" | "READY" | "PUBLISHING" | "PUBLISHED" | "FAILED";
+  publishKey?: string;
+  publishedAt?: string;
   templateVersion?: number;
   importerVersion?: string;
   fingerprint?: string;
