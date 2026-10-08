@@ -25,6 +25,7 @@ test("authenticated manager completes scan, staging, recovery, publication and P
   const manager = await browser.newContext();
   await authorize(manager, fixture.userId, fixture.managerAccessToken, fixture.firstBranchId);
   const page = await manager.newPage();
+  await establishSession(page, fixture.userId, fixture.firstBranchId);
   await page.goto("/menu-import");
   await expect(page.getByRole("button", { name: "Import menu" })).toBeEnabled();
   await page.getByRole("button", { name: "Import menu" }).click();
@@ -74,6 +75,7 @@ test("authenticated manager completes scan, staging, recovery, publication and P
     fixture.secondBranchId,
   );
   const restrictedPage = await restricted.newPage();
+  await establishSession(restrictedPage, fixture.restrictedUserId, fixture.secondBranchId);
   await restrictedPage.goto("/");
   for (const action of ["inspect", "commit", "publish"] as const) {
     const status = await restrictedPage.evaluate(
@@ -126,6 +128,11 @@ test("scanner failures remain quarantined and never create a parsed preview", as
         useRestricted ? fixture.secondBranchId : fixture.firstBranchId,
       );
       const page = await context.newPage();
+      await establishSession(
+        page,
+        useRestricted ? fixture.restrictedUserId : fixture.userId,
+        useRestricted ? fixture.secondBranchId : fixture.firstBranchId,
+      );
       await page.goto("/");
       const job = await uploadThroughApi(
         page,
@@ -181,19 +188,6 @@ async function authorize(
   accessToken: string,
   branchId: string,
 ) {
-  await context.addInitScript(
-    ({ tenantId, userId, branchId }) => {
-      if (!/^https?:$/.test(window.location.protocol)) return;
-      sessionStorage.setItem("seramet.session.interactive-sign-in", "1");
-      localStorage.setItem("seramet.session.tenant-id", tenantId);
-      localStorage.setItem("seramet.session.user-id", userId);
-      localStorage.setItem(
-        "seramet.session.branch-scope.v2",
-        JSON.stringify({ type: "BRANCH", branchId }),
-      );
-    },
-    { tenantId: fixture.tenantId, userId, branchId },
-  );
   await context.route("**/api/seramet/**", async (route) => {
     await route.continue({
       headers: {
@@ -205,6 +199,22 @@ async function authorize(
       },
     });
   });
+}
+
+async function establishSession(page: Page, userId: string, branchId: string) {
+  await page.goto("/login");
+  await page.evaluate(
+    ({ tenantId, userId, branchId }) => {
+      sessionStorage.setItem("seramet.session.interactive-sign-in", "1");
+      localStorage.setItem("seramet.session.tenant-id", tenantId);
+      localStorage.setItem("seramet.session.user-id", userId);
+      localStorage.setItem(
+        "seramet.session.branch-scope.v2",
+        JSON.stringify({ type: "BRANCH", branchId }),
+      );
+    },
+    { tenantId: fixture.tenantId, userId, branchId },
+  );
 }
 
 async function latestImport(page: Page) {

@@ -51,9 +51,10 @@ disabled until separately certified.
 - `npm run test:e2e`: two isolated browser contexts, draft/realtime/offline/auth workflow checks.
 - `npm run test:pilot:local`: workstation-safe source policy, typecheck, lint, unit, concurrency,
   offline, build, bundle audit and two-terminal Playwright gate.
-- `npm run test:pilot`: full engineering gate. It runs `test:pilot:local` and then the real
-  PostgreSQL verifier. CI supplies its disposable PostgreSQL 16 database; a developer workstation
-  must supply the verifier's isolated `SERAMET_POSTGRES_URL` contract.
+- `npm run test:pilot`: full engineering gate. It runs `test:pilot:local`, the POS PostgreSQL
+  verifier, and the menu-import PostgreSQL verifier. CI supplies its disposable PostgreSQL 16
+  database; a developer workstation must supply the verifier's isolated
+  `SERAMET_POSTGRES_URL` contract.
 - `Pilot Staging Acceptance`: protected, manually dispatched workflow covering public signup,
   verification-state enforcement, verified owner login, authenticated reload, device activation,
   branch-bound staff PIN login, logout, reload and back-button behavior. Missing protected inputs
@@ -64,3 +65,56 @@ disabled until separately certified.
   provider credentials, external callbacks and restaurant hardware.
 - Physical printer sign-off must record KOT, bar, bill, receipt, fallback, paper-out/offline,
   uncertain acknowledgement, audited reprint, and restart recovery on actual paper.
+
+## Protected staging acceptance checklist
+
+Use a disposable tenant and non-production accounts. Record the staging release SHA, tester,
+timestamp, branch, device, evidence link, and result for every item. Never place credentials,
+tokens, PINs, customer data, or full provider payloads in the evidence.
+
+### Authenticated shift
+
+- [ ] Owner signup, real email verification, first login, onboarding recovery, and business profile
+      persistence pass.
+- [ ] Separate owner, manager, cashier, kitchen, and finance users receive only their assigned
+      tenant, branches, and actions; cross-tenant and cross-branch requests are rejected.
+- [ ] Device activation and branch-bound staff email/PIN login pass; blocked, revoked, wrong-PIN,
+      rate-limit, and expired-session paths fail without account enumeration.
+- [ ] Cashier creates, holds, recalls, sends, invoices, and settles the exact selected order while a
+      second terminal receives bounded realtime refreshes without overwriting local work.
+- [ ] Kitchen acknowledges the correct branch/station KOT; void, refund, receipt, explicit drawer
+      count, reconciliation, EOD close, and canonical financial reports agree.
+- [ ] Offline hold/replay, duplicate replay, server failure, reconnect, and two-terminal conflict
+      recovery preserve idempotency and leave no orphan financial or KOT effects.
+- [ ] Logout revokes the server session, clears tenant-bound browser state, and reload/back/protected
+      navigation require authentication again.
+
+### M-Pesa sandbox
+
+- [ ] Rotated sandbox consumer credentials, passkey, shortcode, and callback authentication are
+      installed only as protected staging secrets; restaurant UI shows no secret values.
+- [ ] STK initiation creates a pending server-side payment intent and never marks an invoice paid
+      from a browser prompt or client claim.
+- [ ] Authenticated success callback settles once and produces one allocation, journal effect,
+      reconciliation record, and receipt; duplicate delivery is idempotent.
+- [ ] Altered, unauthenticated, cross-tenant, and unknown-reference callbacks are rejected and
+      audited without financial effects.
+- [ ] Customer cancel, provider failure, timeout, lost response, delayed callback, and status query
+      preserve authoritative pending/failed state and support safe recovery.
+
+### Physical ESC/POS printing
+
+- [ ] A supported USB or LAN thermal printer is installed through the Windows spooler and the local
+      bridge is enrolled for the disposable staging branch.
+- [ ] Kitchen KOT, bar ticket, bill, and receipt print on physical paper with correct branch,
+      business date/time, order, totals, and station routing.
+- [ ] Single-printer fallback emits each required document once; multi-printer routing sends each
+      document only to its configured destination.
+- [ ] Paper-out, printer offline, bridge restart, and uncertain acknowledgement remain visible and
+      never trigger an automatic duplicate print.
+- [ ] Authorized reprint is explicit and audited; bridge acceptance and human-confirmed paper output
+      are recorded as separate evidence.
+
+Spreadsheet import remains a failed release gate until a genuine scanner returns authenticated
+CLEAN evidence bound to the exact quarantined object and fingerprint. No staging checklist item may
+be used to authorize a scanner bypass.

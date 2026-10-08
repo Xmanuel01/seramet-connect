@@ -37,5 +37,8 @@ describe("restaurant operations branch isolation", () => {
     const allBranches = deriveBranchOperations(state, "All Branches");
     expect(allBranches.openOrders).toBe(1);
     expect(allBranches.unreadablePayments).toBe(0);
+
+    const paddedBranch = deriveBranchOperations(state, " Branch A ");
+    expect(paddedBranch.openOrders).toBe(1);
   });
 });

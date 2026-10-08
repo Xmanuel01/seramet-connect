@@ -5,6 +5,7 @@ const env = {
   ...process.env,
   CI: "true",
   SERAMET_E2E: "true",
+  SERAMET_IDENTITY_PROVIDER: "internal",
   SERAMET_JWT_SECRET: "seramet-e2e-disposable-jwt-secret",
   SERAMET_JWT_ISSUER: "seramet-e2e",
   SERAMET_JWT_AUDIENCE: "seramet-e2e-browser",

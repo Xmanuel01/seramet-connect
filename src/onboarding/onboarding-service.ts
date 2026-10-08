@@ -1185,6 +1185,21 @@ export class OnboardingService {
             branchIds: input.branchId ? [input.branchId] : [],
           };
     if (input.kind !== "MENU" && input.branchId) await this.assertBranch(input.branchId);
+    const requestDigest = await sha256Text(
+      stableJson({
+        tenantId: this.actor.tenantId,
+        kind: input.kind,
+        fileChecksum: file.digest,
+        originalName: file.filename,
+        mimeType: input.mimeType,
+        duplicateStrategy: input.duplicateStrategy,
+        targetMode: target.mode,
+        targetBranchIds: [...target.branchIds].sort(),
+        columnMap: normalizeStringRecord(input.columnMap),
+        referenceMap: normalizeReferenceMap(input.referenceMap),
+        branchId: input.branchId ?? null,
+      }),
+    );
     const jobKey = `setup-import-prepare:${input.idempotencyKey}`;
     const existing = await this.db
       .prepare(
@@ -1194,9 +1209,9 @@ export class OnboardingService {
       .bind(this.actor.tenantId, jobKey)
       .first<{ id: string; payload_json: string; status: string; result_json: string }>();
     if (existing) {
-      const payload = parseJson<{ fileChecksum?: string }>(existing.payload_json, {});
-      if (payload.fileChecksum !== file.digest) {
-        throw invalidTransition("Import upload identity was reused with different file content");
+      const payload = parseJson<{ requestDigest?: string }>(existing.payload_json, {});
+      if (payload.requestDigest !== requestDigest) {
+        throw invalidTransition("Import upload identity was reused with a different request");
       }
       return {
         jobId: existing.id,
@@ -1230,6 +1245,7 @@ export class OnboardingService {
             objectKey: stored.objectKey,
             objectVersion: stored.objectVersion,
             fileChecksum: file.digest,
+            requestDigest,
             kind: input.kind,
             originalName: file.filename,
             mimeType: input.mimeType,
@@ -1987,7 +2003,7 @@ export class OnboardingService {
     this.require(permissions.setupImport);
     const record = await this.db
       .prepare(
-        `SELECT status,verification_status,approved_plan_digest,publish_status,
+        `SELECT status,verification_status,approved_plan_digest,publish_status,catalogue_revision,
                 publish_idempotency_key,duplicate_strategy,target_branch_ids_json,created_by,
                 batch_size
          FROM setup_imports WHERE tenant_id=? AND id=? AND import_kind='MENU'`,
@@ -1997,6 +2013,7 @@ export class OnboardingService {
         status: string;
         verification_status: string;
         approved_plan_digest: string | null;
+        catalogue_revision: string | null;
         publish_status: string;
         publish_idempotency_key: string | null;
         duplicate_strategy: string;
@@ -2177,20 +2194,50 @@ export class OnboardingService {
       requiredBranchActivations: completion.expectedBranchSettings.size,
       verifiedBranchActivations: stagedVerification.branchSettings,
     };
+    const currentCatalogueRevision = await this.menuCatalogueRevision();
+    const catalogueRevisionVerified =
+      !record.catalogue_revision || record.catalogue_revision === currentCatalogueRevision;
+    const publicationEvidence = {
+      ...publicationInvariant,
+      status:
+        stagedVerification.status === "VERIFIED" && catalogueRevisionVerified
+          ? "VERIFIED"
+          : "FAILED",
+      catalogueRevisionVerified,
+      expectedCatalogueRevision: record.catalogue_revision,
+      currentCatalogueRevision,
+      warnings: [
+        ...stagedVerification.warnings,
+        ...(catalogueRevisionVerified
+          ? []
+          : ["The live menu catalogue changed after this import was approved"]),
+      ],
+    };
     const stamp = now();
     if (
       stagedVerification.status !== "VERIFIED" ||
       approvedPlanRows !== verifiedCommittedRows ||
-      stagedVerification.branchSettings !== completion.expectedBranchSettings.size
+      stagedVerification.branchSettings !== completion.expectedBranchSettings.size ||
+      !catalogueRevisionVerified
     ) {
-      await this.db
-        .prepare(
-          `UPDATE setup_imports SET publish_status='FAILED',pipeline_state='VERIFICATION_FAILED',
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE setup_imports SET publish_status='FAILED',pipeline_state='VERIFICATION_FAILED',
              verification_status='FAILED',
              verification_json=?,updated_at=? WHERE tenant_id=? AND id=?`,
-        )
-        .bind(json(publicationInvariant), stamp, this.actor.tenantId, importId)
-        .run();
+          )
+          .bind(json(publicationEvidence), stamp, this.actor.tenantId, importId),
+        this.audit("SETUP_IMPORT_PUBLICATION_REJECTED", "SETUP_IMPORT", importId, {
+          catalogueRevisionVerified,
+          approvedPlanRows,
+          verifiedCommittedRows,
+        }),
+        this.importStateEvent("VERIFICATION_FAILED", {
+          importId,
+          evidence: publicationEvidence,
+        }),
+      ]);
       throw invalidTransition("Complete menu import plan could not be verified for publication");
     }
     await this.db.batch([
@@ -2208,7 +2255,7 @@ export class OnboardingService {
              published_at=?,verification_json=?,updated_at=?
            WHERE tenant_id=? AND id=? AND publish_status='PUBLISHING'`,
         )
-        .bind(stamp, json(publicationInvariant), stamp, this.actor.tenantId, importId),
+        .bind(stamp, json(publicationEvidence), stamp, this.actor.tenantId, importId),
       this.db
         .prepare(
           `INSERT INTO realtime_events
@@ -2820,7 +2867,21 @@ export class OnboardingService {
     );
     const id =
       input.id ?? stableId("connection", `${input.providerId}:${input.branchId ?? "tenant"}`);
-    let secretReference = input.secretReference;
+    const existing = await this.db
+      .prepare(
+        `SELECT provider_id,branch_id,secret_reference
+         FROM provider_connections WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<{ provider_id: string; branch_id: string | null; secret_reference: string | null }>();
+    const requestedBranchId = input.branchId ?? null;
+    if (
+      existing &&
+      (existing.provider_id !== input.providerId || existing.branch_id !== requestedBranchId)
+    ) {
+      throw validation("Provider connection identity cannot be reassigned");
+    }
+    let secretReference = input.secretReference ?? existing?.secret_reference ?? undefined;
     let secretVersion: string | undefined;
     if (input.credentials) {
       const store = createSecretStore(this.env);
@@ -2868,7 +2929,7 @@ export class OnboardingService {
           stamp,
           stamp,
         ),
-      ...(secretReference
+      ...(secretReference && (input.credentials || input.secretReference)
         ? [
             this.db
               .prepare(

@@ -145,8 +145,8 @@ export async function loadAuthoritativePlatformState(
         active: boolean(row, "active"),
       }),
     ),
-    branches: branches.map((row) =>
-      mergePayload<Branch>(row, {
+    branches: branches.map((row) => {
+      const branch = mergePayload<Branch>(row, {
         id: string(row, "id"),
         tenantId: string(row, "tenant_id"),
         ...(optionalString(row, "brand_id") ? { brandId: optionalString(row, "brand_id") } : {}),
@@ -158,8 +158,15 @@ export async function loadAuthoritativePlatformState(
         timezone: string(row, "timezone"),
         active: boolean(row, "active"),
         metadata: {},
-      }),
-    ),
+      });
+      return {
+        ...branch,
+        metadata: {
+          ...branch.metadata,
+          businessDayCutoffMinutes: number(row, "business_day_cutoff_minutes"),
+        },
+      };
+    }),
     warehouses: warehouses.map((row) =>
       mergePayload<Warehouse>(row, {
         id: string(row, "id"),

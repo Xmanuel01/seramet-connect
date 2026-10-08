@@ -281,6 +281,44 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await rowCount(db, "menu_catalog_items")).toBe(0);
   });
 
+  it("binds upload idempotency to the complete server-derived import request", async () => {
+    const queuedMessages: unknown[] = [];
+    const pipelineEnv: SerametEnv = {
+      ...env,
+      SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_WORK_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
+    };
+    const pipeline = new OnboardingService(db, actor(), pipelineEnv);
+    const request = {
+      targetMode: "SELECTED_BRANCHES" as const,
+      targetBranchIds: [branchId],
+      kind: "MENU" as const,
+      originalName: "idempotent-menu.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(
+        "code,name,category,price,currency\nIDEMPOTENT-01,Idempotent meal,MAIN,1250,KES",
+      ),
+      duplicateStrategy: "ERROR" as const,
+      idempotencyKey: "complete-upload-identity",
+    };
+
+    const first = await pipeline.queueImportPreparation(request);
+    await expect(pipeline.queueImportPreparation(request)).resolves.toMatchObject({
+      jobId: first.jobId,
+      duplicate: true,
+    });
+    await expect(
+      pipeline.queueImportPreparation({ ...request, duplicateStrategy: "SKIP" }),
+    ).rejects.toThrow("identity was reused with a different request");
+
+    expect(queuedMessages).toHaveLength(1);
+    expect(await rowCount(db, "stored_objects")).toBe(1);
+  });
+
   it("accepts authenticated menu uploads only through the queued quarantine route", async () => {
     const queuedMessages: unknown[] = [];
     const routeEnv: SerametEnv = {
@@ -902,6 +940,48 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     ).toBe(0);
   });
 
+  it("rejects publication when the live catalogue changes after commit verification", async () => {
+    const preview = await previewCsv(
+      service,
+      "MENU",
+      "itemCode,name,categoryCode,basePrice,currency\nPUBLISH-STALE-1,Stale publish item,MAIN,100,KES",
+      "stale-menu-publication",
+      "CREATE",
+    );
+    await service.commitImport(preview.id, preview.commitKey);
+    await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_COMMIT");
+    const staged = await service.inspectImport(preview.id);
+    await service.publishImport(preview.id, staged.publishKey!);
+    await db
+      .prepare(
+        `INSERT INTO menu_catalog_items
+          (tenant_id,id,code,name,category_code,selling_price_minor,currency,sellable,active,
+           payload_json,created_at,updated_at)
+         VALUES (?,'menu-publish-race','PUBLISH-RACE','Concurrent item','MAIN',10000,'KES',1,1,'{}',?,?)`,
+      )
+      .bind(tenantId, stamp, "2026-09-01T08:00:02.000Z")
+      .run();
+
+    await expect(
+      service.publishImport(preview.id, staged.publishKey!, { worker: true }),
+    ).rejects.toThrow("could not be verified for publication");
+    expect(await service.importStatus(preview.id)).toMatchObject({ publishStatus: "FAILED" });
+    expect(
+      await db
+        .prepare("SELECT pipeline_state FROM setup_imports WHERE tenant_id=? AND id=?")
+        .bind(tenantId, preview.id)
+        .first("pipeline_state"),
+    ).toBe("VERIFICATION_FAILED");
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND code='PUBLISH-STALE-1'",
+        )
+        .bind(tenantId)
+        .first("count"),
+    ).toBe(0);
+  });
+
   it("rejects branch activation outside the actor assignment", async () => {
     const restricted = new OnboardingService(db, actor([branchId]), env);
     await expect(
@@ -1178,6 +1258,24 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       .first<{ secret_reference: string; payload_json: string }>();
     expect(connection?.secret_reference).toMatch(/^managed:\/\//);
     expect(connection?.payload_json).not.toContain("sensitive");
+
+    const updated = await service.configureProviderConnection({
+      id: "connection-daraja",
+      branchId,
+      providerId: "provider-daraja",
+      environment: "SANDBOX",
+      configuration: { shortcode: "updated-shortcode" },
+    });
+    expect(updated).toMatchObject({ status: "CONFIGURED", secretConfigured: true });
+    const preserved = await db
+      .prepare(
+        "SELECT secret_reference,payload_json FROM provider_connections WHERE tenant_id=? AND id=?",
+      )
+      .bind(tenantId, result.id)
+      .first<{ secret_reference: string; payload_json: string }>();
+    expect(preserved?.secret_reference).toBe(connection?.secret_reference);
+    expect(preserved?.payload_json).toContain("updated-shortcode");
+    expect(preserved?.payload_json).not.toContain("sensitive");
   });
 
   it("does not claim a provider connection is configured without credentials", async () => {

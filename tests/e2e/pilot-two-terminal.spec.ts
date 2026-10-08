@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 type Fixture = {
   tenantId: string;
@@ -14,19 +14,6 @@ const fixture = JSON.parse(
 ) as Fixture;
 
 async function authorize(context: BrowserContext, branchId = fixture.firstBranchId) {
-  await context.addInitScript(
-    ({ tenantId, userId, branchId }) => {
-      if (!/^https?:$/.test(window.location.protocol)) return;
-      sessionStorage.setItem("seramet.session.interactive-sign-in", "1");
-      localStorage.setItem("seramet.session.tenant-id", tenantId);
-      localStorage.setItem("seramet.session.user-id", userId);
-      localStorage.setItem(
-        "seramet.session.branch-scope.v2",
-        JSON.stringify({ type: "BRANCH", branchId }),
-      );
-    },
-    { tenantId: fixture.tenantId, userId: fixture.userId, branchId },
-  );
   await context.route("**/api/seramet/**", async (route) => {
     const headers = {
       ...route.request().headers(),
@@ -41,6 +28,22 @@ async function authorize(context: BrowserContext, branchId = fixture.firstBranch
   });
 }
 
+async function establishSession(page: Page, branchId = fixture.firstBranchId) {
+  await page.goto("/login");
+  await page.evaluate(
+    ({ tenantId, userId, branchId }) => {
+      sessionStorage.setItem("seramet.session.interactive-sign-in", "1");
+      localStorage.setItem("seramet.session.tenant-id", tenantId);
+      localStorage.setItem("seramet.session.user-id", userId);
+      localStorage.setItem(
+        "seramet.session.branch-scope.v2",
+        JSON.stringify({ type: "BRANCH", branchId }),
+      );
+    },
+    { tenantId: fixture.tenantId, userId: fixture.userId, branchId },
+  );
+}
+
 test("two terminals preserve local drafts and enforce one authoritative revision winner", async ({
   browser,
 }) => {
@@ -50,6 +53,8 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   await authorize(manager);
   const cashierPage = await cashier.newPage();
   const managerPage = await manager.newPage();
+  await establishSession(cashierPage);
+  await establishSession(managerPage);
 
   await cashierPage.goto("/pos");
   await cashierPage.getByPlaceholder("Search dishes or scan barcode").fill("Pilot meal");
@@ -141,7 +146,10 @@ test("two terminals preserve local drafts and enforce one authoritative revision
 
   await cashierPage.getByRole("button", { name: "Sign out" }).click();
   await expect(cashierPage).toHaveURL(/\/login/);
+  await cashier.unroute("**/api/seramet/**");
   await cashierPage.reload();
+  await expect(cashierPage).toHaveURL(/\/login/);
+  await cashierPage.goto("/pos");
   await expect(cashierPage).toHaveURL(/\/login/);
   await cashier.close();
   await manager.close();
@@ -153,6 +161,7 @@ test("server rejects a branch selector outside the authenticated assignment", as
   const context = await browser.newContext();
   await authorize(context, fixture.secondBranchId);
   const page = await context.newPage();
+  await establishSession(page, fixture.secondBranchId);
   await page.goto("/");
   const status = await page.evaluate(async () => {
     const response = await fetch("/api/seramet/transactions", {
