@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           /usr/lib/postgresql/17/bin/psql \
             --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
-            --set ON_ERROR_STOP=1 --command 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+            --set ON_ERROR_STOP=1 --command 'DROP SCHEMA public CASCADE;'
           /usr/lib/postgresql/17/bin/pg_restore \
             --host 127.0.0.1 \
             --port 54329 \
