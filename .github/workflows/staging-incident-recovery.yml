@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - verify-backup-restore
           - inspect-imports
           - quarantine-imports
           - inspect-management
@@ -53,10 +54,28 @@ concurrency:
 
 jobs:
   recovery:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      (inputs.operation == 'verify-backup-restore' &&
+       github.ref == 'refs/heads/codex/malware-scanner-staging' &&
+       github.sha == vars.SERAMET_STAGING_APPROVED_SHA)
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: restore-only
+          POSTGRES_DB: seramet_restore
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,6 +83,64 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install PostgreSQL 17 client
+        if: inputs.operation == 'verify-backup-restore'
+        shell: bash
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+      - name: Create staging application database backup
+        if: inputs.operation == 'verify-backup-restore'
+        shell: bash
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$SERAMET_POSTGRES_URL"
+          pg_dump \
+            --dbname "$SERAMET_POSTGRES_URL" \
+            --format custom \
+            --schema public \
+            --no-owner \
+            --no-privileges \
+            --file "$RUNNER_TEMP/seramet-staging-public.dump"
+          test -s "$RUNNER_TEMP/seramet-staging-public.dump"
+          echo "backup_sha256=$(sha256sum "$RUNNER_TEMP/seramet-staging-public.dump" | cut -d' ' -f1)"
+          echo "backup_bytes=$(stat --format=%s "$RUNNER_TEMP/seramet-staging-public.dump")"
+      - name: Restore backup into isolated PostgreSQL 17
+        if: inputs.operation == 'verify-backup-restore'
+        shell: bash
+        env:
+          PGPASSWORD: restore-only
+        run: |
+          set -euo pipefail
+          psql --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
+            --set ON_ERROR_STOP=1 --command 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          pg_restore \
+            --host 127.0.0.1 \
+            --port 54329 \
+            --username postgres \
+            --dbname seramet_restore \
+            --no-owner \
+            --no-privileges \
+            --exit-on-error \
+            "$RUNNER_TEMP/seramet-staging-public.dump"
+      - name: Verify isolated restore completeness and integrity
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+        run: node scripts/verify-staging-backup-restore.mjs
+      - name: Remove temporary database backup
+        if: always() && inputs.operation == 'verify-backup-restore'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/seramet-staging-public.dump"
       - name: Check write prerequisites independently
         if: inputs.operation == 'quarantine-imports' || inputs.operation == 'consolidate-management'
         env:
