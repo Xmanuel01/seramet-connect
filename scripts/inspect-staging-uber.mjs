@@ -10,7 +10,7 @@ export async function inspectStagingUberConnection(db) {
     const result = await db.query(
       `SELECT c.id,c.environment,c.status,c.branch_id,c.secret_reference,c.payload_json,
               EXISTS (
-                SELECT 1 FROM external_resource_mappings m
+                SELECT 1 FROM provider_mappings m
                 WHERE m.tenant_id=c.tenant_id AND m.connection_id=c.id
                   AND m.resource_type='STORE' AND m.status='MAPPED'
               ) AS store_mapping_configured
