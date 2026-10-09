@@ -37,7 +37,7 @@ if (process.argv[1]?.endsWith("assert-no-lovable-source.mjs")) {
     { encoding: "utf8" },
   )
     .split("\0")
-    .filter(Boolean);
+    .filter((path) => path && existsSync(path));
   // Also detect untracked accidental integration when running locally.
   for (const path of FORBIDDEN_LOVABLE_PATHS) {
     if (existsSync(path) && !files.includes(path)) files.push(path);

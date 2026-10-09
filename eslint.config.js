@@ -14,6 +14,7 @@ export default tseslint.config(
       ".vite-cache",
       ".tanstack",
       ".wrangler",
+      ".seramet",
       ".codex-qa",
       "login-live.html",
       "**/*.backup-before-*",

@@ -170,6 +170,51 @@ export const importCommitRequestSchema = z
   .object({ idempotencyKey: z.string().trim().min(8).max(200) })
   .strict();
 
+export const manualMenuItemRequestSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(120),
+    requestKey: z.string().trim().min(12).max(200),
+    code: z
+      .string()
+      .trim()
+      .min(2)
+      .max(40)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]+$/),
+    name: z.string().trim().min(1).max(160),
+    categoryCode: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    basePrice: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,3})?$/),
+    currency: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{3}$/),
+    description: z.string().trim().max(1000).optional(),
+    sku: z.string().trim().max(80).optional(),
+    stationCode: z.string().trim().max(80).optional(),
+    branchPrice: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,3})?$/)
+      .optional(),
+    onlinePrice: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,3})?$/)
+      .optional(),
+    taxCode: z.string().trim().max(80).optional(),
+    unitOfMeasure: z.string().trim().max(40).optional(),
+    recipeCode: z.string().trim().max(80).optional(),
+    serviceChargeApplicable: z.boolean().optional(),
+  })
+  .strict();
+
 export const historicalSalesPreviewRequestSchema = z
   .object({
     sourceSystem: z.string().trim().min(1).max(120),

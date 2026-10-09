@@ -21,3 +21,13 @@ describe("Front of House navigation", () => {
     }
   });
 });
+
+describe("Pilot navigation", () => {
+  it("does not advertise finance modules without authoritative write models", () => {
+    const destinations = navGroups.flatMap((group) => group.items.map((item) => item.to));
+
+    for (const unsupported of ["/budgets", "/cost-centres", "/credit-notes", "/depreciation"]) {
+      expect(destinations).not.toContain(unsupported);
+    }
+  });
+});

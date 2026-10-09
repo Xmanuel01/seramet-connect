@@ -20,6 +20,9 @@ import {
 import type { CommunicationChannel } from "@/crm/types";
 import type { D1PreparedStatement } from "@/server/database/d1";
 import { EnterpriseService } from "@/enterprise/enterprise-service";
+import { TenantObjectStorage } from "@/server/object-storage";
+import { requireCleanMalwareScan } from "@/server/malware-scanner";
+import { ServerOperationError } from "@/server/errors";
 
 export type SerametWorkerMessage =
   | {
@@ -609,6 +612,12 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
       return;
     case "SETUP_IMPORT_COMMIT":
       await commitSetupImport(env, job);
+      return;
+    case "SETUP_IMPORT_PREPARE":
+      await prepareSetupImport(env, job);
+      return;
+    case "SETUP_IMPORT_PUBLISH":
+      await publishSetupImport(env, job);
       return;
     case "ENTERPRISE_ROLLOUT_EXECUTION":
       await executeEnterpriseRollout(env, job);
@@ -1264,6 +1273,217 @@ async function commitSetupImport(env: SerametEnv, job: WorkerJobRow) {
     env,
   );
   return service.commitImport(payload.importId, payload.commitKey, { worker: true });
+}
+
+async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {
+  const payload = parsePayload<{
+    objectId?: string;
+    objectKey?: string;
+    objectVersion?: string;
+    fileChecksum?: string;
+    kind?: "MENU" | "INVENTORY" | "SUPPLIER" | "STAFF" | "OPENING_STOCK" | "CONFIGURATION";
+    originalName?: string;
+    mimeType?: string;
+    duplicateStrategy?: "CREATE" | "UPDATE" | "SKIP" | "ERROR";
+    idempotencyKey?: string;
+    targetMode?: "TENANT_MASTER" | "SELECTED_BRANCHES" | "ROW_BRANCHES";
+    targetBranchIds?: string[];
+    columnMap?: Record<string, string>;
+    referenceMap?: { stations?: Record<string, string> };
+    branchId?: string;
+    actorId?: string;
+  }>(job.payload_json);
+  if (
+    !payload.objectId ||
+    !payload.objectKey ||
+    !payload.objectVersion ||
+    !payload.fileChecksum ||
+    !payload.kind ||
+    !payload.originalName ||
+    !payload.mimeType ||
+    !payload.duplicateStrategy ||
+    !payload.idempotencyKey ||
+    !payload.actorId ||
+    !env.SERAMET_OBJECTS
+  ) {
+    throw new Error("Setup import preparation is missing its quarantined file identity");
+  }
+  const storage = new TenantObjectStorage(env.SERAMET_DB!, env.SERAMET_OBJECTS);
+  const stored = await storage.findQuarantine(job.tenant_id, payload.objectId);
+  if (
+    !stored ||
+    stored.checksum_sha256 !== payload.fileChecksum ||
+    stored.object_key !== payload.objectKey ||
+    stored.object_version !== payload.objectVersion
+  ) {
+    throw new Error("Quarantined import file is unavailable or has changed");
+  }
+  const object = await storage.read(stored);
+  const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+  try {
+    await recordFileImportState(env, {
+      tenantId: job.tenant_id,
+      jobId: job.id,
+      objectId: payload.objectId,
+      state: "SCAN_PENDING",
+      attempt: job.attempt_count,
+      evidence: {
+        objectKey: stored.object_key,
+        objectVersion: stored.object_version,
+        fileChecksum: payload.fileChecksum,
+      },
+    });
+    const evidence = await requireCleanMalwareScan({
+      scanner: env.SERAMET_MALWARE_SCANNER,
+      bytes,
+      sha256: payload.fileChecksum,
+      contentType: payload.mimeType,
+      fileName: payload.originalName,
+      subject: {
+        jobId: job.id,
+        objectKey: stored.object_key,
+        objectVersion: stored.object_version,
+      },
+    });
+    await storage.recordScan({
+      tenantId: job.tenant_id,
+      id: payload.objectId,
+      clean: true,
+      evidence,
+    });
+    await recordFileImportState(env, {
+      tenantId: job.tenant_id,
+      jobId: job.id,
+      objectId: payload.objectId,
+      state: "SCANNED_CLEAN",
+      attempt: job.attempt_count,
+      evidence: {
+        evidenceId: evidence.evidenceId,
+        scannerId: evidence.scannerId,
+        signatureVersion: evidence.signatureVersion,
+        scannedAt: evidence.scannedAt,
+      },
+    });
+    await recordFileImportState(env, {
+      tenantId: job.tenant_id,
+      jobId: job.id,
+      objectId: payload.objectId,
+      state: "PARSING",
+      attempt: job.attempt_count,
+      evidence: { evidenceId: evidence.evidenceId },
+    });
+    const service = new OnboardingService(
+      env.SERAMET_DB!,
+      systemSetupActor(job.tenant_id, job.branch_id ?? undefined),
+      env,
+    );
+    const preview = await service.previewImport(
+      {
+        ...(payload.branchId ? { branchId: payload.branchId } : {}),
+        ...(payload.targetMode ? { targetMode: payload.targetMode } : {}),
+        ...(payload.targetBranchIds ? { targetBranchIds: payload.targetBranchIds } : {}),
+        kind: payload.kind,
+        originalName: payload.originalName,
+        mimeType: payload.mimeType,
+        bytes,
+        duplicateStrategy: payload.duplicateStrategy,
+        idempotencyKey: payload.idempotencyKey,
+        ...(payload.columnMap ? { columnMap: payload.columnMap } : {}),
+        ...(payload.referenceMap ? { referenceMap: payload.referenceMap } : {}),
+      },
+      { cleanEvidence: evidence, sourceObjectId: payload.objectId, createdBy: payload.actorId },
+    );
+    await recordFileImportState(env, {
+      tenantId: job.tenant_id,
+      jobId: job.id,
+      importId: preview.id,
+      objectId: payload.objectId,
+      state: preview.errorCount ? "VALIDATION_FAILED" : "STAGED",
+      attempt: job.attempt_count,
+      evidence: {
+        rowCount: preview.rowCount,
+        errorCount: preview.errorCount,
+        evidenceId: evidence.evidenceId,
+      },
+    });
+    await env
+      .SERAMET_DB!.prepare(
+        "UPDATE worker_jobs SET result_json=? WHERE tenant_id=? AND id=? AND status='RUNNING'",
+      )
+      .bind(JSON.stringify({ importId: preview.id }), job.tenant_id, job.id)
+      .run();
+  } catch (error) {
+    await storage
+      .recordScan({
+        tenantId: job.tenant_id,
+        id: payload.objectId,
+        clean: false,
+        evidence: { status: "REJECTED", recordedAt: new Date().toISOString() },
+      })
+      .catch(() => undefined);
+    await recordFileImportState(env, {
+      tenantId: job.tenant_id,
+      jobId: job.id,
+      objectId: payload.objectId,
+      state:
+        error instanceof ServerOperationError && error.status === 422
+          ? "REJECTED_INFECTED"
+          : error instanceof ServerOperationError && error.code === "VALIDATION_FAILED"
+            ? "VALIDATION_FAILED"
+            : "SCAN_FAILED",
+      attempt: job.attempt_count,
+      evidence: {
+        code: error instanceof ServerOperationError ? error.code : "SCANNER_FAILURE",
+        status: error instanceof ServerOperationError ? error.status : 503,
+      },
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function recordFileImportState(
+  env: SerametEnv,
+  input: {
+    tenantId: string;
+    jobId?: string;
+    importId?: string;
+    objectId?: string;
+    state: string;
+    attempt: number;
+    evidence: Record<string, unknown>;
+  },
+) {
+  await env
+    .SERAMET_DB!.prepare(
+      `INSERT INTO file_import_state_events
+        (tenant_id,id,job_id,import_id,object_id,state,attempt,evidence_json,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    )
+    .bind(
+      input.tenantId,
+      crypto.randomUUID(),
+      input.jobId ?? null,
+      input.importId ?? null,
+      input.objectId ?? null,
+      input.state,
+      input.attempt,
+      JSON.stringify(input.evidence),
+      new Date().toISOString(),
+    )
+    .run();
+}
+
+async function publishSetupImport(env: SerametEnv, job: WorkerJobRow) {
+  const payload = parsePayload<{ importId?: string; publishKey?: string }>(job.payload_json);
+  if (!payload.importId || !payload.publishKey) {
+    throw new Error("Setup import publisher is missing its immutable plan identity");
+  }
+  const service = new OnboardingService(
+    env.SERAMET_DB!,
+    systemSetupActor(job.tenant_id, job.branch_id ?? undefined),
+    env,
+  );
+  return service.publishImport(payload.importId, payload.publishKey, { worker: true });
 }
 
 export async function queueInventoryAvailabilityChanges(

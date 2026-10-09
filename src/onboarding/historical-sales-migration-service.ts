@@ -1,4 +1,4 @@
-import type { ServerActor } from "@/lib/seramet-auth";
+import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import {
   HISTORICAL_SALES_TEMPLATE_VERSION,
@@ -10,6 +10,7 @@ import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 import { validateImportFile } from "@/server/file-import-security";
+import { requireCleanMalwareScan, type CleanScanEvidence } from "@/server/malware-scanner";
 
 export type HistoricalSalesIssue = { field: string; code: string; message: string };
 export type HistoricalSalesPreviewRow = {
@@ -68,6 +69,7 @@ export class HistoricalSalesMigrationService {
   constructor(
     private readonly db: D1Database,
     private readonly actor: ServerActor,
+    private readonly env: SerametEnv,
   ) {}
 
   async getState() {
@@ -104,6 +106,18 @@ export class HistoricalSalesMigrationService {
       filename: input.originalName,
       contentType: input.mimeType,
       bytes: input.bytes,
+    });
+    const scanEvidence = await requireCleanMalwareScan({
+      scanner: this.env.SERAMET_MALWARE_SCANNER,
+      bytes: input.bytes,
+      sha256: file.digest,
+      contentType: input.mimeType,
+      fileName: file.filename,
+      subject: {
+        jobId: `historical-preview:${file.digest}`,
+        objectKey: `inline://${this.actor.tenantId}/historical-sales/${file.digest}`,
+        objectVersion: file.digest,
+      },
     });
     let rawRows: Array<Record<string, string>>;
     try {
@@ -159,7 +173,13 @@ export class HistoricalSalesMigrationService {
           sumMinor(validRows.map((row) => row.normalized.grossSalesMinor)),
           sumMinor(validRows.map((row) => row.normalized.netSalesMinor)),
           validRows.reduce((total, row) => total + row.normalized.orderCount, 0),
-          JSON.stringify({ unsupportedColumns, archivalOnly: true, requiresConfirmation: true }),
+          JSON.stringify({
+            unsupportedColumns,
+            archivalOnly: true,
+            requiresConfirmation: true,
+            fileValidationPolicy: "authenticated-clean-v1",
+            cleanScanEvidence: scanEvidence,
+          }),
           idempotencyKey,
           this.actor.id,
           stamp,
@@ -196,7 +216,8 @@ export class HistoricalSalesMigrationService {
     this.require();
     const migration = await this.db
       .prepare(
-        `SELECT status,idempotency_key,source_system,created_by FROM historical_sales_migrations
+        `SELECT status,idempotency_key,source_system,created_by,file_checksum,report_json
+         FROM historical_sales_migrations
          WHERE tenant_id=? AND id=?`,
       )
       .bind(this.actor.tenantId, id)
@@ -205,8 +226,13 @@ export class HistoricalSalesMigrationService {
         idempotency_key: string;
         source_system: string;
         created_by: string;
+        file_checksum: string;
+        report_json: string;
       }>();
     if (!migration) throw validation("Historical sales preview was not found");
+    if (!hasValidCleanEvidence(migration.report_json, migration.file_checksum)) {
+      throw validation("This preview has no valid file security scan. Upload the file again.");
+    }
     if (migration.status === "COMMITTED")
       return { id, duplicate: true, status: "COMMITTED" as const };
     if (migration.status !== "VALIDATED")
@@ -517,6 +543,14 @@ export class HistoricalSalesMigrationService {
       .bind(this.actor.tenantId, id)
       .first<Record<string, unknown>>();
     if (!migration) throw validation("Historical sales preview was not found");
+    if (
+      !hasValidCleanEvidence(
+        String(migration.report_json ?? "{}"),
+        String(migration.file_checksum ?? ""),
+      )
+    ) {
+      throw validation("This preview has no valid file security scan. Upload the file again.");
+    }
     const rows = await this.db
       .prepare(
         "SELECT * FROM historical_sales_migration_rows WHERE tenant_id=? AND migration_id=? ORDER BY row_number LIMIT 1000",
@@ -647,6 +681,33 @@ function issue(target: HistoricalSalesIssue[], field: string, code: string, mess
 
 function clean(value?: string) {
   return (value ?? "").trim();
+}
+
+function hasValidCleanEvidence(reportJson: string, fileChecksum: string) {
+  try {
+    const report = JSON.parse(reportJson) as {
+      fileValidationPolicy?: string;
+      cleanScanEvidence?: Partial<CleanScanEvidence>;
+    };
+    const evidence = report.cleanScanEvidence;
+    return (
+      report.fileValidationPolicy === "authenticated-clean-v1" &&
+      evidence?.verdict === "CLEAN" &&
+      evidence.sha256 === fileChecksum &&
+      evidence.authenticatedOrigin === "cloudflare-service-binding" &&
+      Boolean(evidence.evidenceId) &&
+      Boolean(evidence.scannerId) &&
+      Boolean(evidence.engine) &&
+      Boolean(evidence.signatureVersion) &&
+      Boolean(evidence.scannedAt) &&
+      Boolean(evidence.jobId) &&
+      Boolean(evidence.objectKey) &&
+      Boolean(evidence.objectVersion) &&
+      Number.isFinite(Date.parse(evidence.scannedAt ?? ""))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function validation(message: string) {

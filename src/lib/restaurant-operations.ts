@@ -47,8 +47,12 @@ export type BranchOperationsSummary = {
   };
 };
 
-const branchMatches = (recordBranch: string | undefined, branch: string) =>
-  isAllBranchScope(branch) || !recordBranch || recordBranch === branch;
+const branchMatches = (recordBranch: string | undefined, branch: string) => {
+  const normalizedRecordBranch = recordBranch?.trim();
+  const normalizedBranch = branch.trim();
+  if (!normalizedRecordBranch) return false;
+  return isAllBranchScope(normalizedBranch) || normalizedRecordBranch === normalizedBranch;
+};
 
 const isAllBranchScope = (branch: string) => /^all(?:\s+branches)?$/i.test(branch.trim());
 

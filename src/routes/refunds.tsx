@@ -8,6 +8,7 @@ import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { TransactionEngine } from "@/lib/transaction-engine";
+import { recordBusinessDate } from "@/lib/pos-workflow";
 
 export const Route = createFileRoute("/refunds")({
   head: () => ({
@@ -29,12 +30,21 @@ export const Route = createFileRoute("/refunds")({
 function Refunds() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
-  const { branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { branchLabel, branchRecords, currentUser, matchesBranch, timeZone } = useAppContext();
   const { state, mutate } = useTransactionEngine();
+  const refundBusinessDate = (refund: (typeof state.refunds)[number]) => {
+    const record = branchRecords.find((candidate) => candidate.id === refund.branchId);
+    return recordBusinessDate(
+      refund.businessDate,
+      refund.createdAt,
+      record?.timezone ?? timeZone,
+      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
+  };
   const rows = state.refunds
     .filter((refund) => matchesBranch(refund.branchId ?? refund.branch))
     .filter((refund) => statusFilter === "All" || refund.status === statusFilter)
-    .filter((refund) => !periodDate || refund.createdAt.slice(0, 10) === periodDate);
+    .filter((refund) => !periodDate || refundBusinessDate(refund) === periodDate);
   const paidReceipt = state.receipts.find((receipt) =>
     matchesBranch(receipt.branchId ?? receipt.branch),
   );
@@ -137,7 +147,7 @@ function Refunds() {
               <tr key={refund.id} className="hover:bg-secondary/50">
                 <TD className="num font-semibold">{refund.id}</TD>
                 <TD className="text-muted-foreground">
-                  {formatFilterDate(refund.createdAt.slice(0, 10))}
+                  {formatFilterDate(refundBusinessDate(refund))}
                 </TD>
                 <TD className="num text-muted-foreground">{refund.orderId}</TD>
                 <TD className="num text-muted-foreground">{refund.invoiceId}</TD>

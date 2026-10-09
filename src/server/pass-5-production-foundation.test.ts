@@ -12,7 +12,10 @@ import { handleWorkerQueue, type SerametWorkerMessage } from "@/server/workers";
 import { SnapshotMigrationService } from "@/server/migrations/snapshot-import";
 import { validateImportFile } from "@/server/file-import-security";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
-import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
+import {
+  getConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
 
 const tenantA = "tenant-a";
@@ -44,10 +47,36 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(26);
+    expect(version?.version).toBe(27);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();
+  });
+
+  it("hydrates the authoritative branch business-day cutoff from its database column", async () => {
+    await database
+      .prepare(
+        "UPDATE branches SET business_day_cutoff_minutes=315,payload_json=? WHERE tenant_id=? AND id=?",
+      )
+      .bind(
+        JSON.stringify({
+          id: branchA,
+          tenantId: tenantA,
+          code: branchA,
+          name: branchA,
+          timezone: "Africa/Nairobi",
+          active: true,
+          metadata: { businessDayCutoffMinutes: 0 },
+        }),
+        tenantA,
+        branchA,
+      )
+      .run();
+
+    await hydrateAuthoritativeConfiguration(database, testEnv(), true);
+    expect(getConfigurationRepository().getBranch(tenantA, branchA).metadata).toMatchObject({
+      businessDayCutoffMinutes: 315,
+    });
   });
 
   it("persists the entered physical cash count exactly and rejects invalid counts without closing", async () => {
