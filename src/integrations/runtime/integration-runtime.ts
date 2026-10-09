@@ -895,7 +895,9 @@ export class IntegrationRuntime {
     else if (!this.dependencies.configuration.getBranch(tenantId, connection.branchId))
       issues.push("The assigned branch does not exist");
     if (adapter.definition.capabilities.includes("RECEIVE_ORDERS")) {
-      const channelId = String(connection.configuration["channelId"] ?? "");
+      const channelId = String(
+        connection.configuration["orderChannelId"] ?? connection.configuration["channelId"] ?? "",
+      );
       const channel = this.dependencies.configuration
         .listOrderChannels(tenantId)
         .find(
@@ -1944,7 +1946,12 @@ export class IntegrationRuntime {
 
   private resolveChannel(tenantId: string, connection: IntegrationConnection, requested?: string) {
     const channels = this.dependencies.configuration.listOrderChannels(tenantId);
-    const configured = String(connection.configuration["channelId"] ?? requested ?? "");
+    const configured = String(
+      connection.configuration["orderChannelId"] ??
+        connection.configuration["channelId"] ??
+        requested ??
+        "",
+    );
     const channel = channels.find(
       (item) =>
         item.id === configured ||
