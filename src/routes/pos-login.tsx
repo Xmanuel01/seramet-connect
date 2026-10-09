@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Delete, LockKeyhole, RefreshCcw, Wifi, WifiOff } from "lucide-react";
+import { Delete, RefreshCcw, Wifi, WifiOff } from "lucide-react";
 import { Logo } from "@/components/app/Logo";
 import {
   deviceStartup,
@@ -110,6 +110,11 @@ function PosLoginPage() {
     [pin.length, requiredLength],
   );
 
+  const tenantName = startup?.device?.tenantName.trim() ?? "";
+  const branchName = startup?.device?.branchName.trim() ?? "";
+  const showTenantName =
+    Boolean(tenantName) && tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
+
   if (!startup) {
     return <ScreenMessage title="Checking this POS" detail="Validating the registered device..." />;
   }
@@ -153,15 +158,16 @@ function PosLoginPage() {
         <div className="grid flex-1 place-items-center py-8">
           <section className="grid w-full max-w-3xl overflow-hidden rounded-lg border border-border bg-card shadow-card md:grid-cols-[1fr_1.12fr]">
             <div className="border-b border-border bg-surface p-6 md:border-r md:border-b-0 md:p-8">
-              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-accent text-primary">
-                <LockKeyhole className="h-5 w-5" />
+              <div className="flex items-center gap-3" aria-label="Seramet">
+                <Logo compact />
+                <span className="text-xl font-bold text-foreground">SERAMET</span>
               </div>
-              <p className="mt-6 text-xs font-bold uppercase text-primary">{startup.device.name}</p>
-              <h1 className="mt-2 text-2xl font-bold">Employee sign in</h1>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                {startup.device.tenantName}
-                <br />
-                <strong className="text-foreground">{startup.device.branchName}</strong>
+              <h1 className="mt-7 text-3xl font-bold">Employee sign in</h1>
+              <p className="mt-4 leading-6">
+                <strong className="block text-base text-foreground">{branchName}</strong>
+                {showTenantName ? (
+                  <span className="block text-sm text-muted-foreground">{tenantName}</span>
+                ) : null}
               </p>
               <label className="mt-7 block text-sm font-semibold">
                 Email or employee code

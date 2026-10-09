@@ -103,3 +103,41 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   await expect(page.getByText(/Setup summary is temporarily unavailable/)).toBeVisible();
   await context.close();
 });
+
+test("employee sign-in uses Seramet branding without repeating identical restaurant names", async ({
+  page,
+}) => {
+  await page.route("**/api/seramet/public/device/startup", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        state: "ACTIVE",
+        device: {
+          id: "branding-test-device",
+          name: "KITCHEN",
+          tenantName: "Mona Swahili",
+          branchId: "branding-test-branch",
+          branchName: "Mona Swahili",
+        },
+        policy: {
+          pinLength: 6,
+          allowEmployeeTiles: false,
+          inactivityLockMinutes: 15,
+        },
+        employees: [],
+      }),
+    }),
+  );
+
+  await page.goto("/pos-login");
+  const heading = page.getByRole("heading", { name: "Employee sign in" });
+  const signInPanel = heading.locator("xpath=ancestor::div[contains(@class,'bg-surface')][1]");
+
+  await expect(signInPanel.getByRole("img", { name: "Seramet" })).toBeVisible();
+  await expect(signInPanel.getByText("SERAMET", { exact: true })).toBeVisible();
+  await expect(signInPanel.getByText("Mona Swahili", { exact: true })).toHaveCount(1);
+  await expect(signInPanel.getByText("KITCHEN", { exact: true })).toHaveCount(0);
+  await expect(heading).toHaveCSS("font-size", "30px");
+});
