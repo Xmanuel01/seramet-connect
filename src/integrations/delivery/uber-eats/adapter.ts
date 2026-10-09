@@ -16,8 +16,8 @@ const uberApiBaseUrls = {
   PRODUCTION: "https://api.uber.com",
 } as const;
 const uberLoginBaseUrls = {
-  SANDBOX: "https://login.uber.com",
-  PRODUCTION: "https://login.uber.com",
+  SANDBOX: "https://sandbox-login.uber.com",
+  PRODUCTION: "https://auth.uber.com",
 } as const;
 const requiredScopes = [
   "eats.store",

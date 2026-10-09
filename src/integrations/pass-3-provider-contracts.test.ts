@@ -301,7 +301,7 @@ describe("Pass 3 Uber Eats official contract", () => {
 
   it("uses documented OAuth scopes, order lifecycle, recovery, and store paths", async () => {
     const mock = adapterRuntime((url) => {
-      if (url.hostname === "login.uber.com")
+      if (url.hostname === "sandbox-login.uber.com")
         return json({ access_token: "uber-token", expires_in: 7200, token_type: "Bearer" });
       if (url.pathname.endsWith("/created-orders"))
         return json({
@@ -338,6 +338,7 @@ describe("Pass 3 Uber Eats official contract", () => {
     });
 
     const tokenCall = mock.calls.find((call) => call.url.includes("/oauth/v2/token"))!;
+    expect(new URL(tokenCall.url).origin).toBe("https://sandbox-login.uber.com");
     expect(tokenCall.body).toContain("grant_type=client_credentials");
     expect(tokenCall.body).toContain("eats.store.orders.read");
     expect(mock.calls.map((call) => new URL(call.url).pathname)).toEqual(
