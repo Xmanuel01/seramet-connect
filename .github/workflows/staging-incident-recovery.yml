@@ -57,8 +57,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' ||
       (inputs.operation == 'verify-backup-restore' &&
-       github.ref == 'refs/heads/codex/malware-scanner-staging' &&
-       github.sha == vars.SERAMET_STAGING_APPROVED_SHA)
+       github.ref == 'refs/heads/codex/malware-scanner-staging')
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 25
@@ -78,6 +77,14 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Verify approved backup candidate
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          test -n "$APPROVED_SHA"
+          test "$CANDIDATE_SHA" = "$APPROVED_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
