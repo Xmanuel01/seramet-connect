@@ -9,7 +9,7 @@ function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
-function requireStagingSource(value) {
+export function requireStagingSource(value) {
   const url = new URL(value);
   if (
     !["postgres:", "postgresql:"].includes(url.protocol) ||
@@ -158,19 +158,27 @@ export function compareDatabaseEvidence(source, restored) {
 async function main() {
   const sourceUrl = process.env.SERAMET_POSTGRES_URL?.trim();
   const restoredUrl = process.env.SERAMET_RESTORE_POSTGRES_URL?.trim();
+  const sourceEvidencePath = process.env.SERAMET_SOURCE_EVIDENCE_PATH?.trim();
   if (!sourceUrl || !restoredUrl) throw new Error("Source and isolated restore DSNs are required");
   if (process.env.SERAMET_ENVIRONMENT !== "staging")
     throw new Error("Backup verification is restricted to staging");
   requireStagingSource(sourceUrl);
 
-  const source = new pg.Client({ connectionString: sourceUrl });
   const restored = new pg.Client({ connectionString: restoredUrl });
-  await source.connect();
   await restored.connect();
+  let source;
   try {
-    await source.query("BEGIN READ ONLY");
     await restored.query("BEGIN READ ONLY");
-    const sourceEvidence = await collectDatabaseEvidence(source);
+    let sourceEvidence;
+    if (sourceEvidencePath) {
+      const { readFile } = await import("node:fs/promises");
+      sourceEvidence = JSON.parse(await readFile(sourceEvidencePath, "utf8"));
+    } else {
+      source = new pg.Client({ connectionString: sourceUrl });
+      await source.connect();
+      await source.query("BEGIN READ ONLY");
+      sourceEvidence = await collectDatabaseEvidence(source);
+    }
     const restoredEvidence = await collectDatabaseEvidence(restored);
     const issues = compareDatabaseEvidence(sourceEvidence, restoredEvidence);
     if (issues.length)
@@ -188,8 +196,11 @@ async function main() {
       }),
     );
   } finally {
-    await Promise.allSettled([source.query("ROLLBACK"), restored.query("ROLLBACK")]);
-    await Promise.allSettled([source.end(), restored.end()]);
+    await Promise.allSettled([
+      source?.query("ROLLBACK"),
+      restored.query("ROLLBACK"),
+    ]);
+    await Promise.allSettled([source?.end(), restored.end()]);
   }
 }
 

@@ -103,22 +103,13 @@ jobs:
           sudo apt-get install --yes postgresql-client-17
       - name: Create staging application database backup
         if: inputs.operation == 'verify-backup-restore'
-        shell: bash
         env:
+          SERAMET_ENVIRONMENT: staging
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
-        run: |
-          set -euo pipefail
-          test -n "$SERAMET_POSTGRES_URL"
-          /usr/lib/postgresql/17/bin/pg_dump \
-            --dbname "$SERAMET_POSTGRES_URL" \
-            --format custom \
-            --schema public \
-            --no-owner \
-            --no-privileges \
-            --file "$RUNNER_TEMP/seramet-staging-public.dump"
-          test -s "$RUNNER_TEMP/seramet-staging-public.dump"
-          echo "backup_sha256=$(sha256sum "$RUNNER_TEMP/seramet-staging-public.dump" | cut -d' ' -f1)"
-          echo "backup_bytes=$(stat --format=%s "$RUNNER_TEMP/seramet-staging-public.dump")"
+          SERAMET_PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
+          SERAMET_BACKUP_PATH: ${{ runner.temp }}/seramet-staging-public.dump
+          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
+        run: node scripts/create-staging-backup.mjs
       - name: Restore backup into isolated PostgreSQL 17
         if: inputs.operation == 'verify-backup-restore'
         shell: bash
@@ -159,11 +150,12 @@ jobs:
           SERAMET_ENVIRONMENT: staging
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
           SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
         run: node scripts/verify-staging-backup-restore.mjs
       - name: Remove temporary database backup
         if: always() && inputs.operation == 'verify-backup-restore'
         shell: bash
-        run: rm -f "$RUNNER_TEMP/seramet-staging-public.dump"
+        run: rm -f "$RUNNER_TEMP/seramet-staging-public.dump" "$RUNNER_TEMP/seramet-staging-source-evidence.json"
       - name: Check write prerequisites independently
         if: inputs.operation == 'quarantine-imports' || inputs.operation == 'consolidate-management'
         env:
