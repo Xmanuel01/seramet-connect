@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$SERAMET_POSTGRES_URL"
-          pg_dump \
+          /usr/lib/postgresql/17/bin/pg_dump \
             --dbname "$SERAMET_POSTGRES_URL" \
             --format custom \
             --schema public \
@@ -126,9 +126,10 @@ jobs:
           PGPASSWORD: restore-only
         run: |
           set -euo pipefail
-          psql --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
+          /usr/lib/postgresql/17/bin/psql \
+            --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
             --set ON_ERROR_STOP=1 --command 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
-          pg_restore \
+          /usr/lib/postgresql/17/bin/pg_restore \
             --host 127.0.0.1 \
             --port 54329 \
             --username postgres \
