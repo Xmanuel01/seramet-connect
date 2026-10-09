@@ -1300,6 +1300,26 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(preserved?.payload_json).not.toContain("sensitive");
   });
 
+  it("generates provider callbacks with the public provider code", async () => {
+    const result = await service.configureProviderConnection({
+      id: "connection-uber-sandbox",
+      branchId,
+      providerId: "provider-delivery-uber-eats",
+      environment: "SANDBOX",
+      configuration: { externalStoreId: "sandbox-store" },
+      secretReference: "env://SERAMET_UBER_CREDENTIALS",
+    });
+    const connection = await db
+      .prepare("SELECT payload_json FROM provider_connections WHERE tenant_id=? AND id=?")
+      .bind(tenantId, result.id)
+      .first<{ payload_json: string }>();
+
+    expect(JSON.parse(connection!.payload_json)).toMatchObject({
+      callbackUrl:
+        "https://callbacks.example.test/api/seramet/integrations/webhooks/UBER_EATS/connection-uber-sandbox",
+    });
+  });
+
   it("does not claim a provider connection is configured without credentials", async () => {
     expect(
       await service.configureProviderConnection({

@@ -63,7 +63,7 @@ export const uberEatsDefinition: ProviderDefinition = {
     priceSyncEnabled: { type: "boolean" },
     storeStatusSyncEnabled: { type: "boolean" },
   },
-  secretFields: ["clientId", "clientSecret"],
+  secretFields: ["clientId", "clientSecret", "webhookSigningSecret"],
   adapterMetadata: {
     baseUrls: uberApiBaseUrls,
     webhookBodyLimitBytes: 1_048_576,
@@ -661,11 +661,15 @@ export function serializeUberMenu(menu: NormalizedMarketplaceMenu, factor = 100)
 
 async function verifyUberWebhook(request: ProviderWebhookRequest) {
   const signature = request.headers["x-uber-signature"];
-  const clientSecret = request.credentials["clientSecret"];
-  if (!signature || !clientSecret) return false;
+  const signingSecret =
+    request.credentials["webhookSigningSecret"] ?? request.credentials["clientSecret"];
+  if (!signature || !/^[a-f0-9]{64}$/i.test(signature) || !signingSecret) return false;
+  const deliveryEnvironment = request.headers["x-environment"]?.trim().toUpperCase();
+  if (deliveryEnvironment && deliveryEnvironment !== request.connection.environment.toUpperCase())
+    return false;
   const key = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(clientSecret),
+    new TextEncoder().encode(signingSecret),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],

@@ -2915,7 +2915,7 @@ export class OnboardingService {
           : "CREDENTIALS_REQUIRED";
     const stamp = now();
     const callback = this.env.SERAMET_CALLBACK_BASE_URL
-      ? `${this.env.SERAMET_CALLBACK_BASE_URL.replace(/\/$/, "")}/api/seramet/integrations/webhooks/${encodeURIComponent(input.providerId)}/${encodeURIComponent(id)}`
+      ? `${this.env.SERAMET_CALLBACK_BASE_URL.replace(/\/$/, "")}/api/seramet/integrations/webhooks/${encodeURIComponent(provider.definition.code)}/${encodeURIComponent(id)}`
       : undefined;
     await this.db.batch([
       this.db

@@ -200,6 +200,27 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Configure Uber Eats sandbox secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          put_optional_secret() {
+            local name="$1"
+            local value="$2"
+            if [[ -n "$value" ]]; then
+              printf '%s' "$value" | npx --yes wrangler@4.149.0 secret put "$name" --config .seramet/wrangler.generated.json
+            fi
+          }
+          put_optional_secret SERAMET_UBER_CLIENT_ID "$SERAMET_UBER_CLIENT_ID"
+          put_optional_secret SERAMET_UBER_CLIENT_SECRET "$SERAMET_UBER_CLIENT_SECRET"
+          put_optional_secret SERAMET_UBER_WEBHOOK_SIGNING_SECRET "$SERAMET_UBER_WEBHOOK_SIGNING_SECRET"
+        env:
+          SERAMET_UBER_CLIENT_ID: ${{ secrets.SERAMET_UBER_CLIENT_ID }}
+          SERAMET_UBER_CLIENT_SECRET: ${{ secrets.SERAMET_UBER_CLIENT_SECRET }}
+          SERAMET_UBER_WEBHOOK_SIGNING_SECRET: ${{ secrets.SERAMET_UBER_WEBHOOK_SIGNING_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Verify liveness
         run: curl --fail-with-body --retry 8 --retry-delay 5 "${SERAMET_PUBLIC_ORIGIN}/api/seramet/health/live"
 

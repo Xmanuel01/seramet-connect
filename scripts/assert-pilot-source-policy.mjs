@@ -33,6 +33,12 @@ async function scan(path) {
     check(
       target,
       source,
+      /SERAMET_UBER_(?:CLIENT_ID|CLIENT_SECRET|WEBHOOK_SIGNING_SECRET)\s*=\s*["'][^"']+["']/,
+      "embedded Uber credential",
+    );
+    check(
+      target,
+      source,
       /VITE_[A-Z0-9_]*(?:SECRET|PASSKEY|PRIVATE_KEY)/,
       "client-visible secret environment variable",
     );
