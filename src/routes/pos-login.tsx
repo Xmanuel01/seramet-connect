@@ -113,7 +113,8 @@ function PosLoginPage() {
   const tenantName = startup?.device?.tenantName.trim() ?? "";
   const branchName = startup?.device?.branchName.trim() ?? "";
   const showTenantName =
-    Boolean(tenantName) && tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
+    Boolean(tenantName) &&
+    tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
 
   if (!startup) {
     return <ScreenMessage title="Checking this POS" detail="Validating the registered device..." />;
