@@ -2,7 +2,8 @@ name: Deploy staging
 
 # Incident: staging release requires human-invoked recovery gates. Never deploy
 # automatically from a main push until backup, backlog, and security checks pass.
-# Lightweight deployment has no antivirus service; retain all data security/recovery gates.
+# The scanner is isolated in its own queue Worker and on-demand container; retain
+# all data security/recovery gates for both deployments.
 on:
   workflow_dispatch:
 
@@ -58,7 +59,7 @@ jobs:
           const workQueue = bindings.get("SERAMET_WORK_QUEUE")?.queue_name;
           const publicOrigin = bindings.get("SERAMET_PUBLIC_ORIGIN")?.text;
           if (bindings.has("SERAMET_MALWARE_SCANNER")) {
-            throw new Error("Remove the legacy scanner binding from the staging Worker before deploying the lite release");
+            throw new Error("Remove the legacy synchronous scanner binding before deploying the queue scanner");
           }
           const queueRows = Array.isArray(queuesPayload.result)
             ? queuesPayload.result
@@ -87,8 +88,35 @@ jobs:
           append("SERAMET_CLOUDFLARE_R2_BUCKET", bucket);
           append("SERAMET_CLOUDFLARE_QUEUE", workQueue);
           append("SERAMET_CLOUDFLARE_DLQ", dlq);
+          append("SERAMET_CLOUDFLARE_SCAN_QUEUE", "seramet-staging-file-scan");
+          append("SERAMET_CLOUDFLARE_SCAN_DLQ", "seramet-staging-file-scan-dlq");
+          append("SERAMET_CLOUDFLARE_SCANNER_WORKER_NAME", "seramet-file-scanner-staging");
           append("SERAMET_PUBLIC_ORIGIN", publicOrigin);
           NODE
+
+      - name: Ensure isolated scanner queues exist
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          ensure_queue() {
+            local queue_name="$1"
+            if npx --yes wrangler@4.149.0 queues create "$queue_name"; then
+              return 0
+            fi
+            npx --yes wrangler@4.149.0 queues list --json > /tmp/queues-after-create.json
+            QUEUE_NAME="$queue_name" node <<'NODE'
+          const fs = require("fs");
+          const rows = JSON.parse(fs.readFileSync("/tmp/queues-after-create.json", "utf8"));
+          if (!rows.some((row) => (row.queue_name ?? row.name) === process.env.QUEUE_NAME)) {
+            throw new Error(`Queue ${process.env.QUEUE_NAME} could not be created or verified`);
+          }
+          NODE
+          }
+          ensure_queue "$SERAMET_CLOUDFLARE_SCAN_QUEUE"
+          ensure_queue "$SERAMET_CLOUDFLARE_SCAN_DLQ"
 
       - name: Require release-specific backup and pending-work approval
         env:
@@ -136,15 +164,39 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Generate Cloudflare binding configuration
-        run: node scripts/render-cloudflare-config.mjs staging
+        run: |
+          node scripts/render-scanner-cloudflare-config.mjs staging
+          node scripts/render-cloudflare-config.mjs staging
         env:
           SERAMET_REUSE_EXISTING_VARS: "true"
           SERAMET_APP_VERSION: ${{ github.ref_name }}
           SERAMET_BUILD_ID: ${{ github.sha }}
 
-      - name: Deploy Worker
-        run: npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json
+      - name: Deploy isolated scanner Worker and ClamAV container
+        run: npx --yes wrangler@4.149.0 deploy --config .seramet/scanner.wrangler.generated.json
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Configure scanner authentication secret
+        shell: bash
+        run: printf '%s' "$SERAMET_SCANNER_EVIDENCE_SECRET" | npx --yes wrangler@4.149.0 secret put SERAMET_SCANNER_EVIDENCE_SECRET --config .seramet/scanner.wrangler.generated.json
+        env:
+          SERAMET_SCANNER_EVIDENCE_SECRET: ${{ secrets.SERAMET_SCANNER_EVIDENCE_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy primary staging Worker
+        run: npx --yes wrangler@4.149.0 deploy --config .seramet/wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Configure primary Worker scanner authentication secret
+        shell: bash
+        run: printf '%s' "$SERAMET_SCANNER_EVIDENCE_SECRET" | npx --yes wrangler@4.149.0 secret put SERAMET_SCANNER_EVIDENCE_SECRET --config .seramet/wrangler.generated.json
+        env:
+          SERAMET_SCANNER_EVIDENCE_SECRET: ${{ secrets.SERAMET_SCANNER_EVIDENCE_SECRET }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 

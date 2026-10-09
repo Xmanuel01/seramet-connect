@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 const findings = [];
 await scan("src");
+await scan("scanner-worker");
 if (findings.length) {
   throw new Error(`Pilot source policy failed:\n${findings.join("\n")}`);
 }
@@ -35,6 +36,14 @@ async function scan(path) {
       /VITE_[A-Z0-9_]*(?:SECRET|PASSKEY|PRIVATE_KEY)/,
       "client-visible secret environment variable",
     );
+    if (target.startsWith("src")) {
+      check(
+        target,
+        source,
+        /(?:from\s+|require\s*\(\s*)["'](?:node-clam|clamav|clamd)/i,
+        "antivirus engine dependency in primary application source",
+      );
+    }
   }
 }
 

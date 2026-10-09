@@ -11,6 +11,7 @@ const required = [
   "SERAMET_CLOUDFLARE_R2_BUCKET",
   "SERAMET_CLOUDFLARE_QUEUE",
   "SERAMET_CLOUDFLARE_DLQ",
+  "SERAMET_CLOUDFLARE_SCAN_QUEUE",
 ];
 
 if (!reuseExistingVars) {
@@ -90,6 +91,10 @@ const config = {
       {
         binding: "SERAMET_WORK_QUEUE",
         queue: process.env.SERAMET_CLOUDFLARE_QUEUE,
+      },
+      {
+        binding: "SERAMET_SCAN_QUEUE",
+        queue: process.env.SERAMET_CLOUDFLARE_SCAN_QUEUE,
       },
     ],
     consumers: [

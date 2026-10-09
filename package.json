@@ -35,6 +35,8 @@
     "test:identity": "vitest run src/server/identity-device-branch-hardening.test.ts",
     "migrate:postgres": "vite-node scripts/migrate-postgres.ts",
     "audit:bundle": "node scripts/audit-production-bundle.mjs",
+    "benchmark:scanner": "vite-node scripts/benchmark-scanner-boundary.ts",
+    "scanner:config:staging": "node scripts/render-scanner-cloudflare-config.mjs staging",
     "deploy:staging": "npm run build && node scripts/render-cloudflare-config.mjs staging && npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json",
     "typecheck": "tsc --noEmit",
     "validate": "node scripts/assert-no-lovable-source.mjs && npm run typecheck && npm run lint && npm test && npm run build && node scripts/verify-cloudflare-events.mjs",
@@ -99,6 +101,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@cloudflare/containers": "^0.3.7",
     "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^9.32.0",
     "@playwright/test": "^1.63.0",

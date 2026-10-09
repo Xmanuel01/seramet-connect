@@ -9,6 +9,7 @@ import { validateImportFile } from "@/server/file-import-security";
 import {
   requireCleanMalwareScan,
   scannerConfigured,
+  scannerPipelineConfigured,
   type CleanScanEvidence,
 } from "@/server/malware-scanner";
 import { TenantObjectStorage } from "@/server/object-storage";
@@ -1161,9 +1162,12 @@ export class OnboardingService {
   async queueImportPreparation(input: ImportPreviewInput) {
     this.require(permissions.setupImport);
     if (
-      !scannerConfigured(this.env.SERAMET_MALWARE_SCANNER) ||
-      !this.env.SERAMET_OBJECTS ||
-      !this.env.SERAMET_WORK_QUEUE
+      !scannerPipelineConfigured({
+        scanQueue: this.env.SERAMET_SCAN_QUEUE,
+        workQueue: this.env.SERAMET_WORK_QUEUE,
+        objectStorage: this.env.SERAMET_OBJECTS,
+        evidenceSecret: this.env.SERAMET_SCANNER_EVIDENCE_SECRET,
+      })
     ) {
       throw new ServerOperationError(
         "EXTERNAL_SERVICE_UNAVAILABLE",
@@ -1203,15 +1207,24 @@ export class OnboardingService {
     const jobKey = `setup-import-prepare:${input.idempotencyKey}`;
     const existing = await this.db
       .prepare(
-        `SELECT id,payload_json,status,result_json FROM worker_jobs
+        `SELECT id,payload_json,status,result_json,correlation_id FROM worker_jobs
          WHERE tenant_id=? AND idempotency_key=? AND job_type='SETUP_IMPORT_PREPARE'`,
       )
       .bind(this.actor.tenantId, jobKey)
-      .first<{ id: string; payload_json: string; status: string; result_json: string }>();
+      .first<{
+        id: string;
+        payload_json: string;
+        status: string;
+        result_json: string;
+        correlation_id: string;
+      }>();
     if (existing) {
       const payload = parseJson<{ requestDigest?: string }>(existing.payload_json, {});
       if (payload.requestDigest !== requestDigest) {
         throw invalidTransition("Import upload identity was reused with a different request");
+      }
+      if (["PENDING", "RETRY_PENDING"].includes(existing.status)) {
+        await this.dispatchScanJob(existing.id, existing.correlation_id);
       }
       return {
         jobId: existing.id,
@@ -1221,7 +1234,7 @@ export class OnboardingService {
       };
     }
 
-    const storage = new TenantObjectStorage(this.db, this.env.SERAMET_OBJECTS);
+    const storage = new TenantObjectStorage(this.db, this.env.SERAMET_OBJECTS!);
     const stored = await storage.store({
       tenantId: this.actor.tenantId,
       ...(target.branchIds.length === 1 ? { branchId: target.branchIds[0] } : {}),
@@ -1258,6 +1271,7 @@ export class OnboardingService {
             actorId: this.actor.id,
             ...(input.branchId ? { branchId: input.branchId } : {}),
           },
+          "9999-12-31T23:59:59.999Z",
         ),
         this.audit("SETUP_IMPORT_UPLOAD_QUARANTINED", "WORKER_JOB", jobId, {
           objectId: stored.id,
@@ -1278,7 +1292,7 @@ export class OnboardingService {
       await storage.remove(this.actor.tenantId, stored.id).catch(() => undefined);
       throw error;
     }
-    await this.dispatchWorkerJob(jobId, correlationId);
+    await this.dispatchScanJob(jobId, correlationId);
     return { jobId, status: "PENDING" as const, duplicate: false, result: {} };
   }
 
@@ -5887,6 +5901,7 @@ export class OnboardingService {
     idempotencyKey: string,
     correlationId: string,
     payload: Record<string, unknown>,
+    scheduledAt = now(),
   ) {
     const stamp = now();
     return this.db
@@ -5900,10 +5915,36 @@ export class OnboardingService {
         json(payload),
         idempotencyKey,
         correlationId,
-        stamp,
+        scheduledAt,
         stamp,
         stamp,
       );
+  }
+  private async dispatchScanJob(jobId: string, correlationId: string) {
+    if (!this.env.SERAMET_SCAN_QUEUE) {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "File imports are unavailable until security scanning is configured",
+      );
+    }
+    try {
+      await this.env.SERAMET_SCAN_QUEUE.send(
+        {
+          kind: "file-scan",
+          tenantId: this.actor.tenantId,
+          jobId,
+          correlationId,
+        },
+        { contentType: "json" },
+      );
+    } catch {
+      throw new ServerOperationError(
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+        503,
+        "File security scan could not be queued; retry the upload",
+      );
+    }
   }
   private async dispatchWorkerJob(jobId: string, correlationId: string) {
     if (!this.env.SERAMET_WORK_QUEUE) return;
@@ -6540,7 +6581,9 @@ function hasValidCleanEvidence(
   return (
     evidence.verdict === "CLEAN" &&
     evidence.sha256 === checksum &&
-    evidence.authenticatedOrigin === "cloudflare-service-binding" &&
+    ["cloudflare-service-binding", "cloudflare-service-binding+hmac-v1"].includes(
+      evidence.authenticatedOrigin ?? "",
+    ) &&
     (!subject.objectKey || evidence.objectKey === subject.objectKey) &&
     (!subject.objectVersion || evidence.objectVersion === subject.objectVersion) &&
     (!subject.evidenceId || evidence.evidenceId === subject.evidenceId) &&
