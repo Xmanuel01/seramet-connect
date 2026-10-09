@@ -196,10 +196,7 @@ async function main() {
       }),
     );
   } finally {
-    await Promise.allSettled([
-      source?.query("ROLLBACK"),
-      restored.query("ROLLBACK"),
-    ]);
+    await Promise.allSettled([source?.query("ROLLBACK"), restored.query("ROLLBACK")]);
     await Promise.allSettled([source?.end(), restored.end()]);
   }
 }

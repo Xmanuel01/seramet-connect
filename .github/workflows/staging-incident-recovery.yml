@@ -152,6 +152,12 @@ jobs:
           SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
           SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
         run: node scripts/verify-staging-backup-restore.mjs
+      - name: Apply and verify Data API lockdown on isolated restore
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+          SERAMET_ISOLATED_RESTORE: "true"
+        run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
       - name: Remove temporary database backup
         if: always() && inputs.operation == 'verify-backup-restore'
         shell: bash

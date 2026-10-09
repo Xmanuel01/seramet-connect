@@ -3,10 +3,7 @@ import { createReadStream } from "node:fs";
 import { stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import pg from "pg";
-import {
-  collectDatabaseEvidence,
-  requireStagingSource,
-} from "./verify-staging-backup-restore.mjs";
+import { collectDatabaseEvidence, requireStagingSource } from "./verify-staging-backup-restore.mjs";
 
 function run(command, args, env) {
   return new Promise((resolve, reject) => {
