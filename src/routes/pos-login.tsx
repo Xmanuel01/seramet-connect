@@ -8,6 +8,7 @@ import {
   markInteractiveSignIn,
   type DeviceStartup,
 } from "@/lib/auth-client";
+import { pinAfterIdentityChange, shouldCapturePinKeyboardEvent } from "@/lib/pos-login-input";
 
 export const Route = createFileRoute("/pos-login")({
   head: () => ({ meta: [{ title: "Employee sign in - Seramet" }] }),
@@ -22,12 +23,17 @@ function PosLoginPage() {
   const [message, setMessage] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
   const identifierRef = useRef<HTMLInputElement>(null);
+  const deviceContextRef = useRef("");
+  const submittingRef = useRef(false);
   const requiredLength = startup?.policy?.pinLength ?? 6;
 
   const load = useCallback(async () => {
     setMessage("");
     try {
       const result = await deviceStartup();
+      const nextDeviceContext = `${result.device?.id ?? result.state}:${result.policy?.pinLength ?? ""}`;
+      if (deviceContextRef.current && deviceContextRef.current !== nextDeviceContext) setPin("");
+      deviceContextRef.current = nextDeviceContext;
       setStartup(result);
       if (result.state !== "ACTIVE") setMessage(deviceMessage(result.state));
     } catch (error) {
@@ -44,6 +50,7 @@ function PosLoginPage() {
   );
 
   const submit = useCallback(async () => {
+    if (submittingRef.current) return;
     if (!identifier.trim()) {
       setMessage("Enter your email or employee code.");
       identifierRef.current?.focus();
@@ -57,6 +64,7 @@ function PosLoginPage() {
       setMessage("Employee sign-in requires a secure server connection.");
       return;
     }
+    submittingRef.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -67,6 +75,7 @@ function PosLoginPage() {
       setPin("");
       setMessage(error instanceof Error ? error.message : "Employee sign-in failed");
     } finally {
+      submittingRef.current = false;
       setBusy(false);
     }
   }, [identifier, online, pin, requiredLength]);
@@ -86,6 +95,7 @@ function PosLoginPage() {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (busy || startup?.state !== "ACTIVE") return;
+      if (!shouldCapturePinKeyboardEvent(event.target)) return;
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
       if (event.key === "Escape") setPin("");
@@ -158,7 +168,14 @@ function PosLoginPage() {
                 <input
                   ref={identifierRef}
                   value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextIdentifier = event.target.value;
+                    setPin((current) =>
+                      pinAfterIdentityChange(identifier, nextIdentifier, current),
+                    );
+                    setIdentifier(nextIdentifier);
+                  }}
                   autoComplete="username"
                   maxLength={254}
                   className="mt-2 h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -174,7 +191,12 @@ function PosLoginPage() {
                       key={employee.employeeCode}
                       type="button"
                       className="rounded-md border border-border bg-card px-3 py-2 text-left text-xs font-semibold hover:border-primary"
-                      onClick={() => setIdentifier(employee.employeeCode)}
+                      onClick={() => {
+                        setPin((current) =>
+                          pinAfterIdentityChange(identifier, employee.employeeCode, current),
+                        );
+                        setIdentifier(employee.employeeCode);
+                      }}
                     >
                       {employee.displayName}
                     </button>

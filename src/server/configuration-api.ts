@@ -16,12 +16,99 @@ import { replaceRolePermissions } from "@/server/module-access-service";
 import { replaceUserBranchAssignments } from "@/server/branch-access-service";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
+import {
+  createOrderChannel,
+  createOrderChannelInputSchema,
+  createPaymentMethod,
+  createPaymentMethodInputSchema,
+  createRole,
+  createRoleInputSchema,
+  deactivateRole,
+  updateOrderChannel,
+  updateOrderChannelInputSchema,
+  updatePaymentMethod,
+  updatePaymentMethodInputSchema,
+} from "@/server/settings-configuration-service";
+import type { z } from "zod";
 
 export async function handleConfigurationApi(
   request: Request,
   env: SerametEnv,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  if (url.pathname === "/api/seramet/configuration/roles" && request.method === "POST") {
+    const actor = await settingsMutationActor(request, env, "roles");
+    const result = await createRole(
+      requireDatabase(env),
+      actor,
+      await readSettingsBody(request, createRoleInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  const disableRoleRoute = /^\/api\/seramet\/configuration\/roles\/([^/]+)\/disable$/.exec(
+    url.pathname,
+  );
+  if (disableRoleRoute && request.method === "POST") {
+    const actor = await settingsMutationActor(request, env, "roles");
+    const body = await readSettingsBody(request, createRoleInputSchema.pick({ reason: true }));
+    const result = await deactivateRole(
+      requireDatabase(env),
+      actor,
+      decodeURIComponent(disableRoleRoute[1]!),
+      body,
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  if (url.pathname === "/api/seramet/configuration/payment-methods" && request.method === "POST") {
+    const actor = await settingsMutationActor(request, env, "payment-methods");
+    const result = await createPaymentMethod(
+      requireDatabase(env),
+      actor,
+      await readSettingsBody(request, createPaymentMethodInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  const paymentMethodRoute = /^\/api\/seramet\/configuration\/payment-methods\/([^/]+)$/.exec(
+    url.pathname,
+  );
+  if (paymentMethodRoute && request.method === "PATCH") {
+    const actor = await settingsMutationActor(request, env, "payment-methods");
+    const result = await updatePaymentMethod(
+      requireDatabase(env),
+      actor,
+      decodeURIComponent(paymentMethodRoute[1]!),
+      await readSettingsBody(request, updatePaymentMethodInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  if (url.pathname === "/api/seramet/configuration/order-channels" && request.method === "POST") {
+    const actor = await settingsMutationActor(request, env, "order-channels");
+    const result = await createOrderChannel(
+      requireDatabase(env),
+      actor,
+      await readSettingsBody(request, createOrderChannelInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  const orderChannelRoute = /^\/api\/seramet\/configuration\/order-channels\/([^/]+)$/.exec(
+    url.pathname,
+  );
+  if (orderChannelRoute && request.method === "PATCH") {
+    const actor = await settingsMutationActor(request, env, "order-channels");
+    const result = await updateOrderChannel(
+      requireDatabase(env),
+      actor,
+      decodeURIComponent(orderChannelRoute[1]!),
+      await readSettingsBody(request, updateOrderChannelInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
   const rolePermissionsRoute = /^\/api\/seramet\/access\/roles\/([^/]+)\/permissions$/.exec(
     url.pathname,
   );
@@ -114,6 +201,39 @@ export async function handleConfigurationApi(
     return json({ ok: true, applied: true, preview });
   }
   return null;
+}
+
+async function settingsMutationActor(request: Request, env: SerametEnv, bucket: string) {
+  const actor = await authenticateSerametRequest(request, env);
+  requireFullAuthentication(actor);
+  const db = requireDatabase(env);
+  await new DatabaseRateLimiter(db).consume(
+    `${actor.tenantId}:${actor.id}:settings:${bucket}`,
+    sensitiveRateLimits.configuration,
+  );
+  return actor;
+}
+
+async function refreshConfiguration(db: D1Database, env: SerametEnv) {
+  invalidateAuthoritativeConfiguration(db);
+  await hydrateAuthoritativeConfiguration(db, env, true);
+}
+
+async function readSettingsBody<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    throw new SerametHttpError(400, "Settings request must be valid JSON");
+  }
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw new SerametHttpError(
+      400,
+      parsed.error.issues[0]?.message ?? "Settings request is invalid",
+    );
+  }
+  return parsed.data;
 }
 
 async function persistConfiguration(db: D1Database, state: PlatformState, actor: ServerActor) {

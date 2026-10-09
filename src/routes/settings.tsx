@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { cn } from "@/lib/utils";
 import {
   canNavigateToPath,
@@ -13,7 +14,6 @@ import {
   type PermissionRequirement,
 } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
-import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { settingsGroups } from "@/platform/settings-navigation";
 import type { OrderChannelType, PaymentMethodCategory } from "@/platform/types";
 
@@ -56,11 +56,8 @@ function Settings() {
     refreshAccess,
     canAccessModule,
     hasPermission,
-    addRole,
-    removeRole,
   } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId);
-  const repository = getConfigurationRepository();
   const [active, setActive] = useState("Users and access");
   const [newRole, setNewRole] = useState("");
   const [paymentName, setPaymentName] = useState("");
@@ -70,9 +67,11 @@ function Settings() {
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
   const [channelUsesOnlinePrice, setChannelUsesOnlinePrice] = useState(false);
-  const [configNotice, setConfigNotice] = useState(
-    "Configuration changes apply to the active tenant.",
-  );
+  const [configNotice, setConfigNotice] = useState({
+    kind: "info" as "info" | "success" | "error",
+    message: "Configuration changes apply to the active tenant.",
+  });
+  const [configSaving, setConfigSaving] = useState("");
   const [selectedAccessRoleId, setSelectedAccessRoleId] = useState(roleRecords[0]?.id ?? "");
   const [accessSaving, setAccessSaving] = useState(false);
   const tenantUsers = platformState.users.filter(
@@ -134,55 +133,184 @@ function Settings() {
     setActive(visibleGroups[0]?.label ?? "");
   }, [active, visibleGroups]);
 
-  const addPaymentMethod = () => {
+  const mutateSettings = async (path: string, method: "POST" | "PATCH", body: unknown) => {
+    const token = getSerametAccessToken();
+    const response = await authenticatedFetch(path, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "x-seramet-tenant-id": activeTenantId,
+        "x-seramet-user-id": currentUser.id,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(
+        payload.message ?? payload.error ?? `Configuration update failed (${response.status})`,
+      );
+    }
+    await refreshConfiguration();
+  };
+
+  const addPaymentMethod = async () => {
     if (!canManagePaymentMethods) return;
     const displayName = paymentName.trim();
     const code = paymentCode.trim().toUpperCase();
-    if (!displayName || !code) return;
-    repository.upsertPaymentMethod(activeTenantId, {
-      id: `payment-${slug(code)}-${Date.now().toString(36)}`,
-      tenantId: activeTenantId,
-      code,
-      displayName,
-      category: paymentCategory,
-      enabled: true,
-      sortOrder: (paymentMethods.at(-1)?.sortOrder ?? 0) + 10,
-      requiresReference: paymentCategory !== "CASH",
-      requiresCustomer: paymentCategory === "CREDIT",
-      supportsRefund: true,
-      supportsSplit: true,
-      metadata: {},
-    });
-    refreshConfiguration();
-    setPaymentName("");
-    setPaymentCode("");
-    setConfigNotice(`${displayName} is now available to POS payment selection.`);
+    if (!displayName || !code) {
+      setConfigNotice({ kind: "error", message: "Display name and code are required." });
+      return;
+    }
+    setConfigSaving("payment-create");
+    try {
+      await mutateSettings("/api/seramet/configuration/payment-methods", "POST", {
+        displayName,
+        code,
+        category: paymentCategory,
+        reason: "Created from Settings payment methods",
+      });
+      setPaymentName("");
+      setPaymentCode("");
+      setConfigNotice({
+        kind: "success",
+        message: `${displayName} was saved and is now available to POS payment selection.`,
+      });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Payment method update failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
   };
 
-  const addOrderChannel = () => {
+  const addOrderChannel = async () => {
     if (!canManageOrderChannels) return;
     const displayName = channelName.trim();
     const code = channelCode.trim().toUpperCase();
-    if (!displayName || !code) return;
-    repository.upsertOrderChannel(activeTenantId, {
-      id: `channel-${slug(code)}-${Date.now().toString(36)}`,
-      tenantId: activeTenantId,
-      code,
-      displayName,
-      channelType,
-      enabled: true,
-      requiresCustomer: ["OWN_DELIVERY", "PHONE", "WHATSAPP"].includes(channelType),
-      requiresTable: channelType === "DINE_IN",
-      requiresAddress: channelType === "OWN_DELIVERY",
-      isExternallyPaid: channelType === "MARKETPLACE",
-      sortOrder: (orderChannels.at(-1)?.sortOrder ?? 0) + 10,
-      metadata: { useOnlinePrice: channelUsesOnlinePrice },
-    });
-    refreshConfiguration();
-    setChannelName("");
-    setChannelCode("");
-    setChannelUsesOnlinePrice(false);
-    setConfigNotice(`${displayName} is now available in the POS order-source control.`);
+    if (!displayName || !code) {
+      setConfigNotice({ kind: "error", message: "Display name and code are required." });
+      return;
+    }
+    setConfigSaving("channel-create");
+    try {
+      await mutateSettings("/api/seramet/configuration/order-channels", "POST", {
+        displayName,
+        code,
+        channelType,
+        useOnlinePrice: channelUsesOnlinePrice,
+        reason: "Created from Settings order channels",
+      });
+      setChannelName("");
+      setChannelCode("");
+      setChannelUsesOnlinePrice(false);
+      setConfigNotice({
+        kind: "success",
+        message: `${displayName} was saved and is now available in the POS order-source control.`,
+      });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Order channel update failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
+  };
+
+  const addConfiguredRole = async () => {
+    const name = newRole.trim();
+    if (!canManageRoleAccess || !name) return;
+    setConfigSaving("role-create");
+    try {
+      await mutateSettings("/api/seramet/configuration/roles", "POST", {
+        name,
+        reason: "Created from Settings role management",
+      });
+      setNewRole("");
+      setConfigNotice({ kind: "success", message: `${name} was saved.` });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Role creation failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
+  };
+
+  const disableConfiguredRole = async (roleId: string, name: string) => {
+    if (!canManageRoleAccess) return;
+    setConfigSaving(`role-disable:${roleId}`);
+    try {
+      await mutateSettings(
+        `/api/seramet/configuration/roles/${encodeURIComponent(roleId)}/disable`,
+        "POST",
+        { reason: "Disabled from Settings role management" },
+      );
+      setConfigNotice({ kind: "success", message: `${name} was disabled.` });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Role update failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
+  };
+
+  const updateConfiguredChannel = async (
+    channelId: string,
+    displayName: string,
+    change: { enabled?: boolean; useOnlinePrice?: boolean },
+  ) => {
+    setConfigSaving(`channel-update:${channelId}`);
+    try {
+      await mutateSettings(
+        `/api/seramet/configuration/order-channels/${encodeURIComponent(channelId)}`,
+        "PATCH",
+        { ...change, reason: "Updated from Settings order channels" },
+      );
+      setConfigNotice({ kind: "success", message: `${displayName} was updated.` });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Order channel update failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
+  };
+
+  const updateConfiguredPaymentMethod = async (
+    paymentMethodId: string,
+    displayName: string,
+    enabled: boolean,
+  ) => {
+    setConfigSaving(`payment-update:${paymentMethodId}`);
+    try {
+      await mutateSettings(
+        `/api/seramet/configuration/payment-methods/${encodeURIComponent(paymentMethodId)}`,
+        "PATCH",
+        {
+          enabled,
+          reason: `${enabled ? "Enabled" : "Disabled"} from Settings payment methods`,
+        },
+      );
+      setConfigNotice({ kind: "success", message: `${displayName} was disabled.` });
+    } catch (error) {
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Payment method update failed.",
+      });
+    } finally {
+      setConfigSaving("");
+    }
   };
 
   const togglePermission = async (roleId: string, permission: string) => {
@@ -214,11 +342,15 @@ function Settings() {
       if (!response.ok)
         throw new Error(payload.message ?? `Access update failed (${response.status})`);
       await refreshAccess();
-      setConfigNotice(
-        `${roleRecord.name} permissions were updated and active access was refreshed.`,
-      );
+      setConfigNotice({
+        kind: "success",
+        message: `${roleRecord.name} permissions were updated and active access was refreshed.`,
+      });
     } catch (error) {
-      setConfigNotice(error instanceof Error ? error.message : "Permission update failed.");
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Permission update failed.",
+      });
     } finally {
       setAccessSaving(false);
     }
@@ -251,9 +383,15 @@ function Settings() {
         throw new Error(payload.message ?? `Branch assignment update failed (${response.status})`);
       }
       await refreshAccess();
-      setConfigNotice(`${selectedBranchUser.name}'s primary branch and access were updated.`);
+      setConfigNotice({
+        kind: "success",
+        message: `${selectedBranchUser.name}'s primary branch and access were updated.`,
+      });
     } catch (error) {
-      setConfigNotice(error instanceof Error ? error.message : "Branch assignment update failed.");
+      setConfigNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Branch assignment update failed.",
+      });
     } finally {
       setBranchAssignmentSaving(false);
     }
@@ -316,6 +454,11 @@ function Settings() {
                   <Link
                     key={`${item.label}:${item.to}`}
                     to={item.to}
+                    search={
+                      item.to === "/seramet-setup" && item.section
+                        ? { section: item.section }
+                        : undefined
+                    }
                     className="group rounded-lg border border-border p-3 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -377,7 +520,13 @@ function Settings() {
                               roleRecords.find((record) => record.name === role)?.id ?? "",
                             ) && (
                               <button
-                                onClick={() => removeRole(role)}
+                                disabled={Boolean(configSaving)}
+                                onClick={() => {
+                                  const record = roleRecords.find(
+                                    (candidate) => candidate.name === role,
+                                  );
+                                  if (record) void disableConfiguredRole(record.id, record.name);
+                                }}
                                 className="text-muted-foreground hover:text-danger"
                               >
                                 Remove
@@ -395,13 +544,10 @@ function Settings() {
                         className="h-9 min-w-0 flex-1 rounded-md border border-border bg-card px-3 text-[13px] outline-none"
                       />
                       <Btn
-                        disabled={!canManageRoleAccess}
-                        onClick={() => {
-                          addRole(newRole);
-                          setNewRole("");
-                        }}
+                        disabled={!canManageRoleAccess || Boolean(configSaving) || !newRole.trim()}
+                        onClick={() => void addConfiguredRole()}
                       >
-                        Add role
+                        {configSaving === "role-create" ? "Saving..." : "Add role"}
                       </Btn>
                     </div>
                   </div>
@@ -668,10 +814,15 @@ function Settings() {
                 </label>
                 <Btn
                   className="self-end"
-                  disabled={!canManageOrderChannels}
-                  onClick={addOrderChannel}
+                  disabled={
+                    !canManageOrderChannels ||
+                    Boolean(configSaving) ||
+                    !channelName.trim() ||
+                    !channelCode.trim()
+                  }
+                  onClick={() => void addOrderChannel()}
                 >
-                  Add channel
+                  {configSaving === "channel-create" ? "Saving..." : "Add channel"}
                 </Btn>
               </div>
               <div className="divide-y divide-border border-t border-border">
@@ -687,37 +838,26 @@ function Settings() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
-                      <Status>Active</Status>
+                      <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
                       <Btn
-                        disabled={!canManageOrderChannels}
-                        onClick={() => {
-                          const enablingOnlinePrice = channel.metadata["useOnlinePrice"] !== true;
-                          repository.upsertOrderChannel(activeTenantId, {
-                            ...channel,
-                            metadata: {
-                              ...channel.metadata,
-                              useOnlinePrice: enablingOnlinePrice,
-                            },
-                          });
-                          refreshConfiguration();
-                          setConfigNotice(
-                            channel.displayName +
-                              (enablingOnlinePrice
-                                ? " now uses online pricing."
-                                : " now uses base pricing."),
-                          );
-                        }}
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onClick={() =>
+                          void updateConfiguredChannel(channel.id, channel.displayName, {
+                            useOnlinePrice: channel.metadata["useOnlinePrice"] !== true,
+                          })
+                        }
                       >
                         Online price: {channel.metadata["useOnlinePrice"] === true ? "On" : "Off"}
                       </Btn>
                       <Btn
-                        disabled={!canManageOrderChannels}
-                        onClick={() => {
-                          repository.archiveOrderChannel(activeTenantId, channel.id);
-                          refreshConfiguration();
-                        }}
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onClick={() =>
+                          void updateConfiguredChannel(channel.id, channel.displayName, {
+                            enabled: !channel.enabled,
+                          })
+                        }
                       >
-                        Disable
+                        {channel.enabled ? "Disable" : "Enable"}
                       </Btn>
                     </div>
                   </div>
@@ -774,10 +914,15 @@ function Settings() {
                 </label>
                 <Btn
                   className="self-end"
-                  disabled={!canManagePaymentMethods}
-                  onClick={addPaymentMethod}
+                  disabled={
+                    !canManagePaymentMethods ||
+                    Boolean(configSaving) ||
+                    !paymentName.trim() ||
+                    !paymentCode.trim()
+                  }
+                  onClick={() => void addPaymentMethod()}
                 >
-                  Add method
+                  {configSaving === "payment-create" ? "Saving..." : "Add method"}
                 </Btn>
               </div>
               <div className="divide-y divide-border border-t border-border">
@@ -793,15 +938,18 @@ function Settings() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Status>Active</Status>
+                      <Status>{method.enabled ? "Active" : "Disabled"}</Status>
                       <Btn
-                        disabled={!canManagePaymentMethods}
-                        onClick={() => {
-                          repository.archivePaymentMethod(activeTenantId, method.id);
-                          refreshConfiguration();
-                        }}
+                        disabled={!canManagePaymentMethods || Boolean(configSaving)}
+                        onClick={() =>
+                          void updateConfiguredPaymentMethod(
+                            method.id,
+                            method.displayName,
+                            !method.enabled,
+                          )
+                        }
                       >
-                        Disable
+                        {method.enabled ? "Disable" : "Enable"}
                       </Btn>
                     </div>
                   </div>
@@ -815,9 +963,16 @@ function Settings() {
             current.label === "Finance") && (
             <div
               role="status"
-              className="rounded-lg border border-border bg-card px-4 py-3 text-[12px] text-muted-foreground"
+              className={cn(
+                "rounded-lg border px-4 py-3 text-[12px]",
+                configNotice.kind === "error"
+                  ? "border-danger/30 bg-danger-soft text-danger"
+                  : configNotice.kind === "success"
+                    ? "border-success/30 bg-success-soft text-success"
+                    : "border-border bg-card text-muted-foreground",
+              )}
             >
-              {configNotice}
+              {configNotice.message}
             </div>
           )}
         </div>
@@ -904,11 +1059,4 @@ function ConfigField({
 function compactPermission(value: string) {
   const segments = value.split(".");
   return segments.slice(Math.max(0, segments.length - 2)).join(".");
-}
-
-function slug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
 }

@@ -34,6 +34,7 @@ export type SettingsItem = {
   | {
       kind: "route";
       to: SettingsRoute;
+      section?: SetupSection;
     }
 );
 
@@ -51,6 +52,7 @@ export const settingsGroups: readonly SettingsGroup[] = [
         description: "Trading identity, locale, timezone and controlled base currency.",
         kind: "route",
         to: "/seramet-setup",
+        section: "BUSINESS_PROFILE",
       },
       {
         label: "Branches",
@@ -63,12 +65,14 @@ export const settingsGroups: readonly SettingsGroup[] = [
         description: "Configure the operating context used by restaurant setup and devices.",
         kind: "route",
         to: "/seramet-setup",
+        section: "BRANCHES",
       },
       {
         label: "Currencies",
         description: "Manage the base currency and accepted operational exchange rates.",
         kind: "route",
         to: "/seramet-setup",
+        section: "BUSINESS_PROFILE",
       },
     ],
   },
@@ -106,6 +110,7 @@ export const settingsGroups: readonly SettingsGroup[] = [
         description: "Configure branch devices and controlled register activation.",
         kind: "route",
         to: "/seramet-setup",
+        section: "PRINTERS_DEVICES",
       },
       {
         label: "Tables",
@@ -134,6 +139,7 @@ export const settingsGroups: readonly SettingsGroup[] = [
         description: "Configure inventory units and conversion foundations.",
         kind: "route",
         to: "/seramet-setup",
+        section: "RECIPES_UOM",
       },
       {
         label: "Categories",
@@ -318,3 +324,4 @@ export const settingsRouteItems = settingsGroups.flatMap((group) =>
     (item): item is Extract<SettingsItem, { kind: "route" }> => item.kind === "route",
   ),
 );
+import type { SetupSection } from "@/onboarding/types";
