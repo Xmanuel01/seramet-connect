@@ -128,7 +128,22 @@ jobs:
           set -euo pipefail
           /usr/lib/postgresql/17/bin/psql \
             --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
-            --set ON_ERROR_STOP=1 --command 'DROP SCHEMA public CASCADE;'
+            --set ON_ERROR_STOP=1 <<'SQL'
+          DROP SCHEMA public CASCADE;
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN;
+            END IF;
+          END;
+          $$;
+          SQL
           /usr/lib/postgresql/17/bin/pg_restore \
             --host 127.0.0.1 \
             --port 54329 \
