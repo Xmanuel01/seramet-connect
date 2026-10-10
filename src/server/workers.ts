@@ -21,7 +21,7 @@ import type { CommunicationChannel } from "@/crm/types";
 import type { D1PreparedStatement } from "@/server/database/d1";
 import { EnterpriseService } from "@/enterprise/enterprise-service";
 import { TenantObjectStorage } from "@/server/object-storage";
-import { requireCleanMalwareScan } from "@/server/malware-scanner";
+import { requireValidStoredCleanEvidence } from "@/server/malware-scanner";
 import { ServerOperationError } from "@/server/errors";
 
 export type SerametWorkerMessage =
@@ -1312,58 +1312,24 @@ async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {
   const stored = await storage.findQuarantine(job.tenant_id, payload.objectId);
   if (
     !stored ||
+    stored.status !== "ACTIVE" ||
     stored.checksum_sha256 !== payload.fileChecksum ||
     stored.object_key !== payload.objectKey ||
     stored.object_version !== payload.objectVersion
   ) {
     throw new Error("Quarantined import file is unavailable or has changed");
   }
-  const object = await storage.read(stored);
-  const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+  const evidence = requireValidStoredCleanEvidence({
+    evidence: parsePayload(stored.scan_evidence_json),
+    sha256: payload.fileChecksum,
+    subject: {
+      jobId: job.id,
+      objectKey: stored.object_key,
+      objectVersion: stored.object_version,
+    },
+    maxAgeMs: Number.POSITIVE_INFINITY,
+  });
   try {
-    await recordFileImportState(env, {
-      tenantId: job.tenant_id,
-      jobId: job.id,
-      objectId: payload.objectId,
-      state: "SCAN_PENDING",
-      attempt: job.attempt_count,
-      evidence: {
-        objectKey: stored.object_key,
-        objectVersion: stored.object_version,
-        fileChecksum: payload.fileChecksum,
-      },
-    });
-    const evidence = await requireCleanMalwareScan({
-      scanner: env.SERAMET_MALWARE_SCANNER,
-      bytes,
-      sha256: payload.fileChecksum,
-      contentType: payload.mimeType,
-      fileName: payload.originalName,
-      subject: {
-        jobId: job.id,
-        objectKey: stored.object_key,
-        objectVersion: stored.object_version,
-      },
-    });
-    await storage.recordScan({
-      tenantId: job.tenant_id,
-      id: payload.objectId,
-      clean: true,
-      evidence,
-    });
-    await recordFileImportState(env, {
-      tenantId: job.tenant_id,
-      jobId: job.id,
-      objectId: payload.objectId,
-      state: "SCANNED_CLEAN",
-      attempt: job.attempt_count,
-      evidence: {
-        evidenceId: evidence.evidenceId,
-        scannerId: evidence.scannerId,
-        signatureVersion: evidence.signatureVersion,
-        scannedAt: evidence.scannedAt,
-      },
-    });
     await recordFileImportState(env, {
       tenantId: job.tenant_id,
       jobId: job.id,
@@ -1372,6 +1338,8 @@ async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {
       attempt: job.attempt_count,
       evidence: { evidenceId: evidence.evidenceId },
     });
+    const object = await storage.read(stored);
+    const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
     const service = new OnboardingService(
       env.SERAMET_DB!,
       systemSetupActor(job.tenant_id, job.branch_id ?? undefined),
@@ -1413,27 +1381,14 @@ async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {
       .bind(JSON.stringify({ importId: preview.id }), job.tenant_id, job.id)
       .run();
   } catch (error) {
-    await storage
-      .recordScan({
-        tenantId: job.tenant_id,
-        id: payload.objectId,
-        clean: false,
-        evidence: { status: "REJECTED", recordedAt: new Date().toISOString() },
-      })
-      .catch(() => undefined);
     await recordFileImportState(env, {
       tenantId: job.tenant_id,
       jobId: job.id,
       objectId: payload.objectId,
-      state:
-        error instanceof ServerOperationError && error.status === 422
-          ? "REJECTED_INFECTED"
-          : error instanceof ServerOperationError && error.code === "VALIDATION_FAILED"
-            ? "VALIDATION_FAILED"
-            : "SCAN_FAILED",
+      state: "VALIDATION_FAILED",
       attempt: job.attempt_count,
       evidence: {
-        code: error instanceof ServerOperationError ? error.code : "SCANNER_FAILURE",
+        code: error instanceof ServerOperationError ? error.code : "IMPORT_PREPARATION_FAILED",
         status: error instanceof ServerOperationError ? error.status : 503,
       },
     }).catch(() => undefined);

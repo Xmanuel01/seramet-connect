@@ -8,6 +8,8 @@ on:
         required: true
         type: choice
         options:
+          - verify-backup-restore
+          - inspect-uber
           - inspect-imports
           - quarantine-imports
           - inspect-management
@@ -53,17 +55,120 @@ concurrency:
 
 jobs:
   recovery:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      ((inputs.operation == 'verify-backup-restore' || inputs.operation == 'inspect-uber') &&
+       github.ref == 'refs/heads/codex/malware-scanner-staging')
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: restore-only
+          POSTGRES_DB: seramet_restore
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Verify approved backup candidate
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          test -n "$APPROVED_SHA"
+          test "$CANDIDATE_SHA" = "$APPROVED_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Inspect Uber Eats sandbox connection without exposing credentials
+        if: inputs.operation == 'inspect-uber'
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/inspect-staging-uber.mjs
+      - name: Install PostgreSQL 17 client
+        if: inputs.operation == 'verify-backup-restore'
+        shell: bash
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+      - name: Create staging application database backup
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          SERAMET_PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
+          SERAMET_BACKUP_PATH: ${{ runner.temp }}/seramet-staging-public.dump
+          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
+        run: node scripts/create-staging-backup.mjs
+      - name: Restore backup into isolated PostgreSQL 17
+        if: inputs.operation == 'verify-backup-restore'
+        shell: bash
+        env:
+          PGPASSWORD: restore-only
+        run: |
+          set -euo pipefail
+          /usr/lib/postgresql/17/bin/psql \
+            --host 127.0.0.1 --port 54329 --username postgres --dbname seramet_restore \
+            --set ON_ERROR_STOP=1 <<'SQL'
+          DROP SCHEMA public CASCADE;
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN;
+            END IF;
+          END;
+          $$;
+          SQL
+          /usr/lib/postgresql/17/bin/pg_restore \
+            --host 127.0.0.1 \
+            --port 54329 \
+            --username postgres \
+            --dbname seramet_restore \
+            --no-owner \
+            --no-privileges \
+            --exit-on-error \
+            "$RUNNER_TEMP/seramet-staging-public.dump"
+      - name: Verify isolated restore completeness and integrity
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
+        run: node scripts/verify-staging-backup-restore.mjs
+      - name: Apply and verify Data API lockdown on isolated restore
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+          SERAMET_ISOLATED_RESTORE: "true"
+        run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+      - name: Remove temporary database backup
+        if: always() && inputs.operation == 'verify-backup-restore'
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/seramet-staging-public.dump" "$RUNNER_TEMP/seramet-staging-source-evidence.json"
       - name: Check write prerequisites independently
         if: inputs.operation == 'quarantine-imports' || inputs.operation == 'consolidate-management'
         env:

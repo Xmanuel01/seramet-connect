@@ -21,6 +21,7 @@ export type StoredObjectRecord = {
   checksum_sha256: string;
   object_version: string;
   scan_evidence_id: string | null;
+  scan_evidence_json: string;
   status: "PENDING_SCAN" | "ACTIVE" | "QUARANTINED" | "DELETED";
   created_by: string;
   created_at: string;
@@ -138,7 +139,7 @@ export class TenantObjectStorage {
       .prepare(
         `SELECT tenant_id,id,branch_id,object_key,object_class,content_type,size_bytes,
                 checksum_sha256,status,created_by,created_at,metadata_json,object_version,
-                scan_evidence_id
+                scan_evidence_id,scan_evidence_json
          FROM stored_objects WHERE tenant_id=? AND id=? AND object_class='IMPORT_QUARANTINE'
            AND status IN ('PENDING_SCAN','QUARANTINED','ACTIVE')`,
       )
@@ -182,7 +183,7 @@ export class TenantObjectStorage {
       .prepare(
         `SELECT tenant_id,id,branch_id,object_key,object_class,content_type,size_bytes,
                 checksum_sha256,status,created_by,created_at,metadata_json,object_version,
-                scan_evidence_id
+                scan_evidence_id,scan_evidence_json
          FROM stored_objects
          WHERE tenant_id=? AND id=? AND status='ACTIVE'
            AND object_class<>'IMPORT_QUARANTINE'`,
@@ -196,7 +197,7 @@ export class TenantObjectStorage {
       .prepare(
         `SELECT o.tenant_id,o.id,o.branch_id,o.object_key,o.object_class,o.content_type,
                 o.size_bytes,o.checksum_sha256,o.status,o.created_by,o.created_at,o.metadata_json,
-                o.object_version,o.scan_evidence_id
+                o.object_version,o.scan_evidence_id,o.scan_evidence_json
          FROM stored_objects o JOIN tenants t ON t.id=o.tenant_id
          WHERE t.slug=? AND t.active=1 AND o.id=? AND o.object_class='PUBLIC_ASSET'
            AND o.status='ACTIVE'`,

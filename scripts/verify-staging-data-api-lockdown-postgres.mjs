@@ -6,8 +6,11 @@ import pg from "pg";
 const connectionString = process.env.SERAMET_POSTGRES_URL;
 if (!connectionString) throw new Error("Missing disposable CI PostgreSQL URL");
 const url = new URL(connectionString);
-if (!["127.0.0.1", "localhost"].includes(url.hostname) || url.pathname !== "/seramet_test") {
-  throw new Error("Refusing security integration test outside disposable local seramet_test");
+const allowedDatabase =
+  url.pathname === "/seramet_test" ||
+  (url.pathname === "/seramet_restore" && process.env.SERAMET_ISOLATED_RESTORE === "true");
+if (!["127.0.0.1", "localhost"].includes(url.hostname) || !allowedDatabase) {
+  throw new Error("Refusing security integration test outside an approved disposable database");
 }
 const db = new pg.Client({ connectionString });
 await db.connect();
@@ -51,6 +54,21 @@ try {
       "has_table_privilege('authenticated',format('%I.%I',schemaname,tablename),'SELECT'))",
   );
   assert.equal(actual.rows[0].exposed, 0);
+  const schemaAccess = await db.query(
+    "SELECT has_schema_privilege('anon','public','USAGE') AS anon_usage, " +
+      "has_schema_privilege('authenticated','public','USAGE') AS authenticated_usage",
+  );
+  assert.deepEqual(schemaAccess.rows[0], {
+    anon_usage: false,
+    authenticated_usage: false,
+  });
+
+  // The staging pooler uses the database owner. Prove the same authority can
+  // still read and prepare a no-op write, then roll the transaction back.
+  await db.query("BEGIN");
+  await db.query("SELECT COUNT(*) FROM public.schema_migrations");
+  await db.query("UPDATE public.worker_jobs SET updated_at=updated_at WHERE false");
+  await db.query("ROLLBACK");
   console.log("DISPOSABLE POSTGRES: approval guard and public-schema grants/RLS lockdown PASSED");
 } finally {
   await db.end();

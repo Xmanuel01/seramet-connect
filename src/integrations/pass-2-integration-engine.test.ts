@@ -106,7 +106,7 @@ function fixture(
     status: "CONFIGURED",
     displayName: "Test delivery sandbox",
     configuration: {
-      channelId: "channel-test-delivery",
+      orderChannelId: "channel-test-delivery",
       unmappedItemPolicy: options.unmappedItemPolicy ?? "AUTO_REJECT",
       acceptancePolicy: options.acceptancePolicy ?? "AUTO_ACCEPT_VALID",
       availabilitySyncEnabled: true,

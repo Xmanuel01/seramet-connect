@@ -141,7 +141,7 @@ test("scanner failures remain quarantined and never create a parsed preview", as
       );
       await expect
         .poll(async () => (await preparationStatus(page, job.jobId)).status, { timeout: 15_000 })
-        .toBe("RETRY_PENDING");
+        .toBe("DEAD_LETTER");
       jobs.push({ jobId: job.jobId, expectedState });
     }
 

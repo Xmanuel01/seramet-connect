@@ -2,9 +2,9 @@
 
 ## Architecture
 
-The production path is:
+The authoritative path is:
 
-`Menu Import UI -> authenticated setup API -> file security -> OnboardingService preview -> setup_imports/setup_import_rows -> explicit commit -> menu_catalog_items/menu_item_branch_settings -> verification -> operational catalogue -> POS/KDS/marketplace reader`
+`Menu Import UI -> authenticated upload -> private R2 quarantine -> isolated scan queue/ClamAV -> authenticated CLEAN evidence -> staged preview -> immutable approved plan -> idempotent 20-row batches -> menu_catalog_items/menu_item_branch_settings -> verification -> explicit publication -> POS/KDS/marketplace reader`
 
 The browser holds only the selected file and preview presentation. The server derives the tenant from the authenticated actor, calculates the file digest and preview fingerprint, validates branch authority, and owns every authoritative write.
 
@@ -82,7 +82,7 @@ Preview rows show `CREATE`, `UPDATE`, `SKIP`, `NO_CHANGE`, or `ERROR`. Changing 
 
 The preview fingerprint contains tenant ID, SHA-256 file digest, template/importer version, normalized column map, duplicate policy, target mode, sorted target branch IDs, and reference mappings. Filename and browser timestamps are not authoritative identity.
 
-Commit rejects expired previews and catalogue revisions that changed after preview. Synchronous writes use one database batch. On failure the batch rolls back and the import is marked `FAILED`. Imports over 500 rows enter the durable worker as `COMMITTING`; the client reports `QUEUED` and does not claim success.
+Approval rejects expired previews and catalogue revisions that changed after preview. Every approved plan uses the durable worker in idempotent batches of at most 20 rows; completed batches are not replayed after retry or recovery. The client reports queued/processing state and does not claim publication success.
 
 After writes, verification counts created/updated/skipped records, verifies every expected tenant item and branch setting, and persists the summary. Only a verified result becomes `COMMITTED`.
 
@@ -99,7 +99,7 @@ Negative, malformed, excessive-precision, unknown, and tenant-inactive currency 
 - Tenant/user database rate limits for preview and commit.
 - Safe filename, MIME, extension, signature, file-size and row limits.
 - Maximum 10 XLSX sheets, 500 ZIP entries, 50 MiB expanded workbook data, 100 columns and 10,000 characters per cell.
-- Optional malware scanner boundary remains supported.
+- Authenticated malware scanning is mandatory; missing scanner bindings keep imports unavailable.
 - CSV template/report cells use formula-injection escaping.
 - Uploaded files and secrets are not logged.
 

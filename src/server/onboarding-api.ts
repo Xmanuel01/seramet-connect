@@ -51,7 +51,10 @@ import type {
 import { ServerOperationError } from "@/server/errors";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
-import { scannerConfigured } from "@/server/malware-scanner";
+import { scannerPipelineConfigured } from "@/server/malware-scanner";
+
+// 10 MiB raw files expand by roughly one third when transported as base64 JSON.
+const maxEncodedImportRequestBytes = 14 * 1024 * 1024;
 import type { ZodTypeAny } from "zod";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
 
@@ -225,7 +228,7 @@ export async function handleOnboardingApi(
       idempotencyKey: string;
       columnMap?: Record<string, string>;
       referenceMap?: { stations?: Record<string, string> };
-    }>(request, importPreviewRequestSchema, 30 * 1024 * 1024);
+    }>(request, importPreviewRequestSchema, maxEncodedImportRequestBytes);
     return json(
       {
         ok: true,
@@ -260,10 +263,12 @@ export async function handleOnboardingApi(
     });
   }
   if (url.pathname === "/api/seramet/setup/imports/capability" && request.method === "GET") {
-    const available =
-      scannerConfigured(env.SERAMET_MALWARE_SCANNER) &&
-      Boolean(env.SERAMET_OBJECTS) &&
-      Boolean(env.SERAMET_WORK_QUEUE);
+    const available = scannerPipelineConfigured({
+      scanQueue: env.SERAMET_SCAN_QUEUE,
+      workQueue: env.SERAMET_WORK_QUEUE,
+      objectStorage: env.SERAMET_OBJECTS,
+      evidenceSecret: env.SERAMET_SCANNER_EVIDENCE_SECRET,
+    });
     return json({
       ok: true,
       capability: {
@@ -304,7 +309,7 @@ export async function handleOnboardingApi(
       originalName: string;
       mimeType: string;
       base64: string;
-    }>(request, historicalSalesPreviewRequestSchema, 30 * 1024 * 1024);
+    }>(request, historicalSalesPreviewRequestSchema, maxEncodedImportRequestBytes);
     return json(
       {
         ok: true,

@@ -121,6 +121,7 @@ function createServerCredentialResolver(env: SerametEnv, configuration: Configur
                     ? compact({
                         clientId: env.SERAMET_UBER_CLIENT_ID,
                         clientSecret: env.SERAMET_UBER_CLIENT_SECRET,
+                        webhookSigningSecret: env.SERAMET_UBER_WEBHOOK_SIGNING_SECRET,
                       })
                     : provider.code === "GLOVO"
                       ? compact({
