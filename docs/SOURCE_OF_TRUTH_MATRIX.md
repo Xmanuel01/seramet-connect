@@ -40,6 +40,8 @@ This checkpoint records the intended authoritative owner for each transactional 
 | `SERAMET_MPESA_WEBHOOK_SECRET`                                                                                                                  | M-Pesa callback protection   | Optional shared secret accepted through callback query or `x-seramet-webhook-secret` where the provider supports it.    |
 | `SERAMET_TENDEPAY_BASE_URL`, `SERAMET_TENDEPAY_API_KEY`, `SERAMET_TENDEPAY_WEBHOOK_SECRET`                                                      | TendePay                     | Live field mapping may need adjustment against the restaurant's official TendePay API contract.                         |
 | `SERAMET_CARD_WEBHOOK_SECRET`, `SERAMET_BANK_WEBHOOK_SECRET`                                                                                    | Card and bank feed webhooks  | Required for webhook import endpoints to accept provider events securely.                                               |
+| `SERAMET_UBER_CLIENT_ID`, `SERAMET_UBER_CLIENT_SECRET`                                                                                          | Uber Eats Marketplace        | Server-only OAuth credentials. Uber Eats webhook HMAC currently uses the client secret.                                 |
+| `SERAMET_UBER_WEBHOOK_SIGNING_SECRET`                                                                                                           | Uber webhook verification    | Optional server-only override when Uber issues a dedicated signing key; stored separately from OAuth credentials.       |
 
 ## Integration Rule
 

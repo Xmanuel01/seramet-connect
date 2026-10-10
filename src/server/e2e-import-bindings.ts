@@ -1,10 +1,12 @@
 import type { SerametEnv } from "@/lib/seramet-auth";
 import type {
   DurableQueueMessage,
-  MalwareScannerBinding,
+  FileScanQueueMessage,
   ObjectStoreBinding,
 } from "@/server/environment";
 import { handleWorkerQueue, type SerametWorkerMessage } from "@/server/workers";
+import { handleScannerInternalApi } from "@/server/scanner-internal-api";
+import { scannerAuthRequestHeaders, signScannerRequest } from "@/server/scanner-auth";
 
 type StoredValue = {
   bytes: Uint8Array;
@@ -47,44 +49,7 @@ const objectStore: ObjectStoreBinding = {
   },
 };
 
-const scanner: MalwareScannerBinding = {
-  async fetch(_input, init) {
-    const headers = new Headers(init?.headers);
-    const fileName = decodeURIComponent(headers.get("x-seramet-file-name") ?? "");
-    const sha256 = headers.get("x-seramet-content-sha256") ?? "";
-    const jobId = headers.get("x-seramet-scan-job-id") ?? "";
-    const objectKey = headers.get("x-seramet-object-key") ?? "";
-    const objectVersion = headers.get("x-seramet-object-version") ?? "";
-    if (fileName.startsWith("scanner-unavailable")) throw new Error("scanner unavailable");
-    if (fileName.startsWith("scanner-timeout")) {
-      throw new DOMException("scanner timed out", "AbortError");
-    }
-    if (fileName.startsWith("scanner-auth-failure")) {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
-    }
-    if (fileName.startsWith("scanner-infected")) {
-      return Response.json({ verdict: "INFECTED" });
-    }
-    if (fileName.startsWith("scanner-malformed")) {
-      return Response.json({ verdict: "CLEAN", sha256 });
-    }
-    const evidence = {
-      verdict: "CLEAN",
-      sha256: fileName.startsWith("scanner-wrong-sha") ? `wrong-${sha256}` : sha256,
-      evidenceId: `e2e-evidence:${crypto.randomUUID()}`,
-      scannerId: "e2e-authenticated-scanner",
-      engine: "e2e-scanner",
-      signatureVersion: "e2e-v1",
-      scannedAt: fileName.startsWith("scanner-expired")
-        ? new Date(Date.now() - 10 * 60_000).toISOString()
-        : new Date().toISOString(),
-      jobId,
-      objectKey: fileName.startsWith("scanner-replay") ? `${objectKey}:another-file` : objectKey,
-      objectVersion,
-    };
-    return Response.json(evidence);
-  },
-};
+const scannerSecret = "seramet-e2e-scanner-evidence-secret-at-least-32-bytes";
 
 const queue = {
   async send(message: SerametWorkerMessage) {
@@ -104,12 +69,94 @@ const queue = {
   },
 };
 
+const scanQueue = {
+  async send(message: FileScanQueueMessage) {
+    const env = activeEnvironment;
+    if (!env) throw new Error("E2E scanner environment is unavailable");
+    setTimeout(() => void simulateScan(env, message), 5);
+  },
+};
+
 /** Installs deterministic local bindings only behind the explicit CI E2E gate. */
 export function installE2EImportBindings(env: SerametEnv) {
   activeEnvironment = env;
   env.SERAMET_OBJECTS = objectStore;
-  env.SERAMET_MALWARE_SCANNER = scanner;
   env.SERAMET_WORK_QUEUE = queue;
+  env.SERAMET_SCAN_QUEUE = scanQueue;
+  env.SERAMET_SCANNER_EVIDENCE_SECRET = scannerSecret;
+}
+
+async function simulateScan(env: SerametEnv, identity: FileScanQueueMessage) {
+  const claim = await scannerCall(env, "claim", identity);
+  if (!claim.ok) return;
+  const claimBody = (await claim.json()) as { job?: Record<string, unknown> };
+  const job = claimBody.job;
+  if (!job) return;
+  const fileName = String(job["originalName"] ?? "");
+  if (fileName.startsWith("scanner-infected")) {
+    await scannerCall(env, "verdict", {
+      ...job,
+      verdict: "INFECTED",
+      scannerId: "e2e-clamav",
+      threat: "Eicar-Signature",
+      scannedAt: new Date().toISOString(),
+    });
+    return;
+  }
+  const negative = [
+    "scanner-unavailable",
+    "scanner-timeout",
+    "scanner-auth-failure",
+    "scanner-malformed",
+    "scanner-wrong-sha",
+    "scanner-expired",
+    "scanner-replay",
+  ].some((prefix) => fileName.startsWith(prefix));
+  if (negative) {
+    await scannerCall(env, "verdict", {
+      ...job,
+      verdict: "ERROR",
+      scannerId: "e2e-clamav",
+      failureCode: `E2E_${fileName.split(".")[0]?.toUpperCase().replaceAll("-", "_")}`,
+      scannedAt: new Date().toISOString(),
+    });
+    return;
+  }
+  await scannerCall(env, "verdict", {
+    ...job,
+    verdict: "CLEAN",
+    evidenceId: `e2e-evidence:${crypto.randomUUID()}`,
+    scannerId: "e2e-clamav",
+    engine: "ClamAV",
+    engineVersion: "e2e",
+    signatureVersion: "e2e-v1",
+    scannedAt: new Date().toISOString(),
+  });
+}
+
+async function scannerCall(
+  env: SerametEnv,
+  kind: "claim" | "verdict",
+  payload: Record<string, unknown>,
+) {
+  const pathname = `/api/seramet/internal/file-scanner/${kind}`;
+  const body = JSON.stringify(payload);
+  const auth = await signScannerRequest({
+    secret: scannerSecret,
+    method: "POST",
+    pathname,
+    body,
+  });
+  const response = await handleScannerInternalApi(
+    new Request(`https://scanner.e2e${pathname}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...scannerAuthRequestHeaders(auth) },
+      body,
+    }),
+    env,
+  );
+  if (!response) throw new Error("E2E scanner route was not handled");
+  return response;
 }
 
 async function valueBytes(

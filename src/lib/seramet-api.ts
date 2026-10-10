@@ -576,6 +576,14 @@ async function receiveIntegrationWebhook(
     rawBody,
     headers: Object.fromEntries(request.headers.entries()),
   });
+  return integrationWebhookAcknowledgement(providerCode, result);
+}
+
+export function integrationWebhookAcknowledgement(
+  providerCode: string,
+  result: Record<string, unknown>,
+) {
+  if (providerCode.toUpperCase() === "UBER_EATS") return new Response(null, { status: 200 });
   return json({ ok: true, ...result }, 200);
 }
 

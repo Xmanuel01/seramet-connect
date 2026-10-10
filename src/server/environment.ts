@@ -50,14 +50,23 @@ export type MalwareScannerBinding = {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 };
 
+export type FileScanQueueMessage = {
+  kind: "file-scan";
+  tenantId: string;
+  jobId: string;
+  correlationId: string;
+};
+
 export type ProductionRuntimeEnv = {
   SERAMET_ENVIRONMENT?: string;
   NODE_ENV?: string;
   SERAMET_DB?: D1Database;
   SERAMET_HYPERDRIVE?: HyperdriveBinding;
   SERAMET_WORK_QUEUE?: DurableQueue;
+  SERAMET_SCAN_QUEUE?: DurableQueue<FileScanQueueMessage>;
   SERAMET_OBJECTS?: ObjectStoreBinding;
   SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;
+  SERAMET_SCANNER_EVIDENCE_SECRET?: string;
   SERAMET_DATABASE_PROVIDER?: string;
   SERAMET_IDENTITY_PROVIDER?: string;
   SERAMET_SUPABASE_URL?: string;

@@ -14,6 +14,8 @@ const forbidden = [
   /createDefaultDemoPlatformState/,
   /stagingPrinterlessTestingEnabled/,
   /isStagingPrinterlessTestingEnabled/,
+  /@cloudflare\/containers/,
+  /clamav\/clamav|clamdscan|\/usr\/sbin\/clamd|seramet-scanner-gateway/i,
 ];
 const findings = [];
 for (const root of roots) await scan(root);

@@ -198,7 +198,10 @@ describe("Pass 3 Uber Eats official contract", () => {
     );
     const request: ProviderWebhookRequest = {
       rawBody,
-      headers: { "x-uber-signature": await uberSignature(rawBody, "client-secret") },
+      headers: {
+        "x-uber-signature": await uberSignature(rawBody, "client-secret"),
+        "x-environment": "sandbox",
+      },
       connection: connectionValue,
       credentials: { clientSecret: "client-secret" },
     };
@@ -217,6 +220,57 @@ describe("Pass 3 Uber Eats official contract", () => {
         payment: { externallyPaid: true, amountPaid: 3000 },
       },
     });
+  });
+
+  it("prefers a dedicated webhook key, rejects altered payloads, and enforces environment", async () => {
+    const adapter = createUberEatsAdapter();
+    const connectionValue = connection("provider-delivery-uber-eats", {
+      externalStoreId: "uber-store-1",
+    });
+    const rawBody = new TextEncoder().encode(
+      JSON.stringify({
+        event_type: "orders.notification",
+        event_id: "event-signing-boundary",
+        meta: { resource_id: "uber-order-1", user_id: "uber-store-1" },
+      }),
+    );
+    const dedicatedSecret = "dedicated-webhook-secret";
+    const credentials = {
+      clientSecret: "oauth-client-secret",
+      webhookSigningSecret: dedicatedSecret,
+    };
+    const validRequest: ProviderWebhookRequest = {
+      rawBody,
+      headers: {
+        "x-uber-signature": await uberSignature(rawBody, dedicatedSecret),
+        "x-environment": "sandbox",
+      },
+      connection: connectionValue,
+      credentials,
+    };
+
+    expect(await adapter.verifyWebhook!(validRequest)).toBe(true);
+    expect(
+      await adapter.verifyWebhook!({
+        ...validRequest,
+        rawBody: new TextEncoder().encode(`${new TextDecoder().decode(rawBody)} `),
+      }),
+    ).toBe(false);
+    expect(
+      await adapter.verifyWebhook!({
+        ...validRequest,
+        headers: { ...validRequest.headers, "x-environment": "production" },
+      }),
+    ).toBe(false);
+    expect(
+      await adapter.verifyWebhook!({
+        ...validRequest,
+        headers: {
+          ...validRequest.headers,
+          "x-uber-signature": await uberSignature(rawBody, credentials.clientSecret),
+        },
+      }),
+    ).toBe(false);
   });
 
   it("normalizes restaurant-delivered cash-due orders without inventing a platform payment", async () => {
@@ -247,7 +301,7 @@ describe("Pass 3 Uber Eats official contract", () => {
 
   it("uses documented OAuth scopes, order lifecycle, recovery, and store paths", async () => {
     const mock = adapterRuntime((url) => {
-      if (url.hostname === "login.uber.com")
+      if (url.hostname === "sandbox-login.uber.com")
         return json({ access_token: "uber-token", expires_in: 7200, token_type: "Bearer" });
       if (url.pathname.endsWith("/created-orders"))
         return json({
@@ -284,6 +338,7 @@ describe("Pass 3 Uber Eats official contract", () => {
     });
 
     const tokenCall = mock.calls.find((call) => call.url.includes("/oauth/v2/token"))!;
+    expect(new URL(tokenCall.url).origin).toBe("https://sandbox-login.uber.com");
     expect(tokenCall.body).toContain("grant_type=client_credentials");
     expect(tokenCall.body).toContain("eats.store.orders.read");
     expect(mock.calls.map((call) => new URL(call.url).pathname)).toEqual(

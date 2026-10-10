@@ -18,6 +18,8 @@ import { createMenuCatalogReader } from "@/integrations/marketplace/menu-catalog
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
 import { ManagementIntelligenceService } from "@/management/management-intelligence-service";
 import type { ImportPreview } from "@/onboarding/types";
+import { handleScannerInternalApi } from "@/server/scanner-internal-api";
+import { scannerAuthRequestHeaders, signScannerRequest } from "@/server/scanner-auth";
 
 const tenantId = "tenant-setup-a";
 const secondTenantId = "tenant-setup-b";
@@ -28,6 +30,7 @@ const stamp = "2026-09-01T08:00:00.000Z";
 const jwtSecret = "pass-eight-menu-import-signing-secret-32-bytes";
 const jwtIssuer = "https://identity.seramet.test";
 const jwtAudience = "seramet-pass-eight";
+const scannerSecret = "pass-eight-scanner-evidence-secret-at-least-32-bytes";
 
 describe.sequential("Pass 8 commercial productization and onboarding", () => {
   let db: SqliteD1TestDatabase;
@@ -235,6 +238,12 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     const pipelineEnv: SerametEnv = {
       ...env,
       SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_SCANNER_EVIDENCE_SECRET: scannerSecret,
+      SERAMET_SCAN_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
       SERAMET_WORK_QUEUE: {
         async send(message) {
           queuedMessages.push(message);
@@ -268,6 +277,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         .first("status"),
     ).toBe("PENDING_SCAN");
 
+    await authorizeQueuedImportScan(pipelineEnv, upload.jobId);
     await processWorkerJob(db, pipelineEnv, upload.jobId, true);
     const preparation = await pipeline.importPreparationStatus(upload.jobId);
     expect(preparation).toMatchObject({ status: "SUCCEEDED" });
@@ -286,6 +296,12 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     const pipelineEnv: SerametEnv = {
       ...env,
       SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_SCANNER_EVIDENCE_SECRET: scannerSecret,
+      SERAMET_SCAN_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
       SERAMET_WORK_QUEUE: {
         async send(message) {
           queuedMessages.push(message);
@@ -315,7 +331,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       pipeline.queueImportPreparation({ ...request, duplicateStrategy: "SKIP" }),
     ).rejects.toThrow("identity was reused with a different request");
 
-    expect(queuedMessages).toHaveLength(1);
+    expect(queuedMessages).toHaveLength(2);
     expect(await rowCount(db, "stored_objects")).toBe(1);
   });
 
@@ -324,6 +340,12 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     const routeEnv: SerametEnv = {
       ...env,
       SERAMET_OBJECTS: memoryObjectStore(),
+      SERAMET_SCANNER_EVIDENCE_SECRET: scannerSecret,
+      SERAMET_SCAN_QUEUE: {
+        async send(message) {
+          queuedMessages.push(message);
+        },
+      },
       SERAMET_WORK_QUEUE: {
         async send(message) {
           queuedMessages.push(message);
@@ -1278,6 +1300,26 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(preserved?.payload_json).not.toContain("sensitive");
   });
 
+  it("generates provider callbacks with the public provider code", async () => {
+    const result = await service.configureProviderConnection({
+      id: "connection-uber-sandbox",
+      branchId,
+      providerId: "provider-delivery-uber-eats",
+      environment: "SANDBOX",
+      configuration: { externalStoreId: "sandbox-store" },
+      secretReference: "env://SERAMET_UBER_CREDENTIALS",
+    });
+    const connection = await db
+      .prepare("SELECT payload_json FROM provider_connections WHERE tenant_id=? AND id=?")
+      .bind(tenantId, result.id)
+      .first<{ payload_json: string }>();
+
+    expect(JSON.parse(connection!.payload_json)).toMatchObject({
+      callbackUrl:
+        "https://callbacks.example.test/api/seramet/integrations/webhooks/UBER_EATS/connection-uber-sandbox",
+    });
+  });
+
   it("does not claim a provider connection is configured without credentials", async () => {
     expect(
       await service.configureProviderConnection({
@@ -1842,6 +1884,55 @@ function testEnvironment(
       },
     },
   };
+}
+
+async function authorizeQueuedImportScan(env: SerametEnv, jobId: string) {
+  const row = await env
+    .SERAMET_DB!.prepare(
+      "SELECT tenant_id,correlation_id FROM worker_jobs WHERE id=? AND job_type='SETUP_IMPORT_PREPARE'",
+    )
+    .bind(jobId)
+    .first<{ tenant_id: string; correlation_id: string }>();
+  if (!row) throw new Error("Queued import job was not found");
+  const claimPayload = {
+    tenantId: row.tenant_id,
+    jobId,
+    correlationId: row.correlation_id,
+  };
+  const claim = await scannerRequest(env, "/api/seramet/internal/file-scanner/claim", claimPayload);
+  const claimBody = (await claim.json()) as { job?: Record<string, unknown> };
+  if (!claimBody.job) throw new Error("Scanner claim did not return the file identity");
+  const verdict = await scannerRequest(env, "/api/seramet/internal/file-scanner/verdict", {
+    ...claimBody.job,
+    verdict: "CLEAN",
+    evidenceId: `test-${jobId}`,
+    scannerId: "seramet-test-clamav",
+    engine: "ClamAV",
+    engineVersion: "test",
+    signatureVersion: "test-signatures",
+    scannedAt: new Date().toISOString(),
+  });
+  if (verdict.status !== 202) throw new Error(`Scanner verdict failed (${verdict.status})`);
+}
+
+async function scannerRequest(env: SerametEnv, pathname: string, payload: Record<string, unknown>) {
+  const body = JSON.stringify(payload);
+  const auth = await signScannerRequest({
+    secret: scannerSecret,
+    method: "POST",
+    pathname,
+    body,
+  });
+  const response = await handleScannerInternalApi(
+    new Request(`https://scanner.test${pathname}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...scannerAuthRequestHeaders(auth) },
+      body,
+    }),
+    env,
+  );
+  if (!response) throw new Error("Scanner route was not handled");
+  return response;
 }
 
 function memoryObjectStore(): ObjectStoreBinding {
