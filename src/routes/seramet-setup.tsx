@@ -806,7 +806,24 @@ function SetupCentre() {
               </Panel>
             </div>
           )}
-          {importKind && (
+          {section === "MENU" ? (
+            <Panel>
+              <PanelHead
+                title="Menu import"
+                sub="Upload, validate, commit, verify and publish from one authoritative workspace"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <p className="text-sm text-muted-foreground">
+                  Importing here uses the secure Menu Import workflow, including publication and
+                  branch activation checks.
+                </p>
+                <Btn variant="primary" onClick={() => navigate({ to: "/menu-import" })}>
+                  Open Menu Import
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Btn>
+              </div>
+            </Panel>
+          ) : importKind ? (
             <ImportPanel
               kind={importKind}
               busy={busy}
@@ -819,7 +836,7 @@ function SetupCentre() {
                 void run(() => centre.commitImport(preview), "Import commit accepted and audited.")
               }
             />
-          )}
+          ) : null}
           {section === "RECIPES_UOM" && (
             <Panel>
               <PanelHead
