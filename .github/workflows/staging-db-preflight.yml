@@ -49,7 +49,7 @@ jobs:
           const host = target.hostname.toLowerCase();
           const user = decodeURIComponent(target.username).toLowerCase();
           const directHost = host === `db.${expectedProjectRef}.supabase.co`;
-          const poolerHost = /(^|\\.)pooler\\.supabase\\.com$/.test(host) &&
+          const poolerHost = /(^|\.)pooler\.supabase\.com$/.test(host) &&
             user.endsWith(`.${expectedProjectRef}`);
           if (!directHost && !poolerHost) {
             throw new Error("Connection target does not match the independently recorded staging Supabase project reference");
