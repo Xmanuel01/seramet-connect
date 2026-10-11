@@ -18,9 +18,10 @@ const names = [
 try {
   await client.connect();
   await client.query("BEGIN READ ONLY");
-  const ledger = (await client.query(
+  const ledgerResult = await client.query(
     "SELECT version,name,checksum FROM public.schema_migrations ORDER BY version",
-  )).rows;
+  );
+  const ledger = ledgerResult.rows;
   assert.equal(ledger.length, 27, "Every migration 1-27 must be applied");
   assert.ok(ledger.every((row, index) => Number(row.version) === index + 1));
   assert.equal(ledger[26].name, "menu_import_pipeline");
