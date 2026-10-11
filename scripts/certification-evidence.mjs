@@ -173,6 +173,12 @@ function summarize() {
   ]);
   const row = (cells) => "| " + cells.join(" | ") + " |";
   const base = process.env.CERT_MAIN_SHA || "NOT VERIFIED";
+  let postgresVersion = "NOT VERIFIED";
+  try {
+    postgresVersion = read(join(source, "postgres.json")).postgresVersion ?? postgresVersion;
+  } catch {
+    // A missing PostgreSQL artifact must be reported as blocked, never passed.
+  }
   const summary = [
     "# Seramet Lite engineering certification",
     "",
@@ -187,7 +193,7 @@ function summarize() {
       (process.env.CHECK_STAGING_HEALTH === "true" ? "REQUESTED" : "NOT REQUESTED"),
     "- Lockfile SHA256: `" + sha256(readFileSync("package-lock.json")) + "`",
     "- Runtime Node: `" + process.version + "`",
-    "- Verified PostgreSQL version: `" + (read(join(source, "postgres.json"))?.postgresVersion ?? "NOT VERIFIED") + "`",
+    "- Verified PostgreSQL version: `" + postgresVersion + "`",
     "",
     "| Certification gate | Job status |",
     "| --- | --- |",
