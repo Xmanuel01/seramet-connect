@@ -362,6 +362,37 @@ export function useSetupCentre() {
     ) => {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const base64 = bytesToBase64(bytes);
+      // Bind retry identity to the actual file bytes AND import settings. Reusing a file
+      // with different branch targets or mappings must create a different request;
+      // retrying the same request must resolve its existing durable job.
+      const branchForRequest = !options?.targetMode && !isAllBranches ? branchId : undefined;
+      const stableEntries = (values?: Record<string, string>) =>
+        Object.entries(values ?? {}).sort(([left], [right]) => left.localeCompare(right));
+      const requestIdentity = {
+        tenantId: activeTenantId,
+        branchId: branchForRequest ?? null,
+        kind,
+        originalName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        duplicateStrategy,
+        targetMode: options?.targetMode ?? null,
+        targetBranchIds: [...(options?.targetBranchIds ?? [])].sort(),
+        columnMap: stableEntries(options?.columnMap),
+        stations: stableEntries(options?.referenceMap?.stations),
+        fileDigest: Array.from(
+          new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join(""),
+      };
+      const identityDigest = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(JSON.stringify(requestIdentity)),
+          ),
+        ),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
       const response = await authenticatedFetch("/api/seramet/setup/imports/uploads", {
         method: "POST",
         headers,
@@ -373,7 +404,7 @@ export function useSetupCentre() {
           mimeType: file.type || "application/octet-stream",
           base64,
           duplicateStrategy,
-          idempotencyKey: `setup-import:${kind}:${activeTenantId}:${file.name}:${file.size}:${file.lastModified}`,
+          idempotencyKey: `setup-import:${kind}:${identityDigest}`,
         }),
       });
       const submitted = (await response.json().catch(() => ({}))) as {
