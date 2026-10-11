@@ -1,90 +1,102 @@
-# Seramet Lite comprehensive certification: evidence contract
+# Seramet Lite engineering certification: evidence contract
 
-This document defines what the manually dispatched
-`.github/workflows/seramet-lite-certification.yml` proves and, just as
-importantly, what it **does not** prove. An isolated CI green run is not a live
-staging or production release sign-off.
+The `Seramet Lite Comprehensive Certification` workflow is **manual-only**
+and uses isolated synthetic data by default. A passing CI run is NOT a
+deployed-staging acceptance or a production release authorization.
 
-## Running the certification
+## Six non-overlapping certification gates
 
-GitHub Actions > **Seramet Lite Comprehensive Certification** > **Run workflow**.
-The default run uses **only synthetic local/CI data** and has no credentials
-for deployed PostgreSQL, Cloudflare or payment providers.
-
-Inputs:
-
-- `include_load=false`: normal engineering certification; set to true
-  to add the existing load/resilience suites and consume more runner minutes.
-- `check_staging_health=false`: do not contact staging by default. Set to
-  true only on the `main` branch to perform **read-only HTTPS** operational
-  and readiness checks through the protected `staging` GitHub environment.
-  This does **not** invoke a staging browser test, create records or run
-  database migrations.
-
-No automatic push/PR trigger is installed, to avoid duplicate or unwanted
-full-suite runs. The workflow requests `contents: read` only.
-
-## Engineering coverage and evidence
-
-| Workflow or architecture | CI evidence gate | Limitation |
+| Gate | Evidence | How it runs |
 | --- | --- | --- |
-| Restaurant registration, onboarding and setup | All Vitest tests; local browser setup/settings test | Real Supabase signup/email and live tenant provisioning require protected staging acceptance |
-| Staff identities, device access, PIN and branch permissions | All Vitest tests; local browser session and tenant/branch rejection tests | Local browser tests use development fixtures; real staging Auth is a separate existing acceptance workflow |
-| Manual menu and branch activation | All Vitest tests; real SQL catalogue/branch-isolation verifier on disposable PostgreSQL | Live POS visibility still requires staging acceptance |
-| Menu CSV upload, approval, batching, publication, retry and recovery | Local Playwright menu-import test; PostgreSQL worker/import verifier | Local scanner simulation is not certified genuine staging CLEAN evidence |
-| POS draft/hold, dispatch and kitchen obligations | Two-terminal Playwright; PostgreSQL transaction verifier; all Vitest tests | Actual KDS displays and physical kitchen tickets require device acceptance |
-| Invoice, cash, receipt and refund | PostgreSQL transaction verifier; all Vitest tests | Physical receipt printing remains manual |
-| M-Pesa payment state, reconciliation rules and callback idempotency | Payment/unit/integration tests included in Vitest suite | Provider sandbox callbacks, credentials and settlement **not** certified here |
-| Cash drawer, reconciliation, EOD and business-date accounting | PostgreSQL POS verifier; all Vitest tests | Live shift reconciliation and accounting sign-off required |
-| Inventory, procurement, recipes, food costing, waste and stock counts | Existing Vitest domain tests | Operational inventory counts and provider/warehouse integration require human acceptance |
-| CRM, loyalty, guest ordering, reservations and marketplace logic | Existing Vitest/integration tests | Actual external delivery/payment provider certification not included |
-| Finance, management dashboards, reports and permissions | Existing Vitest tests; PostgreSQL transaction paths | UI totals on real staging data and accountants' review not certified |
-| Multi-user concurrency, isolation, idempotency, offline replay | Dedicated Vitest concurrency/offline runs; two-browser test; two-connection PostgreSQL POS verifier | Real network disruption on pilot terminals still requires staging acceptance |
-| Database migration versions 1–27 | Official migration runner on *disposable* PostgreSQL 17; exact ledger assertion | This never migrates deployed staging; staging may remain on 26 |
-| Migration 27 RLS on four internal tables | PostgreSQL catalog assertion on the **fresh disposable** database | Fails until the migration 27 security correction is present in the tested ref |
-| PostgREST public-schema lockdown guard and anonymous grants | Existing isolated security verifier against disposable `seramet_test` database | The guarded lockdown SQL is never applied to staging; deployed Worker role/consumer impact not proven |
-| Worker compilation, queue and cron registration, source and credential policies | Source contracts; typecheck; lint; build; bundle audit; compiled queue/cron hook check | Actual Hyperdrive, Cloudflare Queues and scheduled delivery require live integration evidence |
-| ESC/POS printer bridge and print idempotency | Logic tests included in Vitest | Does not prove paper output, correct Windows spooler mapping, or retry/reprint on hardware |
-| Representative load and resilience | Existing load suites, only with `include_load=true` | Does not measure Cloudflare live capacity or vendor SLAs |
-| Read-only deployed staging health | Only with `check_staging_health=true` on `main` | No transactional staging E2E; current schema can legitimately fail readiness |
+| `contract` | Pinned actionlint, Lovable/source-policy checks, route/API evidence inventory, unexpected skipped/todo/focused tests, seven-load-suite inventory | Every comprehensive run; also a cheap automatic PR workflow |
+| `application` | Typecheck, ESLint, `npm audit --omit=dev --audit-level=high`, the entire **non-load** Vitest suite once, recovery/policy script tests, deployable build and bundle audit, Cloudflare Worker queue/cron contract check | Once per manual certification |
+| `browser` | Three existing local-fixture Playwright specifications for auth/settings, menu import and two-terminal POS, with a JSON result and failure traces | Once per manual certification |
+| `postgres` | Disposable PostgreSQL 17 with three **separate** databases: POS; Finance; menu/import/CRM/schema-27 RLS and guarded lockdown. All eight specific verifiers execute once | Once per manual certification, never against a deployed DB |
+| `load` | All seven distinct `src/**/*-load.test.ts` suites (single load-only Vitest invocation) | **Off** unless `include_load=true` |
+| `staging-health` | HTTPS operational and ready health endpoints only, no writes | **Off** unless `check_staging_health=true`; only on protected `main` |
 
-The **All application unit/integration tests** step uses `npm test`, which runs
-the existing Vitest suite as-is; this table identifies domain coverage already
-represented in that suite and other verifiers. It is **not** a claim that
-every route or external integration has its own independent automated E2E
-test. Test failures, skipped tests and future coverage gaps must be reviewed
-in the run logs.
+The standard Vitest config explicitly excludes `*-load.test.ts`.
+`vitest.load.config.ts` includes only those seven suites, and existing
+individual load npm scripts continue working through the dedicated config.
+The comprehensive workflow does NOT re-run concurrency/offline Vitest subsets,
+nor does it re-run menu-import PostgreSQL from two separate jobs.
 
-## Release gates outside this workflow
+The optional load and staging steps must be marked NOT REQUESTED unless
+selected; unexpected required skips/failures or missing evidence fail the
+aggregate result. All GitHub Actions use repository `contents: read` and
+`persist-credentials: false`; the only database credentials are synthetic
+loopback CI credentials. The optional staging HTTPS check uses the protected
+staging environment URL and does not receive a PostgreSQL secret.
 
-A full pilot sign-off must separately record protected staging evidence for:
+## Automatic, cheap PR contract
 
-1. Verified Supabase owner onboarding, employee PIN and branch/device
-   restrictions (existing `pilot-staging-acceptance.yml` is a starting point).
-2. Disposable-tenant, server-authoritative menu -> order -> KOT -> invoice ->
-   cash/payment -> receipt -> reconciliation -> EOD -> reporting across two
-   deployed terminals, with permission and rollback evidence. **Not yet fully
-   automated against live staging.** Require explicit approval for test-record
-   writes before building/running this stage.
-3. Genuine scanner CLEAN evidence bound to the exact uploaded object.
-4. M-Pesa sandbox callbacks, delayed/duplicate/invalid events, settlement and
-   cancellation.
-5. Real printer/KDS output with hardware, missing paper, disconnect, reconnect
-   and explicit audited reprint.
-6. Real Cloudflare Worker/Hyperdrive/queue/cron delivery and secure
-   Data API/RLS compatibility for the actual runtime identity.
-7. Other enabled third-party marketplace, notification and finance providers.
+`.github/workflows/seramet-certification-contract.yml` runs on relevant PR
+changes without `npm ci`, browsers, Docker databases or the comprehensive
+suite. It checks:
 
-Do not mark any of these gates as passed merely because isolated engineering
-certification is green.
+- GitHub workflow syntax via pinned `actionlint`.
+- Branch ancestry against the latest remote `main` fetched during checkout;
+  a behind/diverged branch fails closed.
+- Explicit classification of every discovered `src/routes/**/*.ts(x)` and
+  `src/server/**/*-api.ts` entry in
+  `certification/coverage-manifest.json`.
+- No unexpected focused, todo/fixme or skipped test declarations.
+- Exactly seven load files and correct Vitest config partitioning.
+- Existing pilot source policies and unsupported integration guard tests.
 
-## Failure policy
+The manifest distinguishes **local-browser evidence** and **service-level
+PostgreSQL coverage** from **unverified route-level and external HTTP E2E**;
+adding a route or API requires an explicit inventory update. Three conditional
+`test.skip` calls in the separate protected-staging auth specification are
+allowlisted by exact file and count; they are not counted as local browser
+certification. Inventory validation is not a claim of full API test coverage.
 
-- Do not dispatch the staging deployment or staging database migration workflows
-  as part of this certification.
-- Keep PostgreSQL integration tests fenced to disposable loopback CI databases.
-- Do not use production/staging payment credentials in synthetic tests.
-- Review the failing named job and Playwright failure artifacts; fix only
-  evidenced failures before scheduling another run.
-- A failing migration 27 RLS assertion is a legitimate release blocker,
-  not something to bypass.
+## Reproducible evidence
+
+Each applicable gate uploads 7-day-retained machine-readable evidence with
+the tested commit, `package-lock.json` SHA256 and Node version. Vitest and
+Playwright gates include passed, failed, skipped, todo and flaky counts as
+available; PostgreSQL records its verified server version and named checks.
+The aggregate `report` job records:
+
+- Exact `github.sha` under test, base-main SHA at report time, Actions run URL.
+- Lockfile hash, Node version and PostgreSQL version.
+- Every mandatory and selected optional job's status.
+- Passed/failed/skipped/todo counts; missing evidence is a **blocker**.
+- SHA256 of downloaded/unpacked evidence and trace files.
+- Explicit **NOT VERIFIED** status for external release gates.
+
+An artifact hash verifies the downloaded file bytes; it is not a signature of
+GitHub's compressed artifact ZIP. No secrets should enter these reports.
+
+## Coverage limits
+
+| Category | Evidence available | Remaining independent acceptance |
+| --- | --- | --- |
+| Restaurant onboarding, staff PIN, branches, setup | Vitest + local Playwright | Real Supabase owner verification and deployed device/branch login |
+| Manual menu and branch activation | Vitest + disposable PostgreSQL catalogue + local browser | Deployed POS menu visibility, real permissions |
+| CSV menu import, scanner, queued batching and publication | Local browser (simulated scanner), one PostgreSQL import verifier | Genuine scanner CLEAN evidence on exact object and live Cloudflare queue |
+| Order hold/dispatch, kitchen obligations, invoice, cash, receipt, EOD | Two-terminal local Playwright + authoritative POS PostgreSQL verifier | Protected deployed shift end-to-end, actual KDS and receipt printers |
+| M-Pesa, marketplace, notification and payment-provider callbacks | Existing isolated domain tests | Real vendor sandbox integration, settlement, error/replay handling |
+| Finance, CRM, journal reporting and tenant isolation | Finance and CRM PostgreSQL verifiers; domain suite | Accounting sign-off, real UI totals, production-role isolation |
+| Inventory, stock, requisitions, food costing, cookbook, prep, waste | Domain suite | Physical stock and restaurant staff acceptance |
+| Cloudflare Worker, Hyperdrive, queue/cron | Build, source/bundle and event-hook checks | Real runtime bindings/delivery under staging secrets |
+| Database migration 27 and four new internal RLS flags | Full disposable PostgreSQL migration and explicit RLS/ledger check | Staging migration under separate authorization; existing public-schema exposure remains |
+
+The isolated security verifier can run the guarded lockdown on **disposable CI
+PostgreSQL only**. It does NOT clear staging's public-schema exposure or authorize
+the independently guarded staging lockdown.
+
+## Run and failure policy
+
+Before merging, use the existing normal CI and cheap automatic PR contract
+gate. Do not try to dispatch the expensive workflow on a PR branch before the
+workflow is available on the default branch. After a protected merge, dispatch
+**once** from `main` and record the exact tested main SHA.
+
+Leave both optional inputs off for the first baseline. Do not rerun the full
+suite or deployment workflow to investigate a single failed step. Review the
+named failing gate's compact evidence and retained artifacts first.
+
+No migration 27, schema lockdown, production/staging record write, Cloudflare
+operation or deployment is performed by comprehensive certification.
