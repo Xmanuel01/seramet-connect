@@ -1,0 +1,138 @@
+name: Staging Migration 27 - manual migration only
+
+# Deliberately NEVER triggered on push, PR or schedule. No Cloudflare deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      authorization:
+        description: 'Type I_AUTHORIZE_STAGING_MIGRATION_27 after a separate explicit migration approval'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Serialize with deploy-staging.yml; never cancel an in-flight DDL transaction.
+concurrency:
+  group: seramet-staging
+  cancel-in-progress: false
+
+jobs:
+  migration-27:
+    name: Staging v26 to v27 only
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Require main-branch dispatch and explicit migration authorization
+        shell: bash
+        env:
+          MIGRATION_AUTHORIZATION: ${{ inputs.authorization }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Migration 27 workflow can only be dispatched from main."
+            exit 1
+          fi
+          if [[ "$MIGRATION_AUTHORIZATION" != "I_AUTHORIZE_STAGING_MIGRATION_27" ]]; then
+            echo "::error::Separate explicit Migration 27 execution authorization is required."
+            exit 1
+          fi
+          echo "Manual staging migration 27 dispatch confirmed."
+
+      - name: Checkout reviewed workflow and verification helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout precisely the approved PR 109 migration source
+        uses: actions/checkout@v4
+        with:
+          ref: 5229cb2377fc01d8be0a3f9e1185b0df4bd3b5a6
+          path: migration-27-source
+          persist-credentials: false
+
+      - name: Verify pinned source and stage read-only verification helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git -C migration-27-source rev-parse HEAD)" != "5229cb2377fc01d8be0a3f9e1185b0df4bd3b5a6" ]]; then
+            echo "::error::Expected reviewed Migration 27 source SHA is missing."
+            exit 1
+          fi
+          if [[ "$(sed -n 's/.*CURRENT_SCHEMA_VERSION = \([0-9]*\).*/\1/p' migration-27-source/src/server/database/schema-version.ts)" != "27" ]]; then
+            echo "::error::Pinned source does not require schema 27."
+            exit 1
+          fi
+          test -f scripts/staging-migration-27-gate.mjs
+          # This new read-only verifier is deliberately NOT part of the older,
+          # pinned migration source. Copy it into the transient runner workspace.
+          cp scripts/staging-migration-27-gate.mjs migration-27-source/scripts/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: migration-27-source/package-lock.json
+
+      - name: Install pinned dependencies without lifecycle scripts
+        working-directory: migration-27-source
+        run: npm ci --ignore-scripts
+
+      - name: Read-only target, role, function permissions and schema v26 preflight
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs pre
+
+      - name: Execute only the official PostgreSQL migration runner
+        working-directory: migration-27-source
+        shell: bash
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          migration_log="$(mktemp)"
+          trap 'rm -f "$migration_log"' EXIT
+          # Suppress raw driver exceptions because they could contain DSN metadata.
+          # Only the pinned official runner owns BEGIN, advisory lock, COMMIT, ROLLBACK.
+          if npm run migrate:postgres >"$migration_log" 2>&1; then
+            echo "Official migration runner completed; raw output suppressed."
+            echo "### Official migration runner: completed (postflight verification required)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Official migration runner failed. No retries or repair attempted."
+            echo "### Official migration runner: FAILED; no automatic retry" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Read-only verify v27 checksum, schema objects and new RLS flags
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs post
+
+      - name: Independent read-only public-schema security posture check
+        working-directory: migration-27-source
+        shell: bash
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          posture_log="$(mktemp)"
+          trap 'rm -f "$posture_log"' EXIT
+          if node scripts/assert-staging-api-posture.mjs >"$posture_log" 2>&1; then
+            echo "Independent staging public-schema security gate: PASS."
+            echo "### Independent public-schema security posture: PASS" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Expected pre-existing exposure is a release blocker, not
+            # authorization to execute lockdown SQL or revert schema 27.
+            echo "::error::Public-schema security gate BLOCKED; no security changes attempted."
+            echo "### Independent public-schema security posture: BLOCKED (separate authorization required)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
