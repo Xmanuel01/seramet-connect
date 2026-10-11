@@ -290,7 +290,7 @@ jobs:
       BROWSER_RESULT: ${{ needs.browser.result }}
       POSTGRES_RESULT: ${{ needs.postgres.result }}
       LOAD_RESULT: ${{ needs.load.result }}
-      STAGING_RESULT: ${{ needs.staging-health.result }}
+      STAGING_RESULT: ${{ needs['staging-health'].result }}
       INCLUDE_LOAD: ${{ inputs.include_load }}
       CHECK_STAGING_HEALTH: ${{ inputs.check_staging_health }}
     steps:
@@ -301,7 +301,7 @@ jobs:
       - name: Record current main base SHA without altering checkout
         shell: bash
         run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
+          # checkout fetch-depth: 0 already contains origin/main.
           echo "CERT_MAIN_SHA=$(git rev-parse refs/remotes/origin/main)" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
