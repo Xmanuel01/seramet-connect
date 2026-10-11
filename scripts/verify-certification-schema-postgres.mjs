@@ -26,13 +26,14 @@ try {
   assert.ok(ledger.every((row, index) => Number(row.version) === index + 1));
   assert.equal(ledger[26].name, "menu_import_pipeline");
   assert.equal(ledger[26].checksum, "menu-import-pipeline-0027-v2");
-  const tables = (await client.query(
+  const tableResult = await client.query(
     "SELECT c.relname,c.relrowsecurity FROM pg_class c " +
       "JOIN pg_namespace n ON n.oid=c.relnamespace " +
       "WHERE n.nspname='public' AND c.relkind IN ('r','p') " +
       "AND c.relname=ANY($1::text[])",
     [names],
-  )).rows;
+  );
+  const tables = tableResult.rows;
   assert.equal(tables.length, names.length);
   for (const name of names) {
     const row = tables.find((item) => item.relname === name);
