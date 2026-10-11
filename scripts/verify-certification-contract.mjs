@@ -35,19 +35,13 @@ for (const [path, item] of Object.entries(manifest.routes)) {
 }
 for (const [path, item] of Object.entries(manifest.apis)) {
   assert.equal(item.directHttp, "NOT_VERIFIED", "No deployed HTTP acceptance was performed");
-  assert.ok(
-    ["FINANCE", "CRM", "MENU", "NOT_VERIFIED"].includes(item.servicePostgres),
-    path,
-  );
+  assert.ok(["FINANCE", "CRM", "MENU", "NOT_VERIFIED"].includes(item.servicePostgres), path);
 }
 const load = collect("src", (path) => /-load\.test\.ts$/.test(path));
 exact(load, manifest.expectedLoadSuites, "Seven explicit load suites must be tracked");
 assert.equal(load.length, 7, "Expected exactly seven opt-in load suites");
 assert.match(readFileSync("vitest.config.ts", "utf8"), /exclude:.*-load\.test\.ts/);
-assert.match(
-  readFileSync("vitest.load.config.ts", "utf8"),
-  /include:.*-load\.test\.ts/,
-);
+assert.match(readFileSync("vitest.load.config.ts", "utf8"), /include:.*-load\.test\.ts/);
 
 const testFiles = [
   ...collect("src", (file) => /\.test\.[cm]?[jt]sx?$/.test(file)),
@@ -61,9 +55,7 @@ for (const file of testFiles) {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|\s)\/\/[^\n]*/g, "$1");
   const directives = [
-    ...source.matchAll(
-      /\b(?:test|it|describe)\s*\.\s*(only|skip|todo|fixme)\s*\(/g,
-    ),
+    ...source.matchAll(/\b(?:test|it|describe)\s*\.\s*(only|skip|todo|fixme)\s*\(/g),
   ];
   if (directives.length) {
     const categories = directives.map((match) => match[1]);
@@ -73,7 +65,8 @@ for (const file of testFiles) {
     );
     const allowed = manifest.permittedConditionalSkips[file];
     assert.equal(
-      directives.length, allowed ?? 0,
+      directives.length,
+      allowed ?? 0,
       "Unexpected conditional skipped tests in " + file,
     );
     seen[file] = directives.length;
