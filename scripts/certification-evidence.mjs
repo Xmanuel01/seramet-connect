@@ -100,7 +100,10 @@ function record() {
       "lockdown",
       "schema-27-rls",
     ];
-    if (new Set(probes).size !== required.length || !required.every((name) => probes.includes(name))) {
+    if (
+      new Set(probes).size !== required.length ||
+      !required.every((name) => probes.includes(name))
+    ) {
       throw new Error("PostgreSQL probe evidence incomplete or repeated");
     }
     evidence.probes = probes;
@@ -164,8 +167,10 @@ function summarize() {
       todo += record.counts.todo ?? 0;
     }
   }
-  const checksums = allFiles(source)
-    .map((file) => [file.replace(source + "/", ""), sha256(readFileSync(file))]);
+  const checksums = allFiles(source).map((file) => [
+    file.replace(source + "/", ""),
+    sha256(readFileSync(file)),
+  ]);
   const row = (cells) => "| " + cells.join(" | ") + " |";
   const base = process.env.CERT_MAIN_SHA || "NOT VERIFIED";
   const summary = [
@@ -173,12 +178,16 @@ function summarize() {
     "",
     "- Tested commit: `" + process.env.GITHUB_SHA + "`",
     "- Base main SHA (recorded at report time): `" + base + "`",
-    "- Run: https://github.com/" + process.env.GITHUB_REPOSITORY +
-      "/actions/runs/" + process.env.GITHUB_RUN_ID,
+    "- Run: https://github.com/" +
+      process.env.GITHUB_REPOSITORY +
+      "/actions/runs/" +
+      process.env.GITHUB_RUN_ID,
     "- Optional load: " + (process.env.INCLUDE_LOAD === "true" ? "REQUESTED" : "NOT REQUESTED"),
     "- Optional staging health: " +
       (process.env.CHECK_STAGING_HEALTH === "true" ? "REQUESTED" : "NOT REQUESTED"),
     "- Lockfile SHA256: `" + sha256(readFileSync("package-lock.json")) + "`",
+    "- Runtime Node: `" + process.version + "`",
+    "- Verified PostgreSQL version: `" + (read(join(source, "postgres.json"))?.postgresVersion ?? "NOT VERIFIED") + "`",
     "",
     "| Certification gate | Job status |",
     "| --- | --- |",
@@ -186,8 +195,14 @@ function summarize() {
     "",
     "## Machine-readable evidence",
     "",
-    "Recorded non-load/load/browser assertions: passed=" + passed +
-      ", failed=" + failed + ", skipped=" + skipped + ", todo=" + todo,
+    "Recorded non-load/load/browser assertions: passed=" +
+      passed +
+      ", failed=" +
+      failed +
+      ", skipped=" +
+      skipped +
+      ", todo=" +
+      todo,
     "",
     "| Evidence file | SHA256 (unpacked artifact content) |",
     "| --- | --- |",
