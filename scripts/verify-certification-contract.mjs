@@ -42,6 +42,8 @@ exact(load, manifest.expectedLoadSuites, "Seven explicit load suites must be tra
 assert.equal(load.length, 7, "Expected exactly seven opt-in load suites");
 assert.match(readFileSync("vitest.config.ts", "utf8"), /exclude:.*-load\.test\.ts/);
 assert.match(readFileSync("vitest.load.config.ts", "utf8"), /include:.*-load\.test\.ts/);
+assert.match(readFileSync("vitest.load.config.ts", "utf8"), /exclude: \[\]/);
+assert.doesNotMatch(readFileSync("vitest.load.config.ts", "utf8"), /mergeConfig\s*\(/);
 
 const testFiles = [
   ...collect("src", (file) => /\.test\.[cm]?[jt]sx?$/.test(file)),
