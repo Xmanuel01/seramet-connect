@@ -88,6 +88,10 @@ test("two terminals preserve local drafts and enforce one authoritative revision
     expect.objectContaining({ name: "Pilot meal", itemNote: "No onion - keep this draft" }),
   );
   await managerPage.goto("/orders");
+  // The Orders view defaults to the restaurant-local business date. A held order
+  // can legitimately belong to the previous business date near the cutoff;
+  // cross-terminal visibility must be checked without that independent filter.
+  await managerPage.getByRole("button", { name: "Clear all" }).click();
   await managerPage.getByRole("button", { name: heldOrder!.id, exact: true }).click();
   await expect(managerPage.getByRole("dialog").getByText("Pilot meal")).toBeVisible();
 
