@@ -1,0 +1,58 @@
+name: Seramet Certification Contract (cheap PR guard)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - ".github/workflows/**"
+      - "certification/**"
+      - "scripts/verify-certification-*.mjs"
+      - "scripts/prepare-certification-postgres.mjs"
+      - "src/**"
+      - "tests/e2e/**"
+      - "playwright.config.ts"
+      - "vitest*.config.ts"
+      - "package*.json"
+      - "docs/SERAMET_LITE_CERTIFICATION_COVERAGE.md"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Workflow syntax, source policy, branch freshness, route/API manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Fail on outdated or unmerged-main candidate branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          echo "PR head: $(git rev-parse HEAD)"
+          echo "Current main: $(git rev-parse refs/remotes/origin/main)"
+          if ! git merge-base --is-ancestor refs/remotes/origin/main HEAD; then
+            echo "::error::PR branch is behind or diverged from current main."
+            exit 1
+          fi
+      - name: Pinned actionlint on both certification workflows
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+            .github/workflows/seramet-lite-certification.yml \
+            .github/workflows/seramet-certification-contract.yml
+      - name: Route/API manifest, seven load files and skipped/focused test baseline
+        run: node scripts/verify-certification-contract.mjs
+      - name: Check source bypass and pilot contract policies
+        run: |
+          node --test scripts/assert-no-lovable-source.test.mjs
+          node scripts/assert-no-lovable-source.mjs
+          node --test scripts/assert-pilot-source-policy.test.mjs scripts/pilot-gate-contract.test.mjs
+          node scripts/assert-pilot-source-policy.mjs
