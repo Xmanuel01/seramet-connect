@@ -1,4 +1,4 @@
-import { currentDateKey } from "@/lib/currency";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import type { BillingRecord, TransactionState } from "@/lib/transaction-engine";
 import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 
@@ -28,9 +28,12 @@ export function ordersDashboardFinancials(
   periodDate: string,
   timeZone: string,
   currency: string,
+  businessDayCutoffMinutes = 0,
 ): OrdersDashboardFinancials {
   const matchesDate = (date: string | undefined, timestamp: string) =>
-    !periodDate || (date || currentDateKey(new Date(timestamp), timeZone)) === periodDate;
+    !periodDate ||
+    (date || businessDateForTimestamp(timestamp, timeZone, businessDayCutoffMinutes)) ===
+      periodDate;
   const amount = (value: number) => parseMajorAmount(value, currency);
 
   const activeOrderValueMinor = sumMinor(

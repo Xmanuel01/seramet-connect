@@ -784,7 +784,118 @@ describe("Marketplace, bank and file reconciliation", () => {
   });
 
   it("uses configurable business-day cutoffs across midnight", () => {
-    expect(businessDateFor("2026-08-31T01:00:00.000Z", 2)).toBe("2026-08-30");
+    expect(businessDateFor("2026-08-30T22:30:00.000Z", "Africa/Nairobi", 240)).toBe("2026-08-30");
+    expect(businessDateFor("2026-08-31T01:00:00.000Z", "Africa/Nairobi", 240)).toBe("2026-08-31");
+  });
+
+  it("captures a drawer's authoritative business date when it opens", () => {
+    const platform = createDefaultDemoPlatformState();
+    platform.branches.find((branch) => branch.id === branchId)!.metadata[
+      "businessDayCutoffMinutes"
+    ] = 240;
+    const configured = new PaymentOrchestrator(new ConfigurationRepository(platform));
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-30T22:30:00.000Z");
+    try {
+      const state = configured.openDrawer(createEmptyTransactionState(tenantId), {
+        tenantId,
+        branchId,
+        employeeId: "cashier",
+        openingFloatMinor: kes(5_000),
+        currency,
+        actor,
+      });
+      expect(state.paymentOperations!.drawerSessions[0]!.businessDate).toBe("2026-08-30");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("persists collections and receipts on the branch accounting date", () => {
+    const platform = createDefaultDemoPlatformState();
+    platform.branches.find((branch) => branch.id === branchId)!.metadata[
+      "businessDayCutoffMinutes"
+    ] = 240;
+    const configured = new PaymentOrchestrator(new ConfigurationRepository(platform));
+    const state = configured.confirmProviderCollection(stateWithBills(1_000), {
+      tenantId,
+      branchId,
+      paymentMethodId: "payment-demo-mpesa-till",
+      providerConnectionId: "connection-demo-daraja-wst",
+      providerTransactionId: "MPESA-BUSINESS-DATE",
+      merchantReference: "INV-T-1",
+      amountMinor: kes(1_000),
+      currency,
+      allocations: [{ invoiceId: "INV-T-1", amountMinor: kes(1_000) }],
+      actor,
+      occurredAt: "2026-08-30T22:30:00.000Z",
+    });
+
+    expect(state.payments[0]!.businessDate).toBe("2026-08-30");
+    expect(state.receipts[0]!.businessDate).toBe("2026-08-30");
+    expect(
+      state.paymentOperations!.journals.find(
+        (journal) => journal.sourceType === "PAYMENT_COLLECTION",
+      )?.businessDate,
+    ).toBe("2026-08-30");
+    expect(state.journalEntries[0]!.businessDate).toBe("2026-08-30");
+  });
+
+  it("posts marketplace settlements and reversals on branch accounting dates", () => {
+    const platform = createDefaultDemoPlatformState();
+    platform.branches.find((branch) => branch.id === branchId)!.metadata[
+      "businessDayCutoffMinutes"
+    ] = 240;
+    const engine = new ReconciliationEngine(new ConfigurationRepository(platform));
+    let state = stateWithBills(100_000);
+    state.marketplaceReceivables.push(marketplaceReceivable());
+    const normalized = settlementImport(75_000);
+    normalized.settledAt = "2026-08-30T22:30:00.000Z";
+    const imported = engine.importSettlement(state, {
+      tenantId,
+      branchId,
+      importedBy: actor,
+      normalized,
+    });
+    state = engine.importBankTransactions(imported.state, {
+      tenantId,
+      branchId,
+      accountId: "account-demo-bank",
+      adapterCode: "TEST",
+      rows: [bankRow("BANK-DATE", 75_000, "SETTLEMENT-001")],
+    });
+    state = engine.matchSettlementToBank(state, {
+      tenantId,
+      settlementBatchId: imported.batch.id,
+      bankTransactionId: state.paymentOperations!.bankTransactions[0]!.id,
+      actor,
+    });
+    state = engine.postSettlement(state, {
+      tenantId,
+      settlementBatchId: imported.batch.id,
+      actor,
+      accounts: settlementAccounts(),
+    });
+    const posted = state.paymentOperations!.journals[0]!;
+    expect(posted.businessDate).toBe("2026-08-30");
+
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-31T22:30:00.000Z");
+    try {
+      state = engine.reversePostedSettlement(state, {
+        tenantId,
+        settlementBatchId: imported.batch.id,
+        actor,
+        reason: "Settlement correction",
+      });
+      expect(state.paymentOperations!.journals[0]).toMatchObject({
+        sourceType: "REVERSAL",
+        businessDate: "2026-08-31",
+      });
+      expect(posted.businessDate).toBe("2026-08-30");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

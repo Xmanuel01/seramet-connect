@@ -161,6 +161,7 @@ export type CashDrawerSession = {
   deviceId?: string;
   employeeId: string;
   baseCurrency: string;
+  businessDate?: string;
   openedAt: string;
   openingFloatMinor: MinorAmount;
   closedAt?: string;

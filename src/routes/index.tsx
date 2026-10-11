@@ -16,13 +16,12 @@ import {
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Segmented, Status, TD, TH } from "@/components/app/ui";
-import { currentDateKey, ksh } from "@/lib/currency";
+import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
 import { permissions } from "@/platform/permissions";
-import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
-import { majorFromMinor } from "@/payments/money";
+import { buildDashboardFinancials } from "@/lib/dashboard-financials";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -56,31 +55,6 @@ function greeting() {
   return "Good evening";
 }
 
-function periodStart(period: string, now: Date) {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  if (period === "Yesterday") start.setDate(start.getDate() - 1);
-  if (period === "Week") start.setDate(start.getDate() - 6);
-  if (period === "Month") start.setDate(1);
-  return start;
-}
-
-function dateKey(value: string | Date) {
-  const date = new Date(value);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function lastSevenDays(now: Date) {
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(now);
-    date.setDate(date.getDate() - (6 - index));
-    return {
-      key: dateKey(date),
-      label: date.toLocaleDateString(undefined, { weekday: "short" }),
-    };
-  });
-}
-
 function Home() {
   const [period, setPeriod] = useState("Today");
   const {
@@ -99,109 +73,20 @@ function Home() {
   const { state } = useTransactionEngine();
   const operations = deriveBranchOperations(state, branch);
   const canViewDashboard = hasPermission(permissions.dashboardView);
-  const report = useMemo(() => {
-    const now = new Date();
-    const start = periodStart(period, now);
-    const scopedOrders = state.orders.filter((order) => {
-      const created = new Date(order.createdAt);
-      return (
-        matchesBranch(order.branchId ?? order.branch) &&
-        created >= start &&
-        created <= now &&
-        !["DRAFT", "HELD", "CANCELLED", "REFUNDED"].includes(order.status)
-      );
-    });
-    const currentBusinessDate = currentDateKey(now, timeZone);
-    const todayProjection = branchRecords
-      .filter((record) => matchesBranch(record.id))
-      .map((record) =>
-        projectFinancialLifecycle(state, {
-          tenantId: activeTenantId,
-          branchId: record.id,
-          businessDate: currentBusinessDate,
-          currency,
-        }),
-      );
-    const netSales =
-      period === "Today"
-        ? majorFromMinor(
-            todayProjection.reduce((total, row) => total + row.netRevenueMinor, 0),
-            currency,
-          )
-        : scopedOrders.reduce((total, order) => total + order.total, 0);
-    const scopedMovements = state.stockMovements.filter((movement) => {
-      const created = new Date(movement.createdAt);
-      return (
-        matchesBranch(movement.branchId ?? movement.branch) &&
-        movement.type === "SALE_CONSUMPTION" &&
-        created >= start &&
-        created <= now
-      );
-    });
-    const cost = scopedMovements.reduce(
-      (total, movement) => total + Math.abs(movement.quantity) * movement.unitCost,
-      0,
-    );
-    const collected =
-      period === "Today"
-        ? majorFromMinor(
-            todayProjection.reduce((total, row) => total + row.collectedMinor, 0),
-            currency,
-          )
-        : state.payments
-            .filter((payment) => {
-              const created = new Date(payment.timestamp);
-              return (
-                matchesBranch(payment.branchId ?? payment.branch) &&
-                created >= start &&
-                created <= now
-              );
-            })
-            .reduce((total, payment) => total + payment.amount, 0);
-    const trend = lastSevenDays(now).map(({ key, label }) => ({
-      d: label,
-      sales: scopedOrders
-        .filter((order) => dateKey(order.createdAt) === key)
-        .reduce((total, order) => total + order.total, 0),
-      cost: scopedMovements
-        .filter((movement) => dateKey(movement.createdAt) === key)
-        .reduce((total, movement) => total + Math.abs(movement.quantity) * movement.unitCost, 0),
-    }));
-    const hourly = Array.from({ length: 24 }, (_, hour) => ({
-      h: `${String(hour).padStart(2, "0")}:00`,
-      v: scopedOrders
-        .filter((order) => new Date(order.createdAt).getHours() === hour)
-        .reduce((total, order) => total + order.total, 0),
-    })).filter((row) => row.v > 0);
-    const channels = [...new Set(scopedOrders.map((order) => order.channel))].map((channel) => ({
-      name: channel,
-      value: scopedOrders
-        .filter((order) => order.channel === channel)
-        .reduce((total, order) => total + order.total, 0),
-    }));
-    const branches = branchRecords
-      .filter((record) => matchesBranch(record.id))
-      .map((record) => {
-        const orders = scopedOrders.filter(
-          (order) => order.branchId === record.id || order.branch === record.name,
-        );
-        const sales = orders.reduce((total, order) => total + order.total, 0);
-        const branchCost = scopedMovements
-          .filter((movement) => movement.branchId === record.id || movement.branch === record.name)
-          .reduce((total, movement) => total + Math.abs(movement.quantity) * movement.unitCost, 0);
-        const margin = sales > 0 ? ((sales - branchCost) / sales) * 100 : 0;
-        const foodCost = sales > 0 ? (branchCost / sales) * 100 : 0;
-        return {
-          branch: record.name,
-          sales,
-          orders: orders.length,
-          margin: Math.round(margin),
-          foodCost: Math.round(foodCost),
-          status: sales === 0 ? "No activity" : margin >= 60 ? "Healthy" : "Attention",
-        };
-      });
-    return { netSales, cost, collected, orders: scopedOrders, trend, hourly, channels, branches };
-  }, [activeTenantId, branchRecords, currency, matchesBranch, period, state, timeZone]);
+  const report = useMemo(
+    () =>
+      buildDashboardFinancials({
+        state,
+        tenantId: activeTenantId,
+        branches: branchRecords.filter((record) => matchesBranch(record.id)),
+        period: period as "Today" | "Yesterday" | "Week" | "Month",
+        now: new Date(),
+        currency,
+        fallbackTimeZone: timeZone,
+        locale,
+      }),
+    [activeTenantId, branchRecords, currency, locale, matchesBranch, period, state, timeZone],
+  );
   const grossProfit = report.netSales - report.cost;
   const scopedKpis = [
     { label: "Net Sales", value: report.netSales, money: true },
@@ -343,7 +228,7 @@ function Home() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel>
               <PanelHead
-                title="Sales by hour"
+                title="Ordered by hour"
                 sub={
                   scopedSalesByHour.length ? "Recorded order activity" : "No sales in this period"
                 }
@@ -381,7 +266,7 @@ function Home() {
               </div>
             </Panel>
             <Panel>
-              <PanelHead title="Sales by channel" sub="Today" />
+              <PanelHead title="Ordered by channel" sub={period} />
               <div className="flex items-center gap-2 p-3">
                 <div className="h-[170px] w-[170px] shrink-0">
                   <ResponsiveContainer width="100%" height="100%">

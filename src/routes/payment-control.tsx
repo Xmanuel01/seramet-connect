@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertTriangle, CheckCircle2, FileUp, RefreshCcw, Search, ShieldCheck } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { todayInputValue } from "@/lib/date-filters";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { formatMinor, majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 import type { SettlementAccountMappings } from "@/payments/reconciliation-engine";
 import {
@@ -59,8 +59,16 @@ function PaymentControlCentre() {
     isAllBranches,
     timeZone,
   } = useAppContext();
+  const activeBranch = branchRecords.find((candidate) => candidate.id === branchId);
+  const activeTimeZone = activeBranch?.timezone ?? timeZone;
+  const activeCutoffMinutes = Number(activeBranch?.metadata["businessDayCutoffMinutes"] ?? 0);
+  const currentBusinessDate = businessDateForTimestamp(
+    new Date(),
+    activeTimeZone,
+    activeCutoffMinutes,
+  );
   const [tab, setTab] = useState<Tab>("Payments");
-  const [periodDate, setPeriodDate] = useState(todayInputValue);
+  const [periodDate, setPeriodDate] = useState(currentBusinessDate);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedTransactionId, setSelectedTransactionId] = useState("");
@@ -76,6 +84,7 @@ function PaymentControlCentre() {
     useState<StatementPreview<NormalizedSettlementImport> | null>(null);
   const operations = state.paymentOperations;
   const configuration = getConfigurationRepository();
+  useEffect(() => setPeriodDate(currentBusinessDate), [branchId, currentBusinessDate]);
   const currency = configuration.getTenant(activeTenantId).defaultCurrency;
   const scoped = useCallback(
     <T extends { tenantId: string; branchId?: string }>(rows: T[]) =>
@@ -159,6 +168,8 @@ function PaymentControlCentre() {
           branchId: record.id,
           businessDate: periodDate,
           currency,
+          timeZone: record.timezone ?? timeZone,
+          businessDayCutoffMinutes: Number(record.metadata["businessDayCutoffMinutes"] ?? 0),
         }),
       )
       .reduce((total, projection) => total + projection.settledMinor, 0),

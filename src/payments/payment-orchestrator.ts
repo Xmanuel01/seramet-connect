@@ -12,6 +12,7 @@ import {
   parseMajorAmount,
   sumMinor,
 } from "@/payments/money";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import type {
   CashMovementType,
   PaymentAllocation,
@@ -71,6 +72,15 @@ export class PaymentOrchestrator {
 
   private get configuration() {
     return this.configuredRepository ?? getConfigurationRepository();
+  }
+
+  private branchBusinessDate(tenantId: string, branchId: string, timestamp: string | Date) {
+    const branch = this.configuration.getBranch(tenantId, branchId);
+    return businessDateForTimestamp(
+      timestamp,
+      branch.timezone ?? this.configuration.getTenant(tenantId).timezone,
+      Number(branch.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
   }
 
   createIntent(state: TransactionState, input: CreateIntentInput) {
@@ -439,6 +449,12 @@ export class PaymentOrchestrator {
     )
       throw new Error("Employee already has an open drawer session in this branch");
     const stamp = new Date().toISOString();
+    const branch = this.configuration.getBranch(input.tenantId, input.branchId);
+    const businessDate = businessDateForTimestamp(
+      stamp,
+      branch.timezone ?? this.configuration.getTenant(input.tenantId).timezone,
+      Number(branch.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
     const session = {
       id: nextId("DRAWER", operations.drawerSessions),
       tenantId: input.tenantId,
@@ -446,6 +462,7 @@ export class PaymentOrchestrator {
       ...(input.deviceId ? { deviceId: input.deviceId } : {}),
       employeeId: input.employeeId,
       baseCurrency: input.currency.toUpperCase(),
+      businessDate,
       openedAt: stamp,
       openingFloatMinor: input.openingFloatMinor,
       expectedCashMinor: 0,
@@ -777,7 +794,7 @@ export class PaymentOrchestrator {
         branchId: refund.branchId,
         sourceType: "REFUND",
         sourceId: transaction.id,
-        businessDate: stamp.slice(0, 10),
+        businessDate: this.branchBusinessDate(refund.tenantId, refund.branchId, stamp),
         description: `Refund ${input.providerReference}`,
         postedBy: input.actor,
         lines: [
@@ -855,7 +872,7 @@ export class PaymentOrchestrator {
         reverseJournal(journal, {
           id: nextId("JRN4", operations.journals),
           actor: input.actor,
-          businessDate: stamp.slice(0, 10),
+          businessDate: this.branchBusinessDate(original.tenantId, original.branchId, stamp),
         }),
       );
       journal.status = "REVERSED";
@@ -1031,7 +1048,7 @@ export class PaymentOrchestrator {
         branchId: input.branchId,
         sourceType: "GIFT_CARD_REDEMPTION",
         sourceId: transaction.id,
-        businessDate: stamp.slice(0, 10),
+        businessDate: this.branchBusinessDate(input.tenantId, input.branchId, stamp),
         description: `${account.type} redemption`,
         postedBy: input.actor,
         lines: [
@@ -1431,7 +1448,7 @@ export class PaymentOrchestrator {
         branchId: input.branchId,
         sourceType: "HOUSE_ACCOUNT",
         sourceId: input.invoiceId,
-        businessDate: stamp.slice(0, 10),
+        businessDate: this.branchBusinessDate(input.tenantId, input.branchId, stamp),
         description: `House account charge ${input.invoiceId}`,
         postedBy: input.actor,
         lines: [
@@ -1623,9 +1640,15 @@ export class PaymentOrchestrator {
     const isCustodyCollection = collectionPurpose === "RIDER_CUSTODY";
     const isReceivableCollection =
       isCustodyCollection || collectionPurpose === "DIRECT_COMPANY_COLLECTION";
+    const collectionBusinessDate = this.branchBusinessDate(
+      input.tenantId,
+      input.branchId,
+      occurredAt,
+    );
     let lastLegacyPaymentId: string | undefined;
     for (const allocation of input.allocations) {
       const beforeIds = new Set(next.payments.map((payment) => payment.id));
+      const beforeReceiptIds = new Set(next.receipts.map((receipt) => receipt.id));
       next = TransactionEngine.applyPayment(next, allocation.invoiceId, {
         amount: majorFromMinor(allocation.amountMinor, input.currency),
         method: method.code,
@@ -1675,7 +1698,20 @@ export class PaymentOrchestrator {
             }
           : {}),
       });
-      lastLegacyPaymentId = next.payments.find((payment) => !beforeIds.has(payment.id))?.id;
+      const legacyPayment = next.payments.find((payment) => !beforeIds.has(payment.id));
+      if (legacyPayment) {
+        legacyPayment.businessDate = collectionBusinessDate;
+        const legacyJournal = next.journalEntries.find(
+          (journal) => journal.sourceId === legacyPayment.id,
+        );
+        if (legacyJournal) legacyJournal.businessDate = collectionBusinessDate;
+        lastLegacyPaymentId = legacyPayment.id;
+      }
+      for (const receipt of next.receipts.filter(
+        (candidate) => !beforeReceiptIds.has(candidate.id),
+      )) {
+        receipt.businessDate = collectionBusinessDate;
+      }
     }
     operations = requiredOperations(next);
     const transaction: PaymentTransaction = Object.freeze({
@@ -1735,7 +1771,7 @@ export class PaymentOrchestrator {
         branchId: input.branchId,
         sourceType: "PAYMENT_COLLECTION",
         sourceId: transaction.id,
-        businessDate: occurredAt.slice(0, 10),
+        businessDate: collectionBusinessDate,
         description: `Collection ${transaction.merchantReference}`,
         postedBy: input.actor,
         lines: [

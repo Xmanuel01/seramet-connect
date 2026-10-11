@@ -1,12 +1,16 @@
-import { currentDateKey } from "@/lib/currency";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import type { BillingRecord, TransactionOrder } from "@/lib/transaction-engine";
 
 /** Respect the restaurant's explicit business date; legacy orders use local event date. */
 export function orderBusinessDate(
   order: Pick<TransactionOrder, "businessDate" | "createdAt">,
   timeZone: string,
+  businessDayCutoffMinutes = 0,
 ) {
-  return order.businessDate || currentDateKey(new Date(order.createdAt), timeZone);
+  return (
+    order.businessDate ||
+    businessDateForTimestamp(order.createdAt, timeZone, businessDayCutoffMinutes)
+  );
 }
 
 /** Printing a bill never changes order state. Split invoices are deliberately
