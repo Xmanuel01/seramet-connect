@@ -8,10 +8,7 @@ export default defineConfig({
   workers: 1,
   reporter:
     process.env.SERAMET_CERTIFICATION_REPORTS === "true"
-      ? [
-          ["line"],
-          ["json", { outputFile: "cert-evidence/playwright.json" }],
-        ]
+      ? [["line"], ["json", { outputFile: "cert-evidence/playwright.json" }]]
       : process.env.CI === "true"
         ? "line"
         : "list",
