@@ -37,6 +37,11 @@ export function compileSqliteMigrationForPostgres(source: string): CompiledPostg
   let triggerCount = 0;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
+    const postgresOnly = /^\s*--\s*POSTGRES_ONLY:\s*(.+)$/i.exec(line);
+    if (postgresOnly) {
+      output.push(postgresOnly[1]!);
+      continue;
+    }
     if (/^\s*PRAGMA\s+/i.test(line)) continue;
     if (!/^\s*CREATE\s+TRIGGER\b/i.test(line)) {
       output.push(line);

@@ -111,6 +111,13 @@ CREATE TABLE file_import_state_events (
   FOREIGN KEY (tenant_id,object_id) REFERENCES stored_objects(tenant_id,id)
 );
 
+-- These internal tables are never direct Supabase Data API resources. SQLite
+-- ignores the markers; the PostgreSQL migration compiler emits the statements.
+-- POSTGRES_ONLY: ALTER TABLE menu_import_staged_items ENABLE ROW LEVEL SECURITY;
+-- POSTGRES_ONLY: ALTER TABLE menu_import_staged_branch_settings ENABLE ROW LEVEL SECURITY;
+-- POSTGRES_ONLY: ALTER TABLE manual_menu_item_requests ENABLE ROW LEVEL SECURITY;
+-- POSTGRES_ONLY: ALTER TABLE file_import_state_events ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX idx_setup_import_pipeline
   ON setup_imports(tenant_id,scan_status,status,publish_status,updated_at);
 CREATE INDEX idx_setup_import_rows_batch

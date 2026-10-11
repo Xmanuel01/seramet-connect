@@ -47,4 +47,14 @@ END;
 `);
     expect(compiled.sql).toContain("revision=revision+1");
   });
+
+  it("emits explicitly marked PostgreSQL-only migration statements", () => {
+    const compiled = compileSqliteMigrationForPostgres(`
+CREATE TABLE secure_records (id TEXT PRIMARY KEY);
+-- POSTGRES_ONLY: ALTER TABLE secure_records ENABLE ROW LEVEL SECURITY;
+`);
+
+    expect(compiled.sql).toContain("ALTER TABLE secure_records ENABLE ROW LEVEL SECURITY;");
+    expect(compiled.sql).not.toContain("POSTGRES_ONLY");
+  });
 });

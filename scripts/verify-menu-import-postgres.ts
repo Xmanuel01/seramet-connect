@@ -388,6 +388,7 @@ async function assertMigration() {
   for (const table of [
     "menu_import_staged_items",
     "menu_import_staged_branch_settings",
+    "manual_menu_item_requests",
     "file_import_state_events",
   ]) {
     assert.equal(
@@ -396,6 +397,14 @@ async function assertMigration() {
         table,
       ),
       1,
+    );
+    assert.equal(
+      await scalar(
+        "SELECT COUNT(*) count FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=? AND c.relrowsecurity",
+        table,
+      ),
+      1,
+      `${table} must have PostgreSQL row-level security enabled`,
     );
   }
 }
