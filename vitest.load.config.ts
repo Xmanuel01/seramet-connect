@@ -1,13 +1,13 @@
-import { defineConfig, mergeConfig } from "vitest/config";
+import { defineConfig } from "vitest/config";
 import defaultConfig from "./vitest.config";
 
-// Explicit load-only discovery: all seven suites, none in ordinary npm test.
-export default mergeConfig(
-  defaultConfig,
-  defineConfig({
-    test: {
-      include: ["src/**/*-load.test.ts"],
-      exclude: [],
-    },
-  }),
-);
+// Explicitly REPLACE rather than merge arrays; mergeConfig can retain the
+// default exclude glob and silently skip all load tests.
+export default defineConfig({
+  ...defaultConfig,
+  test: {
+    ...defaultConfig.test,
+    include: ["src/**/*-load.test.ts"],
+    exclude: [],
+  },
+});
