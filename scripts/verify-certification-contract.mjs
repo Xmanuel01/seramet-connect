@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, sep } from "node:path";
 
 // Cheap, deterministic repository contract (no npm install, network, secrets or DB).
 // Route/API inventory must be updated when adding a route or *-api.ts module.
