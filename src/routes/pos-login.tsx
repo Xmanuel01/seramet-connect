@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Delete, LockKeyhole, RefreshCcw, Wifi, WifiOff } from "lucide-react";
+import { Delete, RefreshCcw, Wifi, WifiOff } from "lucide-react";
 import { Logo } from "@/components/app/Logo";
 import {
   deviceStartup,
@@ -8,6 +8,7 @@ import {
   markInteractiveSignIn,
   type DeviceStartup,
 } from "@/lib/auth-client";
+import { pinAfterIdentityChange, shouldCapturePinKeyboardEvent } from "@/lib/pos-login-input";
 
 export const Route = createFileRoute("/pos-login")({
   head: () => ({ meta: [{ title: "Employee sign in - Seramet" }] }),
@@ -22,12 +23,17 @@ function PosLoginPage() {
   const [message, setMessage] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
   const identifierRef = useRef<HTMLInputElement>(null);
+  const deviceContextRef = useRef("");
+  const submittingRef = useRef(false);
   const requiredLength = startup?.policy?.pinLength ?? 6;
 
   const load = useCallback(async () => {
     setMessage("");
     try {
       const result = await deviceStartup();
+      const nextDeviceContext = `${result.device?.id ?? result.state}:${result.policy?.pinLength ?? ""}`;
+      if (deviceContextRef.current && deviceContextRef.current !== nextDeviceContext) setPin("");
+      deviceContextRef.current = nextDeviceContext;
       setStartup(result);
       if (result.state !== "ACTIVE") setMessage(deviceMessage(result.state));
     } catch (error) {
@@ -44,6 +50,7 @@ function PosLoginPage() {
   );
 
   const submit = useCallback(async () => {
+    if (submittingRef.current) return;
     if (!identifier.trim()) {
       setMessage("Enter your email or employee code.");
       identifierRef.current?.focus();
@@ -57,6 +64,7 @@ function PosLoginPage() {
       setMessage("Employee sign-in requires a secure server connection.");
       return;
     }
+    submittingRef.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -67,6 +75,7 @@ function PosLoginPage() {
       setPin("");
       setMessage(error instanceof Error ? error.message : "Employee sign-in failed");
     } finally {
+      submittingRef.current = false;
       setBusy(false);
     }
   }, [identifier, online, pin, requiredLength]);
@@ -86,6 +95,7 @@ function PosLoginPage() {
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (busy || startup?.state !== "ACTIVE") return;
+      if (!shouldCapturePinKeyboardEvent(event.target)) return;
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
       if (event.key === "Escape") setPin("");
@@ -99,6 +109,12 @@ function PosLoginPage() {
     () => Array.from({ length: requiredLength }, (_, index) => index < pin.length),
     [pin.length, requiredLength],
   );
+
+  const tenantName = startup?.device?.tenantName.trim() ?? "";
+  const branchName = startup?.device?.branchName.trim() ?? "";
+  const showTenantName =
+    Boolean(tenantName) &&
+    tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
 
   if (!startup) {
     return <ScreenMessage title="Checking this POS" detail="Validating the registered device..." />;
@@ -143,22 +159,30 @@ function PosLoginPage() {
         <div className="grid flex-1 place-items-center py-8">
           <section className="grid w-full max-w-3xl overflow-hidden rounded-lg border border-border bg-card shadow-card md:grid-cols-[1fr_1.12fr]">
             <div className="border-b border-border bg-surface p-6 md:border-r md:border-b-0 md:p-8">
-              <div className="flex h-11 w-11 items-center justify-center rounded-md bg-accent text-primary">
-                <LockKeyhole className="h-5 w-5" />
+              <div className="flex items-center gap-3" aria-label="Seramet">
+                <Logo compact />
+                <span className="text-xl font-bold text-foreground">SERAMET</span>
               </div>
-              <p className="mt-6 text-xs font-bold uppercase text-primary">{startup.device.name}</p>
-              <h1 className="mt-2 text-2xl font-bold">Employee sign in</h1>
-              <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                {startup.device.tenantName}
-                <br />
-                <strong className="text-foreground">{startup.device.branchName}</strong>
+              <h1 className="mt-7 text-3xl font-bold">Employee sign in</h1>
+              <p className="mt-4 leading-6">
+                <strong className="block text-base text-foreground">{branchName}</strong>
+                {showTenantName ? (
+                  <span className="block text-sm text-muted-foreground">{tenantName}</span>
+                ) : null}
               </p>
               <label className="mt-7 block text-sm font-semibold">
                 Email or employee code
                 <input
                   ref={identifierRef}
                   value={identifier}
-                  onChange={(event) => setIdentifier(event.target.value)}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextIdentifier = event.target.value;
+                    setPin((current) =>
+                      pinAfterIdentityChange(identifier, nextIdentifier, current),
+                    );
+                    setIdentifier(nextIdentifier);
+                  }}
                   autoComplete="username"
                   maxLength={254}
                   className="mt-2 h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -174,7 +198,12 @@ function PosLoginPage() {
                       key={employee.employeeCode}
                       type="button"
                       className="rounded-md border border-border bg-card px-3 py-2 text-left text-xs font-semibold hover:border-primary"
-                      onClick={() => setIdentifier(employee.employeeCode)}
+                      onClick={() => {
+                        setPin((current) =>
+                          pinAfterIdentityChange(identifier, employee.employeeCode, current),
+                        );
+                        setIdentifier(employee.employeeCode);
+                      }}
                     >
                       {employee.displayName}
                     </button>

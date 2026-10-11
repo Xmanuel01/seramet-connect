@@ -65,13 +65,6 @@ const readSessionValue = (key: string, fallback: string) => {
   return window.localStorage.getItem(key)?.trim() || fallback;
 };
 
-const makeId = (prefix: string, name: string) =>
-  `${prefix}-${name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
-
 const readBranchScope = (allowedBranchIds: BranchId[], canSeeAllBranches: boolean): BranchScope => {
   const fallback: BranchScope = { type: "BRANCH", branchId: allowedBranchIds[0] ?? "" };
   if (typeof window === "undefined") return fallback;
@@ -115,14 +108,10 @@ type AppContextValue = {
   canAccessModule: (moduleKey: ModuleKey, action?: ModuleAction) => boolean;
   setBranch: (branchIdOrName: string) => void;
   setBranchScope: (scope: BranchScope) => void;
-  addBranch: (branchName: string) => void;
-  removeBranch: (branchIdOrName: string) => void;
-  addRole: (roleName: string) => void;
-  removeRole: (roleIdOrName: string) => void;
   setTheme: (theme: AppTheme) => void;
   toggleTheme: () => void;
   matchesBranch: (branchIdOrName?: string) => boolean;
-  refreshConfiguration: () => void;
+  refreshConfiguration: () => Promise<void>;
   refreshAccess: () => Promise<void>;
 };
 
@@ -438,56 +427,6 @@ function ConfiguredAppProvider({
         if (target) changeBranchScope({ type: "BRANCH", branchId: target.id });
       },
       setBranchScope: changeBranchScope,
-      addBranch: (branchName) => {
-        if (!session.permissions.includes(permissions.settingsBranchManage)) return;
-        const clean = branchName.trim();
-        if (!clean || branchRecords.some((item) => item.name.toLowerCase() === clean.toLowerCase()))
-          return;
-        repository.upsertBranch(activeTenantId, {
-          id: makeId("branch", clean),
-          tenantId: activeTenantId,
-          code: clean
-            .replace(/[^a-z0-9]/gi, "")
-            .slice(0, 6)
-            .toUpperCase(),
-          name: clean,
-          address: "",
-          phone: "",
-          email: "",
-          active: true,
-          metadata: {},
-        });
-      },
-      removeBranch: (branchIdOrName) => {
-        if (!session.permissions.includes(permissions.settingsBranchManage)) return;
-        const target = branchRecords.find(
-          (item) => item.id === branchIdOrName || item.name === branchIdOrName,
-        );
-        if (target) repository.archiveBranch(activeTenantId, target.id);
-      },
-      addRole: (roleName) => {
-        if (!session.permissions.includes(permissions.settingsRoleManage)) return;
-        const clean = roleName.trim();
-        if (!clean || roleRecords.some((item) => item.name.toLowerCase() === clean.toLowerCase()))
-          return;
-        repository.upsertRole(activeTenantId, {
-          id: makeId("role", clean),
-          tenantId: activeTenantId,
-          code: clean.replace(/[^a-z0-9]/gi, "_").toUpperCase(),
-          name: clean,
-          active: true,
-          permissions: [],
-        });
-      },
-      removeRole: (roleIdOrName) => {
-        if (!session.permissions.includes(permissions.settingsRoleManage)) return;
-        const target = roleRecords.find(
-          (item) => item.id === roleIdOrName || item.name === roleIdOrName,
-        );
-        if (target && !session.roleIds.includes(target.id)) {
-          repository.archiveRole(activeTenantId, target.id);
-        }
-      },
       setTheme: (next) => setThemeState(next),
       toggleTheme: () => setThemeState((current) => (current === "dark" ? "light" : "dark")),
       matchesBranch: (candidate) => {
@@ -495,7 +434,7 @@ function ConfiguredAppProvider({
         if (isAllBranches) return true;
         return candidate === fallbackBranch.id || candidate === fallbackBranch.name;
       },
-      refreshConfiguration: () => setRevision((current) => current + 1),
+      refreshConfiguration: refreshAccess,
       refreshAccess,
     };
   }, [
@@ -718,17 +657,6 @@ async function bootstrapAuthoritativeSession(
   }
   repository.configurePersistence({
     persistBrowser: false,
-    onCommit: (state) => {
-      void authenticatedFetch("/api/seramet/configuration/import", {
-        method: "POST",
-        headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify({ mode: "APPLY", configuration: { ...state, users: [] } }),
-      })
-        .then((response) => {
-          if (!response.ok) throw new Error(`Configuration save failed: ${response.status}`);
-        })
-        .catch((error) => console.error(error));
-    },
   });
   repository.replaceState(configuration.configuration);
   return { status: "AUTHENTICATED", actor: session.actor };

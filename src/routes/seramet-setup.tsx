@@ -24,13 +24,20 @@ import type {
   ImportPreview,
   SetupSection,
 } from "@/onboarding/types";
+import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
 import { formatMinor, parseMajorAmount } from "@/payments/money";
 import { cn } from "@/lib/utils";
 
+type SetupSearch = { section?: SetupSection };
+
 export const Route = createFileRoute("/seramet-setup")({
+  validateSearch: (search: Record<string, unknown>): SetupSearch =>
+    typeof search.section === "string" && setupSections.includes(search.section as SetupSection)
+      ? { section: search.section as SetupSection }
+      : {},
   head: () => ({
     meta: [
       { title: "Setup Centre - Seramet" },
@@ -71,9 +78,13 @@ const documentTypes = [
 
 function SetupCentre() {
   const navigate = useNavigate();
+  const search = Route.useSearch();
   const centre = useSetupCentre();
-  const [section, setSection] = useState<SetupSection>("BUSINESS_PROFILE");
-  const [notice, setNotice] = useState("");
+  const [section, setSection] = useState<SetupSection>(search.section ?? "BUSINESS_PROFILE");
+  const [notice, setNotice] = useState<{
+    kind: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [duplicateStrategy, setDuplicateStrategy] = useState<DuplicateStrategy>("ERROR");
@@ -168,6 +179,10 @@ function SetupCentre() {
     }));
   }, [centre.profile]);
 
+  useEffect(() => {
+    if (search.section) setSection(search.section);
+  }, [search.section]);
+
   const provider = centre.providers.find((candidate) => candidate.id === providerId);
   const sectionStage = centre.setup?.stages.find((stage) => stage.section === section);
   const sectionResults = centre.setup?.results.filter((result) => result.section === section) ?? [];
@@ -176,6 +191,8 @@ function SetupCentre() {
   const score = ((centre.setup?.overallScoreBps ?? 0) / 100).toFixed(0);
   const healthFailures = centre.integrations.filter((row) => row.health !== "HEALTHY").length;
   const offlineDevices = centre.devices.filter((row) => row.health !== "ONLINE").length;
+  const integrationHealthAvailable = !centre.unavailableResources.includes("provider health");
+  const deviceHealthAvailable = !centre.unavailableResources.includes("device health");
   const selectedBranch = centre.structure.branches.find(
     (candidate) => candidate.id === opening.branchId,
   );
@@ -183,12 +200,15 @@ function SetupCentre() {
 
   const run = async (task: () => Promise<unknown>, message: string) => {
     setBusy(true);
-    setNotice("");
+    setNotice(null);
     try {
       await task();
-      setNotice(message);
+      setNotice({ kind: "success", message });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Setup command failed");
+      setNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Setup command failed",
+      });
     } finally {
       setBusy(false);
     }
@@ -241,15 +261,21 @@ function SetupCentre() {
   const uploadImport = async (file: File) => {
     if (!importKind) return;
     setBusy(true);
-    setNotice("");
+    setNotice(null);
     try {
       const next = await centre.previewImport(file, importKind, duplicateStrategy);
       setPreview(next);
-      setNotice(
-        next.canCommit ? "Preview ready for explicit commit." : "Preview contains blocking errors.",
-      );
+      setNotice({
+        kind: next.canCommit ? "success" : "error",
+        message: next.canCommit
+          ? "Preview ready for explicit commit."
+          : "Preview contains blocking errors.",
+      });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Import preview failed");
+      setNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Import preview failed",
+      });
     } finally {
       setBusy(false);
     }
@@ -314,7 +340,11 @@ function SetupCentre() {
   };
   const saveOpeningStock = (event: FormEvent) => {
     event.preventDefault();
-    if (!currency) return setNotice("Configure the tenant currency before opening stock.");
+    if (!currency)
+      return setNotice({
+        kind: "error",
+        message: "Configure the tenant currency before opening stock.",
+      });
     void run(
       () =>
         centre.command("/api/seramet/setup/opening-stock", {
@@ -372,12 +402,15 @@ function SetupCentre() {
     try {
       ratio = decimalRateRatio(fxRate.rate);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Exchange rate is invalid.");
+      setNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Exchange rate is invalid.",
+      });
       return;
     }
     const validHours = Number(fxRate.validHours);
     if (!Number.isSafeInteger(validHours) || validHours < 1 || validHours > 720) {
-      setNotice("Rate validity must be between 1 and 720 hours.");
+      setNotice({ kind: "error", message: "Rate validity must be between 1 and 720 hours." });
       return;
     }
     const effectiveFrom = new Date();
@@ -407,6 +440,27 @@ function SetupCentre() {
       </AppShell>
     );
 
+  if (centre.status === "error" && !centre.setup)
+    return (
+      <AppShell title="Setup Centre" subtitle="Authoritative setup state is unavailable">
+        <Panel className="p-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
+            <div className="min-w-0 flex-1">
+              <div className="text-[14px] font-bold">Setup data could not be loaded</div>
+              <p className="mt-1 break-words text-[12px] leading-5 text-muted-foreground">
+                {centre.error || "The setup service did not return an authoritative response."}
+              </p>
+              <Btn className="mt-4" onClick={() => void centre.refresh()}>
+                <RefreshCcw className="h-4 w-4" />
+                Retry loading
+              </Btn>
+            </div>
+          </div>
+        </Panel>
+      </AppShell>
+    );
+
   if (centre.onboarding && centre.onboarding.status !== "COMPLETED") {
     return <OnboardingWizard centre={centre} />;
   }
@@ -430,17 +484,42 @@ function SetupCentre() {
         <Metric label="Blockers" value={blockers.length} invert={blockers.length > 0} />
         <Metric label="Branches" value={centre.setup?.counts.branches ?? 0} />
         <Metric label="Menu items" value={centre.setup?.counts.menuItems ?? 0} />
-        <Metric label="Integration issues" value={healthFailures} invert={healthFailures > 0} />
-        <Metric label="Device issues" value={offlineDevices} invert={offlineDevices > 0} />
+        <Metric
+          label="Integration issues"
+          value={integrationHealthAvailable ? healthFailures : "Unavailable"}
+          invert={integrationHealthAvailable && healthFailures > 0}
+        />
+        <Metric
+          label="Device issues"
+          value={deviceHealthAvailable ? offlineDevices : "Unavailable"}
+          invert={deviceHealthAvailable && offlineDevices > 0}
+        />
       </div>
+      {centre.error && (
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] font-semibold text-warning">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 break-words">
+            Some setup data is unavailable: {centre.error}
+          </span>
+        </div>
+      )}
       {notice && (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-[12px] font-semibold">
-          {notice.toLowerCase().includes("fail") || notice.toLowerCase().includes("required") ? (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+        <div
+          className={cn(
+            "mt-3 flex items-start gap-2 rounded-md border px-3 py-2 text-[12px] font-semibold",
+            notice.kind === "error"
+              ? "border-danger/30 bg-danger/10 text-danger"
+              : notice.kind === "success"
+                ? "border-success/30 bg-success/10 text-success"
+                : "border-border bg-card",
           )}
-          <span className="min-w-0 break-words">{notice}</span>
+        >
+          {notice.kind === "error" ? (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          ) : (
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          )}
+          <span className="min-w-0 break-words">{notice.message}</span>
         </div>
       )}
       <div className="mt-4 overflow-x-auto border-b border-border xl:hidden">

@@ -183,6 +183,7 @@ export function useSetupCentre() {
   });
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [unavailableResources, setUnavailableResources] = useState<string[]>([]);
 
   const get = useCallback(
     async <T>(path: string) => {
@@ -240,8 +241,11 @@ export function useSetupCentre() {
       get<{ capability: FileImportCapability }>("/api/seramet/setup/imports/capability"),
     ] as const);
     if (summary.status === "fulfilled") setSetup(summary.value.setup);
+    else setSetup(null);
     if (providerHealth.status === "fulfilled") setIntegrations(providerHealth.value.integrations);
+    else setIntegrations([]);
     if (deviceHealth.status === "fulfilled") setDevices(deviceHealth.value.devices);
+    else setDevices([]);
     if (providerDefinitions.status === "fulfilled")
       setProviders(providerDefinitions.value.providers);
     if (organisation.status === "fulfilled") {
@@ -291,6 +295,9 @@ export function useSetupCentre() {
       result.status === "rejected"
         ? [`${name}: ${failureMessage(result.reason, "unavailable")}`]
         : [],
+    );
+    setUnavailableResources(
+      resources.flatMap(([name, result]) => (result.status === "rejected" ? [name] : [])),
     );
     setError(failures.join("; "));
     const criticalFailure = [summary, organisation, setupOptions].some(
@@ -592,6 +599,7 @@ export function useSetupCentre() {
     fileImportCapability,
     status,
     error,
+    unavailableResources,
     refresh,
     command,
     previewImport,

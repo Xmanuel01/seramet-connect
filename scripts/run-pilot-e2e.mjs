@@ -18,6 +18,7 @@ run(
     "test",
     "tests/e2e/pilot-two-terminal.spec.ts",
     "tests/e2e/menu-import-pipeline.spec.ts",
+    "tests/e2e/settings-setup-auth.spec.ts",
   ],
   env,
 );
