@@ -1,0 +1,340 @@
+name: Seramet Lite Comprehensive Certification
+
+# Deliberately manual: no implicit staging writes, deploys, or recurring CI charges.
+on:
+  workflow_dispatch:
+    inputs:
+      include_load:
+        description: "Include extended load and resilience tests (extra runner minutes)"
+        required: false
+        type: boolean
+        default: false
+      check_staging_health:
+        description: "Read-only HTTPS operational/ready health checks on protected staging (main only)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seramet-lite-certification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  architecture:
+    name: Source, build and Worker architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Validate source and pilot gate contracts
+        run: |
+          node --test scripts/assert-pilot-source-policy.test.mjs scripts/pilot-gate-contract.test.mjs
+          node scripts/assert-pilot-source-policy.mjs
+      - name: Type safety
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build actual deployable Worker bundle
+        run: npm run build
+      - name: Reject credentials and sensitive values in client/server bundle
+        run: npm run audit:bundle
+      - name: Verify compiled Cloudflare queue and scheduled event hooks
+        run: node scripts/verify-cloudflare-events.mjs
+
+  domain-tests:
+    name: Domain, authorization, finance and offline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Vitest discovers every *.test.* file, including menu, authentication,
+      # POS, payments, inventory, procurement, finance, guest, CRM, and management.
+      - name: All application unit/integration tests
+        run: npm test
+      - name: Explicit multi-command and idempotency regression
+        run: npm run test:concurrency
+      - name: Explicit offline/replay regression
+        run: npm run test:offline
+
+  browser:
+    name: Playwright browser workflow and two-terminal acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Seed isolated local fixtures and test UI workflows
+        run: npm run test:e2e
+      - name: Upload local-only Playwright failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: seramet-lite-playwright-${{ github.run_id }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  postgres-pos:
+    name: PostgreSQL 17 authoritative POS and concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: seramet_pos_ci
+          POSTGRES_USER: pos_ci
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pos_ci -d seramet_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      SERAMET_POSTGRES_URL: postgresql://pos_ci:isolated_ci_only@127.0.0.1:5432/seramet_pos_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Initialize disposable PostgreSQL using the authoritative migration runner
+        run: npm run migrate:postgres
+      - name: Certify order, KOT, invoice, cash, receipt, refunds, EOD and concurrent writes
+        run: npm run test:pos-postgres
+      - name: Certify menu-import worker queue, batching and publication under POS DB credentials
+        run: npm run test:menu-import-postgres
+
+  postgres-menu-security:
+    name: PostgreSQL 17 menu, schema 27 and isolated lockdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: seramet_test
+          POSTGRES_USER: seramet_test
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seramet_test -d seramet_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      SERAMET_POSTGRES_URL: postgresql://seramet_test:isolated_ci_only@127.0.0.1:5432/seramet_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Initialize disposable PostgreSQL via existing migrations
+        run: npm run migrate:postgres
+      - name: Verify complete migration ledger and fail-closed RLS on all four new tables
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+          const names = [
+            "menu_import_staged_items",
+            "menu_import_staged_branch_settings",
+            "manual_menu_item_requests",
+            "file_import_state_events",
+          ];
+          const db = new pg.Client({
+            connectionString: process.env.SERAMET_POSTGRES_URL,
+            connectionTimeoutMillis: 8000,
+            query_timeout: 8000,
+          });
+          try {
+            await db.connect();
+            await db.query("BEGIN READ ONLY");
+            const versions = await db.query(
+              "SELECT version FROM public.schema_migrations ORDER BY version"
+            );
+            if (versions.rows.length !== 27 ||
+                versions.rows.some((row, index) => Number(row.version) !== index + 1)) {
+              throw new Error("Authoritative migration ledger is not exactly versions 1 through 27");
+            }
+            const found = await db.query(
+              "SELECT c.relname, c.relrowsecurity FROM pg_class c " +
+              "JOIN pg_namespace n ON n.oid = c.relnamespace " +
+              "WHERE n.nspname = 'public' AND c.relkind IN ('r','p') " +
+              "AND c.relname = ANY($1::text[])",
+              [names]
+            );
+            for (const name of names) {
+              const entry = found.rows.find((row) => row.relname === name);
+              if (!entry || !entry.relrowsecurity) {
+                throw new Error("Migration 27 RLS missing for " + name);
+              }
+            }
+            console.log("Versions 1-27 and four migration 27 RLS flags: PASS");
+          } finally {
+            try { await db.query("ROLLBACK"); } catch {}
+            await db.end();
+          }
+          NODE
+      - name: Verify authoritative menu catalogue, pricing and branch isolation
+        run: ./node_modules/.bin/vite-node scripts/verify-menu-postgres.ts
+      - name: Verify durable menu import, idempotency and staged publication
+        run: npm run test:menu-import-postgres
+      - name: Exercise guarded Data API lockdown only on this disposable CI instance
+        run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+
+  extended-load:
+    name: Optional representative load and resilience suites
+    if: ${{ inputs.include_load }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:load
+      - run: npm run test:pass7-load
+      - run: npm run test:pass8-load
+      - run: npm run test:pass11-load
+      - run: npm run test:pass12-load
+
+  staging-health:
+    name: Optional protected staging read-only health
+    if: ${{ inputs.check_staging_health }}
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 8
+    env:
+      SERAMET_PUBLIC_ORIGIN: ${{ secrets.SERAMET_STAGING_URL }}
+    steps:
+      - name: Fail closed outside main or without protected staging URL
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" || -z "$SERAMET_PUBLIC_ORIGIN" ]]; then
+            echo "::error::Protected staging health requires main and SERAMET_STAGING_URL"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Read-only operational health and required schema version
+        run: node scripts/verify-staging-health.mjs operational
+      - name: Read-only full readiness health
+        run: node scripts/verify-staging-health.mjs ready
+
+  certification-report:
+    name: Summarize verified and outstanding acceptance
+    if: ${{ always() }}
+    needs:
+      - architecture
+      - domain-tests
+      - browser
+      - postgres-pos
+      - postgres-menu-security
+      - extended-load
+      - staging-health
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      ARCHITECTURE_RESULT: ${{ needs.architecture.result }}
+      DOMAIN_RESULT: ${{ needs.domain-tests.result }}
+      BROWSER_RESULT: ${{ needs.browser.result }}
+      POSTGRES_POS_RESULT: ${{ needs.postgres-pos.result }}
+      POSTGRES_MENU_RESULT: ${{ needs.postgres-menu-security.result }}
+      LOAD_RESULT: ${{ needs.extended-load.result }}
+      STAGING_RESULT: ${{ needs.staging-health.result }}
+      INCLUDE_LOAD: ${{ inputs.include_load }}
+      CHECK_STAGING_HEALTH: ${{ inputs.check_staging_health }}
+    steps:
+      - name: Write evidence-based certification summary and enforce gates
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const required = [
+            ["Source/build/Worker hooks", process.env.ARCHITECTURE_RESULT],
+            ["All domain and offline tests", process.env.DOMAIN_RESULT],
+            ["Two-terminal and browser workflows", process.env.BROWSER_RESULT],
+            ["Authoritative PostgreSQL POS", process.env.POSTGRES_POS_RESULT],
+            ["PostgreSQL menu, schema/RLS, isolated security guard", process.env.POSTGRES_MENU_RESULT],
+          ];
+          const optional = [
+            ["Extended load and resilience", process.env.LOAD_RESULT, process.env.INCLUDE_LOAD === "true"],
+            ["Live staging read-only health", process.env.STAGING_RESULT, process.env.CHECK_STAGING_HEALTH === "true"],
+          ];
+          const rows = required.map(([name, result]) => [name, result, true]);
+          for (const [name, result, selected] of optional) {
+            rows.push([name, selected ? result : "not requested", selected]);
+          }
+          const failures = rows.filter(([, result, required]) => required && result !== "success");
+          const markdown = [
+            "# Seramet Lite comprehensive certification",
+            "",
+            "Run ref: " + process.env.GITHUB_REF,
+            "",
+            "| Evidence gate | Result |",
+            "| --- | --- |",
+            ...rows.map(([name, result]) => "| " + name + " | " + result + " |"),
+            "",
+            "## Outside this automated certification",
+            "",
+            "- Real staging cashier-to-EOD acceptance with disposable tenant and explicit write approval: NOT VERIFIED.",
+            "- Real Supabase Auth email delivery/verification and protected device acceptance: NOT VERIFIED.",
+            "- M-Pesa provider callback/webhook and settlement sandbox: NOT VERIFIED.",
+            "- Physical printer/KDS output, scanner service, and external marketplace providers: NOT VERIFIED.",
+            "- Deployed Worker/Hyperdrive runtime and production-like role compatibility: NOT VERIFIED unless separately accepted.",
+            "",
+            failures.length
+              ? "**ENGINEERING CERTIFICATION: FAILED/BLOCKED.** Fix only the failing evidence gate."
+              : "**ISOLATED ENGINEERING CERTIFICATION: PASSED.** This is not staging or production go-live approval.",
+            "",
+          ].join("\n");
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
+          console.log(failures.length ? "Certification failed: " + failures.map((row) => row[0]).join(", ") : "Isolated engineering gates passed");
+          if (failures.length) process.exitCode = 1;
+          NODE
