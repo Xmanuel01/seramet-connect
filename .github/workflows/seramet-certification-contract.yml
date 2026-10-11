@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main:refs/remotes/origin/main
+          # checkout fetch-depth: 0 already fetched remote refs before credential removal.
           echo "PR head: $(git rev-parse HEAD)"
           echo "Current main: $(git rev-parse refs/remotes/origin/main)"
           if ! git merge-base --is-ancestor refs/remotes/origin/main HEAD; then
