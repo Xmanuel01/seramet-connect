@@ -126,14 +126,22 @@ jobs:
       - name: Capture browser test counts
         if: ${{ always() }}
         run: node scripts/certification-evidence.mjs record browser
+      - name: Collect Playwright failure traces alongside structured evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          mkdir -p cert-evidence/traces
+          if [[ -d test-results ]]; then
+            cp -R test-results cert-evidence/traces/
+          fi
+          if [[ -d playwright-report ]]; then
+            cp -R playwright-report cert-evidence/traces/
+          fi
       - uses: actions/upload-artifact@v4
         if: ${{ always() }}
         with:
           name: seramet-cert-browser-${{ github.run_id }}
-          path: |
-            cert-evidence/
-            test-results/
-            playwright-report/
+          path: cert-evidence/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -243,7 +251,7 @@ jobs:
 
   staging-health:
     name: Optional read-only protected staging HTTPS health
-    if: ${{ inputs.check_staging_health }}
+    if: ${{ inputs.check_staging_health && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 8
