@@ -1,0 +1,136 @@
+name: Staging PostgreSQL read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seramet-staging-db-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Verify staging database identity and migration privileges (read only)
+        shell: bash
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SERAMET_POSTGRES_URL}" ]]; then
+            echo "::error::Missing staging environment secret SERAMET_POSTGRES_URL"
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+
+          const expectedProjectRef = "vnymbavsbxorwxpebkot";
+          const raw = process.env.SERAMET_POSTGRES_URL;
+          let target;
+          try {
+            target = new URL(raw);
+          } catch {
+            throw new Error("Invalid staging PostgreSQL URL");
+          }
+          if (!["postgres:", "postgresql:"].includes(target.protocol)) {
+            throw new Error("Connection must use PostgreSQL");
+          }
+          const host = target.hostname.toLowerCase();
+          const user = decodeURIComponent(target.username).toLowerCase();
+          const directHost = host === `db.${expectedProjectRef}.supabase.co`;
+          const poolerHost = /(^|\\.)pooler\\.supabase\\.com$/.test(host) &&
+            user.endsWith(`.${expectedProjectRef}`);
+          if (!directHost && !poolerHost) {
+            throw new Error("Connection target does not match the independently recorded staging Supabase project reference");
+          }
+          // Prevent accidental local/proxy targets. Do not print any part of the DSN.
+          const pool = new pg.Pool({
+            connectionString: raw,
+            max: 1,
+            connectionTimeoutMillis: 8000,
+            idleTimeoutMillis: 1000,
+            application_name: "seramet-staging-db-preflight",
+          });
+          let client;
+          try {
+            client = await pool.connect();
+            await client.query("BEGIN READ ONLY");
+            await client.query("SET LOCAL statement_timeout = '5000ms'");
+            const { rows: [identity] } = await client.query(`
+              SELECT current_database() AS database_name,
+                     current_user AS database_role,
+                     inet_server_addr()::text AS server_address,
+                     inet_server_port() AS server_port,
+                     current_setting('server_version') AS server_version,
+                     current_setting('transaction_read_only') AS transaction_mode,
+                     has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
+                     has_table_privilege(current_user, 'public.schema_migrations', 'INSERT') AS can_insert_migration_ledger,
+                     pg_has_role(current_user, (
+                       SELECT c.relowner FROM pg_class c
+                       WHERE c.oid = 'public.schema_migrations'::regclass
+                     ), 'MEMBER') AS migration_ledger_owner_member
+            `);
+            const { rows: [migration] } = await client.query(`
+              SELECT max(version)::int AS max_version, count(*)::int AS version_count
+              FROM public.schema_migrations
+            `);
+            const { rows: [ownership] } = await client.query(`
+              SELECT count(*)::int AS prerequisite_tables,
+                     bool_and(pg_has_role(current_user, c.relowner, 'MEMBER')) AS can_alter_prerequisite_tables
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+                AND c.relname = ANY(ARRAY[
+                  'stored_objects','setup_imports','setup_import_rows','worker_jobs',
+                  'branches','menu_catalog_items','menu_item_branch_settings'
+                ])
+            `);
+            await client.query("ROLLBACK");
+            if (identity.transaction_mode !== "on") throw new Error("Read-only transaction was not enforced");
+            const canMigrate = identity.can_create_in_public &&
+              identity.can_insert_migration_ledger &&
+              identity.migration_ledger_owner_member &&
+              ownership.prerequisite_tables === 7 &&
+              ownership.can_alter_prerequisite_tables;
+            // Output only non-sensitive server metadata and privilege booleans.
+            console.log(JSON.stringify({
+              target_project_ref_verified_from_connection: true,
+              database_name: identity.database_name,
+              database_role: identity.database_role,
+              server_address: identity.server_address,
+              server_port: identity.server_port,
+              server_version: identity.server_version,
+              transaction_read_only: true,
+              migration_version: migration.max_version,
+              migration_records: migration.version_count,
+              can_create_in_public: identity.can_create_in_public,
+              can_insert_migration_ledger: identity.can_insert_migration_ledger,
+              migration_ledger_owner_member: identity.migration_ledger_owner_member,
+              prerequisite_tables: ownership.prerequisite_tables,
+              can_alter_prerequisite_tables: ownership.can_alter_prerequisite_tables,
+              migration_permissions_preflight_pass: Boolean(canMigrate),
+            }));
+            if (!canMigrate) throw new Error("Migration privilege preflight failed");
+          } catch (error) {
+            if (client) {
+              try { await client.query("ROLLBACK"); } catch {}
+            }
+            // Avoid echoing driver errors, which can contain connection metadata.
+            console.error("Staging PostgreSQL preflight failed; inspect secret, network access and role permissions securely.");
+            process.exitCode = 1;
+          } finally {
+            client?.release();
+            await pool.end();
+          }
+          NODE
