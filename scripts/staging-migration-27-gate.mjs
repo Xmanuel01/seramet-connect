@@ -86,6 +86,15 @@ function validateTarget() {
       process.env.SERAMET_ENVIRONMENT === "staging",
     "NOT_PROTECTED_MAIN_STAGING",
   );
+  requireCondition(
+    process.env.SERAMET_OWNER_AUTHORIZATION_VERIFIED === "true" &&
+      process.env.SERAMET_OWNER_AUTHORIZATION_SHA === process.env.GITHUB_SHA &&
+      process.env.SERAMET_OWNER_AUTHORIZATION_PROJECT === project &&
+      process.env.SERAMET_OWNER_AUTHORIZATION_DATABASE === "postgres" &&
+      process.env.SERAMET_OWNER_AUTHORIZATION_OPERATION === "migration-27-and-security-lockdown" &&
+      /^[0-9]+$/.test(process.env.SERAMET_OWNER_AUTHORIZATION_COMMENT_ID ?? ""),
+    "OWNER_AUTHORIZATION_MISSING_OR_MISMATCHED",
+  );
   const raw = process.env.SERAMET_POSTGRES_URL;
   requireCondition(Boolean(raw), "STAGING_SECRET_MISSING");
   let url;
