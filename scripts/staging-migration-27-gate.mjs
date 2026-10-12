@@ -1,7 +1,8 @@
 import pg from "pg";
 import { appendFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
-// Non-mutating gate for the explicitly authorized, one-time staging migration.
+// Guard and verifier for the explicitly authorized, one-time staging remediation.
 // Never print the DSN, driver exception details, SQL parameters, or user data.
 // The migration itself is performed ONLY by scripts/migrate-postgres.ts.
 const mode = process.argv[2];
@@ -75,7 +76,10 @@ function addSummary(lines) {
   }
 }
 function validateTarget() {
-  requireCondition(["pre", "post"].includes(mode), "UNKNOWN_GATE_MODE");
+  requireCondition(
+    ["pre", "post", "lockdown", "secure", "status"].includes(mode),
+    "UNKNOWN_GATE_MODE",
+  );
   requireCondition(
     process.env.GITHUB_ACTIONS === "true" &&
       process.env.GITHUB_REF === "refs/heads/main" &&
@@ -113,19 +117,173 @@ function validateTarget() {
   return raw;
 }
 
+async function requireExecutionIdentity(client) {
+  const identity = (
+    await client.query(
+      "SELECT current_database() AS database_name, current_user AS role_name, " +
+        "(SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()) AS ssl_enabled, " +
+        "has_schema_privilege(current_user,'public','CREATE') AS can_create, " +
+        "has_table_privilege(current_user,'public.schema_migrations','INSERT') AS can_insert_ledger, " +
+        "pg_has_role(current_user,(SELECT relowner FROM pg_class " +
+        "WHERE oid='public.schema_migrations'::regclass),'MEMBER') AS ledger_owner_member",
+    )
+  ).rows[0];
+  requireCondition(
+    identity?.database_name === "postgres" && identity.role_name === "postgres",
+    "DATABASE_IDENTITY_OR_ROLE_MISMATCH",
+  );
+  requireCondition(identity.ssl_enabled === true, "DATABASE_SSL_NOT_VERIFIED");
+  requireCondition(
+    identity.can_create && identity.can_insert_ledger && identity.ledger_owner_member,
+    "MIGRATION_SCHEMA_OR_LEDGER_PERMISSION_MISSING",
+  );
+}
+
+async function requireSchema27(client) {
+  const ledger = (
+    await client.query(
+      "SELECT version, name, checksum FROM public.schema_migrations ORDER BY version",
+    )
+  ).rows;
+  requireCondition(
+    ledger.length === 27 && ledger.every((row, index) => Number(row.version) === index + 1),
+    "EXPECTED_CONSECUTIVE_SCHEMA_VERSIONS_27",
+  );
+  requireCondition(
+    ledger[26]?.name === "menu_import_pipeline" &&
+      ledger[26]?.checksum === "menu-import-pipeline-0027-v2",
+    "MIGRATION_27_LEDGER_CHECKSUM_MISMATCH",
+  );
+}
+
+async function executeLockdown(client) {
+  requireCondition(
+    process.env.SERAMET_LOCKDOWN_AUTHORIZATION ===
+      "I_AUTHORIZE_STAGING_MIGRATION_27_AND_LOCKDOWN",
+    "LOCKDOWN_AUTHORIZATION_MISSING",
+  );
+  requireCondition(
+    process.env.SERAMET_BACKUP_RESTORE_VERIFIED === "true" &&
+      /^[0-9]+$/.test(process.env.SERAMET_BACKUP_RESTORE_RUN_ID ?? ""),
+    "CURRENT_BACKUP_RESTORE_EVIDENCE_MISSING",
+  );
+  await requireExecutionIdentity(client);
+  await requireSchema27(client);
+
+  const advisoryLock = "32478965233706356";
+  let locked = false;
+  try {
+    await client.query("SELECT pg_advisory_lock($1::bigint)", [advisoryLock]);
+    locked = true;
+    await requireSchema27(client);
+    const sql = await readFile("ops/sql/staging-public-schema-lockdown.sql", "utf8");
+    requireCondition(
+      sql.includes("APPROVED_AFTER_ISOLATED_RESTORE") &&
+        sql.includes("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public") &&
+        sql.includes("ENABLE ROW LEVEL SECURITY"),
+      "REVIEWED_LOCKDOWN_GUARDS_MISSING",
+    );
+    await client.query(
+      "SET seramet.staging_schema_lockdown_approved = 'APPROVED_AFTER_ISOLATED_RESTORE'",
+    );
+    await client.query(sql);
+    console.log(
+      "Staging security lockdown committed under the shared database advisory lock; independent postflight is required.",
+    );
+    addSummary([
+      "### Guarded public-schema lockdown: committed",
+      "",
+      "- Existing approval guard: satisfied after current backup/restore evidence verification",
+      "- Migration and lockdown are separate committed transactions",
+      "- Independent security and Worker-role postflight remains required",
+      "",
+    ]);
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    if (locked) {
+      try {
+        await client.query("SELECT pg_advisory_unlock($1::bigint)", [advisoryLock]);
+      } catch {}
+    }
+  }
+}
+
+async function reportCheckpoint(client) {
+  await requireExecutionIdentity(client);
+  await client.query("BEGIN READ ONLY");
+  try {
+    const schema = (
+      await client.query(
+        "SELECT COUNT(*)::integer AS count, COALESCE(MAX(version),0)::integer AS maximum " +
+          "FROM public.schema_migrations",
+      )
+    ).rows[0];
+    const posture = (
+      await client.query(
+        "SELECT COUNT(*) FILTER (WHERE NOT rowsecurity)::integer AS rls_disabled, " +
+          "COUNT(*) FILTER (WHERE has_table_privilege('anon',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS anon_select, " +
+          "COUNT(*) FILTER (WHERE has_table_privilege('authenticated',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS authenticated_select, " +
+          "has_schema_privilege('anon','public','USAGE') AS anon_schema_usage, " +
+          "has_schema_privilege('authenticated','public','USAGE') AS authenticated_schema_usage " +
+          "FROM pg_tables WHERE schemaname='public'",
+      )
+    ).rows[0];
+    const secure =
+      Number(posture.rls_disabled) === 0 &&
+      Number(posture.anon_select) === 0 &&
+      Number(posture.authenticated_select) === 0 &&
+      posture.anon_schema_usage === false &&
+      posture.authenticated_schema_usage === false;
+    const version = Number(schema.maximum);
+    const checkpoint =
+      version === 26
+        ? "SCHEMA_26_NO_REMEDIATION_COMMITTED"
+        : version === 27 && secure
+          ? "SCHEMA_27_LOCKDOWN_VERIFIED"
+          : version === 27
+            ? "SCHEMA_27_LOCKDOWN_INCOMPLETE"
+            : "UNEXPECTED_SCHEMA_STATE";
+    console.log("Staging remediation recovery checkpoint: " + checkpoint);
+    addSummary([
+      "### Recovery checkpoint: `" + checkpoint + "`",
+      "",
+      "- Schema migration count/version: " + Number(schema.count) + "/" + version,
+      "- Public-schema lockdown verified: " + (secure ? "yes" : "no"),
+      "- A failed job is never converted to success by this diagnostic checkpoint",
+      "",
+    ]);
+    requireCondition(checkpoint !== "UNEXPECTED_SCHEMA_STATE", checkpoint);
+  } finally {
+    await client.query("ROLLBACK");
+  }
+}
+
 async function run() {
   const raw = validateTarget();
   const client = new pg.Client({
     connectionString: raw,
     connectionTimeoutMillis: 8000,
-    query_timeout: 10000,
+    query_timeout: mode === "lockdown" ? 190000 : 10000,
     application_name: "seramet-staging-migration-27-" + mode,
   });
   let connected = false;
   try {
     await client.connect();
     connected = true;
-    await client.query("BEGIN READ ONLY");
+    if (mode === "lockdown") {
+      await executeLockdown(client);
+      return;
+    }
+    if (mode === "status") {
+      await reportCheckpoint(client);
+      return;
+    }
+
+    await client.query(mode === "secure" ? "BEGIN" : "BEGIN READ ONLY");
     await client.query("SET LOCAL statement_timeout = '8000ms'");
     await client.query("SET LOCAL lock_timeout = '3000ms'");
 
@@ -144,7 +302,10 @@ async function run() {
       identity?.database_name === "postgres" && identity.role_name === "postgres",
       "DATABASE_IDENTITY_OR_ROLE_MISMATCH",
     );
-    requireCondition(identity.read_only === "on", "READ_ONLY_GATE_NOT_ENFORCED");
+    requireCondition(
+      mode === "secure" || identity.read_only === "on",
+      "READ_ONLY_GATE_NOT_ENFORCED",
+    );
     requireCondition(identity.ssl_enabled === true, "DATABASE_SSL_NOT_VERIFIED");
     requireCondition(
       identity.can_create && identity.can_insert_ledger && identity.ledger_owner_member,
@@ -156,13 +317,18 @@ async function run() {
         "SELECT version, name, checksum FROM public.schema_migrations ORDER BY version",
       )
     ).rows;
-    const requiredVersion = mode === "pre" ? 26 : 27;
+    const detectedVersion = Number(ledger.at(-1)?.version ?? 0);
+    const requiredVersion = mode === "pre" ? detectedVersion : 27;
+    requireCondition(
+      mode !== "pre" || requiredVersion === 26 || requiredVersion === 27,
+      "EXPECTED_RECOVERABLE_SCHEMA_VERSION_26_OR_27",
+    );
     requireCondition(
       ledger.length === requiredVersion &&
         ledger.every((row, index) => Number(row.version) === index + 1),
       "EXPECTED_CONSECUTIVE_SCHEMA_VERSIONS_" + requiredVersion,
     );
-    if (mode === "post") {
+    if (requiredVersion === 27) {
       const last = ledger[26];
       requireCondition(
         last?.name === "menu_import_pipeline" && last?.checksum === "menu-import-pipeline-0027-v2",
@@ -246,7 +412,7 @@ async function run() {
         [Object.keys(triggers).map((name) => "seramet_trigger_" + name)],
       )
     ).rows;
-    if (mode === "pre") {
+    if (mode === "pre" && requiredVersion === 26) {
       requireCondition(
         tables.length === 0 &&
           columns.length === 0 &&
@@ -309,6 +475,49 @@ async function run() {
       );
     }
 
+    if (mode === "pre" && requiredVersion === 27) {
+      const posture = (
+        await client.query(
+          "SELECT COUNT(*) FILTER (WHERE NOT rowsecurity)::integer AS rls_disabled, " +
+            "COUNT(*) FILTER (WHERE has_table_privilege('anon',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS anon_select, " +
+            "COUNT(*) FILTER (WHERE has_table_privilege('authenticated',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS authenticated_select, " +
+            "has_schema_privilege('anon','public','USAGE') AS anon_schema_usage, " +
+            "has_schema_privilege('authenticated','public','USAGE') AS authenticated_schema_usage " +
+            "FROM pg_tables WHERE schemaname='public'",
+        )
+      ).rows[0];
+      const alreadySecure =
+        Number(posture.rls_disabled) === 0 &&
+        Number(posture.anon_select) === 0 &&
+        Number(posture.authenticated_select) === 0 &&
+        posture.anon_schema_usage === false &&
+        posture.authenticated_schema_usage === false;
+      requireCondition(!alreadySecure, "REMEDIATION_ALREADY_COMPLETE");
+    }
+
+    if (mode === "secure") {
+      const posture = (
+        await client.query(
+          "SELECT COUNT(*) FILTER (WHERE NOT rowsecurity)::integer AS rls_disabled, " +
+            "COUNT(*) FILTER (WHERE has_table_privilege('anon',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS anon_select, " +
+            "COUNT(*) FILTER (WHERE has_table_privilege('authenticated',format('%I.%I',schemaname,tablename),'SELECT'))::integer AS authenticated_select, " +
+            "has_schema_privilege('anon','public','USAGE') AS anon_schema_usage, " +
+            "has_schema_privilege('authenticated','public','USAGE') AS authenticated_schema_usage " +
+            "FROM pg_tables WHERE schemaname='public'",
+        )
+      ).rows[0];
+      requireCondition(
+        Number(posture.rls_disabled) === 0 &&
+          Number(posture.anon_select) === 0 &&
+          Number(posture.authenticated_select) === 0 &&
+          posture.anon_schema_usage === false &&
+          posture.authenticated_schema_usage === false,
+        "PUBLIC_SCHEMA_LOCKDOWN_INCOMPLETE",
+      );
+      await client.query("SELECT COUNT(*) FROM public.schema_migrations");
+      await client.query("UPDATE public.worker_jobs SET updated_at=updated_at WHERE false");
+    }
+
     await client.query("ROLLBACK");
     console.log(
       "Staging migration 27 " +
@@ -317,17 +526,27 @@ async function run() {
         "database=postgres, role=postgres, SSL=enabled, schema=" +
         requiredVersion +
         ", prerequisite_tables=7, new_tables=" +
-        (mode === "post" ? "4 RLS-enabled" : "absent"),
+        (requiredVersion === 26 ? "absent" : "4 RLS-enabled"),
     );
     addSummary([
       "### Staging migration 27 " + mode + "flight: PASS",
       "",
       "- Target: staging Supabase DSN project-ref constraint matched; database `postgres`, role `postgres`",
-      "- TLS: enabled; SQL verification transaction: read-only",
+      "- TLS: enabled; SQL verification transaction: " +
+        (mode === "secure" ? "rolled-back Worker compatibility probe" : "read-only"),
       "- Migration versions: 1–" + requiredVersion + " consecutive",
-      mode === "post"
-        ? "- Migration 27 checksum, columns, six indexes, three triggers/functions, keys and four RLS flags: PASS"
-        : "- Migration 27 targets absent; prerequisite owners and compatibility-function ownership: PASS",
+      requiredVersion === 26
+        ? "- Migration 27 targets absent; prerequisite owners and compatibility-function ownership: PASS"
+        : "- Migration 27 checksum, objects and four new-table RLS flags: PASS",
+      ...(mode === "pre" && requiredVersion === 27
+        ? ["- Recovery mode: schema 27 is complete but lockdown is not yet verified"]
+        : []),
+      ...(mode === "secure"
+        ? [
+            "- Public grants/schema access: locked down",
+            "- Configured Worker database role: read and rolled-back no-op write probe passed",
+          ]
+        : []),
       "",
     ]);
   } catch (error) {
@@ -352,14 +571,14 @@ try {
   const code =
     typeof error?.safeCode === "string" ? error.safeCode : "DATABASE_CONNECTION_OR_QUERY_FAILED";
   console.error(
-    "Staging migration 27 " +
-      (mode === "pre" ? "preflight" : "postflight") +
+    "Staging remediation " +
+      mode +
       " BLOCKED: " +
       code +
       "; no automatic retry.",
   );
   addSummary([
-    "### Staging migration 27 " + (mode === "pre" ? "preflight" : "postflight") + ": BLOCKED",
+    "### Staging remediation " + mode + ": BLOCKED",
     "",
     "- Failure category: " + code,
     "- No retry or repair initiated.",
