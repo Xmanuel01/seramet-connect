@@ -158,8 +158,7 @@ async function requireSchema27(client) {
 
 async function executeLockdown(client) {
   requireCondition(
-    process.env.SERAMET_LOCKDOWN_AUTHORIZATION ===
-      "I_AUTHORIZE_STAGING_MIGRATION_27_AND_LOCKDOWN",
+    process.env.SERAMET_LOCKDOWN_AUTHORIZATION === "I_AUTHORIZE_STAGING_MIGRATION_27_AND_LOCKDOWN",
     "LOCKDOWN_AUTHORIZATION_MISSING",
   );
   requireCondition(
@@ -570,13 +569,7 @@ try {
 } catch (error) {
   const code =
     typeof error?.safeCode === "string" ? error.safeCode : "DATABASE_CONNECTION_OR_QUERY_FAILED";
-  console.error(
-    "Staging remediation " +
-      mode +
-      " BLOCKED: " +
-      code +
-      "; no automatic retry.",
-  );
+  console.error("Staging remediation " + mode + " BLOCKED: " + code + "; no automatic retry.");
   addSummary([
     "### Staging remediation " + mode + ": BLOCKED",
     "",
