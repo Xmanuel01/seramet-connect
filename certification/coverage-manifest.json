@@ -1,0 +1,446 @@
+{
+  "schemaVersion": 1,
+  "statement": "An inventory of registered UI route files and server *-api.ts modules, NOT a guarantee of full HTTP/UI E2E coverage. Browser means existing local-fixture Playwright flow; all external integrations remain NOT_VERIFIED.",
+  "routes": {
+    "src/routes/__root.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/accounting.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/adjustments.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/ai.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/approvals.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/assets.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/attendance.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/audit-trail.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/balance-sheet.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/bar.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/branches.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/breakages.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/budgets.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/campaigns.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/cash-flow.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/categories.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/command-centre.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/complaints.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/cookbook.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/cost-centres.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/cost-control.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/credit-notes.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/crm-pipeline.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/crm.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/customers.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/daily-sales-journal.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/decisions.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/delivery.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/depreciation.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/design-system.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/employees.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/enterprise.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/expenses.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/feedback.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/finance.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/general-ledger.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/gift-cards.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest-service.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.account.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.index.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.menu.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.reservation.$token.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.reserve.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.track.$token.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/guest.$restaurant.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/host.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/index.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/integrations.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/inventory-items.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/inventory.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/invoices.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/items.$sku.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/kitchen-analytics.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/kitchen.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/leave.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/login.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/loyalty.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/marketing.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/marketplace.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/menu-import.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/notifications.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/online-orders.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/orders.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/par.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/payables.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/payment-control.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/payroll.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/pending.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/people.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/performance.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/period-close.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/pos-login.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/pos.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/prep.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/prime-cost.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/privacy-requests.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/procurement.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/production.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/profit-loss.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/purchase-orders.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/qr-management.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/receipts.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/receivables.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/receiving.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/recipes.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/reconciliation.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/recruitment.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/refunds.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/register.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/reports.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/requisitions.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/reservations.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/returns.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/riders.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/schedule.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/segments.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/seramet-printers.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/seramet-setup.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/settings.tsx": {
+      "directBrowser": "LOCAL_FIXTURE"
+    },
+    "src/routes/stock-count.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/stock-detail.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/supplier-bills.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/supplier-performance.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/suppliers.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/system-health.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/tables.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/tasks.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/tax-centre.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/transfers.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/trial-balance.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/vouchers.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/waitlist.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/warehouses.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
+    "src/routes/wastage.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    }
+  },
+  "apis": {
+    "src/server/configuration-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/cookbook-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/crm-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "CRM"
+    },
+    "src/server/enterprise-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/finance-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "FINANCE"
+    },
+    "src/server/guest-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/identity-device-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/intelligence-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/inventory-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/kitchen-analytics-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/management-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/object-storage-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/offline-sync-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/onboarding-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "MENU"
+    },
+    "src/server/operations-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/prep-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/realtime-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/registration-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/scanner-internal-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/supabase-auth-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/table-management-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    }
+  },
+  "expectedLoadSuites": [
+    "src/enterprise/pass-12-load.test.ts",
+    "src/guest/pass-11-load.test.ts",
+    "src/intelligence/pass-9-load.test.ts",
+    "src/inventory/pass-6-load.test.ts",
+    "src/management/pass-7-load.test.ts",
+    "src/onboarding/pass-8-load.test.ts",
+    "src/server/pass-5-load.test.ts"
+  ],
+  "permittedConditionalSkips": {
+    "tests/e2e/staging-auth.spec.ts": 3
+  }
+}

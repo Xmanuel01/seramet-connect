@@ -6,7 +6,12 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   fullyParallel: false,
   workers: 1,
-  reporter: process.env.CI === "true" ? "line" : "list",
+  reporter:
+    process.env.SERAMET_CERTIFICATION_REPORTS === "true"
+      ? [["line"], ["json", { outputFile: "cert-evidence/playwright.json" }]]
+      : process.env.CI === "true"
+        ? "line"
+        : "list",
   use: {
     baseURL: process.env.SERAMET_E2E_BASE_URL ?? "http://127.0.0.1:4173",
     trace: "retain-on-failure",

@@ -1,0 +1,331 @@
+name: Seramet Lite Comprehensive Certification
+
+# Manual only. No staging writes, database migrations on staging, or deployments.
+on:
+  workflow_dispatch:
+    inputs:
+      include_load:
+        description: "Run all seven load/resilience suites (extra runner minutes)"
+        type: boolean
+        required: false
+        default: false
+      check_staging_health:
+        description: "Read-only staging health on protected main (no test records)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seramet-lite-certification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Contract, actionlint, route/API and source policies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check GitHub workflow syntax using pinned actionlint
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 \
+            .github/workflows/seramet-lite-certification.yml \
+            .github/workflows/seramet-certification-contract.yml
+      - name: Verify route/API manifest, seven load tests, and skip/focus policy
+        run: node scripts/verify-certification-contract.mjs
+      - name: Reject source bypasses and historical Lovable integrations
+        run: |
+          node --test scripts/assert-no-lovable-source.test.mjs
+          node scripts/assert-no-lovable-source.mjs
+          node --test scripts/assert-pilot-source-policy.test.mjs scripts/pilot-gate-contract.test.mjs
+          node scripts/assert-pilot-source-policy.mjs
+      - name: Record isolated contract evidence
+        run: node scripts/certification-evidence.mjs record contract
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-contract-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  application:
+    name: Non-load application, dependencies, build and Worker policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Audit production dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - name: Typecheck and lint application
+        run: |
+          npm run typecheck
+          npm run lint
+      - name: Verify isolated staging recovery and security policy contracts
+        run: |
+          node --test scripts/verify-staging-health.test.mjs
+          node --test scripts/verify-staging-release-gate.test.mjs
+          node --test scripts/inspect-staging-backlog.test.mjs
+          node --test scripts/staging-menu-reconciliation-plan.test.mjs
+          node --test scripts/staging-management-backlog-plan.test.mjs
+          node --test scripts/staging-recovery-cli-args.test.mjs
+          node --test scripts/assert-staging-api-posture.test.mjs
+      - name: Run every non-load Vitest case exactly once
+        run: |
+          mkdir -p cert-evidence
+          npm test -- --reporter=json --outputFile=cert-evidence/vitest.json
+      - name: Build and inspect Worker bundle, queue and cron contracts
+        run: |
+          npm run build
+          npm run audit:bundle
+          node scripts/verify-cloudflare-events.mjs
+      - name: Record machine-readable Vitest counts and lockfile hash
+        if: ${{ always() }}
+        run: node scripts/certification-evidence.mjs record application
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-application-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  browser:
+    name: One isolated Playwright run (menu, auth, POS and terminals)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: One local-fixture browser acceptance with JSON evidence
+        env:
+          SERAMET_CERTIFICATION_REPORTS: "true"
+        run: npm run test:e2e
+      - name: Capture browser test counts
+        if: ${{ always() }}
+        run: node scripts/certification-evidence.mjs record browser
+      - name: Collect Playwright failure traces alongside structured evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          mkdir -p cert-evidence/traces
+          if [[ -d test-results ]]; then
+            cp -R test-results cert-evidence/traces/
+          fi
+          if [[ -d playwright-report ]]; then
+            cp -R playwright-report cert-evidence/traces/
+          fi
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-browser-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  postgres:
+    name: PostgreSQL 17 POS, menu/RLS, finance and CRM (no repeats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: seramet_test
+          POSTGRES_USER: seramet_test
+          POSTGRES_PASSWORD: isolated_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seramet_test -d seramet_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: "true"
+      SERAMET_POSTGRES_URL: postgresql://seramet_test:isolated_ci_only@127.0.0.1:5432/seramet_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Set up three physically separate disposable test databases
+        run: node scripts/prepare-certification-postgres.mjs
+      - name: Apply migrations and certify authoritative POS
+        env:
+          SERAMET_POSTGRES_URL: postgresql://pos_ci:isolated_ci_only@127.0.0.1:5432/seramet_pos_ci
+        run: |
+          npm run migrate:postgres
+          npm run test:pos-postgres
+          echo pos >> cert-evidence/postgres-probes.txt
+      - name: Apply migrations and certify financial ledger service
+        env:
+          SERAMET_POSTGRES_URL: postgresql://finance_ci:test_only_isolated@127.0.0.1:5432/seramet_finance_ci
+        run: |
+          npm run migrate:postgres
+          ./node_modules/.bin/vite-node scripts/verify-finance-postgres.ts
+          echo finance >> cert-evidence/postgres-probes.txt
+      - name: Apply migrations and certify menu, import and CRM on disposable DB
+        run: |
+          npm run migrate:postgres
+          node scripts/verify-certification-schema-postgres.mjs
+          echo schema-27-rls >> cert-evidence/postgres-probes.txt
+          ./node_modules/.bin/vite-node scripts/verify-menu-postgres.ts
+          echo menu-catalog >> cert-evidence/postgres-probes.txt
+          npm run test:menu-import-postgres
+          echo menu-import >> cert-evidence/postgres-probes.txt
+          node scripts/verify-crm-postgres.mjs
+          echo crm-schema >> cert-evidence/postgres-probes.txt
+          ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
+          echo crm-runtime >> cert-evidence/postgres-probes.txt
+      - name: Test guarded RLS/grant lockdown on disposable CI DB only
+        run: |
+          node scripts/verify-staging-data-api-lockdown-postgres.mjs
+          echo lockdown >> cert-evidence/postgres-probes.txt
+      - name: Record PostgreSQL version and unique completed verifiers
+        if: ${{ always() }}
+        run: node scripts/certification-evidence.mjs record postgres
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-postgres-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  load:
+    name: Optional seven load suites (once)
+    if: ${{ inputs.include_load }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Exactly seven load suites, zero default-suite duplication
+        run: |
+          mkdir -p cert-evidence
+          npx vitest run --config vitest.load.config.ts --reporter=json \
+            --outputFile=cert-evidence/vitest-load.json
+      - name: Enforce seven load files and capture counts
+        if: ${{ always() }}
+        run: node scripts/certification-evidence.mjs record load
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-load-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  staging-health:
+    name: Optional read-only protected staging HTTPS health
+    if: ${{ inputs.check_staging_health && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 8
+    env:
+      SERAMET_PUBLIC_ORIGIN: ${{ secrets.SERAMET_STAGING_URL }}
+    steps:
+      - name: Require main and protected staging origin
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" || -z "$SERAMET_PUBLIC_ORIGIN" ]]; then
+            echo "::error::Protected staging health requires main and SERAMET_STAGING_URL"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Probe read-only operational and readiness endpoints
+        run: |
+          node scripts/verify-staging-health.mjs operational
+          node scripts/verify-staging-health.mjs ready
+      - name: Record staging health evidence
+        if: ${{ always() }}
+        run: node scripts/certification-evidence.mjs record staging
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: seramet-cert-staging-${{ github.run_id }}
+          path: cert-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  report:
+    name: Fail closed and summarize reproducible test evidence
+    if: ${{ always() }}
+    needs: [contract, application, browser, postgres, load, staging-health]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CONTRACT_RESULT: ${{ needs.contract.result }}
+      APPLICATION_RESULT: ${{ needs.application.result }}
+      BROWSER_RESULT: ${{ needs.browser.result }}
+      POSTGRES_RESULT: ${{ needs.postgres.result }}
+      LOAD_RESULT: ${{ needs.load.result }}
+      STAGING_RESULT: ${{ needs['staging-health'].result }}
+      INCLUDE_LOAD: ${{ inputs.include_load }}
+      CHECK_STAGING_HEALTH: ${{ inputs.check_staging_health }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Record current main base SHA without altering checkout
+        shell: bash
+        run: |
+          # checkout fetch-depth: 0 already contains origin/main.
+          echo "CERT_MAIN_SHA=$(git rev-parse refs/remotes/origin/main)" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: seramet-cert-*
+          path: certification-download
+          merge-multiple: true
+      - name: Write gate results, counts, versions and artifact SHA256
+        run: node scripts/certification-evidence.mjs summarize
+      - name: Retain final certification report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: seramet-cert-summary-${{ github.run_id }}
+          path: certification-summary.md
+          retention-days: 7
+          if-no-files-found: ignore
