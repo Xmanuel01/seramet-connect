@@ -41,7 +41,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write
+      # Authorization and consumption records are comments on PR 112.
+      pull-requests: write
     outputs:
       verified: ${{ steps.owner-authorization.outputs.verified }}
       approved_sha: ${{ steps.owner-authorization.outputs.approved_sha }}

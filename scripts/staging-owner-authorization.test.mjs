@@ -9,8 +9,34 @@ import {
   AUTHORIZATION_OPERATION,
   CONSUMPTION_MARKER,
   hasConsumptionRecord,
+  githubRequest,
   validateOwnerAuthorization,
 } from "./staging-owner-authorization.mjs";
+
+test("GitHub 403 failures identify the exact request and never disclose the token or body", async (t) => {
+  const messages = [];
+  t.mock.method(console, "error", (message) => messages.push(message));
+  const token = "test-token-never-log";
+  for (const [method, path] of [
+    ["GET", "/repos/Xmanuel01/seramet-connect/issues/comments/6143506490"],
+    ["GET", "/repos/Xmanuel01/seramet-connect/issues/112/comments?per_page=100"],
+    ["POST", "/repos/Xmanuel01/seramet-connect/issues/112/comments"],
+  ]) {
+    await assert.rejects(
+      githubRequest(path, token, { method, body: "private-comment-body" }, async () => ({
+        ok: false,
+        status: 403,
+      })),
+      /GITHUB_API_403/,
+    );
+    assert.equal(messages.at(-1), `GitHub authorization request failed: ${method} ${path}`);
+  }
+  assert.ok(
+    messages.every(
+      (message) => !message.includes(token) && !message.includes("private-comment-body"),
+    ),
+  );
+});
 
 const repository = "Xmanuel01/seramet-connect";
 const owner = "Xmanuel01";
@@ -111,7 +137,8 @@ test("workflow requires and consumes owner authorization before staging credenti
   const credentialStep = workflow.indexOf("Read-only target, role, permissions");
   assert.match(workflow, /owner_authorization_comment_id:/);
   assert.match(workflow, /permissions: \{\}/);
-  assert.match(workflow, /issues: write/);
+  assert.match(workflow, /pull-requests: write/);
+  assert.doesNotMatch(workflow, /issues: write/);
   assert.match(workflow, /needs: authorize/);
   assert.match(workflow, /actions: read/);
   assert.match(workflow, /group: seramet-staging/);

@@ -99,8 +99,8 @@ export function hasConsumptionRecord(comments, commentId) {
   );
 }
 
-async function githubRequest(path, token, options = {}) {
-  const response = await fetch(`https://api.github.com${path}`, {
+export async function githubRequest(path, token, options = {}, request = fetch) {
+  const response = await request(`https://api.github.com${path}`, {
     ...options,
     headers: {
       Accept: "application/vnd.github+json",
@@ -109,7 +109,12 @@ async function githubRequest(path, token, options = {}) {
       ...options.headers,
     },
   });
-  if (!response.ok) reject(`GITHUB_API_${response.status}`);
+  if (!response.ok) {
+    // Paths are constructed from validated repository/comment identifiers;
+    // never include tokens, response bodies or authorization comment contents.
+    console.error(`GitHub authorization request failed: ${options.method ?? "GET"} ${path}`);
+    reject(`GITHUB_API_${response.status}`);
+  }
   return response.json();
 }
 
