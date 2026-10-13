@@ -112,6 +112,7 @@ jobs:
       contents: read
       actions: read
     env:
+      PGSSLMODE: verify-full
       SERAMET_OWNER_AUTHORIZATION_VERIFIED: ${{ needs.authorize.outputs.verified }}
       SERAMET_OWNER_AUTHORIZATION_SHA: ${{ needs.authorize.outputs.approved_sha }}
       SERAMET_OWNER_AUTHORIZATION_PROJECT: ${{ needs.authorize.outputs.database_project }}
@@ -234,6 +235,7 @@ jobs:
           # This reviewed helper is deliberately NOT part of the older, pinned
           # migration source. Copy it into the transient runner workspace.
           cp scripts/staging-migration-27-gate.mjs migration-27-source/scripts/
+          cp scripts/staging-postgres-tls.mjs migration-27-source/scripts/
 
       - uses: actions/setup-node@v4
         with:

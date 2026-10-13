@@ -1,4 +1,5 @@
 import pg from "pg";
+import { stagingTlsConfig } from "./staging-postgres-tls.mjs";
 import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
@@ -273,7 +274,7 @@ async function reportCheckpoint(client) {
 async function run() {
   const raw = validateTarget();
   const client = new pg.Client({
-    connectionString: raw,
+    ...stagingTlsConfig(raw),
     connectionTimeoutMillis: 8000,
     query_timeout: mode === "lockdown" ? 190000 : 10000,
     application_name: "seramet-staging-migration-27-" + mode,
