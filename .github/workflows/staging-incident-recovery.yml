@@ -48,6 +48,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   # Share the staging database/deployment lock. A backup snapshot, restore
@@ -88,6 +89,14 @@ jobs:
         run: |
           test -n "$APPROVED_SHA"
           test "$CANDIDATE_SHA" = "$APPROVED_SHA"
+      - name: Require recovery encryption and offline key escrow
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+          KEY_ESCROW_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED }}
+        run: |
+          test -n "$BACKUP_KEY"
+          test "$KEY_ESCROW_VERIFIED" = "true"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -119,6 +128,33 @@ jobs:
           SERAMET_BACKUP_PATH: ${{ runner.temp }}/seramet-staging-public.dump
           SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
         run: node scripts/create-staging-backup.mjs
+      - name: Encrypt staging recovery files
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+        run: node scripts/staging-recovery-envelope.mjs seal "$RUNNER_TEMP" "$RUNNER_TEMP/encrypted-recovery"
+      - name: Retain encrypted staging recovery point
+        if: inputs.operation == 'verify-backup-restore'
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/encrypted-recovery/*.enc
+          if-no-files-found: error
+          retention-days: 7
+      - name: Download retained recovery point
+        if: inputs.operation == 'verify-backup-restore'
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/downloaded-recovery
+      - name: Authenticate and decrypt retained recovery point
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+        run: |
+          node scripts/staging-recovery-envelope.mjs open "$RUNNER_TEMP/downloaded-recovery" "$RUNNER_TEMP/recovered-backup"
+          cmp "$RUNNER_TEMP/seramet-staging-public.dump" "$RUNNER_TEMP/recovered-backup/seramet-staging-public.dump"
+          cmp "$RUNNER_TEMP/seramet-staging-source-evidence.json" "$RUNNER_TEMP/recovered-backup/seramet-staging-source-evidence.json"
       - name: Restore backup into isolated PostgreSQL 17
         if: inputs.operation == 'verify-backup-restore'
         shell: bash
@@ -152,14 +188,14 @@ jobs:
             --no-owner \
             --no-privileges \
             --exit-on-error \
-            "$RUNNER_TEMP/seramet-staging-public.dump"
+            "$RUNNER_TEMP/recovered-backup/seramet-staging-public.dump"
       - name: Verify isolated restore completeness and integrity
         if: inputs.operation == 'verify-backup-restore'
         env:
           SERAMET_ENVIRONMENT: staging
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
           SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
-          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
+          SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/recovered-backup/seramet-staging-source-evidence.json
         run: node scripts/verify-staging-backup-restore.mjs
       - name: Apply official migrations to isolated restore
         if: inputs.operation == 'verify-backup-restore'
@@ -175,7 +211,9 @@ jobs:
       - name: Remove temporary database backup
         if: always() && inputs.operation == 'verify-backup-restore'
         shell: bash
-        run: rm -f "$RUNNER_TEMP/seramet-staging-public.dump" "$RUNNER_TEMP/seramet-staging-source-evidence.json"
+        run: |
+          rm -f "$RUNNER_TEMP/seramet-staging-public.dump" "$RUNNER_TEMP/seramet-staging-source-evidence.json"
+          rm -rf "$RUNNER_TEMP/encrypted-recovery" "$RUNNER_TEMP/downloaded-recovery" "$RUNNER_TEMP/recovered-backup"
       - name: Check write prerequisites independently
         if: inputs.operation == 'quarantine-imports' || inputs.operation == 'consolidate-management'
         env:

@@ -136,11 +136,13 @@ jobs:
           trap 'rm -rf "$evidence_dir"' EXIT
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RESTORE_RUN_ID}" >"$evidence_dir/run.json"
           gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RESTORE_RUN_ID}/jobs?per_page=100" >"$evidence_dir/jobs.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RESTORE_RUN_ID}/artifacts?per_page=100" >"$evidence_dir/artifacts.json"
           EVIDENCE_DIR="$evidence_dir" node <<'NODE'
           const fs = require("fs");
           const path = require("path");
           const run = JSON.parse(fs.readFileSync(path.join(process.env.EVIDENCE_DIR, "run.json"), "utf8"));
           const jobs = JSON.parse(fs.readFileSync(path.join(process.env.EVIDENCE_DIR, "jobs.json"), "utf8"));
+          const artifacts = JSON.parse(fs.readFileSync(path.join(process.env.EVIDENCE_DIR, "artifacts.json"), "utf8"));
           const reject = (message) => {
             console.error(`::error::Backup/restore evidence rejected: ${message}`);
             process.exit(1);
@@ -159,11 +161,21 @@ jobs:
           const requiredSteps = [
             "Verify approved backup candidate",
             "Create staging application database backup",
+            "Retain encrypted staging recovery point",
+            "Download retained recovery point",
+            "Authenticate and decrypt retained recovery point",
             "Restore backup into isolated PostgreSQL 17",
             "Verify isolated restore completeness and integrity",
             "Apply official migrations to isolated restore",
             "Apply and verify Data API lockdown on migrated isolated restore",
           ];
+          const recoveryName = `staging-recovery-${process.env.GITHUB_SHA}-${process.env.BACKUP_RESTORE_RUN_ID}`;
+          const recovery = (artifacts.artifacts ?? []).filter((artifact) => artifact.name === recoveryName);
+          if (recovery.length !== 1 || recovery[0].expired || recovery[0].size_in_bytes <= 0 ||
+              !Number.isFinite(Date.parse(recovery[0].expires_at)) ||
+              Date.parse(recovery[0].expires_at) < Date.now() + 24 * 60 * 60 * 1000) {
+            reject("retained encrypted recovery point missing or expires within 24 hours");
+          }
           const steps = (jobs.jobs ?? []).flatMap((job) => job.steps ?? []);
           for (const name of requiredSteps) {
             const step = steps.find((candidate) => candidate.name === name);
@@ -181,6 +193,22 @@ jobs:
             `### Recovery evidence: PASS\n\n- Current-main backup and isolated restore run: ${process.env.BACKUP_RESTORE_RUN_ID}\n- Maximum evidence age: 2 hours\n- Isolated sequence: restore, official Migration 27, guarded lockdown\n\n`,
           );
           NODE
+
+      - name: Download certified encrypted recovery point before mutation
+        uses: actions/download-artifact@v4
+        with:
+          name: staging-recovery-${{ github.sha }}-${{ inputs.backup_restore_run_id }}
+          run-id: ${{ inputs.backup_restore_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/certified-recovery
+
+      - name: Verify recovery access and decryption before mutation
+        env:
+          SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+          KEY_ESCROW_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED }}
+        run: |
+          test "$KEY_ESCROW_VERIFIED" = "true"
+          node scripts/staging-recovery-envelope.mjs open "$RUNNER_TEMP/certified-recovery" "$RUNNER_TEMP/certified-recovery-plaintext"
 
       - name: Checkout precisely the approved PR 109 migration source
         uses: actions/checkout@v4
@@ -295,3 +323,7 @@ jobs:
           SERAMET_ENVIRONMENT: staging
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
         run: node scripts/staging-migration-27-gate.mjs status
+
+      - name: Remove temporary recovery files
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/certified-recovery" "$RUNNER_TEMP/certified-recovery-plaintext"
