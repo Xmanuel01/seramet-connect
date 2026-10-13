@@ -1,0 +1,29 @@
+name: Staging read-only connectivity diagnostic
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: seramet-staging
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Diagnose staging connectivity without mutation
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_STAGING_READONLY_POSTGRES_URL: ${{ secrets.SERAMET_STAGING_READONLY_POSTGRES_URL }}
+        run: node scripts/staging-connectivity-diagnostic.mjs
