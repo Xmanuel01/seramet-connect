@@ -236,6 +236,7 @@ jobs:
           # migration source. Copy it into the transient runner workspace.
           cp scripts/staging-migration-27-gate.mjs migration-27-source/scripts/
           cp scripts/staging-postgres-tls.mjs migration-27-source/scripts/
+          cp scripts/staging-database-diagnostics.mjs migration-27-source/scripts/
 
       - uses: actions/setup-node@v4
         with:
