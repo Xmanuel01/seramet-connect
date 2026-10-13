@@ -53,14 +53,7 @@ try {
   };
   await run(
     pgDump,
-    [
-      "--format=custom",
-      "--schema=public",
-      "--no-owner",
-      "--no-privileges",
-      `--snapshot=${snapshot}`,
-      `--file=${dumpPath}`,
-    ],
+    ["--format=custom", "--schema=public", `--snapshot=${snapshot}`, `--file=${dumpPath}`],
     dumpEnvironment,
   );
 
