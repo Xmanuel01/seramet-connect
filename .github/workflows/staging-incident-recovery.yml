@@ -50,7 +50,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: seramet-staging-incident-data-recovery
+  # Share the staging database/deployment lock. A backup snapshot, restore
+  # certification, migration, lockdown or deployment must not overlap.
+  group: seramet-staging
   cancel-in-progress: false
 
 jobs:
@@ -159,7 +161,12 @@ jobs:
           SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
           SERAMET_SOURCE_EVIDENCE_PATH: ${{ runner.temp }}/seramet-staging-source-evidence.json
         run: node scripts/verify-staging-backup-restore.mjs
-      - name: Apply and verify Data API lockdown on isolated restore
+      - name: Apply official migrations to isolated restore
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+        run: npm run migrate:postgres
+      - name: Apply and verify Data API lockdown on migrated isolated restore
         if: inputs.operation == 'verify-backup-restore'
         env:
           SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore

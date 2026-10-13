@@ -1,0 +1,297 @@
+name: Staging Migration 27 and security lockdown
+
+# Deliberately NEVER triggered on push, PR or schedule. No Cloudflare deploy.
+# Migration and lockdown are separate committed transactions with explicit
+# recovery evidence and a diagnostic checkpoint for partial completion.
+# This private, single-owner repository cannot use GitHub environment reviewers.
+# A fresh owner-authored comment on PR 112 is therefore required and consumed
+# before credentials are exposed. This is separation of actions, not independent review.
+on:
+  workflow_dispatch:
+    inputs:
+      authorization:
+        description: "Type I_AUTHORIZE_STAGING_MIGRATION_27_AND_LOCKDOWN after separate approval"
+        required: true
+        type: string
+      backup_restore_run_id:
+        description: "Successful current-main Staging incident recovery run that certified backup, restore, migration 27 and lockdown"
+        required: true
+        type: string
+      owner_authorization_comment_id:
+        description: "Fresh owner authorization comment ID from PR 112, bound to this SHA and staging database operation"
+        required: true
+        type: string
+      acknowledge_separate_transactions:
+        description: "Acknowledge that Migration 27 and lockdown commit separately and recovery uses the verified backup"
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+# Serialize with deploy-staging.yml; never cancel an in-flight DDL transaction.
+concurrency:
+  group: seramet-staging
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Verify and consume single-owner authorization
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      verified: ${{ steps.owner-authorization.outputs.verified }}
+      approved_sha: ${{ steps.owner-authorization.outputs.approved_sha }}
+      database_project: ${{ steps.owner-authorization.outputs.database_project }}
+      database_name: ${{ steps.owner-authorization.outputs.database_name }}
+      operation: ${{ steps.owner-authorization.outputs.operation }}
+      comment_id: ${{ steps.owner-authorization.outputs.comment_id }}
+    steps:
+      - name: Require main-branch dispatch and explicit migration authorization
+        shell: bash
+        env:
+          MIGRATION_AUTHORIZATION: ${{ inputs.authorization }}
+          BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
+          OWNER_AUTHORIZATION_COMMENT_ID: ${{ inputs.owner_authorization_comment_id }}
+          ACKNOWLEDGE_SEPARATE_TRANSACTIONS: ${{ inputs.acknowledge_separate_transactions }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Migration 27 workflow can only be dispatched from main."
+            exit 1
+          fi
+          if [[ "$MIGRATION_AUTHORIZATION" != "I_AUTHORIZE_STAGING_MIGRATION_27_AND_LOCKDOWN" ]]; then
+            echo "::error::Separate explicit Migration 27 and lockdown authorization is required."
+            exit 1
+          fi
+          if [[ ! "$BACKUP_RESTORE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::A valid backup/restore certification run ID is required."
+            exit 1
+          fi
+          if [[ ! "$OWNER_AUTHORIZATION_COMMENT_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::A valid owner authorization comment ID from PR 112 is required."
+            exit 1
+          fi
+          if [[ "$GITHUB_ACTOR" != "$GITHUB_REPOSITORY_OWNER" ]]; then
+            echo "::error::Only the repository owner may dispatch staging remediation."
+            exit 1
+          fi
+          if [[ "$ACKNOWLEDGE_SEPARATE_TRANSACTIONS" != "true" ]]; then
+            echo "::error::The separate migration and lockdown transaction recovery boundary must be acknowledged."
+            exit 1
+          fi
+          echo "Manual staging migration 27 and lockdown dispatch confirmed."
+
+      - name: Checkout reviewed workflow and authorization verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify and consume separate owner authorization
+        id: owner-authorization
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SERAMET_OWNER_LOGIN: ${{ github.repository_owner }}
+          SERAMET_DISPATCH_ACTOR: ${{ github.actor }}
+          SERAMET_APPROVED_SHA: ${{ github.sha }}
+          SERAMET_OWNER_AUTH_COMMENT_ID: ${{ inputs.owner_authorization_comment_id }}
+        run: node scripts/staging-owner-authorization.mjs
+
+  migration-27:
+    name: Staging v26/v27 recovery to secured v27
+    needs: authorize
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    env:
+      SERAMET_OWNER_AUTHORIZATION_VERIFIED: ${{ needs.authorize.outputs.verified }}
+      SERAMET_OWNER_AUTHORIZATION_SHA: ${{ needs.authorize.outputs.approved_sha }}
+      SERAMET_OWNER_AUTHORIZATION_PROJECT: ${{ needs.authorize.outputs.database_project }}
+      SERAMET_OWNER_AUTHORIZATION_DATABASE: ${{ needs.authorize.outputs.database_name }}
+      SERAMET_OWNER_AUTHORIZATION_OPERATION: ${{ needs.authorize.outputs.operation }}
+      SERAMET_OWNER_AUTHORIZATION_COMMENT_ID: ${{ needs.authorize.outputs.comment_id }}
+    steps:
+      - name: Checkout reviewed workflow and verification helper
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify current backup and isolated-restore certification evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          evidence_dir="$(mktemp -d)"
+          trap 'rm -rf "$evidence_dir"' EXIT
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RESTORE_RUN_ID}" >"$evidence_dir/run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BACKUP_RESTORE_RUN_ID}/jobs?per_page=100" >"$evidence_dir/jobs.json"
+          EVIDENCE_DIR="$evidence_dir" node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const run = JSON.parse(fs.readFileSync(path.join(process.env.EVIDENCE_DIR, "run.json"), "utf8"));
+          const jobs = JSON.parse(fs.readFileSync(path.join(process.env.EVIDENCE_DIR, "jobs.json"), "utf8"));
+          const reject = (message) => {
+            console.error(`::error::Backup/restore evidence rejected: ${message}`);
+            process.exit(1);
+          };
+          if (run.path !== ".github/workflows/staging-incident-recovery.yml") reject("wrong workflow");
+          if (run.event !== "workflow_dispatch" || run.status !== "completed" || run.conclusion !== "success") {
+            reject("workflow run did not complete successfully");
+          }
+          if (run.head_branch !== "main" || run.head_sha !== process.env.GITHUB_SHA) {
+            reject("evidence is not bound to the exact current main revision");
+          }
+          const ageMs = Date.now() - Date.parse(run.updated_at);
+          if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 2 * 60 * 60 * 1000) {
+            reject("evidence is older than 2 hours");
+          }
+          const requiredSteps = [
+            "Verify approved backup candidate",
+            "Create staging application database backup",
+            "Restore backup into isolated PostgreSQL 17",
+            "Verify isolated restore completeness and integrity",
+            "Apply official migrations to isolated restore",
+            "Apply and verify Data API lockdown on migrated isolated restore",
+          ];
+          const steps = (jobs.jobs ?? []).flatMap((job) => job.steps ?? []);
+          for (const name of requiredSteps) {
+            const step = steps.find((candidate) => candidate.name === name);
+            if (!step || step.status !== "completed" || step.conclusion !== "success") {
+              reject(`required successful step missing: ${name}`);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, "SERAMET_BACKUP_RESTORE_VERIFIED=true\n");
+          fs.appendFileSync(
+            process.env.GITHUB_ENV,
+            `SERAMET_BACKUP_RESTORE_RUN_ID=${process.env.BACKUP_RESTORE_RUN_ID}\n`,
+          );
+          fs.appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `### Recovery evidence: PASS\n\n- Current-main backup and isolated restore run: ${process.env.BACKUP_RESTORE_RUN_ID}\n- Maximum evidence age: 2 hours\n- Isolated sequence: restore, official Migration 27, guarded lockdown\n\n`,
+          );
+          NODE
+
+      - name: Checkout precisely the approved PR 109 migration source
+        uses: actions/checkout@v4
+        with:
+          ref: 5229cb2377fc01d8be0a3f9e1185b0df4bd3b5a6
+          path: migration-27-source
+          persist-credentials: false
+
+      - name: Verify pinned source and stage reviewed remediation helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$(git -C migration-27-source rev-parse HEAD)" != "5229cb2377fc01d8be0a3f9e1185b0df4bd3b5a6" ]]; then
+            echo "::error::Expected reviewed Migration 27 source SHA is missing."
+            exit 1
+          fi
+          if [[ "$(sed -n 's/.*CURRENT_SCHEMA_VERSION = \([0-9]*\).*/\1/p' migration-27-source/src/server/database/schema-version.ts)" != "27" ]]; then
+            echo "::error::Pinned source does not require schema 27."
+            exit 1
+          fi
+          test -f scripts/staging-migration-27-gate.mjs
+          # This reviewed helper is deliberately NOT part of the older, pinned
+          # migration source. Copy it into the transient runner workspace.
+          cp scripts/staging-migration-27-gate.mjs migration-27-source/scripts/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: migration-27-source/package-lock.json
+
+      - name: Install pinned dependencies without lifecycle scripts
+        working-directory: migration-27-source
+        run: npm ci --ignore-scripts
+
+      - name: Read-only target, role, permissions and v26/v27 recovery-state preflight
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs pre
+
+      - name: Execute only the official PostgreSQL migration runner
+        working-directory: migration-27-source
+        shell: bash
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          migration_log="$(mktemp)"
+          trap 'rm -f "$migration_log"' EXIT
+          # Suppress raw driver exceptions because they could contain DSN metadata.
+          # Only the pinned official runner owns BEGIN, advisory lock, COMMIT, ROLLBACK.
+          if npm run migrate:postgres >"$migration_log" 2>&1; then
+            echo "Official migration runner completed; raw output suppressed."
+            echo "### Official migration runner: completed (postflight verification required)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Official migration runner failed. No retries or repair attempted."
+            echo "### Official migration runner: FAILED; no automatic retry" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Read-only verify v27 checksum, schema objects and new RLS flags
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs post
+
+      - name: Execute existing guarded public-schema security lockdown
+        working-directory: migration-27-source
+        shell: bash
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          SERAMET_LOCKDOWN_AUTHORIZATION: ${{ inputs.authorization }}
+        run: node scripts/staging-migration-27-gate.mjs lockdown
+
+      - name: Independently verify public-schema security posture
+        working-directory: migration-27-source
+        shell: bash
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          posture_log="$(mktemp)"
+          trap 'rm -f "$posture_log"' EXIT
+          if node scripts/assert-staging-api-posture.mjs >"$posture_log" 2>&1; then
+            echo "Independent staging public-schema security gate: PASS."
+            echo "### Independent public-schema security posture: PASS" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Public-schema security verification failed after lockdown."
+            echo "### Independent public-schema security posture: FAILED after lockdown" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Verify Worker database-role compatibility after lockdown
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs secure
+
+      - name: Record database recovery checkpoint
+        if: always()
+        continue-on-error: true
+        working-directory: migration-27-source
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+        run: node scripts/staging-migration-27-gate.mjs status
