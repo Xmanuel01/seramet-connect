@@ -1,4 +1,5 @@
 import pg from "pg";
+import { databaseFailureDiagnostic } from "./staging-database-diagnostics.mjs";
 import { stagingTlsConfig } from "./staging-postgres-tls.mjs";
 import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -7,6 +8,7 @@ import { readFile } from "node:fs/promises";
 // Never print the DSN, driver exception details, SQL parameters, or user data.
 // The migration itself is performed ONLY by scripts/migrate-postgres.ts.
 const mode = process.argv[2];
+let failureStage = "configuration";
 const project = "vnymbavsbxorwxpebkot";
 const newTables = [
   "menu_import_staged_items",
@@ -281,8 +283,10 @@ async function run() {
   });
   let connected = false;
   try {
+    failureStage = "connect";
     await client.connect();
     connected = true;
+    failureStage = "query";
     if (mode === "lockdown") {
       await executeLockdown(client);
       return;
@@ -580,6 +584,9 @@ try {
   const code =
     typeof error?.safeCode === "string" ? error.safeCode : "DATABASE_CONNECTION_OR_QUERY_FAILED";
   console.error("Staging remediation " + mode + " BLOCKED: " + code + "; no automatic retry.");
+  if (typeof error?.safeCode !== "string") {
+    console.error(JSON.stringify(databaseFailureDiagnostic(error, failureStage)));
+  }
   addSummary([
     "### Staging remediation " + mode + ": BLOCKED",
     "",
