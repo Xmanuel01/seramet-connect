@@ -125,6 +125,16 @@ describe("canonical financial lifecycle projection", () => {
         ...context,
       }).cashVarianceMinor,
     ).toBe(250);
+    delete state.paymentOperations!.drawerSessions[0]!.businessDate;
+    expect(
+      projectFinancialLifecycle(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-29",
+        currency: "KES",
+        ...context,
+      }).cashVarianceMinor,
+    ).toBe(250);
   });
 
   it("blocks EOD for an unposted settlement on the branch accounting date", () => {
@@ -160,6 +170,26 @@ describe("canonical financial lifecycle projection", () => {
         tenantId,
         branchId,
         businessDate: "2026-09-29",
+        timeZone: "Africa/Nairobi",
+        businessDayCutoffMinutes: 240,
+      }).map((item) => item.code),
+    ).toEqual(["UNPOSTED_SETTLEMENT"]);
+    state.paymentOperations!.settlementBatches[0]!.settledAt = undefined;
+    state.paymentOperations!.settlementBatches[0]!.periodEnd = "2026-09-30";
+    expect(
+      financialCloseReadiness(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-29",
+        timeZone: "Africa/Nairobi",
+        businessDayCutoffMinutes: 240,
+      }),
+    ).toEqual([]);
+    expect(
+      financialCloseReadiness(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-30",
         timeZone: "Africa/Nairobi",
         businessDayCutoffMinutes: 240,
       }).map((item) => item.code),

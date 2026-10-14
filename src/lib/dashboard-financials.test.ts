@@ -118,6 +118,10 @@ describe("dashboard canonical financial periods", () => {
     expect(today).toMatchObject({ netSales: 100, collected: 116 });
     expect(today.orders).toHaveLength(2);
     expect(today.branches[0]).toMatchObject({ sales: 100, orders: 2 });
+    expect(today.trend.reduce((sum, row) => sum + row.sales, 0)).toBe(100);
+    // Ordered activity intentionally includes unsettled orders and tax; it is
+    // labeled separately from settled net revenue in the dashboard.
+    expect(today.channels.reduce((sum, row) => sum + row.value, 0)).toBe(696);
 
     const month = buildDashboardFinancials({
       state,
@@ -131,5 +135,42 @@ describe("dashboard canonical financial periods", () => {
     });
     expect(month.netSales).toBe(300);
     expect(month.collected).toBe(348);
+  });
+
+  it("uses each branch's own accounting calendar", () => {
+    const state = createEmptyTransactionState(tenantId);
+    addSale(state, { id: "cutoff", timestamp: "2026-09-30T00:30:00Z", subtotal: 100, tax: 16 });
+    const otherBranch = {
+      ...branch,
+      id: "utc-branch",
+      name: "UTC",
+      timezone: "UTC",
+      metadata: { businessDayCutoffMinutes: 0 },
+    };
+    state.orders.push({
+      ...state.orders[0],
+      id: "utc-order",
+      branchId: otherBranch.id,
+      branch: otherBranch.name,
+    });
+    state.bills.push({
+      ...state.bills[0],
+      id: "utc-bill",
+      orderIds: ["utc-order"],
+      branchId: otherBranch.id,
+      branch: otherBranch.name,
+    });
+    const result = buildDashboardFinancials({
+      state,
+      tenantId,
+      branches: [branch, otherBranch],
+      period: "Today",
+      now: new Date("2026-09-30T00:45:00Z"),
+      currency: "KES",
+      fallbackTimeZone: "UTC",
+      locale: "en-KE",
+    });
+    expect(result.netSales).toBe(200);
+    expect(result.branches.map((row) => row.sales)).toEqual([100, 100]);
   });
 });

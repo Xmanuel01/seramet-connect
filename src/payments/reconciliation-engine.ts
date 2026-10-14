@@ -60,6 +60,7 @@ export class ReconciliationEngine {
 
   private settlementBusinessDate(batch: SettlementBatch) {
     const timestamp = batch.settledAt ?? batch.periodEnd;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(timestamp)) return timestamp;
     if (!batch.branchId) return businessDateForTimestamp(timestamp, "UTC", 0);
     const context = this.branchAccountingContext(batch.tenantId, batch.branchId);
     return businessDateForTimestamp(timestamp, context.timeZone, context.businessDayCutoffMinutes);

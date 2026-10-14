@@ -159,7 +159,7 @@ export function projectFinancialLifecycle(
   const drawers = (state.paymentOperations?.drawerSessions ?? []).filter(
     (drawer) =>
       matchesBranch(drawer.branchId) &&
-      matchesDate(drawer.businessDate, drawer.closedAt ?? drawer.openedAt) &&
+      matchesDate(drawer.businessDate, drawer.openedAt) &&
       drawer.varianceMinor !== undefined,
   );
   return {
@@ -268,11 +268,14 @@ export function financialCloseReadiness(
     }
   }
   for (const settlement of operations?.settlementBatches ?? []) {
-    const settlementBusinessDate = businessDateForTimestamp(
-      settlement.settledAt ?? settlement.periodEnd,
-      scope.timeZone ?? "UTC",
-      scope.businessDayCutoffMinutes ?? 0,
-    );
+    const settlementTimestamp = settlement.settledAt ?? settlement.periodEnd;
+    const settlementBusinessDate = /^\d{4}-\d{2}-\d{2}$/.test(settlementTimestamp)
+      ? settlementTimestamp
+      : businessDateForTimestamp(
+          settlementTimestamp,
+          scope.timeZone ?? "UTC",
+          scope.businessDayCutoffMinutes ?? 0,
+        );
     if (
       (!settlement.branchId || settlement.branchId === scope.branchId) &&
       settlementBusinessDate <= scope.businessDate &&

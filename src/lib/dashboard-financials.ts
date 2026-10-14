@@ -56,22 +56,29 @@ export function buildDashboardFinancials(input: DashboardFinancialsInput) {
         explicit ?? businessDateForTimestamp(timestamp, context.timeZone, context.cutoffMinutes);
       return businessDate >= range.from && businessDate <= range.to;
     };
-    const projections = [];
-    for (
-      let businessDate = range.from;
-      businessDate <= range.to;
-      businessDate = shiftBusinessDate(businessDate, 1)
-    ) {
-      projections.push(
-        projectFinancialLifecycle(input.state, {
+    const projectionCache = new Map<string, ReturnType<typeof projectFinancialLifecycle>>();
+    const projectionFor = (businessDate: string) => {
+      let projection = projectionCache.get(businessDate);
+      if (!projection) {
+        projection = projectFinancialLifecycle(input.state, {
           tenantId: input.tenantId,
           branchId: branch.id,
           businessDate,
           currency: input.currency,
           timeZone: context.timeZone,
           businessDayCutoffMinutes: context.cutoffMinutes,
-        }),
-      );
+        });
+        projectionCache.set(businessDate, projection);
+      }
+      return projection;
+    };
+    const projections = [];
+    for (
+      let businessDate = range.from;
+      businessDate <= range.to;
+      businessDate = shiftBusinessDate(businessDate, 1)
+    ) {
+      projections.push(projectionFor(businessDate));
     }
     const orders = input.state.orders.filter(
       (order) =>
@@ -108,6 +115,7 @@ export function buildDashboardFinancials(input: DashboardFinancialsInput) {
       netRevenueMinor,
       collectedMinor,
       currentBusinessDate,
+      projectionFor,
     };
   });
 
@@ -121,14 +129,7 @@ export function buildDashboardFinancials(input: DashboardFinancialsInput) {
     const salesMinor = sumMinor(
       branchReports.map((report) => {
         const businessDate = shiftBusinessDate(report.currentBusinessDate, offset);
-        return projectFinancialLifecycle(input.state, {
-          tenantId: input.tenantId,
-          branchId: report.branch.id,
-          businessDate,
-          currency: input.currency,
-          timeZone: report.context.timeZone,
-          businessDayCutoffMinutes: report.context.cutoffMinutes,
-        }).netRevenueMinor;
+        return report.projectionFor(businessDate).netRevenueMinor;
       }),
     );
     const costMinor = sumMinor(
