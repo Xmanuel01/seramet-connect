@@ -1,3 +1,4 @@
+import { businessDateForTimestamp } from "@/lib/business-date";
 import type { TransactionOrder, BillingRecord } from "@/lib/transaction-engine";
 import { currentDateKey } from "@/lib/currency";
 
@@ -91,26 +92,5 @@ export function recordBusinessDate(
   cutoffMinutes = 0,
 ) {
   if (businessDate) return businessDate;
-  const occurredAt = new Date(timestamp);
-  if (!Number.isFinite(occurredAt.getTime())) throw new Error("Invalid business timestamp");
-  const cutoff =
-    Number.isInteger(cutoffMinutes) && cutoffMinutes >= 0 && cutoffMinutes < 1_440
-      ? cutoffMinutes
-      : 0;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(occurredAt);
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((part) => part.type === type)?.value);
-  const localDate = new Date(Date.UTC(value("year"), value("month") - 1, value("day")));
-  if (value("hour") * 60 + value("minute") < cutoff) {
-    localDate.setUTCDate(localDate.getUTCDate() - 1);
-  }
-  return localDate.toISOString().slice(0, 10);
+  return businessDateForTimestamp(timestamp, timezone, cutoffMinutes);
 }

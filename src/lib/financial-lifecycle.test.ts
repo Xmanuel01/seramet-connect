@@ -77,6 +77,95 @@ describe("canonical financial lifecycle projection", () => {
     ).toEqual(["OPEN_CASH_DRAWER", "OPEN_ORDER", "UNSETTLED_INVOICE"]);
   });
 
+  it("attributes legacy and spanning-midnight drawers to the branch business date", () => {
+    const state = createEmptyTransactionState(tenantId);
+    state.paymentOperations!.drawerSessions.push({
+      id: "drawer-before-cutoff",
+      tenantId,
+      branchId,
+      employeeId: "employee",
+      baseCurrency: "KES",
+      openedAt: "2026-09-30T00:30:00.000Z",
+      openingFloatMinor: 1_000,
+      expectedCashMinor: 1_000,
+      status: "OPEN",
+      currencyBalances: { KES: { openingFloatMinor: 1_000, expectedCashMinor: 1_000 } },
+      createdAt: "2026-09-30T00:30:00.000Z",
+      updatedAt: "2026-09-30T00:30:00.000Z",
+    });
+
+    const context = { timeZone: "Africa/Nairobi", businessDayCutoffMinutes: 240 };
+    expect(
+      financialCloseReadiness(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-29",
+        ...context,
+      }).map((item) => item.code),
+    ).toEqual(["OPEN_CASH_DRAWER"]);
+    expect(
+      financialCloseReadiness(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-30",
+        ...context,
+      }),
+    ).toEqual([]);
+
+    state.paymentOperations!.drawerSessions[0]!.businessDate = "2026-09-29";
+    state.paymentOperations!.drawerSessions[0]!.status = "CLOSED";
+    state.paymentOperations!.drawerSessions[0]!.closedAt = "2026-09-30T03:30:00.000Z";
+    state.paymentOperations!.drawerSessions[0]!.varianceMinor = 250;
+    expect(
+      projectFinancialLifecycle(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-29",
+        currency: "KES",
+        ...context,
+      }).cashVarianceMinor,
+    ).toBe(250);
+  });
+
+  it("blocks EOD for an unposted settlement on the branch accounting date", () => {
+    const state = createEmptyTransactionState(tenantId);
+    state.paymentOperations!.settlementBatches.push({
+      id: "settlement-before-cutoff",
+      tenantId,
+      branchId,
+      connectionId: "marketplace",
+      externalSettlementId: "provider-settlement",
+      periodStart: "2026-09-01T00:00:00.000Z",
+      periodEnd: "2026-09-30T00:30:00.000Z",
+      settledAt: "2026-09-30T00:30:00.000Z",
+      currency: "KES",
+      grossSalesMinor: 10_000,
+      commissionsMinor: 0,
+      serviceFeesMinor: 0,
+      deliveryAdjustmentsMinor: 0,
+      promotionsMinor: 0,
+      refundsMinor: 0,
+      taxAdjustmentsMinor: 0,
+      otherAdjustmentsMinor: 0,
+      netExpectedMinor: 10_000,
+      netSettledMinor: 0,
+      status: "IMPORTED",
+      importedBy: "manager",
+      importedAt: "2026-09-30T00:30:00.000Z",
+      updatedAt: "2026-09-30T00:30:00.000Z",
+    });
+
+    expect(
+      financialCloseReadiness(state, {
+        tenantId,
+        branchId,
+        businessDate: "2026-09-29",
+        timeZone: "Africa/Nairobi",
+        businessDayCutoffMinutes: 240,
+      }).map((item) => item.code),
+    ).toEqual(["UNPOSTED_SETTLEMENT"]);
+  });
+
   it("stores immutable revisioned close snapshots and recalculates blockers at close", () => {
     const engine = new ReconciliationEngine();
     let state = engine.prepareDayClose(settledState(), {

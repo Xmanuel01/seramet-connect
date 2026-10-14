@@ -1,4 +1,5 @@
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { financialCloseReadiness, projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 import { createJournal, reverseJournal } from "@/payments/accounting-posting";
 import {
@@ -24,6 +25,10 @@ import type {
   SettlementLine,
   SettlementLineType,
 } from "@/payments/types";
+import {
+  getConfigurationRepository,
+  type ConfigurationRepository,
+} from "@/platform/repositories/configuration-repository";
 
 export type SettlementAccountMappings = {
   bankAccountId: string;
@@ -39,6 +44,27 @@ export type SettlementAccountMappings = {
 };
 
 export class ReconciliationEngine {
+  constructor(private readonly configuredRepository?: ConfigurationRepository) {}
+
+  private get configuration() {
+    return this.configuredRepository ?? getConfigurationRepository();
+  }
+
+  private branchAccountingContext(tenantId: string, branchId: string) {
+    const branch = this.configuration.getBranch(tenantId, branchId);
+    return {
+      timeZone: branch.timezone ?? this.configuration.getTenant(tenantId).timezone,
+      businessDayCutoffMinutes: Number(branch.metadata["businessDayCutoffMinutes"] ?? 0),
+    };
+  }
+
+  private settlementBusinessDate(batch: SettlementBatch) {
+    const timestamp = batch.settledAt ?? batch.periodEnd;
+    if (!batch.branchId) return businessDateForTimestamp(timestamp, "UTC", 0);
+    const context = this.branchAccountingContext(batch.tenantId, batch.branchId);
+    return businessDateForTimestamp(timestamp, context.timeZone, context.businessDayCutoffMinutes);
+  }
+
   importBankTransactions(
     state: TransactionState,
     input: {
@@ -665,7 +691,7 @@ export class ReconciliationEngine {
         (candidate) =>
           candidate.tenantId === input.tenantId &&
           candidate.type === "SETTLEMENT" &&
-          candidate.businessDate === batch.periodEnd &&
+          candidate.businessDate === this.settlementBusinessDate(batch) &&
           candidate.status !== "REVERSED",
       ) ??
       ({
@@ -673,7 +699,7 @@ export class ReconciliationEngine {
         tenantId: input.tenantId,
         ...(batch.branchId ? { branchId: batch.branchId } : {}),
         type: "SETTLEMENT" as const,
-        businessDate: batch.periodEnd,
+        businessDate: this.settlementBusinessDate(batch),
         status: "MATCHING" as const,
         createdBy: input.actor,
         createdAt: new Date().toISOString(),
@@ -778,7 +804,7 @@ export class ReconciliationEngine {
         ...(batch.branchId ? { branchId: batch.branchId } : {}),
         sourceType: "MARKETPLACE_SETTLEMENT",
         sourceId: batch.id,
-        businessDate: businessDateFor(batch.settledAt ?? new Date().toISOString(), 0),
+        businessDate: this.settlementBusinessDate(batch),
         description: `Marketplace settlement ${batch.externalSettlementId}`,
         postedBy: input.actor,
         lines: journalLines,
@@ -833,10 +859,17 @@ export class ReconciliationEngine {
         candidate.status === "POSTED",
     );
     if (!journal) throw new Error("Settlement journal not found");
+    const accountingContext = batch.branchId
+      ? this.branchAccountingContext(input.tenantId, batch.branchId)
+      : { timeZone: "UTC", businessDayCutoffMinutes: 0 };
     const reversal = reverseJournal(journal, {
       id: nextId("JRN4", operations.journals),
       actor: input.actor,
-      businessDate: new Date().toISOString().slice(0, 10),
+      businessDate: businessDateForTimestamp(
+        new Date(),
+        accountingContext.timeZone,
+        accountingContext.businessDayCutoffMinutes,
+      ),
     });
     operations.journals.unshift(reversal);
     journal.status = "REVERSED";
@@ -865,7 +898,8 @@ export class ReconciliationEngine {
         day.branchId === input.branchId &&
         day.businessDate === input.businessDate,
     );
-    const readiness = financialCloseReadiness(next, input);
+    const accountingContext = this.branchAccountingContext(input.tenantId, input.branchId);
+    const readiness = financialCloseReadiness(next, { ...input, ...accountingContext });
     const ids = readiness.map((item) => item.id);
     const stamp = new Date().toISOString();
     if (existing) {
@@ -910,7 +944,8 @@ export class ReconciliationEngine {
     );
     if (!day) throw new Error("Day close was not found");
     if (day.status === "CLOSED") return next;
-    const readiness = financialCloseReadiness(next, day);
+    const accountingContext = this.branchAccountingContext(day.tenantId, day.branchId);
+    const readiness = financialCloseReadiness(next, { ...day, ...accountingContext });
     day.readiness = readiness;
     day.unresolvedExceptionIds = readiness.map((item) => item.id);
     if (readiness.length) {
@@ -926,6 +961,7 @@ export class ReconciliationEngine {
       businessDate: day.businessDate,
       currency,
       calculatedAt: closedAt,
+      ...accountingContext,
     });
     const snapshots = day.snapshots ?? (day.snapshot ? [day.snapshot] : []);
     const snapshot = {
@@ -977,14 +1013,8 @@ export class ReconciliationEngine {
   }
 }
 
-export function businessDateFor(timestamp: string, cutoffHour: number) {
-  if (!Number.isInteger(cutoffHour) || cutoffHour < 0 || cutoffHour > 23) {
-    throw new Error("Business-day cutoff hour must be between 0 and 23");
-  }
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) throw new Error("Invalid business timestamp");
-  const shifted = new Date(date.getTime() - cutoffHour * 60 * 60 * 1000);
-  return shifted.toISOString().slice(0, 10);
+export function businessDateFor(timestamp: string, timeZone: string, cutoffMinutes: number) {
+  return businessDateForTimestamp(timestamp, timeZone, cutoffMinutes);
 }
 
 function resolveCloseCurrency(state: TransactionState, branchId: string) {
