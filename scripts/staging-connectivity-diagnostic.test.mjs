@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import {
+  authorizedDiagnosticConfig,
   diagnosticConfig,
   readonlyProbe,
   reportFailure,
@@ -10,6 +11,58 @@ import {
 
 const url =
   "postgresql://seramet_staging_diagnostic.vnymbavsbxorwxpebkot:test@aws-1-eu-west-1.pooler.supabase.com:5432/postgres";
+const authorizedEnv = {
+  GITHUB_ACTIONS: "true",
+  GITHUB_REF: "refs/heads/main",
+  SERAMET_ENVIRONMENT: "staging",
+  GITHUB_REPOSITORY_OWNER: "Xmanuel01",
+  GITHUB_ACTOR: "Xmanuel01",
+  GITHUB_TRIGGERING_ACTOR: "Xmanuel01",
+  SERAMET_STAGING_READONLY_POSTGRES_URL: url,
+};
+test("owner dispatch and owner rerun pass both actor checks", () => {
+  assert.equal(authorizedDiagnosticConfig(authorizedEnv).ssl.rejectUnauthorized, true);
+});
+test("unauthorized or missing identities fail before reading credentials", () => {
+  for (const overrides of [
+    { GITHUB_TRIGGERING_ACTOR: "collaborator" },
+    { GITHUB_ACTOR: "collaborator" },
+    { GITHUB_TRIGGERING_ACTOR: undefined },
+    { GITHUB_ACTOR: undefined },
+    { GITHUB_REPOSITORY_OWNER: undefined },
+    { GITHUB_TRIGGERING_ACTOR: "" },
+    { GITHUB_TRIGGERING_ACTOR: "unexpected\nidentity" },
+    { GITHUB_TRIGGERING_ACTOR: 42 },
+    { GITHUB_REF: "refs/heads/other" },
+  ]) {
+    let credentialReads = 0;
+    const env = { ...authorizedEnv, ...overrides };
+    Object.defineProperty(env, "SERAMET_STAGING_READONLY_POSTGRES_URL", {
+      get() {
+        credentialReads++;
+        throw new Error("sensitive credential access");
+      },
+    });
+    let rejected;
+    try {
+      authorizedDiagnosticConfig(env);
+    } catch (error) {
+      rejected = error;
+    }
+    assert.ok(rejected);
+    assert.equal(credentialReads, 0);
+    assert.deepEqual(reportFailure(rejected, "configuration"), {
+      stage: "configuration",
+      status: "FAIL",
+      category: "SECURITY_PREREQUISITE",
+      code: "CONFIGURATION_INVALID",
+    });
+    assert.doesNotMatch(
+      JSON.stringify(reportFailure(rejected, "configuration")),
+      /postgresql|SELECT|password|collaborator|unexpected/,
+    );
+  }
+});
 test("requires dedicated staging credential and verified TLS with session read-only defaults", () => {
   const client = new pg.Client(diagnosticConfig(url));
   assert.equal(client.connectionParameters.ssl.rejectUnauthorized, true);
@@ -84,6 +137,7 @@ test("workflow has manual owner/main gate and only the dedicated diagnostic secr
   );
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /github.actor == github.repository_owner/);
+  assert.match(workflow, /github.triggering_actor == github.repository_owner/);
   assert.match(workflow, /refs\/heads\/main/);
   assert.match(workflow, /group: seramet-staging/);
   assert.match(workflow, /npm ci --ignore-scripts/);

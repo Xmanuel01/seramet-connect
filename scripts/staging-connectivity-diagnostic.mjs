@@ -12,6 +12,20 @@ const timeout = 8000;
 function fail(code) {
   throw Object.assign(new Error("Diagnostic blocked"), { diagnosticCode: code });
 }
+export function authorizedDiagnosticConfig(env) {
+  const identities = [env.GITHUB_REPOSITORY_OWNER, env.GITHUB_ACTOR, env.GITHUB_TRIGGERING_ACTOR];
+  const login = /^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i;
+  if (
+    env.GITHUB_ACTIONS !== "true" ||
+    env.GITHUB_REF !== "refs/heads/main" ||
+    env.SERAMET_ENVIRONMENT !== "staging" ||
+    !identities.every((value) => typeof value === "string" && login.test(value)) ||
+    identities[1] !== identities[0] ||
+    identities[2] !== identities[0]
+  )
+    fail("CONFIGURATION_INVALID");
+  return diagnosticConfig(env.SERAMET_STAGING_READONLY_POSTGRES_URL);
+}
 export function diagnosticConfig(raw) {
   if (!raw) fail("READONLY_CREDENTIAL_MISSING");
   let url;
@@ -132,14 +146,7 @@ async function main() {
   let stage = "configuration";
   let client;
   try {
-    if (
-      process.env.GITHUB_ACTIONS !== "true" ||
-      process.env.GITHUB_REF !== "refs/heads/main" ||
-      process.env.GITHUB_ACTOR !== process.env.GITHUB_REPOSITORY_OWNER ||
-      process.env.SERAMET_ENVIRONMENT !== "staging"
-    )
-      fail("CONFIGURATION_INVALID");
-    const config = diagnosticConfig(process.env.SERAMET_STAGING_READONLY_POSTGRES_URL);
+    const config = authorizedDiagnosticConfig(process.env);
     const url = new URL(config.connectionString);
     const pass = () => console.log(JSON.stringify({ stage, status: "PASS" }));
     pass();
