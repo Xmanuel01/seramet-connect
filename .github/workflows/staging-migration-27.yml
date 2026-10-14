@@ -248,6 +248,13 @@ jobs:
         working-directory: migration-27-source
         run: npm ci --ignore-scripts
 
+      - name: Prepare pinned staging PostgreSQL root CA
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_STAGING_POSTGRES_CA_PEM: ${{ secrets.SERAMET_STAGING_POSTGRES_CA_PEM }}
+          SERAMET_STAGING_POSTGRES_CA_SHA256: ${{ vars.SERAMET_STAGING_POSTGRES_CA_SHA256 }}
+        run: node scripts/prepare-staging-postgres-ca.mjs
+
       - name: Read-only target, role, permissions and v26/v27 recovery-state preflight
         working-directory: migration-27-source
         env:

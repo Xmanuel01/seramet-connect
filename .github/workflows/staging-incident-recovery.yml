@@ -102,6 +102,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Prepare pinned staging PostgreSQL root CA
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_STAGING_POSTGRES_CA_PEM: ${{ secrets.SERAMET_STAGING_POSTGRES_CA_PEM }}
+          SERAMET_STAGING_POSTGRES_CA_SHA256: ${{ vars.SERAMET_STAGING_POSTGRES_CA_SHA256 }}
+        run: node scripts/prepare-staging-postgres-ca.mjs
       - name: Inspect Uber Eats sandbox connection without exposing credentials
         if: inputs.operation == 'inspect-uber'
         env:
