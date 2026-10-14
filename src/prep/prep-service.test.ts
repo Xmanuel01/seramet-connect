@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrepService } from "@/prep/prep-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes } from "@/platform/permissions";
@@ -28,9 +28,15 @@ describe("authoritative prep execution", () => {
     service = new PrepService(db, actor());
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    vi.useRealTimers();
+    db.close();
+  });
 
   it("scales ingredients, controls revision changes and executes through production", async () => {
+    // Audit timestamps must be distinct when asserting chronological SQL ordering.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-24T12:00:00.000Z"));
     const initial = await service.library(branchId, "2026-09-24");
     expect(initial.tasks).toHaveLength(1);
     expect(initial.tasks[0]).toMatchObject({
@@ -72,6 +78,7 @@ describe("authoritative prep execution", () => {
       }),
     ).rejects.toThrow("Prep task changed while you were editing it");
 
+    vi.setSystemTime(new Date("2026-09-24T12:00:01.000Z"));
     const approved = await service.approve(recommendationId, {
       expectedRevision: 2,
       warehouseId,
@@ -91,6 +98,7 @@ describe("authoritative prep execution", () => {
       .first<{ planned_quantity_minor: number; status: string }>();
     expect(batch).toEqual({ planned_quantity_minor: 3_000_000, status: "PLANNED" });
 
+    vi.setSystemTime(new Date("2026-09-24T12:00:02.000Z"));
     const started = await service.start(recommendationId, approved.revision);
     expect(started).toMatchObject({
       status: "STARTED",
@@ -98,6 +106,7 @@ describe("authoritative prep execution", () => {
       productionStatus: "IN_PROGRESS",
     });
 
+    vi.setSystemTime(new Date("2026-09-24T12:00:03.000Z"));
     const completed = await service.complete(recommendationId, {
       expectedRevision: started.revision,
       actualOutputQuantityMicro: 2_800_000,
