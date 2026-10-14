@@ -16,7 +16,7 @@ export function AuthShell({
   return (
     <main className="min-h-screen bg-background px-4 py-8 text-foreground sm:py-14">
       <div className="mx-auto w-full max-w-md">
-        <Link to="/login" className="mb-7 inline-flex" aria-label="Seramet sign in">
+        <Link to="/pos-login" className="mb-7 inline-flex" aria-label="Seramet sign in">
           <Logo />
         </Link>
         <section className="rounded-xl border border-border bg-card p-5 shadow-card sm:p-6">
