@@ -1,6 +1,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import type { FileScanQueueMessage } from "../../src/server/environment";
 import { scannerAuthRequestHeaders, signScannerRequest } from "../../src/server/scanner-auth";
+import { persistScannerFailure } from "./failure-delivery";
 
 type QueueMessage<T> = {
   body: T;
@@ -123,14 +124,12 @@ async function processMessage(message: QueueMessage<FileScanQueueMessage>, env: 
     message.ack();
   } catch (error) {
     if (error instanceof TerminalScanError) {
-      await reportTerminalFailure(env, identity, error.code).catch(() => undefined);
-      message.ack();
+      await persistScannerFailure(message, () => reportTerminalFailure(env, identity, error.code));
       return;
     }
     if (message.attempts >= maxAttempts) {
       const code = error instanceof RetryableScanError ? error.code : "SCANNER_UNAVAILABLE";
-      await reportTerminalFailure(env, identity, code).catch(() => undefined);
-      message.ack();
+      await persistScannerFailure(message, () => reportTerminalFailure(env, identity, code));
       return;
     }
     message.retry({ delaySeconds: Math.min(300, 30 * 2 ** Math.max(0, message.attempts - 1)) });
@@ -205,7 +204,8 @@ async function reportTerminalFailure(
     jobId: identity.jobId,
     correlationId: identity.correlationId,
   });
-  if (!claim.job) return;
+  if (claim.state === "CLEAN") return;
+  if (!claim.job) throw new RetryableScanError("CLAIM_INVALID");
   await callMain(env, "/api/seramet/internal/file-scanner/verdict", {
     tenantId: claim.job.tenantId,
     jobId: claim.job.jobId,
