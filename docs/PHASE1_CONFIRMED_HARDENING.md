@@ -2,7 +2,12 @@
 
 Date: 2026-10-14.
 Branch: `codex/phase1-confirmed-hardening`.
-Base: `13c69907e5c5ff92ad0c4564882aa128a43c8f68` (`origin/main`).
+Original validation base: `13c69907e5c5ff92ad0c4564882aa128a43c8f68`.
+
+Rebased without conflicts onto current `origin/main` (`621d404`, merge of PR #120)
+before publishing for review. The employee-first authentication changes are
+preserved. Validation below records the original candidate; fresh PR CI is
+required for this rebased candidate. No comprehensive certification was rerun.
 
 ## Scope and Reused Work
 
