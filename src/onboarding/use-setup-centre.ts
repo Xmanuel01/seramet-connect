@@ -1,5 +1,6 @@
 import type { PersistedImportProgress } from "@/onboarding/menu-import-progress";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createScopedReadGuard } from "@/lib/scoped-read-guard";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
@@ -136,6 +137,11 @@ export type FileImportCapability = { available: boolean; reason: string | null }
 
 export function useSetupCentre() {
   const { activeTenantId, branchId, currentUser, isAllBranches, role } = useAppContext();
+  const scopeKey = `${activeTenantId}:${branchId}:${currentUser.id}:${role}:${isAllBranches}`;
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+  const readGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
+  const catalogGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
     return {
@@ -186,8 +192,8 @@ export function useSetupCentre() {
   const [unavailableResources, setUnavailableResources] = useState<string[]>([]);
 
   const get = useCallback(
-    async <T>(path: string) => {
-      const response = await authenticatedFetch(path, { headers });
+    async <T>(path: string, signal?: AbortSignal) => {
+      const response = await authenticatedFetch(path, { headers, signal });
       const body = (await response.json().catch(() => ({}))) as T & {
         message?: string;
         error?: string;
@@ -200,6 +206,10 @@ export function useSetupCentre() {
   );
 
   const refresh = useCallback(async () => {
+    if (scopeRef.current !== scopeKey) return;
+    const read = readGuard.begin(scopeKey);
+    const catalogRead = catalogGuard.begin(scopeKey);
+    const readGet = <T>(path: string) => get<T>(path, read.signal);
     setStatus("loading");
     setError("");
     setMenuCatalogStatus("loading");
@@ -222,24 +232,27 @@ export function useSetupCentre() {
       historicalSales,
       importCapability,
     ] = await Promise.allSettled([
-      get<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`),
-      get<{ integrations: IntegrationHealthRow[] }>("/api/seramet/setup/integration-health"),
-      get<{ devices: DeviceHealthRow[] }>("/api/seramet/setup/device-health"),
-      get<{ providers: SetupProviderDefinition[] }>("/api/seramet/setup/providers"),
-      get<SetupStructure>("/api/seramet/setup/organisation-structure"),
-      get<{ profile: SetupBusinessProfile }>("/api/seramet/setup/business-profile"),
-      get<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`),
-      get<{ mappings: Array<Record<string, unknown>> }>("/api/seramet/setup/provider-mappings"),
-      get<{ batches: Array<Record<string, unknown>> }>(`/api/seramet/setup/opening-stock${query}`),
-      get<{ items: SetupMenuCatalogItem[] }>(`/api/seramet/setup/menu-catalog${query}`),
-      get<{ diagnostics: SetupDiagnostics }>("/api/seramet/setup/diagnostics"),
-      get<{ onboarding: OnboardingWizardState }>("/api/seramet/setup/onboarding"),
-      get<{ countries: CountryReference[]; currencies: CurrencyReference[] }>(
+      readGet<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`),
+      readGet<{ integrations: IntegrationHealthRow[] }>("/api/seramet/setup/integration-health"),
+      readGet<{ devices: DeviceHealthRow[] }>("/api/seramet/setup/device-health"),
+      readGet<{ providers: SetupProviderDefinition[] }>("/api/seramet/setup/providers"),
+      readGet<SetupStructure>("/api/seramet/setup/organisation-structure"),
+      readGet<{ profile: SetupBusinessProfile }>("/api/seramet/setup/business-profile"),
+      readGet<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`),
+      readGet<{ mappings: Array<Record<string, unknown>> }>("/api/seramet/setup/provider-mappings"),
+      readGet<{ batches: Array<Record<string, unknown>> }>(
+        `/api/seramet/setup/opening-stock${query}`,
+      ),
+      readGet<{ items: SetupMenuCatalogItem[] }>(`/api/seramet/setup/menu-catalog${query}`),
+      readGet<{ diagnostics: SetupDiagnostics }>("/api/seramet/setup/diagnostics"),
+      readGet<{ onboarding: OnboardingWizardState }>("/api/seramet/setup/onboarding"),
+      readGet<{ countries: CountryReference[]; currencies: CurrencyReference[] }>(
         "/api/seramet/setup/reference/location-currency",
       ),
-      get<{ state: HistoricalSalesMigrationState }>("/api/seramet/setup/historical-sales"),
-      get<{ capability: FileImportCapability }>("/api/seramet/setup/imports/capability"),
+      readGet<{ state: HistoricalSalesMigrationState }>("/api/seramet/setup/historical-sales"),
+      readGet<{ capability: FileImportCapability }>("/api/seramet/setup/imports/capability"),
     ] as const);
+    if (!read.isCurrent()) return;
     if (summary.status === "fulfilled") setSetup(summary.value.setup);
     else setSetup(null);
     if (providerHealth.status === "fulfilled") setIntegrations(providerHealth.value.integrations);
@@ -265,10 +278,15 @@ export function useSetupCentre() {
       setHistoricalSalesState(historicalSales.value.state);
     if (importCapability.status === "fulfilled")
       setFileImportCapability(importCapability.value.capability);
-    if (catalog.status === "fulfilled") {
+    else
+      setFileImportCapability({
+        available: false,
+        reason: "File-import security configuration could not be verified",
+      });
+    if (catalogRead.isCurrent() && catalog.status === "fulfilled") {
       setMenuCatalog(catalog.value.items);
       setMenuCatalogStatus("ready");
-    } else {
+    } else if (catalogRead.isCurrent() && catalog.status === "rejected") {
       setMenuCatalogError(
         failureMessage(catalog.reason, "Authoritative menu catalogue is unavailable"),
       );
@@ -304,28 +322,62 @@ export function useSetupCentre() {
       (result) => result.status === "rejected",
     );
     setStatus(criticalFailure ? "error" : "ready");
-  }, [branchId, get, isAllBranches]);
+  }, [branchId, get, isAllBranches, readGuard, catalogGuard, scopeKey]);
 
   /** Refresh only the item catalogue after a verified import. */
   const refreshMenuCatalog = useCallback(async () => {
+    if (scopeRef.current !== scopeKey) return;
+    const read = catalogGuard.begin(scopeKey);
     const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
     setMenuCatalogStatus("loading");
     try {
       const result = await get<{ items: SetupMenuCatalogItem[] }>(
         `/api/seramet/setup/menu-catalog${query}`,
+        read.signal,
       );
+      if (!read.isCurrent()) return;
       setMenuCatalog(result.items);
       setMenuCatalogError("");
       setMenuCatalogStatus("ready");
     } catch (error) {
+      if (!read.isCurrent()) return;
       setMenuCatalogError(failureMessage(error, "Authoritative menu catalogue is unavailable"));
       setMenuCatalogStatus("error");
     }
-  }, [branchId, get, isAllBranches]);
+  }, [branchId, get, isAllBranches, catalogGuard, scopeKey]);
 
   useEffect(() => {
+    setSetup(null);
+    setMenuCatalog([]);
+    setIntegrations([]);
+    setDevices([]);
+    setMappings([]);
+    setOpeningStock([]);
+    setDiagnostics(null);
+    setProviders([]);
+    setStructure({ brands: [], branches: [] });
+    setProfile(null);
+    setOptions({
+      accounts: [],
+      roles: [],
+      warehouses: [],
+      stations: [],
+      documentTemplates: [],
+      inventoryItems: [],
+      units: [],
+    });
+    setOnboarding(null);
+    setHistoricalSalesState(null);
+    setFileImportCapability({
+      available: false,
+      reason: "Checking file-import security configuration",
+    });
     void refresh();
-  }, [refresh]);
+    return () => {
+      readGuard.cancel();
+      catalogGuard.cancel();
+    };
+  }, [refresh, readGuard, catalogGuard]);
 
   const command = useCallback(
     async <T>(path: string, body: unknown) => {
