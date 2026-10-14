@@ -151,7 +151,6 @@ function POS() {
   const [cat, setCat] = useState("All items");
   const [searchQuery, setSearchQuery] = useState("");
   const [menuLimit, setMenuLimit] = useState(INITIAL_POS_MENU_ITEMS);
-  const [clockNow, setClockNow] = useState(() => new Date());
   const channelPreferenceKey = `seramet.pos.channel:${activeTenantId}:${branchId}:${currentUser.id}`;
   const [preferredChannelId, setPreferredChannelId] = useState<string>(() =>
     typeof window !== "undefined"
@@ -495,11 +494,6 @@ function POS() {
   };
 
   useEffect(() => {
-    const timer = window.setInterval(() => setClockNow(new Date()), 15_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
     if (!paymentMethods.length) {
       if (paymentMethod) setPaymentMethod("");
       return;
@@ -728,7 +722,6 @@ function POS() {
     tenant.countryCode,
     tenant.defaultCurrency,
   );
-  const clockLabel = formatPosClock(clockNow, tenant.locale || activeLocale(), clockTimeZone);
   const orderContextLabel = activeOrder
     ? `${activeOrder.status.replaceAll("_", " ")} - ${activeOrder.customer}`
     : isOnlineSource
@@ -1969,7 +1962,8 @@ function POS() {
             </span>
           )}
           <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" /> <span title={clockTimeZone}>{clockLabel}</span>
+            <Clock className="h-3.5 w-3.5" />
+            <PosClock locale={tenant.locale || activeLocale()} timeZone={clockTimeZone} />
           </span>
         </div>
       </div>
@@ -2977,6 +2971,26 @@ function POS() {
         </DialogContent>
       </Dialog>
     </AppShell>
+  );
+}
+
+function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const update = () => setNow(new Date());
+    const timer = window.setInterval(update, 1000);
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  return (
+    <span aria-label="POS clock" title={timeZone} suppressHydrationWarning>
+      {formatPosClock(now, locale, timeZone)}
+    </span>
   );
 }
 

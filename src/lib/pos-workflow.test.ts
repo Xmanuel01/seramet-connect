@@ -52,6 +52,19 @@ describe("POS production queue separation", () => {
 });
 
 describe("POS business-branch clock", () => {
+  it.each(["en-US", "en-GB", "en-KE"])("displays midnight as 00 rather than 24 in %s", (locale) => {
+    expect(formatPosClock(new Date("2026-10-14T21:00:00Z"), locale, "Africa/Nairobi")).toBe(
+      "00:00:00",
+    );
+  });
+  it("uses the configured branch timezone through DST changes", () => {
+    expect(formatPosClock(new Date("2026-03-08T06:59:59Z"), "en-US", "America/New_York")).toBe(
+      "01:59:59",
+    );
+    expect(formatPosClock(new Date("2026-03-08T07:00:00Z"), "en-US", "America/New_York")).toBe(
+      "03:00:00",
+    );
+  });
   it("displays a UTC instant at 05:00 in Nairobi, without modifying the event timestamp", () => {
     const now = new Date("2026-09-29T02:00:00.000Z");
     expect(resolvePosTimeZone("UTC", "UTC", "KE")).toBe("Africa/Nairobi");

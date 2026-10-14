@@ -162,6 +162,33 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   await manager.close();
 });
 
+test("POS clock ticks each second in branch time and catches up when refocused", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ timezoneId: "America/Los_Angeles" });
+  await authorize(context);
+  const page = await context.newPage();
+  await page.clock.install();
+  await establishSession(page);
+  await page.clock.pauseAt(new Date(Date.now() + 3000));
+  await page.clock.setSystemTime(new Date("2026-10-14T20:59:59Z"));
+  await page.goto("/pos");
+  const clock = page.getByLabel("POS clock", { exact: true });
+  await expect(clock).toBeVisible();
+  await expect(clock).toHaveAttribute("title", "Africa/Nairobi");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(clock).toHaveText("23:59:59");
+  await page.clock.runFor(1000);
+  await expect(clock).toHaveText("00:00:00");
+  await page.clock.runFor(1000);
+  await expect(clock).toHaveText("00:00:01");
+  await page.clock.setSystemTime(new Date("2026-10-15T02:00:00Z"));
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(clock).toHaveText("05:00:00");
+  await expect(page).toHaveURL(/\/pos$/);
+  await context.close();
+});
+
 test("server rejects a branch selector outside the authenticated assignment", async ({
   browser,
 }) => {
