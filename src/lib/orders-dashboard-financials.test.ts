@@ -184,4 +184,18 @@ describe("Orders dashboard financial populations", () => {
     expect(report.paidInvoiceSales).toBe(1000);
     expect(report.completedRefunds).toBe(100);
   });
+
+  it("uses the configured cutoff for legacy records without a persisted business date", () => {
+    const state = createEmptyTransactionState("tenant");
+    state.orders = [order({ createdAt: "2026-09-30T00:30:00.000Z" })];
+    const report = ordersDashboardFinancials(
+      state,
+      activeBranch,
+      "2026-09-29",
+      "Africa/Nairobi",
+      "KES",
+      240,
+    );
+    expect(report.activeOrderValue).toBe(1000);
+  });
 });

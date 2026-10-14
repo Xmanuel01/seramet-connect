@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createScopedReadGuard } from "@/lib/scoped-read-guard";
+import { createTransactionRefreshCoordinator } from "@/lib/transaction-refresh-coordinator";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import type {
@@ -15,6 +17,10 @@ export function useManagementIntelligence(enabled = true) {
     [branchId, branchRecords, isAllBranches],
   );
   const branchKey = selectedBranchIds.join("|");
+  const scopeKey = `${activeTenantId}:${currentUser.id}:${role}:${branchKey}:${enabled}`;
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+  const readGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
     return {
@@ -35,7 +41,11 @@ export function useManagementIntelligence(enabled = true) {
   const [asOf, setAsOf] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    if (scopeRef.current !== scopeKey) return;
+    const read = readGuard.begin(scopeKey);
     if (!enabled) {
+      setControls([]);
+      setOwner(null);
       setStatus("idle");
       return;
     }
@@ -48,7 +58,7 @@ export function useManagementIntelligence(enabled = true) {
           branchIds.map(async (selectedBranchId) => {
             const response = await fetch(
               `/api/seramet/management/control-centre?branchId=${encodeURIComponent(selectedBranchId)}&limit=100`,
-              { headers },
+              { headers, signal: read.signal },
             );
             const body = (await response.json().catch(() => ({}))) as {
               controlCentre?: ManagementControlCentre;
@@ -66,46 +76,56 @@ export function useManagementIntelligence(enabled = true) {
           }),
         ),
         isAllBranches
-          ? fetch("/api/seramet/management/owner", { headers }).then(async (response) => {
-              const body = (await response.json().catch(() => ({}))) as {
-                owner?: OwnerControlCentre;
-                message?: string;
-              };
-              if (!response.ok || !body.owner) {
-                throw new Error(
-                  body.message ?? `Owner read model unavailable (${response.status})`,
-                );
-              }
-              return body.owner;
-            })
+          ? fetch("/api/seramet/management/owner", { headers, signal: read.signal }).then(
+              async (response) => {
+                const body = (await response.json().catch(() => ({}))) as {
+                  owner?: OwnerControlCentre;
+                  message?: string;
+                };
+                if (!response.ok || !body.owner) {
+                  throw new Error(
+                    body.message ?? `Owner read model unavailable (${response.status})`,
+                  );
+                }
+                return body.owner;
+              },
+            )
           : Promise.resolve(null),
       ]);
+      if (!read.isCurrent()) return;
       setControls(controlRows);
       setOwner(ownerPayload);
       setStatus("ready");
       setAsOf(new Date().toISOString());
     } catch (cause) {
+      if (!read.isCurrent()) return;
       setControls([]);
       setOwner(null);
       setError(cause instanceof Error ? cause.message : "Management read model unavailable");
       setStatus("error");
     }
-  }, [branchKey, enabled, headers, isAllBranches]);
+  }, [branchKey, enabled, headers, isAllBranches, readGuard, scopeKey]);
 
   useEffect(() => {
+    setControls([]);
+    setOwner(null);
+    setAsOf(null);
     void refresh();
-  }, [refresh]);
+    return () => readGuard.cancel();
+  }, [readGuard, refresh]);
 
   useEffect(() => {
-    let timer: number | undefined;
-    const onRefresh = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => void refresh(), 200);
-    };
+    const coordinator = createTransactionRefreshCoordinator({
+      refresh,
+      now: Date.now,
+      schedule: (run, delay) => window.setTimeout(run, delay),
+      cancel: (timer) => window.clearTimeout(timer),
+    });
+    const onRefresh = () => coordinator.request();
     window.addEventListener("seramet:realtime", onRefresh);
     window.addEventListener("seramet:refresh", onRefresh);
     return () => {
-      window.clearTimeout(timer);
+      coordinator.stop();
       window.removeEventListener("seramet:realtime", onRefresh);
       window.removeEventListener("seramet:refresh", onRefresh);
     };

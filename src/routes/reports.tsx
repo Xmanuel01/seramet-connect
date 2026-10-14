@@ -5,7 +5,7 @@ import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
-import { currentDateKey } from "@/lib/currency";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 import { majorFromMinor } from "@/payments/money";
 
@@ -47,17 +47,22 @@ function Reports() {
     branchScope.type === "ALL"
       ? branchRecords
       : branchRecords.filter((configuredBranch) => configuredBranch.name === branch);
-  const businessDate = currentDateKey(new Date(), timeZone);
   const scopedPreview = selectedBranches.map((configuredBranch) => {
+    const branchTimeZone = configuredBranch.timezone ?? timeZone;
+    const cutoffMinutes = Number(configuredBranch.metadata["businessDayCutoffMinutes"] ?? 0);
+    const businessDate = businessDateForTimestamp(new Date(), branchTimeZone, cutoffMinutes);
     const projection = projectFinancialLifecycle(state, {
       tenantId: activeTenantId,
       branchId: configuredBranch.id,
       businessDate,
       currency,
+      timeZone: branchTimeZone,
+      businessDayCutoffMinutes: cutoffMinutes,
     });
     const health = deriveBranchOperations(state, configuredBranch.name);
     return {
       branch: configuredBranch.name,
+      businessDate,
       sales: majorFromMinor(projection.netRevenueMinor, currency),
       orders: projection.orderCount,
       paidRate: projection.invoiceCount
@@ -67,6 +72,8 @@ function Reports() {
       state: health.label,
     };
   });
+  const businessDates = [...new Set(scopedPreview.map((row) => row.businessDate))];
+  const businessDateLabel = businessDates.length === 1 ? businessDates[0] : "Per branch";
   const totalSales = scopedPreview.reduce((sum, row) => sum + row.sales, 0);
   const totalOrders = scopedPreview.reduce((sum, row) => sum + row.orders, 0);
   const avgOrder = totalOrders ? Math.round(totalSales / totalOrders) : 0;
@@ -125,7 +132,7 @@ function Reports() {
           <div className="border-b border-border px-4 py-3">
             <Chips
               items={[
-                `Business date: ${businessDate}`,
+                `Business date: ${businessDateLabel}`,
                 `Branch: ${branch}`,
                 `Sync: ${backendStatus}`,
               ]}

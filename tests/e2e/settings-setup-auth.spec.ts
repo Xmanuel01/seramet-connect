@@ -190,3 +190,151 @@ test("employee sign-in uses Seramet branding without repeating identical restaur
   await expect(signInPanel.getByText("KITCHEN", { exact: true })).toHaveCount(0);
   await expect(heading).toHaveCSS("font-size", "30px");
 });
+
+test("attendance and payroll tolerate delayed hydration and pay edits wait for acknowledgement", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  await authorize(context);
+  const page = await context.newPage();
+  await establishSession(page);
+  await page.goto("/pos");
+  await expect(page.getByLabel(/Connection: Online/)).toBeVisible();
+  const name = `Payroll fixture ${Date.now()}`;
+  const created = await page.evaluate(async (name) => {
+    const snapshot = await (await fetch("/api/seramet/transactions")).json();
+    const idempotencyKey = crypto.randomUUID();
+    const response = await fetch("/api/seramet/transactions/mutate", {
+      method: "POST",
+      headers: { "content-type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        action: "addRider",
+        payload: { name },
+        idempotencyKey,
+        expectedRevision: snapshot.revision,
+      }),
+    });
+    return response.status;
+  }, name);
+  expect(created).toBe(200);
+
+  for (const path of ["/attendance", "/payroll"]) {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/api/seramet/transactions?**", async (route) => {
+      await pending;
+      await route.fallback();
+    });
+    await page.goto(path);
+    await expect(
+      page.getByRole("heading", {
+        name: path === "/attendance" ? "Attendance" : "Payroll",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("This page didn't load")).toHaveCount(0);
+    release();
+    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
+    await page.unroute("**/api/seramet/transactions?**");
+  }
+
+  const input = page.getByLabel(`Base net pay for ${name}`);
+  await page.route("**/api/seramet/transactions/mutate", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Pay persistence unavailable" }),
+    }),
+  );
+  await input.fill("15000");
+  await input.press("Tab");
+  await expect(page.getByText(/Pay persistence unavailable/)).toBeVisible();
+  await expect(input).toHaveValue("15000");
+  await expect(page.getByText(`${name}'s base net pay updated.`)).toHaveCount(0);
+  await page.unroute("**/api/seramet/transactions/mutate");
+
+  let acknowledge!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  await page.route("**/api/seramet/transactions/mutate", async (route) => {
+    await pending;
+    await route.fallback();
+  });
+  await input.focus();
+  await input.press("Tab");
+  await expect(page.getByText(/Saving base net pay/)).toBeVisible();
+  await expect(page.getByText(`${name}'s base net pay updated.`)).toHaveCount(0);
+  acknowledge();
+  await expect(page.getByText(`${name}'s base net pay updated.`, { exact: false })).toBeVisible();
+  await page.unroute("**/api/seramet/transactions/mutate");
+  await page.reload();
+  await expect(page.getByLabel(`Base net pay for ${name}`)).toHaveValue("15000");
+  await context.close();
+});
+
+test("mobile POS exposes the order recall control without horizontal clipping", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await authorize(context);
+  const page = await context.newPage();
+  await establishSession(page);
+  await page.goto("/pos");
+  const orders = page.getByRole("button", { name: /^Orders\s*\d+$/ });
+  await expect(orders).toBeVisible();
+  const bounds = await orders.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  await orders.click();
+  await expect(page.getByText("Active orders", { exact: true })).toBeVisible();
+  await context.close();
+});
+
+test("a delayed Setup Centre response cannot replace the selected branch", async ({ browser }) => {
+  const context = await browser.newContext();
+  await authorize(context);
+  const page = await context.newPage();
+  await establishSession(page);
+  let release!: () => void;
+  let attempted!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delivered = new Promise<void>((resolve) => {
+    attempted = resolve;
+  });
+  await page.route("**/api/seramet/setup/centre?**", async (route) => {
+    const response = await route.fetch({
+      headers: {
+        ...route.request().headers(),
+        authorization: `Bearer ${fixture.managerAccessToken}`,
+      },
+    });
+    const payload = await response.json();
+    const oldScope =
+      new URL(route.request().url()).searchParams.get("branchId") === fixture.firstBranchId;
+    payload.setup.organisationName = oldScope ? "Delayed branch A" : "Current branch B";
+    if (oldScope) await pending;
+    try {
+      await route.fulfill({ response, json: payload });
+    } catch (error) {
+      if (!oldScope) throw error;
+      // Aborting the old transport is expected; the completion guard is also unit tested.
+    } finally {
+      if (oldScope) attempted();
+    }
+  });
+  await page.goto("/seramet-setup");
+  await page.getByRole("button", { name: /Change active branch/ }).click();
+  await page.getByRole("menuitem", { name: /Pilot Branch B/ }).click();
+  await expect(page.getByText(/Current branch B/)).toBeVisible();
+  release();
+  await delivered;
+  await expect(page.getByText(/Delayed branch A/)).toHaveCount(0);
+  await expect(page.getByText(/Current branch B/)).toBeVisible();
+  await context.close();
+});

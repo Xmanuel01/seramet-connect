@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
@@ -26,14 +26,66 @@ export const Route = createFileRoute("/payroll")({
 });
 
 function Payroll() {
-  const { branch, branchLabel, currentUser } = useAppContext();
+  const { activeTenantId, branchId, branch, branchLabel, currentUser, hasPermission } =
+    useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
   const [notice, setNotice] = useState("");
+  const [payDrafts, setPayDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const scopeKey = `${activeTenantId}:${branchId}`;
+  const scopeRef = useRef(scopeKey);
+  scopeRef.current = scopeKey;
+  const canEditPay = hasPermission("payroll.manage");
+  useEffect(() => {
+    setPayDrafts({});
+    setNotice("");
+  }, [scopeKey]);
   const rows = TransactionEngine.getPayrollPreview(state, branch);
   const baseNet = rows.reduce((sum, row) => sum + row.employee.netMonthlyPay, 0);
   const lateDeductions = rows.reduce((sum, row) => sum + row.latenessDeduction, 0);
   const adjustedNet = rows.reduce((sum, row) => sum + row.adjustedNetPay, 0);
   const lateMinutes = rows.reduce((sum, row) => sum + row.lateMinutes, 0);
+
+  const savePay = async (employeeId: string, name: string, value: string, previous: number) => {
+    if (savingRef.current || !canEditPay) return;
+    const nextPay = Number(value);
+    if (
+      !/^\d+(?:\.\d{1,2})?$/.test(value) ||
+      !Number.isFinite(nextPay) ||
+      nextPay < 0 ||
+      !Number.isSafeInteger(Math.round(nextPay * 100))
+    ) {
+      setNotice("Enter a non-negative base net pay with at most two decimal places.");
+      return;
+    }
+    if (nextPay === previous) return;
+    const requestScope = scopeKey;
+    savingRef.current = true;
+    setSaving(true);
+    setNotice("Saving base net pay...");
+    try {
+      const result = await mutate("setEmployeeNetPay", { employeeId, netMonthlyPay: nextPay });
+      if (scopeRef.current !== requestScope) return;
+      const saved = result.state.employees.find((employee) => employee.id === employeeId);
+      if (("offline" in result && result.offline) || saved?.netMonthlyPay !== nextPay) {
+        throw new Error("The server has not confirmed this pay change. Your entry was retained.");
+      }
+      setPayDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[employeeId];
+        return next;
+      });
+      setNotice(`${name}'s base net pay updated.`);
+    } catch (error) {
+      if (scopeRef.current === requestScope) {
+        setNotice(error instanceof Error ? error.message : "Pay change could not be saved.");
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
 
   return (
     <AppShell
@@ -142,17 +194,23 @@ function Payroll() {
                       <input
                         type="number"
                         min="0"
-                        defaultValue={row.employee.netMonthlyPay}
-                        onBlur={(event) => {
-                          const nextPay = Number(event.target.value);
-                          if (!Number.isFinite(nextPay) || nextPay === row.employee.netMonthlyPay)
-                            return;
-                          void mutate("setEmployeeNetPay", {
-                            employeeId: row.employee.id,
-                            netMonthlyPay: nextPay,
-                          });
-                          setNotice(`${row.employee.name}'s base net pay updated.`);
-                        }}
+                        aria-label={`Base net pay for ${row.employee.name}`}
+                        disabled={!canEditPay || saving || backendStatus === "loading"}
+                        value={payDrafts[row.employee.id] ?? String(row.employee.netMonthlyPay)}
+                        onChange={(event) =>
+                          setPayDrafts((drafts) => ({
+                            ...drafts,
+                            [row.employee.id]: event.target.value,
+                          }))
+                        }
+                        onBlur={(event) =>
+                          void savePay(
+                            row.employee.id,
+                            row.employee.name,
+                            event.target.value,
+                            row.employee.netMonthlyPay,
+                          )
+                        }
                         className="num h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-[12px] font-semibold outline-none focus:border-primary"
                       />
                     </TD>

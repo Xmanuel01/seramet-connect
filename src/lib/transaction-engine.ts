@@ -1478,6 +1478,7 @@ export const TransactionEngine = {
   },
 
   getAttendanceRows(state: TransactionState, branch: string, date?: string) {
+    if (state.employees.length === 0) return [];
     const tenantId = state.tenantId ?? LOCAL_PILOT_TENANT_ID;
     const attendanceDate = date ?? dateInTimeZone(scopeTimeZone(tenantId, branch));
     return state.employees
@@ -1726,6 +1727,7 @@ export const TransactionEngine = {
   },
 
   getPayrollPreview(state: TransactionState, branch: string, month?: string) {
+    if (state.employees.length === 0) return [];
     const tenantId = state.tenantId ?? LOCAL_PILOT_TENANT_ID;
     const targetMonth = month ?? dateInTimeZone(scopeTimeZone(tenantId, branch)).slice(0, 7);
     return state.employees

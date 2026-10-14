@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { financeDefaultDates } from "@/finance/finance-business-date";
 
 describe("finance period defaults", () => {
+  it("uses wall-clock cutoff across the daylight-saving jump", () => {
+    expect(financeDefaultDates(new Date("2026-03-08T08:30:00Z"), "America/New_York", 240)).toEqual({
+      from: "2026-03-01",
+      to: "2026-03-08",
+    });
+  });
   it("uses the Nairobi business date instead of UTC", () => {
     const utcLateEvening = new Date("2026-09-30T22:45:00.000Z");
     expect(financeDefaultDates(utcLateEvening, "Africa/Nairobi", 0)).toEqual({

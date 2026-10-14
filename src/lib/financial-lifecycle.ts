@@ -1,4 +1,5 @@
 import type { TransactionState } from "@/lib/transaction-engine";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { parseMajorAmount, sumMinor } from "@/payments/money";
 
 export type FinancialLifecycleLine = {
@@ -51,6 +52,8 @@ type ProjectionScope = {
   businessDate: string;
   currency: string;
   calculatedAt?: string;
+  timeZone?: string;
+  businessDayCutoffMinutes?: number;
 };
 
 const inactiveOrderStatuses = new Set(["DRAFT", "HELD", "CANCELLED", "REFUNDED"]);
@@ -64,7 +67,12 @@ export function projectFinancialLifecycle(
 ): FinancialLifecycleProjection {
   const matchesBranch = (value?: string) => value === scope.branchId;
   const matchesDate = (explicit: string | undefined, timestamp: string) =>
-    (explicit ?? timestamp.slice(0, 10)) === scope.businessDate;
+    (explicit ??
+      businessDateForTimestamp(
+        timestamp,
+        scope.timeZone ?? "UTC",
+        scope.businessDayCutoffMinutes ?? 0,
+      )) === scope.businessDate;
   const orders = state.orders.filter(
     (order) =>
       matchesBranch(order.branchId) &&
@@ -151,7 +159,7 @@ export function projectFinancialLifecycle(
   const drawers = (state.paymentOperations?.drawerSessions ?? []).filter(
     (drawer) =>
       matchesBranch(drawer.branchId) &&
-      matchesDate(undefined, drawer.closedAt ?? drawer.openedAt) &&
+      matchesDate(drawer.businessDate, drawer.openedAt) &&
       drawer.varianceMinor !== undefined,
   );
   return {
@@ -187,11 +195,19 @@ export function projectFinancialLifecycle(
 
 export function financialCloseReadiness(
   state: TransactionState,
-  scope: Pick<ProjectionScope, "tenantId" | "branchId" | "businessDate">,
+  scope: Pick<
+    ProjectionScope,
+    "tenantId" | "branchId" | "businessDate" | "timeZone" | "businessDayCutoffMinutes"
+  >,
 ): DayCloseReadinessIssue[] {
   const issues: DayCloseReadinessIssue[] = [];
   const matchesDate = (explicit: string | undefined, timestamp: string) =>
-    (explicit ?? timestamp.slice(0, 10)) === scope.businessDate;
+    (explicit ??
+      businessDateForTimestamp(
+        timestamp,
+        scope.timeZone ?? "UTC",
+        scope.businessDayCutoffMinutes ?? 0,
+      )) === scope.businessDate;
   for (const order of state.orders) {
     if (
       order.branchId === scope.branchId &&
@@ -216,7 +232,7 @@ export function financialCloseReadiness(
   for (const drawer of operations?.drawerSessions ?? []) {
     if (
       drawer.branchId === scope.branchId &&
-      matchesDate(undefined, drawer.openedAt) &&
+      matchesDate(drawer.businessDate, drawer.openedAt) &&
       drawer.status === "OPEN"
     ) {
       issues.push(issue("OPEN_CASH_DRAWER", drawer.id, "Cash drawer is still open"));
@@ -252,9 +268,17 @@ export function financialCloseReadiness(
     }
   }
   for (const settlement of operations?.settlementBatches ?? []) {
+    const settlementTimestamp = settlement.settledAt ?? settlement.periodEnd;
+    const settlementBusinessDate = /^\d{4}-\d{2}-\d{2}$/.test(settlementTimestamp)
+      ? settlementTimestamp
+      : businessDateForTimestamp(
+          settlementTimestamp,
+          scope.timeZone ?? "UTC",
+          scope.businessDayCutoffMinutes ?? 0,
+        );
     if (
       (!settlement.branchId || settlement.branchId === scope.branchId) &&
-      settlement.periodEnd <= scope.businessDate &&
+      settlementBusinessDate <= scope.businessDate &&
       !["POSTED", "REVERSED"].includes(settlement.status)
     ) {
       issues.push(issue("UNPOSTED_SETTLEMENT", settlement.id, "Settlement is not posted"));

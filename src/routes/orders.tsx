@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import {
@@ -10,7 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { currentDateKey, formatTime, ksh } from "@/lib/currency";
+import { formatTime, ksh } from "@/lib/currency";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { ordersDashboardFinancials } from "@/lib/orders-dashboard-financials";
 import { invoiceCandidatesForOrder, orderBusinessDate } from "@/lib/orders-interface";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
@@ -38,9 +39,14 @@ export const Route = createFileRoute("/orders")({
 });
 
 function Orders() {
-  const { branchId, branchLabel, matchesBranch, currentUser, timeZone, currency } = useAppContext();
+  const { branchId, branchLabel, branchRecords, matchesBranch, currentUser, timeZone, currency } =
+    useAppContext();
+  const configuredBranch = branchRecords.find((record) => record.id === branchId);
+  const branchTimeZone = configuredBranch?.timezone ?? timeZone;
+  const cutoffMinutes = Number(configuredBranch?.metadata["businessDayCutoffMinutes"] ?? 0);
+  const currentBusinessDate = businessDateForTimestamp(new Date(), branchTimeZone, cutoffMinutes);
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
-  const [periodDate, setPeriodDate] = useState(() => currentDateKey(new Date(), timeZone));
+  const [periodDate, setPeriodDate] = useState(currentBusinessDate);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [detailsOrderId, setDetailsOrderId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -48,15 +54,20 @@ function Orders() {
   const [operationBusy, setOperationBusy] = useState(false);
   const { state, mutate } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
+  useEffect(() => setPeriodDate(currentBusinessDate), [branchId, currentBusinessDate]);
   const rows = state.orders
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
-    .filter((order) => !periodDate || orderBusinessDate(order, timeZone) === periodDate);
+    .filter(
+      (order) =>
+        !periodDate || orderBusinessDate(order, branchTimeZone, cutoffMinutes) === periodDate,
+    );
   const financials = ordersDashboardFinancials(
     state,
     matchesBranch,
     periodDate,
-    timeZone,
+    branchTimeZone,
     currency,
+    cutoffMinutes,
   );
   const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
   const selectedOrder =
@@ -193,7 +204,7 @@ function Orders() {
             items={[
               {
                 label: "Period",
-                value: formatFilterDate(periodDate, currentDateKey(new Date(), timeZone)),
+                value: formatFilterDate(periodDate, currentBusinessDate),
                 dateValue: periodDate,
                 onDateChange: setPeriodDate,
                 onClear: () => setPeriodDate(""),
@@ -348,7 +359,7 @@ function Orders() {
                 <div>
                   <dt className="text-muted-foreground">Created</dt>
                   <dd>
-                    {orderBusinessDate(detailsOrder, timeZone)} ·{" "}
+                    {orderBusinessDate(detailsOrder, branchTimeZone, cutoffMinutes)} ·{" "}
                     {formatTime(
                       detailsOrder.createdAt,
                       { hour: "2-digit", minute: "2-digit" },

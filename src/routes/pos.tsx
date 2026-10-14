@@ -2023,7 +2023,7 @@ function POS() {
         </nav>
 
         <div className="min-w-0 p-4">
-          <div className="relative mb-2 flex gap-1.5 overflow-visible rounded-lg bg-card p-1.5">
+          <div className="relative mb-2 flex flex-wrap gap-1.5 overflow-visible rounded-lg bg-card p-1.5">
             {orderChannels.map((source) => (
               <button
                 key={source.id}
