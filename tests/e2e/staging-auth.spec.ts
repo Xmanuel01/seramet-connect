@@ -89,7 +89,7 @@ test.describe("protected staging authentication", () => {
     await expect(page).not.toHaveURL(/\/login/);
     await signOut(page);
     await page.goBack();
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/pos-login/);
   });
 
   test("owner activates this browser and branch-assigned staff signs in with an individual PIN", async ({
@@ -130,9 +130,9 @@ test.describe("protected staging authentication", () => {
     await expect(page).toHaveURL(/\/pos(?:[/?#]|$)/);
     await signOut(page);
     await page.reload();
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/pos-login/);
     await page.goBack();
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/pos-login/);
 
     await ownerLogin(page);
     await revokeDevice(page, "Reset disposable device after staging authentication certification");
@@ -158,7 +158,7 @@ async function ownerLogin(page: Page) {
 
 async function signOut(page: Page) {
   await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/login/);
+  await expect(page).toHaveURL(/\/pos-login/);
 }
 
 async function revokeDevice(page: Page, reason: string) {

@@ -129,7 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // An existing server cookie must not silently unlock a newly opened POS tab.
     if (!hasInteractiveSignIn()) {
-      window.location.replace("/login");
+      window.location.replace("/pos-login");
       return;
     }
     let active = true;
@@ -720,7 +720,7 @@ function SessionGate({
         {action === "AUTH" && (
           <div className="mt-4 flex gap-2">
             <a
-              href="/login"
+              href="/pos-login"
               className="inline-flex h-10 flex-1 items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
             >
               Sign in

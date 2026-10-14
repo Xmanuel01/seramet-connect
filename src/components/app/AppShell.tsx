@@ -877,7 +877,7 @@ export function AppShell({
                   .finally(() => {
                     window.localStorage.removeItem("seramet.session.tenant-id");
                     window.localStorage.removeItem("seramet.session.user-id");
-                    window.location.replace("/login");
+                    window.location.replace("/pos-login");
                   });
               }}
               className="grid h-9 w-9 place-items-center rounded-md hover:bg-secondary"

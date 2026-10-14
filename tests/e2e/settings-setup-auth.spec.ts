@@ -13,6 +13,55 @@ const fixture = JSON.parse(
   readFileSync(resolve(process.cwd(), ".seramet", "e2e-fixture.json"), "utf8"),
 ) as Fixture;
 
+test("employee entry is default and administrator access is explicit on any device", async ({
+  page,
+}) => {
+  await page.route("**/api/seramet/public/device/startup", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ state: "UNREGISTERED" }),
+    }),
+  );
+  for (const path of ["/", "/pos", "/login", "/login?account=0"]) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/pos-login(?:\?|$)/);
+    await expect(page.getByRole("heading", { name: "Device activation required" })).toBeVisible();
+    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+  }
+  await page.getByRole("link", { name: "Administrator sign in" }).click();
+  await expect(page).toHaveURL(/\/login\?account=1$/);
+  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(/\/login\?account=1$/);
+  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+
+  await page.route("**/api/seramet/public/device/startup", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        state: "ACTIVE",
+        device: {
+          id: fixture.firstBranchId,
+          name: "Disposable terminal",
+          tenantName: "Disposable restaurant",
+          branchId: fixture.firstBranchId,
+          branchName: "Disposable branch",
+        },
+        policy: { pinLength: 6 },
+      }),
+    }),
+  );
+  await page.goto("/pos-login");
+  await expect(page.getByLabel("Email or employee code")).toBeVisible();
+  await page.getByRole("link", { name: "Use administrator account" }).click();
+  await expect(page).toHaveURL(/\/login\?account=1$/);
+  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  await page.goto("/register");
+  await expect(page).toHaveURL(/\/register/);
+});
+
 async function authorize(context: BrowserContext) {
   await context.route("**/api/seramet/**", async (route) => {
     await route.continue({

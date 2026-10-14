@@ -28,9 +28,9 @@ function isPublicAuthRequest(input: RequestInfo | URL) {
 
 function redirectToLogin() {
   if (typeof window === "undefined") return;
-  if (window.location.pathname === "/login") return;
+  if (["/login", "/pos-login", "/register"].includes(window.location.pathname)) return;
 
-  window.location.assign("/login?reason=session-expired");
+  window.location.replace("/pos-login?reason=session-expired");
 }
 
 export async function authenticatedFetch(

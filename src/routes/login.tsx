@@ -1,17 +1,23 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, type FormEvent } from "react";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
 import {
   authMutation,
   authStatus,
-  deviceStartup,
   enterRestaurant,
   markInteractiveSignIn,
   type AuthRestaurant,
 } from "@/lib/auth-client";
 
-export const Route = createFileRoute("/login")({ component: LoginPage });
+export const Route = createFileRoute("/login")({
+  beforeLoad: ({ location }) => {
+    if (new URLSearchParams(location.searchStr).get("account") !== "1") {
+      throw redirect({ to: "/pos-login", replace: true });
+    }
+  },
+  component: LoginPage,
+});
 
 function LoginPage() {
   const [email, setEmail] = useState("");
@@ -19,15 +25,6 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
-
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("account") === "1") return;
-    void deviceStartup()
-      .then((device) => {
-        if (device.state === "ACTIVE") window.location.assign("/pos-login");
-      })
-      .catch(() => undefined);
-  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

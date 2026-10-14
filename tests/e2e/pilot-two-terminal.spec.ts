@@ -94,6 +94,9 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   await managerPage.getByRole("button", { name: "Clear all" }).click();
   await managerPage.getByRole("button", { name: heldOrder!.id, exact: true }).click();
   await expect(managerPage.getByRole("dialog").getByText("Pilot meal")).toBeVisible();
+  await managerPage.reload();
+  await expect(managerPage).toHaveURL(/\/orders$/);
+  await expect(managerPage.getByRole("button", { name: "Clear all" })).toBeVisible();
 
   const current = await cashierPage.evaluate(async () => {
     const response = await fetch("/api/seramet/transactions");
@@ -149,12 +152,12 @@ test("two terminals preserve local drafts and enforce one authoritative revision
   expect(conflict).toMatchObject({ code: "CONFLICT", current: { revision: current.revision + 1 } });
 
   await cashierPage.getByRole("button", { name: "Sign out" }).click();
-  await expect(cashierPage).toHaveURL(/\/login/);
+  await expect(cashierPage).toHaveURL(/\/pos-login/);
   await cashier.unroute("**/api/seramet/**");
   await cashierPage.reload();
-  await expect(cashierPage).toHaveURL(/\/login/);
+  await expect(cashierPage).toHaveURL(/\/pos-login/);
   await cashierPage.goto("/pos");
-  await expect(cashierPage).toHaveURL(/\/login/);
+  await expect(cashierPage).toHaveURL(/\/pos-login/);
   await cashier.close();
   await manager.close();
 });
