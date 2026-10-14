@@ -16,6 +16,9 @@ test("payroll renders an empty initial snapshot before tenant configuration arri
   expect(
     TransactionEngine.getPayrollPreview(createEmptyTransactionState(""), "pending-branch"),
   ).toEqual([]);
+  expect(
+    TransactionEngine.getAttendanceRows(createEmptyTransactionState(""), "pending-branch"),
+  ).toEqual([]);
 });
 
 test("populated payroll retains configured-branch lookup and existing pay calculations", () => {
@@ -39,6 +42,10 @@ test("populated payroll retains configured-branch lookup and existing pay calcul
   expect(rows).toHaveLength(1);
   expect(rows[0].hourlyRate).toBe(120);
   expect(rows[0].adjustedNetPay).toBe(24000);
+  expect(TransactionEngine.getAttendanceRows(state, DEMO_WESTLANDS_BRANCH_ID)).toHaveLength(1);
+  expect(() => TransactionEngine.getAttendanceRows(state, "missing-branch")).toThrow(
+    "No active branch",
+  );
   expect(() => TransactionEngine.getPayrollPreview(state, "missing-branch")).toThrow(
     "No active branch",
   );
