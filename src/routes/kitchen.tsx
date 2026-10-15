@@ -164,42 +164,12 @@ function KDS() {
     }
   };
 
-  const reprintTicket = (ticket: KitchenTicket) => {
-    if (!profile || !canPrintProduction) return;
-    const order = state.orders.find((candidate) => candidate.id === ticket.orderId);
-    if (!order) {
-      setNotice("The source order is no longer available.");
-      return;
-    }
-    const latest = latestPhysicalPrintJob(printJobs, ticket);
-    if (latest && ["Queued", "Sending", "Retrying"].includes(latest.status)) {
-      setNotice(`${ticket.stationLabel} already has a print job in progress.`);
-      return;
-    }
-    const result = sendKitchenTickets(
-      printOrderForTicket(order, ticket, profile.branch, branchId, currentUser.name),
-      "REPRINT",
-    );
-    if (result.jobs.length === 0) {
-      setNotice(result.skipped.join("; ") || "No production print route is available.");
-      return;
-    }
-    const physical = result.jobs.find(
-      (job) =>
-        job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT",
-    );
-    setNotice(
-      physical
-        ? `Reprint ${physical.id} queued for ${ticket.stationLabel}.`
-        : `Kitchen duplicate queued for ${ticket.stationLabel}.`,
-    );
+  const reprintTicket = (_ticket: KitchenTicket) => {
+    window.location.assign("/seramet-printers");
   };
 
-  const retryTicketPrint = (ticket: KitchenTicket) => {
-    const latest = latestPhysicalPrintJob(printJobs, ticket);
-    if (!latest || latest.status !== "Failed") return;
-    retryJob(latest.id);
-    setNotice(`Retrying ${latest.id} for ${ticket.stationLabel}.`);
+  const retryTicketPrint = (_ticket: KitchenTicket) => {
+    window.location.assign("/seramet-printers");
   };
 
   return (
