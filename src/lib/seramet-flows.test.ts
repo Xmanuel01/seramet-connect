@@ -58,6 +58,8 @@ import {
 } from "@/lib/transaction-engine";
 import { createInitialTransactionState } from "@/testing/transaction-state-fixture";
 import { resetMemoryTransactionRepositoryForTests } from "@/lib/seramet-repository";
+import { billingDocumentToPrintOrder } from "@/lib/print-order-adapter";
+import { parseMajorAmount } from "@/payments/money";
 
 beforeEach(() => {
   setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
@@ -1016,6 +1018,56 @@ describe("transaction engine order to reconciliation lifecycle", () => {
     expect(state.receipts).toHaveLength(1);
     expect(state.bills[0]?.status).toBe("PAID");
     expect(state.orders[0]?.status).toBe("PAID");
+  });
+
+  it("preserves fractional cash allocations and prints only the authoritative receipt identity", () => {
+    let state = TransactionEngine.createOrder(blank(), draft, "OPEN");
+    state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Amina W.");
+    state = TransactionEngine.requestBill(state, state.orders[0]!.id, "Amina W.");
+    const bill = state.bills[0]!;
+    // The authoritative pricing layer can supply fractional major-unit totals.
+    bill.subtotal = 614.05;
+    bill.tax = 0;
+    bill.total = 614.05;
+    expect(billingDocumentToPrintOrder(bill, state, "RECEIPT")).toBeNull();
+    for (const [index, amount] of [300.1, 313.95].entries()) {
+      state = TransactionEngine.applyPayment(state, bill.id, {
+        amount,
+        method: "CASH",
+        provider: "Cash",
+        reference: `fractional-${index}`,
+        cashier: "Amina W.",
+        terminal: "WEST-POS-01",
+        reconciliationStatus: "RECONCILED",
+        settlementStatus: "NOT_REQUIRED",
+      });
+      expect(parseMajorAmount(state.bills[0]!.paid, "KES")).toBe(index === 0 ? 30010 : 61405);
+      expect(state.receipts).toHaveLength(index === 0 ? 0 : 1);
+    }
+    const paid = state.bills[0]!;
+    expect(paid.status).toBe("PAID");
+    const receipt = state.receipts[0]!;
+    expect(parseMajorAmount(receipt.paidAmount, "KES")).toBe(61405);
+    const document = billingDocumentToPrintOrder(paid, state, "RECEIPT");
+    expect(document?.receiptNumber).toBe(receipt.id);
+    expect(document?.invoiceNumber).toBe(paid.id);
+    expect(document?.paymentBreakdown).toHaveLength(2);
+    expect(billingDocumentToPrintOrder(paid, state, "BILL")?.invoiceNumber).toBe(paid.id);
+    expect(
+      billingDocumentToPrintOrder(
+        paid,
+        { ...state, receipts: [{ ...receipt, branchId: DEMO_NGONG_BRANCH_ID }] },
+        "RECEIPT",
+      ),
+    ).toBeNull();
+    expect(
+      billingDocumentToPrintOrder(
+        paid,
+        { ...state, receipts: [{ ...receipt, tenantId: "other-tenant" }] },
+        "RECEIPT",
+      ),
+    ).toBeNull();
+    expect(billingDocumentToPrintOrder(paid, { ...state, receipts: [] }, "RECEIPT")).toBeNull();
   });
 
   it("records cash, card, bank and manual till payments as distinct payment types", () => {

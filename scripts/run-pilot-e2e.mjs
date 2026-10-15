@@ -14,14 +14,19 @@ const env = {
 };
 run(["exec", "vite-node", "scripts/seed-pilot-e2e.ts"], env);
 const focused = process.argv.slice(2);
+const operational = "tests/e2e/printing-operational.spec.ts";
 const allowed = new Set([
   "tests/e2e/pilot-two-terminal.spec.ts",
   "tests/e2e/menu-import-pipeline.spec.ts",
   "tests/e2e/settings-setup-auth.spec.ts",
   "tests/e2e/printing-admin.spec.ts",
 ]);
-if (focused.some((suite) => !allowed.has(suite)))
+if (focused.some((suite) => !allowed.has(suite) && suite !== operational))
   throw new Error("Unknown local pilot acceptance suite");
+if (focused.includes(operational)) {
+  env.SERAMET_BRIDGE_MODE = "local-test";
+  run(["exec", "vite-node", "scripts/seed-printing-operational.ts"], env);
+}
 run(["exec", "playwright", "test", ...(focused.length ? focused : [...allowed])], env);
 
 function run(args, environment) {

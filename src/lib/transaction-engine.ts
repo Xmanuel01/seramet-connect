@@ -8,6 +8,7 @@ import { normalizePaymentOperations, emptyPaymentOperationsState } from "@/payme
 import type { PaymentOperationsState } from "@/payments/types";
 import type { CostControlSnapshot } from "@/cost-control/types";
 import { cashCount } from "@/payments/cash-count";
+import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 
 export type OrderStatus =
   | "DRAFT"
@@ -3204,7 +3205,13 @@ export const TransactionEngine = {
       ...input,
     };
     next.payments.unshift(payment);
-    bill.paid = money(bill.paid + input.amount);
+    bill.paid = majorFromMinor(
+      sumMinor([
+        parseMajorAmount(bill.paid, payment.currency),
+        parseMajorAmount(input.amount, payment.currency),
+      ]),
+      payment.currency,
+    );
     bill.paymentStatus = bill.paid >= bill.total ? "PAID" : "PARTIAL";
     bill.status = bill.paid >= bill.total ? "PAID" : "PARTIAL";
     if (order) {
@@ -3631,7 +3638,13 @@ function createReceipt(
   bill: BillingRecord,
   payments: PaymentRecord[],
 ): ReceiptRecord {
-  const paidAmount = money(payments.reduce((sum, payment) => sum + payment.amount, 0));
+  const currency = getConfigurationRepository().getTenant(
+    bill.tenantId ?? state.tenantId ?? LOCAL_PILOT_TENANT_ID,
+  ).defaultCurrency;
+  const paidAmount = majorFromMinor(
+    sumMinor(payments.map((payment) => parseMajorAmount(payment.amount, currency))),
+    currency,
+  );
   const cashChange = payments.reduce((sum, payment) => sum + (payment.cash?.change ?? 0), 0);
   const scope = resolveScope(
     bill.branchId ?? bill.branch,
