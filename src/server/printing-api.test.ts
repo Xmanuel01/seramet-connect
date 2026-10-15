@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { handlePrintingApi } from "@/server/printing-api";
+import {
+  handlePrintingApi,
+  deriveBridgeSigningKey,
+  authorizeDelivery,
+  signPrintJob,
+} from "@/server/printing-api";
 import { authenticateSerametRequest, type ServerActor } from "@/lib/seramet-auth";
 import {
   createMigratedTestDatabase,
@@ -8,6 +13,8 @@ import {
 import { MemoryTransactionRepository } from "@/lib/seramet-repository";
 import { permissions } from "@/platform/permissions";
 import { printerConfigurationSchema } from "@/printing/printer-configuration";
+import { createEmptyTransactionState } from "@/lib/transaction-engine";
+import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 
 vi.mock("@/lib/seramet-auth", async (original) => ({
   ...(await original<object>()),
@@ -84,6 +91,281 @@ const configuration = () =>
     host: "127.0.0.1",
     roles: ["BILL", "RECEIPT"],
   });
+
+it("consumes one global attempt across terminals, old evidence, ledger loss and bounded recovery", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const input = { printerId: printer.id, documentType: "TEST", recordId: crypto.randomUUID() };
+  const issued = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  const competing = await Promise.allSettled(
+    Array.from({ length: 12 }, () =>
+      handlePrintingApi(
+        request("consume", { authorization: issued.authorization }),
+        env(),
+        repository,
+      ),
+    ),
+  );
+  expect(competing.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect(competing.filter((r) => r.status === "rejected")).toHaveLength(11);
+  const original = JSON.parse(Buffer.from(issued.authorization.payload, "base64url").toString());
+  const key = await deriveBridgeSigningKey(signingKey, actor.tenantId, branchId, printer.bridgeId);
+  const changed = await signPrintJob({ ...original, content: "substituted" }, key);
+  await expect(
+    handlePrintingApi(request("consume", { authorization: changed }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  const expired = await signPrintJob({ ...original, expiresAt: Date.now() - 1 }, key);
+  await expect(
+    handlePrintingApi(request("consume", { authorization: expired }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  for (const recoveryId of [crypto.randomUUID(), crypto.randomUUID()]) {
+    const recovered = await authorizeDelivery(db, actor, {
+      ...original,
+      recoveryId,
+      expiresAt: Date.now() + 90000,
+    });
+    const authorization = await signPrintJob(recovered, key);
+    await handlePrintingApi(request("consume", { authorization }), env(), repository);
+    await expect(
+      handlePrintingApi(
+        request("consume", { authorization: issued.authorization }),
+        env(),
+        repository,
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+  }
+  await expect(
+    authorizeDelivery(db, actor, { ...original, recoveryId: crypto.randomUUID() }),
+  ).rejects.toMatchObject({ status: 409 });
+  expect(
+    await db
+      .prepare("SELECT COUNT(*) n FROM audit_events WHERE action='PRINT_DELIVERY_RESERVED'")
+      .first(),
+  ).toEqual({ n: 3 });
+});
+
+it("rejects self-signed but unissued capabilities and branch substitutions", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const key = await deriveBridgeSigningKey(signingKey, actor.tenantId, branchId, printer.bridgeId);
+  const authorization = await signPrintJob(
+    {
+      v: 1,
+      id: crypto.randomUUID(),
+      tenantId: actor.tenantId,
+      branchId,
+      bridgeId: printer.bridgeId,
+      actorId: actor.id,
+      deliveryAttempt: 0,
+      expiresAt: Date.now() + 90000,
+      target: { id: printer.id },
+    },
+    key,
+  );
+  await expect(
+    handlePrintingApi(request("consume", { authorization }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+});
+
+it("revokes issued delivery when the configured printer changes", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const issued = await (await handlePrintingApi(
+    request("authorize", {
+      printerId: printer.id,
+      documentType: "TEST",
+      recordId: crypto.randomUUID(),
+    }),
+    env(),
+    repository,
+  ))!.json();
+  await handlePrintingApi(request("printers", { ...printer, host: "10.0.0.8" }), env(), repository);
+  await expect(
+    handlePrintingApi(
+      request("consume", { authorization: issued.authorization }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  expect(
+    await db
+      .prepare("SELECT COUNT(*) n FROM audit_events WHERE action='PRINT_DELIVERY_RESERVED'")
+      .first(),
+  ).toEqual({ n: 0 });
+});
+
+it("records one authoritative receipt reprint across separate terminals", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  actor.permissions.push(permissions.invoicesManage);
+  const state = createEmptyTransactionState(actor.tenantId);
+  const invoiceId = crypto.randomUUID(),
+    receiptId = crypto.randomUUID(),
+    stamp = new Date().toISOString();
+  state.bills.push({
+    id: invoiceId,
+    tenantId: actor.tenantId,
+    branchId,
+    branch: "Disposable branch",
+    orderIds: [],
+    customer: "Test",
+    status: "PAID",
+    paymentStatus: "PAID",
+    issuedAt: stamp,
+    dueAt: stamp,
+    lines: [
+      {
+        id: crypto.randomUUID(),
+        name: "Meal",
+        category: "Test",
+        quantity: 2,
+        unitPrice: 12.34,
+        productionStation: "NONE",
+      },
+    ],
+    subtotal: 24.68,
+    tax: 0,
+    total: 24.68,
+    paid: 24.68,
+  });
+  state.receipts.push({
+    id: receiptId,
+    tenantId: actor.tenantId,
+    branchId,
+    invoiceId,
+    orderId: crypto.randomUUID(),
+    branch: "Disposable branch",
+    cashier: "Disposable operator",
+    customer: "Test",
+    issuedAt: stamp,
+    total: 24.68,
+    paidAmount: 24.68,
+    change: 0,
+    paymentBreakdown: [{ method: "CASH", amount: 24.68, reference: "TEST ONLY" }],
+    reprints: [],
+  });
+  await repository.saveState(state, actor, "Disposable receipt acceptance");
+  await hydrateAuthoritativeConfiguration(db, env(), true);
+  const input = {
+    printerId: printer.id,
+    documentType: "RECEIPT",
+    recordId: receiptId,
+    reprintId: crypto.randomUUID(),
+    reprintReason: "Customer requested another receipt",
+  };
+  const first = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  actor.id = crypto.randomUUID();
+  actor.name = "Second disposable terminal";
+  const second = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  const results = await Promise.allSettled(
+    [first, second].map((issued) =>
+      handlePrintingApi(
+        request("consume", { authorization: issued.authorization }),
+        env(),
+        repository,
+      ),
+    ),
+  );
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  expect((await repository.loadState(actor.tenantId)).receipts[0]!.reprints).toHaveLength(1);
+  actor.permissions = [];
+  await expect(
+    handlePrintingApi(request("authorize", input), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+});
+
+it("binds bill reprint identity and reason across terminals before signing", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  actor.permissions.push(permissions.invoicesManage);
+  const state = createEmptyTransactionState(actor.tenantId);
+  const id = crypto.randomUUID();
+  state.bills.push({
+    id,
+    tenantId: actor.tenantId,
+    branchId,
+    branch: "Disposable branch",
+    orderIds: [],
+    customer: "Test",
+    status: "OPEN",
+    paymentStatus: "UNPAID",
+    issuedAt: new Date().toISOString(),
+    dueAt: new Date().toISOString(),
+    lines: [
+      {
+        id: crypto.randomUUID(),
+        name: "Meal",
+        category: "Test",
+        quantity: 2,
+        unitPrice: 12.34,
+        productionStation: "NONE",
+      },
+    ],
+    subtotal: 24.68,
+    tax: 0,
+    total: 24.68,
+    paid: 0,
+  });
+  await repository.saveState(state, actor, "Disposable bill reprint acceptance");
+  await hydrateAuthoritativeConfiguration(db, env(), true);
+  const input = {
+    printerId: printer.id,
+    documentType: "BILL",
+    recordId: id,
+    reprintId: crypto.randomUUID(),
+    reprintReason: "Customer requested another copy",
+  };
+  const first = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  actor.id = crypto.randomUUID();
+  const second = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  expect(JSON.parse(Buffer.from(first.authorization.payload, "base64url").toString()).id).toBe(
+    JSON.parse(Buffer.from(second.authorization.payload, "base64url").toString()).id,
+  );
+  await expect(
+    handlePrintingApi(
+      request("authorize", { ...input, reprintReason: "An altered operator reason" }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  await expect(
+    handlePrintingApi(
+      request("authorize", { ...input, reprintReason: undefined }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 400 });
+  expect(
+    await db
+      .prepare("SELECT COUNT(*) n FROM audit_events WHERE action='PRINT_REPRINT_AUTHORIZED'")
+      .first(),
+  ).toEqual({ n: 1 });
+});
 
 it("persists administrator config, edits/disables it and lists only active branch", async () => {
   const saved = await (await handlePrintingApi(
@@ -204,4 +486,163 @@ it("rejects unsafe endpoint syntax, incompatible profiles and excessive copies",
       false,
     );
   }
+});
+
+it("derives isolated enrollment keys without exporting the server master", async () => {
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const enrollment = await (await handlePrintingApi(
+    request("enrollment", { bridgeId: printer.bridgeId }),
+    env(),
+    repository,
+  ))!.json();
+  expect(enrollment.signingKey).not.toBe(signingKey);
+  expect(enrollment.signingKey).toBe(
+    await deriveBridgeSigningKey(signingKey, actor.tenantId, actor.branchId, printer.bridgeId),
+  );
+  expect(enrollment.signingKey).not.toBe(
+    await deriveBridgeSigningKey(signingKey, actor.tenantId, crypto.randomUUID(), printer.bridgeId),
+  );
+  actor.permissions = [];
+  await expect(
+    handlePrintingApi(request("enrollment", { bridgeId: printer.bridgeId }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+});
+
+it("authorizes only the exact claimed immutable station obligation and renders it reproducibly", async () => {
+  await db
+    .prepare(
+      "INSERT INTO stations(tenant_id,id,branch_id,code,name,station_type,payload_json) VALUES (?,?,?,?,?,'KITCHEN','{}')",
+    )
+    .bind(actor.tenantId, crypto.randomUUID(), branchId, "GRILL", "Grill")
+    .run();
+  const printer = (
+    await (await handlePrintingApi(
+      request("printers", { ...configuration(), roles: ["KITCHEN"], stations: ["GRILL"] }),
+      env(),
+      repository,
+    ))!.json()
+  ).printer;
+  actor.permissions.push(permissions.ordersUpdate);
+  const state = createEmptyTransactionState(actor.tenantId);
+  const orderId = crypto.randomUUID();
+  const obligationId = crypto.randomUUID();
+  const claimToken = crypto.randomUUID();
+  const stamp = new Date().toISOString();
+  const lines = [
+    {
+      id: crypto.randomUUID(),
+      name: "Persisted meal",
+      category: "Test",
+      quantity: 2,
+      unitPrice: 123.45,
+      productionStation: "GRILL",
+      itemNote: "No salt",
+    },
+  ];
+  state.orders = [
+    {
+      id: orderId,
+      tenantId: actor.tenantId,
+      branchId,
+      branch: actor.branch,
+      customer: "Disposable",
+      channel: "Takeaway",
+      cashier: actor.name,
+      status: "SENT_TO_KITCHEN",
+      paymentStatus: "UNPAID",
+      createdAt: stamp,
+      updatedAt: stamp,
+      lines,
+      subtotal: 246.9,
+      tax: 0,
+      total: 246.9,
+    },
+  ];
+  state.kitchenPrintObligations = [
+    {
+      id: obligationId,
+      tenantId: actor.tenantId,
+      branchId,
+      branch: actor.branch,
+      orderId,
+      station: "GRILL",
+      sourceId: crypto.randomUUID(),
+      kind: "ORIGINAL",
+      lines,
+      status: "CLAIMED",
+      claimedBy: actor.id,
+      claimToken,
+      claimedAt: stamp,
+      createdAt: stamp,
+      updatedAt: stamp,
+    },
+  ];
+  await repository.saveState(state, actor, "Disposable print acceptance");
+  await hydrateAuthoritativeConfiguration(db, env(), true);
+  const input = {
+    printerId: printer.id,
+    documentType: "FOOD_KOT",
+    recordId: obligationId,
+    claimToken,
+  };
+  const first = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  const second = await (await handlePrintingApi(
+    request("authorize", input),
+    env(),
+    repository,
+  ))!.json();
+  const decode = (result: { authorization: { payload: string } }) =>
+    JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
+  expect(decode(first).content).toBe(decode(second).content);
+  expect(decode(first).id).toBe(`${obligationId}:0`);
+  expect(decode(first).content).toContain("2 x PERSISTED MEAL");
+  expect(decode(first).content).toContain("NO SALT");
+  await handlePrintingApi(
+    request("consume", { authorization: first.authorization }),
+    env(),
+    repository,
+  );
+  await expect(
+    handlePrintingApi(
+      request("authorize", { ...input, claimToken: crypto.randomUUID() }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  actor.id = crypto.randomUUID();
+  await expect(
+    handlePrintingApi(request("authorize", input), env(), repository),
+  ).rejects.toMatchObject({ status: 409 });
+  const recoveryToken = crypto.randomUUID();
+  Object.assign(state.kitchenPrintObligations![0]!, {
+    claimedBy: actor.id,
+    claimToken: recoveryToken,
+    reviewReason: "Manager inspected paper and authorized recovery",
+  });
+  await repository.saveState(state, actor, "Disposable reviewed KOT recovery");
+  const recovery = await (await handlePrintingApi(
+    request("authorize", { ...input, claimToken: recoveryToken }),
+    env(),
+    repository,
+  ))!.json();
+  expect(decode(recovery).id).toBe(decode(first).id);
+  expect(recovery.retry).toBe(true);
+  await expect(
+    handlePrintingApi(
+      request("consume", { authorization: first.authorization }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  await handlePrintingApi(
+    request("consume", { authorization: recovery.authorization }),
+    env(),
+    repository,
+  );
 });

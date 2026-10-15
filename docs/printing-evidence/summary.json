@@ -1,0 +1,59 @@
+{
+  "emulatorRevision": "1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d",
+  "results": [
+    {
+      "name": "bill-58mm",
+      "transportMilliseconds": 236.8,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 68,
+      "unknownCommands": 0,
+      "textSha256": "204a695b01132cb54b07618c4df66902581b066618b48026ee1c7899880f6914"
+    },
+    {
+      "name": "receipt-58mm",
+      "transportMilliseconds": 93.1,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 62,
+      "unknownCommands": 0,
+      "textSha256": "32e545f789ead2db43eadb48e55d572952d3219b39785e0e7ecafa1f76af0a0e"
+    },
+    {
+      "name": "kot-58mm",
+      "transportMilliseconds": 89.9,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 54,
+      "unknownCommands": 0,
+      "textSha256": "4fa099666e095d4e4cd8b9dabe224efbe96b6708372614cc069cae2c391f8997"
+    },
+    {
+      "name": "bill-80mm",
+      "transportMilliseconds": 108.6,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 68,
+      "unknownCommands": 0,
+      "textSha256": "97e8985843e3d18c96dc7d4d4960964030aae42596dc6735544e67c17d3b2de0"
+    },
+    {
+      "name": "receipt-80mm",
+      "transportMilliseconds": 96.3,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 62,
+      "unknownCommands": 0,
+      "textSha256": "021c8a91688473174eb3a6a125892820d1dc1164b30e7f0bb8ae934af991e8cf"
+    },
+    {
+      "name": "kot-80mm",
+      "transportMilliseconds": 86.2,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 50,
+      "unknownCommands": 0,
+      "textSha256": "7de624bf4760443515320a5df2a36875da7cc6e1806e23874d7080a6796ceacc"
+    }
+  ]
+}

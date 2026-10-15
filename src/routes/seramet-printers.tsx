@@ -140,7 +140,6 @@ function SerametPrinters() {
     bridgeConfig,
     printCustomerDocument,
     sendKitchenTickets,
-    reprintJob,
   } = useSerametPrintQueue(selectedBranchId);
   const recoverPendingKot = async (obligation: KitchenPrintObligation) => {
     if (kotActionRef.current || !mayDeliverKot) return;
@@ -370,19 +369,6 @@ function SerametPrinters() {
     setNotice(
       `${result.jobs.length} ${type.toLowerCase()} diagnostic job(s) created. Transport and physical output are not yet confirmed.`,
     );
-  };
-
-  const reprintLatest = () => {
-    const latest = jobs.find(
-      (job) => job.status === "Printed" || job.status === "Fallback Printed",
-    );
-    if (!latest) {
-      setNotice("Print a test job before requesting a reprint.");
-      return;
-    }
-    const result = reprintJob(latest.id, "Branch Manager", "Manager authorized duplicate copy");
-    setBridgeStatus(SerametLocalPrintBridge.getStatus());
-    setNotice(result?.skipped ?? `Reprint logged against ${latest.id}.`);
   };
 
   const uploadLogo = async (event: ChangeEvent<HTMLInputElement>, scope: LogoScope) => {
@@ -906,7 +892,7 @@ function SerametPrinters() {
           sub="Template settings drive the rendered print content used by POS"
         />
         <div className="grid gap-3 p-4 md:grid-cols-3">
-          {(Object.values(documentTemplates) as PrintTemplateSettings[]).map((template) => (
+          {Object.values(profile.templateSettings).map((template) => (
             <article
               key={template.id}
               className="rounded-lg border border-border bg-secondary/30 p-3"

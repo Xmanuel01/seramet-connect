@@ -27,6 +27,9 @@ export const printerConfigurationSchema = z
     fallbackPrinterId: z.string().uuid().optional(),
     copies: z.number().int().min(1).max(3).default(1),
     enabled: z.boolean().default(true),
+    kitchenMode: z
+      .enum(["PRINTER_ONLY", "KDS_ONLY", "KDS_AND_PRINTER", "NO_DEDICATED_KITCHEN_SYSTEM"])
+      .default("PRINTER_ONLY"),
   })
   .strict()
   .superRefine((value, ctx) => {

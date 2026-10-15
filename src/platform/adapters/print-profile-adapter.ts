@@ -58,6 +58,10 @@ export function getConfiguredBranchHardwareProfile(
   const resolved = resolveBranch(branchIdOrName, tenantId);
   const branch = resolved.branch;
   const tenant = repository.getTenant(resolved.tenantId);
+  const configuredDevices = repository.listDevices(resolved.tenantId, branch.id);
+  if (configuredDevices.some((device) => device.printing)) {
+    return buildEnrolledProfile(resolved.tenantId, branch.id);
+  }
   const identity = repository.getDocumentIdentity(resolved.tenantId, branch.id);
   const devices = repository.listDevices(resolved.tenantId, branch.id);
   const routes = repository.listPrintRoutes(resolved.tenantId, branch.id);
@@ -127,6 +131,89 @@ export function getConfiguredBranchHardwareProfile(
     printers,
     stationRoutes: buildStationRoutes(resolved.tenantId, branch.id),
     documentRoutes,
+    templateSettings,
+  };
+}
+
+function buildEnrolledProfile(tenantId: string, branchId: string): BranchHardwareProfile {
+  const repository = getConfigurationRepository();
+  const tenant = repository.getTenant(tenantId);
+  const branch = repository.getBranch(tenantId, branchId);
+  const devices = repository.listDevices(tenantId, branchId);
+  const routes = repository.listPrintRoutes(tenantId, branchId);
+  const snapshot = repository.snapshot();
+  const existingIdentity =
+    snapshot.documentIdentities.find(
+      (item) => item.tenantId === tenantId && item.branchId === branchId,
+    ) ?? snapshot.documentIdentities.find((item) => item.tenantId === tenantId && !item.branchId);
+  const identity: BusinessDocumentIdentity = existingIdentity ?? {
+    id: `printer-identity:${branchId}`,
+    tenantId,
+    branchId,
+    businessName: tenant.tradingName || tenant.legalName,
+    address: branch.address,
+    phone: branch.phone,
+    email: branch.email,
+    taxNumber: "",
+    currency: tenant.defaultCurrency,
+    footerMessage: "",
+    paymentInstructions: [],
+    metadata: {},
+  };
+  const templates = repository.listDocumentTemplates(tenantId, branchId);
+  const templateSettings = Object.fromEntries(
+    customerDocumentTypes.map((documentType) => {
+      const existing = templates.find((template) => template.documentType === documentType);
+      if (existing) return [documentType, toTemplateSettings(existing, identity)];
+      const device = devices.find(
+        (candidate) => candidate.enabled && candidate.printing?.roles.includes(documentType),
+      );
+      return [
+        documentType,
+        {
+          id: `enrolled:${documentType}`,
+          label: documentType,
+          documentType,
+          width: device?.printing?.paperWidth ?? "80mm",
+          copies: device?.printing?.copies ?? 1,
+          logoText: identity.businessName,
+          showBranch: true,
+          showCashier: true,
+          showCustomer: true,
+          showTax: true,
+          showPayment: true,
+          showQrCode: false,
+          footerMessage: identity.footerMessage,
+        },
+      ];
+    }),
+  ) as BranchHardwareProfile["templateSettings"];
+  return {
+    tenantId,
+    branchId,
+    branch: branch.name,
+    printIdentity: {
+      ...toPrintIdentity(identity, branch.name, branch.timezone ?? tenant.timezone),
+      locale: tenant.locale,
+    },
+    kitchenMode: readKitchenMode(branch.metadata["kitchenMode"]),
+    capabilities: readCapabilities(branch.metadata["capabilities"] ?? {}),
+    posTerminals: devices.filter((device) => device.enabled && device.deviceType === "POS_TERMINAL")
+      .length,
+    printers: devices
+      .filter((device) => device.deviceType === "PRINTER")
+      .map((device) => toPrinterDevice(device, branch.name, routes)),
+    stationRoutes: buildStationRoutes(tenantId, branchId),
+    documentRoutes: Object.fromEntries(
+      printDocumentTypes.map((type) => [
+        type,
+        {
+          primaryRole: documentRole(type),
+          copies: 1,
+          template: type,
+        },
+      ]),
+    ) as BranchHardwareProfile["documentRoutes"],
     templateSettings,
   };
 }

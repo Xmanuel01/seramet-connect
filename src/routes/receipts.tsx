@@ -64,7 +64,12 @@ function Receipts() {
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
   const reprints = rows.reduce((sum, receipt) => sum + receipt.reprints.length, 0);
 
-  const printReceipt = (receiptId: string, reason = "Receipt register print") => {
+  const printReceipt = (receiptId: string, _suggestion = "Receipt register print") => {
+    const reason = window.prompt("Specific reason for this receipt copy")?.trim();
+    if (!reason || reason.length < 12) {
+      setPrintNotice("A specific reprint reason of at least 12 characters is required.");
+      return;
+    }
     const receipt = state.receipts.find((item) => item.id === receiptId);
     if (!receipt) return;
     const order = receiptRecordToPrintOrder(receipt, state);

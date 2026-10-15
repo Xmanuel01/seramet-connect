@@ -10,9 +10,9 @@ import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
 import { encodeEscPos } from "./escpos-encoder.mjs";
-import { sendTcp, sendWindows } from "./transports.mjs";
+import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
 
-export async function createBridge(config, { deliver, localTest = false } = {}) {
+export async function createBridge(config, { deliver, localTest = false, consume } = {}) {
   if (config.host && config.host !== "127.0.0.1") throw new Error("LOOPBACK_BIND_REQUIRED");
   if (
     !config.token ||
@@ -24,27 +24,65 @@ export async function createBridge(config, { deliver, localTest = false } = {}) 
     !config.branchId
   )
     throw new Error("BRIDGE_ENROLLMENT_REQUIRED");
-  const dataDir = config.dataDir ?? join(homedir(), ".seramet-print-bridge");
+  if (!consume) {
+    const endpoint = new URL(config.authorizationEndpoint);
+    if (
+      endpoint.pathname !== "/api/seramet/printing/consume" ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !(
+        endpoint.protocol === "https:" ||
+        (localTest &&
+          endpoint.protocol === "http:" &&
+          ["127.0.0.1", "localhost"].includes(endpoint.hostname))
+      )
+    )
+      throw new Error("AUTHORITY_ENDPOINT_REQUIRED");
+    consume = async (authorization) => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(10000),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authorization }),
+      });
+      if (!response.ok || (await response.json()).reserved !== true)
+        throw new Error("DELIVERY_REQUIRES_RECONCILIATION");
+    };
+  }
+  const scope = createHash("sha256")
+    .update(JSON.stringify([config.tenantId, config.branchId, config.bridgeId]))
+    .digest("hex");
+  const dataDir = join(config.dataDir ?? join(homedir(), ".seramet-print-bridge"), scope);
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const store = new PrintJobStore(join(dataDir, "print-jobs.sqlite"));
   await chmod(join(dataDir, "print-jobs.sqlite"), 0o600);
   const runner = new PrintJobRunner(
     store,
-    deliver ??
-      (async (job) => {
-        if (job.target.transport === "TCP") {
-          return sendTcp(encodeEscPos(job.content, job.profile), job.target, {
-            localTest: localTest && job.localTest === true,
-          });
-        }
-        const file = join(dataDir, `${createHash("sha256").update(job.id).digest("hex")}.txt`);
-        try {
-          await writeFile(file, job.content, { mode: 0o600 });
-          return await sendWindows(file, job.target);
-        } finally {
-          await unlink(file).catch(() => undefined);
-        }
-      }),
+    async (job) => {
+      verifyPrintAuthorization(job.authorization, config);
+      await consume(job.authorization);
+      return (
+        deliver ??
+        ((job) =>
+          deliverWithFallback(job, async (target, profile) => {
+            if (target.transport === "TCP") {
+              return sendTcp(encodeEscPos(job.content, profile), target, {
+                localTest: localTest && job.localTest === true,
+              });
+            }
+            const file = join(dataDir, `${createHash("sha256").update(job.id).digest("hex")}.txt`);
+            try {
+              await writeFile(file, job.content, { mode: 0o600 });
+              return await sendWindows(file, target);
+            } finally {
+              await unlink(file).catch(() => undefined);
+            }
+          }))
+      )(job);
+    },
     config.concurrency ?? 2,
   );
   const allowed = new Set(config.allowedOrigins ?? []);
@@ -93,14 +131,17 @@ export async function createBridge(config, { deliver, localTest = false } = {}) 
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      const job = verifyPrintAuthorization(body.authorization, config);
+      const job = {
+        ...verifyPrintAuthorization(body.authorization, config),
+        authorization: body.authorization,
+      };
       const row = store.enqueue(job);
       if (
         body.retry === true &&
         ["NOT_SENT", "UNCERTAIN"].includes(row.stage) &&
         row.recovery_id !== job.recoveryId
       )
-        store.retry(job.id, job.recoveryId);
+        store.retry(job.id, job.recoveryId, job);
       runner.pump();
       const current = store.get(row.id);
       return reply(202, {
@@ -147,7 +188,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.env.SERAMET_BRIDGE_CONFIG ??
         join(process.cwd(), "local-print-bridge/config.local.json"),
       "utf8",
-    ),
+    ).replace(/^\uFEFF/, ""),
   );
   const bridge = await createBridge(config, {
     localTest: process.env.SERAMET_BRIDGE_MODE === "local-test",

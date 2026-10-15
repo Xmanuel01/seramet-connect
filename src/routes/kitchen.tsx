@@ -430,8 +430,8 @@ function KitchenTicketCard({
               {printBusy
                 ? "Printing..."
                 : printJob?.status === "Failed"
-                  ? "Retry print"
-                  : "Reprint KOT"}
+                  ? "Review print"
+                  : "Review print"}
             </button>
           ) : null}
         </div>
@@ -445,8 +445,8 @@ function KitchenTicketCard({
           {printBusy
             ? "Printing..."
             : printJob?.status === "Failed"
-              ? "Retry print"
-              : "Reprint KOT"}
+              ? "Review print"
+              : "Review print"}
         </button>
       )}
     </article>
