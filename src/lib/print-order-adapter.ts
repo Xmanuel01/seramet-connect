@@ -162,3 +162,20 @@ export function receiptRecordToPrintOrder(
     change: receipt.change,
   };
 }
+
+export function billingDocumentToPrintOrder(
+  bill: BillingRecord,
+  state: TransactionState,
+  documentType: "BILL" | "INVOICE" | "RECEIPT",
+): OrderForPrint | null {
+  if (documentType !== "RECEIPT")
+    return billingRecordToPrintOrder(bill, state.payments, state.orders);
+  const receipt = state.receipts.find(
+    (item) =>
+      item.invoiceId === bill.id &&
+      item.tenantId === bill.tenantId &&
+      item.branchId === bill.branchId &&
+      item.branch === bill.branch,
+  );
+  return receipt ? receiptRecordToPrintOrder(receipt, state) : null;
+}

@@ -12,7 +12,7 @@ import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate } from "@/lib/date-filters";
 import { TransactionEngine, type BillingRecord } from "@/lib/transaction-engine";
 import { SerametPrintService } from "@/lib/seramet-print-service";
-import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
+import { billingDocumentToPrintOrder } from "@/lib/print-order-adapter";
 import {
   createDeliveryLog,
   createInvoicePdfBlob,
@@ -269,11 +269,10 @@ function Invoices() {
   ) => {
     try {
       const profile = SerametPrintService.getBranchHardwareProfile(invoice.branch);
-      const job = SerametPrintService.createDocumentJob(
-        profile,
-        billingRecordToPrintOrder(invoice, state.payments, state.orders),
-        documentType,
-      );
+      const source = billingDocumentToPrintOrder(invoice, state, documentType);
+      if (!source)
+        throw new Error("No authoritative payment receipt is available for this invoice.");
+      const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
         title: `${documentType === "INVOICE" ? "A4 tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
@@ -875,10 +874,16 @@ function Invoices() {
                       setWarning("The billing record is no longer available to print.");
                       return;
                     }
-                    const result = printCustomerDocument(
-                      billingRecordToPrintOrder(source, state.payments, state.orders),
+                    const document = billingDocumentToPrintOrder(
+                      source,
+                      state,
                       printPreview.documentType,
                     );
+                    if (!document) {
+                      setWarning("No authoritative payment receipt is available for this invoice.");
+                      return;
+                    }
+                    const result = printCustomerDocument(document, printPreview.documentType);
                     if (result.jobs.length === 0) {
                       setWarning(result.skipped[0] ?? "Printing is not configured.");
                     }
