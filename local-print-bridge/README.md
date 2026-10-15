@@ -27,7 +27,15 @@ acceptance dependencies. Unsigned v1 payloads are rejected, not silently trusted
 5. Run `npm run bridge`. Enable the local bridge connection in Seramet after
    startup. The local bearer token and scoped bridge signing key are distinct.
 
-The optional Windows installer requires explicit bridge/tenant/branch arguments
+Enrollment includes `authorizationEndpoint`, the existing gateway's HTTPS
+`/api/seramet/printing/consume` endpoint. The bridge must reach it before every
+physical attempt. Literal loopback HTTP is allowed only in explicit local-test
+mode. No authorization endpoint, no connectivity, expired evidence or an
+unexpected response means no printer contact. This is deliberate fail-closed
+behavior, not offline printer availability.
+
+The optional Windows installer requires explicit bridge/tenant/branch arguments,
+the enrollment's HTTPS `AuthorizationEndpoint`,
 and the **scoped** `SERAMET_BRIDGE_SIGNING_KEY` in its process environment. Never
 give it the server master. It refuses to overwrite an existing enrollment. No
 printer ports/drivers, printer defaults or security-policy changes are needed.
@@ -69,9 +77,10 @@ NOT_SENT means no TCP submission occurred; UNCERTAIN means output may exist.
 Printer status remains UNKNOWN; neither terminal acceptance state means paper
 printed. There is no production dry-run success path.
 
-Concurrency is bounded (default two, maximum four); primary and fallback targets
-are reserved together so concurrent jobs cannot interleave on an assigned
-endpoint. Approved fallback is attempted only after TCP reports NOT_SENT. It
+Concurrency is bounded (default two, maximum four). All TCP targets share one
+bridge-wide lane, including fallback, so different hostnames for the same
+physical device cannot interleave. Windows endpoints retain independent lanes.
+Approved fallback is attempted only after TCP reports NOT_SENT. It
 is never attempted after partial bytes, timeout after submission, uncertain OS
 spooling, or partial multi-copy acceptance. Unknown output requires inspection.
 
@@ -93,12 +102,42 @@ spooling, or partial multi-copy acceptance. Unknown output requires inspection.
    or be reconciled before reconfiguration. Changed content/target under the
    same identity fails closed; never edit the ledger to force printing.
 
-Accepted/cancelled job content is scrubbed immediately; fingerprints, metadata
+### Ledger Loss, Re-enrollment and Reconciliation
+
+Each issued capability has a durable server grant and an atomic, unique attempt
+reservation in the existing `audit_events` store. This is shared by terminals
+and machines, not inferred from a browser or local ledger. An already-reserved
+attempt cannot reserve again after local disk loss, re-enrollment or submission
+to another machine. A missing response after reservation is ambiguous: no
+automatic replay, fallback or "not printed" claim is allowed. The existing KOT
+manager review must record physical inspection and authorize a fresh claim;
+customer copies require a specific entered reason and durable server audit.
+There are at most three reserved attempts per logical job/copy. Independent
+explicit reprints are separately identified and visibly marked copies.
+
+Stop the old bridge before replacement. Preserve the ledger and inspect server
+obligations, reservations and paper. Re-enrollment is not evidence of
+non-delivery and cannot reset history. Configuration changes invalidate issued
+targets/fallbacks; reconcile first, then use an authorized recovery or copy.
+The TCP lane is local to a bridge process. Unrelated bridge IDs targeting the
+same hardware are not a distributed device lock: assign one active bridge per
+physical printer and drain/reconcile before moving it. Copied machine secrets
+are a credential incident, not a supported deployment pattern.
+
+Retain the server print grant/reservation audit records. Deleting/restoring
+those records together with local ledgers removes replay evidence and cannot
+be made exactly-once by this software. After server rollback or loss, stop
+printing and explicitly reconcile all potentially delivered documents before
+resuming; never automatically replay restored queues. Backup restoration cannot
+undo physical output. No new live storage or credential changes are made here.
+
+Accepted/cancelled job content and signed payload are logically scrubbed immediately; fingerprints, metadata
 and attempt history remain to prevent replay. Unresolved documents retain their
 payload for recovery. Pending work is bounded to 100; unresolved work to 1000.
 Capacity exhaustion rejects new submissions rather than losing them. Inspect
 and reconcile unresolved work; never delete uncertainty to make capacity free.
-The ledger has no automatic deletion of replay-protection tombstones. Windows
+The ledger has no automatic deletion of replay-protection tombstones. WAL files
+and backups remain sensitive; logical deletion is not forensic secure erasure. Windows
 temporary spool text is removed after submission. Securely back up the scoped
 ledger with the service stopped before moving hardware; do not restore an old
 ledger as if it establishes non-delivery. Preserve uncertainty after disk loss.

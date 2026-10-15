@@ -14,18 +14,21 @@ export class PrintJobRunner {
     for (const row of this.store.pending()) {
       if (this.tasks.size >= this.concurrency) break;
       const job = JSON.parse(row.payload);
+      // All TCP aliases share one lane. DNS aliases and address changes cannot
+      // evade serialization; Windows queues retain their own independent lanes.
       const keys = [job.target, job.fallbackTarget]
         .filter(Boolean)
         .map((target) =>
-          JSON.stringify([
-            target.transport,
-            target.host,
-            target.port ?? 9100,
-            target.osPrinterName,
-          ]),
+          target.transport === "TCP"
+            ? "TCP:SERIAL"
+            : JSON.stringify([
+                target.transport,
+                target.host,
+                target.port ?? 9100,
+                target.osPrinterName,
+              ]),
         );
       if (keys.some((key) => this.active.has(key)) || !this.store.claim(row.id)) continue;
-      this.store.record(row.id, "TRANSMITTING", "ATTEMPT_STARTED");
       keys.forEach((key) => this.active.add(key));
       const task = Promise.resolve()
         .then(() => this.deliver(job))

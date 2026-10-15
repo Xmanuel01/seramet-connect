@@ -4,6 +4,13 @@ import { D1AuthoritativeTransactionRepository } from "../src/server/database/aut
 import { hydrateAuthoritativeConfiguration } from "../src/server/database/authoritative-configuration";
 import { PostgresD1Database } from "../src/server/database/postgres-database";
 import type { ServerActor } from "../src/lib/seramet-auth";
+import {
+  authorizeDelivery,
+  deriveBridgeSigningKey,
+  handlePrintingApi,
+  signPrintJob,
+} from "../src/server/printing-api";
+import { printerConfigurationSchema } from "../src/printing/printer-configuration";
 
 const connectionString = process.env.SERAMET_POSTGRES_URL;
 const parsed = connectionString ? new URL(connectionString) : null;
@@ -283,9 +290,80 @@ try {
   const commits = await count("mutation_commits");
   assert.equal(await count("realtime_events"), commits);
   assert.equal(await count("audit_events"), commits);
+  await verifyPrintingReservations();
   console.log("POS PostgreSQL two-connection atomicity and idempotency: PASS");
 } finally {
   await Promise.all([firstDb.close(), secondDb.close()]);
+}
+
+async function verifyPrintingReservations() {
+  const printerId = randomUUID();
+  const bridgeId = randomUUID();
+  const master = randomUUID() + randomUUID();
+  const printer = printerConfigurationSchema.parse({
+    branchId,
+    name: "Disposable print verifier",
+    bridgeId,
+    transport: "TCP",
+    host: "10.0.0.2",
+    roles: ["BILL"],
+  });
+  await firstDb
+    .prepare(
+      "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,registered_at,payload_json) VALUES (?,?,?,'PRINTER',?,'ACTIVE',?,?)",
+    )
+    .bind(
+      tenantId,
+      printerId,
+      branchId,
+      printer.name,
+      new Date().toISOString(),
+      JSON.stringify({ printing: printer }),
+    )
+    .run();
+  const job = {
+    v: 1,
+    id: `PRINT-CI:${randomUUID()}`,
+    tenantId,
+    branchId,
+    bridgeId,
+    actorId: userId,
+    target: { id: printerId, transport: "TCP", host: "10.0.0.2", port: 9100 },
+    documentType: "BILL",
+    content: "DISPOSABLE TEST ONLY",
+    expiresAt: Date.now() + 90000,
+  };
+  const issued = await authorizeDelivery(firstDb, actor(), job);
+  const key = await deriveBridgeSigningKey(master, tenantId, branchId, bridgeId);
+  const authorization = await signPrintJob(issued, key);
+  const consume = (db: PostgresD1Database, proof = authorization) =>
+    handlePrintingApi(
+      new Request("http://localhost/api/seramet/printing/consume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ authorization: proof }),
+      }),
+      { SERAMET_DB: db, SERAMET_PRINT_SIGNING_KEY: master },
+      new D1AuthoritativeTransactionRepository(db),
+    );
+  const results = await Promise.allSettled(
+    Array.from({ length: 12 }, (_, index) => consume(index % 2 ? firstDb : secondDb)),
+  );
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 11);
+  for (const recoveryId of [randomUUID(), randomUUID()]) {
+    const recovery = await authorizeDelivery(secondDb, actor(), { ...job, recoveryId });
+    await consume(secondDb, await signPrintJob(recovery, key));
+    await assert.rejects(
+      () => consume(firstDb),
+      (error) => (error as { status?: number }).status === 409,
+    );
+  }
+  await assert.rejects(
+    () => authorizeDelivery(firstDb, actor(), { ...job, recoveryId: randomUUID() }),
+    (error) => (error as { status?: number }).status === 409,
+  );
+  console.log("Printing PostgreSQL two-connection reservation, replay and attempt limit: PASS");
 }
 
 function command(

@@ -54,6 +54,7 @@ function auditStatement(
   id: string,
   action: string,
   detail: string,
+  metadata: unknown = {},
 ) {
   return db
     .prepare(
@@ -73,11 +74,11 @@ function auditStatement(
       detail,
       id,
       actor.sessionId ?? null,
-      "{}",
+      JSON.stringify(metadata),
       new Date().toISOString(),
     );
 }
-async function parse(request: Request) {
+async function parse(request: Request, limit = 16000) {
   const reader = request.body?.getReader();
   let text = "";
   let size = 0;
@@ -87,7 +88,7 @@ async function parse(request: Request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 16000) {
+      if (size > limit) {
         await reader.cancel();
         throw new SerametHttpError(413, "Printer request too large");
       }
@@ -155,6 +156,225 @@ export async function deriveBridgeSigningKey(
   ).join("");
 }
 
+async function digest(value: unknown) {
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(
+          JSON.stringify(value, (_key, item) =>
+            item && typeof item === "object" && !Array.isArray(item)
+              ? Object.fromEntries(
+                  Object.keys(item)
+                    .sort()
+                    .map((key) => [key, item[key]]),
+                )
+              : item,
+          ),
+        ),
+      ),
+    ),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+const deliverySchema = z
+  .object({
+    v: z.literal(1),
+    id: z.string().min(1).max(300),
+    tenantId: z.string().min(1),
+    branchId: z.string().min(1),
+    bridgeId: z.string().min(1),
+    actorId: z.string().min(1),
+    deliveryAttempt: z.number().int().min(0).max(2),
+    expiresAt: z.number().int(),
+    target: z.object({ id: z.string().min(1) }).passthrough(),
+    recoveryId: z.string().min(1).optional(),
+  })
+  .passthrough();
+type Delivery = z.infer<typeof deliverySchema>;
+async function deliveryIdentity(job: Record<string, unknown>) {
+  const { expiresAt: _expires, actorId: _actor, deliveryAttempt: _attempt, ...stable } = job;
+  return {
+    fingerprint: await digest(stable),
+    grantId: `PRINT-GRANT:${await digest([job.tenantId, job.branchId, job.id, job.recoveryId ?? "ORIGINAL"])}`,
+    slotPrefix: `PRINT-DELIVERY:${await digest([job.tenantId, job.branchId, job.id])}:`,
+  };
+}
+async function reserveDelivery(
+  request: Request,
+  env: SerametEnv,
+  repository: TransactionRepository,
+) {
+  const db = env.SERAMET_DB!;
+  const envelope = z
+    .object({
+      authorization: z.object({
+        payload: z.string().max(256000),
+        signature: z.string().regex(/^[a-f0-9]{64}$/),
+      }),
+    })
+    .strict()
+    .parse(await parse(request, 300000));
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(envelope.authorization.payload.replace(/-/g, "+").replace(/_/g, "/")),
+          (c) => c.charCodeAt(0),
+        ),
+      ),
+    );
+  } catch {
+    throw new SerametHttpError(403, "Invalid delivery evidence");
+  }
+  const job = deliverySchema.parse(decoded);
+  const now = Date.now();
+  if (job.expiresAt <= now || job.expiresAt > now + 120000)
+    throw new SerametHttpError(403, "Expired delivery evidence");
+  const key = await deriveBridgeSigningKey(
+    env.SERAMET_PRINT_SIGNING_KEY ?? "",
+    job.tenantId,
+    job.branchId,
+    job.bridgeId,
+  );
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  if (
+    !(await crypto.subtle.verify(
+      "HMAC",
+      cryptoKey,
+      Uint8Array.from(envelope.authorization.signature.match(/../g)!, (v) => parseInt(v, 16)),
+      new TextEncoder().encode(envelope.authorization.payload),
+    ))
+  )
+    throw new SerametHttpError(403, "Invalid delivery evidence");
+  const identity = await deliveryIdentity(job);
+  const grant = await db
+    .prepare(
+      "SELECT metadata_json,actor_id FROM audit_events WHERE tenant_id=? AND branch_id=? AND id=? AND action='PRINT_DELIVERY_AUTHORIZED'",
+    )
+    .bind(job.tenantId, job.branchId, identity.grantId)
+    .first<{ metadata_json: string; actor_id: string }>();
+  const metadata = grant ? JSON.parse(grant.metadata_json) : null;
+  if (
+    !metadata ||
+    metadata.fingerprint !== identity.fingerprint ||
+    metadata.attempt !== job.deliveryAttempt
+  )
+    throw new SerametHttpError(403, "Unissued delivery evidence");
+  if (["FOOD_KOT", "BAR_TICKET", "DISPATCH_TICKET"].includes(String(job.documentType))) {
+    const state = await repository.loadState(job.tenantId);
+    const obligation = state.kitchenPrintObligations?.find(
+      (item) => item.id === job.sourceRecordId && item.branchId === job.branchId,
+    );
+    if (
+      !obligation ||
+      obligation.status !== "CLAIMED" ||
+      obligation.claimToken !== job.claimToken ||
+      obligation.claimedBy !== job.actorId
+    )
+      throw new SerametHttpError(409, "KOT claim is no longer active; reconcile before recovery");
+  }
+  const configured = await db
+    .prepare(
+      "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+    )
+    .bind(job.tenantId, job.branchId, job.target.id)
+    .first<{ payload_json: string }>();
+  const printer = printerConfigurationSchema.safeParse(
+    configured ? JSON.parse(configured.payload_json).printing : null,
+  );
+  if (!printer.success || !printer.data.enabled || printer.data.bridgeId !== job.bridgeId)
+    throw new SerametHttpError(403, "Bridge enrollment no longer active");
+  if (
+    job.printerConfigurationHash &&
+    job.printerConfigurationHash !== (await digest({ ...printer.data, id: job.target.id }))
+  )
+    throw new SerametHttpError(409, "Printer configuration changed; reconcile before recovery");
+  if (job.fallbackTarget && typeof job.fallbackTarget === "object") {
+    const target = job.fallbackTarget as { id?: string };
+    const row = await db
+      .prepare(
+        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+      )
+      .bind(job.tenantId, job.branchId, target.id ?? "")
+      .first<{ payload_json: string }>();
+    const fallback = printerConfigurationSchema.safeParse(
+      row ? JSON.parse(row.payload_json).printing : null,
+    );
+    if (
+      !fallback.success ||
+      !fallback.data.enabled ||
+      fallback.data.bridgeId !== job.bridgeId ||
+      job.fallbackConfigurationHash !== (await digest({ ...fallback.data, id: target.id }))
+    )
+      throw new SerametHttpError(409, "Fallback configuration changed; reconcile before recovery");
+  }
+  const actor = {
+    id: grant!.actor_id,
+    tenantId: job.tenantId,
+    branchId: job.branchId,
+  } as ServerActor;
+  const consumed = await auditStatement(
+    db,
+    actor,
+    `${identity.slotPrefix}${job.deliveryAttempt}`,
+    "PRINT_DELIVERY_RESERVED",
+    job.id,
+    { grantId: identity.grantId },
+  ).run();
+  if (consumed.meta?.changes !== 1)
+    throw new SerametHttpError(
+      409,
+      "Delivery already reserved; reconcile physical output before recovery",
+    );
+  return respond({ reserved: true });
+}
+
+export async function authorizeDelivery(
+  db: D1Database,
+  actor: ServerActor,
+  job: Record<string, unknown>,
+): Promise<Delivery> {
+  const identity = await deliveryIdentity(job);
+  const prior = await db
+    .prepare(
+      "SELECT COUNT(*) n FROM audit_events WHERE tenant_id=? AND branch_id=? AND action='PRINT_DELIVERY_RESERVED' AND id IN (?,?,?)",
+    )
+    .bind(
+      actor.tenantId,
+      actor.branchId,
+      `${identity.slotPrefix}0`,
+      `${identity.slotPrefix}1`,
+      `${identity.slotPrefix}2`,
+    )
+    .first<{ n: number }>();
+  const attempt = job.recoveryId ? Number(prior?.n ?? 0) : 0;
+  if (attempt > 2)
+    throw new SerametHttpError(
+      409,
+      "Delivery attempt limit reached; reconcile without another automatic attempt",
+    );
+  await auditStatement(db, actor, identity.grantId, "PRINT_DELIVERY_AUTHORIZED", String(job.id), {
+    fingerprint: identity.fingerprint,
+    attempt,
+  }).run();
+  const saved = await db
+    .prepare("SELECT metadata_json FROM audit_events WHERE tenant_id=? AND branch_id=? AND id=?")
+    .bind(actor.tenantId, actor.branchId, identity.grantId)
+    .first<{ metadata_json: string }>();
+  const metadata = JSON.parse(saved!.metadata_json);
+  if (metadata.fingerprint !== identity.fingerprint)
+    throw new SerametHttpError(409, "Altered print identity; reconcile before replacement");
+  return deliverySchema.parse({ ...job, deliveryAttempt: metadata.attempt });
+}
+
 export async function handlePrintingApi(
   request: Request,
   env: SerametEnv,
@@ -162,9 +382,12 @@ export async function handlePrintingApi(
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/seramet/printing/")) return null;
-  const actor = await authenticateSerametRequest(request, env);
   const db = env.SERAMET_DB;
   if (!db) throw new SerametHttpError(503, "Authoritative printer configuration is unavailable");
+  // This endpoint consumes an issued, signed capability, not browser scope headers.
+  if (url.pathname === "/api/seramet/printing/consume" && request.method === "POST")
+    return reserveDelivery(request, env, repository);
+  const actor = await authenticateSerametRequest(request, env);
   if (url.pathname === "/api/seramet/printing/enrollment" && request.method === "POST") {
     manage(actor);
     const input = z
@@ -205,6 +428,7 @@ export async function handlePrintingApi(
       tenantId: actor.tenantId,
       branchId: actor.branchId,
       signingKey,
+      authorizationEndpoint: `${url.origin}/api/seramet/printing/consume`,
     });
   }
   if (url.pathname === "/api/seramet/printing/printers" && request.method === "GET") {
@@ -487,39 +711,47 @@ export async function handlePrintingApi(
   }
   if (!env.SERAMET_PRINT_SIGNING_KEY || env.SERAMET_PRINT_SIGNING_KEY.length < 32)
     throw new SerametHttpError(503, "Protected print signing is not configured");
-  const authorization = await signPrintJob(
-    {
-      v: 1,
-      id,
-      bridgeId: printer.bridgeId,
-      tenantId: actor.tenantId,
-      branchId: actor.branchId,
-      documentType: input.documentType,
-      content,
-      target: printerTarget(printer),
-      ...(fallback
-        ? {
-            fallbackTarget: printerTarget(fallback),
-            fallbackProfile: {
-              paperWidth: fallback.paperWidth,
-              encoding: fallback.encoding,
-              cutter: fallback.cutter,
-              emphasis: fallback.emphasis,
-            },
-          }
-        : {}),
-      profile: {
-        paperWidth: printer.paperWidth,
-        encoding: printer.encoding,
-        cutter: printer.cutter,
-        emphasis: printer.emphasis,
-      },
-      expiresAt: Date.now() + 90000,
-      localTest:
-        resolveRuntimeConfiguration(env).environment === "development" &&
-        ["localhost", "127.0.0.1"].includes(url.hostname),
-      ...(recoveryId ? { recoveryId } : {}),
+  const delivery = await authorizeDelivery(db, actor, {
+    v: 1,
+    id,
+    bridgeId: printer.bridgeId,
+    tenantId: actor.tenantId,
+    branchId: actor.branchId,
+    actorId: actor.id,
+    sourceRecordId: input.recordId,
+    claimToken: input.claimToken ?? null,
+    reprintReason: input.reprintReason ?? null,
+    reprintId: input.reprintId ?? null,
+    documentType: input.documentType,
+    content,
+    target: printerTarget(printer),
+    printerConfigurationHash: await digest(printer),
+    ...(fallback
+      ? {
+          fallbackTarget: printerTarget(fallback),
+          fallbackConfigurationHash: await digest(fallback),
+          fallbackProfile: {
+            paperWidth: fallback.paperWidth,
+            encoding: fallback.encoding,
+            cutter: fallback.cutter,
+            emphasis: fallback.emphasis,
+          },
+        }
+      : {}),
+    profile: {
+      paperWidth: printer.paperWidth,
+      encoding: printer.encoding,
+      cutter: printer.cutter,
+      emphasis: printer.emphasis,
     },
+    expiresAt: Date.now() + 90000,
+    localTest:
+      resolveRuntimeConfiguration(env).environment === "development" &&
+      ["localhost", "127.0.0.1"].includes(url.hostname),
+    ...(recoveryId ? { recoveryId } : {}),
+  });
+  const authorization = await signPrintJob(
+    delivery,
     await deriveBridgeSigningKey(
       env.SERAMET_PRINT_SIGNING_KEY,
       actor.tenantId,

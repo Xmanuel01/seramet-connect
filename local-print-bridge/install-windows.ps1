@@ -2,11 +2,13 @@ param(
   [Parameter(Mandatory=$true)][string]$BridgeId,
   [Parameter(Mandatory=$true)][string]$TenantId,
   [Parameter(Mandatory=$true)][string]$BranchId,
+  [Parameter(Mandatory=$true)][uri]$AuthorizationEndpoint,
   [switch]$InstallStartup,
   [string[]]$AllowedOrigins = @("http://127.0.0.1:5173", "http://localhost:5173")
 )
 
 $ErrorActionPreference = "Stop"
+if ($AuthorizationEndpoint.Scheme -ne "https" -or $AuthorizationEndpoint.AbsolutePath -ne "/api/seramet/printing/consume" -or $AuthorizationEndpoint.UserInfo -or $AuthorizationEndpoint.Query -or $AuthorizationEndpoint.Fragment) { throw "Use the HTTPS authorization endpoint from the protected bridge enrollment." }
 $BridgeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $BridgeDir "config.local.json"
 if (Test-Path -LiteralPath $ConfigPath) { throw "Existing enrollment found. Back it up securely; do not overwrite it automatically." }
@@ -31,6 +33,7 @@ $config = [ordered]@{
   bridgeId = $BridgeId
   tenantId = $TenantId
   branchId = $BranchId
+  authorizationEndpoint = $AuthorizationEndpoint.AbsoluteUri
   concurrency = 2
   dataDir = $dataDir
   allowedOrigins = $AllowedOrigins

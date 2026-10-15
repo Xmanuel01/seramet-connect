@@ -1,5 +1,10 @@
 # Printing Implementation Evidence
 
+Final retry/ledger-loss corrections and current certification evidence are
+documented in [Printing Final Safety Review](PRINTING_FINAL_SAFETY_REVIEW.md).
+That review supersedes the earlier alias-lock and PostgreSQL-coverage limitations
+below; historical execution results remain labeled by layer.
+
 ## Review Layer A: Transport and Delivery Safety
 
 The bridge v2 accepts only short-lived server-signed immutable jobs, scoped to

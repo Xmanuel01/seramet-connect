@@ -6,6 +6,7 @@
   "bridgeId": "replace-with-enrolled-bridge-identity",
   "tenantId": "replace-with-authorized-tenant-id",
   "branchId": "replace-with-authorized-branch-id",
+  "authorizationEndpoint": "https://your-seramet-origin/api/seramet/printing/consume",
   "concurrency": 2,
   "dataDir": "C:\\Users\\USER\\.seramet-print-bridge",
   "allowedOrigins": ["http://127.0.0.1:5173", "http://localhost:5173"]

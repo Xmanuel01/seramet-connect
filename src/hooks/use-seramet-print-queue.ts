@@ -184,11 +184,16 @@ export function useSerametPrintQueue(branch: string) {
   const reprintJob = (
     jobId: string,
     requestedBy: string,
-    reason = "Operator requested duplicate copy",
+    reason: string,
   ): ReprintQueueResult | undefined => {
     if (!profile) return undefined;
     const original = jobs.find((job) => job.id === jobId);
     if (!original) return undefined;
+    if (["FOOD_KOT", "BAR_TICKET", "DISPATCH_TICKET"].includes(original.documentType)) {
+      window.location.assign("/seramet-printers");
+      return undefined;
+    }
+    if (reason.trim().length < 12) return undefined;
     const result = SerametPrintService.createReprintJob(
       profile,
       original,
@@ -202,7 +207,17 @@ export function useSerametPrintQueue(branch: string) {
         ? { queue: jobs, log: result.log, skipped: result.skipped }
         : { queue: jobs, log: result.log };
     }
-    const queued = processJobs([result.job], jobs, profile);
+    const queued = processJobs(
+      [
+        {
+          ...result.job,
+          reprintReason: reason.trim(),
+          authorizationReprintId: crypto.randomUUID(),
+        },
+      ],
+      jobs,
+      profile,
+    );
     return { queue: queued, log: result.log };
   };
 

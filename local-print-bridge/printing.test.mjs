@@ -226,7 +226,11 @@ test("durable queue deduplicates, rejects altered reuse, survives restart and bo
 test("runner serializes aliases of one physical endpoint and preserves jobs", async (t) => {
   const store = new PrintJobStore(join(await temporary(t), "queue.sqlite"));
   for (let n = 0; n < 3; n++)
-    store.enqueue({ ...job(), id: `job-${n}`, target: { ...job().target, id: `alias-${n}` } });
+    store.enqueue({
+      ...job(),
+      id: `job-${n}`,
+      target: { ...job().target, id: `alias-${n}`, host: `printer-alias-${n}.local` },
+    });
   let active = 0;
   let max = 0;
   const runner = new PrintJobRunner(store, async () => {
@@ -241,6 +245,93 @@ test("runner serializes aliases of one physical endpoint and preserves jobs", as
   assert.equal(max, 1);
   await runner.stop();
   store.close();
+});
+
+test("recovery IDs are consumed transactionally forever, including failed commits and restart", async (t) => {
+  const path = join(await temporary(t), "atomic.sqlite");
+  let store = new PrintJobStore(path);
+  store.enqueue(job());
+  store.record(job().id, "UNCERTAIN", "TEST_LOST_ACK");
+  const original = store.recordInside;
+  store.recordInside = () => {
+    throw new Error("SIMULATED_CRASH");
+  };
+  assert.throws(() => store.retry(job().id, "approval-A"), /SIMULATED_CRASH/);
+  store.recordInside = original;
+  assert.equal(store.get(job().id).stage, "UNCERTAIN");
+  store.retry(job().id, "approval-A");
+  store.record(job().id, "UNCERTAIN", "TEST_LOST_ACK");
+  store.retry(job().id, "approval-B");
+  store.record(job().id, "UNCERTAIN", "TEST_LOST_ACK");
+  store.close();
+  store = new PrintJobStore(path);
+  assert.throws(() => store.retry(job().id, "approval-A"), /AUTHORIZATION/);
+  assert.throws(() => store.retry(job().id, "approval-B"), /AUTHORIZATION/);
+  assert.throws(() => store.retry(job().id, "approval-C"), /LIMIT/);
+  assert.equal(store.history(job().id).filter((a) => a.stage === "QUEUED").length, 3);
+  store.close();
+});
+
+test("a reviewed authorization first seen after ledger loss cannot authorize its own retry", async (t) => {
+  const store = new PrintJobStore(join(await temporary(t), "reviewed.sqlite"));
+  const reviewed = { ...job(), recoveryId: "already-reviewed-approval" };
+  store.enqueue(reviewed);
+  store.record(reviewed.id, "UNCERTAIN", "TEST_LOST_ACK");
+  assert.throws(() => store.retry(reviewed.id, reviewed.recoveryId), /AUTHORIZATION/);
+  assert.equal(store.history(reviewed.id).filter((a) => a.stage === "QUEUED").length, 1);
+  store.close();
+});
+
+test("one global reservation survives concurrent HTTP, second machine and local ledger deletion", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "seramet-print-reservation-"));
+  const reservations = new Set();
+  let delivered = 0;
+  const options = {
+    consume: async (proof) => {
+      const value = JSON.parse(Buffer.from(proof.payload, "base64url").toString());
+      if (reservations.has(value.id)) throw new Error("RECONCILIATION_REQUIRED");
+      reservations.add(value.id);
+    },
+    deliver: async () => {
+      delivered++;
+      await new Promise((r) => setTimeout(r, 10));
+      return { stage: "BYTES_SUBMITTED", code: "OK" };
+    },
+  };
+  const bridges = [];
+  async function machine(directory) {
+    const bridge = await createBridge({ ...config, dataDir: join(root, directory) }, options);
+    bridges.push(bridge);
+    await new Promise((r) => bridge.server.listen(0, "127.0.0.1", r));
+    return bridge;
+  }
+  const first = await machine("first"),
+    second = await machine("second");
+  t.after(async () => {
+    for (const bridge of bridges) await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const submit = (bridge) =>
+    fetch(`http://127.0.0.1:${bridge.server.address().port}/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ authorization: sign(job()) }),
+    });
+  await Promise.all(Array.from({ length: 20 }, (_, i) => submit(i % 2 ? first : second)));
+  while (bridges.some((b) => b.runner.tasks.size)) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(delivered, 1);
+  assert.deepEqual(bridges.map((b) => b.store.get(job().id).stage).sort(), [
+    "BYTES_SUBMITTED",
+    "UNCERTAIN",
+  ]);
+  await first.close();
+  bridges.splice(bridges.indexOf(first), 1);
+  await rm(join(root, "first"), { recursive: true, force: true });
+  const replacement = await machine("first");
+  await submit(replacement);
+  while (replacement.runner.tasks.size) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(replacement.store.get(job().id).stage, "UNCERTAIN");
+  assert.equal(delivered, 1);
 });
 
 test("completed payloads are scrubbed while replay protection and capacity remain durable", async (t) => {
@@ -260,6 +351,7 @@ test("bridge rejects origin, bearer and unsigned requests before transport", asy
   const bridge = await createBridge(
     { ...config, dataDir, allowedOrigins: ["https://pos.example"] },
     {
+      consume: async () => {},
       deliver: async () => {
         delivered++;
         return { stage: "BYTES_SUBMITTED", code: "OK" };

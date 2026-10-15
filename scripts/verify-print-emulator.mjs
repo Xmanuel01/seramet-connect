@@ -53,7 +53,15 @@ let browser;
 const results = [];
 try {
   await rm(config.dataDir, { recursive: true, force: true });
-  bridge = await createBridge(config, { localTest: true });
+  // Fixture-only issuer; authenticated gateway consumption is covered by E2E.
+  const consumed = new Set();
+  bridge = await createBridge(config, {
+    localTest: true,
+    consume: async (proof) => {
+      if (consumed.has(proof.payload)) throw new Error("Fixture delivery already reserved");
+      consumed.add(proof.payload);
+    },
+  });
   await new Promise((done) => bridge.server.listen(0, "127.0.0.1", done));
   const url = `http://127.0.0.1:${bridge.server.address().port}/jobs`;
   browser = await chromium.launch({ headless: true });

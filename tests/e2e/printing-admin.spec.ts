@@ -38,6 +38,7 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
       token,
       dataDir,
       allowedOrigins: ["http://127.0.0.1:4173"],
+      authorizationEndpoint: "http://127.0.0.1:4173/api/seramet/printing/consume",
     },
     { localTest: true },
   );
