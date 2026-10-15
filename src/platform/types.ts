@@ -285,6 +285,7 @@ export type HardwareDevice = {
   name: string;
   deviceType: DeviceType;
   connectionType: "OS_PRINTER" | "NETWORK" | "USB" | "BLUETOOTH" | "BROWSER" | "OTHER";
+  printing?: import("@/printing/printer-configuration").PrinterConfiguration;
   driver: string;
   address: string;
   enabled: boolean;

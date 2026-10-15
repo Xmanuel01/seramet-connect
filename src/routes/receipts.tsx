@@ -70,13 +70,17 @@ function Receipts() {
     const order = receiptRecordToPrintOrder(receipt, state);
     if (!order) return;
 
-    const result = printCustomerDocument(order, "RECEIPT");
+    const result = printCustomerDocument(order, "RECEIPT", {
+      reprintReason: reason,
+      authorizationReprintId: crypto.randomUUID(),
+    });
     if (result.jobs.length === 0) {
       setPrintNotice(result.skipped[0] ?? "Printing is not configured for this branch.");
       return;
     }
     setPrintNotice("");
-    void mutate("recordReceiptReprint", { receiptId: receipt.id, reason });
+    // The print authorization API persists the operator's reprint authorization
+    // before returning signed evidence; the bridge never trusts this UI alone.
   };
 
   const sendWhatsApp = (receiptId: string) => {

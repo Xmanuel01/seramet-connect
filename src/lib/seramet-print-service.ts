@@ -1,4 +1,7 @@
-import { activeLocale, ksh } from "@/lib/currency";
+import { activeLocale, activeCurrency } from "@/lib/currency";
+import { parseMajorAmount, formatMinor, minorDigits } from "@/payments/money";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { getSerametAccessToken } from "@/lib/access-token";
 import type { Product } from "@/lib/menu-product";
 import {
   getConfiguredBranchHardwareProfile,
@@ -25,10 +28,12 @@ export type PrintJobStatus =
   | "Displayed"
   | "Failed"
   | "Retrying"
+  | "Bridge accepted"
+  | "Delivery uncertain"
   | "Fallback Printed"
   | "Cancelled";
 export type KitchenTicketDelivery = "KDS_DISPLAY" | "PRODUCTION_PRINT" | "POS_FRONT_PRINT";
-export type PrinterConnection = "Connected" | "Offline" | "Degraded";
+export type PrinterConnection = "Connected" | "Offline" | "Degraded" | "Unknown";
 export type KitchenOperatingMode =
   "KDS_ONLY" | "PRINTER_ONLY" | "KDS_AND_PRINTER" | "NO_DEDICATED_KITCHEN_SYSTEM";
 export type ProductionStation = NonNullable<Product["productionStation"]>;
@@ -49,6 +54,8 @@ export type BranchCapability =
   | "INVOICE_PRINTING";
 
 export type BranchPrintIdentity = {
+  currency?: string;
+  locale?: string;
   businessName: string;
   receiptBrand: string;
   branchName: string;
@@ -75,6 +82,10 @@ export type PrinterDevice = {
   queue: number;
   failures: number;
   fallbackPrinterId?: string;
+  enabled?: boolean;
+  stationKeys?: string[];
+  configuredTransport?: boolean;
+  copies?: number;
 };
 
 export type BranchHardwareProfile = {
@@ -129,6 +140,7 @@ export type OrderLineForPrint = {
 
 export type OrderForPrint = {
   orderId: string;
+  kitchenObligationId?: string;
   branch: string;
   terminalId: string;
   table?: string;
@@ -166,6 +178,8 @@ export type OrderForPrint = {
 
 export type PrintJob = {
   id: string;
+  branchId?: string;
+  tenantId?: string;
   branch: string;
   orderId: string;
   documentType: PrintDocumentType;
@@ -188,6 +202,12 @@ export type PrintJob = {
   kitchenTicketRecordId?: string;
   kitchenDelivery?: KitchenTicketDelivery;
   amendmentType?: "NEW" | "ADDITION" | "VOID" | "REPRINT";
+  obligationId?: string;
+  claimToken?: string;
+  recordId?: string;
+  copyIndex?: number;
+  reprintReason?: string;
+  authorizationReprintId?: string;
 };
 
 export type PrintPlanResult = {
@@ -335,6 +355,34 @@ export const SerametPrintService = {
     productionStation?: ProductionStation,
   ): RouteResolution {
     const route = profile.documentRoutes[documentType];
+    const eligible = profile.printers.filter((printer) => printer.enabled !== false);
+    const explicitStation = productionStation
+      ? eligible.filter((printer) => printer.stationKeys?.includes(productionStation))
+      : [];
+    if (explicitStation.length > 1) throw new Error("Ambiguous station printer assignment");
+    const configured = eligible.filter((printer) => printer.configuredTransport);
+    const exact =
+      explicitStation[0] ??
+      (!productionStation
+        ? configured.find((printer) => printer.roles.includes(route.primaryRole))
+        : undefined);
+    if (configured.length > 0) {
+      if (!exact)
+        return {
+          destination: route.primaryRole,
+          routeMode: "failed",
+          route,
+          failureReason: "No explicit enabled printer assignment for this document/station",
+        };
+      const fallbackPrinter = eligible.find((printer) => printer.id === exact.fallbackPrinterId);
+      return {
+        destination: route.primaryRole,
+        printer: exact,
+        route: { ...route, copies: exact.copies ?? route.copies },
+        ...(fallbackPrinter ? { fallbackPrinter } : {}),
+        routeMode: "primary",
+      };
+    }
     const onePrinter =
       profile.printers.filter((printer) => printer.connection !== "Offline").length === 1;
     const destination = productionStation
@@ -396,7 +444,7 @@ export const SerametPrintService = {
     documentType: "BILL" | "RECEIPT" | "INVOICE",
   ): PrintJob {
     const resolution = this.resolvePrinter(profile, documentType);
-    return createJob({
+    const job = createJob({
       profile,
       order,
       documentType,
@@ -408,6 +456,10 @@ export const SerametPrintService = {
         profile,
       ),
     });
+    return {
+      ...job,
+      recordId: documentType === "RECEIPT" ? order.receiptNumber : order.invoiceNumber,
+    };
   },
 
   createProductionTicketJobs(
@@ -432,10 +484,17 @@ export const SerametPrintService = {
         return;
       }
       const kitchenTicketId =
-        amendmentType === "NEW"
+        order.kitchenObligationId ??
+        (amendmentType === "NEW"
           ? ticketId
-          : `${ticketId}-${amendmentType}-${Date.now().toString(36)}`;
-      const printDocumentType = productionDocumentType(station);
+          : `${ticketId}-${amendmentType}-${Date.now().toString(36)}`);
+      const stationRole = profile.stationRoutes[station];
+      const printDocumentType =
+        stationRole === "BAR"
+          ? "BAR_TICKET"
+          : stationRole === "DISPATCH"
+            ? "DISPATCH_TICKET"
+            : productionDocumentType(station);
       const deliveries = productionDeliveriesForMode(profile.kitchenMode);
 
       deliveries.forEach((delivery) => {
@@ -785,21 +844,85 @@ export const SerametLocalPrintBridge = {
     endpoint = "http://127.0.0.1:48777",
     printerName?: string,
   ): Promise<BridgeSubmitResult> {
-    const response = await fetch(`${endpoint}/jobs`, {
+    const targetUrl = new URL(endpoint);
+    if (
+      targetUrl.protocol !== "http:" ||
+      !["127.0.0.1", "localhost"].includes(targetUrl.hostname) ||
+      targetUrl.username ||
+      targetUrl.password
+    ) {
+      throw new Error("Only an enrolled loopback print bridge is supported");
+    }
+    const accessToken = getSerametAccessToken();
+    const authorized = await authenticatedFetch("/api/seramet/printing/authorize", {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        ...(job.branchId ? { "x-seramet-branch-id": job.branchId } : {}),
+        ...(job.tenantId ? { "x-seramet-tenant-id": job.tenantId } : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
-      body: JSON.stringify(this.createTrustedBridgePayload(job, printerName)),
+      body: JSON.stringify({
+        printerId: job.printerId,
+        documentType: job.orderId === "#PRINT-TEST" ? "TEST" : job.documentType,
+        recordId: job.obligationId ?? job.recordId ?? job.orderId,
+        ...(job.orderId === "#PRINT-TEST"
+          ? {
+              testKind:
+                job.documentType === "FOOD_KOT" || job.documentType === "BAR_TICKET"
+                  ? "FOOD_KOT"
+                  : job.documentType,
+              recordId: job.id,
+            }
+          : {}),
+        ...(job.claimToken ? { claimToken: job.claimToken } : {}),
+        ...(job.reprintReason
+          ? { reprintReason: job.reprintReason, reprintId: job.authorizationReprintId }
+          : {}),
+        copyIndex: job.copyIndex ?? 0,
+      }),
     });
-    const payload = (await response.json()) as BridgeSubmitResult;
-    if (!response.ok)
-      return {
-        accepted: false,
-        message: payload.message ?? "Installed bridge rejected the print job",
+    if (!authorized.ok)
+      throw new Error(
+        "Server print authorization failed; inspect printer configuration and the authoritative document/claim",
+      );
+    const submission = await authorized.json();
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${endpoint}/jobs`, {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(submission),
+      });
+      if (!response.ok)
+        return {
+          accepted: false,
+          message: "Bridge rejected the authorized job; do not blindly retry",
+        };
+      const payload = (await response.json()) as {
+        stage: string;
+        bridgeJobId: string;
+        message: string;
       };
-    return payload;
+      if (["BYTES_SUBMITTED", "SPOOL_ACCEPTED"].includes(payload.stage))
+        return {
+          accepted: true,
+          bridgeJobId: payload.bridgeJobId,
+          message: "Transport submitted; physical delivery unconfirmed",
+        };
+      if (["NOT_SENT", "UNCERTAIN", "CANCELLED"].includes(payload.stage))
+        return {
+          accepted: false,
+          message: `Delivery ${payload.stage.toLowerCase()}; use authorized recovery`,
+        };
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return {
+      accepted: false,
+      message: "Bridge outcome uncertain; inspect recovery before retrying",
+    };
   },
 };
 
@@ -859,6 +982,8 @@ function createJob({
   const isKdsTicket = resolution.destination === "KDS" || documentType === "KDS_TICKET";
   const base: PrintJob = {
     id: makeId("PJ"),
+    branchId: profile.branchId,
+    tenantId: profile.tenantId,
     branch: profile.branch,
     orderId: order.orderId,
     documentType,
@@ -954,6 +1079,7 @@ function renderProductionTicket(
   const ticketPrefix = isBar ? "BAR" : "KOT";
   const showPrices = profile.templateSettings.BILL.showKotPrices === true;
   const identity = profile.printIdentity;
+  const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
@@ -974,10 +1100,10 @@ function renderProductionTicket(
     dotted(width),
     row("QTY", showPrices ? "ITEM / AMOUNT" : "ITEM", width),
     dotted(width),
-    ...lines.flatMap((line) => productionLineRows(line, width, showPrices)),
+    ...lines.flatMap((line) => productionLineRows(line, width, showPrices, money)),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
     `Requested by: ${order.requestedBy}`,
-    `Printed: ${timeOnly(nowStamp(identity.timeZone))}`,
+    `Issued: ${issued.time}`,
     ribbon("*** NEW ORDER ***", width),
   ]
     .filter(Boolean)
@@ -997,17 +1123,18 @@ function renderCustomerDocument(
   const width = template.width === "58mm" ? 32 : 42;
   const title = documentType === "BILL" ? "BILL" : "RECEIPT";
   const identity = profile.printIdentity;
+  const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const documentNumber =
     documentType === "BILL"
       ? (order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`)
       : (order.receiptNumber ?? `RCP ${cleanOrderId(order.orderId)}`);
   const issued = documentDateTime(order.createdAt, identity.timeZone);
-  const paymentRows = documentType === "RECEIPT" ? renderPaymentRows(order, width) : [];
+  const paymentRows = documentType === "RECEIPT" ? renderPaymentRows(order, width, money) : [];
   const loyaltyRows = documentType === "RECEIPT" ? renderLoyaltyRows(order, width) : [];
   const settlementBanner =
     documentType === "BILL"
       ? boxText("PAYMENT PENDING", width)
-      : ribbon(`PAID  ${formatMoney(order.paid ?? order.total)}`, width);
+      : ribbon(`PAID  ${money(order.paid ?? order.total)}`, width);
   const qrBlock =
     documentType === "BILL" ? ["", boxedPaymentPrompt(identity.paymentInstructions, width)] : [];
   const footer =
@@ -1033,12 +1160,11 @@ function renderCustomerDocument(
     dotted(width),
     row("QTY  ITEM", "AMOUNT", width),
     dotted(width),
-    ...order.lines.flatMap((line) => customerLineRows(line, width)),
+    ...order.lines.flatMap((line) => customerLineRows(line, width, money)),
     dotted(width),
-    row("SUBTOTAL", formatMoney(order.subtotal), width),
-    row("DISCOUNT", formatMoney(0), width),
-    template.showTax ? row("TAX", formatMoney(order.tax), width) : "",
-    row("TOTAL", formatMoney(order.total), width),
+    row("SUBTOTAL", money(order.subtotal), width),
+    template.showTax ? row("TAX", money(order.tax), width) : "",
+    row("TOTAL", money(order.total), width),
     settlementBanner,
     ...paymentRows,
     ...loyaltyRows,
@@ -1057,6 +1183,7 @@ function renderA4Invoice(
 ) {
   const width = 78;
   const identity = profile.printIdentity;
+  const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const invoiceNumber = order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`;
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   return [
@@ -1078,12 +1205,11 @@ function renderA4Invoice(
     rule(width),
     row("QTY  DESCRIPTION", "UNIT PRICE      AMOUNT", width),
     rule(width),
-    ...order.lines.flatMap((line) => invoiceLineRows(line, width)),
+    ...order.lines.flatMap((line) => invoiceLineRows(line, width, money)),
     rule(width),
-    row("SUBTOTAL", formatMoney(order.subtotal), width),
-    row("DISCOUNT", formatMoney(0), width),
-    template.showTax ? row("TAX", formatMoney(order.tax), width) : "",
-    row("TOTAL", formatMoney(order.total), width),
+    row("SUBTOTAL", money(order.subtotal), width),
+    template.showTax ? row("TAX", money(order.tax), width) : "",
+    row("TOTAL", money(order.total), width),
     rule(width),
     "PAYMENT INFORMATION",
     ...identity.paymentInstructions,
@@ -1139,7 +1265,7 @@ function boxedPaymentPrompt(paymentInstructions: string[], width: number) {
     : ["Payment instructions not configured"];
   return [
     boxLine(width),
-    `| ${"PAYMENT OPTIONS".padEnd(Math.floor(innerWidth / 2))}${"SCAN TO PAY".padStart(Math.ceil(innerWidth / 2))} |`,
+    `| ${"PAYMENT OPTIONS".padEnd(innerWidth)} |`,
     ...instructions.flatMap((instruction) =>
       wrap(instruction, innerWidth).map((line) => `| ${line.padEnd(innerWidth)} |`),
     ),
@@ -1161,12 +1287,17 @@ function printableTicketNumber(kitchenTicketId: string | undefined, orderId: str
   return cleanOrderId(orderId);
 }
 
-function productionLineRows(line: OrderLineForPrint, width: number, showPrices: boolean) {
+function productionLineRows(
+  line: OrderLineForPrint,
+  width: number,
+  showPrices: boolean,
+  money: (amount: number) => string = formatMoney,
+) {
   const itemLabel = `${line.quantity} x ${line.name.toUpperCase()}`;
   const rows = [
     showPrices
-      ? row(itemLabel, formatMoney(line.quantity * line.unitPrice), width)
-      : itemLabel.slice(0, width),
+      ? row(itemLabel, money(line.quantity * line.unitPrice), width)
+      : wrap(itemLabel, width).join("\n"),
   ];
   if (line.itemNote?.trim()) rows.push(...wrap(`  - ${line.itemNote.toUpperCase()}`, width));
   if (line.modifiers?.length)
@@ -1176,21 +1307,29 @@ function productionLineRows(line: OrderLineForPrint, width: number, showPrices: 
   return rows;
 }
 
-function customerLineRows(line: OrderLineForPrint, width: number) {
+function customerLineRows(
+  line: OrderLineForPrint,
+  width: number,
+  money: (amount: number) => string = formatMoney,
+) {
   const label = `${line.quantity}  ${line.name}`;
-  const rows = [row(label, formatMoney(line.quantity * line.unitPrice), width)];
+  const rows = [row(label, money(line.quantity * line.unitPrice), width)];
   if (line.modifiers?.length) rows.push(...wrap(`   ${line.modifiers.join(", ")}`, width));
   if (line.itemNote?.trim()) rows.push(...wrap(`   Note: ${line.itemNote}`, width));
   return rows;
 }
 
-function invoiceLineRows(line: OrderLineForPrint, width: number) {
+function invoiceLineRows(
+  line: OrderLineForPrint,
+  width: number,
+  money: (amount: number) => string = formatMoney,
+) {
   const descriptionWidth = Math.max(28, width - 32);
   const first = `${line.quantity}    ${line.name}`.slice(0, descriptionWidth);
   const rows = [
     row(
       first,
-      `${formatMoney(line.unitPrice).padStart(12)} ${formatMoney(line.quantity * line.unitPrice).padStart(12)}`,
+      `${money(line.unitPrice).padStart(12)} ${money(line.quantity * line.unitPrice).padStart(12)}`,
       width,
     ),
   ];
@@ -1199,7 +1338,11 @@ function invoiceLineRows(line: OrderLineForPrint, width: number) {
   return rows;
 }
 
-function renderPaymentRows(order: OrderForPrint, width: number) {
+function renderPaymentRows(
+  order: OrderForPrint,
+  width: number,
+  money: (amount: number) => string = formatMoney,
+) {
   const breakdown = order.paymentBreakdown?.length
     ? order.paymentBreakdown
     : [
@@ -1212,7 +1355,7 @@ function renderPaymentRows(order: OrderForPrint, width: number) {
 
   return breakdown
     .flatMap((payment) => [
-      row(payment.method.toUpperCase(), formatMoney(payment.amount), width),
+      row(payment.method.toUpperCase(), money(payment.amount), width),
       payment.reference ? `Ref: ${payment.reference}` : "",
     ])
     .filter(Boolean);
@@ -1328,8 +1471,10 @@ function cleanOrderId(orderId: string) {
   return orderId.startsWith("#") ? orderId : `#${orderId}`;
 }
 
-function formatMoney(amount: number) {
-  return ksh(amount);
+function formatMoney(amount: number, currency = activeCurrency(), locale = activeLocale()) {
+  if (!Number.isFinite(amount)) throw new Error("Invalid authoritative print amount");
+  const minor = parseMajorAmount(amount.toFixed(minorDigits(currency)), currency);
+  return formatMinor(minor, currency, locale).replace(/\u00a0/g, " ");
 }
 
 function timeOnly(value: string) {

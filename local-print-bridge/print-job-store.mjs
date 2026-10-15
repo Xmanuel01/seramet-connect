@@ -63,6 +63,11 @@ export class PrintJobStore {
   pending() {
     return this.db.prepare("SELECT * FROM jobs WHERE stage='QUEUED' ORDER BY rowid").all();
   }
+  list() {
+    return this.db
+      .prepare("SELECT id,stage,outcome,updated_at FROM jobs ORDER BY rowid DESC LIMIT 100")
+      .all();
+  }
   history(id) {
     return this.db.prepare("SELECT stage,code,at FROM attempts WHERE job_id=? ORDER BY id").all(id);
   }

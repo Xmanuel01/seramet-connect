@@ -519,14 +519,12 @@ function POS() {
       setPrintNoticeType("warning");
       return;
     }
-    const delivered = tracked.every((job) =>
-      ["Printed", "Displayed", "Fallback Printed"].includes(job.status),
-    );
+    const delivered = tracked.every((job) => ["Bridge accepted", "Displayed"].includes(job.status));
     if (delivered) {
       setPrintNotice(
         tracked.some((job) => job.status === "Displayed")
           ? `${trackedPrint.label} delivered to the configured KDS/production route.`
-          : `${trackedPrint.label} delivered to the configured printer route.`,
+          : `${trackedPrint.label} accepted by the bridge. Physical output is not confirmed.`,
       );
       setPrintNoticeType("success");
       return;
@@ -1372,6 +1370,7 @@ function POS() {
           completed.set(job.id, outcome);
           queueMicrotask(() => recordOutcome(job.id, outcome));
         },
+        { obligationId: obligation.id, claimToken },
       );
       expected = next.jobs.length;
       if (!next.jobs.length) {

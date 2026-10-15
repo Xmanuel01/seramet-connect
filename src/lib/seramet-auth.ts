@@ -35,6 +35,7 @@ export type ServerActor = {
 export type SerametEnv = ProviderRuntimeEnv &
   ProductionRuntimeEnv & {
     SERAMET_DB?: D1Database;
+    SERAMET_PRINT_SIGNING_KEY?: string;
   };
 
 export class SerametHttpError extends Error {

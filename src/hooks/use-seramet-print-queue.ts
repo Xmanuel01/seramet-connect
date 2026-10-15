@@ -23,6 +23,7 @@ import {
 } from "@/lib/print-bridge-client-config";
 import { formatDateTime } from "@/lib/currency";
 import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
@@ -30,10 +31,20 @@ type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: s
 type OnKitchenDelivery = (job: PrintJob, result: "BRIDGE_ACCEPTED" | "UNCERTAIN") => void;
 
 export function useSerametPrintQueue(branch: string) {
+  const [configurationVersion, setConfigurationVersion] = useState(0);
+  useEffect(
+    () =>
+      getConfigurationRepository().subscribe(() =>
+        setConfigurationVersion((version) => version + 1),
+      ),
+    [],
+  );
   const profileState = useMemo<{
     profile: BranchHardwareProfile | null;
     configurationError: string | null;
   }>(() => {
+    // The repository subscription invalidates this cached adapter projection.
+    void configurationVersion;
     try {
       return {
         profile: SerametPrintService.getBranchHardwareProfile(branch),
@@ -46,7 +57,7 @@ export function useSerametPrintQueue(branch: string) {
           error instanceof Error ? error.message : "Printing is not configured for this branch",
       };
     }
-  }, [branch]);
+  }, [branch, configurationVersion]);
   const { profile, configurationError } = profileState;
   const subscribeToQueue = useCallback(
     (listener: () => void) => DevicePrintQueueStore.subscribe(branch, listener),
@@ -122,6 +133,7 @@ export function useSerametPrintQueue(branch: string) {
     order: OrderForPrint,
     amendmentType: "NEW" | "ADDITION" | "VOID" | "REPRINT" = "NEW",
     onKitchenDelivery?: OnKitchenDelivery,
+    authorization?: { obligationId: string; claimToken: string },
   ): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
     const plan = SerametPrintService.createProductionTicketJobs(
@@ -130,13 +142,15 @@ export function useSerametPrintQueue(branch: string) {
       jobs,
       amendmentType,
     );
-    const queued = processJobs(plan.jobs, jobs, profile, onKitchenDelivery);
-    return { ...plan, queue: queued };
+    const authorizedJobs = plan.jobs.map((job) => ({ ...job, ...authorization }));
+    const queued = processJobs(authorizedJobs, jobs, profile, onKitchenDelivery);
+    return { ...plan, jobs: authorizedJobs, queue: queued };
   };
 
   const printCustomerDocument = (
     order: OrderForPrint,
     documentType: "BILL" | "RECEIPT" | "INVOICE",
+    reprint?: { reprintReason: string; authorizationReprintId: string },
   ): QueueResult => {
     if (!profile) return unavailableResult(jobs, configurationError);
     try {
@@ -144,7 +158,10 @@ export function useSerametPrintQueue(branch: string) {
         order.branch === profile.branch
           ? profile
           : SerametPrintService.getBranchHardwareProfile(order.branch);
-      const job = SerametPrintService.createDocumentJob(targetProfile, order, documentType);
+      const job = {
+        ...SerametPrintService.createDocumentJob(targetProfile, order, documentType),
+        ...reprint,
+      };
       const queued = processJobs([job], jobs, targetProfile);
       return { jobs: [job], skipped: [], queue: queued };
     } catch (error) {
@@ -155,37 +172,12 @@ export function useSerametPrintQueue(branch: string) {
     }
   };
 
-  const retryJob = (jobId: string) => {
-    if (!profile) return;
-    const target = jobs.find((job) => job.id === jobId);
-    if (!target) return;
-    if (bridgeConfigReady(bridgeConfig)) {
-      setJobs((current) =>
-        current.map((job) =>
-          job.id === jobId
-            ? clearFailureReason(job, {
-                status: "Retrying",
-                retryCount: job.retryCount + 1,
-              })
-            : job,
-        ),
-      );
-      void sendInstalledBridgeJob(
-        { ...target, status: "Retrying", retryCount: target.retryCount + 1 },
-        profile,
-        bridgeConfig,
-        setJobs,
-      );
-      return;
-    }
-    setJobs((current) => SerametPrintService.retryJob(profile, current, jobId));
+  const retryJob = (_jobId: string) => {
+    window.location.assign("/seramet-printers");
   };
-
-  const printAtFallback = (jobId: string) => {
-    if (!profile) return;
-    setJobs((current) => SerametPrintService.printAtFallback(profile, current, jobId));
+  const printAtFallback = (_jobId: string) => {
+    window.location.assign("/seramet-printers");
   };
-
   const reprintJob = (
     jobId: string,
     requestedBy: string,
@@ -274,7 +266,7 @@ async function sendInstalledBridgeJob(
       return;
     }
     updateJob(setJobs, job.id, {
-      status: fallback ? "Fallback Printed" : "Printed",
+      status: "Bridge accepted",
       ...(fallback ? { printerId: fallback.id, fallbackPrinterId: fallback.id } : {}),
       printedAt: formatDateTime(new Date(), { hour12: false }),
       failureReason: null,
@@ -300,7 +292,7 @@ async function submitCopies(
   let last = { accepted: true, message: "Printed" };
   for (let copy = 0; copy < Math.max(1, job.copies); copy += 1) {
     last = await SerametLocalPrintBridge.submitToInstalledBridge(
-      { ...job, copies: 1 },
+      { ...job, copies: 1, copyIndex: copy },
       config.token,
       config.endpoint,
       printerName,

@@ -3212,7 +3212,7 @@ export class OnboardingService {
             .first<{ trust_status: string; last_seen_at: string | null }>()
         : null;
       status =
-        device?.trust_status === "ACTIVE" && device.last_seen_at ? "SUCCESS" : "DEVICE_OFFLINE";
+        device?.trust_status === "ACTIVE" && device.last_seen_at ? "UNKNOWN" : "DEVICE_OFFLINE";
       result = {
         documentMarker: "*** TEST PRINT ***",
         financialTransactionCreated: false,
