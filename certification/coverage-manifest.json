@@ -410,6 +410,10 @@
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
     },
+    "src/server/printing-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
     "src/server/realtime-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
