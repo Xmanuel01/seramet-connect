@@ -21,7 +21,10 @@ const restrictedRoleId = `e2e-restricted-role-${suffix}`;
 const stationId = `e2e-station-${suffix}`;
 const secondStationId = `e2e-station-b-${suffix}`;
 const menuItemId = `e2e-menu-${suffix}`;
+const secondMenuItemId = `e2e-menu-b-${suffix}`;
 const cashMethodId = `e2e-cash-${suffix}`;
+const cashAccountId = `e2e-cash-account-${suffix}`;
+const receivableAccountId = `e2e-receivable-account-${suffix}`;
 const stamp = new Date().toISOString();
 const jwtSecret = requiredEnvironment("SERAMET_JWT_SECRET");
 const jwtIssuer = requiredEnvironment("SERAMET_JWT_ISSUER");
@@ -204,14 +207,28 @@ try {
       "Disposable restricted browser fixture",
     )
     .run();
+  for (const [accountId, code, name] of [
+    [cashAccountId, "E2E_CASH", "Fixture cash on hand"],
+    [receivableAccountId, "E2E_RECEIVABLE", "Fixture customer receivables"],
+  ]) {
+    await db
+      .prepare(
+        "INSERT INTO accounts (tenant_id,id,code,name,account_type,currency,active,payload_json) VALUES (?,?,?,?,'ASSET','KES',1,'{}')",
+      )
+      .bind(tenantId, accountId, code, name)
+      .run();
+  }
   await db
     .prepare(
-      "INSERT INTO payment_methods (tenant_id,id,code,category,cash_account_id,active,payload_json) VALUES (?,?,?,'CASH','cash-on-hand',1,?)",
+      "INSERT INTO payment_methods (tenant_id,id,code,category,cash_account_id,settlement_account_id,receivable_account_id,active,payload_json) VALUES (?,?,?,'CASH',?,?,?,1,?)",
     )
     .bind(
       tenantId,
       cashMethodId,
       "CASH",
+      cashAccountId,
+      cashAccountId,
+      receivableAccountId,
       JSON.stringify({
         id: cashMethodId,
         tenantId,
@@ -224,7 +241,9 @@ try {
         requiresCustomer: false,
         supportsRefund: true,
         supportsSplit: true,
-        cashAccountId: "cash-on-hand",
+        cashAccountId,
+        settlementAccountId: cashAccountId,
+        receivableAccountId,
         metadata: {},
       }),
     )
@@ -253,18 +272,21 @@ try {
       }),
     )
     .run();
-  await db
-    .prepare(
-      "INSERT INTO menu_catalog_items (tenant_id,id,code,sku,name,category_code,description,selling_price_minor,currency,service_charge_applicable,station_id,sellable,active,payload_json,created_at,updated_at) VALUES (?,?,?,?,?,'MAIN_MEALS','Pilot fixture',100000,'KES',0,?,1,1,'{}',?,?)",
-    )
-    .bind(tenantId, menuItemId, "E2E-001", "E2E-001", "Pilot meal", stationId, stamp, stamp)
-    .run();
-  for (const branchId of [firstBranchId, secondBranchId]) {
+  for (const [itemId, branchId, itemStationId, code] of [
+    [menuItemId, firstBranchId, stationId, "E2E-001"],
+    [secondMenuItemId, secondBranchId, secondStationId, "E2E-002"],
+  ]) {
+    await db
+      .prepare(
+        "INSERT INTO menu_catalog_items (tenant_id,id,code,sku,name,category_code,description,selling_price_minor,currency,service_charge_applicable,station_id,sellable,active,payload_json,created_at,updated_at) VALUES (?,?,?,?,?,'MAIN_MEALS','Pilot fixture',100000,'KES',0,?,1,1,'{}',?,?)",
+      )
+      .bind(tenantId, itemId, code, code, "Pilot meal", itemStationId, stamp, stamp)
+      .run();
     await db
       .prepare(
         "INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,updated_at) VALUES (?,?,?,100000,1,'{}',?)",
       )
-      .bind(tenantId, branchId, menuItemId, stamp)
+      .bind(tenantId, branchId, itemId, stamp)
       .run();
   }
   mkdirSync(resolve(process.cwd(), ".seramet"), { recursive: true });
