@@ -48,6 +48,31 @@ fail-closed throughout these failures.
 Assertions now include rejected API response details for these local fixture
 operations, rather than hiding the cause behind an eventual dialog timeout.
 
+## PR Review Correction: Nonvacuous Branch Isolation
+
+The original cash-shift assertion compared Branch A orders inside Branch B's
+filtered API responses. Both arrays were empty, so that earlier assertion did
+not establish cross-branch preservation. The review finding was valid.
+
+The corrected scenario creates a real Branch A sentinel order through an
+independently authorized local UI context. Before Branch B's shift, it opens the
+local SQLite store read-only and captures all authoritative Branch A records for
+the disposable fixture tenant. It requires a persisted sentinel with a positive
+record version, then compares complete, deterministically ordered rows after the
+shift and after reload: tenant/branch IDs, entity types and IDs, versions, business
+dates, status, full persisted payloads and creation/update timestamps.
+
+The observer does not use the branch-filtered API. It rejects remote E2E targets
+and requires the local E2E/CI flags and generated fixture tenant format before any
+sentinel creation. It never writes to the database directly or changes production
+authorization. The legitimately advancing tenant-wide revision is not confused
+with the per-record revisions that must remain unchanged.
+
+One focused execution passed both the corrected cash shift (41.9 seconds) and
+unauthorized branch selector (27.7 seconds): 2 passed, zero failures or skips.
+Typecheck, changed-file ESLint, formatting and diff checks also passed. The full
+suite was not manually rerun for this review correction; updated PR CI is separate.
+
 ## Browser Coverage
 
 | Scenario                                                                                                 | Evidence                                                |

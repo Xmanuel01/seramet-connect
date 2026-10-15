@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import type { TransactionState } from "../../src/lib/transaction-engine";
 
@@ -211,6 +212,55 @@ test("server rejects a branch selector outside the authenticated assignment", as
 test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and financial close", async ({
   browser,
 }) => {
+  if (
+    process.env.SERAMET_E2E !== "true" ||
+    process.env.CI !== "true" ||
+    process.env.SERAMET_E2E_BASE_URL ||
+    !/^e2e-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/.test(fixture.tenantId)
+  ) {
+    throw new Error("Authoritative isolation inspection requires disposable local E2E data");
+  }
+  const branchARecords = () => {
+    const database = new DatabaseSync(resolve(process.cwd(), ".seramet", "development.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      return database
+        .prepare(
+          `SELECT tenant_id, entity_type, entity_id, branch_id, business_date, status,
+                version, payload_json, created_at, updated_at
+         FROM authoritative_records WHERE tenant_id = ? AND branch_id = ?
+         ORDER BY entity_type, entity_id`,
+        )
+        .all(fixture.tenantId, fixture.firstBranchId);
+    } finally {
+      database.close();
+    }
+  };
+  // Seed the control through normal branch-authorized UI, so this focused test
+  // cannot pass vacuously when run without the other browser scenarios.
+  const control = await browser.newContext();
+  try {
+    await authorize(control);
+    const controlPage = await control.newPage();
+    await establishSession(controlPage);
+    await controlPage.goto("/pos");
+    await controlPage.getByPlaceholder("Search dishes or scan barcode").fill("Pilot meal");
+    await controlPage.getByRole("button", { name: "Add Pilot meal to order" }).click();
+    await controlPage.getByPlaceholder("Item note").fill("Branch A isolation sentinel");
+    await controlPage.getByRole("button", { name: "Hold", exact: true }).click();
+    await expect(controlPage.getByText("Order held in active orders.")).toBeVisible();
+  } finally {
+    await control.close();
+  }
+  const branchABefore = branchARecords();
+  const sentinel = branchABefore.find(
+    (record) =>
+      record.entity_type === "state:orders" &&
+      String(record.payload_json).includes("Branch A isolation sentinel"),
+  );
+  expect(sentinel, "Branch A must contain a real persisted control order").toBeDefined();
+  expect(Number(sentinel!.version)).toBeGreaterThan(0);
   const context = await browser.newContext();
   await authorize(context, fixture.secondBranchId);
   const page = await context.newPage();
@@ -357,13 +407,14 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   expect(closed.state.receipts.filter((receipt) => receipt.invoiceId === invoice.id)).toHaveLength(
     1,
   );
-  expect(closed.state.orders.filter((order) => order.branchId === fixture.firstBranchId)).toEqual(
-    before.state.orders.filter((order) => order.branchId === fixture.firstBranchId),
-  );
+  // Compare persisted identities, per-record revisions and full values, not the
+  // branch-filtered API response or the legitimately advancing tenant revision.
+  expect(branchARecords()).toEqual(branchABefore);
   await page.reload();
   const reloaded = await snapshot();
   expect(
     reloaded.state.paymentOperations!.dayCloses.find((item) => item.id === day.id)?.status,
   ).toBe("CLOSED");
+  expect(branchARecords()).toEqual(branchABefore);
   await context.close();
 });
