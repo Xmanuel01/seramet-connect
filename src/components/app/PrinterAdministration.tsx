@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Save, Pencil, RefreshCw, Printer } from "lucide-react";
+import { Plus, Save, Pencil, RefreshCw, Printer, Download } from "lucide-react";
 import { useAppContext } from "@/lib/app-context";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -41,6 +41,7 @@ function blank(branchId: string): PrinterConfiguration {
     stations: [],
     copies: 1,
     enabled: true,
+    kitchenMode: "PRINTER_ONLY",
   };
 }
 
@@ -97,13 +98,13 @@ export function PrinterAdministration() {
   useEffect(() => {
     void refresh().catch(() => setNotice("Printer configuration unavailable"));
   }, [branchId, refresh]);
-  const save = async (printer: PrinterConfiguration) => {
+  const save = async (printer: PrinterConfiguration, updateBranchMode = true) => {
     setBusy(true);
     try {
       const response = await authenticatedFetch("/api/seramet/printing/printers", {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify({ ...printer, branchId }),
+        body: JSON.stringify({ ...printer, branchId, updateBranchMode }),
         signal: AbortSignal.timeout(10000),
       });
       if (!response.ok)
@@ -117,6 +118,52 @@ export function PrinterAdministration() {
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Printer save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const enroll = async (printer: SavedPrinter) => {
+    setBusy(true);
+    try {
+      const response = await authenticatedFetch("/api/seramet/printing/enrollment", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ bridgeId: printer.bridgeId }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw new Error("Bridge enrollment was not authorized");
+      const enrollment = await response.json();
+      const bytes = crypto.getRandomValues(new Uint8Array(32));
+      const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const blob = new Blob(
+        [
+          JSON.stringify(
+            {
+              ...enrollment,
+              token,
+              host: "127.0.0.1",
+              port: 48777,
+              concurrency: 2,
+              allowedOrigins: [window.location.origin],
+            },
+            null,
+            2,
+          ),
+        ],
+        { type: "application/json" },
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "config.local.json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const local = { enabled: false, endpoint: "http://127.0.0.1:48777", token };
+      setBridge(local);
+      saveInstalledPrintBridgeConfig(local);
+      setNotice("Scoped bridge enrollment downloaded.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Enrollment failed");
     } finally {
       setBusy(false);
     }
@@ -239,6 +286,13 @@ export function PrinterAdministration() {
                       {mayManage && (
                         <>
                           <Btn
+                            disabled={busy || !printer.enabled}
+                            onClick={() => void enroll(printer)}
+                            title="Download scoped bridge enrollment"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Btn>
+                          <Btn
                             disabled={busy}
                             onClick={() => {
                               setDraft(printer);
@@ -250,7 +304,9 @@ export function PrinterAdministration() {
                           </Btn>
                           <Btn
                             disabled={busy}
-                            onClick={() => void save({ ...printer, enabled: !printer.enabled })}
+                            onClick={() =>
+                              void save({ ...printer, enabled: !printer.enabled }, false)
+                            }
                           >
                             {printer.enabled ? "Disable" : "Enable"}
                           </Btn>
@@ -359,6 +415,24 @@ export function PrinterAdministration() {
               >
                 <option>58mm</option>
                 <option>80mm</option>
+              </select>
+            </label>
+            <label>
+              Branch production delivery
+              <select
+                className={inputClass}
+                value={draft.kitchenMode}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    kitchenMode: event.target.value as PrinterConfiguration["kitchenMode"],
+                  })
+                }
+              >
+                <option value="PRINTER_ONLY">Printer only</option>
+                <option value="KDS_ONLY">KDS only</option>
+                <option value="KDS_AND_PRINTER">KDS and printer</option>
+                <option value="NO_DEDICATED_KITCHEN_SYSTEM">Assigned front printer</option>
               </select>
             </label>
             <label>

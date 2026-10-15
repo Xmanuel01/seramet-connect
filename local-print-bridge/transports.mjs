@@ -2,6 +2,13 @@ import { Socket } from "node:net";
 import { execFile } from "node:child_process";
 import { resolvePrinterTarget } from "./printer-target.mjs";
 
+export async function deliverWithFallback(job, send) {
+  const primary = await send(job.target, job.profile);
+  if (primary.stage !== "NOT_SENT" || !job.fallbackTarget) return primary;
+  const fallback = await send(job.fallbackTarget, job.fallbackProfile);
+  return { ...fallback, code: `FALLBACK_${fallback.code}` };
+}
+
 export async function sendTcp(bytes, target, options = {}) {
   let timer;
   let endpoint;

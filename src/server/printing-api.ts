@@ -126,6 +126,34 @@ export async function signPrintJob(job: Record<string, unknown>, key: string) {
   ).join("");
   return { payload, signature };
 }
+export async function deriveBridgeSigningKey(
+  master: string,
+  tenantId: string,
+  branchId: string,
+  bridgeId: string,
+) {
+  if (master.length < 32)
+    throw new SerametHttpError(503, "Protected print signing is not configured");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(master),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.sign(
+        "HMAC",
+        key,
+        new TextEncoder().encode(
+          JSON.stringify(["seramet-print-v1", tenantId, branchId, bridgeId]),
+        ),
+      ),
+    ),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 
 export async function handlePrintingApi(
   request: Request,
@@ -137,6 +165,48 @@ export async function handlePrintingApi(
   const actor = await authenticateSerametRequest(request, env);
   const db = env.SERAMET_DB;
   if (!db) throw new SerametHttpError(503, "Authoritative printer configuration is unavailable");
+  if (url.pathname === "/api/seramet/printing/enrollment" && request.method === "POST") {
+    manage(actor);
+    const input = z
+      .object({ bridgeId: z.string().min(8).max(160) })
+      .strict()
+      .parse(await parse(request));
+    const rows =
+      (
+        await db
+          .prepare(
+            "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER'",
+          )
+          .bind(actor.tenantId, actor.branchId)
+          .all<{ payload_json: string }>()
+      ).results ?? [];
+    if (
+      !rows.some((row) => {
+        const config = printerConfigurationSchema.safeParse(JSON.parse(row.payload_json).printing);
+        return config.success && config.data.enabled && config.data.bridgeId === input.bridgeId;
+      })
+    )
+      throw new SerametHttpError(403, "Configured branch bridge required");
+    const signingKey = await deriveBridgeSigningKey(
+      env.SERAMET_PRINT_SIGNING_KEY ?? "",
+      actor.tenantId,
+      actor.branchId,
+      input.bridgeId,
+    );
+    await auditStatement(
+      db,
+      actor,
+      `PRINT-ENROLL:${crypto.randomUUID()}`,
+      "PRINT_BRIDGE_ENROLLED",
+      input.bridgeId,
+    ).run();
+    return respond({
+      bridgeId: input.bridgeId,
+      tenantId: actor.tenantId,
+      branchId: actor.branchId,
+      signingKey,
+    });
+  }
   if (url.pathname === "/api/seramet/printing/printers" && request.method === "GET") {
     requirePermission(actor, permissions.settingsHardwareView);
     const rows = await db
@@ -153,7 +223,13 @@ export async function handlePrintingApi(
   }
   if (url.pathname === "/api/seramet/printing/printers" && request.method === "POST") {
     manage(actor);
-    const result = printerConfigurationSchema.safeParse(await parse(request));
+    const raw = await parse(request);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      throw new SerametHttpError(400, "Invalid printer configuration");
+    const { updateBranchMode, ...configuration } = raw;
+    if (updateBranchMode !== undefined && typeof updateBranchMode !== "boolean")
+      throw new SerametHttpError(400, "Invalid branch mode operation");
+    const result = printerConfigurationSchema.safeParse(configuration);
     if (!result.success) throw new SerametHttpError(400, "Invalid printer configuration");
     const printer = result.data;
     if (printer.branchId !== actor.branchId)
@@ -221,8 +297,26 @@ export async function handlePrintingApi(
           outputRoles: [],
         }),
       );
+    const branchRow = await db
+      .prepare("SELECT payload_json FROM branches WHERE tenant_id=? AND id=?")
+      .bind(actor.tenantId, actor.branchId)
+      .first<{ payload_json: string }>();
+    if (!branchRow) throw new SerametHttpError(403, "Authoritative branch unavailable");
+    const branchPayload = JSON.parse(branchRow.payload_json);
     await db.batch([
       configurationWrite,
+      ...(updateBranchMode === false
+        ? []
+        : [
+            db.prepare("UPDATE branches SET payload_json=? WHERE tenant_id=? AND id=?").bind(
+              JSON.stringify({
+                ...branchPayload,
+                metadata: { ...branchPayload.metadata, kitchenMode: printer.kitchenMode },
+              }),
+              actor.tenantId,
+              actor.branchId,
+            ),
+          ]),
       auditStatement(
         db,
         actor,
@@ -251,6 +345,20 @@ export async function handlePrintingApi(
   if (!parsedConfig.success || !parsedConfig.data.enabled)
     throw new SerametHttpError(403, "Enabled branch printer required");
   const printer = { ...parsedConfig.data, id: input.printerId };
+  let fallback: (PrinterConfiguration & { id: string }) | undefined;
+  if (printer.fallbackPrinterId) {
+    const row = await db
+      .prepare(
+        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+      )
+      .bind(actor.tenantId, actor.branchId, printer.fallbackPrinterId)
+      .first<{ payload_json: string }>();
+    const parsed = printerConfigurationSchema.safeParse(
+      row ? JSON.parse(row.payload_json).printing : null,
+    );
+    if (parsed.success && parsed.data.enabled && parsed.data.bridgeId === printer.bridgeId)
+      fallback = { ...parsed.data, id: printer.fallbackPrinterId };
+  }
   if (input.copyIndex >= printer.copies)
     throw new SerametHttpError(400, "Printer copy limit exceeded");
   const state = await repository.loadState(actor.tenantId);
@@ -389,6 +497,17 @@ export async function handlePrintingApi(
       documentType: input.documentType,
       content,
       target: printerTarget(printer),
+      ...(fallback
+        ? {
+            fallbackTarget: printerTarget(fallback),
+            fallbackProfile: {
+              paperWidth: fallback.paperWidth,
+              encoding: fallback.encoding,
+              cutter: fallback.cutter,
+              emphasis: fallback.emphasis,
+            },
+          }
+        : {}),
       profile: {
         paperWidth: printer.paperWidth,
         encoding: printer.encoding,
@@ -401,7 +520,12 @@ export async function handlePrintingApi(
         ["localhost", "127.0.0.1"].includes(url.hostname),
       ...(recoveryId ? { recoveryId } : {}),
     },
-    env.SERAMET_PRINT_SIGNING_KEY,
+    await deriveBridgeSigningKey(
+      env.SERAMET_PRINT_SIGNING_KEY,
+      actor.tenantId,
+      actor.branchId,
+      printer.bridgeId,
+    ),
   );
   return respond({ authorization, retry: Boolean(recoveryId) });
 }

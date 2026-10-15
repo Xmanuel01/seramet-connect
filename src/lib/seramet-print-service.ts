@@ -366,7 +366,7 @@ export const SerametPrintService = {
       (!productionStation
         ? configured.find((printer) => printer.roles.includes(route.primaryRole))
         : undefined);
-    if (configured.length > 0) {
+    if (profile.printers.some((printer) => printer.configuredTransport)) {
       if (!exact)
         return {
           destination: route.primaryRole,
@@ -949,7 +949,9 @@ export function branchHasCapability(
 
 function findPrinterByRole(profile: BranchHardwareProfile, role: PrinterRole) {
   if (role === "KDS") return undefined;
-  return profile.printers.find((printer) => printer.roles.includes(role));
+  return profile.printers.find(
+    (printer) => printer.enabled !== false && printer.roles.includes(role),
+  );
 }
 
 function createJob({

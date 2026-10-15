@@ -2,7 +2,7 @@
   "host": "127.0.0.1",
   "port": 48777,
   "token": "replace-with-a-random-local-token-at-least-32-chars",
-  "signingKey": "provision-the-protected-server-signing-key-securely",
+  "signingKey": "provision-the-scoped-enrolled-bridge-key-NOT-the-server-master",
   "bridgeId": "replace-with-enrolled-bridge-identity",
   "tenantId": "replace-with-authorized-tenant-id",
   "branchId": "replace-with-authorized-branch-id",

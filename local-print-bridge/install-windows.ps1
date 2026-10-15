@@ -10,8 +10,8 @@ $ErrorActionPreference = "Stop"
 $BridgeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $BridgeDir "config.local.json"
 if (Test-Path -LiteralPath $ConfigPath) { throw "Existing enrollment found. Back it up securely; do not overwrite it automatically." }
-if (-not $env:SERAMET_PRINT_SIGNING_KEY -or $env:SERAMET_PRINT_SIGNING_KEY.Length -lt 32) {
-  throw "Securely provision SERAMET_PRINT_SIGNING_KEY for this process before enrollment. Do not paste it into command history."
+if (-not $env:SERAMET_BRIDGE_SIGNING_KEY -or $env:SERAMET_BRIDGE_SIGNING_KEY.Length -lt 32) {
+  throw "Securely provision the scoped SERAMET_BRIDGE_SIGNING_KEY for this process. Never copy the server master key."
 }
 $Node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $Node) {
@@ -27,7 +27,7 @@ $config = [ordered]@{
   host = "127.0.0.1"
   port = 48777
   token = $token
-  signingKey = $env:SERAMET_PRINT_SIGNING_KEY
+  signingKey = $env:SERAMET_BRIDGE_SIGNING_KEY
   bridgeId = $BridgeId
   tenantId = $TenantId
   branchId = $BranchId

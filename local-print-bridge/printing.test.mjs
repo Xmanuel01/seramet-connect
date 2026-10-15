@@ -7,7 +7,7 @@ import { createServer } from "node:net";
 import { createHmac, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { permittedAddress, resolvePrinterTarget } from "./printer-target.mjs";
-import { sendTcp, sendWindows } from "./transports.mjs";
+import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
 import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
@@ -90,6 +90,25 @@ test("signed authorization binds identity, content, expiry and tenant/branch", (
   tampered.payload += "A";
   assert.throws(() => verifyPrintAuthorization(tampered, config), /INVALID_AUTHORIZATION/);
   assert.throws(() => verifyPrintAuthorization(null, config), /AUTHORIZATION_REQUIRED/);
+});
+
+test("authorized fallback is used only when definitely no bytes were submitted", async () => {
+  const input = { ...job(), fallbackTarget: { id: "fallback" }, fallbackProfile: profile };
+  let calls = 0;
+  const accepted = await deliverWithFallback(input, async () =>
+    ++calls === 1
+      ? { stage: "NOT_SENT", code: "REFUSED" }
+      : { stage: "BYTES_SUBMITTED", code: "OK" },
+  );
+  assert.equal(calls, 2);
+  assert.equal(accepted.code, "FALLBACK_OK");
+  calls = 0;
+  const uncertain = await deliverWithFallback(input, async () => {
+    calls++;
+    return { stage: "UNCERTAIN", code: "PARTIAL" };
+  });
+  assert.equal(calls, 1);
+  assert.equal(uncertain.stage, "UNCERTAIN");
 });
 
 test("encoder emits bounded 58/80mm lines, safe text, feed and opted-in cut", () => {
@@ -221,6 +240,17 @@ test("runner serializes aliases of one physical endpoint and preserves jobs", as
   while (store.pending().length || runner.tasks.size) await new Promise((r) => setTimeout(r, 10));
   assert.equal(max, 1);
   await runner.stop();
+  store.close();
+});
+
+test("completed payloads are scrubbed while replay protection and capacity remain durable", async (t) => {
+  const store = new PrintJobStore(join(await temporary(t), "retention.sqlite"), { maxPending: 1 });
+  store.enqueue(job());
+  assert.throws(() => store.enqueue({ ...job(), id: "second" }), /CAPACITY/);
+  store.record(job().id, "BYTES_SUBMITTED", "OK");
+  assert.ok(!store.get(job().id).payload.includes(job().content));
+  assert.equal(store.enqueue(job()).stage, "BYTES_SUBMITTED");
+  assert.equal(store.enqueue({ ...job(), id: "second" }).stage, "QUEUED");
   store.close();
 });
 

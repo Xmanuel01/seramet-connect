@@ -49,6 +49,7 @@ import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-cur
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
+import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -523,7 +524,7 @@ function POS() {
     if (delivered) {
       setPrintNotice(
         tracked.some((job) => job.status === "Displayed")
-          ? `${trackedPrint.label} delivered to the configured KDS/production route.`
+          ? `${trackedPrint.label} accepted by the configured display/print routes. Physical output is not confirmed.`
           : `${trackedPrint.label} accepted by the bridge. Physical output is not confirmed.`,
       );
       setPrintNoticeType("success");
@@ -1544,13 +1545,17 @@ function POS() {
       return;
     }
     try {
-      const orderForPrint = buildPrintOrder();
-      await mutateTransaction("requestBillWithDraft", {
+      const billed = await mutateTransaction("requestBillWithDraft", {
         orderId: activeOrder.id,
         draft: buildTransactionDraft(),
       });
       if (printBill) {
-        const result = printCustomerDocument(orderForPrint, "BILL");
+        const invoice = billed.state.bills.find((bill) => bill.orderIds.includes(activeOrder.id));
+        if (!invoice) throw new Error("Authoritative invoice is not available for printing");
+        const result = printCustomerDocument(
+          billingRecordToPrintOrder(invoice, billed.state.payments, billed.state.orders),
+          "BILL",
+        );
         clearCurrentOrder(
           result.jobs.length > 0
             ? "Customer bill queued for the configured printer. Delivery is not yet confirmed."

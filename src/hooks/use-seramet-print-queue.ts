@@ -24,6 +24,7 @@ import {
 import { formatDateTime } from "@/lib/currency";
 import { DevicePrintQueueStore } from "@/lib/device-print-queue-store";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { useAppContext } from "@/lib/app-context";
 
 type QueueResult = PrintPlanResult & { queue: PrintJob[] };
 type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: string };
@@ -31,6 +32,8 @@ type ReprintQueueResult = { queue: PrintJob[]; log: ReprintLogEntry; skipped?: s
 type OnKitchenDelivery = (job: PrintJob, result: "BRIDGE_ACCEPTED" | "UNCERTAIN") => void;
 
 export function useSerametPrintQueue(branch: string) {
+  const { activeTenantId } = useAppContext();
+  const queueKey = `${activeTenantId}:${branch}`;
   const [configurationVersion, setConfigurationVersion] = useState(0);
   useEffect(
     () =>
@@ -47,7 +50,7 @@ export function useSerametPrintQueue(branch: string) {
     void configurationVersion;
     try {
       return {
-        profile: SerametPrintService.getBranchHardwareProfile(branch),
+        profile: SerametPrintService.getBranchHardwareProfile(branch, activeTenantId),
         configurationError: null,
       };
     } catch (error) {
@@ -57,23 +60,23 @@ export function useSerametPrintQueue(branch: string) {
           error instanceof Error ? error.message : "Printing is not configured for this branch",
       };
     }
-  }, [branch, configurationVersion]);
+  }, [branch, activeTenantId, configurationVersion]);
   const { profile, configurationError } = profileState;
   const subscribeToQueue = useCallback(
-    (listener: () => void) => DevicePrintQueueStore.subscribe(branch, listener),
-    [branch],
+    (listener: () => void) => DevicePrintQueueStore.subscribe(queueKey, listener),
+    [queueKey],
   );
-  const readQueue = useCallback(() => DevicePrintQueueStore.snapshot(branch), [branch]);
+  const readQueue = useCallback(() => DevicePrintQueueStore.snapshot(queueKey), [queueKey]);
   const queue = useSyncExternalStore(subscribeToQueue, readQueue, readQueue);
   const jobs = queue.jobs;
   const reprints = queue.reprints;
   const setJobs = useCallback<Dispatch<SetStateAction<PrintJob[]>>>(
-    (update) => DevicePrintQueueStore.setJobs(branch, update),
-    [branch],
+    (update) => DevicePrintQueueStore.setJobs(queueKey, update),
+    [queueKey],
   );
   const setReprints = useCallback<Dispatch<SetStateAction<ReprintLogEntry[]>>>(
-    (update) => DevicePrintQueueStore.setReprints(branch, update),
-    [branch],
+    (update) => DevicePrintQueueStore.setReprints(queueKey, update),
+    [queueKey],
   );
   const [bridgeConfig, setBridgeConfig] = useState<InstalledPrintBridgeConfig>(() =>
     loadInstalledPrintBridgeConfig(),
@@ -157,7 +160,7 @@ export function useSerametPrintQueue(branch: string) {
       const targetProfile =
         order.branch === profile.branch
           ? profile
-          : SerametPrintService.getBranchHardwareProfile(order.branch);
+          : SerametPrintService.getBranchHardwareProfile(order.branch, activeTenantId);
       const job = {
         ...SerametPrintService.createDocumentJob(targetProfile, order, documentType),
         ...reprint,

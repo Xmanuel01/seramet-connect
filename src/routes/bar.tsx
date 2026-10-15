@@ -295,7 +295,7 @@ function BarModule() {
                           className="block text-[11px] font-semibold text-primary hover:underline"
                           onClick={() => retryTicketPrint(ticket)}
                         >
-                          Retry print
+                          Review print
                         </button>
                       ) : (
                         <button
@@ -303,7 +303,7 @@ function BarModule() {
                           disabled={!canPrintProduction}
                           onClick={() => reprintTicket(ticket)}
                         >
-                          {latestPrint ? "Reprint" : "Print ticket"}
+                          Review print
                         </button>
                       )}
                       {latestPrint?.failureReason && (

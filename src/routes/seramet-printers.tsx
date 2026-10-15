@@ -906,7 +906,7 @@ function SerametPrinters() {
           sub="Template settings drive the rendered print content used by POS"
         />
         <div className="grid gap-3 p-4 md:grid-cols-3">
-          {(Object.values(documentTemplates) as PrintTemplateSettings[]).map((template) => (
+          {Object.values(profile.templateSettings).map((template) => (
             <article
               key={template.id}
               className="rounded-lg border border-border bg-secondary/30 p-3"

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const env = {
@@ -9,19 +10,19 @@ const env = {
   SERAMET_JWT_SECRET: "seramet-e2e-disposable-jwt-secret",
   SERAMET_JWT_ISSUER: "seramet-e2e",
   SERAMET_JWT_AUDIENCE: "seramet-e2e-browser",
+  SERAMET_PRINT_SIGNING_KEY: randomBytes(32).toString("hex"),
 };
 run(["exec", "vite-node", "scripts/seed-pilot-e2e.ts"], env);
-run(
-  [
-    "exec",
-    "playwright",
-    "test",
-    "tests/e2e/pilot-two-terminal.spec.ts",
-    "tests/e2e/menu-import-pipeline.spec.ts",
-    "tests/e2e/settings-setup-auth.spec.ts",
-  ],
-  env,
-);
+const focused = process.argv.slice(2);
+const allowed = new Set([
+  "tests/e2e/pilot-two-terminal.spec.ts",
+  "tests/e2e/menu-import-pipeline.spec.ts",
+  "tests/e2e/settings-setup-auth.spec.ts",
+  "tests/e2e/printing-admin.spec.ts",
+]);
+if (focused.some((suite) => !allowed.has(suite)))
+  throw new Error("Unknown local pilot acceptance suite");
+run(["exec", "playwright", "test", ...(focused.length ? focused : [...allowed])], env);
 
 function run(args, environment) {
   const result = spawnSync(npm, args, {

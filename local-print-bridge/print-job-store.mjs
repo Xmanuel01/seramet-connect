@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 
 export class PrintJobStore {
-  constructor(path, { maxPending = 100, maxJobs = 10000 } = {}) {
+  constructor(path, { maxPending = 100, maxUnresolved = 1000 } = {}) {
     this.db = new DatabaseSync(path);
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000");
     this.db.exec(`CREATE TABLE IF NOT EXISTS jobs (
@@ -11,9 +11,11 @@ export class PrintJobStore {
       updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS attempts (
       id INTEGER PRIMARY KEY, job_id TEXT NOT NULL, stage TEXT NOT NULL,
-      code TEXT NOT NULL, at TEXT NOT NULL);`);
+      code TEXT NOT NULL, at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS jobs_stage ON jobs(stage);
+      CREATE INDEX IF NOT EXISTS attempts_job ON attempts(job_id);`);
     this.maxPending = maxPending;
-    this.maxJobs = maxJobs;
+    this.maxUnresolved = maxUnresolved;
     // A process exit during transmission cannot establish non-delivery.
     this.db.exec(
       "UPDATE jobs SET stage='UNCERTAIN', outcome='CRASH_DURING_SEND' WHERE stage='TRANSMITTING'",
@@ -30,6 +32,8 @@ export class PrintJobStore {
           documentType: job.documentType,
           content: job.content,
           profile: job.profile,
+          fallbackTarget: job.fallbackTarget,
+          fallbackProfile: job.fallbackProfile,
         }),
       )
       .digest("hex");
@@ -41,7 +45,11 @@ export class PrintJobStore {
     if (
       this.db.prepare("SELECT COUNT(*) n FROM jobs WHERE stage IN ('QUEUED','TRANSMITTING')").get()
         .n >= this.maxPending ||
-      this.db.prepare("SELECT COUNT(*) n FROM jobs").get().n >= this.maxJobs
+      this.db
+        .prepare(
+          "SELECT COUNT(*) n FROM jobs WHERE stage IN ('CREATED','ASSIGNED','QUEUED','TRANSMITTING','NOT_SENT','UNCERTAIN')",
+        )
+        .get().n >= this.maxUnresolved
     ) {
       throw new Error("QUEUE_CAPACITY_REACHED");
     }
@@ -54,6 +62,8 @@ export class PrintJobStore {
         JSON.stringify(job),
         new Date().toISOString(),
       );
+    this.record(id, "CREATED", "AUTHORIZED_JOB_PERSISTED");
+    this.record(id, "ASSIGNED", "AUTHORIZED_TARGET_BOUND");
     this.record(id, "QUEUED", "ACCEPTED");
     return this.get(id);
   }
@@ -85,6 +95,10 @@ export class PrintJobStore {
     this.db
       .prepare("UPDATE jobs SET stage=?,outcome=?,updated_at=? WHERE id=?")
       .run(stage, code, new Date().toISOString(), id);
+    if (["BYTES_SUBMITTED", "SPOOL_ACCEPTED", "CANCELLED"].includes(stage)) {
+      const { content: _content, ...metadata } = JSON.parse(this.get(id).payload);
+      this.db.prepare("UPDATE jobs SET payload=? WHERE id=?").run(JSON.stringify(metadata), id);
+    }
   }
   retry(id, recoveryId) {
     const row = this.get(id);
