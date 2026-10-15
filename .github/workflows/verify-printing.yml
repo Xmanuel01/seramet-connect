@@ -1,0 +1,18 @@
+name: Verify Printing Transport
+on:
+  pull_request:
+    paths:
+      - "local-print-bridge/**"
+      - ".github/workflows/verify-printing.yml"
+permissions:
+  contents: read
+jobs:
+  printing:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --test local-print-bridge/printing.test.mjs

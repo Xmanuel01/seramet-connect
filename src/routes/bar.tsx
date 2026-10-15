@@ -152,41 +152,12 @@ function BarModule() {
     }
   };
 
-  const reprintTicket = (ticket: KitchenTicket) => {
-    if (!profile || !canPrintProduction) return;
-    const order = state.orders.find((candidate) => candidate.id === ticket.orderId);
-    if (!order) {
-      setNotice("The source order is no longer available.");
-      return;
-    }
-
-    const latest = latestPhysicalBarPrintJob(barJobs, ticket);
-    if (latest && ["Queued", "Sending", "Retrying"].includes(latest.status)) {
-      setNotice(`${ticket.stationLabel} already has a print job in progress.`);
-      return;
-    }
-
-    const result = sendKitchenTickets(
-      printOrderForBarTicket(order, ticket, profile.branch, branchId, currentUser.name),
-      "REPRINT",
-    );
-    const physical = result.jobs.find(
-      (job) =>
-        job.kitchenDelivery === "PRODUCTION_PRINT" || job.kitchenDelivery === "POS_FRONT_PRINT",
-    );
-
-    if (!physical) {
-      setNotice(result.skipped.join("; ") || "No physical bar print route is available.");
-      return;
-    }
-    setNotice(`Bar reprint ${physical.id} queued.`);
+  const reprintTicket = (_ticket: KitchenTicket) => {
+    window.location.assign("/seramet-printers");
   };
 
-  const retryTicketPrint = (ticket: KitchenTicket) => {
-    const latest = latestPhysicalBarPrintJob(barJobs, ticket);
-    if (!latest || latest.status !== "Failed") return;
-    retryJob(latest.id);
-    setNotice(`Retrying ${latest.id} for the bar.`);
+  const retryTicketPrint = (_ticket: KitchenTicket) => {
+    window.location.assign("/seramet-printers");
   };
 
   return (
