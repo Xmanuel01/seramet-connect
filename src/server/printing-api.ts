@@ -706,7 +706,7 @@ export async function handlePrintingApi(
         });
       }
       await auditStatement(db, actor, id, "PRINT_REPRINT_AUTHORIZED", input.reprintReason).run();
-      content = `*** DUPLICATE COPY ***\n${content}`;
+      content = SerametPrintService.formatDuplicateCopy(content, printer.paperWidth);
     }
   }
   if (!env.SERAMET_PRINT_SIGNING_KEY || env.SERAMET_PRINT_SIGNING_KEY.length < 32)

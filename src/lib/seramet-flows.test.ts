@@ -614,13 +614,13 @@ describe("Seramet POS acceptance scenarios", () => {
 
     expect(kot?.content).toContain("KITCHEN ORDER");
     expect(kot?.content).toContain("KOT #T-100");
-    expect(kot?.content).toContain("1 x CHICKEN BIRYANI");
-    expect(kot?.content).toContain("- EXTRA GRAVY");
+    expect(kot?.content).toMatch(/\|\s*1\|CHICKEN BIRYANI/);
+    expect(kot?.content).toContain("Note: EXTRA GRAVY");
     expect(kot?.content).toContain("SPECIAL REQUEST");
     expect(kot?.content).toContain("No chilli on one biryani");
     expect(kot?.content).not.toContain("KSh");
     expect(bar?.content).toContain("BAR ORDER");
-    expect(bar?.content).toContain("2 x PASSION JUICE");
+    expect(bar?.content).toMatch(/\|\s*2\|PASSION JUICE/);
     expect(bar?.content).toContain("NO ICE");
     expect(bar?.content).not.toContain("Chicken Biryani");
   });
@@ -669,8 +669,9 @@ describe("Seramet POS acceptance scenarios", () => {
 
     expect(addition?.content).toContain("*** ADDITION ***");
     expect(cancelled?.content).toContain("*** CANCEL ITEM ***");
-    expect(reprint.job?.content).toContain("*** DUPLICATE COPY ***");
-    expect(reprint.job?.content).toContain("Original job:");
+    expect(reprint.job?.content).toContain("DUPLICATE COPY");
+    expect(reprint.job?.reprintOfJobId).toBe(original.id);
+    expect(reprint.log.reason).toBe("Customer requested copy");
   });
 
   it("validates and confirms a larger menu import with categories, stations, barcodes and branch availability", async () => {

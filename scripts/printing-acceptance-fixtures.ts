@@ -23,12 +23,15 @@ export function printingAcceptanceFixtures() {
     profile.printIdentity.branchName = "Disposable branch";
     profile.printIdentity.address = "Test-only address";
     profile.printIdentity.phone = "0000000000";
+    profile.printIdentity.email = "contact@example.invalid";
+    profile.printIdentity.footerMessage = "Please visit again.";
     profile.printIdentity.paymentInstructions = ["Diagnostic only - no payment destination"];
     for (const template of Object.values(profile.templateSettings)) template.width = width;
     for (const route of Object.values(profile.documentRoutes)) route.template = width;
-    const subtotalMinor = 12345,
-      taxMinor = 1600,
-      totalMinor = 13945;
+    profile.printIdentity.pin = "TEST-PIN-ONLY";
+    const subtotalMinor = 24690,
+      taxMinor = 3200,
+      totalMinor = 28390;
     const order: OrderForPrint = {
       orderId: "#ACCEPTANCE",
       branch: profile.branch,
@@ -46,31 +49,55 @@ export function printingAcceptanceFixtures() {
       tax: taxMinor / 100,
       total: totalMinor / 100,
       paid: totalMinor / 100,
+      serviceCharge: 10,
+      discount: 5,
       lines: [
         {
           id: "fixture-line",
           name: "Long named kitchen meal with distinguishing extra details",
           category: "Test",
-          quantity: 1,
-          unitPrice: subtotalMinor / 100,
+          quantity: 2,
+          unitPrice: 123.45,
           productionStation: "MAIN KITCHEN",
           modifiers: ["No onion"],
           itemNote: "Separate sauce",
         },
       ],
     };
-    for (const type of ["BILL", "RECEIPT"] as const)
+    for (const type of ["BILL", "RECEIPT", "INVOICE"] as const) {
+      const content = SerametPrintService.createDocumentJob(profile, order, type).content;
       examples.push({
         name: `${type.toLowerCase()}-${width}`,
         width,
-        content: SerametPrintService.createDocumentJob(profile, order, type).content,
+        documentType: type,
+        content,
       });
-    examples.push({
-      name: `kot-${width}`,
-      width,
-      content: SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW").jobs[0]
-        .content,
-    });
+      examples.push({
+        name: `${type.toLowerCase()}-copy-${width}`,
+        width,
+        documentType: type,
+        content: SerametPrintService.formatDuplicateCopy(content, width),
+      });
+    }
+    for (const [name, station] of [
+      ["kot", "MAIN KITCHEN"],
+      ["bar", "BAR"],
+    ] as const) {
+      const production = {
+        ...order,
+        lines: order.lines.map((line) => ({ ...line, productionStation: station })),
+      };
+      for (const kind of ["NEW", "REPRINT"] as const) {
+        const job = SerametPrintService.createProductionTicketJobs(profile, production, [], kind)
+          .jobs[0];
+        examples.push({
+          name: `${name}${kind === "REPRINT" ? "-copy" : ""}-${width}`,
+          width,
+          documentType: job.documentType,
+          content: job.content,
+        });
+      }
+    }
   }
   return examples;
 }

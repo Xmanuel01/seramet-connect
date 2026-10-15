@@ -396,9 +396,10 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         (product: { station: string }) =>
           product.station === (device.name === "Kitchen" ? "MAIN" : device.name.toUpperCase()),
       );
-      expect(text.toUpperCase().replace(/\s+/g, " ")).toContain(product.name.toUpperCase());
+      const itemText = text.toUpperCase().replace(/\|/g, " ").replace(/\s+/g, " ");
+      expect(itemText).toContain(product.name.toUpperCase());
       for (const other of setup.products.filter((item: { id: string }) => item.id !== product.id))
-        expect(text.toUpperCase()).not.toContain(other.name.toUpperCase());
+        expect(itemText).not.toContain(other.name.toUpperCase());
     }
     events.push(
       "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Send kitchen; three authoritative obligations and independent emulator destinations verified",

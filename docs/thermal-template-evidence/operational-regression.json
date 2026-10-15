@@ -1,0 +1,97 @@
+{
+  "baseline": "8607afc935471a75b175684d21a878bae2f67e5c",
+  "candidateCommit": "c3521770804d579d62e84b01ef43347913022316",
+  "sourceHashes": {
+    "src/lib/transaction-engine.ts": "9fff54367e75f5bd622f6c0776e23c5817b7cd6eab166f126ef9fb1ada994ec6",
+    "src/lib/print-order-adapter.ts": "833b553ec6fb937db94a32699e20fb6e17df0bf2e4f8268deca19c5eae7c5567",
+    "src/routes/invoices.tsx": "7f1806deebaf5fbfbfa750210cb859443d991498c699dc03a0aa3d9cf184b03d",
+    "scripts/run-pilot-e2e.mjs": "7492517ed5cb27ee667ccee7a72a820e794c666b5ef388f76656172de8555510",
+    "scripts/seed-printing-operational.ts": "4df8eeb55b50ed34882cb4380f53b320964f1fe661b9f843ff8d1f61882d1843",
+    "tests/e2e/printing-operational.spec.ts": "759dd147f8c62d804d8e2312720d4a28183af85a70c7cbdd4cb083214a0df23b"
+  },
+  "node": "v24.22.0",
+  "emulatorRevision": "1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d",
+  "events": [
+    "Four distinct real upstream TCP listeners started on loopback 9100-9103",
+    "UI add kitchen printer; authenticated admin API sets exact MAIN/GRILL/BAR and cashier routes with persistent configuration",
+    "Employee creation/device activation: real authenticated admin APIs. Employee code + PIN sign-in: real browser UI and server cookies",
+    "CAPTURE kitchen-80mm: actual 9100 TCP parser, feed/cut, no unknown commands",
+    "CAPTURE grill-80mm: actual 9101 TCP parser, feed/cut, no unknown commands",
+    "CAPTURE bar-80mm: actual 9102 TCP parser, feed/cut, no unknown commands",
+    "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Send kitchen; three authoritative obligations and independent emulator destinations verified",
+    "CAPTURE bill-80mm: actual 9103 TCP parser, feed/cut, no unknown commands",
+    "CAPTURE bill-58mm: actual 9103 TCP parser, feed/cut, no unknown commands",
+    "CAPTURE receipt-80mm: actual 9103 TCP parser, feed/cut, no unknown commands",
+    "UI invoice creation for exact dispatched order; manager UI bill printing; employee UI invoice cash settlement and actual receipt printing -> cashier TCP",
+    "CAPTURE kitchen-58mm: actual 9100 TCP parser, feed/cut, no unknown commands",
+    "CAPTURE receipt-58mm: actual 9103 TCP parser, feed/cut, no unknown commands",
+    "fresh-machine: real server reservation rejected replay; no extra TCP output",
+    "deleted-ledger: real server reservation rejected replay; no extra TCP output",
+    "Authenticated API: explicit audited narrow bill/receipt/KOT copies; 12 duplicate HTTP submissions caused no additional TCP document",
+    "Actual grill listener offline -> NOT_SENT; reconnect did not replay; manager API review/new claim -> same logical job recovered; old claim consumption rejected",
+    "Real employee PIN session denied printer administration and unauthorized branch selector",
+    "Actual Node 24 bridge killed after genuine server reservation; restart recovered SQLite TRANSMITTING as UNCERTAIN without TCP output or automatic retry",
+    "Real TCP prefix loss: bridge BYTES_SUBMITTED, emulator has no completed cut; physical delivery stays unverified and 12 submissions caused no replay",
+    "Manager UI inspected failed queue, edited paper/station configuration, sent real diagnostic, disabled bar printer; new authorization denied"
+  ],
+  "routing": [
+    {
+      "name": "Kitchen",
+      "port": 9100
+    },
+    {
+      "name": "Grill",
+      "port": 9101
+    },
+    {
+      "name": "Bar",
+      "port": 9102
+    },
+    {
+      "name": "Cashier",
+      "port": 9103
+    }
+  ],
+  "moneyMinor": {
+    "subtotal": 61405,
+    "tax": 0,
+    "total": 61405,
+    "receiptTotal": 61405
+  },
+  "jobs": [
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    },
+    {
+      "stage": "BYTES_SUBMITTED"
+    }
+  ],
+  "physicalOutput": "NOT_VERIFIED"
+}

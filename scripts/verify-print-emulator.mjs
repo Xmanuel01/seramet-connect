@@ -80,11 +80,7 @@ try {
       branchId: config.branchId,
       expiresAt: Date.now() + 90000,
       localTest: true,
-      documentType: fixture.name.startsWith("kot")
-        ? "FOOD_KOT"
-        : fixture.name.startsWith("bill")
-          ? "BILL"
-          : "RECEIPT",
+      documentType: fixture.documentType,
       content: fixture.content,
       target: { id: "disposable-emulator", transport: "TCP", host: "127.0.0.1", port: 9100 },
       profile: { paperWidth: fixture.width, encoding: "ascii", emphasis: true, cutter: "partial" },
@@ -122,10 +118,13 @@ try {
       .filter((line) => line.kind === "Text")
       .map((line) => line.line.text)
       .join("\n");
-    if (fixture.name.startsWith("kot")) {
+    if (fixture.name.startsWith("kot") || fixture.name.startsWith("bar")) {
       assert.match(text, /SAUCE/i);
       assert.match(text, /NO ONION/i);
-    } else assert.match(text, /139\.45/);
+    } else assert.match(text, /283\.90/);
+    assert.ok(
+      text.split("\n").every((line) => line.length <= (fixture.width === "58mm" ? 32 : 42)),
+    );
     await writeFile(
       join(evidence, `${fixture.name}.commands.json`),
       JSON.stringify(snapshot, null, 2),
@@ -153,6 +152,12 @@ try {
     );
     await page.addScriptTag({ content: renderer.outputFiles[0].text });
     await page.getByText("Real Preview", { exact: false }).waitFor();
+    const captureHeight = await page
+      .locator(".workbench")
+      .evaluate((element) =>
+        Math.ceil(element.scrollHeight + element.getBoundingClientRect().top + 24),
+      );
+    await page.setViewportSize({ width: 1100, height: Math.max(1000, captureHeight) });
     await page.screenshot({ path: join(evidence, `${fixture.name}.png`), fullPage: true });
     const unknown = commands.filter((command) => command === "Unknown").length;
     assert.equal(unknown, 0);

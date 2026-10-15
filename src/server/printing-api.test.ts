@@ -601,7 +601,7 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
   expect(decode(first).content).toBe(decode(second).content);
   expect(decode(first).id).toBe(`${obligationId}:0`);
-  expect(decode(first).content).toContain("2 x PERSISTED MEAL");
+  expect(decode(first).content).toMatch(/\|\s*2\|PERSISTED MEAL/);
   expect(decode(first).content).toContain("NO SALT");
   await handlePrintingApi(
     request("consume", { authorization: first.authorization }),
