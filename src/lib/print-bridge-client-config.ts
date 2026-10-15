@@ -33,6 +33,18 @@ export function loadInstalledPrintBridgeConfig(): InstalledPrintBridgeConfig {
 
 export function saveInstalledPrintBridgeConfig(config: InstalledPrintBridgeConfig) {
   if (typeof window === "undefined") return;
+  const url = new URL(config.endpoint);
+  if (
+    url.protocol !== "http:" ||
+    !["127.0.0.1", "localhost"].includes(url.hostname) ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("An HTTP loopback bridge endpoint is required");
+  }
   const next: InstalledPrintBridgeConfig = {
     enabled: config.enabled,
     endpoint:

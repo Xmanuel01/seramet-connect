@@ -74,7 +74,9 @@ export function getConfiguredBranchHardwareProfile(
     throw new PlatformConfigurationError(`No printer routes configured for ${branch.name}`);
   }
 
-  const printers = devices.map((device) => toPrinterDevice(device, branch.name, routes));
+  const printers = devices
+    .filter((device) => ["PRINTER", "KDS"].includes(device.deviceType))
+    .map((device) => toPrinterDevice(device, branch.name, routes));
   const templateSettings = Object.fromEntries(
     customerDocumentTypes.map((documentType) => {
       const configured = findTemplate(templates, documentType);
@@ -405,21 +407,34 @@ function toPrinterDevice(
   )?.fallbackDeviceId;
   return {
     id: device.id,
+    enabled: device.enabled,
     name: device.name,
     branch: branchName,
-    roles: Array.from(
-      new Set([...device.outputRoles.flatMap(outputRoleToPrinterRoles), ...routeRoles]),
-    ),
+    ...(device.printing
+      ? {
+          configuredTransport: true,
+          stationKeys: device.printing.stations,
+          enabled: device.printing.enabled,
+          copies: device.printing.copies,
+        }
+      : {}),
+    roles:
+      device.printing?.roles ??
+      Array.from(new Set([...device.outputRoles.flatMap(outputRoleToPrinterRoles), ...routeRoles])),
     connection:
       device.healthStatus === "ONLINE"
         ? "Connected"
         : device.healthStatus === "DEGRADED"
           ? "Degraded"
-          : "Offline",
+          : device.printing
+            ? "Unknown"
+            : "Offline",
     lastPrintAt: String(device.metadata["lastPrintAt"] ?? "Never"),
     queue: Number(device.metadata["queue"] ?? 0),
     failures: Number(device.metadata["failures"] ?? 0),
-    ...(fallbackPrinterId ? { fallbackPrinterId } : {}),
+    ...(device.printing?.fallbackPrinterId || fallbackPrinterId
+      ? { fallbackPrinterId: device.printing?.fallbackPrinterId ?? fallbackPrinterId }
+      : {}),
   };
 }
 
@@ -461,6 +476,7 @@ function toPrintIdentity(
       : {};
   return {
     businessName: identity.businessName,
+    currency: identity.currency,
     receiptBrand: String(identity.metadata["receiptBrand"] ?? identity.businessName),
     branchName,
     address: identity.address,

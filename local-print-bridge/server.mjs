@@ -33,7 +33,9 @@ export async function createBridge(config, { deliver, localTest = false } = {}) 
     deliver ??
       (async (job) => {
         if (job.target.transport === "TCP") {
-          return sendTcp(encodeEscPos(job.content, job.profile), job.target, { localTest });
+          return sendTcp(encodeEscPos(job.content, job.profile), job.target, {
+            localTest: localTest && job.localTest === true,
+          });
         }
         const file = join(dataDir, `${createHash("sha256").update(job.id).digest("hex")}.txt`);
         try {
@@ -77,6 +79,10 @@ export async function createBridge(config, { deliver, localTest = false } = {}) 
     if (supplied.length !== secret.length || !timingSafeEqual(supplied, secret))
       return reply(401, { code: "UNAUTHORIZED" });
     try {
+      if (request.method === "GET" && request.url === "/jobs")
+        return reply(200, { jobs: store.list() });
+      if (request.method === "GET" && request.url === "/printers")
+        return reply(200, { printers: [] });
       if (request.method !== "POST" || request.url !== "/jobs")
         return reply(404, { code: "NOT_FOUND" });
       const chunks = [];
@@ -89,7 +95,12 @@ export async function createBridge(config, { deliver, localTest = false } = {}) 
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const job = verifyPrintAuthorization(body.authorization, config);
       const row = store.enqueue(job);
-      if (body.retry === true) store.retry(job.id, job.recoveryId);
+      if (
+        body.retry === true &&
+        ["NOT_SENT", "UNCERTAIN"].includes(row.stage) &&
+        row.recovery_id !== job.recoveryId
+      )
+        store.retry(job.id, job.recoveryId);
       runner.pump();
       const current = store.get(row.id);
       return reply(202, {

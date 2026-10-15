@@ -62,6 +62,7 @@ import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { findOverdueDurableWork } from "@/server/worker-health";
+import { handlePrintingApi } from "@/server/printing-api";
 
 type MutationRequest = {
   action?: string;
@@ -163,6 +164,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+    const printingResponse = await handlePrintingApi(request, env, repo);
+    if (printingResponse) return printingResponse;
 
     const registrationResponse = await handleRegistrationApi(request, env);
     if (registrationResponse) return registrationResponse;

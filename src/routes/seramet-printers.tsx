@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { PrinterAdministration } from "@/components/app/PrinterAdministration";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
@@ -213,6 +214,7 @@ function SerametPrinters() {
         (job, outcome) => {
           queueMicrotask(() => callback(job.id, outcome));
         },
+        { obligationId: obligation.id, claimToken: token },
       );
       expectedJobs = result.jobs.length;
       if (!expectedJobs) {
@@ -366,7 +368,7 @@ function SerametPrinters() {
       type === "KITCHEN" ? sendKitchenTickets(order) : printCustomerDocument(order, type);
     setBridgeStatus(SerametLocalPrintBridge.getStatus());
     setNotice(
-      `${result.jobs.length} ${type.toLowerCase()} test job${result.jobs.length === 1 ? "" : "s"} accepted. ${result.skipped.length} duplicate blocked.`,
+      `${result.jobs.length} ${type.toLowerCase()} diagnostic job(s) created. Transport and physical output are not yet confirmed.`,
     );
   };
 
@@ -425,6 +427,7 @@ function SerametPrinters() {
           </select>
         }
       >
+        <PrinterAdministration />
         <Panel>
           <PanelHead
             title="Print setup required"
@@ -474,6 +477,7 @@ function SerametPrinters() {
         </>
       }
     >
+      <PrinterAdministration />
       <Panel className="mb-4">
         <PanelHead
           title="Durable kitchen ticket recovery"
@@ -597,11 +601,7 @@ function SerametPrinters() {
           <PanelHead
             title="Printer health"
             sub={`${profile.branch} - ${profile.kitchenMode.replaceAll("_", " ").toLowerCase()}`}
-            right={
-              <Status>
-                {bridgeStatus.online && bridgeStatus.authenticated ? "Healthy" : "Attention"}
-              </Status>
-            }
+            right={<Status>{installedBridge.online ? "Bridge reachable" : "Unknown"}</Status>}
           />
           <div className="grid gap-3 p-4 md:grid-cols-2">
             {visiblePrinters.map((printer) => (
@@ -767,10 +767,9 @@ function SerametPrinters() {
             title="Reprint audit"
             sub={`${reprints.length} duplicate events this session`}
             right={
-              <Btn onClick={reprintLatest}>
-                <RotateCcw className="h-4 w-4" />
-                Reprint latest
-              </Btn>
+              <span className="text-xs text-muted-foreground">
+                Use authoritative document recovery
+              </span>
             }
           />
           <div className="max-h-[320px] space-y-2 overflow-y-auto p-4">
