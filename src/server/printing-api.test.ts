@@ -645,4 +645,24 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     env(),
     repository,
   );
+  const reprintId = crypto.randomUUID();
+  const reprintClaim = crypto.randomUUID();
+  actor.name = "Reviewing manager";
+  state.kitchenPrintObligations!.push({
+    ...state.kitchenPrintObligations![0]!,
+    id: reprintId,
+    sourceId: crypto.randomUUID(),
+    kind: "REPRINT",
+    claimToken: reprintClaim,
+  });
+  await repository.saveState(state, actor, "Disposable authorized KOT reprint");
+  const reprint = await (await handlePrintingApi(
+    request("authorize", { ...input, recordId: reprintId, claimToken: reprintClaim }),
+    env(),
+    repository,
+  ))!.json();
+  const text = decode(reprint).content.replace(/\s+/g, " ");
+  expect(text).toContain("REPRINT");
+  expect(text).toContain("Reprinted by: Reviewing manager");
+  expect(text).not.toContain(`Reprinted by: ${state.orders[0]!.cashier}`);
 });

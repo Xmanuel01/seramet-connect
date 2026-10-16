@@ -1,141 +1,148 @@
-# Thermal Document Template Redesign
+# Final Thermal Document Design
 
-Date: 15 October 2026
+16 October 2026. Existing PR #129. The owner's receipt grid governs customer
+documents; the ticket comparison governs kitchen, grill and bar production.
+Reference images are design specifications, not business data.
 
-## Scope
+## Final Layout
 
-Presentation changes only, on `codex/thermal-template-redesign`, based on PR #128
-head `c3521770804d579d62e84b01ef43347913022316`. The redesign is not deployed.
-The existing ESC/POS encoder, gateway, routing, signatures, print claims, durable
-queue, retry/recovery authorization and audit mechanisms are retained.
+- Existing 58mm/32-column and 80mm/42-column ASCII profiles remain in use.
+- Customer documents have centered configured merchant branding, branch and
+  available contact/PIN details. A legacy SERAMET platform-brand default falls
+  back to the merchant business name. No raster-logo support is invented.
+- A thin divider precedes BILL, RECEIPT / PAID or TAX INVOICE. Reference, order,
+  date/time, table/type and operator/customer details use compact aligned rows,
+  not boxed metadata. Empty values and fabricated due dates are omitted.
+- Customer tables use `QTY | ITEM | AMT` at 58mm and `QTY | ITEM | AMOUNT` at 80mm.
+  Long descriptions wrap in their column. Modifiers and notes are indented
+  full-span rows. Customer items share one table; production retains row dividers.
+- Subtotal, tax and supplied nonzero service/discount values remain authoritative.
+  TOTAL is separated by rules. No totals or tax rates are inferred/recomputed.
+  Invoices retain unit prices, tax/customer information and TAX INVOICE semantics
+  at thermal and A4 widths. This is not a legal tax-compliance certification.
+- Receipts retain actual paid amount, tender breakdown, available references and
+  change, with the configured short footer. Unconfigured payment instructions
+  no longer print a configuration-warning placeholder.
+- Production starts directly with KITCHEN ORDER / KOT number or BAR ORDER / BAR
+  number, followed by order/type/table/date/station/operator and a short branch
+  row. No merchant header, contacts, introductory feed, NEW ORDER footer or
+  repeated KITCHEN TICKET / BAR TICKET footer remains.
+- Production has a `QTY | ITEM` table, station-specific items and no prices by
+  default. The existing explicit priced-KOT option is unchanged. Special requests
+  have a ruled box; order instructions are not copied beneath every item.
+- When the existing emphasis option is enabled, fixed ESC/POS commands emphasize
+  titles, TOTAL, reprint/special-request labels and allergy text. Input is still
+  sanitized; user-supplied controls never become device commands.
+- Production reprints retain REPRINT and original ticket/order/station identity.
+  Reprinted by identifies the authenticated claim holder, not the original cashier.
 
-## Layout Contract
+## Preserved Safety
 
-- 58mm uses 32 monospaced columns; 80mm uses 42.
-- Centered configured text branding is the logo fallback. Restaurant, branch and
-  available contact/PIN details are wrapped rather than truncated. Production
-  tickets retain a compact restaurant/branch header.
-- Document title (TAX INVOICE for invoices), number, order/date/time, operator, service mode/table and
-  applicable customer details use ruled sections.
-- Customer tables use `QTY | ITEM | PRICE` at 58mm and
-  `QTY | DESCRIPTION | AMOUNT` at 80mm. The monetary column contains the line
-  amount; invoices additionally show the unit price below each item.
-- Kitchen and bar tables use `QTY | ITEM`, with the existing optional priced-KOT
-  setting respected. Station and order identity remain prominent.
-- Long descriptions wrap in their own column. Modifiers and item notes are
-  indented full-span rows. Production special requests use a separate ruled box.
-- Totals have aligned amounts and a distinct TOTAL band. Service and discount
-  rows are supported when explicitly supplied; the renderer does not infer them
-  or recalculate the authoritative total. Existing adapters are not changed to
-  manufacture these amounts.
-- Existing paid amounts, change, payment methods/references and loyalty details
-  remain available. Bills retain PAYMENT PENDING; receipt and invoice settlement
-  information continues to use the existing supplied payment data.
-- Customer duplicates have a conspicuous DUPLICATE COPY section. Kitchen/bar
-  recovery tickets retain REPRINT and amendment labels. Internal original-job
-  IDs remain in the job/audit record rather than cluttering the paper.
-- Thermal invoices now honor the configured thermal width instead of being
-  forced into A4. Explicit A4 configuration remains supported at 78 columns.
+RAW TCP, Windows transport, signed identities, tenant/branch permissions,
+routing, immutable obligations, durable queues, idempotency, server attempt
+reservations, audit and manager-reviewed recovery remain intact. Uncertain
+delivery never automatically retries. Customer receipts still require a confirmed
+authoritative receipt through the existing gateway.
 
-No monetary, date/time, authorization, permission, routing or recovery semantics
-are redesigned. No schema, dependency, credential or infrastructure changes are
-required.
+Customer duplicate payloads remain stable across terminals for the same reprint.
+Injecting the current requester's display name changed the fingerprint on replay
+in the regression test, so production customer copies do not add that field.
+Actual operator attribution remains in the durable server audit. Fixture copies
+exercise the renderer's optional operator label separately; this is not a claim
+that production customer copies include it. KOT reprint attribution has a focused
+API regression proving the claim holder is distinct from the original cashier.
 
-## Fresh Emulator Evidence
+## Actual Emulator Evidence
 
-The existing pinned ESC/POS emulator revision is
-`1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d`. The verifier sends real encoded bytes
-through the local bridge and TCP listener and renders the emulator's own
-ReceiptViewer. The capture viewport expands to include the entire paper.
+Pinned upstream: `1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d`. All 20 final images
+show its actual ReceiptViewer paper after real ESC/POS bridge/TCP delivery, cropped
+only to the paper element. They are not design mockups or re-typeset documents.
 
-| Document          | 58mm                                                       | 80mm                                                       |
-| ----------------- | ---------------------------------------------------------- | ---------------------------------------------------------- |
-| Kitchen order     | [Preview](thermal-template-evidence/kot-58mm.png)          | [Preview](thermal-template-evidence/kot-80mm.png)          |
-| Bar order         | [Preview](thermal-template-evidence/bar-58mm.png)          | [Preview](thermal-template-evidence/bar-80mm.png)          |
-| Bill              | [Preview](thermal-template-evidence/bill-58mm.png)         | [Preview](thermal-template-evidence/bill-80mm.png)         |
-| Receipt           | [Preview](thermal-template-evidence/receipt-58mm.png)      | [Preview](thermal-template-evidence/receipt-80mm.png)      |
-| Invoice           | [Preview](thermal-template-evidence/invoice-58mm.png)      | [Preview](thermal-template-evidence/invoice-80mm.png)      |
-| Kitchen reprint   | [Preview](thermal-template-evidence/kot-copy-58mm.png)     | [Preview](thermal-template-evidence/kot-copy-80mm.png)     |
-| Bar reprint       | [Preview](thermal-template-evidence/bar-copy-58mm.png)     | [Preview](thermal-template-evidence/bar-copy-80mm.png)     |
-| Bill duplicate    | [Preview](thermal-template-evidence/bill-copy-58mm.png)    | [Preview](thermal-template-evidence/bill-copy-80mm.png)    |
-| Receipt duplicate | [Preview](thermal-template-evidence/receipt-copy-58mm.png) | [Preview](thermal-template-evidence/receipt-copy-80mm.png) |
-| Invoice duplicate | [Preview](thermal-template-evidence/invoice-copy-58mm.png) | [Preview](thermal-template-evidence/invoice-copy-80mm.png) |
+| Document          | 58mm                                                     | 80mm                                                     |
+| ----------------- | -------------------------------------------------------- | -------------------------------------------------------- |
+| Bill              | [Final](thermal-template-evidence/bill-58mm.png)         | [Final](thermal-template-evidence/bill-80mm.png)         |
+| Paid receipt      | [Final](thermal-template-evidence/receipt-58mm.png)      | [Final](thermal-template-evidence/receipt-80mm.png)      |
+| Tax invoice       | [Final](thermal-template-evidence/invoice-58mm.png)      | [Final](thermal-template-evidence/invoice-80mm.png)      |
+| Kitchen KOT       | [Final](thermal-template-evidence/kot-58mm.png)          | [Final](thermal-template-evidence/kot-80mm.png)          |
+| Bar ticket        | [Final](thermal-template-evidence/bar-58mm.png)          | [Final](thermal-template-evidence/bar-80mm.png)          |
+| Bill duplicate    | [Final](thermal-template-evidence/bill-copy-58mm.png)    | [Final](thermal-template-evidence/bill-copy-80mm.png)    |
+| Receipt duplicate | [Final](thermal-template-evidence/receipt-copy-58mm.png) | [Final](thermal-template-evidence/receipt-copy-80mm.png) |
+| Invoice duplicate | [Final](thermal-template-evidence/invoice-copy-58mm.png) | [Final](thermal-template-evidence/invoice-copy-80mm.png) |
+| Kitchen reprint   | [Final](thermal-template-evidence/kot-copy-58mm.png)     | [Final](thermal-template-evidence/kot-copy-80mm.png)     |
+| Bar reprint       | [Final](thermal-template-evidence/bar-copy-58mm.png)     | [Final](thermal-template-evidence/bar-copy-80mm.png)     |
 
-Each preview has adjacent parsed `.txt` evidence. The
-[summary](thermal-template-evidence/summary.json) records text SHA-256 hashes,
-command counts and transport outcomes. All 20 have zero unknown commands,
-bounded 32/42-column output, initialization, feed and cut commands. Visual review
-covered the required six originals plus invoice and copy examples: no clipped
-columns or missing totals, instructions or footers were observed.
+Adjacent parsed text and [summary](thermal-template-evidence/summary.json) record
+SHA-256 hashes, encoded line counts and zero unknown commands. All 20 images
+were visually reviewed for alignment, wrapping, clipping, notes, amounts and copy
+labels. Automated checks assert bounds, titles, header/footer suppression and feed/cut.
 
-These are disposable **presentation fixtures**, including explicit service and
-discount example values. Their test-only signer is not evidence of real gateway
-authorization or a financial transaction. The separate operational browser test
-uses the actual application gateway and employee session.
+Before images/text use the same filenames under
+[before-final](thermal-template-evidence/before-final/), from baseline
+`f5c0d8c4cfcd627ab92be0ada7cc9b5d2cc1fe38`. Before images include the emulator
+frame; final images crop its paper. Do not infer paper savings from pixel height.
 
-## Validation
+## Encoded Line Savings
 
-- Focused rendering/API/outbox/recovery/routing tests: **96 passed**, including
-  **23 layout tests** for all 20 documents and extreme long identifiers/amounts
-  at 58mm, 80mm and A4.
-- Bridge transport/security/concurrency/recovery tests: **14 passed**.
-- `npm run validate`: **passed**; typecheck, ESLint, **783/783 unit tests**,
-  production build and compiled Worker Queue/Cron registration. ESLint reports
-  28 existing warnings and zero errors.
-- Final emulator verification: **20/20 passed**.
-- Operational browser regression: **1/1 passed** in 1.6 minutes. The real employee
-  flow covers Hold/recall, multi-station kitchen dispatch, invoice/bill, cash
-  settlement/receipt, both widths, audited copies, duplicate submissions,
-  lost-ledger/second-machine rejection, branch denial, printer outage recovery,
-  bridge restart and uncertain delivery. See the sanitized
+Counts are actual parsed NewLine commands, not emulator CSS/buffer height.
+The existing three-line `ESC d 3` cutter feed is unchanged and counted separately.
+Fixture items/amounts are retained; reprints now demonstrate a distinct, longer
+operator name. No extra introductory feed is introduced.
+
+| Document             | Before | Final | Saved |
+| -------------------- | -----: | ----: | ----: |
+| Kitchen 58mm         |     32 |    23 |     9 |
+| Kitchen 80mm         |     30 |    21 |     9 |
+| Bar 58mm             |     32 |    23 |     9 |
+| Bar 80mm             |     30 |    21 |     9 |
+| Kitchen reprint 58mm |     36 |    24 |    12 |
+| Kitchen reprint 80mm |     33 |    22 |    11 |
+| Bar reprint 58mm     |     36 |    24 |    12 |
+| Bar reprint 80mm     |     33 |    22 |    11 |
+
+Original production tickets save approximately 28-30% of text lines. Customer
+originals save 7-11 lines. All 20 comparisons are in
+[line-comparison.json](thermal-template-evidence/line-comparison.json).
+These are not physical millimetre measurements or guarantees for every order.
+
+## Validation and Provenance
+
+- Focused rendering/API/routing/outbox/recovery: **100/100 passed**, including
+  **27 layout tests**, branded-header fallback, absent placeholders, monetary
+  values, station isolation and correct reprint attribution.
+- Bridge transport/security/concurrency/recovery/emphasis: **15/15 passed**.
+- Final emulator cases: **20/20 passed**.
+- Real employee POS / four independent TCP emulators: **1/1 operational browser
+  scenario passed** in 2.3 minutes. It covers Hold/recall, station dispatch,
+  invoice/bill, cash receipt, both widths, audited copies, duplicate submissions,
+  branch denial, outages, restart and uncertain delivery. See
   [operational result](thermal-template-evidence/operational-regression.json).
-- Formatting and `git diff --check`: **passed**. The earlier complete twelve-
-  scenario browser acceptance suite is not claimed as rerun for this redesign.
+- Repository validation and GitHub CI results are recorded in the PR completion
+  comment; a failed security gate is never a successful certification.
 
-The tested source is the local working tree, not the branch's unchanged base
-commit. `candidateCommit` in the operational result reports that base HEAD; it
-does not claim the uncommitted redesign exists in that commit. SHA-256 of
-`src/lib/seramet-print-service.ts`:
-`99312fdd672395ddff2e76077b3a4605d174becfb31951e08699a9e7074f3deb`.
-SHA-256 of `src/server/printing-api.ts`:
-`5532fdb1298de33e3523f8cc475b67e6d64374b7ab8a82dfbc836b6035d005d3`.
+Evidence was generated from the final local working tree before commit. The
+operational result's candidateCommit denotes its base HEAD, not a claim that the
+refinements existed in that commit. Exact tested source hashes are in
+[source-hashes.json](thermal-template-evidence/source-hashes.json).
+Fixture-only signing is presentation evidence; operational browser acceptance
+uses the real authenticated gateway, not a mock authorization endpoint.
 
-## Invoice Review Correction - 16 October 2026
+## Known Limits
 
-Thermal invoices and duplicate copies now retain the TAX INVOICE title, matching
-the A4 invoice and existing document semantics. The obsolete due-date helper is
-removed: a creation timestamp is not a payment due date, and the current print
-input has no authoritative due-date value. No fabricated `Due Date: -` is printed
-at any width. Amounts and the ruled layout remain unchanged.
+- The pinned emulator labels narrow geometry 50mm; Seramet still checks 32
+  columns for its 58mm profile. Its renderer does not faithfully show emphasis
+  and inserts spacing on style changes. Commands and encoded line counts, not
+  those CSS artefacts, establish emphasis/feed. Upstream is not patched to make
+  the evidence look better.
+- ASCII rules approximate thin borders. No Unicode dependency, fake logo or new
+  raster support is introduced. Windows retains text spooling; native emphasis
+  evidence applies to RAW ESC/POS.
+- Printable dots, font density, darkness, cutter/feed and physical paper remain
+  printer-model-specific and unverified. BYTES_SUBMITTED is not proof of delivery.
+- Narrow paper wraps more; oversized amounts use full-span rows instead of
+  truncation. Existing A4 output remains bounded at 78 columns.
+- This is not dependency remediation or a new architecture. The known production
+  dependency-audit blocker must not be bypassed.
 
-Focused renderer/API/flow regression: **87/87 passed**, including **26 layout
-tests** and explicit 58mm/80mm/A4 title, amount and absent-due-date assertions.
-The emulator verifier passed **20/20** again; only the four invoice originals and
-copies and their summary entries were replaced. Other capture evidence and the
-earlier operational browser result above remain historical evidence from the
-original redesign, not newly rerun operational certification.
-
-Corrected renderer SHA-256:
-`a2eb40d02393bd38509d3fab791692f42d0664f30afa68996c4f2e0034142c8e`.
-
-## Physical Limitations
-
-- The pinned emulator labels its narrow paper geometry 50mm; the Seramet 58mm
-  profile still encodes and checks exactly 32 columns. This is not a claim that
-  a physical 58mm printer was calibrated.
-- Narrow paper necessarily wraps more and uses more vertical paper. Very large
-  line amounts move to a full-span Amount row rather than being truncated.
-- ASCII rules and configured text branding preserve current code-page and
-  printer compatibility. No raster logo download or new Unicode/box-drawing
-  dependency is introduced. TOTAL emphasis comes from hierarchy and rules,
-  without changing the encoder's existing emphasis behavior.
-- Actual printable width, font density, cutter support, paper feed and physical
-  output still require verification on the target device. BYTES_SUBMITTED is
-  not proof of paper delivery. Uncertain delivery must not automatically retry.
-- Existing operator/reason provenance and amendment semantics are retained;
-  this presentation change does not certify a new recovery/security model.
-
-Validation was performed locally before committing the redesign. Delivery is a
-focused review PR only; no merge, manual deployment, database operation,
-printer-driver installation or physical-printer certification is authorized.
-Repository-managed CI or preview builds may run automatically on push.
+No merge, manual deployment, live database operation, secret provisioning or
+driver installation is part of this work. Existing repository-managed preview
+builds may run automatically on push.

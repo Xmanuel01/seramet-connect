@@ -76,7 +76,11 @@ export function printingAcceptanceFixtures() {
         name: `${type.toLowerCase()}-copy-${width}`,
         width,
         documentType: type,
-        content: SerametPrintService.formatDuplicateCopy(content, width),
+        content: SerametPrintService.formatDuplicateCopy(
+          content,
+          width,
+          "Disposable reprint operator",
+        ),
       });
     }
     for (const [name, station] of [
@@ -88,8 +92,16 @@ export function printingAcceptanceFixtures() {
         lines: order.lines.map((line) => ({ ...line, productionStation: station })),
       };
       for (const kind of ["NEW", "REPRINT"] as const) {
-        const job = SerametPrintService.createProductionTicketJobs(profile, production, [], kind)
-          .jobs[0];
+        const job = SerametPrintService.createProductionTicketJobs(
+          profile,
+          {
+            ...production,
+            requestedBy:
+              kind === "REPRINT" ? "Disposable reprint operator" : production.requestedBy,
+          },
+          [],
+          kind,
+        ).jobs[0];
         examples.push({
           name: `${name}${kind === "REPRINT" ? "-copy" : ""}-${width}`,
           width,

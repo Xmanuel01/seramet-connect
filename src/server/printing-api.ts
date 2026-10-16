@@ -616,7 +616,7 @@ export async function handlePrintingApi(
       terminalId: actor.deviceId ?? "authorized-terminal",
       kitchenObligationId: obligation.id,
       orderType: order.channel,
-      requestedBy: order.cashier,
+      requestedBy: obligation.kind === "REPRINT" ? actor.name : order.cashier,
       cashier: order.cashier,
       waiter: order.waiter ?? order.cashier,
       createdAt: obligation.createdAt,

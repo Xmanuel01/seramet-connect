@@ -1,28 +1,25 @@
-+----------------------------------------+
+              DUPLICATE COPY
+Reprinted by: Disposable reprint operator
 
-|             DUPLICATE COPY             |
-+----------------------------------------+
+------------------------------------------
         Disposable Test Restaurant
             Disposable branch
             Test-only address
              Tel: 0000000000
          contact@example.invalid
             PIN: TEST-PIN-ONLY
-+----------------------------------------+
-|                RECEIPT                 |
-+----------------------------------------+
-| RCP-TEST-ONLY                          |
-+----------------------------------------+
-| ORDER DETAILS                          |
-+----------------------------------------+
-| Order: #ACCEPTANCE                     |
-| Date: Oct 15, 2026 13:00               |
-| Mode: Takeaway                         |
-| Cashier: Disposable operator           |
-| Bill to: Walk-in Customer              |
-+----------------------------------------+
+------------------------------------------
+
+                 RECEIPT
+                   PAID
+
+Receipt: RCP-TEST-ONLY
+Order  : #ACCEPTANCE
+Date   : Oct 15, 2026 13:00
+Type   : Takeaway
+Cashier: Disposable operator
 +---+-----------------------+------------+
-|QTY|DESCRIPTION            |AMOUNT      |
+|QTY|ITEM                   |AMOUNT      |
 +---+-----------------------+------------+
 |  2|Long named kitchen meal|  KES 246.90|
 |   |with distinguishing    |            |
@@ -36,18 +33,14 @@
 |SERVICE                  |     KES 10.00|
 |DISCOUNT                 |      KES 5.00|
 +-------------------------+--------------+
+
 |TOTAL                    |    KES 283.90|
+
 +=========================+==============+
 +----------------------------------------+
-|                  PAID                  |
-+----------------------------------------+
 | Paid: KES 283.90                       |
-+----------------------------------------+
-| PAYMENT                                |
-+----------------------------------------+
 | CASH KES 283.90                        |
 +----------------------------------------+
 ------------------------------------------
-      Thank you for dining with us.
            Please visit again.
 

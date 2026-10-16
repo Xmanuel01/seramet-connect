@@ -1,29 +1,25 @@
-+------------------------------+
+         DUPLICATE COPY
+Reprinted by: Disposable reprint
 
-|        DUPLICATE COPY        |
-+------------------------------+
+              operator
+--------------------------------
    Disposable Test Restaurant
        Disposable branch
        Test-only address
         Tel: 0000000000
     contact@example.invalid
        PIN: TEST-PIN-ONLY
-+------------------------------+
-|             BILL             |
-+------------------------------+
-| INV-TEST-ONLY                |
-+------------------------------+
-| ORDER DETAILS                |
-+------------------------------+
-| Order: #ACCEPTANCE           |
-| Date: Oct 15, 2026 13:00     |
-| Mode: Takeaway               |
-| Served by: Disposable        |
-| operator                     |
-| Bill to: Walk-in Customer    |
-+------------------------------+
+--------------------------------
+
+              BILL
+
+Bill   : INV-TEST-ONLY
+Order  : #ACCEPTANCE
+Date   : Oct 15, 2026 13:00
+Type   : Takeaway
+Server : Disposable operator
 +---+---------------+----------+
-|QTY|ITEM           |PRICE     |
+|QTY|ITEM           |AMT       |
 +---+---------------+----------+
 |  2|Long named     |KES 246.90|
 |   |kitchen meal   |          |
@@ -39,10 +35,11 @@
 |SERVICE        |     KES 10.00|
 |DISCOUNT       |      KES 5.00|
 +---------------+--------------+
+
 |TOTAL          |    KES 283.90|
+
 +===============+==============+
-+------------------------------+
-| PAYMENT PENDING              |
+        PAYMENT PENDING
 +------------------------------+
 | PAYMENT OPTIONS              |
 | Diagnostic only - no payment |

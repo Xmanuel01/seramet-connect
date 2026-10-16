@@ -1,6 +1,6 @@
 {
   "baseline": "8607afc935471a75b175684d21a878bae2f67e5c",
-  "candidateCommit": "c3521770804d579d62e84b01ef43347913022316",
+  "candidateCommit": "f5c0d8c4cfcd627ab92be0ada7cc9b5d2cc1fe38",
   "sourceHashes": {
     "src/lib/transaction-engine.ts": "9fff54367e75f5bd622f6c0776e23c5817b7cd6eab166f126ef9fb1ada994ec6",
     "src/lib/print-order-adapter.ts": "833b553ec6fb937db94a32699e20fb6e17df0bf2e4f8268deca19c5eae7c5567",

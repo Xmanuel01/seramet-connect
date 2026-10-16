@@ -3,183 +3,223 @@
   "results": [
     {
       "name": "bill-58mm",
-      "transportMilliseconds": 160,
+      "transportMilliseconds": 112.7,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 102,
+      "commands": 90,
+      "encodedTextLines": 40,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "021dc9405ee8f410b4dd49bc51cec4a4122aa4b22c09829c1e7ebf683dcff01b"
+      "textSha256": "55c31063468ba66c583b016569101cc5a5821f50475db5ad1481c15060970612"
     },
     {
       "name": "bill-copy-58mm",
-      "transportMilliseconds": 165.8,
+      "transportMilliseconds": 47,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 108,
+      "commands": 100,
+      "encodedTextLines": 44,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "4fe50f09f7113d2be82f3175cc8100f5a8fcaa3b79ace891fc83579e54c10e87"
+      "textSha256": "f3ddddf03b48ef46cebeecfad0b56a7f88abf9bb8221f6ffb126516c8cccd346"
     },
     {
       "name": "receipt-58mm",
-      "transportMilliseconds": 158.5,
+      "transportMilliseconds": 42.1,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 106,
+      "commands": 90,
+      "encodedTextLines": 39,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "5cf6af68748c0639eabb261a70dfa3f4f448d9112482a2c6ace899ffd9c9f4fa"
+      "textSha256": "c5f11a2d65c4b23578df777396cb56a911288491068b9c51a39682f608e03617"
     },
     {
       "name": "receipt-copy-58mm",
-      "transportMilliseconds": 60.7,
+      "transportMilliseconds": 50,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 112,
+      "commands": 100,
+      "encodedTextLines": 43,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "47698de8c90733e5452bd77185e96e334514a07a9c568558592fe6e52fc2a6de"
+      "textSha256": "37c1bd20e4bf4b691db0f521f582de2f311fd0b40f8c7df4b58e89d5fd931f97"
     },
     {
       "name": "invoice-58mm",
-      "transportMilliseconds": 41.9,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 114,
-      "unknownCommands": 0,
-      "textSha256": "fe6c9a1f060e49f271c9fac84acf82c00ea2d8b1da63e0016b3d11d01a1fb7d6"
-    },
-    {
-      "name": "invoice-copy-58mm",
-      "transportMilliseconds": 42.5,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 120,
-      "unknownCommands": 0,
-      "textSha256": "1b175e2300449c2ed7c8afddb1594790726efa7f347dffa7f35c30ef1729f600"
-    },
-    {
-      "name": "kot-58mm",
-      "transportMilliseconds": 46.8,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 70,
-      "unknownCommands": 0,
-      "textSha256": "26133eff9308939eb4c4d02e12cb4695fc2b13f59f3b6e20beb92d1a2194fb0a"
-    },
-    {
-      "name": "kot-copy-58mm",
-      "transportMilliseconds": 44.3,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 78,
-      "unknownCommands": 0,
-      "textSha256": "a3736011f90648aa969e06aa06b48bf514299b362f4a63c5cbe254505c0fa3a4"
-    },
-    {
-      "name": "bar-58mm",
-      "transportMilliseconds": 50.7,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 70,
-      "unknownCommands": 0,
-      "textSha256": "f0a918da7373ef7ab5bb3b5babf88b6569dc57894e4fc0c39d24141e55d6ec72"
-    },
-    {
-      "name": "bar-copy-58mm",
-      "transportMilliseconds": 51.8,
-      "stage": "BYTES_SUBMITTED",
-      "physicalOutput": "NOT_VERIFIED",
-      "commands": 78,
-      "unknownCommands": 0,
-      "textSha256": "9b3236045ed63b7215d6dafb6cb84a0f1a319dd50dce30ed1101738d86987638"
-    },
-    {
-      "name": "bill-80mm",
-      "transportMilliseconds": 47.1,
+      "transportMilliseconds": 1294.2,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
       "commands": 96,
+      "encodedTextLines": 43,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "a3325741f0649afe1b7ccd5b58f44ed7c7e79a50330eb2852620a3a014257641"
+      "textSha256": "28bbaed178e2c69218346b8471c11af079817565fec53f7030910fa4dbd2982d"
+    },
+    {
+      "name": "invoice-copy-58mm",
+      "transportMilliseconds": 232.9,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 106,
+      "encodedTextLines": 47,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "2932273b4bb4e17ab580dfbb884e8c65bc37e6f8f46fc40030fa0469bc8cd765"
+    },
+    {
+      "name": "kot-58mm",
+      "transportMilliseconds": 45,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 56,
+      "encodedTextLines": 23,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "5321e29a18bff0ab8b384d65de491fabfe2c5b76e584a1f6ebd76717143b392e"
+    },
+    {
+      "name": "kot-copy-58mm",
+      "transportMilliseconds": 47.6,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 62,
+      "encodedTextLines": 24,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "09d11cf5d6c010c2af09213212de97a55d2bb2f6ed0795c90994e6926b158f98"
+    },
+    {
+      "name": "bar-58mm",
+      "transportMilliseconds": 47.9,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 56,
+      "encodedTextLines": 23,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "803296b34a96132f54285c03d06225ab9e980500ac976a112676c26778b47ba7"
+    },
+    {
+      "name": "bar-copy-58mm",
+      "transportMilliseconds": 40.8,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 62,
+      "encodedTextLines": 24,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "fc376b1eb48c68b75c41c6619fa55f727a9dc7f61e4f9adfbbc580fa479beba2"
+    },
+    {
+      "name": "bill-80mm",
+      "transportMilliseconds": 43.4,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "commands": 86,
+      "encodedTextLines": 38,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "a4298b37ad6f0634cd845de8797643fa41b14208544c8479e6b56e2278e56d1f"
     },
     {
       "name": "bill-copy-80mm",
-      "transportMilliseconds": 46.6,
+      "transportMilliseconds": 56,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 102,
+      "commands": 94,
+      "encodedTextLines": 41,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "b0f066da3df141cb03065ad92a6e18fb0d4146fa987c51c1efadac7375b521fa"
+      "textSha256": "00c2bb7ac600e6be4f8dc94833165f255367323c7822c66913a25b0cb2320493"
     },
     {
       "name": "receipt-80mm",
-      "transportMilliseconds": 46.9,
+      "transportMilliseconds": 47,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 102,
+      "commands": 86,
+      "encodedTextLines": 37,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "15f4dc5fc205ddbc4febe95e37b2faa7a3fe57a966103954ae6bcdbae66e1a84"
+      "textSha256": "22cce925ad4ca7c770a385b0d029c961de4ab5cc4846d8f2e15e75ab477ce8c9"
     },
     {
       "name": "receipt-copy-80mm",
-      "transportMilliseconds": 47.4,
+      "transportMilliseconds": 49.9,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 108,
+      "commands": 94,
+      "encodedTextLines": 40,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "aa105c459286f0611ff1e52dbbd231c82585e36924ee28db489fb9f927c25af9"
+      "textSha256": "6300b2c13235c8db8fe7197b844f47d9b856969013bbe9db2f1e6fb1f9d1fe17"
     },
     {
       "name": "invoice-80mm",
-      "transportMilliseconds": 46.7,
+      "transportMilliseconds": 43.9,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 110,
+      "commands": 92,
+      "encodedTextLines": 41,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "84cce6a022677a60205a24cc0712c965355f63115bf662c4ef2b0e6a49c7eb6a"
+      "textSha256": "1dc9fd3e7fca7eedbbd58abdecf2a96f3588a84b8501ae6149d4aa43dcc40fc5"
     },
     {
       "name": "invoice-copy-80mm",
-      "transportMilliseconds": 42.6,
+      "transportMilliseconds": 56.3,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 116,
+      "commands": 100,
+      "encodedTextLines": 44,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "c483569195b900c7d0f7619a49578900fc504655174e8bfc4449d92ea550d34f"
+      "textSha256": "0d35d4da2cf3364f9850948571b81e898760f995eab0d4767b9b7ad365274c17"
     },
     {
       "name": "kot-80mm",
-      "transportMilliseconds": 48.9,
+      "transportMilliseconds": 43.2,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 66,
+      "commands": 52,
+      "encodedTextLines": 21,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "2ad083888823740d56f728a60b70a21030f157c5e7826e6ff2776bf9924b6ae0"
+      "textSha256": "aed6adf2d72a01c7f5179fd87876abbe0ef09b93ee278da870427bf4a1917f9c"
     },
     {
       "name": "kot-copy-80mm",
-      "transportMilliseconds": 41.2,
+      "transportMilliseconds": 45.7,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 72,
+      "commands": 58,
+      "encodedTextLines": 22,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "b0058bdb7ae6d54da12003c92a1c2d8e2142c664f726e40ef2ec30cf6c08209f"
+      "textSha256": "0e88d83e44029083b5464a0bb6dad10ae62eff3700b4635f03c2ca7195b386c1"
     },
     {
       "name": "bar-80mm",
-      "transportMilliseconds": 45.1,
+      "transportMilliseconds": 44.5,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 66,
+      "commands": 52,
+      "encodedTextLines": 21,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "a3d9166df56095493864a280ec559ee0ba3ed2c312ade35bc48fe611cd67d8fc"
+      "textSha256": "5a9fdc1e1c1db2d42f18ffa41bdd7b278ad48fe238deac5c8ef2fc84aa4d7973"
     },
     {
       "name": "bar-copy-80mm",
-      "transportMilliseconds": 43.3,
+      "transportMilliseconds": 43.9,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 72,
+      "commands": 58,
+      "encodedTextLines": 22,
+      "feedLines": 3,
       "unknownCommands": 0,
-      "textSha256": "a3c82f7ad1f2a6f23a13c6ba57ca6a07db903c7f13d45d2b40b5f347936c4129"
+      "textSha256": "7a3f9fce903f9791250603b1f01997508ba974b45b0d49255d3df76435b4a0ff"
     }
   ]
 }

@@ -1,20 +1,15 @@
-        Disposable Test Restaurant
+BAR ORDER BAR #ACCEPTANCE
+*** REPRINT ***
 
-            Disposable branch
-+----------------------------------------+
-|               BAR ORDER                |
-+----------------------------------------+
-| *** REPRINT ***                        |
-| BAR #ACCEPTANCE                        |
-| ORDER #ACCEPTANCE                      |
-| STATION: BAR                           |
-+----------------------------------------+
-| ORDER DETAILS                          |
-+----------------------------------------+
-| Date: Oct 15, 2026 13:00               |
-| Mode: Takeaway                         |
-| Requested by: Disposable operator      |
-+----------------------------------------+
+------------------------------------------
+Order  : #ACCEPTANCE
+Type   : Takeaway
+Date   : Oct 15, 2026 13:00
+STATION: BAR
+Branch : Disposable branch
+
+Reprinted by: Disposable reprint operator
+
 +---+------------------------------------+
 |QTY|ITEM                                |
 +---+------------------------------------+
@@ -24,12 +19,12 @@
 |   Note: SEPARATE SAUCE                 |
 +---+------------------------------------+
 +----------------------------------------+
-| SPECIAL REQUEST                        |
+
+|            SPECIAL REQUEST             |
+
 +----------------------------------------+
+
 | No salt. Allergy test only.            |
-+----------------------------------------+
-| OPERATOR                               |
-+----------------------------------------+
-| Reprinted by: Disposable operator      |
+
 +----------------------------------------+
 

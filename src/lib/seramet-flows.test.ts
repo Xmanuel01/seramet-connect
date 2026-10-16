@@ -595,9 +595,9 @@ describe("Seramet POS acceptance scenarios", () => {
       "PAID",
       "M-PESA",
       "Ref: TH7XXXXXXX",
-      "Thank you for dining",
+      profileForMode("PRINTER_ONLY").printIdentity.footerMessage,
     ].forEach((text) => {
-      expect(receipt.content).toContain(text);
+      expect(receipt.content.replace(/\s+:/g, ":")).toContain(text);
     });
     expect(receipt.content.toLowerCase()).not.toContain("cost");
     expect(receipt.content.toLowerCase()).not.toContain("profit");

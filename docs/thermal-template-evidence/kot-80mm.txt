@@ -1,20 +1,12 @@
-        Disposable Test Restaurant
+KITCHEN ORDER KOT #ACCEPTANCE
 
-            Disposable branch
-+----------------------------------------+
-|             KITCHEN ORDER              |
-+----------------------------------------+
-| KOT #ACCEPTANCE                        |
-| ORDER #ACCEPTANCE                      |
-| STATION: MAIN KITCHEN                  |
-+----------------------------------------+
-| ORDER DETAILS                          |
-+----------------------------------------+
-| Date: Oct 15, 2026 13:00               |
-| Mode: Takeaway                         |
-| Server: Disposable operator            |
-| Requested by: Disposable operator      |
-+----------------------------------------+
+------------------------------------------
+Order  : #ACCEPTANCE
+Type   : Takeaway
+Date   : Oct 15, 2026 13:00
+STATION: MAIN KITCHEN
+Branch : Disposable branch
+Requested by: Disposable operator
 +---+------------------------------------+
 |QTY|ITEM                                |
 +---+------------------------------------+
@@ -24,9 +16,12 @@
 |   Note: SEPARATE SAUCE                 |
 +---+------------------------------------+
 +----------------------------------------+
-| SPECIAL REQUEST                        |
+
+|            SPECIAL REQUEST             |
+
 +----------------------------------------+
+
 | No salt. Allergy test only.            |
+
 +----------------------------------------+
-                NEW ORDER
 

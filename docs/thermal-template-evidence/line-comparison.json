@@ -1,0 +1,146 @@
+{
+  "baseline": "f5c0d8c4cfcd627ab92be0ada7cc9b5d2cc1fe38",
+  "measurement": "Actual TCP parser NewLine command count; unchanged ESC d 3 feed is separate",
+  "results": [
+    {
+      "name": "bill-58mm",
+      "beforeTextLines": 48,
+      "afterTextLines": 40,
+      "savedTextLines": 8,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-copy-58mm",
+      "beforeTextLines": 51,
+      "afterTextLines": 44,
+      "savedTextLines": 7,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-58mm",
+      "beforeTextLines": 50,
+      "afterTextLines": 39,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-copy-58mm",
+      "beforeTextLines": 53,
+      "afterTextLines": 43,
+      "savedTextLines": 10,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-58mm",
+      "beforeTextLines": 54,
+      "afterTextLines": 43,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-copy-58mm",
+      "beforeTextLines": 57,
+      "afterTextLines": 47,
+      "savedTextLines": 10,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-58mm",
+      "beforeTextLines": 32,
+      "afterTextLines": 23,
+      "savedTextLines": 9,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-copy-58mm",
+      "beforeTextLines": 36,
+      "afterTextLines": 24,
+      "savedTextLines": 12,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-58mm",
+      "beforeTextLines": 32,
+      "afterTextLines": 23,
+      "savedTextLines": 9,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-copy-58mm",
+      "beforeTextLines": 36,
+      "afterTextLines": 24,
+      "savedTextLines": 12,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-80mm",
+      "beforeTextLines": 45,
+      "afterTextLines": 38,
+      "savedTextLines": 7,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-copy-80mm",
+      "beforeTextLines": 48,
+      "afterTextLines": 41,
+      "savedTextLines": 7,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-80mm",
+      "beforeTextLines": 48,
+      "afterTextLines": 37,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-copy-80mm",
+      "beforeTextLines": 51,
+      "afterTextLines": 40,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-80mm",
+      "beforeTextLines": 52,
+      "afterTextLines": 41,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-copy-80mm",
+      "beforeTextLines": 55,
+      "afterTextLines": 44,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-80mm",
+      "beforeTextLines": 30,
+      "afterTextLines": 21,
+      "savedTextLines": 9,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-copy-80mm",
+      "beforeTextLines": 33,
+      "afterTextLines": 22,
+      "savedTextLines": 11,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-80mm",
+      "beforeTextLines": 30,
+      "afterTextLines": 21,
+      "savedTextLines": 9,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-copy-80mm",
+      "beforeTextLines": 33,
+      "afterTextLines": 22,
+      "savedTextLines": 11,
+      "feedLines": 3
+    }
+  ]
+}

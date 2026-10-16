@@ -121,7 +121,12 @@ try {
     if (fixture.name.startsWith("kot") || fixture.name.startsWith("bar")) {
       assert.match(text, /SAUCE/i);
       assert.match(text, /NO ONION/i);
+      assert.match(text, /^(KITCHEN ORDER KOT|BAR ORDER BAR) /);
+      assert.ok(!text.includes("Disposable Test Restaurant"));
+      assert.ok(!/KITCHEN TICKET|BAR TICKET|NEW ORDER/.test(text));
     } else assert.match(text, /283\.90/);
+    if (fixture.documentType === "INVOICE") assert.match(text, /TAX INVOICE/);
+    assert.ok(!text.includes("Due Date: -"));
     assert.ok(
       text.split("\n").every((line) => line.length <= (fixture.width === "58mm" ? 32 : 42)),
     );
@@ -158,7 +163,7 @@ try {
         Math.ceil(element.scrollHeight + element.getBoundingClientRect().top + 24),
       );
     await page.setViewportSize({ width: 1100, height: Math.max(1000, captureHeight) });
-    await page.screenshot({ path: join(evidence, `${fixture.name}.png`), fullPage: true });
+    await page.locator(".paper").screenshot({ path: join(evidence, `${fixture.name}.png`) });
     const unknown = commands.filter((command) => command === "Unknown").length;
     assert.equal(unknown, 0);
     results.push({
@@ -167,6 +172,8 @@ try {
       stage: outcome.stage,
       physicalOutput: "NOT_VERIFIED",
       commands: commands.length,
+      encodedTextLines: commands.filter((command) => command === "NewLine").length,
+      feedLines: 3,
       unknownCommands: unknown,
       textSha256: createHash("sha256").update(text).digest("hex"),
     });
