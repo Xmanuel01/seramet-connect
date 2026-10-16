@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { DayClose } from "@/payments/types";
 import { formatMinor, parseMajorAmount, sumMinor } from "@/payments/money";
+import { summarizeInvoiceComponents } from "@/payments/invoice-components";
 
 export type ClosingSnapshot = NonNullable<DayClose["snapshot"]>;
 export type ClosingReportSection = { title: string; rows: Array<[string, string]> };
@@ -117,11 +118,27 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
         "Invoice tax",
         money(sumMinor(report.invoices.map((i) => parseMajorAmount(i.tax, snapshot.currency)))),
       ],
-      [
-        "Discount / service breakdown",
-        "Not separately recorded by the current invoice ledger; no amounts inferred.",
-      ],
     ],
+  });
+  const components = summarizeInvoiceComponents(report.invoices, snapshot.currency);
+  sections.push({
+    title: "Invoiced economic components (before refunds)",
+    rows:
+      components.status === "COMPLETE"
+        ? [
+            ["Gross sales before discounts", money(components.totals.grossSalesMinor)],
+            ["Discounts", money(components.totals.discountsMinor)],
+            ["Net sales excluding service and tax", money(components.totals.netSalesMinor)],
+            ["Service charges", money(components.totals.serviceChargeMinor)],
+            ["Tax", money(components.totals.taxMinor)],
+            ["Invoice total", money(components.totals.totalMinor)],
+          ]
+        : [
+            [
+              "Breakdown unavailable",
+              `${components.missing} of ${components.invoiceCount} invoices lack a recorded breakdown. No gross, discount or service amounts inferred.`,
+            ],
+          ],
   });
   return sections;
 }

@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { closingReportSections, renderDailyClosingPdf } from "./daily-closing-report";
 import { closeBusinessDay } from "@/payments/daily-closing";
-import { createEmptyTransactionState } from "@/lib/transaction-engine";
+import { TransactionEngine, createEmptyTransactionState } from "@/lib/transaction-engine";
 import { allPermissionCodes } from "@/platform/permissions";
 import {
   ConfigurationRepository,
@@ -61,6 +61,60 @@ function fixture() {
   };
 }
 describe("immutable closing PDF", () => {
+  it("reports recorded components exactly, freezes source invoices and reproduces identical PDF bytes", async () => {
+    let state = TransactionEngine.createOrder(
+      createEmptyTransactionState(actor.tenantId),
+      {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        branch: actor.branchId,
+        customer: "Customer",
+        channel: "Dine In",
+        cashier: actor.name,
+        lines: [{ id: "meal", name: "Meal", category: "Food", quantity: 1, unitPrice: 100 }],
+        financialOverride: {
+          subtotal: 95,
+          tax: 14.4,
+          total: 109.4,
+          financialComponents: {
+            version: 1,
+            currency: "KES",
+            grossSalesMinor: 10000,
+            discountsMinor: 1000,
+            netSalesMinor: 9000,
+            serviceChargeMinor: 500,
+            taxMinor: 1440,
+            totalMinor: 10940,
+          },
+        },
+      },
+      "SERVED",
+    );
+    state.orders[0]!.businessDate = "2026-10-15";
+    state = TransactionEngine.createOpenBill(state, state.orders[0]!.id);
+    state = closeBusinessDay(state, actor, {
+      businessDate: "2026-10-15",
+      drawerCounts: [],
+      confirmed: true,
+    });
+    const snapshot = state.paymentOperations!.dayCloses[0]!.snapshot!;
+    const rows = closingReportSections(snapshot).flatMap((s) => s.rows);
+    expect(rows).toContainEqual(["Discounts", "KES\u00a010.00"]);
+    expect(rows).toContainEqual(["Service charges", "KES\u00a05.00"]);
+    expect(snapshot.dailyReport!.outstandingInvoices).toEqual([
+      { id: state.bills[0]!.id, balanceMinor: 10940 },
+    ]);
+    const before = await renderDailyClosingPdf(snapshot);
+    state.bills[0]!.total = 99999;
+    state.bills[0]!.financialComponents!.discountsMinor = 999;
+    vi.setSystemTime(new Date("2026-10-20T20:00:00Z"));
+    expect(await renderDailyClosingPdf(snapshot)).toEqual(before);
+    delete snapshot.dailyReport!.invoices[0]!.financialComponents;
+    expect(closingReportSections(snapshot).flatMap((s) => s.rows)).toContainEqual([
+      "Breakdown unavailable",
+      "1 of 1 invoices lack a recorded breakdown. No gross, discount or service amounts inferred.",
+    ]);
+  });
   it("uses persisted financial figures and creates a valid, revision-labelled PDF", async () => {
     const { snapshot } = fixture();
     snapshot.invoicedMinor = 12345;

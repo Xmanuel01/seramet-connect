@@ -416,6 +416,26 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                   </div>
                 ))}
               </dl>
+              {projection.invoiceComponents?.status === "COMPLETE" ? (
+                <dl className="grid grid-cols-2 gap-2 text-sm">
+                  {[
+                    ["Gross invoiced sales", projection.invoiceComponents.totals.grossSalesMinor],
+                    ["Discounts", projection.invoiceComponents.totals.discountsMinor],
+                    ["Net invoiced sales", projection.invoiceComponents.totals.netSalesMinor],
+                    ["Service charges", projection.invoiceComponents.totals.serviceChargeMinor],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <dt>{label}</dt>
+                      <dd className="font-semibold">{formatMinor(Number(value), currency)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Gross sales, discounts and service charges: not recorded for every invoice in this
+                  period.
+                </p>
+              )}
               <h3 className="font-semibold">2. Reconcile cash</h3>
               {selectedDrawers.map((drawer) => (
                 <fieldset key={drawer.id} className="space-y-2 border-t py-3">
