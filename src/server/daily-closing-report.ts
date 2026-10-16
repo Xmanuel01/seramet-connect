@@ -213,15 +213,21 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
         }
       })
       .join("");
-  const wrap = (value: string, width: number, size = 10) => {
+  const wrap = (value: string, width: number, size = 10, font = regular) => {
     const lines: string[] = [];
     let line = "";
     for (const char of safe(value)) {
-      if (regular.widthOfTextAtSize(line + char, size) > width && line) {
-        lines.push(line);
-        line = "";
+      if (font.widthOfTextAtSize(line + char, size) > width && line) {
+        const boundary = line.lastIndexOf(" ");
+        if (boundary > 0) {
+          lines.push(line.slice(0, boundary));
+          line = line.slice(boundary + 1);
+        } else {
+          lines.push(line);
+          line = "";
+        }
       }
-      line += char;
+      line = (line + char).trimStart();
     }
     lines.push(line);
     return lines;
@@ -233,7 +239,7 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
     }
   }
   function heading(text: string, size: number) {
-    for (const line of wrap(text, 507, size)) {
+    for (const line of wrap(text, 507, size, bold)) {
       space(size + 12);
       page.drawText(line, { x: 44, y, size, font: bold, color: rgb(0.06, 0.3, 0.27) });
       y -= size + 8;
