@@ -17,6 +17,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Progress } from "@/components/ui/progress";
 import {
   estimateImportEtaSeconds,
+  importPresentationStage,
   summarizeImportProgress,
   type ImportProgressSnapshot,
   type PersistedImportProgress,
@@ -289,11 +290,13 @@ function MenuImport() {
         if (sample.processed > lastImportedCount.current) {
           // Only refresh after actual persisted row results change.
           lastImportedCount.current = sample.processed;
-          void inspectImport(importId)
-            .then((updated) => {
-              if (active) setPreview((current) => (current?.id === importId ? updated : current));
-            })
-            .catch(() => undefined);
+          // Serialize inspection with this poll: a detached response could replace
+          // publication confirmation with an older staged snapshot.
+          if (result.status === "COMMITTING") {
+            const updated = await inspectImport(importId);
+            if (!active) return;
+            setPreview((current) => (current?.id === importId ? updated : current));
+          }
           void refreshMenuCatalog();
         }
         if (
@@ -309,7 +312,8 @@ function MenuImport() {
         ) {
           lastProgressSample.current = sample;
         }
-        if (result.publishStatus === "PUBLISHED") {
+        const stage = importPresentationStage(result);
+        if (stage === "PUBLISHED") {
           const published = await inspectImport(importId);
           if (!active) return;
           setPreview(published);
@@ -317,7 +321,10 @@ function MenuImport() {
           setNotice("Menu import published and verified in the authoritative catalogue.");
           setNoticeTone("success");
           void refreshMenuCatalog();
-        } else if (result.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
+        } else if (stage === "PUBLISHING") {
+          setNotice("Menu publication is being verified. Do not submit it again.");
+          setNoticeTone("warning");
+        } else if (stage === "STAGED") {
           const staged = await inspectImport(importId);
           if (!active) return;
           setPreview(staged);
