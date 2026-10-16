@@ -55,17 +55,36 @@ const queue = {
   async send(message: SerametWorkerMessage) {
     const env = activeEnvironment;
     if (!env) throw new Error("E2E worker environment is unavailable");
-    setTimeout(() => {
-      const queued: DurableQueueMessage<SerametWorkerMessage> = {
-        id: `e2e-message:${crypto.randomUUID()}`,
-        timestamp: new Date(),
-        body: message,
-        attempts: 1,
-        ack() {},
-        retry() {},
-      };
-      void handleWorkerQueue({ queue: "seramet-e2e", messages: [queued] }, env);
-    }, 5);
+    const deliver = (attempts: number, delaySeconds: number) =>
+      setTimeout(
+        () => {
+          let settled = false;
+          const retry = (options?: { delaySeconds?: number }) => {
+            if (settled) return;
+            settled = true;
+            if (attempts >= 8) {
+              console.error("E2E_QUEUE_RETRY_LIMIT");
+              return;
+            }
+            deliver(attempts + 1, options?.delaySeconds ?? 5);
+          };
+          const queued: DurableQueueMessage<SerametWorkerMessage> = {
+            id: `e2e-message:${crypto.randomUUID()}`,
+            timestamp: new Date(),
+            body: message,
+            attempts,
+            ack() {
+              settled = true;
+            },
+            retry,
+          };
+          void handleWorkerQueue({ queue: "seramet-e2e", messages: [queued] }, env).catch(() =>
+            retry(),
+          );
+        },
+        Math.max(5, delaySeconds * 1000),
+      );
+    deliver(1, 0);
   },
 };
 

@@ -62,6 +62,32 @@ test("authenticated manager completes scan, staging, recovery, publication and P
 
   const published = await latestImport(page);
   expect(published.publishStatus).toBe("PUBLISHED");
+  const beforeReplay = await publishedRows(published.id);
+  expect(beforeReplay).toHaveLength(41);
+  expect(
+    beforeReplay.every(
+      (row) =>
+        row.branch_id === fixture.firstBranchId &&
+        row.active === 1 &&
+        row.sellable === 1 &&
+        row.available === 1,
+    ),
+  ).toBe(true);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const replay = await page.evaluate(async ({ id, publishKey }) => {
+      const response = await fetch(`/api/seramet/setup/imports/${encodeURIComponent(id)}/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: publishKey }),
+      });
+      if (!response.ok) throw new Error(`Publication replay failed: ${response.status}`);
+      return (await response.json()).result;
+    }, published);
+    expect(replay).toMatchObject({ duplicate: true, status: "PUBLISHED" });
+  }
+  expect(await publishedRows(published.id)).toEqual(beforeReplay);
+  await page.reload();
+  expect(await latestImport(page)).toMatchObject({ id: published.id, publishStatus: "PUBLISHED" });
   await page.goto("/pos");
   await expect(
     page.getByRole("button", { name: "Add Browser imported 01 to order" }),
@@ -226,10 +252,28 @@ async function latestImport(page: Page) {
     const id = body.imports[0]!.id;
     const inspected = await fetch(`/api/seramet/setup/imports/${encodeURIComponent(id)}`);
     const detail = (await inspected.json()) as {
-      preview: { id: string; publishStatus?: string };
+      preview: { id: string; publishStatus?: string; publishKey?: string };
     };
     return detail.preview;
   });
+}
+
+async function publishedRows(importId: string) {
+  const db = createLocalDevelopmentDatabase();
+  try {
+    const rows = await db
+      .prepare(
+        `SELECT r.row_number,r.committed_entity_id,c.active,c.sellable,b.branch_id,b.available
+      FROM setup_import_rows r JOIN menu_catalog_items c ON c.tenant_id=r.tenant_id AND c.id=r.committed_entity_id
+      JOIN menu_item_branch_settings b ON b.tenant_id=c.tenant_id AND b.menu_item_id=c.id
+      WHERE r.tenant_id=? AND r.import_id=? ORDER BY r.row_number,b.branch_id`,
+      )
+      .bind(fixture.tenantId, importId)
+      .all<{ branch_id: string; active: number; sellable: number; available: number }>();
+    return rows.results ?? [];
+  } finally {
+    db.close();
+  }
 }
 
 async function uploadThroughApi(page: Page, fileName: string, branchId: string) {
