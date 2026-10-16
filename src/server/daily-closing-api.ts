@@ -14,6 +14,65 @@ export async function handleDailyClosingApi(
   env: SerametEnv,
   repository: TransactionRepository,
 ) {
+  const notifications = /^\/api\/seramet\/daily-closing\/notifications\/([^/]+)$/.exec(
+    new URL(request.url).pathname,
+  );
+  if (notifications) {
+    if (request.method !== "GET") throw new SerametHttpError(405, "Read-only notification status");
+    const actor = await authenticateSerametRequest(request, env);
+    if (!actor.permissions.includes(permissions.reconciliationView))
+      throw new SerametHttpError(403, "Reconciliation view permission is required");
+    const state = await repository.loadState(actor.tenantId);
+    const day = state.paymentOperations?.dayCloses.find(
+      (d) => d.id === decodeURIComponent(notifications[1]!) && d.tenantId === actor.tenantId,
+    );
+    if (!day) throw new SerametHttpError(404, "Closing report was not found");
+    authorizeBranchRead(actor, actor.tenantId, day.branchId);
+    const revision = Number(
+      new URL(request.url).searchParams.get("revision") ?? day.snapshot?.revision,
+    );
+    if (!Number.isSafeInteger(revision) || !day.snapshots.some((s) => s.revision === revision))
+      throw new SerametHttpError(404, "Closing revision was not found");
+    if (!env.SERAMET_DB) throw new SerametHttpError(503, "Durable email status is unavailable");
+    const jobs = await env.SERAMET_DB.prepare(
+      "SELECT status,attempt_count,payload_json,result_json,last_error FROM worker_jobs WHERE tenant_id=? AND branch_id=? AND job_type='DAILY_CLOSING_EMAIL' AND idempotency_key LIKE ? LIMIT 20",
+    )
+      .bind(actor.tenantId, day.branchId, `daily-closing:${day.id}:r${revision}:%`)
+      .all<{
+        status: string;
+        attempt_count: number;
+        payload_json: string;
+        result_json: string;
+        last_error: string | null;
+      }>();
+    const deliveries = (jobs.results ?? []).flatMap((job) => {
+      const payload = JSON.parse(job.payload_json) as {
+        dayCloseId: string;
+        revision: number;
+        recipientUserId: string;
+      };
+      if (payload.dayCloseId !== day.id || payload.revision !== revision) return [];
+      const evidence = JSON.parse(job.result_json) as { acceptedByProvider?: boolean };
+      return [
+        {
+          revision: payload.revision,
+          recipientUserId: payload.recipientUserId,
+          attempts: job.attempt_count,
+          status: evidence.acceptedByProvider
+            ? "PROVIDER_ACCEPTED"
+            : job.last_error === "CLOSING_EMAIL_CONFIGURATION_REQUIRED"
+              ? "CONFIGURATION_REQUIRED"
+              : ["DEAD_LETTER", "FAILED"].includes(job.status)
+                ? "DELIVERY_FAILED"
+                : "QUEUED",
+        },
+      ];
+    });
+    return Response.json(
+      { closureStatus: day.status, reportAvailable: !!day.snapshot?.dailyReport, deliveries },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
   if (new URL(request.url).pathname === "/api/seramet/daily-closing/context") {
     if (request.method !== "GET") throw new SerametHttpError(405, "Read-only closing context");
     const actor = await authenticateSerametRequest(request, env);

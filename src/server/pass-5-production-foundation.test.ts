@@ -119,7 +119,12 @@ describe.sequential("Pass 5 production foundation", () => {
       ).rejects.toThrow();
       expect(await repository.loadState(tenantA)).toEqual(before);
     }
-    const payload = { drawerId: "count-drawer", physicalCount: "100.09" };
+    const payload = {
+      drawerId: "count-drawer",
+      physicalCount: "100.09",
+      confirmed: true,
+      varianceReason: "Verified one-cent cash shortage",
+    };
     await expect(
       repository.commitMutation({
         actor: actor(),
@@ -132,14 +137,25 @@ describe.sequential("Pass 5 production foundation", () => {
       }),
     ).rejects.toMatchObject({ status: 409 });
     expect(await repository.loadState(tenantA)).toEqual(before);
-    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    const closingCommand = {
+      actor: {
+        ...actor(),
+        permissions: [...actor().permissions, "cash.close", "reconciliation.approve"],
+      },
+      action: "closeCashDrawer",
+      payload,
+      idempotencyKey: "valid-count",
+      requestHash: "valid-count",
+      correlationId: "valid-count",
+    };
+    await repository.commitMutation(closingCommand);
     const stored = await repository.loadState(tenantA);
     expect(stored.cashDrawers[0]).toMatchObject({
       physicalCount: 100.09,
       variance: -0.01,
-      status: "VARIANCE_REVIEW",
+      status: "APPROVED",
     });
-    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    await repository.commitMutation(closingCommand);
     expect(await repository.loadState(tenantA)).toEqual(stored);
   });
 

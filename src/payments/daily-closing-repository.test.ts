@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   createMigratedTestDatabase,
@@ -10,6 +10,9 @@ import { setConfigurationRepositoryForTests } from "@/platform/repositories/conf
 import { allPermissionCodes } from "@/platform/permissions";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { businessDateForTimestamp } from "@/lib/business-date";
+import { deliverDailyClosingEmail } from "@/server/daily-closing-email";
+import { handleWorkerQueue, scheduleDurableWork } from "@/server/workers";
+import type { SerametEnv } from "@/lib/seramet-auth";
 
 let db: SqliteD1TestDatabase;
 let repo: D1AuthoritativeTransactionRepository;
@@ -39,6 +42,24 @@ beforeEach(async () => {
     )
     .bind(tenantId, id, `${id}@example.invalid`, stamp, stamp)
     .run();
+  await db
+    .prepare(
+      "INSERT INTO permissions (code,description) VALUES ('reconciliation.view','Disposable report recipient') ON CONFLICT DO NOTHING",
+    )
+    .run();
+  const roleId = randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,'Disposable report recipient',1,'{}')",
+    )
+    .bind(tenantId, roleId, roleId)
+    .run();
+  await db
+    .prepare("INSERT INTO role_permissions VALUES (?,?,'reconciliation.view')")
+    .bind(tenantId, roleId)
+    .run();
+  await db.prepare("INSERT INTO user_roles VALUES (?,?,?)").bind(tenantId, id, roleId).run();
+  await db.prepare("INSERT INTO user_branches VALUES (?,?,?)").bind(tenantId, id, branchId).run();
   await hydrateAuthoritativeConfiguration(db, {}, true);
   actor = {
     id,
@@ -57,8 +78,288 @@ beforeEach(async () => {
   repo = new D1AuthoritativeTransactionRepository(db);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   db.close();
   setConfigurationRepositoryForTests();
+});
+
+async function queuedEmail() {
+  await command("configureDailyClosing", {
+    branchId: actor.branchId,
+    mode: "SUPERVISOR_DAILY_CLOSE",
+    materialVarianceMinor: 50000,
+    recipientUserIds: [actor.id],
+  });
+  const openedDrawer = await opened();
+  const request = payload(openedDrawer.state.paymentOperations!.drawerSessions[0]!.id);
+  await command("closeBusinessDay", request, "email-close");
+  const job = await db
+    .prepare("SELECT id FROM worker_jobs WHERE tenant_id=? AND job_type='DAILY_CLOSING_EMAIL'")
+    .bind(actor.tenantId)
+    .first<{ id: string }>();
+  return { jobId: job!.id, request };
+}
+const emailConfiguration = {
+  SERAMET_CLOSING_EMAIL_API_KEY: "disposable-test-only",
+  SERAMET_CLOSING_EMAIL_FROM: "Closing <closing@example.invalid>",
+};
+describe("durable daily closing email boundary", () => {
+  it("recovers an expired email lease through the existing scheduler", async () => {
+    const { jobId } = await queuedEmail();
+    await db
+      .prepare(
+        "UPDATE worker_jobs SET status='RUNNING',lease_owner='crashed-consumer',lease_expires_at=?,attempt_count=1 WHERE id=?",
+      )
+      .bind(new Date(Date.now() - 1000).toISOString(), jobId)
+      .run();
+    const send = vi.fn().mockResolvedValue(undefined);
+    const env: SerametEnv = {
+      SERAMET_DB: db,
+      SERAMET_ENVIRONMENT: "test",
+      SERAMET_WORK_QUEUE: { send },
+      ...emailConfiguration,
+    };
+    await scheduleDurableWork(env);
+    expect(send.mock.calls.some(([body]) => body.jobId === jobId)).toBe(true);
+    const transport = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify({ id: randomUUID() })));
+    await handleWorkerQueue(
+      {
+        queue: "disposable",
+        messages: [
+          {
+            id: randomUUID(),
+            timestamp: new Date(),
+            body: {
+              kind: "worker-job",
+              tenantId: actor.tenantId,
+              jobId,
+              correlationId: randomUUID(),
+            },
+            attempts: 2,
+            ack: vi.fn(),
+            retry: vi.fn(),
+          },
+        ],
+      },
+      env,
+    );
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(
+      await db.prepare("SELECT status FROM worker_jobs WHERE id=?").bind(jobId).first("status"),
+    ).toBe("SUCCEEDED");
+  });
+  it.each([401, 429, 503])(
+    "sanitizes provider HTTP %s without exposing its body",
+    async (status) => {
+      const { jobId } = await queuedEmail();
+      await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
+      const transport = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response("private provider diagnostic content", { status }));
+      await expect(
+        deliverDailyClosingEmail(
+          { SERAMET_DB: db, ...emailConfiguration },
+          actor.tenantId,
+          jobId,
+          transport,
+        ),
+      ).rejects.toThrow(
+        `CLOSING_EMAIL_PROVIDER_HTTP_${status >= 500 ? "5XX" : status === 429 ? "429" : "4XX"}`,
+      );
+    },
+  );
+  it("rejects an unverified provider response and cannot exceed eight send attempts", async () => {
+    const { jobId } = await queuedEmail();
+    await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ success: true })));
+    await expect(
+      deliverDailyClosingEmail(
+        { SERAMET_DB: db, ...emailConfiguration },
+        actor.tenantId,
+        jobId,
+        transport,
+      ),
+    ).rejects.toThrow("CLOSING_EMAIL_PROVIDER_RESPONSE_UNVERIFIED");
+    await db.prepare("UPDATE worker_jobs SET attempt_count=9 WHERE id=?").bind(jobId).run();
+    await expect(
+      deliverDailyClosingEmail(
+        { SERAMET_DB: db, ...emailConfiguration },
+        actor.tenantId,
+        jobId,
+        transport,
+      ),
+    ).rejects.toThrow("CLOSING_EMAIL_ATTEMPT_LIMIT_REACHED");
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("permits only one queued worker claim and provider send under concurrent consumers", async () => {
+    const { jobId } = await queuedEmail();
+    const send = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify({ id: randomUUID() })));
+    const env: SerametEnv = { SERAMET_DB: db, SERAMET_ENVIRONMENT: "test", ...emailConfiguration };
+    const message = () => ({
+      id: randomUUID(),
+      timestamp: new Date(),
+      body: {
+        kind: "worker-job" as const,
+        tenantId: actor.tenantId,
+        jobId,
+        correlationId: randomUUID(),
+      },
+      attempts: 1,
+      ack: vi.fn(),
+      retry: vi.fn(),
+    });
+    await Promise.all([
+      handleWorkerQueue({ queue: "disposable", messages: [message()] }, env),
+      handleWorkerQueue({ queue: "disposable", messages: [message()] }, env),
+    ]);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(
+      await db.prepare("SELECT status FROM worker_jobs WHERE id=?").bind(jobId).first("status"),
+    ).toBe("SUCCEEDED");
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM audit_events WHERE action='CLOSING_EMAIL_PROVIDER_ACCEPTED'",
+        )
+        .first("count"),
+    ).toBe(1);
+  });
+  it("records one durable job in the close transaction and never duplicates it on confirmation replay", async () => {
+    const { request } = await queuedEmail();
+    await command("closeBusinessDay", request, "email-close");
+    await command("closeBusinessDay", request, "another-confirmation");
+    expect(
+      await db
+        .prepare("SELECT COUNT(*) AS count FROM worker_jobs WHERE job_type='DAILY_CLOSING_EMAIL'")
+        .first("count"),
+    ).toBe(1);
+    expect((await repo.loadState(actor.tenantId)).paymentOperations!.dayCloses[0]!.status).toBe(
+      "CLOSED",
+    );
+  });
+  it("does not leave a notification behind when financial closing rolls back", async () => {
+    await command("configureDailyClosing", {
+      branchId: actor.branchId,
+      mode: "SUPERVISOR_DAILY_CLOSE",
+      materialVarianceMinor: 50000,
+      recipientUserIds: [actor.id],
+    });
+    const initial = await opened();
+    await db.exec(
+      "CREATE TRIGGER reject_test_email BEFORE INSERT ON worker_jobs WHEN NEW.job_type='DAILY_CLOSING_EMAIL' BEGIN SELECT RAISE(ABORT, 'Injected durable enqueue failure'); END;",
+    );
+    await expect(
+      command("closeBusinessDay", payload(initial.state.paymentOperations!.drawerSessions[0]!.id)),
+    ).rejects.toThrow();
+    expect(await repo.loadState(actor.tenantId)).toEqual(initial.state);
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM worker_jobs").first("count")).toBe(0);
+  });
+  it("replays an uncertain provider request using the exact prepared body and key", async () => {
+    const { jobId } = await queuedEmail();
+    await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
+    const transport = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("Private provider details must not be logged"))
+      .mockResolvedValue(new Response(JSON.stringify({ id: randomUUID() })));
+    const env = { SERAMET_DB: db, ...emailConfiguration };
+    await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
+      "CLOSING_EMAIL_PROVIDER_UNAVAILABLE",
+    );
+    await deliverDailyClosingEmail(env, actor.tenantId, jobId, transport);
+    expect(transport.mock.calls[0]![1]!.body).toEqual(transport.mock.calls[1]![1]!.body);
+    expect(transport.mock.calls[0]![1]!.headers).toEqual(transport.mock.calls[1]![1]!.headers);
+    await deliverDailyClosingEmail(env, actor.tenantId, jobId, transport);
+    expect(transport).toHaveBeenCalledTimes(2);
+    const evidence = await db
+      .prepare("SELECT result_json FROM worker_jobs WHERE id=?")
+      .bind(jobId)
+      .first<{ result_json: string }>();
+    expect(JSON.parse(evidence!.result_json)).toMatchObject({ acceptedByProvider: true });
+  });
+  it("rejects revoked recipient authorization without contacting the provider", async () => {
+    const { jobId } = await queuedEmail();
+    await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
+    await db
+      .prepare("DELETE FROM user_branches WHERE tenant_id=? AND user_id=?")
+      .bind(actor.tenantId, actor.id)
+      .run();
+    const transport = vi.fn<typeof fetch>();
+    await expect(
+      deliverDailyClosingEmail(
+        { SERAMET_DB: db, ...emailConfiguration },
+        actor.tenantId,
+        jobId,
+        transport,
+      ),
+    ).rejects.toThrow("CLOSING_EMAIL_RECIPIENT_NOT_AUTHORIZED");
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it("fails closed outside the provider idempotency window rather than resending ambiguously", async () => {
+    const { jobId } = await queuedEmail();
+    await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
+    const transport = vi.fn<typeof fetch>().mockRejectedValue(new Error("Simulated timeout"));
+    const env = { SERAMET_DB: db, ...emailConfiguration };
+    await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
+      "CLOSING_EMAIL_PROVIDER_UNAVAILABLE",
+    );
+    const row = await db
+      .prepare("SELECT result_json FROM worker_jobs WHERE id=?")
+      .bind(jobId)
+      .first<{ result_json: string }>();
+    const result = JSON.parse(row!.result_json);
+    result.prepared.preparedAt = new Date(Date.now() - 24 * 3600000).toISOString();
+    await db
+      .prepare("UPDATE worker_jobs SET result_json=? WHERE id=?")
+      .bind(JSON.stringify(result), jobId)
+      .run();
+    await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
+      "CLOSING_EMAIL_DELIVERY_RECONCILIATION_REQUIRED",
+    );
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("uses existing queue backoff and attempt limits without reopening a closed day", async () => {
+    const { jobId } = await queuedEmail();
+    const env: SerametEnv = { SERAMET_DB: db, SERAMET_ENVIRONMENT: "test" };
+    const ack = vi.fn(),
+      retry = vi.fn();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const message = {
+      id: randomUUID(),
+      timestamp: new Date(),
+      body: {
+        kind: "worker-job" as const,
+        tenantId: actor.tenantId,
+        jobId,
+        correlationId: randomUUID(),
+      },
+      attempts: 1,
+      ack,
+      retry,
+    };
+    await handleWorkerQueue({ queue: "disposable", messages: [message] }, env);
+    expect(retry).toHaveBeenCalled();
+    expect(
+      await db.prepare("SELECT status FROM worker_jobs WHERE id=?").bind(jobId).first("status"),
+    ).toBe("RETRY_PENDING");
+    await db
+      .prepare("UPDATE worker_jobs SET attempt_count=7,scheduled_at=? WHERE id=?")
+      .bind(new Date(Date.now() - 1000).toISOString(), jobId)
+      .run();
+    await handleWorkerQueue({ queue: "disposable", messages: [message] }, env);
+    expect(
+      await db.prepare("SELECT status FROM worker_jobs WHERE id=?").bind(jobId).first("status"),
+    ).toBe("DEAD_LETTER");
+    expect(ack).toHaveBeenCalled();
+    expect((await repo.loadState(actor.tenantId)).paymentOperations!.dayCloses[0]!.status).toBe(
+      "CLOSED",
+    );
+  });
 });
 async function command(
   action: string,

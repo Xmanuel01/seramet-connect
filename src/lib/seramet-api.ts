@@ -49,6 +49,11 @@ import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
 import { handleFinanceApi } from "@/server/finance-api";
 import { handleDailyClosingApi } from "@/server/daily-closing-api";
+import {
+  closingMutationActions,
+  closingStateForReader,
+  DailyClosingError,
+} from "@/payments/daily-closing";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
 import { handleTableManagementApi } from "@/server/table-management-api";
@@ -745,6 +750,8 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
       ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
     });
   } catch (error) {
+    if (error instanceof DailyClosingError)
+      throw new ServerOperationError(error.code, error.status, error.message);
     if (
       (error instanceof ServerOperationError || error instanceof TransactionConflictError) &&
       error.code === "CONFLICT"
@@ -767,7 +774,10 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     throw error;
   }
   assertBranchSafeSnapshotReplace(current, result.state, actor);
-  if (!result.duplicate) {
+  // Closing already commits its report/email jobs with the financial state. A later
+  // optional management refresh must not turn a successful close into a failed acknowledgement.
+  const closingCommand = closingMutationActions.has(body.action);
+  if (!result.duplicate && !closingCommand) {
     await createIntegrationRuntime(env).captureTransactionDomainEvents(current, result.state);
     if (env.SERAMET_DB && env.SERAMET_WORK_QUEUE) {
       await Promise.all(
@@ -1329,12 +1339,12 @@ function filterStateForActor(state: TransactionState, actor: ServerActor): Trans
   if (state.tenantId !== actor.tenantId) {
     throw new SerametHttpError(403, "Cross-tenant read denied");
   }
-  if (
+  const scoped =
     actor.branchScope.type === "ALL" &&
     actor.permissions.includes(permissions.tenantScopeAllBranches)
-  )
-    return state;
-  return branchRestrictedSnapshot(state, actor, true);
+      ? state
+      : branchRestrictedSnapshot(state, actor, true);
+  return closingStateForReader(scoped, actor.permissions.includes(permissions.reconciliationView));
 }
 
 async function loadCachedIdempotency(

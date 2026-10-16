@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { closingMutationActions } from "@/payments/daily-closing";
 import { useAppContext } from "@/lib/app-context";
 import { applyServerMutation } from "@/lib/seramet-repository";
 import {
@@ -383,6 +384,7 @@ export function useTransactionEngine() {
       localEffects?: OfflineCommand["localEffects"],
     ) => {
       const idempotencyKey = `command:${crypto.randomUUID()}`;
+      const mutationScope = `${activeTenantId}:${branchId}`;
       localMutationGenerationRef.current += 1;
       const applyOptimistic = () => {
         const next = optimistic
@@ -439,6 +441,15 @@ export function useTransactionEngine() {
           }),
         });
         receivedServerResponse = true;
+        if (closingMutationActions.has(action) && scopeRef.current !== mutationScope) {
+          const result = (await response.json()) as {
+            state: TransactionState;
+            revision?: number;
+            message?: string;
+          };
+          if (!response.ok) throw new Error(result.message ?? "Closing was not acknowledged");
+          return result;
+        }
         if (!response.ok) {
           const failure = (await response.json().catch(() => ({}))) as {
             code?: string;
@@ -469,6 +480,7 @@ export function useTransactionEngine() {
         setBackendStatus("synced");
         return body;
       } catch (error) {
+        if (closingMutationActions.has(action) && scopeRef.current !== mutationScope) throw error;
         if (
           !receivedServerResponse &&
           offlineAllowedCommands.has(action as OfflineAllowedCommand)

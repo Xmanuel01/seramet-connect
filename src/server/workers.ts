@@ -411,10 +411,11 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
   }
   const pending = await env.SERAMET_DB.prepare(
     `SELECT tenant_id,id,correlation_id FROM worker_jobs
-     WHERE status IN ('PENDING','RETRY_PENDING') AND scheduled_at<=?
+     WHERE (status IN ('PENDING','RETRY_PENDING') AND scheduled_at<=?)
+        OR (job_type='DAILY_CLOSING_EMAIL' AND status IN ('CLAIMED','RUNNING') AND lease_expires_at<?)
      ORDER BY scheduled_at LIMIT 500`,
   )
-    .bind(at.toISOString())
+    .bind(at.toISOString(), at.toISOString())
     .all<{ tenant_id: string; id: string; correlation_id: string }>();
   const known = new Set(
     messages.map(
@@ -547,6 +548,11 @@ async function claimWorkerJob(
 async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
   const runtime = createIntegrationRuntime(env);
   switch (job.job_type) {
+    case "DAILY_CLOSING_EMAIL": {
+      const { deliverDailyClosingEmail } = await import("@/server/daily-closing-email");
+      await deliverDailyClosingEmail(env, job.tenant_id, job.id);
+      return;
+    }
     case "SCHEDULED_ORDER_RELEASE":
       await runtime.releaseDueScheduledOrders(job.tenant_id);
       return;
