@@ -39,21 +39,21 @@
     },
     {
       "name": "invoice-58mm",
-      "transportMilliseconds": 52.7,
+      "transportMilliseconds": 41.9,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 116,
+      "commands": 114,
       "unknownCommands": 0,
-      "textSha256": "4bd23103f6605f9e0899c47861a5c598f3d7a69bb7fc37201996307dc0605ed1"
+      "textSha256": "fe6c9a1f060e49f271c9fac84acf82c00ea2d8b1da63e0016b3d11d01a1fb7d6"
     },
     {
       "name": "invoice-copy-58mm",
-      "transportMilliseconds": 67.8,
+      "transportMilliseconds": 42.5,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 122,
+      "commands": 120,
       "unknownCommands": 0,
-      "textSha256": "234cce3237f9121844aa927f1ad3ae25f85c03b535030dc088ec9fbdbf727dfa"
+      "textSha256": "1b175e2300449c2ed7c8afddb1594790726efa7f347dffa7f35c30ef1729f600"
     },
     {
       "name": "kot-58mm",
@@ -129,21 +129,21 @@
     },
     {
       "name": "invoice-80mm",
-      "transportMilliseconds": 43.4,
+      "transportMilliseconds": 46.7,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 112,
+      "commands": 110,
       "unknownCommands": 0,
-      "textSha256": "017db5124911fb2fd0be9fe5271f99ccda272c1fc60adecd90b313ec385d4be2"
+      "textSha256": "84cce6a022677a60205a24cc0712c965355f63115bf662c4ef2b0e6a49c7eb6a"
     },
     {
       "name": "invoice-copy-80mm",
-      "transportMilliseconds": 49.2,
+      "transportMilliseconds": 42.6,
       "stage": "BYTES_SUBMITTED",
       "physicalOutput": "NOT_VERIFIED",
-      "commands": 118,
+      "commands": 116,
       "unknownCommands": 0,
-      "textSha256": "cd49bf19f5ce0076f02d5c0daaafd34dbe39dd68c2879d4c7d6631a83af636e1"
+      "textSha256": "c483569195b900c7d0f7619a49578900fc504655174e8bfc4449d92ea550d34f"
     },
     {
       "name": "kot-80mm",

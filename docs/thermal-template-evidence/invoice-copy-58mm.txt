@@ -9,7 +9,7 @@
     contact@example.invalid
        PIN: TEST-PIN-ONLY
 +------------------------------+
-|           INVOICE            |
+|         TAX INVOICE          |
 +------------------------------+
 | INV-TEST-ONLY                |
 +------------------------------+
@@ -17,7 +17,6 @@
 +------------------------------+
 | Order: #ACCEPTANCE           |
 | Date: Oct 15, 2026 13:00     |
-| Due Date: -                  |
 | Mode: Takeaway               |
 | Cashier: Disposable operator |
 | Bill to: Walk-in Customer    |

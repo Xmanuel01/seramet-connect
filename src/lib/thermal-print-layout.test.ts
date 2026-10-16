@@ -27,7 +27,8 @@ describe("ruled thermal document layouts", () => {
           expect(fixture.content).toContain(value);
         expect(fixture.content).toContain(width === 32 ? "|QTY|ITEM" : "|QTY|DESCRIPTION");
         if (fixture.documentType === "INVOICE") {
-          expect(fixture.content).toContain("INVOICE");
+          expect(fixture.content).toContain("TAX INVOICE");
+          expect(fixture.content).not.toContain("Due Date:");
           expect(fixture.content).toContain("Unit:");
           expect(fixture.content).toContain("TEST-PIN-ONLY");
         }
@@ -43,6 +44,46 @@ describe("ruled thermal document layouts", () => {
   }
 
   for (const paper of ["58mm", "80mm", "A4"] as const) {
+    it(`${paper} retains tax-invoice semantics without inventing a due date`, () => {
+      printingAcceptanceFixtures();
+      const profile = SerametPrintService.getBranchHardwareProfile(
+        DEMO_WESTLANDS_BRANCH_ID,
+        DEMO_TENANT_ID,
+      );
+      profile.templateSettings.INVOICE.width = paper;
+      const order: OrderForPrint = {
+        orderId: "#TAX-TEST",
+        invoiceNumber: "INV-TAX-TEST",
+        branch: profile.branch,
+        terminalId: "test",
+        requestedBy: "Test operator",
+        cashier: "Test operator",
+        waiter: "Test operator",
+        createdAt: "2026-10-15T10:00:00Z",
+        orderType: "Takeaway",
+        subtotal: 100,
+        tax: 16,
+        total: 116,
+        lines: [
+          {
+            id: "tax-line",
+            name: "Taxable meal",
+            category: "Test",
+            quantity: 1,
+            unitPrice: 100,
+            productionStation: "MAIN KITCHEN",
+          },
+        ],
+      };
+      const content = SerametPrintService.createDocumentJob(profile, order, "INVOICE").content;
+      bounded(content, paper === "58mm" ? 32 : paper === "80mm" ? 42 : 78);
+      expect(content).toMatch(/\|\s*TAX INVOICE\s*\|/);
+      expect(content).not.toMatch(/\|\s*INVOICE\s*\|/);
+      expect(content).not.toContain("Due Date:");
+      for (const value of ["INV-TAX-TEST", "100.00", "16.00", "116.00", "Taxable meal"])
+        expect(content).toContain(value);
+    });
+
     it(`${paper} wraps unbroken identifiers and all optional details without dropping data`, () => {
       printingAcceptanceFixtures();
       const profile = SerametPrintService.getBranchHardwareProfile(

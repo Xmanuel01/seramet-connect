@@ -15,7 +15,7 @@ queue, retry/recovery authorization and audit mechanisms are retained.
 - Centered configured text branding is the logo fallback. Restaurant, branch and
   available contact/PIN details are wrapped rather than truncated. Production
   tickets retain a compact restaurant/branch header.
-- Document title, number, order/date/time, operator, service mode/table and
+- Document title (TAX INVOICE for invoices), number, order/date/time, operator, service mode/table and
   applicable customer details use ruled sections.
 - Customer tables use `QTY | ITEM | PRICE` at 58mm and
   `QTY | DESCRIPTION | AMOUNT` at 80mm. The monetary column contains the line
@@ -99,6 +99,24 @@ does not claim the uncommitted redesign exists in that commit. SHA-256 of
 `99312fdd672395ddff2e76077b3a4605d174becfb31951e08699a9e7074f3deb`.
 SHA-256 of `src/server/printing-api.ts`:
 `5532fdb1298de33e3523f8cc475b67e6d64374b7ab8a82dfbc836b6035d005d3`.
+
+## Invoice Review Correction - 16 October 2026
+
+Thermal invoices and duplicate copies now retain the TAX INVOICE title, matching
+the A4 invoice and existing document semantics. The obsolete due-date helper is
+removed: a creation timestamp is not a payment due date, and the current print
+input has no authoritative due-date value. No fabricated `Due Date: -` is printed
+at any width. Amounts and the ruled layout remain unchanged.
+
+Focused renderer/API/flow regression: **87/87 passed**, including **26 layout
+tests** and explicit 58mm/80mm/A4 title, amount and absent-due-date assertions.
+The emulator verifier passed **20/20** again; only the four invoice originals and
+copies and their summary entries were replaced. Other capture evidence and the
+earlier operational browser result above remain historical evidence from the
+original redesign, not newly rerun operational certification.
+
+Corrected renderer SHA-256:
+`a2eb40d02393bd38509d3fab791692f42d0664f30afa68996c4f2e0034142c8e`.
 
 ## Physical Limitations
 

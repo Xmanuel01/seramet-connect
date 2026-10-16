@@ -1146,7 +1146,7 @@ function renderCustomerDocument(
   }
 
   const width = template.width === "58mm" ? 32 : 42;
-  const title = documentType;
+  const title = documentType === "INVOICE" ? "TAX INVOICE" : documentType;
   const identity = profile.printIdentity;
   const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const documentNumber =
@@ -1185,7 +1185,6 @@ function renderCustomerDocument(
       [
         `Order: ${order.orderId}`,
         `Date: ${issued.date} ${issued.time}`,
-        ...(documentType === "INVOICE" ? [`Due Date: ${documentDueDate(order.createdAt)}`] : []),
         `Mode: ${order.orderType}${order.table ? ` / Table: ${order.table}` : ""}`,
         ...(template.showCashier
           ? [`${documentType === "BILL" ? "Served by" : "Cashier"}: ${order.cashier}`]
@@ -1232,7 +1231,6 @@ function renderA4Invoice(
         order.customerPhone ?? "",
         `Order: ${order.orderId}`,
         `Date: ${issued.date} ${issued.time}`,
-        `Due Date: ${documentDueDate(order.createdAt)}`,
         `Mode: ${order.orderType}${order.table ? ` / Table: ${order.table}` : ""}`,
         ...(template.showCashier ? [`Cashier: ${order.cashier}`] : []),
       ],
@@ -1635,10 +1633,6 @@ function documentDateTime(value: string, timeZone = localTimeZone) {
     ? value
     : parsed.toLocaleTimeString(activeLocale(), timeOptions);
   return { date, time };
-}
-
-function documentDueDate(createdAt: string) {
-  return createdAt.includes("Due") ? createdAt : "-";
 }
 
 function failJob(job: PrintJob, reason: string) {
