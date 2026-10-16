@@ -290,14 +290,8 @@ function MenuImport() {
         if (sample.processed > lastImportedCount.current) {
           // Only refresh after actual persisted row results change.
           lastImportedCount.current = sample.processed;
-          // Serialize inspection with this poll: a detached response could replace
-          // publication confirmation with an older staged snapshot.
-          if (result.status === "COMMITTING") {
-            const updated = await inspectImport(importId);
-            if (!active) return;
-            setPreview((current) => (current?.id === importId ? updated : current));
-          }
-          void refreshMenuCatalog();
+          // Progress counts are authoritative. Inspect the full snapshot only in
+          // the terminal branches below, so an older inspection cannot stop polling.
         }
         if (
           result.worker?.status === "RUNNING" &&
