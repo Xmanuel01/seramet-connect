@@ -65,7 +65,11 @@ function count(state: TransactionState, amount = 10000, reason?: string) {
     varianceReason: reason,
   };
 }
-function close(state: TransactionState, counts: DrawerCount[] = [count(state)], actor = supervisor) {
+function close(
+  state: TransactionState,
+  counts: DrawerCount[] = [count(state)],
+  actor = supervisor,
+) {
   return closeBusinessDay(state, actor, {
     businessDate: date,
     drawerCounts: counts,
