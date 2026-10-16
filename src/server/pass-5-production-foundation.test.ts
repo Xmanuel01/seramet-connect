@@ -17,6 +17,7 @@ import {
   setConfigurationRepositoryForTests,
 } from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
+import { handleSerametApiRequest } from "@/lib/seramet-api";
 
 const tenantA = "tenant-a";
 const tenantB = "tenant-b";
@@ -585,6 +586,32 @@ describe.sequential("Pass 5 production foundation", () => {
     await expect(authenticateSerametRequest(request, testEnv())).rejects.toThrow(
       /Device is not active/,
     );
+  });
+
+  it("skips unchanged transaction snapshots only after authenticating and authorizing the branch", async () => {
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const env = {
+      ...testEnv(),
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_IDENTITY_PROVIDER: "internal",
+    };
+    const read = (branch: string, bearer = token) =>
+      handleSerametApiRequest(
+        new Request(
+          `https://seramet.test/api/seramet/transactions?branchId=${branch}&knownRevision=0`,
+          { headers: { authorization: `Bearer ${bearer}`, "x-seramet-branch-id": branchA } },
+        ),
+        env,
+      );
+    const response = await read(branchA);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, unchanged: true, revision: 0 });
+    expect((await read("branch-b")).status).toBe(403);
+    await database
+      .prepare("UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND id=?")
+      .bind(new Date().toISOString(), tenantA, sessionA)
+      .run();
+    expect((await read(branchA)).status).toBe(401);
   });
 
   it("rejects development headers in production", async () => {

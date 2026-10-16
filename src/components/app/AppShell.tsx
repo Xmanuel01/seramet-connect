@@ -545,7 +545,7 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
       <Sheet open={quickCreateOpen} onOpenChange={setQuickCreateOpen}>
         <SheetContent className="w-full overflow-y-auto border-border bg-card p-0 sm:max-w-[420px]">
           <SheetHeader className="border-b border-border px-4 py-4 text-left">

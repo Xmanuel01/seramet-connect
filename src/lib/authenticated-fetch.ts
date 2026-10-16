@@ -1,6 +1,7 @@
-let refreshPromise: Promise<boolean> | null = null;
+import { clearInteractiveSignIn } from "@/lib/auth-client";
+let refreshPromise: Promise<"OK" | "REJECTED" | "UNAVAILABLE"> | null = null;
 
-async function refreshSession(): Promise<boolean> {
+async function refreshSession(): Promise<"OK" | "REJECTED" | "UNAVAILABLE"> {
   if (!refreshPromise) {
     refreshPromise = fetch("/api/seramet/public/auth/refresh", {
       method: "POST",
@@ -8,9 +9,16 @@ async function refreshSession(): Promise<boolean> {
       headers: {
         accept: "application/json",
       },
+      signal: AbortSignal.timeout(12_000),
     })
-      .then((response) => response.ok)
-      .catch(() => false)
+      .then((response) =>
+        response.ok
+          ? ("OK" as const)
+          : [401, 403].includes(response.status)
+            ? ("REJECTED" as const)
+            : ("UNAVAILABLE" as const),
+      )
+      .catch(() => "UNAVAILABLE" as const)
       .finally(() => {
         refreshPromise = null;
       });
@@ -28,6 +36,7 @@ function isPublicAuthRequest(input: RequestInfo | URL) {
 
 function redirectToLogin() {
   if (typeof window === "undefined") return;
+  clearInteractiveSignIn();
   if (["/login", "/pos-login", "/register"].includes(window.location.pathname)) return;
 
   window.location.replace("/pos-login?reason=session-expired");
@@ -50,7 +59,12 @@ export async function authenticatedFetch(
 
   const refreshed = await refreshSession();
 
-  if (!refreshed) {
+  if (refreshed === "UNAVAILABLE") {
+    throw Object.assign(new Error("Session refresh is temporarily unavailable"), {
+      httpStatus: 503,
+    });
+  }
+  if (refreshed === "REJECTED") {
     redirectToLogin();
     return response;
   }

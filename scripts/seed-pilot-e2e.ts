@@ -28,6 +28,7 @@ const jwtIssuer = requiredEnvironment("SERAMET_JWT_ISSUER");
 const jwtAudience = requiredEnvironment("SERAMET_JWT_AUDIENCE");
 const managerSessionId = `e2e-session-${suffix}`;
 const restrictedSessionId = `e2e-restricted-session-${suffix}`;
+const trustedDeviceId = `e2e-device-${suffix}`;
 
 try {
   await db
@@ -267,6 +268,12 @@ try {
       .bind(tenantId, branchId, menuItemId, stamp)
       .run();
   }
+  await db
+    .prepare(
+      "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,registered_at,payload_json) VALUES (?,?,?,'POS_TERMINAL','Disposable replay terminal','ACTIVE',?,'{}')",
+    )
+    .bind(tenantId, trustedDeviceId, firstBranchId, stamp)
+    .run();
   mkdirSync(resolve(process.cwd(), ".seramet"), { recursive: true });
   writeFileSync(
     resolve(process.cwd(), ".seramet", "e2e-fixture.json"),
@@ -276,6 +283,7 @@ try {
         userId,
         restrictedUserId,
         managerAccessToken: signToken(userId, managerSessionId),
+        trustedAccessToken: signToken(userId, managerSessionId, trustedDeviceId),
         restrictedAccessToken: signToken(restrictedUserId, restrictedSessionId),
         firstBranchId,
         secondBranchId,
@@ -290,13 +298,14 @@ try {
   db.close();
 }
 
-function signToken(subject: string, sessionId: string) {
+function signToken(subject: string, sessionId: string, deviceId?: string) {
   const now = Math.floor(Date.now() / 1_000);
   const header = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({
     sub: subject,
     tid: tenantId,
     sid: sessionId,
+    ...(deviceId ? { deviceId } : {}),
     iss: jwtIssuer,
     aud: jwtAudience,
     iat: now,
