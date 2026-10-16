@@ -209,6 +209,7 @@ export type PrintJob = {
   recordId?: string;
   copyIndex?: number;
   reprintReason?: string;
+  diagnosticRenderingMode?: "TEXT_ESC_POS" | "RASTER_ESC_POS";
   authorizationReprintId?: string;
 };
 
@@ -886,6 +887,9 @@ export const SerametLocalPrintBridge = {
                   ? "FOOD_KOT"
                   : job.documentType,
               recordId: job.id,
+              ...(job.diagnosticRenderingMode
+                ? { testRenderingMode: job.diagnosticRenderingMode }
+                : {}),
             }
           : {}),
         ...(job.claimToken ? { claimToken: job.claimToken } : {}),

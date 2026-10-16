@@ -1,0 +1,425 @@
+{
+  "emulatorRevision": "1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d",
+  "results": [
+    {
+      "name": "bill-58mm",
+      "transportMilliseconds": 189.7,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1238,
+      "wireSha256": "309574c02a28afc38564ca26c9604a6c67c77ecfc96621b1bfc21a8d23bd9f07",
+      "localEncodeMs": 2.37,
+      "memorySnapshots": {
+        "rssBefore": 136151040,
+        "rssAfter": 136212480,
+        "heapBefore": 55017776,
+        "heapAfter": 55575312
+      },
+      "commands": 90,
+      "encodedTextLines": 40,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "55c31063468ba66c583b016569101cc5a5821f50475db5ad1481c15060970612"
+    },
+    {
+      "name": "bill-copy-58mm",
+      "transportMilliseconds": 87.2,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1357,
+      "wireSha256": "6a1f457702817782ccb9e024c03914f1b96d990397606ec6eea5a4d77eac9c8e",
+      "localEncodeMs": 0.43,
+      "memorySnapshots": {
+        "rssBefore": 155332608,
+        "rssAfter": 155332608,
+        "heapBefore": 69293176,
+        "heapAfter": 68958584
+      },
+      "commands": 100,
+      "encodedTextLines": 44,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "f3ddddf03b48ef46cebeecfad0b56a7f88abf9bb8221f6ffb126516c8cccd346"
+    },
+    {
+      "name": "receipt-58mm",
+      "transportMilliseconds": 108.9,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1202,
+      "wireSha256": "458c50023fb6d453c70364e7b6a2477ea6b4530ac3aa4cf18e8407c406ad6c20",
+      "localEncodeMs": 0.36,
+      "memorySnapshots": {
+        "rssBefore": 158072832,
+        "rssAfter": 158081024,
+        "heapBefore": 62835496,
+        "heapAfter": 62482800
+      },
+      "commands": 90,
+      "encodedTextLines": 39,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "c5f11a2d65c4b23578df777396cb56a911288491068b9c51a39682f608e03617"
+    },
+    {
+      "name": "receipt-copy-58mm",
+      "transportMilliseconds": 96.5,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1321,
+      "wireSha256": "d73e6ac48122b77bbb5f6c59f27aea73f4c10dcd16ac9f76e632eefa3ba13d0e",
+      "localEncodeMs": 1.09,
+      "memorySnapshots": {
+        "rssBefore": 176709632,
+        "rssAfter": 176840704,
+        "heapBefore": 73131456,
+        "heapAfter": 73182080
+      },
+      "commands": 100,
+      "encodedTextLines": 43,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "37c1bd20e4bf4b691db0f521f582de2f311fd0b40f8c7df4b58e89d5fd931f97"
+    },
+    {
+      "name": "invoice-58mm",
+      "transportMilliseconds": 84,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1349,
+      "wireSha256": "2ac69a9a2b166ce90fec3b268b6db6fb5186b13017e95a1522ca00ae8679b7b6",
+      "localEncodeMs": 0.41,
+      "memorySnapshots": {
+        "rssBefore": 159539200,
+        "rssAfter": 159539200,
+        "heapBefore": 55729144,
+        "heapAfter": 55781744
+      },
+      "commands": 96,
+      "encodedTextLines": 43,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "28bbaed178e2c69218346b8471c11af079817565fec53f7030910fa4dbd2982d"
+    },
+    {
+      "name": "invoice-copy-58mm",
+      "transportMilliseconds": 78.1,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1468,
+      "wireSha256": "e5b550b693c16e3edbc189ac299a1d19cf82069d8e14d3abe09bc5afb91ac806",
+      "localEncodeMs": 0.34,
+      "memorySnapshots": {
+        "rssBefore": 158638080,
+        "rssAfter": 158654464,
+        "heapBefore": 54202432,
+        "heapAfter": 54253496
+      },
+      "commands": 106,
+      "encodedTextLines": 47,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "2932273b4bb4e17ab580dfbb884e8c65bc37e6f8f46fc40030fa0469bc8cd765"
+    },
+    {
+      "name": "kot-58mm",
+      "transportMilliseconds": 53,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 718,
+      "wireSha256": "402a970ef097c092f8958c9d8731f4f709fb51a7088845771987335cfc65f82d",
+      "localEncodeMs": 0.26,
+      "memorySnapshots": {
+        "rssBefore": 173154304,
+        "rssAfter": 173154304,
+        "heapBefore": 67682888,
+        "heapAfter": 67708904
+      },
+      "commands": 56,
+      "encodedTextLines": 23,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "5321e29a18bff0ab8b384d65de491fabfe2c5b76e584a1f6ebd76717143b392e"
+    },
+    {
+      "name": "kot-copy-58mm",
+      "transportMilliseconds": 53.8,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 754,
+      "wireSha256": "ba7fa444982f4f860e47dad594eb5106a7cda3ea4b48013276624664e0d79350",
+      "localEncodeMs": 0.22,
+      "memorySnapshots": {
+        "rssBefore": 181587968,
+        "rssAfter": 181587968,
+        "heapBefore": 73862592,
+        "heapAfter": 73890056
+      },
+      "commands": 62,
+      "encodedTextLines": 24,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "09d11cf5d6c010c2af09213212de97a55d2bb2f6ed0795c90994e6926b158f98"
+    },
+    {
+      "name": "bar-58mm",
+      "transportMilliseconds": 57.7,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 705,
+      "wireSha256": "3cd5710bfe49957c88ea30725812959f1321df1f4f3665ae6e356377980d23ed",
+      "localEncodeMs": 0.22,
+      "memorySnapshots": {
+        "rssBefore": 189591552,
+        "rssAfter": 189591552,
+        "heapBefore": 80443104,
+        "heapAfter": 80469064
+      },
+      "commands": 56,
+      "encodedTextLines": 23,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "803296b34a96132f54285c03d06225ab9e980500ac976a112676c26778b47ba7"
+    },
+    {
+      "name": "bar-copy-58mm",
+      "transportMilliseconds": 56.4,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 741,
+      "wireSha256": "6c59b8c1b51a5b02902d50e3f2d42d36c17e0c3c02ec24f335b5cebd170f2680",
+      "localEncodeMs": 0.26,
+      "memorySnapshots": {
+        "rssBefore": 200781824,
+        "rssAfter": 200810496,
+        "heapBefore": 86708400,
+        "heapAfter": 86735848
+      },
+      "commands": 62,
+      "encodedTextLines": 24,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "fc376b1eb48c68b75c41c6619fa55f727a9dc7f61e4f9adfbbc580fa479beba2"
+    },
+    {
+      "name": "bill-80mm",
+      "transportMilliseconds": 68.1,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1457,
+      "wireSha256": "7d72d0ac94cf16055e20e922cbf86a9d5508a71020243a928b26dbe338a01d47",
+      "localEncodeMs": 0.31,
+      "memorySnapshots": {
+        "rssBefore": 212586496,
+        "rssAfter": 212586496,
+        "heapBefore": 93487496,
+        "heapAfter": 93528480
+      },
+      "commands": 86,
+      "encodedTextLines": 38,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "a4298b37ad6f0634cd845de8797643fa41b14208544c8479e6b56e2278e56d1f"
+    },
+    {
+      "name": "bill-copy-80mm",
+      "transportMilliseconds": 50.8,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1577,
+      "wireSha256": "81c42880698128ce2d6719908d8b24a9c08975b95e8dafa8ef00dcae997a522d",
+      "localEncodeMs": 0.38,
+      "memorySnapshots": {
+        "rssBefore": 182726656,
+        "rssAfter": 182726656,
+        "heapBefore": 60932392,
+        "heapAfter": 60977624
+      },
+      "commands": 94,
+      "encodedTextLines": 41,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "00c2bb7ac600e6be4f8dc94833165f255367323c7822c66913a25b0cb2320493"
+    },
+    {
+      "name": "receipt-80mm",
+      "transportMilliseconds": 66.8,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1411,
+      "wireSha256": "a63c2c02675a7679dbe29b50f978cc5a3f61341cbee07cf4ad209e31b49e63f6",
+      "localEncodeMs": 0.89,
+      "memorySnapshots": {
+        "rssBefore": 196268032,
+        "rssAfter": 196268032,
+        "heapBefore": 73297584,
+        "heapAfter": 73338344
+      },
+      "commands": 86,
+      "encodedTextLines": 37,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "22cce925ad4ca7c770a385b0d029c961de4ab5cc4846d8f2e15e75ab477ce8c9"
+    },
+    {
+      "name": "receipt-copy-80mm",
+      "transportMilliseconds": 51.6,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1531,
+      "wireSha256": "ba39b425fe36f82ab95f86b45bc7dc682f48d7e2f0cba5b95acf18ea740ce797",
+      "localEncodeMs": 0.26,
+      "memorySnapshots": {
+        "rssBefore": 209129472,
+        "rssAfter": 209129472,
+        "heapBefore": 84006760,
+        "heapAfter": 84050856
+      },
+      "commands": 94,
+      "encodedTextLines": 40,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "6300b2c13235c8db8fe7197b844f47d9b856969013bbe9db2f1e6fb1f9d1fe17"
+    },
+    {
+      "name": "invoice-80mm",
+      "transportMilliseconds": 56.5,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1603,
+      "wireSha256": "937d3f0af641815914d45dce965bdf783c7bd8cd31ae2751c43d2f6fda77b6a0",
+      "localEncodeMs": 0.3,
+      "memorySnapshots": {
+        "rssBefore": 221913088,
+        "rssAfter": 221913088,
+        "heapBefore": 96045136,
+        "heapAfter": 96089672
+      },
+      "commands": 92,
+      "encodedTextLines": 41,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "1dc9fd3e7fca7eedbbd58abdecf2a96f3588a84b8501ae6149d4aa43dcc40fc5"
+    },
+    {
+      "name": "invoice-copy-80mm",
+      "transportMilliseconds": 58.7,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 1723,
+      "wireSha256": "3a83937f772aecec7d8d5c56b0eed2dc052ddd26b1bdf4eda81408bb604d5fab",
+      "localEncodeMs": 0.3,
+      "memorySnapshots": {
+        "rssBefore": 201777152,
+        "rssAfter": 201777152,
+        "heapBefore": 63661544,
+        "heapAfter": 63710072
+      },
+      "commands": 100,
+      "encodedTextLines": 44,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "0d35d4da2cf3364f9850948571b81e898760f995eab0d4767b9b7ad365274c17"
+    },
+    {
+      "name": "kot-80mm",
+      "transportMilliseconds": 91.4,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 811,
+      "wireSha256": "54a949e70668f231901469d4b49efb38a9ae188e2552c94f56c23a53563fb973",
+      "localEncodeMs": 11.43,
+      "memorySnapshots": {
+        "rssBefore": 217014272,
+        "rssAfter": 217014272,
+        "heapBefore": 77410216,
+        "heapAfter": 77434632
+      },
+      "commands": 52,
+      "encodedTextLines": 21,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "aed6adf2d72a01c7f5179fd87876abbe0ef09b93ee278da870427bf4a1917f9c"
+    },
+    {
+      "name": "kot-copy-80mm",
+      "transportMilliseconds": 45.9,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 847,
+      "wireSha256": "813db8add41f2d956def0272f402ef9b5ec0c89a43c5b3a5b2b4ccc91b2d3538",
+      "localEncodeMs": 0.21,
+      "memorySnapshots": {
+        "rssBefore": 224419840,
+        "rssAfter": 224419840,
+        "heapBefore": 83421680,
+        "heapAfter": 83447776
+      },
+      "commands": 58,
+      "encodedTextLines": 22,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "0e88d83e44029083b5464a0bb6dad10ae62eff3700b4635f03c2ca7195b386c1"
+    },
+    {
+      "name": "bar-80mm",
+      "transportMilliseconds": 59.7,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 798,
+      "wireSha256": "375ef7ed0da75b31d0bd1e585446b4cbd125963bd638d44e669a28e0c0725446",
+      "localEncodeMs": 0.19,
+      "memorySnapshots": {
+        "rssBefore": 235044864,
+        "rssAfter": 235044864,
+        "heapBefore": 89949200,
+        "heapAfter": 89973656
+      },
+      "commands": 52,
+      "encodedTextLines": 21,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "5a9fdc1e1c1db2d42f18ffa41bdd7b278ad48fe238deac5c8ef2fc84aa4d7973"
+    },
+    {
+      "name": "bar-copy-80mm",
+      "transportMilliseconds": 47.7,
+      "stage": "BYTES_SUBMITTED",
+      "physicalOutput": "NOT_VERIFIED",
+      "renderingMode": "TEXT_ESC_POS",
+      "encodedBytes": 834,
+      "wireSha256": "fad3c20f69c772593ae3ba43ad9059b884789a4fc189d56fbb0b416419d633f2",
+      "localEncodeMs": 0.25,
+      "memorySnapshots": {
+        "rssBefore": 246079488,
+        "rssAfter": 246145024,
+        "heapBefore": 95941992,
+        "heapAfter": 95968080
+      },
+      "commands": 58,
+      "encodedTextLines": 22,
+      "feedLines": 3,
+      "unknownCommands": 0,
+      "textSha256": "7a3f9fce903f9791250603b1f01997508ba974b45b0d49255d3df76435b4a0ff"
+    }
+  ]
+}
