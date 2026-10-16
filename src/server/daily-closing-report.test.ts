@@ -1,5 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { closingReportSections, renderDailyClosingPdf } from "./daily-closing-report";
 import { closeBusinessDay } from "@/payments/daily-closing";
 import { TransactionEngine, createEmptyTransactionState } from "@/lib/transaction-engine";
@@ -60,6 +62,12 @@ function fixture() {
     repository: { loadState: vi.fn().mockResolvedValue(state) } as unknown as TransactionRepository,
   };
 }
+async function evidence(name: string, pdf: Uint8Array) {
+  if (process.env.SERAMET_CLOSING_REPORT_EVIDENCE !== "true") return;
+  const directory = resolve(".seramet/daily-closing");
+  await mkdir(directory, { recursive: true });
+  await writeFile(resolve(directory, `${name}.pdf`), pdf);
+}
 describe("immutable closing PDF", () => {
   it("reports recorded components exactly, freezes source invoices and reproduces identical PDF bytes", async () => {
     let state = TransactionEngine.createOrder(
@@ -105,6 +113,7 @@ describe("immutable closing PDF", () => {
       { id: state.bills[0]!.id, balanceMinor: 10940 },
     ]);
     const before = await renderDailyClosingPdf(snapshot);
+    await evidence("standard-components", before);
     state.bills[0]!.total = 99999;
     state.bills[0]!.financialComponents!.discountsMinor = 999;
     vi.setSystemTime(new Date("2026-10-20T20:00:00Z"));
@@ -130,7 +139,14 @@ describe("immutable closing PDF", () => {
   });
   it("paginates long entries and preserves unsupported character identities explicitly", async () => {
     const { snapshot } = fixture();
-    snapshot.dailyReport!.restaurant = "Restaurant \u4e2d\u6587";
+    snapshot.dailyReport!.restaurant =
+      "Long Restaurant and Hospitality Group Name ".repeat(4) + "\u4e2d\u6587";
+    snapshot.dailyReport!.branch =
+      "Long branch name, overnight service and consolidated daily reconciliation";
+    snapshot.dailyReport!.outstandingInvoices = Array.from({ length: 40 }, (_, i) => ({
+      id: `invoice-${i}`,
+      balanceMinor: 10000 + i,
+    }));
     snapshot.dailyReport!.nonblocking = Array.from({ length: 100 }, (_, i) => ({
       id: String(i),
       code: "UNSETTLED_INVOICE",
@@ -138,9 +154,9 @@ describe("immutable closing PDF", () => {
       sourceId: `invoice-${i}`,
       message: "Long obligation ".repeat(15),
     }));
-    expect(
-      (await PDFDocument.load(await renderDailyClosingPdf(snapshot))).getPageCount(),
-    ).toBeGreaterThan(5);
+    const bytes = await renderDailyClosingPdf(snapshot);
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(5);
+    await evidence("complex-long-report", bytes);
   });
   it("serves only authenticated authorized snapshot revisions with private cache controls", async () => {
     const { repository, day } = fixture();

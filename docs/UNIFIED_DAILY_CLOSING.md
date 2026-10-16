@@ -65,9 +65,19 @@ no-store responses. They render only the requested stored revision, including af
 reopening. The PDF library is lazy-loaded server-side, never included in the POS client
 for report generation. No public report URL or financial-data URL token is created.
 
-Known report limitations: the current invoice ledger does not separately persist
-discount and service-charge components. Reports label that absence rather than inferring
-amounts. The built-in PDF font renders unsupported characters as explicit Unicode codepoint
+New normal POS invoices capture a versioned integer-minor-unit economic breakdown.
+Verified pricing overrides can carry their own breakdown, checked against invoice totals.
+Gross less discounts equals net sales; net sales plus service plus tax equals the invoice
+total. The legacy subtotal continues to mean net sales plus service (revenue before tax).
+Split and merge conserve these amounts and tax instead of repricing original item lines.
+The existing JSON payload persistence stores these optional fields; no migration is needed.
+
+Historical and provider invoices without a verified breakdown remain explicitly not recorded.
+A mixed period reports incomplete coverage, never fabricated zero discounts/service or an
+unsupported whole-period gross figure. Provider gateways that cannot supply the breakdown
+remain an explicit reporting limitation; voucher tender must not be relabelled as a sales
+discount without changing its established accounting treatment.
+The built-in PDF font renders unsupported characters as explicit Unicode codepoint
 tokens; full multilingual font embedding remains unverified. These limitations must be
 resolved before claiming the complete requested report specification is certified.
 
@@ -133,11 +143,13 @@ there is no new public storage bucket or paid infrastructure.
   replay, concurrency, crash recovery, revoked recipients, expired evidence, malformed
   provider responses, outages, bounded retries and terminal failure. They do not prove
   real-world sender configuration or inbox delivery.
-- The existing production dependency audit reports five critical TanStack advisories
-  (GHSA-qx66-fv34-fjm8). Its failure is not bypassed or suppressed by these changes.
+- The five critical dependency entries for GHSA-qx66-fv34-fjm8 are addressed by the
+  minimum patched TanStack release in the prerequisite stack. See
+  PILOT_CERTIFICATION_PREREQUISITES.md for the original tree and compatibility change.
 
-The stack remains draft pending final CI, the invoice discount/service-component gap,
-protected live-email acceptance, and final candidate certification. The first PDF page was
+The stack remains draft pending final CI, protected live-email acceptance and final
+candidate certification. Historical/provider component coverage is explicitly reported.
+The first PDF page was
 rendered and visually inspected for alignment and legibility. Product sections rank invoiced
 units, not profit or unavailable/unsold menu items. No production-readiness claim is made.
 
@@ -146,3 +158,17 @@ explicit tenant/branch IDs. Once another branch had closing records, the unchang
 isolation assertion correctly rejected that response. The record now receives its canonical
 scope at creation; the isolation guard is not weakened. Its payroll browser regression is
 part of the final acceptance suite.
+
+## Final Stabilization Scope
+
+The POS PostgreSQL job runs the repository verifier independently before the aggregate
+pilot gate, so a browser failure cannot conceal missing database certification. A disposable
+PostgreSQL trigger injects a failure during day-close persistence; state, drawer, mutation,
+audit, realtime and notification counts must remain unchanged through a second connection.
+The trigger is test-only and removed in finally; it is not a migration or live operation.
+Browser failure traces are retained privately for seven days for this disposable fixture.
+
+Closing performs no global invalidation or browser reload. Delivery status refresh is manual.
+The observed authentication/connectivity remount problem predates this stack and has a
+separate candidate in PR #134; daily-closing certification does not certify that unmerged
+candidate or claim the underlying POS operational blocker has disappeared.
