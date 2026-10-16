@@ -23,6 +23,7 @@ export async function openCashier(context: BrowserContext, page: Page) {
   }, fixture);
   await page.goto("/pos");
   await expect(page.getByLabel("Connection: Online")).toBeVisible();
+  await page.getByPlaceholder("Search dishes or scan barcode").fill("Pilot meal");
   await page.getByRole("button", { name: "Add Pilot meal to order" }).click();
   await page.getByPlaceholder("Item note").fill("No onion - preserve cashier work");
 }

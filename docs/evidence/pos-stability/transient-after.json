@@ -1,0 +1,83 @@
+{
+  "checks": 2,
+  "transactionReads": 3,
+  "entries": [
+    {
+      "at": 1792169297745,
+      "correlationId": "63c12773-c154-45f6-a8b6-6b16da0a456f",
+      "kind": "APP_MOUNT"
+    },
+    {
+      "at": 1792169297831,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "CONNECTIVITY",
+      "value": "ONLINE"
+    },
+    {
+      "at": 1792169298276,
+      "correlationId": "16de623d-724c-4c9b-b11d-b86c8b9c58ea",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169298286,
+      "correlationId": "16de623d-724c-4c9b-b11d-b86c8b9c58ea",
+      "kind": "POS_UNMOUNT"
+    },
+    {
+      "at": 1792169298291,
+      "correlationId": "16de623d-724c-4c9b-b11d-b86c8b9c58ea",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169299257,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "SNAPSHOT_READ",
+      "value": 2
+    },
+    {
+      "at": 1792169299991,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "AUTH_CHECK"
+    },
+    {
+      "at": 1792169300014,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "CONNECTIVITY",
+      "value": "DEGRADED"
+    },
+    {
+      "at": 1792169300365,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "SNAPSHOT_UNCHANGED",
+      "value": 2
+    },
+    {
+      "at": 1792169305895,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "AUTH_CHECK"
+    },
+    {
+      "at": 1792169305957,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "CONNECTIVITY",
+      "value": "ONLINE"
+    },
+    {
+      "at": 1792169305957,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "AUTH_OK"
+    },
+    {
+      "at": 1792169306179,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "SNAPSHOT_UNCHANGED",
+      "value": 2
+    },
+    {
+      "at": 1792169306427,
+      "correlationId": "16b8f8ad-fadb-4627-acbd-a68239091119",
+      "kind": "SNAPSHOT_UNCHANGED",
+      "value": 2
+    }
+  ]
+}

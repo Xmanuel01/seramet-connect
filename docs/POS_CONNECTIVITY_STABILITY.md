@@ -119,3 +119,28 @@ that artifact. Local evidence is under `.seramet/pos-stability/`.
 Final test results and exact candidate SHA are recorded in the PR. A local engineering pass
 does not certify real restaurant networking, physical printers, live providers or production.
 No merge, manual deployment or live database operation is part of this change.
+
+### Recorded Acceptance
+
+Application candidate: `8e03bfe5918e38080ddaeff52e856891d5ab9f65`.
+The subsequent correction only makes the browser fixture search for its seeded meal after
+the existing import test adds 41 items to the paginated menu; application code is unchanged.
+
+- 56 focused unit/security/persistence tests passed, including offline authorization,
+  duplicate replay, revoked device rejection and authorized unchanged-revision reads.
+- Typecheck, repository lint (warnings only), build, bundle audit and diff checks passed.
+- Ten browser acceptance scenarios passed together on the unchanged application candidate,
+  including the three existing multi-terminal/clock/branch tests and six new failure,
+  recovery, IndexedDB and stale-order-conflict cases.
+- The soak lasted 903,200 milliseconds: zero navigations, zero idle replay requests,
+  zero full snapshot downloads, 16 authenticated session checks and 32 revision checks.
+  No post-entry application/POS unmount or input loss occurred.
+- Sanitized before/after traces are committed in `docs/evidence/pos-stability/`.
+- The first full CI browser run passed the twelve existing scenarios but could not locate
+  the seeded meal in any of the six new scenarios after menu-import pagination. The fixture
+  now searches explicitly, as the existing two-terminal test does. Assertions are unchanged.
+- The required dependency audit still reports five critical TanStack dependency findings
+  associated with `GHSA-qx66-fv34-fjm8`. This is not suppressed or fixed by unrelated changes.
+
+Final CI and PostgreSQL outcomes are reported separately in the PR. They must not be inferred
+from the successful local soak, and the outstanding dependency-security check blocks release.
