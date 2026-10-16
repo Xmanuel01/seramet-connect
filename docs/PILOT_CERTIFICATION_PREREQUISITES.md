@@ -41,4 +41,7 @@ the application's existing plugin declaration is retained. Validate typecheck,
 SSR build, authentication, routing and browser workflows against the resolved tree.
 The patched Router correctly types thrown values as unknown; the root error
 boundary now uses its exported ErrorComponentProps rather than assuming Error.
+The lockfile is also validated with Actions' npm 10.9.9: npm 11 omitted Nitro's
+optional lru-cache peer, causing npm ci to stop before any certification executed.
+Regenerating with npm 10 adds only that required optional entry; no scan is bypassed.
 Final certification evidence belongs in DAILY_CLOSING_CERTIFICATION.md.
