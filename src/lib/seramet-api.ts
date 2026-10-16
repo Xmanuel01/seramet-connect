@@ -1257,6 +1257,7 @@ function filterPaymentOperations(
     disputes: keep(operations.disputes),
     journals: keep(operations.journals),
     dayCloses: keep(operations.dayCloses),
+    closingPolicies: keep(operations.closingPolicies ?? []),
     storedValueAccounts: operations.storedValueAccounts.filter(
       (account) => account.tenantId === actor.tenantId,
     ),
@@ -1312,6 +1313,7 @@ function mergePaymentOperations(
     disputes: merge(current.disputes, next.disputes),
     journals: merge(current.journals, next.journals),
     dayCloses: merge(current.dayCloses, next.dayCloses),
+    closingPolicies: merge(current.closingPolicies ?? [], next.closingPolicies ?? []),
     storedValueAccounts: next.storedValueAccounts,
     customerAccounts: next.customerAccounts,
     customerAccountEntries: merge(current.customerAccountEntries, next.customerAccountEntries),

@@ -243,17 +243,6 @@ try {
       value.expectedCashMinor,
     ]),
   );
-  const closedDrawer = await command(first, "drawer-close", "drawer-close", "closePaymentDrawer", {
-    input: {
-      tenantId,
-      drawerSessionId: drawer.id,
-      countedCashMinor: drawer.expectedCashMinor,
-      countedByCurrency,
-      actor: userId,
-    },
-  });
-  assert.equal(closedDrawer.state.paymentOperations?.drawerSessions[0]?.status, "CLOSED");
-
   const businessDate = bill.businessDate ?? bill.issuedAt.slice(0, 10);
   const prepared = await command(first, "day-prepare", "day-prepare", "prepareDayClose", {
     input: { tenantId, branchId, businessDate, actor: userId },
@@ -267,7 +256,13 @@ try {
       "day-close-a",
       "closeDay",
       {
-        input: { tenantId, dayCloseId, actor: userId, overrideReason: "CI invariant proof" },
+        input: {
+          tenantId,
+          dayCloseId,
+          actor: userId,
+          confirmed: true,
+          drawerCounts: [{ drawerSessionId: drawer.id, countedByCurrency }],
+        },
       },
       closeRevision,
     ),
@@ -277,7 +272,13 @@ try {
       "day-close-b",
       "closeDay",
       {
-        input: { tenantId, dayCloseId, actor: userId, overrideReason: "CI invariant proof" },
+        input: {
+          tenantId,
+          dayCloseId,
+          actor: userId,
+          confirmed: true,
+          drawerCounts: [{ drawerSessionId: drawer.id, countedByCurrency }],
+        },
       },
       closeRevision,
     ),
@@ -286,6 +287,24 @@ try {
   assert.equal(closes.filter((result) => result.status === "rejected").length, 1);
   state = await first.loadState(tenantId);
   assert.equal(state.paymentOperations?.dayCloses[0]?.snapshots?.length, 1);
+  assert.equal(state.paymentOperations?.drawerSessions[0]?.status, "CLOSED");
+  assert.equal(
+    state.paymentOperations?.dayCloses[0]?.snapshot?.dailyReport?.drawers[0]?.status,
+    "CLOSED",
+  );
+  await assert.rejects(
+    command(first, "closed-day-drawer", "closed-day-drawer", "openPaymentDrawer", {
+      input: {
+        tenantId,
+        branchId,
+        employeeId: userId,
+        currency: "KES",
+        openingFloatMinor: 0,
+        actor: userId,
+      },
+    }),
+    /closed/,
+  );
 
   const commits = await count("mutation_commits");
   assert.equal(await count("realtime_events"), commits);
@@ -400,6 +419,7 @@ function actor(): ServerActor {
       "payments.collect",
       "payments.reconcile.approve",
       "inventory.adjust",
+      "reconciliation.approve",
     ],
     assignedBranchIds: [branchId],
     assignedBranches: [{ id: branchId, name: branchId }],

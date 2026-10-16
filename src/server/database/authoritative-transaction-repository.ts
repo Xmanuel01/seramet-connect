@@ -74,6 +74,7 @@ const paymentCollections = [
   "disputes",
   "journals",
   "dayCloses",
+  "closingPolicies",
   "storedValueAccounts",
   "customerAccounts",
   "customerAccountEntries",
@@ -3591,6 +3592,8 @@ function dataQualityStatement(
 }
 
 const financiallyLockedActions = new Set([
+  "openPaymentDrawer",
+  "collectCashPayment",
   "holdOrder",
   "createOrder",
   "updateOrderDraft",
