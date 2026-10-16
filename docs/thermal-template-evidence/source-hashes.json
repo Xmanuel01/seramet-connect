@@ -11,6 +11,7 @@
     "src/lib/seramet-flows.test.ts": "210ce510797306795d0185cfa5f56d114d1bc368cafa7273d549d2cc140191fd",
     "scripts/printing-acceptance-fixtures.ts": "cce2b68a9815f6b5986cf106d2e90991e8d0bd4e43825c81ea50bd3a8c82a6e7",
     "scripts/verify-print-emulator.mjs": "183d7fde31ffa28d23d64fceff3561d9f7bd9d9c4e4e45f95bb197b203634ced",
-    "tests/e2e/printing-operational.spec.ts": "759dd147f8c62d804d8e2312720d4a28183af85a70c7cbdd4cb083214a0df23b"
+    "tests/e2e/printing-operational.spec.ts": "759dd147f8c62d804d8e2312720d4a28183af85a70c7cbdd4cb083214a0df23b",
+    "src/platform/platform-foundation.test.ts": "47311fa6cb9d406dbe28528eb3dc61c67cbe3bb094167c0ee5c1f09433b0830d"
   }
 }

@@ -185,9 +185,12 @@ describe.sequential("pass 1 platform foundation acceptance", () => {
     );
     const kot = SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW").jobs[0]
       ?.content;
-    [...customerDocuments, kot].forEach((content) => {
+    customerDocuments.forEach((content) => {
       expect(content?.toUpperCase()).toContain("HARBOR HOUSE");
     });
+    expect(kot?.toUpperCase()).toContain("HARBOR QUAY");
+    expect(kot?.toUpperCase()).not.toContain("HARBOR HOUSE");
+    expect(kot?.split("\n")[0]).toMatch(/^KITCHEN ORDER KOT /);
     expect(customerDocuments[2]).toContain("TAX-HH-7788");
     expect(customerDocuments[0]).toContain("9 Quay Avenue");
   });

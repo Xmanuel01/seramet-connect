@@ -119,6 +119,12 @@ These are not physical millimetre measurements or guarantees for every order.
 - Repository validation and GitHub CI results are recorded in the PR completion
   comment; a failed security gate is never a successful certification.
 
+The first full run passed 786 tests and found one obsolete platform-foundation
+assertion requiring a merchant header on KOTs. It now asserts merchant branding
+on customer documents and branch identity, no merchant header, and a leading
+operational heading on KOTs. This is a test-contract correction, not a relaxed
+authorization check. The complete unit suite is rerun after that correction.
+
 Evidence was generated from the final local working tree before commit. The
 operational result's candidateCommit denotes its base HEAD, not a claim that the
 refinements existed in that commit. Exact tested source hashes are in
