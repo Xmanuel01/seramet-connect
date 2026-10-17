@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
+import { authorizeSerametMutation } from "@/lib/seramet-auth";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
 import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
 
@@ -280,6 +281,15 @@ describe.sequential("authoritative geofenced attendance", () => {
     await expect(
       db.prepare("DELETE FROM attendance_management_events WHERE tenant_id=?").bind(tenantId).run(),
     ).rejects.toThrow(/append-only/i);
+  });
+
+  it("denies legacy attendance transactions that would bypass location enforcement", () => {
+    expect(() => authorizeSerametMutation(actor, "clockInEmployee")).toThrow(
+      /Legacy attendance mutations are disabled/,
+    );
+    expect(() => authorizeSerametMutation(actor, "clockOutEmployee")).toThrow(
+      /Legacy attendance mutations are disabled/,
+    );
   });
 
   it("cannot modify another tenant or an unassigned branch", async () => {
