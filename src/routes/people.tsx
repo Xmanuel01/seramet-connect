@@ -55,7 +55,9 @@ function People() {
       actions={
         <>
           <Btn onClick={() => void navigate({ to: "/attendance" })}>Attendance</Btn>
-          <Btn variant="primary" onClick={() => void navigate({ to: "/employees" })}>Add Employee</Btn>
+          <Btn variant="primary" onClick={() => void navigate({ to: "/employees" })}>
+            Add Employee
+          </Btn>
         </>
       }
     >
