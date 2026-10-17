@@ -203,7 +203,7 @@ async function recordPunch(
         "INSERT INTO employee_attendance_sessions(tenant_id,id,user_id,branch_id,business_date,clock_in_at,clock_in_key,minutes_late,clock_in_source,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT DO NOTHING"
       ).bind(actor.tenantId,id,userId,branch.id,date,instant,requestKey,late,source,instant,instant),
       db.prepare(
-        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.user_id=? AND s.business_date=? AND s.clock_in_key=? ON CONFLICT DO NOTHING"
+        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.user_id=? AND s.business_date=? AND s.clock_in_key=?"
       ).bind(actor.tenantId,eventId,actor.id,eventType,requestKey,reason??null,instant,evidence?.accuracy??null,evidence?.distance??null,actor.tenantId,userId,date,requestKey),
     ]);
     const current = await readSession(db, actor, userId, date);
@@ -225,7 +225,7 @@ async function recordPunch(
       "UPDATE employee_attendance_sessions SET clock_out_at=?,clock_out_key=?,clock_out_source=?,version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND user_id=? AND clock_out_at IS NULL"
     ).bind(instant,requestKey,source,instant,actor.tenantId,open.id,userId),
     db.prepare(
-      "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.clock_out_key=? ON CONFLICT DO NOTHING"
+      "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.clock_out_key=?"
     ).bind(actor.tenantId,eventId,actor.id,eventType,requestKey,reason??null,instant,evidence?.accuracy??null,evidence?.distance??null,actor.tenantId,open.id,requestKey),
   ]);
   const current = await db.prepare(
@@ -257,6 +257,8 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
   if (input.action === "CORRECT_OUT" && instant < record.clock_in_at) deny(400, "Clock-out cannot precede clock-in");
   const correctingIn = input.action === "CORRECT_IN";
   const late = correctingIn ? await lateMinutes(db,actor,branch,input.employeeId,instant,date) : null;
+  if (correctingIn && businessDateForTimestamp(instant,branch.timezone,branch.business_day_cutoff_minutes)!==record.business_date)
+    deny(400, "Corrected clock-in must remain on the original business date");
   const previous = correctingIn ? record.clock_in_at : record.clock_out_at;
   const result = await db.batch([
     db.prepare(correctingIn
@@ -264,7 +266,7 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
       : "UPDATE employee_attendance_sessions SET clock_out_at=?,clock_out_source='SUPERVISOR',version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?"
     ).bind(...(correctingIn ? [instant,late,new Date().toISOString(),actor.tenantId,record.id,record.version] : [instant,new Date().toISOString(),actor.tenantId,record.id,record.version])),
     db.prepare(
-      "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,before_json,after_json) SELECT ?,?,?,?,?,?,?,?, ?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.version=? ON CONFLICT DO NOTHING"
+      "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,before_json,after_json) SELECT ?,?,?,?,?,?,?,?, ?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.version=?"
     ).bind(actor.tenantId,crypto.randomUUID(),record.id,actor.id,input.action,input.idempotencyKey,input.reason,new Date().toISOString(),JSON.stringify({ at: previous }),JSON.stringify({ at: instant }),actor.tenantId,record.id,record.version+1),
   ]);
   if (result[0]?.meta?.changes !== 1) deny(409, "Attendance changed; refresh before correcting");
