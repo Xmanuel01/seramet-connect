@@ -12,6 +12,7 @@ import {
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { appendClearedAccountCookies } from "@/server/supabase-auth-api";
 import { permissions } from "@/platform/permissions";
+import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 
 const employeeLoginSchema = z
   .object({
@@ -141,6 +142,7 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     );
     const body = parse(employeeCreateSchema, await request.json().catch(() => null));
     const employee = await service.createEmployee(actor, body);
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
     return Response.json({ ok: true, employee }, { status: 201, headers: noStore() });
   }
   const creationAttempt = /^\/api\/seramet\/employees\/creation-attempts\/([^/]+)$/.exec(

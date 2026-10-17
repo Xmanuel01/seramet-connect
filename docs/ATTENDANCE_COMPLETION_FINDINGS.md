@@ -43,6 +43,9 @@ notification delivery is authorized by this work.
   the page by `staff.view`. A dedicated attendance route decision now permits that
   page without exposing People, Employees, Schedule, Payroll, Finance or POS, and
   inherits existing staff policy denials. Employee register uses `users.view`.
+- The strict newly-created identity bootstrap assertion then exposed a stale
+  configuration cache. Employee creation now invalidates the existing authoritative
+  cache only after the creation service acknowledges; no assertion was relaxed.
 - Security patch remains separately reviewable in existing PR #136. npm 11 drops
   Nitro's optional peer lock entry; retain that entry for the required npm 10 clean
   install. No audit suppression or forced major upgrade is used.
