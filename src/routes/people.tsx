@@ -11,7 +11,10 @@ export const Route = createFileRoute("/people")({
   head: () => ({
     meta: [
       { title: "People - Seramet" },
-      { name: "description", content: "Verified attendance and employee administration by branch." },
+      {
+        name: "description",
+        content: "Verified attendance and employee administration by branch.",
+      },
     ],
   }),
   component: People,
@@ -52,7 +55,8 @@ function People() {
   const { branchId, branchLabel, activeTenantId, hasPermission } = useAppContext();
   const [people, setPeople] = useState<VerifiedPeople | null>(null);
   const [notice, setNotice] = useState("");
-  const mayRead = hasPermission(permissions.staffManage) || hasPermission(permissions.attendanceUse);
+  const mayRead =
+    hasPermission(permissions.staffManage) || hasPermission(permissions.attendanceUse);
 
   useEffect(() => {
     if (!mayRead) return;
@@ -113,8 +117,14 @@ function People() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Employees" value={canSeeRoster ? count : "—"} />
         <Metric label="Recorded today" value={canSeeRoster ? recorded : people?.me ? 1 : 0} />
-        <Metric label="Currently working" value={canSeeRoster ? working : people?.me && !people.me.clockOutAt ? 1 : 0} />
-        <Metric label="Late arrivals" value={canSeeRoster ? late : people?.me && (people.me.minutesLate ?? 0) > 0 ? 1 : 0} />
+        <Metric
+          label="Currently working"
+          value={canSeeRoster ? working : people?.me && !people.me.clockOutAt ? 1 : 0}
+        />
+        <Metric
+          label="Late arrivals"
+          value={canSeeRoster ? late : people?.me && (people.me.minutesLate ?? 0) > 0 ? 1 : 0}
+        />
       </div>
       {notice && (
         <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
@@ -164,7 +174,11 @@ function People() {
         <Panel className="mt-4">
           <PanelHead
             title="Today's employee register"
-            sub={"Verified attendance for " + people?.businessDate + "; no fabricated schedules or deductions"}
+            sub={
+              "Verified attendance for " +
+              people?.businessDate +
+              "; no fabricated schedules or deductions"
+            }
           />
           <div className="overflow-x-auto">
             <table className="w-full min-w-[650px]">
@@ -207,8 +221,8 @@ function People() {
         </Panel>
       )}
       <p className="mt-3 text-xs text-muted-foreground">
-        Verified punches are maintained separately from historical payroll records.
-        Attendance does not automatically deduct wages.
+        Verified punches are maintained separately from historical payroll records. Attendance does
+        not automatically deduct wages.
       </p>
     </AppShell>
   );

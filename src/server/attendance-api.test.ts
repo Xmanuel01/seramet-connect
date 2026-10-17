@@ -31,7 +31,12 @@ async function call(path: string, method = "GET", body?: unknown) {
   return {
     status: res.status,
     data: (await res.json()) as {
-      session: { employeeId: string; clockInSource: string; clockOutAt: string | null; clockInAt: string };
+      session: {
+        employeeId: string;
+        clockInSource: string;
+        clockOutAt: string | null;
+        clockInAt: string;
+      };
       repeated: boolean;
       records: Array<{ id: string; version: number; clockInAt: string }>;
       geofence: { version: number };

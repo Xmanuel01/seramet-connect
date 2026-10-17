@@ -46,7 +46,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
 }) => {
   const context = await browser.newContext({
     permissions: ["geolocation"],
-    geolocation: { latitude: -1.260, longitude: 36.806, accuracy: 2 },
+    geolocation: { latitude: -1.26, longitude: 36.806, accuracy: 2 },
   });
   await authorize(context);
   const page = await context.newPage();
