@@ -256,18 +256,30 @@ describe.sequential("authoritative geofenced attendance", () => {
     const employee = current.employees.find((value: { id: string }) => value.id === actor.id);
     expect(employee).toBeTruthy();
     await call("/api/seramet/attendance/schedule", "PUT", {
-      branchId, employeeId: actor.id, scheduledStart: "09:30", expectedVersion: 0,
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: "09:30",
+      expectedVersion: 0,
     });
     await expect(
       call("/api/seramet/attendance/schedule", "PUT", {
-        branchId, employeeId: actor.id, scheduledStart: "10:30", expectedVersion: 0,
+        branchId,
+        employeeId: actor.id,
+        scheduledStart: "10:30",
+        expectedVersion: 0,
       }),
     ).rejects.toThrow(/changed/i);
     const after = (await call("/api/seramet/attendance?branchId=" + branchId)).data;
-    expect(after.employees.find((value: { id: string }) => value.id === actor.id).scheduled_start).toBe("09:30");
-    const events = db.sqlite.prepare("SELECT COUNT(*) count FROM attendance_management_events WHERE tenant_id=?").get(tenantId) as { count:number };
+    expect(
+      after.employees.find((value: { id: string }) => value.id === actor.id).scheduled_start,
+    ).toBe("09:30");
+    const events = db.sqlite
+      .prepare("SELECT COUNT(*) count FROM attendance_management_events WHERE tenant_id=?")
+      .get(tenantId) as { count: number };
     expect(events.count).toBe(2);
-    await expect(db.prepare("DELETE FROM attendance_management_events WHERE tenant_id=?").bind(tenantId).run()).rejects.toThrow(/append-only/i);
+    await expect(
+      db.prepare("DELETE FROM attendance_management_events WHERE tenant_id=?").bind(tenantId).run(),
+    ).rejects.toThrow(/append-only/i);
   });
 
   it("cannot modify another tenant or an unassigned branch", async () => {
