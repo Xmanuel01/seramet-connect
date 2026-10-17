@@ -110,6 +110,11 @@ export function authorizeSerametMutation(
   tenantIdOrBranchId?: string,
   branchIdInput?: string,
 ) {
+  // Legacy snapshot attendance is not a geofenced, identity-bound timekeeping source.
+  // Do not let authorized staff bypass the verified attendance API with old actions.
+  if (action === "clockInEmployee" || action === "clockOutEmployee") {
+    throw new SerametHttpError(410, "Legacy attendance mutations are disabled; use authenticated attendance punches");
+  }
   const requiredPermission = mutationPermission[action];
   if (!requiredPermission) throw new SerametHttpError(400, `Unknown transaction action: ${action}`);
   if (!actor.permissions.includes(requiredPermission)) {
