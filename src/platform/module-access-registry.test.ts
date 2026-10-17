@@ -75,6 +75,16 @@ describe("enterprise module access registry", () => {
     });
     expect(canAccessPath(denied, "/attendance")).toBe(false);
     expect(canAccessPath(branchProfile([permissions.usersView]), "/employees")).toBe(true);
+    for (const policies of [{ staff: "DENY" as const }, { users: "DENY" as const }]) {
+      const restricted = buildModuleAccessProfile({
+        permissions: [permissions.usersView],
+        organizationalScopes: ["BRANCH"],
+        entitlements: [],
+        entitlementsEnforced: false,
+        policies,
+      });
+      expect(canAccessPath(restricted, "/employees")).toBe(false);
+    }
     expect(canAccessPath(branchProfile([permissions.staffManage]), "/attendance")).toBe(true);
   });
 

@@ -31,6 +31,7 @@ export type ModuleKey =
   | "loyalty"
   | "staff"
   | "attendance"
+  | "employees"
   | "finance"
   | "accounting"
   | "reports"
@@ -487,6 +488,22 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     routes: ["/attendance"],
   },
   {
+    key: "employees",
+    label: "Employee Identities",
+    navigationPermission: permissions.usersView,
+    routePermission: permissions.usersView,
+    actionPermissions: actions(
+      permissions.usersView,
+      allOf(permissions.usersManage, permissions.employeeCredentialsManage),
+      permissions.usersManage,
+      null,
+      permissions.employeeCredentialsManage,
+    ),
+    supportedScopes: branchScopes,
+    policyCode: "MODULE_ACCESS.EMPLOYEES",
+    routes: ["/employees"],
+  },
+  {
     key: "finance",
     label: "Finance",
     navigationPermission: permissions.financeView,
@@ -605,7 +622,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.USERS",
-    routes: ["/settings", "/employees"],
+    routes: ["/settings"],
   },
   {
     key: "setup",
@@ -832,10 +849,11 @@ export function evaluateModuleAccess(
     context.entitlements.includes(definition.entitlement);
   const featureAllowed =
     !definition.featureFlag || context.featureFlags?.[definition.featureFlag] !== false;
-  const policy =
-    definition.key === "attendance" && context.policies?.staff === "DENY"
-      ? "DENY"
-      : (context.policies?.[definition.key] ?? "ALLOW");
+  const inheritedDeny =
+    ((definition.key === "attendance" || definition.key === "employees") &&
+      context.policies?.staff === "DENY") ||
+    (definition.key === "employees" && context.policies?.users === "DENY");
+  const policy = inheritedDeny ? "DENY" : (context.policies?.[definition.key] ?? "ALLOW");
   const baseAllowed = scopeAllowed && entitlementAllowed && featureAllowed && policy === "ALLOW";
   const route = baseAllowed && hasPermission(context.permissions, definition.routePermission);
   const reasons: string[] = [];
