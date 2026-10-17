@@ -219,11 +219,24 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
   expect(created).toBe(200);
 
   for (const path of ["/attendance", "/payroll"]) {
+    const endpoint =
+      path === "/attendance" ? "**/api/seramet/attendance?**" : "**/api/seramet/transactions?**";
+    const attendanceName =
+      path === "/attendance"
+        ? await page.evaluate(async () => {
+            const response = await fetch("/api/seramet/attendance");
+            if (!response.ok) throw new Error("Attendance fixture unavailable");
+            const body = await response.json();
+            if (!body.employees.length)
+              throw new Error("Expected an authenticated employee fixture");
+            return body.employees[0].name as string;
+          })
+        : name;
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.route("**/api/seramet/transactions?**", async (route) => {
+    await page.route(endpoint, async (route) => {
       await pending;
       await route.fallback();
     });
@@ -236,8 +249,8 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
     ).toBeVisible();
     await expect(page.getByText("This page didn't load")).toHaveCount(0);
     release();
-    await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
-    await page.unroute("**/api/seramet/transactions?**");
+    await expect(page.getByRole("cell", { name: attendanceName, exact: true })).toBeVisible();
+    await page.unroute(endpoint);
   }
 
   const input = page.getByLabel(`Base net pay for ${name}`);

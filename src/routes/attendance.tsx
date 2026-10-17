@@ -6,6 +6,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { useAppContext } from "@/lib/app-context";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
+import { csvCell } from "@/onboarding/menu-import-schema";
 
 export const Route = createFileRoute("/attendance")({
   head: () => ({
@@ -107,7 +108,12 @@ function locationOnce(): Promise<{
   });
 }
 function Attendance() {
-  const { branchId, branchLabel, activeTenantId, hasPermission } = useAppContext();
+  const { branchId, branchLabel, activeTenantId, currentUser, hasPermission } = useAppContext();
+  const scope = activeTenantId + ":" + branchId + ":" + currentUser.id;
+  const activeScope = useRef(scope);
+  const scopeGeneration = useRef(0);
+  const refreshSequence = useRef(0);
+  const operation = useRef(false);
   const [data, setData] = useState<Data | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -133,6 +139,8 @@ function Attendance() {
   );
   const api = useCallback(
     async (path: string, method = "GET", body?: unknown) => {
+      const generation = scopeGeneration.current;
+      if (activeScope.current !== scope) throw new Error("Attendance branch changed; try again");
       const response = await fetch(path, {
         method,
         credentials: "same-origin",
@@ -140,47 +148,73 @@ function Attendance() {
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
       const value = (await response.json().catch(() => ({}))) as { message?: string; ok?: boolean };
+      if (activeScope.current !== scope || generation !== scopeGeneration.current)
+        throw new Error("Attendance branch changed; try again");
       if (!response.ok)
         throw new Error(value.message ?? "Attendance request failed (" + response.status + ")");
       return value;
     },
-    [headers],
+    [headers, scope],
   );
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     try {
       const answer = (await api(
         "/api/seramet/attendance?branchId=" + encodeURIComponent(branchId),
       )) as Data;
+      if (sequence !== refreshSequence.current) return;
       setData(answer);
       setEditFence(answer.geofence);
-      setMessage("");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not load attendance");
+      if (activeScope.current === scope && sequence === refreshSequence.current)
+        setMessage(error instanceof Error ? error.message : "Could not load attendance");
     }
-  }, [api, branchId]);
+  }, [api, branchId, scope]);
   useEffect(() => {
+    scopeGeneration.current += 1;
+    refreshSequence.current += 1;
+    activeScope.current = scope;
+    operation.current = false;
+    punchKey.current = null;
+    setBusy(false);
+    setMessage("");
+    setReason("");
+    setOccurredAt("");
+    setSchedule("");
     setData(null);
     setSelected("");
     setEditFence(null);
     void refresh();
-  }, [refresh]);
+    return () => {
+      activeScope.current = "";
+      scopeGeneration.current += 1;
+    };
+  }, [refresh, scope]);
   const run = async (work: () => Promise<void>) => {
-    if (busy) return;
+    if (operation.current || activeScope.current !== scope) return;
+    const generation = scopeGeneration.current;
+    operation.current = true;
     setBusy(true);
     setMessage("");
     try {
       await work();
-      await refresh();
+      if (activeScope.current === scope && generation === scopeGeneration.current) await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Request could not be completed");
+      if (activeScope.current === scope && generation === scopeGeneration.current)
+        setMessage(error instanceof Error ? error.message : "Request could not be completed");
     } finally {
-      setBusy(false);
+      if (activeScope.current === scope && generation === scopeGeneration.current) {
+        operation.current = false;
+        setBusy(false);
+      }
     }
   };
   const ownPunch = (action: "IN" | "OUT") =>
     void run(async () => {
       setMessage("Checking your precise location…");
+      const generation = scopeGeneration.current;
       const gps = await locationOnce();
+      if (activeScope.current !== scope || generation !== scopeGeneration.current) return;
       const existing = punchKey.current;
       const idempotencyKey = existing?.action === action ? existing.key : crypto.randomUUID();
       punchKey.current = { action, key: idempotencyKey };
@@ -262,9 +296,7 @@ function Attendance() {
         row.clockInSource,
       ]),
     ];
-    const csv = rows
-      .map((row) => row.map((field) => '"' + field.replaceAll('"', '""') + '"').join(","))
-      .join("\r\n");
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;

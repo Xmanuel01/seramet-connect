@@ -9,8 +9,9 @@ import {
 import { businessDateForTimestamp } from "@/lib/business-date";
 import { evaluateAttendanceGeofence } from "@/lib/attendance-geofence";
 import { permissions } from "@/platform/permissions";
-import type { D1Database } from "@/server/database/d1";
+import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
+import { requireFullAuthentication } from "@/server/pos-auth-service";
 
 const key = z.string().uuid();
 const location = z
@@ -98,6 +99,71 @@ type SessionRow = {
   version: number;
 };
 type PunchActor = { actor: ServerActor; db: D1Database; branch: BranchRow };
+
+function uniqueAttendanceConflict(error: unknown) {
+  return (
+    (error as { code?: string } | null)?.code === "23505" ||
+    (error instanceof Error &&
+      /UNIQUE constraint failed: (employee_attendance_sessions|employee_attendance_events|attendance_management_events)|UNIQUE constraint failed: index 'uq_attendance_management_revision'/.test(
+        error.message,
+      ))
+  );
+}
+async function managementBatch(db: D1Database, statements: D1PreparedStatement[]) {
+  try {
+    return await db.batch(statements);
+  } catch (error) {
+    if (uniqueAttendanceConflict(error))
+      deny(409, "Attendance settings changed; refresh and retry");
+    throw error;
+  }
+}
+
+async function executeAttendance(
+  ctx: PunchActor,
+  requestKey: string,
+  command: Record<string, unknown>,
+  perform: (
+    hash: string,
+  ) => Promise<{ session: ReturnType<typeof publicSession>; repeated: boolean }>,
+) {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(command)),
+  );
+  const hash = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+  const replay = async () => {
+    const event = await ctx.db
+      .prepare(
+        "SELECT session_id,request_hash FROM employee_attendance_events WHERE tenant_id=? AND actor_id=? AND request_key=?",
+      )
+      .bind(ctx.actor.tenantId, ctx.actor.id, requestKey)
+      .first<{ session_id: string; request_hash: string }>();
+    if (!event) return null;
+    if (event.request_hash !== hash)
+      deny(409, "Idempotency key was used for a different attendance request");
+    const row = await ctx.db
+      .prepare(
+        "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND id=? AND branch_id=?",
+      )
+      .bind(ctx.actor.tenantId, event.session_id, ctx.branch.id)
+      .first<SessionRow>();
+    if (!row) deny(409, "Attendance replay record unavailable");
+    return { session: publicSession(row), repeated: true };
+  };
+  const existing = await replay();
+  if (existing) return existing;
+  try {
+    return await perform(hash);
+  } catch (error) {
+    if (!uniqueAttendanceConflict(error)) throw error;
+    const completed = await replay();
+    if (completed) return completed;
+    deny(409, "Attendance changed on another terminal; refresh and retry");
+  }
+}
 
 function deny(status: number, message: string): never {
   throw new SerametHttpError(status, message);
@@ -219,8 +285,10 @@ async function lateMinutes(
     .first<{ scheduled_start: string | null }>();
   if (!row?.scheduled_start) return null; // Never invent schedules or payroll deductions.
   const fence = await fenceFor(db, actor, branch.id);
-  const scheduled =
+  const scheduledMinutes =
     Number(row.scheduled_start.slice(0, 2)) * 60 + Number(row.scheduled_start.slice(3, 5));
+  const scheduled =
+    scheduledMinutes + (scheduledMinutes < branch.business_day_cutoff_minutes ? 1440 : 0);
   const clock = localParts(occurredAt, branch.timezone);
   const elapsed = clock.minutes + (clock.date > date ? 1440 : 0);
   return Math.max(0, elapsed - scheduled - (fence?.grace_minutes ?? 0));
@@ -246,14 +314,14 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     branch.business_day_cutoff_minutes,
   );
   const own =
-    (await readSession(db, actor, actor.id, today)) ?? (await readOpen(db, actor, actor.id));
+    (await readOpen(db, actor, actor.id)) ?? (await readSession(db, actor, actor.id, today));
   const fence = await fenceFor(db, actor, branch.id);
   const canManage = manager(actor);
   const records = canManage
     ? ((
         await db
           .prepare(
-            "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND business_date=? ORDER BY clock_in_at DESC LIMIT 500",
+            "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND (business_date=? OR clock_out_at IS NULL) ORDER BY clock_in_at DESC LIMIT 500",
           )
           .bind(actor.tenantId, branch.id, today)
           .all<SessionRow>()
@@ -297,6 +365,7 @@ async function recordPunch(
   action: "IN" | "OUT",
   requestKey: string,
   source: "GEOFENCE" | "SUPERVISOR",
+  requestHash: string,
   reason?: string,
   evidence?: { accuracy: number; distance: number },
 ) {
@@ -345,7 +414,7 @@ async function recordPunch(
         ),
       db
         .prepare(
-          "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.user_id=? AND s.business_date=? AND s.clock_in_key=?",
+          "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,request_hash,session_version,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,s.version,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.user_id=? AND s.business_date=? AND s.clock_in_key=?",
         )
         .bind(
           actor.tenantId,
@@ -353,6 +422,7 @@ async function recordPunch(
           actor.id,
           eventType,
           requestKey,
+          requestHash,
           reason ?? null,
           instant,
           evidence?.accuracy ?? null,
@@ -391,7 +461,7 @@ async function recordPunch(
       .bind(instant, requestKey, source, instant, actor.tenantId, open.id, userId),
     db
       .prepare(
-        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.clock_out_key=?",
+        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,request_hash,session_version,reason,at,accuracy_m,distance_m) SELECT ?,?,s.id,?,?,?,?,s.version,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.clock_out_key=?",
       )
       .bind(
         actor.tenantId,
@@ -399,6 +469,7 @@ async function recordPunch(
         actor.id,
         eventType,
         requestKey,
+        requestHash,
         reason ?? null,
         instant,
         evidence?.accuracy ?? null,
@@ -416,7 +487,11 @@ async function recordPunch(
     deny(409, "Clock-out conflicted with another terminal");
   return { session: publicSession(current), repeated: result[0]?.meta?.changes !== 1 };
 }
-async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSchema>) {
+async function correctPunch(
+  ctx: PunchActor,
+  input: z.infer<typeof supervisorSchema>,
+  requestHash: string,
+) {
   const { actor, db, branch } = ctx;
   await ensureEmployee(db, actor, input.employeeId, branch.id);
   if (!input.expectedVersion) deny(400, "Expected record version is required for corrections");
@@ -474,7 +549,7 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
       ),
     db
       .prepare(
-        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,reason,at,before_json,after_json) SELECT ?,?,?,?,?,?,?,?, ?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.version=?",
+        "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,request_hash,session_version,reason,at,before_json,after_json) SELECT ?,?,?,?,?,?,?,s.version,?,?,?,? FROM employee_attendance_sessions s WHERE s.tenant_id=? AND s.id=? AND s.version=?",
       )
       .bind(
         actor.tenantId,
@@ -483,6 +558,7 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
         actor.id,
         input.action,
         input.idempotencyKey,
+        requestHash,
         input.reason,
         new Date().toISOString(),
         JSON.stringify({ at: previous }),
@@ -537,14 +613,21 @@ export async function handleAttendanceApi(
     if (!decision.allowed) deny(422, "Location verification failed: " + decision.reason);
     return noStore({
       ok: true,
-      ...(await recordPunch(
+      ...(await executeAttendance(
         ctx,
-        actor.id,
-        body.action,
         body.idempotencyKey,
-        "GEOFENCE",
-        undefined,
-        { accuracy: decision.accuracyMeters, distance: decision.distanceMeters },
+        { action: body.action, branchId: body.branchId, employeeId: actor.id, source: "GEOFENCE" },
+        (hash) =>
+          recordPunch(
+            ctx,
+            actor.id,
+            body.action,
+            body.idempotencyKey,
+            "GEOFENCE",
+            hash,
+            undefined,
+            { accuracy: decision.accuracyMeters, distance: decision.distanceMeters },
+          ),
       )),
     });
   }
@@ -552,29 +635,37 @@ export async function handleAttendanceApi(
     const body = parse(supervisorSchema, await request.json().catch(() => null));
     const ctx = await context(actor, db, body.branchId, true);
     if (body.action === "CORRECT_IN" || body.action === "CORRECT_OUT")
-      return noStore({ ok: true, ...(await correctPunch(ctx, body)) });
+      return noStore({
+        ok: true,
+        ...(await executeAttendance(ctx, body.idempotencyKey, body, (hash) =>
+          correctPunch(ctx, body, hash),
+        )),
+      });
     if (body.occurredAt)
       deny(
         400,
         "Manual punches use the authoritative server time; use a correction for prior times",
       );
+    const action = body.action;
     return noStore({
       ok: true,
-      ...(await recordPunch(
-        ctx,
-        body.employeeId,
-        body.action,
-        body.idempotencyKey,
-        "SUPERVISOR",
-        body.reason,
+      ...(await executeAttendance(ctx, body.idempotencyKey, body, (hash) =>
+        recordPunch(
+          ctx,
+          body.employeeId,
+          action,
+          body.idempotencyKey,
+          "SUPERVISOR",
+          hash,
+          body.reason,
+        ),
       )),
     });
   }
   if (url.pathname === "/api/seramet/attendance/geofence" && request.method === "PUT") {
     const body = parse(configSchema, await request.json().catch(() => null));
     await context(actor, db, body.branchId, true);
-    if (actor.authLevel === "POS_PIN")
-      deny(403, "Full administrator authentication is required for location policy changes");
+    requireFullAuthentication(actor);
     if (!actor.permissions.includes(permissions.settingsBranchManage))
       deny(403, "Branch settings permission is required");
     const old = await fenceFor(db, actor, body.branchId);
@@ -628,17 +719,18 @@ export async function handleAttendanceApi(
           graceMinutes: old.grace_minutes,
         }
       : null;
-    const results = await db.batch([
+    const results = await managementBatch(db, [
       change,
       db
         .prepare(
-          "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,event_type,at,before_json,after_json) SELECT ?,?,?,?,'GEOFENCE_POLICY',?,?,? WHERE EXISTS(SELECT 1 FROM attendance_geofences WHERE tenant_id=? AND branch_id=? AND version=? AND updated_by=? AND updated_at=?)",
+          "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,event_type,entity_version,at,before_json,after_json) SELECT ?,?,?,?,'GEOFENCE_POLICY',?,?,?,? WHERE EXISTS(SELECT 1 FROM attendance_geofences WHERE tenant_id=? AND branch_id=? AND version=? AND updated_by=? AND updated_at=?)",
         )
         .bind(
           actor.tenantId,
           crypto.randomUUID(),
           body.branchId,
           actor.id,
+          body.expectedVersion + 1,
           now,
           JSON.stringify(previous),
           JSON.stringify(body),
@@ -692,11 +784,11 @@ export async function handleAttendanceApi(
             stamp,
             actor.id,
           );
-    const results = await db.batch([
+    const results = await managementBatch(db, [
       change,
       db
         .prepare(
-          "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,subject_user_id,event_type,at,before_json,after_json) SELECT ?,?,?,?,?,'SCHEDULE_ASSIGNMENT',?,?,? WHERE EXISTS(SELECT 1 FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=? AND updated_by=? AND updated_at=?)",
+          "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,subject_user_id,event_type,entity_version,at,before_json,after_json) SELECT ?,?,?,?,?,'SCHEDULE_ASSIGNMENT',?,?,?,? WHERE EXISTS(SELECT 1 FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=? AND updated_by=? AND updated_at=?)",
         )
         .bind(
           actor.tenantId,
@@ -704,6 +796,7 @@ export async function handleAttendanceApi(
           body.branchId,
           actor.id,
           body.employeeId,
+          body.expectedVersion + 1,
           stamp,
           JSON.stringify(previous?.scheduled_start ?? null),
           JSON.stringify(body.scheduledStart),

@@ -94,7 +94,174 @@ describe.sequential("authoritative geofenced attendance", () => {
       ],
     };
   });
-  afterEach(() => db.close());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    db.close();
+  });
+  function supervisor(overrides: Record<string, unknown> = {}) {
+    return {
+      branchId,
+      employeeId: actor.id,
+      action: "IN",
+      idempotencyKey: id(),
+      reason: "Verified supervisor exception",
+      ...overrides,
+    };
+  }
+  function pauseNextBatch() {
+    let release!: () => void;
+    let arrived!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      arrived = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = db.batch.bind(db);
+    vi.spyOn(db, "batch").mockImplementationOnce(async (statements) => {
+      arrived();
+      await gate;
+      return original(statements);
+    });
+    return { waiting, release };
+  }
+  it("acknowledges concurrent duplicate punches once and rejects changed key reuse", async () => {
+    const input = supervisor();
+    const paused = pauseNextBatch();
+    const first = call("/api/seramet/attendance/supervisor", "POST", input);
+    await paused.waiting;
+    const second = await call("/api/seramet/attendance/supervisor", "POST", input);
+    paused.release();
+    expect(second.data.repeated).toBe(false);
+    expect((await first).data.repeated).toBe(true);
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", {
+        ...input,
+        reason: "A different supervisor reason",
+      }),
+    ).rejects.toThrow(/different attendance request/);
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", { ...input, action: "OUT" }),
+    ).rejects.toThrow(/different attendance request/);
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_events").get()?.count,
+    ).toBe(1);
+  });
+  it("rolls back a losing correction without orphan audit events", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const record = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    const input = supervisor({
+      action: "CORRECT_IN",
+      sessionId: record.id,
+      expectedVersion: record.version,
+      occurredAt: record.clockInAt,
+    });
+    const paused = pauseNextBatch();
+    const first = call("/api/seramet/attendance/supervisor", "POST", input).catch(
+      (error: unknown) => error,
+    );
+    await paused.waiting;
+    await call("/api/seramet/attendance/supervisor", "POST", {
+      ...input,
+      idempotencyKey: id(),
+      reason: "Winner verified arrival correction",
+    });
+    paused.release();
+    expect(await first).toMatchObject({ status: 409 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_events").get()?.count,
+    ).toBe(2);
+    expect(
+      db.sqlite.prepare("SELECT version FROM employee_attendance_sessions").get()?.version,
+    ).toBe(2);
+  });
+  it("deduplicates racing clock-outs and binds correction retries to their original values", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const input = supervisor({ action: "OUT" });
+    const paused = pauseNextBatch();
+    const first = call("/api/seramet/attendance/supervisor", "POST", input);
+    await paused.waiting;
+    await call("/api/seramet/attendance/supervisor", "POST", input);
+    paused.release();
+    expect((await first).data.repeated).toBe(true);
+    const record = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    const correction = supervisor({
+      action: "CORRECT_IN",
+      sessionId: record.id,
+      expectedVersion: record.version,
+      occurredAt: record.clockInAt,
+    });
+    await call("/api/seramet/attendance/supervisor", "POST", correction);
+    expect(
+      (await call("/api/seramet/attendance/supervisor", "POST", correction)).data.repeated,
+    ).toBe(true);
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", {
+        ...correction,
+        reason: "Altered correction request reason",
+      }),
+    ).rejects.toThrow(/different attendance request/);
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_events").get()?.count,
+    ).toBe(3);
+  });
+  it("does not audit losing settings updates even for the same actor and millisecond", async () => {
+    vi.setSystemTime(new Date("2026-10-17T12:00:00Z"));
+    const paused = pauseNextBatch();
+    const first = call("/api/seramet/attendance/geofence", "PUT", fence).catch(
+      (error: unknown) => error,
+    );
+    await paused.waiting;
+    await call("/api/seramet/attendance/geofence", "PUT", { ...fence, radiusMeters: 20 });
+    paused.release();
+    expect(await first).toMatchObject({ status: 409 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM attendance_management_events").get()?.count,
+    ).toBe(1);
+    expect(db.sqlite.prepare("SELECT radius_m FROM attendance_geofences").get()?.radius_m).toBe(20);
+  });
+  it("rejects policy changes unless authentication is explicitly FULL", async () => {
+    actor = { ...actor, authLevel: undefined };
+    await expect(call("/api/seramet/attendance/geofence", "PUT", fence)).rejects.toThrow();
+    actor = { ...actor, authLevel: "POS_PIN" };
+    await expect(call("/api/seramet/attendance/geofence", "PUT", fence)).rejects.toThrow();
+    expect(db.sqlite.prepare("SELECT COUNT(*) count FROM attendance_geofences").get()?.count).toBe(
+      0,
+    );
+  });
+  it("keeps overnight sessions visible and calculates after-midnight schedules against the cutoff", async () => {
+    vi.setSystemTime(new Date("2026-10-16T23:10:00Z")); // 02:10 Nairobi, prior business day.
+    db.sqlite
+      .prepare("UPDATE branches SET business_day_cutoff_minutes=240 WHERE tenant_id=? AND id=?")
+      .run(tenantId, branchId);
+    await call("/api/seramet/attendance/schedule", "PUT", {
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: "02:00",
+      expectedVersion: 0,
+    });
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const session = db.sqlite
+      .prepare("SELECT minutes_late,business_date FROM employee_attendance_sessions")
+      .get();
+    expect(session).toMatchObject({ minutes_late: 10, business_date: "2026-10-16" });
+    vi.setSystemTime(new Date("2026-10-17T02:00:00Z")); // Past cutoff, still an open session.
+    const report = await call("/api/seramet/attendance?branchId=" + branchId);
+    expect(report.data.records).toHaveLength(1);
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+  });
+  it("rolls back a new session if its durable audit cannot be written", async () => {
+    db.sqlite.exec(
+      "CREATE TRIGGER reject_test_event BEFORE INSERT ON employee_attendance_events BEGIN SELECT RAISE(ABORT,'test audit unavailable'); END",
+    );
+    await expect(call("/api/seramet/attendance/supervisor", "POST", supervisor())).rejects.toThrow(
+      /test audit unavailable/,
+    );
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_sessions").get()?.count,
+    ).toBe(0);
+  });
   it("requires an explicitly enabled workplace geofence", async () => {
     await expect(
       call("/api/seramet/attendance/punch", "POST", {

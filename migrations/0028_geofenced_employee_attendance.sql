@@ -57,6 +57,8 @@ CREATE TABLE employee_attendance_sessions (
 CREATE UNIQUE INDEX uq_attendance_clock_out_key
   ON employee_attendance_sessions(tenant_id,user_id,clock_out_key)
   WHERE clock_out_key IS NOT NULL;
+CREATE UNIQUE INDEX uq_attendance_open_session
+  ON employee_attendance_sessions(tenant_id,user_id) WHERE clock_out_at IS NULL;
 CREATE INDEX idx_attendance_branch_date
   ON employee_attendance_sessions(tenant_id,branch_id,business_date,user_id);
 CREATE TABLE employee_attendance_events (
@@ -66,6 +68,8 @@ CREATE TABLE employee_attendance_events (
   actor_id TEXT NOT NULL,
   event_type TEXT NOT NULL CHECK(event_type IN ('CLOCK_IN','CLOCK_OUT','SUPERVISOR_CLOCK_IN','SUPERVISOR_CLOCK_OUT','CORRECT_IN','CORRECT_OUT')),
   request_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  session_version INTEGER NOT NULL CHECK(session_version > 0),
   reason TEXT,
   at TEXT NOT NULL,
   accuracy_m REAL,
@@ -74,6 +78,7 @@ CREATE TABLE employee_attendance_events (
   after_json TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY(tenant_id,id),
   UNIQUE(tenant_id,actor_id,request_key),
+  UNIQUE(tenant_id,session_id,session_version),
   FOREIGN KEY(tenant_id,session_id) REFERENCES employee_attendance_sessions(tenant_id,id),
   FOREIGN KEY(tenant_id,actor_id) REFERENCES users(tenant_id,id)
 );
@@ -93,6 +98,7 @@ CREATE TABLE attendance_management_events (
   branch_id TEXT NOT NULL,
   actor_id TEXT NOT NULL,
   subject_user_id TEXT,
+  entity_version INTEGER NOT NULL CHECK(entity_version > 0),
   event_type TEXT NOT NULL CHECK(event_type IN ('GEOFENCE_POLICY','SCHEDULE_ASSIGNMENT')),
   at TEXT NOT NULL,
   before_json TEXT NOT NULL,
@@ -102,6 +108,8 @@ CREATE TABLE attendance_management_events (
   FOREIGN KEY(tenant_id,actor_id) REFERENCES users(tenant_id,id)
 );
 CREATE INDEX idx_attendance_management_history ON attendance_management_events(tenant_id,branch_id,at);
+CREATE UNIQUE INDEX uq_attendance_management_revision ON attendance_management_events
+  (tenant_id,branch_id,event_type,COALESCE(subject_user_id,''),entity_version);
 CREATE TRIGGER attendance_management_events_no_update BEFORE UPDATE ON attendance_management_events
 BEGIN SELECT RAISE(ABORT,'attendance management audit is append-only'); END;
 CREATE TRIGGER attendance_management_events_no_delete BEFORE DELETE ON attendance_management_events
@@ -109,4 +117,4 @@ BEGIN SELECT RAISE(ABORT,'attendance management audit is append-only'); END;
 -- POSTGRES_ONLY: ALTER TABLE attendance_management_events ENABLE ROW LEVEL SECURITY;
 
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES(28,'geofenced_employee_attendance','geofenced-attendance-0028-v2',CURRENT_TIMESTAMP);
+VALUES(28,'geofenced_employee_attendance','geofenced-attendance-0028-v3',CURRENT_TIMESTAMP);
