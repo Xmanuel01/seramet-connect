@@ -56,7 +56,7 @@ function Employees() {
   const [assignedBranchIds, setAssignedBranchIds] = useState<string[]>([branchId]);
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
   const [showForm, setShowForm] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [notice, setNotice] = useState("");
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
   const effectiveFrom = useRef(new Date().toISOString());
@@ -224,7 +224,7 @@ function Employees() {
       actions={
         <Btn
           variant="primary"
-          disabled={!canManage}
+          disabled={!canManage || busy}
           title={
             canManage
               ? "Create a new employee"

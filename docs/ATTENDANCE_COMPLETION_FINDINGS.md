@@ -59,6 +59,10 @@ notification delivery is authorized by this work.
 - Aggregate CI exposed an unrelated printer assertion matching a table cell and
   a select option. Scoped the assertion to the printer cell; no printing code,
   timeout or duplicate-row assertion was weakened.
+- The employee-register browser run exposed an initial-load readiness gap:
+  Add Employee was enabled in server markup before the scoped load/hydration.
+  It now starts disabled and remains disabled during loading; the browser holds
+  that GET deliberately and verifies the disabled-to-enabled transition.
 
 Certification is recorded against the final pushed SHA in PR #137. Earlier
 784-test / 14-browser evidence is baseline evidence only, not proof of this new

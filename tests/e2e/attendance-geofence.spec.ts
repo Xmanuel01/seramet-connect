@@ -180,9 +180,19 @@ test("People provides an Add Employee path to the authorized employee register",
   await authorize(context);
   const page = await context.newPage();
   await establishSession(page);
+  let releaseEmployeeLoad!: () => void;
+  const employeeLoadReady = new Promise<void>((resolve) => {
+    releaseEmployeeLoad = resolve;
+  });
+  await page.route("**/api/seramet/employees", async (route) => {
+    if (route.request().method() === "GET") await employeeLoadReady;
+    await route.fallback();
+  });
   await page.goto("/people");
   await page.getByRole("button", { name: "Add Employee" }).click();
   await expect(page).toHaveURL(/\/employees/);
+  await expect(page.getByRole("button", { name: "Add employee" })).toBeDisabled();
+  releaseEmployeeLoad();
   await expect(page.getByRole("button", { name: "Add employee" })).toBeEnabled();
   await page.getByRole("button", { name: "Add employee" }).click();
   const employeeCode = "STAFF-" + randomUUID().slice(0, 8).toUpperCase();
