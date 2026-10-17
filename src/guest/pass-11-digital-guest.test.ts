@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { GuestExperienceService } from "@/guest/guest-service";
 import { hashCapabilityToken } from "@/guest/security";
@@ -54,7 +55,7 @@ describe("Pass 11 digital guest experience", () => {
   it("applies the current schema with tenant-scoped guest and reservation constraints", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get(),
-    ).toMatchObject({ version: 27 });
+    ).toMatchObject({ version: CURRENT_SCHEMA_VERSION });
     const tables = db.sqlite
       .prepare(
         `SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name IN
