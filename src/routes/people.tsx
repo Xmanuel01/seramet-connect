@@ -1,4 +1,4 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ const shiftFor = (i: number, d: number) =>
   (i + d) % 4 === 0 ? "OFF" : (i + d) % 3 === 0 ? "12:00-21:30" : "09:30-21:30";
 
 function People() {
+  const navigate = useNavigate();
   const { branchLabel } = useAppContext();
   const { state } = useTransactionEngine();
   const employees = useBranchRows(state.employees);
@@ -53,8 +54,8 @@ function People() {
       subtitle={`${rows.length} employees - ${branchLabel}`}
       actions={
         <>
-          <Btn>Attendance</Btn>
-          <Btn variant="primary">Publish schedule</Btn>
+          <Btn onClick={() => void navigate({ to: "/attendance" })}>Attendance</Btn>
+          <Btn variant="primary" onClick={() => void navigate({ to: "/employees" })}>Add Employee</Btn>
         </>
       }
     >
