@@ -238,6 +238,14 @@ test("People provides an Add Employee path to the authorized employee register",
     "x-seramet-branch-id": fixture.firstBranchId,
     origin: "http://127.0.0.1:4173",
   };
+  const bootstrap = await staff.request.get("/api/seramet/configuration", {
+    headers: staffHeaders,
+  });
+  expect(bootstrap.status()).toBe(200);
+  const configuration = (await bootstrap.json()) as {
+    configuration: { users: Array<{ id: string }> };
+  };
+  expect(configuration.configuration.users.map((user) => user.id)).toEqual([body.employee.id]);
   expect(
     (
       await staff.request.get(`/api/seramet/attendance?branchId=${fixture.secondBranchId}`, {

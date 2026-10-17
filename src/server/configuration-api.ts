@@ -172,7 +172,14 @@ export async function handleConfigurationApi(
         excluded: ["provider secrets", "users", "sessions", "password material"],
       });
     }
-    return json({ ok: true, source: "authoritative-server", configuration: state });
+    // Ordinary employee bootstrap needs its own identity, not the tenant's full
+    // employee roster. Keep roster visibility aligned with management APIs.
+    const configuration =
+      actor.permissions.includes(permissions.usersView) ||
+      actor.permissions.includes(permissions.staffManage)
+        ? state
+        : { ...state, users: state.users.filter((user) => user.id === actor.id) };
+    return json({ ok: true, source: "authoritative-server", configuration });
   }
 
   if (url.pathname === "/api/seramet/configuration/import" && request.method === "POST") {
