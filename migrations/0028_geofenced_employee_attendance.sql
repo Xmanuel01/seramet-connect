@@ -23,7 +23,7 @@ CREATE TABLE attendance_shift_assignments (
   branch_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
   scheduled_start TEXT CHECK(scheduled_start IS NULL OR
-    (LENGTH(scheduled_start)=5 AND scheduled_start GLOB '[0-2][0-9]:[0-5][0-9]')),
+    (LENGTH(scheduled_start)=5 AND SUBSTR(scheduled_start,3,1)=':')),
   updated_at TEXT NOT NULL,
   updated_by TEXT NOT NULL,
   PRIMARY KEY(tenant_id,branch_id,user_id),
