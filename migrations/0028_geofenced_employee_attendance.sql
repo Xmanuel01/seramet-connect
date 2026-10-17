@@ -24,6 +24,7 @@ CREATE TABLE attendance_shift_assignments (
   user_id TEXT NOT NULL,
   scheduled_start TEXT CHECK(scheduled_start IS NULL OR
     (LENGTH(scheduled_start)=5 AND SUBSTR(scheduled_start,3,1)=':')),
+  version INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL,
   updated_by TEXT NOT NULL,
   PRIMARY KEY(tenant_id,branch_id,user_id),
@@ -86,5 +87,26 @@ BEGIN SELECT RAISE(ABORT,'attendance event history is append-only'); END;
 -- POSTGRES_ONLY: ALTER TABLE employee_attendance_sessions ENABLE ROW LEVEL SECURITY;
 -- POSTGRES_ONLY: ALTER TABLE employee_attendance_events ENABLE ROW LEVEL SECURITY;
 -- All writes go through server-authenticated, tenant-scoped APIs; no direct user Data API policies.
+CREATE TABLE attendance_management_events (
+  tenant_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  branch_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  subject_user_id TEXT,
+  event_type TEXT NOT NULL CHECK(event_type IN ('GEOFENCE_POLICY','SCHEDULE_ASSIGNMENT')),
+  at TEXT NOT NULL,
+  before_json TEXT NOT NULL,
+  after_json TEXT NOT NULL,
+  PRIMARY KEY(tenant_id,id),
+  FOREIGN KEY(tenant_id,branch_id) REFERENCES branches(tenant_id,id),
+  FOREIGN KEY(tenant_id,actor_id) REFERENCES users(tenant_id,id)
+);
+CREATE INDEX idx_attendance_management_history ON attendance_management_events(tenant_id,branch_id,at);
+CREATE TRIGGER attendance_management_events_no_update BEFORE UPDATE ON attendance_management_events
+BEGIN SELECT RAISE(ABORT,'attendance management audit is append-only'); END;
+CREATE TRIGGER attendance_management_events_no_delete BEFORE DELETE ON attendance_management_events
+BEGIN SELECT RAISE(ABORT,'attendance management audit is append-only'); END;
+-- POSTGRES_ONLY: ALTER TABLE attendance_management_events ENABLE ROW LEVEL SECURITY;
+
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES(28,'geofenced_employee_attendance','geofenced-attendance-0028-v1',CURRENT_TIMESTAMP);
+VALUES(28,'geofenced_employee_attendance','geofenced-attendance-0028-v2',CURRENT_TIMESTAMP);
