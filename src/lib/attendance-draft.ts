@@ -4,7 +4,7 @@ export type AttendanceDraft = {
   reason: string;
   occurredAt: string;
   action: "IN" | "OUT" | "CORRECT_IN" | "CORRECT_OUT" | "EXPLAIN";
-  pending?: { action: "IN" | "OUT"; key: string };
+  pending?: { action: "IN" | "OUT"; key: string; sessionId?: string; expectedVersion?: number };
   supervisor?: { key: string; payload: string };
 };
 const prefix = "seramet.attendance.";
@@ -32,6 +32,13 @@ export function readAttendanceDraft(scope: string, now = Date.now()): Attendance
     )
       return null;
     if (draft.supervisor && !safeSupervisor(draft.supervisor)) return null;
+    if (
+      draft.pending?.action === "OUT" &&
+      (!/^[0-9a-f-]{36}$/.test(draft.pending.sessionId ?? "") ||
+        !Number.isInteger(draft.pending.expectedVersion) ||
+        (draft.pending.expectedVersion ?? 0) < 1)
+    )
+      return null;
     return draft;
   } catch {
     return null;
@@ -51,7 +58,14 @@ export function writeAttendanceDraft(scope: string, draft: AttendanceDraft) {
           reason: draft.reason,
           occurredAt: draft.occurredAt,
           action: draft.action,
-          pending: draft.pending,
+          pending: draft.pending
+            ? {
+                action: draft.pending.action,
+                key: draft.pending.key,
+                sessionId: draft.pending.sessionId,
+                expectedVersion: draft.pending.expectedVersion,
+              }
+            : undefined,
           supervisor:
             draft.supervisor && safeSupervisor(draft.supervisor) ? draft.supervisor : undefined,
         },

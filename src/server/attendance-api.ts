@@ -31,6 +31,8 @@ const punchSchema = z
     branchId: z.string().min(1).max(120),
     idempotencyKey: key,
     location,
+    sessionId: z.string().uuid().optional(),
+    expectedVersion: z.number().int().positive().optional(),
   })
   .strict();
 const supervisorSchema = z
@@ -476,6 +478,7 @@ async function recordPunch(
   requestHash: string,
   reason?: string,
   evidence?: { accuracy: number; distance: number },
+  expected?: { sessionId?: string; expectedVersion?: number },
 ) {
   const { actor, db, branch } = ctx;
   await ensureEmployee(db, actor, userId, branch.id);
@@ -579,6 +582,12 @@ async function recordPunch(
   }
   if (open.branch_id !== branch.id)
     deny(409, "Clock out from the same branch where attendance started");
+  if (!expected?.sessionId || !expected.expectedVersion)
+    deny(400, "Clock-out requires the selected session and version");
+  if (open.id !== expected.sessionId || open.version !== expected.expectedVersion)
+    deny(409, "Attendance session changed; refresh before clocking out");
+  if (instant < open.clock_in_at)
+    deny(409, "Recorded clock-in is later than server time; ask a supervisor to correct it");
   const result = await punchBatch(ctx, [
     db
       .prepare(
@@ -866,7 +875,14 @@ export async function handleAttendanceApi(
       ...(await executeAttendance(
         ctx,
         body.idempotencyKey,
-        { action: body.action, branchId: body.branchId, employeeId: actor.id, source: "GEOFENCE" },
+        {
+          action: body.action,
+          branchId: body.branchId,
+          employeeId: actor.id,
+          source: "GEOFENCE",
+          sessionId: body.sessionId,
+          expectedVersion: body.expectedVersion,
+        },
         (hash) =>
           recordPunch(
             ctx,
@@ -877,6 +893,7 @@ export async function handleAttendanceApi(
             hash,
             undefined,
             { accuracy: decision.accuracyMeters, distance: decision.distanceMeters },
+            body,
           ),
       )),
     });
@@ -908,6 +925,8 @@ export async function handleAttendanceApi(
           "SUPERVISOR",
           hash,
           body.reason,
+          undefined,
+          body,
         ),
       )),
     });

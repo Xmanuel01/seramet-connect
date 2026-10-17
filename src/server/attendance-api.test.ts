@@ -32,6 +32,8 @@ async function call(path: string, method = "GET", body?: unknown) {
     status: res.status,
     data: (await res.json()) as {
       session: {
+        id: string;
+        version: number;
         employeeId: string;
         clockInSource: string;
         clockOutAt: string | null;
@@ -100,12 +102,22 @@ describe.sequential("authoritative geofenced attendance", () => {
     db.close();
   });
   function supervisor(overrides: Record<string, unknown> = {}) {
+    const open =
+      overrides.action === "OUT"
+        ? (db.sqlite
+            .prepare(
+              "SELECT id,version FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=? AND clock_out_at IS NULL",
+            )
+            .get(tenantId, String(overrides.employeeId ?? actor.id)) as
+            { id: string; version: number } | undefined)
+        : undefined;
     return {
       branchId,
       employeeId: actor.id,
       action: "IN",
       idempotencyKey: id(),
       reason: "Verified supervisor exception",
+      ...(open ? { sessionId: open.id, expectedVersion: open.version } : {}),
       ...overrides,
     };
   }
@@ -304,6 +316,8 @@ describe.sequential("authoritative geofenced attendance", () => {
       action: "OUT",
       idempotencyKey: id(),
       location: freshLocation(),
+      sessionId: first.data.session.id,
+      expectedVersion: 1,
     });
     expect(out.data.session.clockOutAt).toBeTruthy();
     const audit = db.sqlite
@@ -390,6 +404,8 @@ describe.sequential("authoritative geofenced attendance", () => {
       action: "OUT",
       idempotencyKey: id(),
       reason: "Assisted terminal clock out",
+      sessionId: start.data.session.id,
+      expectedVersion: start.data.session.version,
     });
     const row = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0] as {
       id: string;
@@ -627,6 +643,37 @@ describe.sequential("authoritative geofenced attendance", () => {
     await expect(
       call("/api/seramet/attendance/supervisor", "POST", supervisor({ branchId: other.id })),
     ).rejects.toThrow(/open attendance session/);
+  });
+
+  it("never lets a stale clock-out close a newer split shift", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const originalOut = supervisor({ action: "OUT" });
+    const closed = await call("/api/seramet/attendance/supervisor", "POST", originalOut);
+    const next = await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    expect(next.data.session.id).not.toBe(closed.data.session.id);
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", { ...originalOut, idempotencyKey: id() }),
+    ).rejects.toThrow(/session changed/);
+    const replay = await call("/api/seramet/attendance/supervisor", "POST", originalOut);
+    expect(replay.data.repeated).toBe(true);
+    expect(replay.data.session.id).toBe(closed.data.session.id);
+    expect(
+      db.sqlite
+        .prepare("SELECT clock_out_at FROM employee_attendance_sessions WHERE id=?")
+        .get(next.data.session.id)?.clock_out_at,
+    ).toBeNull();
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", {
+        branchId,
+        employeeId: actor.id,
+        action: "OUT",
+        reason: "Missing session reference denied",
+        idempotencyKey: id(),
+      }),
+    ).rejects.toThrow(/selected session and version/);
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_events").get()?.count,
+    ).toBe(3);
   });
 
   it("denies legacy attendance transactions that would bypass location enforcement", () => {

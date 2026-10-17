@@ -27,6 +27,9 @@ notification delivery is authorized by this work.
   are explicitly tested through the 28-to-29 upgrade.
 - Serialized all attendance writes per employee, including corrections racing
   against another split session. The claim cannot commit without its audit event.
+- Bound clock-out to the selected session and revision. An old terminal/request
+  cannot close a newer split shift; recovery preserves the original target and
+  acknowledges a repeated original request without mutating the new session.
 - Added reason-only EXPLAIN, range/source/status history, exact-session revisions,
   UTC worked duration, conservative early departure, and audited CSV exports.
 - Removed the illustrative local schedule grid; `/schedule` uses the authoritative

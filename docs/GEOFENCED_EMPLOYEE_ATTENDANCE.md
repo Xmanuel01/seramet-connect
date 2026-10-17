@@ -155,6 +155,9 @@ new split sessions as well as same-session edits. Losers roll back without orpha
 events/claims. Session-event and management revision uniqueness remain enforced.
 Same-key semantic replay returns the prior result; altered key reuse is rejected.
 Fresh GPS may be reacquired for retrying the same self-command.
+Clock-out commands bind the exact open session ID and expected revision. A stale
+terminal cannot close a newer return-to-work session; pending retry storage keeps
+the original target, and same-key replay acknowledges the original closed session.
 
 Foreground status refresh is bounded, single-flight and pauses while hidden or
 mutating; it never navigates/reloads the application or requests GPS. Background

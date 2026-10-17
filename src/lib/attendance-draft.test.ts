@@ -46,4 +46,25 @@ describe("session-scoped attendance recovery", () => {
     expect(writeAttendanceDraft("scope", draft)).toBe(false);
     expect(readAttendanceDraft("scope")).toBeNull();
   });
+  it("retains the exact pending clock-out target without nested location data", () => {
+    let stored = "";
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => {
+        stored = value;
+      },
+    });
+    const pending = {
+      action: "OUT" as const,
+      key: crypto.randomUUID(),
+      sessionId: crypto.randomUUID(),
+      expectedVersion: 3,
+    };
+    writeAttendanceDraft("scope", {
+      ...draft,
+      pending: { ...pending, latitude: -1.2 },
+    } as AttendanceDraft);
+    expect(readAttendanceDraft("scope")?.pending).toEqual(pending);
+    expect(stored).not.toContain("latitude");
+  });
 });

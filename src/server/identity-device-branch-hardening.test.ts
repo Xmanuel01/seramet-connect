@@ -131,6 +131,39 @@ describe.sequential("identity, device and branch hardening", () => {
     expect(cookies).toContain("seramet_access=;");
     expect(cookies).toContain("seramet_refresh=;");
     expect(cookies).toContain("seramet_pos_session=");
+    await db
+      .prepare("DELETE FROM role_permissions WHERE tenant_id=? AND role_id=?")
+      .bind(provisioned.tenantId, roleId)
+      .run();
+    await db
+      .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+      .bind(provisioned.tenantId, roleId, permissions.attendanceUse)
+      .run();
+    const attendanceLogin = await handleIdentityDeviceApi(
+      new Request("https://pos.seramet.test/api/seramet/public/employee/login", {
+        method: "POST",
+        headers: {
+          origin: "https://pos.seramet.test",
+          "content-type": "application/json",
+          cookie: `seramet_device=${encodeURIComponent(device.credential)}`,
+        },
+        body: JSON.stringify({ identifier: "CASH-01", pin: "602947" }),
+      }),
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
+    );
+    expect(attendanceLogin?.status).toBe(200);
+    expect(await attendanceLogin!.json()).toMatchObject({ nextPath: "/attendance" });
+    expect((await service.authenticatePosSession(login.token)).permissions).toEqual([
+      permissions.attendanceUse,
+    ]);
+    await db
+      .prepare("DELETE FROM role_permissions WHERE tenant_id=? AND role_id=?")
+      .bind(provisioned.tenantId, roleId)
+      .run();
+    await db
+      .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+      .bind(provisioned.tenantId, roleId, permissions.posAccess)
+      .run();
 
     await db
       .prepare("UPDATE roles SET active=0 WHERE tenant_id=? AND id=?")

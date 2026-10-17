@@ -162,7 +162,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   });
   const [unknown, setUnknown] = useState(false);
   const [editFence, setEditFence] = useState<Fence | null>(null);
-  const punchKey = useRef<{ action: "IN" | "OUT"; key: string } | null>(null);
+  const punchKey = useRef<NonNullable<AttendanceDraft["pending"]> | null>(null);
   const canConfigure =
     hasPermission(permissions.staffManage) && hasPermission(permissions.settingsBranchManage);
   const headers = useCallback(
@@ -334,7 +334,16 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       if (activeScope.current !== scope || generation !== scopeGeneration.current) return;
       const existing = punchKey.current;
       const idempotencyKey = existing?.action === action ? existing.key : crypto.randomUUID();
-      punchKey.current = { action, key: idempotencyKey };
+      punchKey.current = {
+        action,
+        key: idempotencyKey,
+        ...(action === "OUT"
+          ? {
+              sessionId: existing?.sessionId ?? current?.id,
+              expectedVersion: existing?.expectedVersion ?? current?.version,
+            }
+          : {}),
+      };
       setUnknown(true);
       writeAttendanceDraft(scope, { ...currentDraft.current, pending: punchKey.current });
       try {
@@ -343,6 +352,12 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           branchId,
           idempotencyKey,
           location: gps,
+          ...(action === "OUT"
+            ? {
+                sessionId: punchKey.current.sessionId,
+                expectedVersion: punchKey.current.expectedVersion,
+              }
+            : {}),
         });
       } catch (error) {
         const status = (error as { status?: number }).status;
@@ -393,12 +408,18 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       if (reason.trim().length < 8)
         throw new Error("A meaningful reason of at least eight characters is required");
       const record =
-        correctionRecord?.id === selectedSession && correctionRecord.employeeId === selected
-          ? correctionRecord
-          : data?.records.find((row) => row.id === selectedSession && row.employeeId === selected);
+        manualAction === "OUT"
+          ? data?.records.find((row) => row.employeeId === selected && !row.clockOutAt)
+          : correctionRecord?.id === selectedSession && correctionRecord.employeeId === selected
+            ? correctionRecord
+            : data?.records.find(
+                (row) => row.id === selectedSession && row.employeeId === selected,
+              );
       const correcting = manualAction.startsWith("CORRECT") || manualAction === "EXPLAIN";
       if (correcting && !record)
         throw new Error("Select an employee with an attendance record to correct");
+      if (manualAction === "OUT" && !record)
+        throw new Error("Refresh and select an employee with an open session");
       if (manualAction.startsWith("CORRECT") && !occurredAt)
         throw new Error("Enter the correct punch time");
       const command = {
@@ -406,11 +427,11 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         employeeId: selected,
         action: manualAction,
         reason: reason.trim(),
-        ...(correcting
+        ...(correcting || manualAction === "OUT"
           ? {
               sessionId: record?.id,
               expectedVersion: record?.version,
-              ...(manualAction !== "EXPLAIN"
+              ...(manualAction.startsWith("CORRECT")
                 ? { occurredAt: new Date(occurredAt).toISOString() }
                 : {}),
             }
