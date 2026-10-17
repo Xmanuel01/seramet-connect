@@ -90,7 +90,7 @@ function Payroll() {
   return (
     <AppShell
       title="Payroll"
-      subtitle={`Attendance-linked monthly preview - ${branchLabel}`}
+      subtitle={`Historical payroll preview - ${branchLabel}`}
       actions={
         <>
           <Btn
@@ -106,6 +106,10 @@ function Payroll() {
         </>
       }
     >
+      <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm">
+        Historical payroll records only. Verified attendance is recorded separately in Attendance;
+        no automatic deductions or overtime are applied from verified punches.
+      </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Metric label="Base net pay" value={Math.round(baseNet)} money />
         <Metric label="Employees" value={rows.length} />

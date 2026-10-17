@@ -133,6 +133,12 @@ function PosLoginPage() {
           >
             Administrator sign in
           </a>
+          <a
+            href="/login?account=1&next=attendance"
+            className="mt-3 block text-sm font-semibold text-primary"
+          >
+            My attendance — linked account sign in
+          </a>
           <button
             className="h-11 rounded-md border border-border bg-card px-4 text-sm font-semibold"
             onClick={() => void load()}
@@ -215,6 +221,12 @@ function PosLoginPage() {
                 className="mt-6 inline-block text-sm font-semibold text-primary"
               >
                 Use administrator account
+              </a>
+              <a
+                href="/login?account=1&next=attendance"
+                className="mt-3 block text-sm font-semibold text-primary"
+              >
+                My attendance — linked account sign in
               </a>
             </div>
             <div className="p-6 sm:p-8">

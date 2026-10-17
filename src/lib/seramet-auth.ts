@@ -272,9 +272,18 @@ async function authenticateStoredSession(
               s.token_version, u.password_version
        FROM auth_sessions s
        JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
-       WHERE s.tenant_id = ? AND s.id = ? AND s.user_id = ? AND u.active = 1`,
+       WHERE s.tenant_id = ? AND s.id = ? AND s.user_id = ? AND u.active = 1
+         AND u.employment_status = 'ACTIVE'
+         AND (u.effective_from IS NULL OR u.effective_from <= ?)
+         AND (u.effective_until IS NULL OR u.effective_until > ?)`,
     )
-    .bind(identity.tenantId, identity.sessionId, identity.userId)
+    .bind(
+      identity.tenantId,
+      identity.sessionId,
+      identity.userId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    )
     .first<SessionIdentityRow>();
   if (!session || session.revoked_at)
     throw new SerametHttpError(401, "Session is invalid or revoked");
@@ -311,6 +320,7 @@ async function authenticateStoredSession(
     db
       .prepare(
         `SELECT DISTINCT rp.permission_code FROM user_roles ur
+         JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.active = 1
          JOIN role_permissions rp ON rp.tenant_id = ur.tenant_id AND rp.role_id = ur.role_id
          WHERE ur.tenant_id = ? AND ur.user_id = ?`,
       )

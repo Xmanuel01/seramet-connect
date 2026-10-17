@@ -12,6 +12,9 @@ import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
+import { DatabaseRateLimiter } from "@/server/rate-limit";
+import { attendanceRecords, attendanceCsv } from "@/server/attendance-reporting";
+import { attendanceTiming } from "@/lib/attendance-timing";
 
 const key = z.string().uuid();
 const location = z
@@ -32,7 +35,7 @@ const punchSchema = z
   .strict();
 const supervisorSchema = z
   .object({
-    action: z.enum(["IN", "OUT", "CORRECT_IN", "CORRECT_OUT"]),
+    action: z.enum(["IN", "OUT", "CORRECT_IN", "CORRECT_OUT", "EXPLAIN"]),
     branchId: z.string().min(1).max(120),
     employeeId: z.string().min(1).max(120),
     idempotencyKey: key,
@@ -63,6 +66,12 @@ const scheduleSchema = z
       .string()
       .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
       .nullable(),
+    scheduledEnd: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .nullable()
+      .optional(),
+    restDay: z.boolean().optional(),
     expectedVersion: z.number().int().nonnegative(),
   })
   .strict();
@@ -74,6 +83,8 @@ type BranchRow = {
   active: number;
 };
 type FenceRow = {
+  updated_by: string;
+  updated_at: string;
   enabled: number;
   latitude: number | null;
   longitude: number | null;
@@ -84,6 +95,12 @@ type FenceRow = {
   version: number;
 };
 type SessionRow = {
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  rest_day: number | null;
+  grace_minutes: number | null;
+  schedule_timezone: string | null;
+  schedule_cutoff_minutes: number | null;
   id: string;
   tenant_id: string;
   user_id: string;
@@ -98,13 +115,18 @@ type SessionRow = {
   clock_out_source: string | null;
   version: number;
 };
-type PunchActor = { actor: ServerActor; db: D1Database; branch: BranchRow };
+type PunchActor = {
+  actor: ServerActor;
+  db: D1Database;
+  branch: BranchRow;
+  guard?: { userId: string; version: number; eventId: string };
+};
 
 function uniqueAttendanceConflict(error: unknown) {
   return (
     (error as { code?: string } | null)?.code === "23505" ||
     (error instanceof Error &&
-      /UNIQUE constraint failed: (employee_attendance_sessions|employee_attendance_events|attendance_management_events)|UNIQUE constraint failed: index 'uq_attendance_management_revision'/.test(
+      /UNIQUE constraint failed: (employee_attendance_sessions|employee_attendance_events|attendance_management_events|attendance_mutation_claims)|UNIQUE constraint failed: index 'uq_attendance_management_revision'/.test(
         error.message,
       ))
   );
@@ -155,6 +177,19 @@ async function executeAttendance(
   };
   const existing = await replay();
   if (existing) return existing;
+  const userId = String(command.employeeId);
+  await ensureEmployee(ctx.db, ctx.actor, userId, ctx.branch.id);
+  await ctx.db
+    .prepare(
+      "INSERT INTO attendance_employee_versions(tenant_id,user_id,version) VALUES(?,?,0) ON CONFLICT DO NOTHING",
+    )
+    .bind(ctx.actor.tenantId, userId)
+    .run();
+  const revision = await ctx.db
+    .prepare("SELECT version FROM attendance_employee_versions WHERE tenant_id=? AND user_id=?")
+    .bind(ctx.actor.tenantId, userId)
+    .first<{ version: number }>();
+  ctx.guard = { userId, version: revision!.version, eventId: crypto.randomUUID() };
   try {
     return await perform(hash);
   } catch (error) {
@@ -163,6 +198,27 @@ async function executeAttendance(
     if (completed) return completed;
     deny(409, "Attendance changed on another terminal; refresh and retry");
   }
+}
+
+async function punchBatch(ctx: PunchActor, statements: D1PreparedStatement[]) {
+  if (!ctx.guard) throw new Error("Attendance mutation guard missing");
+  const { userId, version, eventId } = ctx.guard;
+  // The unique revision claim stops a CAS loser before any session write. Its
+  // deferred event FK also aborts commit if the corresponding audit is missing.
+  const results = await ctx.db.batch([
+    ctx.db
+      .prepare(
+        "UPDATE attendance_employee_versions SET version=version+1 WHERE tenant_id=? AND user_id=? AND version=?",
+      )
+      .bind(ctx.actor.tenantId, userId, version),
+    ctx.db
+      .prepare(
+        "INSERT INTO attendance_mutation_claims(tenant_id,user_id,version,event_id) VALUES(?,?,?,?)",
+      )
+      .bind(ctx.actor.tenantId, userId, version + 1, eventId),
+    ...statements,
+  ]);
+  return results.slice(2);
 }
 
 function deny(status: number, message: string): never {
@@ -223,26 +279,32 @@ async function ensureEmployee(
 ) {
   const found = await db
     .prepare(
-      "SELECT u.id FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? WHERE u.tenant_id=? AND u.id=? AND u.active=1 AND u.employment_status='ACTIVE'",
+      "SELECT u.id FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? WHERE u.tenant_id=? AND u.id=? AND u.active=1 AND u.employment_status='ACTIVE' AND (u.effective_from IS NULL OR u.effective_from<=?) AND (u.effective_until IS NULL OR u.effective_until>?)",
     )
-    .bind(branchId, actor.tenantId, userId)
+    .bind(branchId, actor.tenantId, userId, new Date().toISOString(), new Date().toISOString())
     .first();
   if (!found) deny(403, "Employee is not active or assigned to the branch");
 }
 async function fenceFor(db: D1Database, actor: ServerActor, branchId: string) {
   return db
     .prepare(
-      "SELECT enabled,latitude,longitude,radius_m,max_accuracy_m,max_fix_age_seconds,grace_minutes,version FROM attendance_geofences WHERE tenant_id=? AND branch_id=?",
+      "SELECT enabled,latitude,longitude,radius_m,max_accuracy_m,max_fix_age_seconds,grace_minutes,version,updated_by,updated_at FROM attendance_geofences WHERE tenant_id=? AND branch_id=?",
     )
     .bind(actor.tenantId, branchId)
     .first<FenceRow>();
 }
-async function readSession(db: D1Database, actor: ServerActor, userId: string, date: string) {
+async function readSession(
+  db: D1Database,
+  actor: ServerActor,
+  userId: string,
+  date: string,
+  branchId: string,
+) {
   return db
     .prepare(
-      "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=? AND business_date=?",
+      "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=? AND business_date=? AND branch_id=? ORDER BY clock_in_at DESC,opened_revision DESC,id DESC LIMIT 1",
     )
-    .bind(actor.tenantId, userId, date)
+    .bind(actor.tenantId, userId, date, branchId)
     .first<SessionRow>();
 }
 async function readOpen(db: D1Database, actor: ServerActor, userId: string) {
@@ -276,14 +338,17 @@ async function lateMinutes(
   userId: string,
   occurredAt: string,
   date: string,
+  snapshot?: Pick<SessionRow, "scheduled_start" | "rest_day" | "grace_minutes">,
 ) {
-  const row = await db
-    .prepare(
-      "SELECT scheduled_start FROM attendance_shift_assignments WHERE tenant_id=? AND user_id=? AND branch_id=?",
-    )
-    .bind(actor.tenantId, userId, branch.id)
-    .first<{ scheduled_start: string | null }>();
-  if (!row?.scheduled_start) return null; // Never invent schedules or payroll deductions.
+  const row =
+    snapshot ??
+    (await db
+      .prepare(
+        "SELECT scheduled_start,rest_day FROM attendance_shift_assignments WHERE tenant_id=? AND user_id=? AND branch_id=?",
+      )
+      .bind(actor.tenantId, userId, branch.id)
+      .first<{ scheduled_start: string | null; rest_day: number }>());
+  if (!row?.scheduled_start || row.rest_day === 1) return null; // Never invent schedules or payroll deductions.
   const fence = await fenceFor(db, actor, branch.id);
   const scheduledMinutes =
     Number(row.scheduled_start.slice(0, 2)) * 60 + Number(row.scheduled_start.slice(3, 5));
@@ -291,7 +356,10 @@ async function lateMinutes(
     scheduledMinutes + (scheduledMinutes < branch.business_day_cutoff_minutes ? 1440 : 0);
   const clock = localParts(occurredAt, branch.timezone);
   const elapsed = clock.minutes + (clock.date > date ? 1440 : 0);
-  return Math.max(0, elapsed - scheduled - (fence?.grace_minutes ?? 0));
+  return Math.max(
+    0,
+    elapsed - scheduled - (snapshot ? (snapshot.grace_minutes ?? 0) : (fence?.grace_minutes ?? 0)),
+  );
 }
 function publicSession(row: SessionRow) {
   return {
@@ -305,6 +373,10 @@ function publicSession(row: SessionRow) {
     clockInSource: row.clock_in_source,
     clockOutSource: row.clock_out_source,
     version: row.version,
+    ...attendanceTiming(row),
+    scheduledStart: row.scheduled_start,
+    scheduledEnd: row.scheduled_end,
+    restDay: row.rest_day === null ? null : row.rest_day === 1,
   };
 }
 async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
@@ -313,15 +385,16 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     branch.timezone,
     branch.business_day_cutoff_minutes,
   );
+  const open = await readOpen(db, actor, actor.id);
   const own =
-    (await readOpen(db, actor, actor.id)) ?? (await readSession(db, actor, actor.id, today));
+    open?.branch_id === branch.id ? open : await readSession(db, actor, actor.id, today, branch.id);
   const fence = await fenceFor(db, actor, branch.id);
   const canManage = manager(actor);
   const records = canManage
     ? ((
         await db
           .prepare(
-            "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND (business_date=? OR clock_out_at IS NULL) ORDER BY clock_in_at DESC LIMIT 500",
+            "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND (business_date=? OR clock_out_at IS NULL) ORDER BY clock_in_at DESC,opened_revision DESC,id DESC LIMIT 500",
           )
           .bind(actor.tenantId, branch.id, today)
           .all<SessionRow>()
@@ -331,19 +404,49 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     ? ((
         await db
           .prepare(
-            "SELECT u.id,u.name,u.employee_code,s.scheduled_start,s.version AS schedule_version FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? LEFT JOIN attendance_shift_assignments s ON s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? WHERE u.tenant_id=? AND u.active=1 AND u.employment_status='ACTIVE' ORDER BY u.name LIMIT 500",
+            "SELECT u.id,u.name,u.employee_code,s.scheduled_start,s.scheduled_end,s.rest_day,s.version AS schedule_version FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? LEFT JOIN attendance_shift_assignments s ON s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? WHERE u.tenant_id=? AND u.active=1 AND u.employment_status='ACTIVE' ORDER BY u.name LIMIT 500",
           )
           .bind(branch.id, branch.id, actor.tenantId)
           .all()
       ).results ?? [])
     : [];
+  const mySchedule = await db
+    .prepare(
+      "SELECT scheduled_start,scheduled_end,rest_day,version FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=?",
+    )
+    .bind(actor.tenantId, branch.id, actor.id)
+    .first();
+  const summary = canManage
+    ? await db
+        .prepare(
+          "SELECT COUNT(DISTINCT CASE WHEN business_date=? THEN user_id END) recorded,COUNT(DISTINCT CASE WHEN clock_out_at IS NULL THEN user_id END) working,COUNT(DISTINCT CASE WHEN business_date=? AND clock_out_at IS NOT NULL THEN user_id END) completed,COUNT(DISTINCT CASE WHEN business_date=? AND minutes_late>0 THEN user_id END) late,COUNT(DISTINCT CASE WHEN business_date=? AND (clock_in_source='SUPERVISOR' OR clock_out_source='SUPERVISOR') THEN user_id END) exceptions FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND (business_date=? OR clock_out_at IS NULL)",
+        )
+        .bind(today, today, today, today, actor.tenantId, branch.id, today)
+        .first()
+    : null;
+  const workforce = canManage
+    ? await db
+        .prepare(
+          "SELECT COUNT(*) total,COUNT(CASE WHEN NOT EXISTS(SELECT 1 FROM employee_attendance_sessions s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? AND (s.business_date=? OR s.clock_out_at IS NULL)) THEN 1 END) not_recorded FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id WHERE u.tenant_id=? AND ub.branch_id=? AND u.active=1 AND u.employment_status='ACTIVE'",
+        )
+        .bind(branch.id, today, actor.tenantId, branch.id)
+        .first()
+    : null;
   return {
     ok: true,
+    serverNow: new Date().toISOString(),
     businessDate: today,
     branchId: branch.id,
     branchTimezone: branch.timezone,
     me: own ? publicSession(own) : null,
+    openElsewhere: Boolean(open && open.branch_id !== branch.id),
     canManage,
+    canConfigure:
+      actor.authLevel === "FULL" &&
+      actor.permissions.includes(permissions.staffManage) &&
+      actor.permissions.includes(permissions.settingsBranchManage),
+    mySchedule,
+    summary: summary && workforce ? { ...summary, ...workforce } : null,
     geofence: {
       enabled: fence?.enabled === 1,
       radiusMeters: fence?.radius_m ?? 10,
@@ -352,7 +455,12 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
       graceMinutes: fence?.grace_minutes ?? 0,
       version: fence?.version ?? 0,
       ...(canManage
-        ? { latitude: fence?.latitude ?? null, longitude: fence?.longitude ?? null }
+        ? {
+            latitude: fence?.latitude ?? null,
+            longitude: fence?.longitude ?? null,
+            updatedBy: fence?.updated_by ?? null,
+            updatedAt: fence?.updated_at ?? null,
+          }
         : {}),
     },
     records: records.map(publicSession),
@@ -377,7 +485,7 @@ async function recordPunch(
     branch.timezone,
     branch.business_day_cutoff_minutes,
   );
-  const eventId = crypto.randomUUID();
+  const eventId = ctx.guard!.eventId;
   const eventType = (source === "SUPERVISOR" ? "SUPERVISOR_CLOCK_" : "CLOCK_") + action;
   if (action === "IN") {
     const existingOpen = await readOpen(db, actor, userId);
@@ -386,18 +494,26 @@ async function recordPunch(
         return { session: publicSession(existingOpen), repeated: true };
       deny(409, "Employee has an open attendance session. Clock out first");
     }
-    const previous = await readSession(db, actor, userId, date);
+    const previous = await readSession(db, actor, userId, date, branch.id);
     if (previous) {
       if (previous.clock_in_key === requestKey)
         return { session: publicSession(previous), repeated: true };
-      deny(409, "Employee already clocked in on this business date");
+      if (!previous.clock_out_at || previous.clock_out_at > instant)
+        deny(409, "Previous attendance must end before returning to work");
     }
     const id = crypto.randomUUID();
-    const late = await lateMinutes(db, actor, branch, userId, instant, date);
-    const results = await db.batch([
+    const schedule = await db
+      .prepare(
+        "SELECT scheduled_start,scheduled_end,rest_day FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=?",
+      )
+      .bind(actor.tenantId, branch.id, userId)
+      .first<{ scheduled_start: string | null; scheduled_end: string | null; rest_day: number }>();
+    const policy = await fenceFor(db, actor, branch.id);
+    const late = previous ? null : await lateMinutes(db, actor, branch, userId, instant, date);
+    const results = await punchBatch(ctx, [
       db
         .prepare(
-          "INSERT INTO employee_attendance_sessions(tenant_id,id,user_id,branch_id,business_date,clock_in_at,clock_in_key,minutes_late,clock_in_source,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT DO NOTHING",
+          "INSERT INTO employee_attendance_sessions(tenant_id,id,user_id,branch_id,business_date,clock_in_at,clock_in_key,minutes_late,clock_in_source,version,created_at,updated_at,opened_revision,scheduled_start,scheduled_end,rest_day,grace_minutes,schedule_timezone,schedule_cutoff_minutes) VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
         )
         .bind(
           actor.tenantId,
@@ -411,6 +527,13 @@ async function recordPunch(
           source,
           instant,
           instant,
+          ctx.guard!.version + 1,
+          schedule?.scheduled_start ?? null,
+          schedule?.scheduled_end ?? null,
+          schedule?.rest_day ?? null,
+          schedule ? (policy?.grace_minutes ?? 0) : null,
+          branch.timezone,
+          branch.business_day_cutoff_minutes,
         ),
       db
         .prepare(
@@ -433,7 +556,10 @@ async function recordPunch(
           requestKey,
         ),
     ]);
-    const current = await readSession(db, actor, userId, date);
+    const current = await db
+      .prepare("SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND id=?")
+      .bind(actor.tenantId, id)
+      .first<SessionRow>();
     if (!current || current.clock_in_key !== requestKey)
       deny(409, "Clock-in conflicted with another terminal");
     if (results[0]?.meta?.changes !== 1 && !results[1]?.meta?.changes)
@@ -453,7 +579,7 @@ async function recordPunch(
   }
   if (open.branch_id !== branch.id)
     deny(409, "Clock out from the same branch where attendance started");
-  const result = await db.batch([
+  const result = await punchBatch(ctx, [
     db
       .prepare(
         "UPDATE employee_attendance_sessions SET clock_out_at=?,clock_out_key=?,clock_out_source=?,version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND user_id=? AND clock_out_at IS NULL",
@@ -495,8 +621,11 @@ async function correctPunch(
   const { actor, db, branch } = ctx;
   await ensureEmployee(db, actor, input.employeeId, branch.id);
   if (!input.expectedVersion) deny(400, "Expected record version is required for corrections");
-  if (!input.occurredAt) deny(400, "Correction timestamp is required");
-  const instant = new Date(input.occurredAt).toISOString();
+  if (!input.occurredAt && input.action !== "EXPLAIN")
+    deny(400, "Correction timestamp is required");
+  const instant = input.occurredAt
+    ? new Date(input.occurredAt).toISOString()
+    : new Date().toISOString();
   if (Date.parse(instant) > Date.now() + 60_000)
     deny(400, "Future punch corrections are not allowed");
   if (!input.sessionId) deny(400, "Attendance session ID is required for corrections");
@@ -524,28 +653,65 @@ async function correctPunch(
     deny(400, "Clock-in cannot follow clock-out");
   if (input.action === "CORRECT_OUT" && instant < record.clock_in_at)
     deny(400, "Clock-out cannot precede clock-in");
+  const proposedStart = input.action === "CORRECT_IN" ? instant : record.clock_in_at;
+  const proposedEnd = input.action === "CORRECT_OUT" ? instant : record.clock_out_at;
+  const overlap = await db
+    .prepare(
+      "SELECT id FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=? AND id<>? AND (clock_out_at IS NULL OR clock_out_at>?) AND (CAST(? AS TEXT) IS NULL OR clock_in_at<?) LIMIT 1",
+    )
+    .bind(actor.tenantId, input.employeeId, record.id, proposedStart, proposedEnd, proposedEnd)
+    .first();
+  if (overlap) deny(409, "Correction overlaps another attendance session");
   const correctingIn = input.action === "CORRECT_IN";
-  const late = correctingIn
-    ? await lateMinutes(db, actor, branch, input.employeeId, instant, record.business_date)
-    : null;
+  const historicalBranch = {
+    ...branch,
+    timezone: record.schedule_timezone ?? branch.timezone,
+    business_day_cutoff_minutes:
+      record.schedule_cutoff_minutes ?? branch.business_day_cutoff_minutes,
+  };
+  const earlier = await db
+    .prepare(
+      "SELECT id FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=? AND business_date=? AND id<>? AND clock_in_at<? LIMIT 1",
+    )
+    .bind(actor.tenantId, input.employeeId, record.business_date, record.id, proposedStart)
+    .first();
+  const late =
+    correctingIn && !earlier
+      ? await lateMinutes(
+          db,
+          actor,
+          historicalBranch,
+          input.employeeId,
+          instant,
+          record.business_date,
+          record,
+        )
+      : null;
   if (
     correctingIn &&
-    businessDateForTimestamp(instant, branch.timezone, branch.business_day_cutoff_minutes) !==
-      record.business_date
+    businessDateForTimestamp(
+      instant,
+      historicalBranch.timezone,
+      historicalBranch.business_day_cutoff_minutes,
+    ) !== record.business_date
   )
     deny(400, "Corrected clock-in must remain on the original business date");
   const previous = correctingIn ? record.clock_in_at : record.clock_out_at;
-  const result = await db.batch([
+  const result = await punchBatch(ctx, [
     db
       .prepare(
-        correctingIn
-          ? "UPDATE employee_attendance_sessions SET clock_in_at=?,minutes_late=?,clock_in_source='SUPERVISOR',version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?"
-          : "UPDATE employee_attendance_sessions SET clock_out_at=?,clock_out_source='SUPERVISOR',version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?",
+        input.action === "EXPLAIN"
+          ? "UPDATE employee_attendance_sessions SET version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?"
+          : correctingIn
+            ? "UPDATE employee_attendance_sessions SET clock_in_at=?,minutes_late=?,clock_in_source='SUPERVISOR',version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?"
+            : "UPDATE employee_attendance_sessions SET clock_out_at=?,clock_out_source='SUPERVISOR',version=version+1,updated_at=? WHERE tenant_id=? AND id=? AND version=?",
       )
       .bind(
-        ...(correctingIn
-          ? [instant, late, new Date().toISOString(), actor.tenantId, record.id, record.version]
-          : [instant, new Date().toISOString(), actor.tenantId, record.id, record.version]),
+        ...(input.action === "EXPLAIN"
+          ? [new Date().toISOString(), actor.tenantId, record.id, record.version]
+          : correctingIn
+            ? [instant, late, new Date().toISOString(), actor.tenantId, record.id, record.version]
+            : [instant, new Date().toISOString(), actor.tenantId, record.id, record.version]),
       ),
     db
       .prepare(
@@ -553,7 +719,7 @@ async function correctPunch(
       )
       .bind(
         actor.tenantId,
-        crypto.randomUUID(),
+        ctx.guard!.eventId,
         record.id,
         actor.id,
         input.action,
@@ -561,8 +727,15 @@ async function correctPunch(
         requestHash,
         input.reason,
         new Date().toISOString(),
-        JSON.stringify({ at: previous }),
-        JSON.stringify({ at: instant }),
+        JSON.stringify({ ...publicSession(record), at: previous }),
+        JSON.stringify({
+          ...publicSession(record),
+          at: input.action === "EXPLAIN" ? previous : instant,
+          clockInAt: correctingIn ? instant : record.clock_in_at,
+          clockOutAt: input.action === "CORRECT_OUT" ? instant : record.clock_out_at,
+          minutesLate: correctingIn ? late : record.minutes_late,
+          version: record.version + 1,
+        }),
         actor.tenantId,
         record.id,
         record.version + 1,
@@ -590,6 +763,83 @@ export async function handleAttendanceApi(
   const actor = await authenticateSerametRequest(request, env);
   const db = env.SERAMET_DB;
   if (request.method !== "GET") sameOrigin(request, env);
+  if (request.method !== "GET")
+    await new DatabaseRateLimiter(db).consume(`attendance:${actor.tenantId}:${actor.id}`, {
+      bucket: "attendance-write",
+      limit: 40,
+      windowSeconds: 60,
+    });
+  if (
+    request.method === "GET" &&
+    ["/api/seramet/attendance/records", "/api/seramet/attendance/export"].includes(url.pathname)
+  ) {
+    const ctx = await context(
+      actor,
+      db,
+      url.searchParams.get("branchId") || actor.branchId,
+      manager(actor),
+    );
+    const today = businessDateForTimestamp(
+      new Date(),
+      ctx.branch.timezone,
+      ctx.branch.business_day_cutoff_minutes,
+    );
+    if (url.pathname.endsWith("/export")) {
+      sameOrigin(request, env);
+      await new DatabaseRateLimiter(db).consume(`attendance-export:${actor.tenantId}:${actor.id}`, {
+        bucket: "attendance-export",
+        limit: 10,
+        windowSeconds: 60,
+      });
+      return attendanceCsv(db, actor, ctx.branch.id, ctx.branch.timezone, today, url);
+    }
+    return noStore({
+      ok: true,
+      ...(await attendanceRecords(db, actor, ctx.branch.id, today, url)),
+    });
+  }
+  const lookup = /^\/api\/seramet\/attendance\/requests\/([0-9a-f-]{36})$/.exec(url.pathname);
+  if (request.method === "GET" && lookup) {
+    const ctx = await context(
+      actor,
+      db,
+      url.searchParams.get("branchId") || actor.branchId,
+      manager(actor),
+    );
+    const row = await db
+      .prepare(
+        "SELECT s.* FROM employee_attendance_events e JOIN employee_attendance_sessions s ON s.tenant_id=e.tenant_id AND s.id=e.session_id WHERE e.tenant_id=? AND e.actor_id=? AND e.request_key=? AND s.branch_id=?",
+      )
+      .bind(actor.tenantId, actor.id, lookup[1], ctx.branch.id)
+      .first<SessionRow>();
+    return noStore({ ok: true, found: Boolean(row), session: row ? publicSession(row) : null });
+  }
+  const history = /^\/api\/seramet\/attendance\/sessions\/([0-9a-f-]{36})\/history$/.exec(
+    url.pathname,
+  );
+  if (request.method === "GET" && history) {
+    const ctx = await context(
+      actor,
+      db,
+      url.searchParams.get("branchId") || actor.branchId,
+      manager(actor),
+    );
+    const session = await db
+      .prepare(
+        "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND id=? AND branch_id=?",
+      )
+      .bind(actor.tenantId, history[1], ctx.branch.id)
+      .first<SessionRow>();
+    if (!session || (!manager(actor) && session.user_id !== actor.id))
+      deny(404, "Attendance session not found");
+    const events = await db
+      .prepare(
+        "SELECT e.id,e.session_version version,e.event_type type,e.reason,e.at,e.before_json,e.after_json,u.name actor FROM employee_attendance_events e JOIN users u ON u.tenant_id=e.tenant_id AND u.id=e.actor_id WHERE e.tenant_id=? AND e.session_id=? ORDER BY e.session_version LIMIT 500",
+      )
+      .bind(actor.tenantId, session.id)
+      .all();
+    return noStore({ ok: true, session: publicSession(session), events: events.results ?? [] });
+  }
   if (url.pathname === "/api/seramet/attendance" && request.method === "GET") {
     const branchId = url.searchParams.get("branchId") || actor.branchId;
     const ctx = await context(actor, db, branchId, manager(actor));
@@ -634,7 +884,7 @@ export async function handleAttendanceApi(
   if (url.pathname === "/api/seramet/attendance/supervisor" && request.method === "POST") {
     const body = parse(supervisorSchema, await request.json().catch(() => null));
     const ctx = await context(actor, db, body.branchId, true);
-    if (body.action === "CORRECT_IN" || body.action === "CORRECT_OUT")
+    if (body.action === "CORRECT_IN" || body.action === "CORRECT_OUT" || body.action === "EXPLAIN")
       return noStore({
         ok: true,
         ...(await executeAttendance(ctx, body.idempotencyKey, body, (hash) =>
@@ -751,20 +1001,34 @@ export async function handleAttendanceApi(
     await ensureEmployee(db, actor, body.employeeId, body.branchId);
     const previous = await db
       .prepare(
-        "SELECT scheduled_start,version FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=?",
+        "SELECT scheduled_start,scheduled_end,rest_day,version FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=?",
       )
       .bind(actor.tenantId, body.branchId, body.employeeId)
-      .first<{ scheduled_start: string | null; version: number }>();
+      .first<{
+        scheduled_start: string | null;
+        scheduled_end: string | null;
+        rest_day: number;
+        version: number;
+      }>();
     if ((previous?.version ?? 0) !== body.expectedVersion)
       deny(409, "Schedule changed; refresh before saving");
+    const scheduledEnd =
+      body.scheduledEnd === undefined ? (previous?.scheduled_end ?? null) : body.scheduledEnd;
+    const restDay = body.restDay === undefined ? previous?.rest_day === 1 : body.restDay;
+    if (restDay && (body.scheduledStart || scheduledEnd))
+      deny(400, "OFF schedules cannot contain work times");
+    if (scheduledEnd && (!body.scheduledStart || scheduledEnd === body.scheduledStart))
+      deny(400, "Scheduled end needs a distinct scheduled start");
     const stamp = new Date().toISOString();
     const change = previous
       ? db
           .prepare(
-            "UPDATE attendance_shift_assignments SET scheduled_start=?,version=version+1,updated_at=?,updated_by=? WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=?",
+            "UPDATE attendance_shift_assignments SET scheduled_start=?,scheduled_end=?,rest_day=?,version=version+1,updated_at=?,updated_by=? WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=?",
           )
           .bind(
             body.scheduledStart,
+            scheduledEnd,
+            restDay ? 1 : 0,
             stamp,
             actor.id,
             actor.tenantId,
@@ -774,13 +1038,15 @@ export async function handleAttendanceApi(
           )
       : db
           .prepare(
-            "INSERT INTO attendance_shift_assignments(tenant_id,branch_id,user_id,scheduled_start,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,1) ON CONFLICT DO NOTHING",
+            "INSERT INTO attendance_shift_assignments(tenant_id,branch_id,user_id,scheduled_start,scheduled_end,rest_day,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT DO NOTHING",
           )
           .bind(
             actor.tenantId,
             body.branchId,
             body.employeeId,
             body.scheduledStart,
+            scheduledEnd,
+            restDay ? 1 : 0,
             stamp,
             actor.id,
           );
@@ -798,8 +1064,13 @@ export async function handleAttendanceApi(
           body.employeeId,
           body.expectedVersion + 1,
           stamp,
-          JSON.stringify(previous?.scheduled_start ?? null),
-          JSON.stringify(body.scheduledStart),
+          JSON.stringify(previous ?? null),
+          JSON.stringify({
+            scheduledStart: body.scheduledStart,
+            scheduledEnd,
+            restDay,
+            version: body.expectedVersion + 1,
+          }),
           actor.tenantId,
           body.branchId,
           body.employeeId,

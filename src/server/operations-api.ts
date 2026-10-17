@@ -77,6 +77,7 @@ export async function handleOperationsApi(
         primaryBranchId: actor.primaryBranchId,
         sessionId: actor.sessionId,
         deviceId: actor.deviceId,
+        authLevel: actor.authLevel,
         moduleAccess,
       },
     });

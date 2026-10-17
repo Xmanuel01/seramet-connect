@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -48,8 +48,10 @@ function Employees() {
     currentUser,
     hasPermission,
     isAllBranches,
+    authenticationLevel,
+    sessionId,
   } = useAppContext();
-  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [storedEmployees, setEmployees] = useState<EmployeeRow[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [assignedBranchIds, setAssignedBranchIds] = useState<string[]>([branchId]);
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
@@ -57,15 +59,27 @@ function Employees() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
+  const effectiveFrom = useRef(new Date().toISOString());
+  const submitting = useRef(false);
+  const uncertainPayload = useRef<string | null>(null);
+  const scope = JSON.stringify([
+    activeTenantId,
+    branchId,
+    currentUser.id,
+    sessionId,
+    isAllBranches,
+  ]);
+  const activeScope = useRef(scope);
+  const employees = activeScope.current === scope ? storedEmployees : [];
   const canManageUsers = hasPermission(permissions.usersManage);
   const canManageCredentials = hasPermission(permissions.employeeCredentialsManage);
-  const canManage = canManageUsers && canManageCredentials;
+  const canManage = canManageUsers && canManageCredentials && authenticationLevel === "FULL";
   const missingPermissions = [
     ...(!canManageUsers ? [permissions.usersManage] : []),
     ...(!canManageCredentials ? [permissions.employeeCredentialsManage] : []),
   ];
 
-  const headers = useMemo(() => {
+  const headers = useCallback(() => {
     const token = getSerametAccessToken();
     return {
       "content-type": "application/json",
@@ -79,55 +93,120 @@ function Employees() {
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const response = await fetch("/api/seramet/employees", { headers });
+      const response = await fetch("/api/seramet/employees", {
+        headers: headers(),
+        signal: AbortSignal.timeout(15000),
+      });
       const body = (await response.json().catch(() => ({}))) as {
         employees?: EmployeeRow[];
         message?: string;
       };
+      if (activeScope.current !== scope) return;
       if (!response.ok) throw new Error(body.message ?? "Employees could not be loaded");
       setEmployees(body.employees ?? []);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Employees could not be loaded");
+      if (activeScope.current === scope)
+        setNotice(error instanceof Error ? error.message : "Employees could not be loaded");
     } finally {
-      setBusy(false);
+      if (activeScope.current === scope) setBusy(false);
     }
-  }, [headers]);
+  }, [headers, scope]);
 
   useEffect(() => {
+    activeScope.current = scope;
+    setEmployees([]);
+    setDraft(emptyDraft);
+    setShowForm(false);
+    setNotice("");
+    setAssignedBranchIds([branchId]);
+    setPrimaryBranchId(branchId);
+    setEmployeeCreateKey(crypto.randomUUID());
+    effectiveFrom.current = new Date().toISOString();
+    uncertainPayload.current = null;
+    submitting.current = false;
     void load();
-  }, [load]);
+    return () => {
+      activeScope.current = "";
+    };
+  }, [load, scope, branchId]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting.current || !canManage) return;
+    submitting.current = true;
     setBusy(true);
     setNotice("");
     try {
+      const { email, phone, ...required } = draft;
+      const payload = JSON.stringify({
+        idempotencyKey: employeeCreateKey,
+        ...required,
+        assignedBranchIds,
+        primaryBranchId,
+        effectiveFrom: effectiveFrom.current,
+        ...(email.trim() ? { email: email.trim() } : {}),
+        ...(phone.trim() ? { phone: phone.trim() } : {}),
+      });
+      if (uncertainPayload.current) {
+        const check = await fetch(`/api/seramet/employees/creation-attempts/${employeeCreateKey}`, {
+          headers: headers(),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!check.ok)
+          throw new Error("Could not verify the previous creation request; retry when connected");
+        const result = (await check.json()) as { found: boolean };
+        if (activeScope.current !== scope) return;
+        if (result.found) {
+          uncertainPayload.current = null;
+          setShowForm(false);
+          setDraft(emptyDraft);
+          setEmployeeCreateKey(crypto.randomUUID());
+          effectiveFrom.current = new Date().toISOString();
+          setNotice("The server confirmed the previous employee creation.");
+          await load();
+          return;
+        }
+        if (uncertainPayload.current !== payload)
+          throw new Error(
+            "The earlier creation is unconfirmed. Restore the original details before retrying; do not create another identity.",
+          );
+      }
+      uncertainPayload.current = payload;
       const response = await fetch("/api/seramet/employees", {
         method: "POST",
-        headers,
-        body: JSON.stringify({
-          idempotencyKey: employeeCreateKey,
-          ...draft,
-          assignedBranchIds,
-          primaryBranchId,
-          effectiveFrom: new Date().toISOString(),
-          ...(draft.email.trim() ? { email: draft.email.trim() } : {}),
-          ...(draft.phone.trim() ? { phone: draft.phone.trim() } : {}),
-        }),
+        headers: headers(),
+        body: payload,
+        signal: AbortSignal.timeout(15000),
       });
       const body = (await response.json().catch(() => ({}))) as { message?: string };
-      if (!response.ok) throw new Error(body.message ?? "Employee could not be created");
+      if (activeScope.current !== scope) return;
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) uncertainPayload.current = null;
+        throw new Error(
+          body.message ?? "Employee creation was not confirmed; safely retry the same request",
+        );
+      }
+      uncertainPayload.current = null;
       setDraft(emptyDraft);
       setEmployeeCreateKey(crypto.randomUUID());
+      effectiveFrom.current = new Date().toISOString();
       setAssignedBranchIds([branchId]);
       setPrimaryBranchId(branchId);
       setShowForm(false);
-      setNotice("Employee created. The temporary PIN must be changed before normal use.");
+      setNotice(
+        draft.temporaryPin
+          ? "Employee created. The temporary PIN must be changed before normal use."
+          : "Employee created with the assigned role and branches.",
+      );
       await load();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Employee could not be created");
+      if (activeScope.current === scope)
+        setNotice(error instanceof Error ? error.message : "Employee could not be created");
     } finally {
-      setBusy(false);
+      if (activeScope.current === scope) {
+        submitting.current = false;
+        setBusy(false);
+      }
     }
   };
 
@@ -149,7 +228,9 @@ function Employees() {
           title={
             canManage
               ? "Create a new employee"
-              : `Missing permissions: ${missingPermissions.join(", ")}`
+              : authenticationLevel !== "FULL"
+                ? "Full account authentication required"
+                : `Missing permissions: ${missingPermissions.join(", ")}`
           }
           onClick={() => setShowForm((value) => !value)}
         >
@@ -175,9 +256,11 @@ function Employees() {
           <strong>{missingPermissions.join(", ")}</strong>. Ask an account owner to grant the
           permissions through role settings, or sign in with an authorized account. The button is
           disabled to protect employee identity and PIN administration.
+          {authenticationLevel !== "FULL" &&
+            " Full account authentication is also required; a terminal PIN session cannot administer credentials."}
         </p>
       )}
-      {showForm && canManage ? (
+      {showForm && canManage && activeScope.current === scope ? (
         <Panel className="mt-4">
           <PanelHead
             title="Create employee access"
@@ -227,6 +310,7 @@ function Employees() {
                   .filter(
                     (role) =>
                       role.active &&
+                      role.code !== "ACCOUNT_OWNER" &&
                       !role.permissions.some(
                         (permission) => !currentUser.permissions.includes(permission),
                       ),

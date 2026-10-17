@@ -132,6 +132,29 @@ describe.sequential("identity, device and branch hardening", () => {
     expect(cookies).toContain("seramet_refresh=;");
     expect(cookies).toContain("seramet_pos_session=");
 
+    await db
+      .prepare("UPDATE roles SET active=0 WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, roleId)
+      .run();
+    expect((await service.authenticatePosSession(login.token)).permissions).not.toContain(
+      permissions.posAccess,
+    );
+    await db
+      .prepare("UPDATE roles SET active=1 WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, roleId)
+      .run();
+    await db
+      .prepare("UPDATE users SET effective_until=? WHERE tenant_id=? AND id=?")
+      .bind(new Date(Date.now() - 1000).toISOString(), provisioned.tenantId, employee.id)
+      .run();
+    await expect(service.authenticatePosSession(login.token)).rejects.toThrow(
+      /invalid or revoked/i,
+    );
+    await db
+      .prepare("UPDATE users SET effective_until=NULL WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, employee.id)
+      .run();
+
     await service.resetPin(actor, employee.id, {
       pin: "830275",
       pinConfirmation: "830275",
@@ -139,6 +162,75 @@ describe.sequential("identity, device and branch hardening", () => {
     });
     await expect(service.authenticatePosSession(login.token)).rejects.toThrow(/revoked/i);
   }, 30_000);
+
+  it("creates attendance-only employees idempotently without identity or privilege escalation", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const actor = await ownerActor(provisioned);
+    const roleId = "attendance-only-role";
+    await db
+      .prepare(
+        "INSERT INTO roles(tenant_id,id,code,name,active,payload_json) VALUES(?,?,'ATTENDANCE_STAFF','Attendance only',1,'{}')",
+      )
+      .bind(actor.tenantId, roleId)
+      .run();
+    await db
+      .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+      .bind(actor.tenantId, roleId, permissions.attendanceUse)
+      .run();
+    const service = new PosIdentityService(db);
+    const input = employeeInput(roleId, provisioned.branchId, "602947");
+    const employee = await service.createEmployee(actor, input);
+    expect(await service.createEmployee(actor, input)).toEqual(employee);
+    await expect(
+      service.createEmployee({ ...actor, id: "different-creator" }, input),
+    ).rejects.toThrow(/Idempotency/);
+    await expect(
+      service.createEmployee(
+        { ...actor, assignedBranchIds: [], branchScope: { type: "BRANCH", branchId: "other" } },
+        input,
+      ),
+    ).rejects.toThrow(/outside your authority/);
+    await expect(
+      service.createEmployee(actor, { ...input, fullName: "Changed identity" }),
+    ).rejects.toThrow(/idempotency/i);
+    await expect(
+      service.createEmployee(
+        { ...actor, authLevel: "POS_PIN" },
+        { ...input, idempotencyKey: crypto.randomUUID() },
+      ),
+    ).rejects.toThrow(/full account/i);
+    await expect(
+      service.createEmployee({ ...actor, permissions: [permissions.attendanceUse] }, input),
+    ).rejects.toThrow(/permission/i);
+    await expect(
+      service.createEmployee(actor, {
+        ...input,
+        roleId: actor.roleIds[0]!,
+        idempotencyKey: crypto.randomUUID(),
+        employeeCode: "OWNER-ATTEMPT",
+      }),
+    ).rejects.toThrow(/role/i);
+    const permissionsForEmployee = await db
+      .prepare(
+        "SELECT rp.permission_code FROM user_roles ur JOIN role_permissions rp ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id WHERE ur.tenant_id=? AND ur.user_id=?",
+      )
+      .bind(actor.tenantId, employee.id)
+      .all<{ permission_code: string }>();
+    expect(permissionsForEmployee.results?.map((row) => row.permission_code)).toEqual([
+      permissions.attendanceUse,
+    ]);
+    expect(
+      (
+        await db
+          .prepare("SELECT COUNT(*) count FROM employee_creation_attempts WHERE tenant_id=?")
+          .bind(actor.tenantId)
+          .first<{ count: number }>()
+      )?.count,
+    ).toBe(1);
+  });
 
   it("creates a later branch idempotently with hierarchy and owner access", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(

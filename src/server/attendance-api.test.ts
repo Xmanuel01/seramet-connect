@@ -464,6 +464,171 @@ describe.sequential("authoritative geofenced attendance", () => {
     ).rejects.toThrow(/append-only/i);
   });
 
+  it("permits split shifts, retains schedule snapshots and appends explanations without hiding arrival", async () => {
+    await call("/api/seramet/attendance/geofence", "PUT", fence);
+    await call("/api/seramet/attendance/schedule", "PUT", {
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: "08:00",
+      scheduledEnd: "17:00",
+      expectedVersion: 0,
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-18T05:17:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    let record = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    const firstId = record.id;
+    const explanation = supervisor({
+      action: "EXPLAIN",
+      sessionId: record.id,
+      expectedVersion: record.version,
+      reason: "Late arrival explained by transport disruption",
+    });
+    await call("/api/seramet/attendance/supervisor", "POST", explanation);
+    expect(
+      (await call("/api/seramet/attendance/supervisor", "POST", explanation)).data.repeated,
+    ).toBe(true);
+    const unchanged = db.sqlite
+      .prepare(
+        "SELECT clock_in_at,minutes_late,scheduled_end FROM employee_attendance_sessions WHERE id=?",
+      )
+      .get(firstId);
+    expect(unchanged).toMatchObject({
+      clock_in_at: "2026-10-18T05:17:00.000Z",
+      minutes_late: 17,
+      scheduled_end: "17:00",
+    });
+    vi.setSystemTime(new Date("2026-10-18T09:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+    vi.setSystemTime(new Date("2026-10-18T10:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    record = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    expect(record.id).not.toBe(firstId);
+    expect(
+      db.sqlite
+        .prepare("SELECT minutes_late FROM employee_attendance_sessions WHERE id=?")
+        .get(record.id)?.minutes_late,
+    ).toBeNull();
+    await expect(
+      call(
+        "/api/seramet/attendance/supervisor",
+        "POST",
+        supervisor({
+          action: "CORRECT_IN",
+          sessionId: record.id,
+          expectedVersion: record.version,
+          occurredAt: "2026-10-18T08:00:00Z",
+        }),
+      ),
+    ).rejects.toThrow(/overlaps/);
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_sessions").get()?.count,
+    ).toBe(2);
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM attendance_mutation_claims").get()?.count,
+    ).toBe(4);
+    const history = await handleAttendanceApi(
+      request(`/api/seramet/attendance/sessions/${firstId}/history?branchId=${branchId}`),
+      { SERAMET_DB: db } as SerametEnv,
+    );
+    const text = await history!.text();
+    expect(text).toContain("Late arrival explained");
+    expect(text).not.toContain("request_hash");
+    expect(text).not.toContain("request_key");
+  });
+
+  it("exports branch-scoped, formula-safe history with an immutable access audit", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    db.sqlite
+      .prepare("UPDATE users SET name=? WHERE tenant_id=? AND id=?")
+      .run('  =IMPORTDATA("bad")', tenantId, actor.id);
+    const response = await handleAttendanceApi(
+      request(`/api/seramet/attendance/export?branchId=${branchId}`),
+      { SERAMET_DB: db } as SerametEnv,
+    );
+    expect(response?.headers.get("cache-control")).toBe("no-store");
+    const csv = await response!.text();
+    expect(csv).toContain("'  =IMPORTDATA");
+    expect(csv).not.toContain("latitude");
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM attendance_access_events").get()?.count,
+    ).toBe(1);
+    await expect(db.prepare("DELETE FROM attendance_access_events").run()).rejects.toThrow(
+      /append-only/,
+    );
+    actor = { ...actor, permissions: [permissions.attendanceUse] };
+    await expect(
+      call(`/api/seramet/attendance/records?branchId=${branchId}&employeeId=another-user`),
+    ).rejects.toThrow(/own attendance/);
+    await expect(
+      call(`/api/seramet/attendance/records?branchId=${branchId}&from=2026-02-30`),
+    ).rejects.toThrow(/valid attendance range/);
+    await expect(
+      call(`/api/seramet/attendance/records?branchId=${branchId}&from=2026-01-01&to=2026-03-01`),
+    ).rejects.toThrow(/31 business dates/);
+  });
+
+  it("serializes split-shift clock-in against correction of an earlier session", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const record = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+    const closed = (await call("/api/seramet/attendance?branchId=" + branchId)).data.records[0]!;
+    const paused = pauseNextBatch();
+    const correction = call(
+      "/api/seramet/attendance/supervisor",
+      "POST",
+      supervisor({
+        action: "CORRECT_OUT",
+        sessionId: record.id,
+        expectedVersion: closed.version,
+        occurredAt: new Date(Date.now() + 30000).toISOString(),
+      }),
+    ).catch((error: unknown) => error);
+    await paused.waiting;
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    paused.release();
+    expect(await correction).toMatchObject({ status: 409 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_events").get()?.count,
+    ).toBe(3);
+    expect(
+      db.sqlite
+        .prepare("SELECT version FROM employee_attendance_sessions WHERE id=?")
+        .get(record.id)?.version,
+    ).toBe(closed.version);
+  });
+
+  it("never substitutes another branch's latest personal session", async () => {
+    const other = db.sqlite
+      .prepare("SELECT id FROM branches WHERE tenant_id=? AND id<>? AND active=1 LIMIT 1")
+      .get(tenantId, branchId) as { id: string };
+    expect(other).toBeTruthy();
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    db.sqlite
+      .prepare(
+        "INSERT INTO user_branches(tenant_id,user_id,branch_id) VALUES(?,?,?) ON CONFLICT DO NOTHING",
+      )
+      .run(tenantId, actor.id, other.id);
+    actor = {
+      ...actor,
+      assignedBranchIds: [branchId, other.id],
+      branchScope: { type: "BRANCH", branchId: other.id },
+      branchId: other.id,
+    };
+    const response = await handleAttendanceApi(
+      request(`/api/seramet/attendance?branchId=${other.id}`),
+      { SERAMET_DB: db } as SerametEnv,
+    );
+    expect(await response!.json()).toMatchObject({
+      me: null,
+      openElsewhere: true,
+      branchId: other.id,
+    });
+    await expect(
+      call("/api/seramet/attendance/supervisor", "POST", supervisor({ branchId: other.id })),
+    ).rejects.toThrow(/open attendance session/);
+  });
+
   it("denies legacy attendance transactions that would bypass location enforcement", () => {
     expect(() => authorizeSerametMutation(actor, "clockInEmployee")).toThrow(
       /Legacy attendance mutations are disabled/,

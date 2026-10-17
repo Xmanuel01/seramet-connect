@@ -161,14 +161,96 @@ async function verifyAttendanceTransactions(tenantId: string, branchId: string) 
       .first<{ count: number; version: number }>();
     assert.equal(Number(final?.count), 1);
     assert.equal(final?.version, 2);
+    const otherSession = crypto.randomUUID();
+    await db
+      .prepare(
+        "INSERT INTO employee_attendance_sessions(tenant_id,id,user_id,branch_id,business_date,clock_in_at,clock_out_at,clock_in_key,clock_in_source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,'SUPERVISOR',?,?)",
+      )
+      .bind(
+        tenantId,
+        otherSession,
+        userId,
+        branchId,
+        "2026-10-16",
+        "2026-10-16T05:00:00Z",
+        "2026-10-16T08:00:00Z",
+        crypto.randomUUID(),
+        stamp,
+        stamp,
+      )
+      .run();
+    await db
+      .prepare("INSERT INTO attendance_employee_versions(tenant_id,user_id,version) VALUES(?,?,0)")
+      .bind(tenantId, userId)
+      .run();
+    const guarded = (
+      database: PostgresD1Database,
+      id: string,
+      version: number,
+      includeEvent = true,
+    ) => {
+      const eventId = crypto.randomUUID();
+      return database.batch([
+        database
+          .prepare(
+            "UPDATE attendance_employee_versions SET version=version+1 WHERE tenant_id=? AND user_id=? AND version=0",
+          )
+          .bind(tenantId, userId),
+        database
+          .prepare(
+            "INSERT INTO attendance_mutation_claims(tenant_id,user_id,version,event_id) VALUES(?,?,1,?)",
+          )
+          .bind(tenantId, userId, eventId),
+        database
+          .prepare(
+            "UPDATE employee_attendance_sessions SET version=version+1 WHERE tenant_id=? AND id=? AND version=?",
+          )
+          .bind(tenantId, id, version),
+        ...(includeEvent
+          ? [
+              database
+                .prepare(
+                  "INSERT INTO employee_attendance_events(tenant_id,id,session_id,actor_id,event_type,request_key,request_hash,session_version,reason,at) VALUES(?,?,?,?,'EXPLAIN',?,'guarded-probe',?,'Disposable split-shift serialization',?)",
+                )
+                .bind(tenantId, eventId, id, userId, crypto.randomUUID(), version + 1, stamp),
+            ]
+          : []),
+      ]);
+    };
+    // An obligation without its immutable event cannot commit, including after a crash.
+    await assert.rejects(
+      guarded(db, otherSession, 1, false),
+      (error: { code?: string }) => error.code === "23503",
+    );
+    const employeeRevision = await db
+      .prepare("SELECT version FROM attendance_employee_versions WHERE tenant_id=? AND user_id=?")
+      .bind(tenantId, userId)
+      .first<{ version: number }>();
+    assert.equal(employeeRevision?.version, 0);
+    const guardedResults = await Promise.allSettled([
+      guarded(db, session.id, 2),
+      guarded(second, otherSession, 1),
+    ]);
+    assert.equal(guardedResults.filter((outcome) => outcome.status === "fulfilled").length, 1);
+    const claims = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM attendance_mutation_claims WHERE tenant_id=? AND user_id=?",
+      )
+      .bind(tenantId, userId)
+      .first<{ count: number }>();
+    assert.equal(
+      Number(claims?.count),
+      1,
+      "Split-session mutations serialize per employee without orphan claims",
+    );
     const rls = await db
       .prepare(
-        "SELECT COUNT(*) count FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN ('attendance_geofences','attendance_shift_assignments','employee_attendance_sessions','employee_attendance_events','attendance_management_events') AND relrowsecurity=true",
+        "SELECT COUNT(*) count FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN ('attendance_geofences','attendance_shift_assignments','employee_attendance_sessions','employee_attendance_events','attendance_management_events','attendance_employee_versions','attendance_mutation_claims','attendance_access_events') AND relrowsecurity=true",
       )
       .first<{ count: number }>();
-    assert.equal(Number(rls?.count), 5, "Every attendance table must enable PostgreSQL RLS");
+    assert.equal(Number(rls?.count), 8, "Every attendance table must enable PostgreSQL RLS");
     console.log(
-      "PostgreSQL attendance: two-connection open-session/correction races, rollback audit integrity and five-table RLS: PASS",
+      "PostgreSQL attendance: two-connection open-session/correction/split-session races, deferred audit rollback and eight-table RLS: PASS",
     );
   } finally {
     await second.close();

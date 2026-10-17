@@ -33,6 +33,15 @@ type VerifiedSession = {
   minutesLate: number | null;
 };
 type VerifiedPeople = {
+  summary: {
+    total: number;
+    recorded: number;
+    working: number;
+    late: number;
+    completed: number;
+    exceptions: number;
+    not_recorded: number;
+  } | null;
   branchTimezone: string;
   businessDate: string;
   canManage: boolean;
@@ -52,13 +61,18 @@ const renderTime = (value: string | null | undefined, zone: string) =>
 
 function People() {
   const navigate = useNavigate();
-  const { branchId, branchLabel, activeTenantId, hasPermission } = useAppContext();
-  const [people, setPeople] = useState<VerifiedPeople | null>(null);
+  const { branchId, branchLabel, activeTenantId, hasPermission, currentUser, sessionId } =
+    useAppContext();
+  const scope = JSON.stringify([activeTenantId, branchId, currentUser.id, sessionId]);
+  const [storedPeople, setPeople] = useState<(VerifiedPeople & { scope: string }) | null>(null);
+  const people = storedPeople?.scope === scope ? storedPeople : null;
   const [notice, setNotice] = useState("");
   const mayRead =
     hasPermission(permissions.staffManage) || hasPermission(permissions.attendanceUse);
 
   useEffect(() => {
+    setPeople(null);
+    setNotice("");
     if (!mayRead) return;
     let active = true;
     const controller = new AbortController();
@@ -78,7 +92,7 @@ function People() {
         };
         if (!response.ok) throw new Error(result.message ?? "Attendance is unavailable");
         if (active) {
-          setPeople(result);
+          setPeople({ ...result, scope });
           setNotice("");
         }
       })
@@ -89,13 +103,13 @@ function People() {
       active = false;
       controller.abort();
     };
-  }, [activeTenantId, branchId, mayRead]);
+  }, [activeTenantId, branchId, mayRead, currentUser.id, sessionId, scope]);
 
   const records = people?.records ?? [];
-  const count = people?.employees.length ?? 0;
-  const recorded = records.length;
-  const working = records.filter((row) => !row.clockOutAt).length;
-  const late = records.filter((row) => (row.minutesLate ?? 0) > 0).length;
+  const count = people?.summary?.total ?? 0;
+  const recorded = people?.summary?.recorded ?? 0;
+  const working = people?.summary?.working ?? 0;
+  const late = people?.summary?.late ?? 0;
   const canSeeRoster = people?.canManage ?? false;
   return (
     <AppShell

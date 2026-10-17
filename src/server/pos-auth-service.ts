@@ -196,16 +196,22 @@ export class PosIdentityService {
     requirePermission(actor, permissions.usersManage);
     requirePermission(actor, permissions.employeeCredentialsManage);
     validateEmployeeInput(input);
+    if (
+      actor.branchScope.type !== "ALL" &&
+      input.assignedBranchIds.some((id) => !actor.assignedBranchIds.includes(id))
+    ) {
+      throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
+    }
     const replay = await this.db
       .prepare(
-        `SELECT response_json,request_hash FROM employee_creation_attempts
+        `SELECT response_json,request_hash,created_by FROM employee_creation_attempts
          WHERE tenant_id=? AND idempotency_key=?`,
       )
       .bind(actor.tenantId, input.idempotencyKey)
-      .first<{ response_json: string; request_hash: string }>();
+      .first<{ response_json: string; request_hash: string; created_by: string }>();
     const requestHash = await sha256(stableJson(input));
     if (replay) {
-      if (replay.request_hash !== requestHash) {
+      if (replay.request_hash !== requestHash || replay.created_by !== actor.id) {
         throw operation("CONFLICT", 409, "Idempotency key was reused with different employee data");
       }
       return JSON.parse(replay.response_json) as { id: string; employeeCode: string };
@@ -238,7 +244,7 @@ export class PosIdentityService {
       .prepare(
         `SELECT rp.permission_code FROM roles r JOIN role_permissions rp
            ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
-         WHERE r.tenant_id=? AND r.id=? AND r.active=1`,
+         WHERE r.tenant_id=? AND r.id=? AND r.active=1 AND r.code<>'ACCOUNT_OWNER'`,
       )
       .bind(actor.tenantId, input.roleId)
       .all<{ permission_code: string }>();
@@ -347,7 +353,29 @@ export class PosIdentityService {
         temporaryPin: Boolean(input.temporaryPin),
       }),
     );
-    await this.db.batch(statements);
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      const duplicate =
+        (error as { code?: string } | null)?.code === "23505" ||
+        (error instanceof Error && /UNIQUE constraint failed/.test(error.message));
+      if (!duplicate) throw error;
+      const completed = await this.db
+        .prepare(
+          "SELECT request_hash,response_json,created_by FROM employee_creation_attempts WHERE tenant_id=? AND idempotency_key=?",
+        )
+        .bind(actor.tenantId, input.idempotencyKey)
+        .first<{ request_hash: string; response_json: string; created_by: string }>();
+      if (completed?.request_hash === requestHash && completed.created_by === actor.id)
+        return JSON.parse(completed.response_json) as { id: string; employeeCode: string };
+      throw operation(
+        "CONFLICT",
+        409,
+        completed
+          ? "Idempotency key was reused with different employee data"
+          : "Employee identity was created concurrently; refresh the employee register",
+      );
+    }
     return response;
   }
 
@@ -684,7 +712,7 @@ export class PosIdentityService {
       .prepare(
         `SELECT s.tenant_id,s.id,s.user_id,s.device_id,s.branch_id,s.expires_at,
                 s.inactivity_expires_at,s.revoked_at,s.credential_version,u.name,
-                u.active,u.employment_status,d.lifecycle_state,c.version AS current_credential_version,
+                u.active,u.employment_status,u.effective_from,u.effective_until,d.lifecycle_state,c.version AS current_credential_version,
                 b.name AS branch_name
          FROM pos_sessions s
          JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id
@@ -700,7 +728,9 @@ export class PosIdentityService {
       !session ||
       session["revoked_at"] ||
       session["active"] !== 1 ||
-      session["employment_status"] !== "ACTIVE"
+      session["employment_status"] !== "ACTIVE" ||
+      (session["effective_from"] && Date.parse(String(session["effective_from"])) > Date.now()) ||
+      (session["effective_until"] && Date.parse(String(session["effective_until"])) <= Date.now())
     ) {
       throw operation("SESSION_REVOKED", 401, "POS session is invalid or revoked");
     }
@@ -728,6 +758,7 @@ export class PosIdentityService {
         .prepare(
           `SELECT DISTINCT rp.permission_code FROM user_roles ur JOIN role_permissions rp
              ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id
+           JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
            WHERE ur.tenant_id=? AND ur.user_id=?`,
         )
         .bind(String(session["tenant_id"]), String(session["user_id"]))
