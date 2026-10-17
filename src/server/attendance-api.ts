@@ -27,6 +27,7 @@ const supervisorSchema = z.object({
   reason: z.string().trim().min(8).max(500),
   occurredAt: z.string().datetime({ offset: true }).optional(),
   expectedVersion: z.number().int().positive().optional(),
+  sessionId: z.string().uuid().optional(),
 }).strict();
 const configSchema = z.object({
   branchId: z.string().min(1).max(120),
@@ -240,13 +241,17 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
   if (!input.occurredAt) deny(400, "Correction timestamp is required");
   const instant = new Date(input.occurredAt).toISOString();
   if (Date.parse(instant) > Date.now() + 60_000) deny(400, "Future punch corrections are not allowed");
-  const date = businessDateForTimestamp(instant, branch.timezone, branch.business_day_cutoff_minutes);
-  const record = await readSession(db, actor, input.employeeId, date);
-  if (!record || record.branch_id !== branch.id) deny(404, "Attendance record not found for correction date");
+  if (!input.sessionId) deny(400, "Attendance session ID is required for corrections");
+  const record = await db.prepare("SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND id=? AND user_id=? AND branch_id=?")
+    .bind(actor.tenantId,input.sessionId,input.employeeId,branch.id).first<SessionRow>();
+  if (!record) deny(404, "Attendance record not found for correction");
   const pastEvent = await db.prepare(
-    "SELECT id FROM employee_attendance_events WHERE tenant_id=? AND actor_id=? AND request_key=?"
-  ).bind(actor.tenantId,actor.id,input.idempotencyKey).first();
-  if (pastEvent) return { session: publicSession(record), repeated: true };
+    "SELECT session_id FROM employee_attendance_events WHERE tenant_id=? AND actor_id=? AND request_key=?"
+  ).bind(actor.tenantId,actor.id,input.idempotencyKey).first<{session_id:string}>();
+  if (pastEvent) {
+    if (pastEvent.session_id !== record.id) deny(409, "Idempotency key was used for another attendance record");
+    return { session: publicSession(record), repeated: true };
+  }
   if (record.version !== input.expectedVersion) deny(409, "Attendance changed; refresh before correcting");
   if (input.action === "CORRECT_IN" && record.clock_out_at && instant > record.clock_out_at) deny(400, "Clock-in cannot follow clock-out");
   if (input.action === "CORRECT_OUT" && instant < record.clock_in_at) deny(400, "Clock-out cannot precede clock-in");
