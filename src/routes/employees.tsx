@@ -57,8 +57,13 @@ function Employees() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
-  const canManage =
-    hasPermission(permissions.usersManage) && hasPermission(permissions.employeeCredentialsManage);
+  const canManageUsers = hasPermission(permissions.usersManage);
+  const canManageCredentials = hasPermission(permissions.employeeCredentialsManage);
+  const canManage = canManageUsers && canManageCredentials;
+  const missingPermissions = [
+    ...(!canManageUsers ? [permissions.usersManage] : []),
+    ...(!canManageCredentials ? [permissions.employeeCredentialsManage] : []),
+  ];
 
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
@@ -138,12 +143,15 @@ function Employees() {
       title="Employees"
       subtitle="Authoritative employee identities, roles and branch access"
       actions={
-        canManage ? (
-          <Btn variant="primary" onClick={() => setShowForm((value) => !value)}>
-            {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-            {showForm ? "Close" : "Add employee"}
-          </Btn>
-        ) : undefined
+        <Btn
+          variant="primary"
+          disabled={!canManage}
+          title={canManage ? "Create a new employee" : `Missing permissions: ${missingPermissions.join(", ")}`}
+          onClick={() => setShowForm((value) => !value)}
+        >
+          {showForm ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
+          {showForm ? "Close" : "Add employee"}
+        </Btn>
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -156,6 +164,14 @@ function Employees() {
         />
       </div>
 
+      {!canManage && (
+        <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
+          Add Employee requires <strong>Manage Users</strong> and <strong>Manage Employee Credentials</strong> permissions.
+          Your current role is missing: <strong>{missingPermissions.join(", ")}</strong>.
+          Ask an account owner to grant the permissions through role settings, or sign in with an authorized account.
+          The button is disabled to protect employee identity and PIN administration.
+        </p>
+      )}
       {showForm && canManage ? (
         <Panel className="mt-4">
           <PanelHead
