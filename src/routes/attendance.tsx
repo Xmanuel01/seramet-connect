@@ -17,7 +17,7 @@ type Session = {
   clockInAt: string; clockOutAt: string | null; minutesLate: number | null;
   clockInSource: string; clockOutSource: string | null; version: number;
 };
-type Employee = { id: string; name: string; employee_code: string | null; scheduled_start: string | null };
+type Employee = { id: string; name: string; employee_code: string | null; scheduled_start: string | null; schedule_version: number | null };
 type Fence = {
   enabled: boolean; radiusMeters: number; maxAccuracyMeters: number;
   maxFixAgeSeconds: number; graceMinutes: number; version: number;
@@ -121,7 +121,7 @@ function Attendance() {
   });
   const updateSchedule = () => void run(async () => {
     if (!selected) throw new Error("Choose an employee");
-    await api("/api/seramet/attendance/schedule","PUT",{branchId,employeeId:selected,scheduledStart:schedule||null});
+    await api("/api/seramet/attendance/schedule","PUT",{branchId,employeeId:selected,scheduledStart:schedule||null,expectedVersion:selectedEmployee?.schedule_version??0});
   });
   const saveFence = () => void run(async () => {
     if (!editFence || editFence.latitude == null || editFence.longitude == null) throw new Error("Set the worksite latitude and longitude");
