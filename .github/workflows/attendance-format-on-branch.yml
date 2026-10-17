@@ -32,3 +32,5 @@ jobs:
             git commit -m "style(attendance): apply repository Prettier formatting"
             git push origin HEAD:feat/attendance-geofence
           fi
+
+# One-time formatting pass after integration tests were added.
