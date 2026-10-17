@@ -44,6 +44,7 @@ const scheduleSchema = z.object({
   branchId: z.string().min(1).max(120),
   employeeId: z.string().min(1).max(120),
   scheduledStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(),
+  expectedVersion: z.number().int().nonnegative(),
 }).strict();
 
 type BranchRow = { id: string; timezone: string; business_day_cutoff_minutes: number; active: number };
@@ -157,7 +158,7 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND business_date=? ORDER BY clock_in_at DESC LIMIT 500"
   ).bind(actor.tenantId, branch.id, today).all<SessionRow>()).results ?? [] : [];
   const staff = canManage ? (await db.prepare(
-    "SELECT u.id,u.name,u.employee_code,s.scheduled_start FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? LEFT JOIN attendance_shift_assignments s ON s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? WHERE u.tenant_id=? AND u.active=1 AND u.employment_status='ACTIVE' ORDER BY u.name LIMIT 500"
+    "SELECT u.id,u.name,u.employee_code,s.scheduled_start,s.version AS schedule_version FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? LEFT JOIN attendance_shift_assignments s ON s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? WHERE u.tenant_id=? AND u.active=1 AND u.employment_status='ACTIVE' ORDER BY u.name LIMIT 500"
   ).bind(branch.id, branch.id, actor.tenantId).all()).results ?? [] : [];
   return {
     ok: true, businessDate: today, branchId: branch.id, branchTimezone: branch.timezone,
@@ -314,21 +315,45 @@ export async function handleAttendanceApi(request: Request, env: SerametEnv): Pr
     const old = await fenceFor(db,actor,body.branchId);
     if ((old?.version ?? 0) !== body.expectedVersion) deny(409,"Geofence changed; refresh before saving");
     const now = new Date().toISOString();
-    const result = old ? await db.prepare(
+    const change = old ? db.prepare(
       "UPDATE attendance_geofences SET enabled=?,latitude=?,longitude=?,radius_m=?,max_accuracy_m=?,max_fix_age_seconds=?,grace_minutes=?,version=version+1,updated_by=?,updated_at=? WHERE tenant_id=? AND branch_id=? AND version=?"
-    ).bind(body.enabled?1:0,body.latitude,body.longitude,body.radiusMeters,body.maxAccuracyMeters,body.maxFixAgeSeconds,body.graceMinutes,actor.id,now,actor.tenantId,body.branchId,body.expectedVersion).run() : await db.prepare(
+    ).bind(body.enabled?1:0,body.latitude,body.longitude,body.radiusMeters,body.maxAccuracyMeters,body.maxFixAgeSeconds,body.graceMinutes,actor.id,now,actor.tenantId,body.branchId,body.expectedVersion) : db.prepare(
       "INSERT INTO attendance_geofences(tenant_id,branch_id,enabled,latitude,longitude,radius_m,max_accuracy_m,max_fix_age_seconds,grace_minutes,version,updated_by,updated_at) VALUES(?,?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT DO NOTHING"
-    ).bind(actor.tenantId,body.branchId,body.enabled?1:0,body.latitude,body.longitude,body.radiusMeters,body.maxAccuracyMeters,body.maxFixAgeSeconds,body.graceMinutes,actor.id,now).run();
-    if (result.meta?.changes !== 1) deny(409,"Concurrent geofence update; refresh and retry");
+    ).bind(actor.tenantId,body.branchId,body.enabled?1:0,body.latitude,body.longitude,body.radiusMeters,body.maxAccuracyMeters,body.maxFixAgeSeconds,body.graceMinutes,actor.id,now);
+    const previous = old ? {
+      enabled:old.enabled===1,latitude:old.latitude,longitude:old.longitude,radiusMeters:old.radius_m,
+      maxAccuracyMeters:old.max_accuracy_m,maxFixAgeSeconds:old.max_fix_age_seconds,graceMinutes:old.grace_minutes,
+    } : null;
+    const results = await db.batch([
+      change,
+      db.prepare(
+        "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,event_type,at,before_json,after_json) SELECT ?,?,?,?,'GEOFENCE_POLICY',?,?,? WHERE EXISTS(SELECT 1 FROM attendance_geofences WHERE tenant_id=? AND branch_id=? AND version=? AND updated_by=? AND updated_at=?)"
+      ).bind(actor.tenantId,crypto.randomUUID(),body.branchId,actor.id,now,JSON.stringify(previous),JSON.stringify(body),actor.tenantId,body.branchId,body.expectedVersion+1,actor.id,now),
+    ]);
+    if (results[0]?.meta?.changes !== 1 || results[1]?.meta?.changes !== 1) deny(409,"Concurrent geofence update; refresh and retry");
     return noStore({ok:true});
   }
   if (url.pathname === "/api/seramet/attendance/schedule" && request.method === "PUT") {
     const body = parse(scheduleSchema,await request.json().catch(()=>null));
     await context(actor,db,body.branchId,true);
     await ensureEmployee(db,actor,body.employeeId,body.branchId);
-    await db.prepare(
-      "INSERT INTO attendance_shift_assignments(tenant_id,branch_id,user_id,scheduled_start,updated_at,updated_by) VALUES(?,?,?,?,?,?) ON CONFLICT(tenant_id,branch_id,user_id) DO UPDATE SET scheduled_start=excluded.scheduled_start,updated_at=excluded.updated_at,updated_by=excluded.updated_by"
-    ).bind(actor.tenantId,body.branchId,body.employeeId,body.scheduledStart,new Date().toISOString(),actor.id).run();
+    const previous = await db.prepare(
+      "SELECT scheduled_start,version FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=?"
+    ).bind(actor.tenantId,body.branchId,body.employeeId).first<{scheduled_start:string|null;version:number}>();
+    if ((previous?.version??0)!==body.expectedVersion) deny(409,"Schedule changed; refresh before saving");
+    const stamp = new Date().toISOString();
+    const change = previous ? db.prepare(
+      "UPDATE attendance_shift_assignments SET scheduled_start=?,version=version+1,updated_at=?,updated_by=? WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=?"
+    ).bind(body.scheduledStart,stamp,actor.id,actor.tenantId,body.branchId,body.employeeId,body.expectedVersion) : db.prepare(
+      "INSERT INTO attendance_shift_assignments(tenant_id,branch_id,user_id,scheduled_start,updated_at,updated_by,version) VALUES(?,?,?,?,?,?,1) ON CONFLICT DO NOTHING"
+    ).bind(actor.tenantId,body.branchId,body.employeeId,body.scheduledStart,stamp,actor.id);
+    const results = await db.batch([
+      change,
+      db.prepare(
+        "INSERT INTO attendance_management_events(tenant_id,id,branch_id,actor_id,subject_user_id,event_type,at,before_json,after_json) SELECT ?,?,?,?,?,'SCHEDULE_ASSIGNMENT',?,?,? WHERE EXISTS(SELECT 1 FROM attendance_shift_assignments WHERE tenant_id=? AND branch_id=? AND user_id=? AND version=? AND updated_by=? AND updated_at=?)"
+      ).bind(actor.tenantId,crypto.randomUUID(),body.branchId,actor.id,body.employeeId,stamp,JSON.stringify(previous?.scheduled_start??null),JSON.stringify(body.scheduledStart),actor.tenantId,body.branchId,body.employeeId,body.expectedVersion+1,actor.id,stamp),
+    ]);
+    if (results[0]?.meta?.changes!==1 || results[1]?.meta?.changes!==1) deny(409,"Schedule changed; refresh and retry");
     return noStore({ok:true});
   }
   return noStore({ok:false,message:"Unsupported attendance endpoint"},405);
