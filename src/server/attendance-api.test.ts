@@ -28,7 +28,16 @@ async function call(path: string, method = "GET", body?: unknown) {
     SERAMET_ENVIRONMENT: "development",
   } as SerametEnv);
   if (!res) throw new Error("Attendance handler not routed");
-  return { status: res.status, data: (await res.json()) as Record<string, any> };
+  return {
+    status: res.status,
+    data: (await res.json()) as {
+      session: { employeeId: string; clockInSource: string; clockOutAt: string | null; clockInAt: string };
+      repeated: boolean;
+      records: Array<{ id: string; version: number; clockInAt: string }>;
+      geofence: { version: number };
+      employees: Array<{ id: string; scheduled_start: string | null }>;
+    },
+  };
 }
 const fence = {
   branchId,
