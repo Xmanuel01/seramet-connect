@@ -1,0 +1,34 @@
+name: Format attendance feature branch
+on:
+  push:
+    branches:
+      - feat/attendance-geofence
+    paths:
+      - '.github/workflows/attendance-format-on-branch.yml'
+permissions:
+  contents: write
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Format feature files only
+        run: npx prettier --write src/server/attendance-api.ts src/server/attendance-api.test.ts src/lib/attendance-geofence.ts src/lib/attendance-geofence.test.ts src/routes/attendance.tsx src/routes/employees.tsx src/routes/people.tsx tests/e2e/attendance-geofence.spec.ts src/lib/seramet-auth.ts
+      - name: Commit only formatting to draft branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/server/attendance-api.ts src/server/attendance-api.test.ts src/lib/attendance-geofence.ts src/lib/attendance-geofence.test.ts src/routes/attendance.tsx src/routes/employees.tsx src/routes/people.tsx tests/e2e/attendance-geofence.spec.ts src/lib/seramet-auth.ts
+          if ! git diff --cached --quiet; then
+            git commit -m "style(attendance): apply repository Prettier formatting"
+            git push origin HEAD:feat/attendance-geofence
+          fi
