@@ -127,10 +127,12 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   const rejected = page.waitForResponse((response) => response.url().endsWith("/attendance/punch"));
   await page.getByRole("button", { name: "Clock in" }).click();
   expect((await rejected).status()).toBe(422);
-  await expect(page.getByRole("status")).toContainText("OUTSIDE_GEOFENCE");
+  await expect(page.getByRole("status").filter({ hasText: "OUTSIDE_GEOFENCE" })).toBeVisible();
   await context.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await page.getByRole("button", { name: "Clock in" }).click();
-  await expect(page.getByRole("status")).toContainText("Clock-in recorded by the server.");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Clock-in recorded by the server." }),
+  ).toBeVisible();
   await expect(page.getByText("Clocked in", { exact: true })).toBeVisible();
   await context.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await page.getByRole("button", { name: "Clock out" }).click();
