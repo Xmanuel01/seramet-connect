@@ -38,6 +38,11 @@ notification delivery is authorized by this work.
   remains foreground-only and does not navigate, poll GPS or reset active inputs.
 - Linked-account attendance navigation is available without POS enrollment;
   automatic PIN-only personal-phone enrollment remains intentionally unavailable.
+- The actual employee-creation browser journey exposed a category-wide navigation
+  defect: attendance-only employees passed the API permission check but were denied
+  the page by `staff.view`. A dedicated attendance route decision now permits that
+  page without exposing People, Employees, Schedule, Payroll, Finance or POS, and
+  inherits existing staff policy denials. Employee register uses `users.view`.
 - Security patch remains separately reviewable in existing PR #136. npm 11 drops
   Nitro's optional peer lock entry; retain that entry for the required npm 10 clean
   install. No audit suppression or forced major upgrade is used.

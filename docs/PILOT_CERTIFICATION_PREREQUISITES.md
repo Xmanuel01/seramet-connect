@@ -1,6 +1,9 @@
 # Pilot certification prerequisites
 
 These fixes precede the daily-closing stack; they do not alter closing rules.
+Attendance PR #137 includes the dependency remediation below, not the independent
+publication prerequisite from #135. Publication claims in this document describe
+that separate prerequisite branch and are not additional attendance changes.
 
 ## Publication confirmation
 

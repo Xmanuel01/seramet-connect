@@ -31,6 +31,11 @@ explicit 5,000-session cap; narrow filters rather than silently truncate.
 
 ## Authentication and personal phones
 
+Attendance has a dedicated route permission decision; `attendance.use` does not
+grant `staff.view`, employee administration, scheduling, payroll or POS access.
+An explicit existing staff-module DENY still denies the attendance route.
+Employee register navigation follows `users.view`, matching its API.
+
 Trusted-device PIN authentication remains mandatory for POS terminals. An
 attendance-only role can use an authorized terminal without receiving POS,
 payment or financial permissions. The verified role permissions determine the

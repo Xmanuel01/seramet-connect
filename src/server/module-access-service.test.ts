@@ -3,6 +3,7 @@ import type { ServerActor } from "@/lib/seramet-auth";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
 import { moduleDecision } from "@/platform/module-access-registry";
 import { permissions } from "@/platform/permissions";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
@@ -26,7 +27,7 @@ describe.sequential("server-authoritative module access", () => {
 
   it("persists the current schema and revisions every access-bearing assignment mutation", () => {
     expect(db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get()).toEqual({
-      version: 28,
+      version: CURRENT_SCHEMA_VERSION,
     });
     const before = revision();
     insertScopedUser("revision-user", [permissions.dashboardView]);
