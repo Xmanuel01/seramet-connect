@@ -702,7 +702,12 @@ export class PosIdentityService {
       token: sessionSecret,
       expiresAt,
       mustChangePin: Boolean(employee["must_change"]),
-      employee: { id: userId, name: String(employee["name"]), branchId: device.branchId },
+      employee: {
+        id: userId,
+        name: String(employee["name"]),
+        branchId: device.branchId,
+        tenantId: device.tenantId,
+      },
     };
   }
 
@@ -712,7 +717,7 @@ export class PosIdentityService {
       .prepare(
         `SELECT s.tenant_id,s.id,s.user_id,s.device_id,s.branch_id,s.expires_at,
                 s.inactivity_expires_at,s.revoked_at,s.credential_version,u.name,
-                u.active,u.employment_status,u.effective_from,u.effective_until,d.lifecycle_state,c.version AS current_credential_version,
+                u.active,u.employment_status,u.effective_from,u.effective_until,d.lifecycle_state,c.must_change,c.version AS current_credential_version,
                 b.name AS branch_name
          FROM pos_sessions s
          JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id
@@ -795,7 +800,99 @@ export class PosIdentityService {
       branch: String(session["branch_name"]),
       role: roles.results?.[0]?.name ?? "Employee",
       authLevel: "POS_PIN",
+      credentialChangeRequired: Boolean(session["must_change"]),
     };
+  }
+
+  async completeTemporaryPin(
+    token: string,
+    deviceCredential: string | undefined,
+    input: { currentPin: string; pin: string; pinConfirmation: string },
+  ) {
+    const actor = await this.authenticatePosSession(token);
+    const device = deviceCredential
+      ? await this.resolveDeviceCredential(deviceCredential)
+      : undefined;
+    if (
+      !device ||
+      device.lifecycleState !== "ACTIVE" ||
+      device.tenantId !== actor.tenantId ||
+      device.deviceId !== actor.deviceId
+    )
+      throw operation("PERMISSION_DENIED", 403, "The authorized POS device is required");
+    if (!actor.credentialChangeRequired)
+      throw operation(
+        "CONFLICT",
+        409,
+        "Sign in again; the temporary credential is no longer pending",
+      );
+    validatePin(input.pin, input.pinConfirmation, device.pinLength);
+    const current = await this.db
+      .prepare(
+        "SELECT version,algorithm,iterations,salt_base64,hash_base64 FROM employee_pin_credentials WHERE tenant_id=? AND user_id=? AND must_change=1",
+      )
+      .bind(actor.tenantId, actor.id)
+      .first<{
+        version: number;
+        algorithm: string;
+        iterations: number;
+        salt_base64: string;
+        hash_base64: string;
+      }>();
+    if (!current || !(await verifyPin(input.currentPin, current)))
+      throw operation("PERMISSION_DENIED", 403, "Current PIN could not be verified");
+    if (input.currentPin === input.pin)
+      throw operation("VALIDATION_FAILED", 400, "New PIN must differ from the temporary PIN");
+    const credential = await derivePin(input.pin);
+    const stamp = now();
+    try {
+      // The existing history primary key serializes this change against an
+      // administrator reset using the same prior credential version.
+      await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO employee_pin_history(tenant_id,user_id,version,algorithm,iterations,salt_base64,hash_base64,replaced_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .bind(
+            actor.tenantId,
+            actor.id,
+            current.version,
+            current.algorithm,
+            current.iterations,
+            current.salt_base64,
+            current.hash_base64,
+            stamp,
+          ),
+        this.db
+          .prepare(
+            "UPDATE employee_pin_credentials SET iterations=?,salt_base64=?,hash_base64=?,pin_length=?,temporary=0,must_change=0,failed_attempts=0,locked_until=NULL,changed_at=?,changed_by=?,version=version+1 WHERE tenant_id=? AND user_id=? AND version=?",
+          )
+          .bind(
+            credential.iterations,
+            credential.salt,
+            credential.hash,
+            input.pin.length,
+            stamp,
+            actor.id,
+            actor.tenantId,
+            actor.id,
+            current.version,
+          ),
+        this.db
+          .prepare(
+            "UPDATE pos_sessions SET revoked_at=?,revoke_reason='EMPLOYEE_PIN_CHANGED' WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL",
+          )
+          .bind(stamp, actor.tenantId, actor.id),
+        audit(this.db, actor, "EMPLOYEE_PIN_CHANGED", "USER", actor.id, { temporary: false }),
+      ]);
+    } catch (error) {
+      if (
+        (error as { code?: string })?.code === "23505" ||
+        (error instanceof Error && /UNIQUE constraint failed/.test(error.message))
+      )
+        throw operation("CONFLICT", 409, "Credential changed concurrently; sign in again");
+      throw error;
+    }
   }
 
   async logoutPosSession(token: string) {

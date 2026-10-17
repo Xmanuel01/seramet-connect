@@ -52,6 +52,13 @@ notification delivery is authorized by this work.
 - Security patch remains separately reviewable in existing PR #136. npm 11 drops
   Nitro's optional peer lock entry; retain that entry for the required npm 10 clean
   install. No audit suppression or forced major upgrade is used.
+- Final credential review confirmed that the temporary-PIN flag was previously
+  advisory only. Added a device-bound own-PIN completion flow and denied ordinary
+  protected APIs until completion, with history-backed concurrency, setup-session
+  revocation, rate limiting and a real service/API test plus browser UI acceptance.
+- Aggregate CI exposed an unrelated printer assertion matching a table cell and
+  a select option. Scoped the assertion to the printer cell; no printing code,
+  timeout or duplicate-row assertion was weakened.
 
 Certification is recorded against the final pushed SHA in PR #137. Earlier
 784-test / 14-browser evidence is baseline evidence only, not proof of this new

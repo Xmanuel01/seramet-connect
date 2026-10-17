@@ -37,6 +37,7 @@ export async function employeePinLogin(identifier: string, pin: string) {
     message?: string;
     nextPath?: string;
     mustChangePin?: boolean;
+    employee?: { tenantId?: string };
   };
   if (!response.ok) throw new Error(payload.message ?? "Employee identifier or PIN is incorrect");
   return payload;

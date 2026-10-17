@@ -30,6 +30,7 @@ export type ServerActor = {
   branch: string;
   tokenId?: string;
   authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
+  credentialChangeRequired?: boolean;
 };
 
 export type SerametEnv = ProviderRuntimeEnv &
@@ -89,7 +90,10 @@ export async function authenticateSerametRequest(
   if (posSession) {
     if (!env.SERAMET_DB)
       throw new SerametHttpError(503, "Authoritative identity store unavailable");
-    return new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
+    const actor = await new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
+    if (actor.credentialChangeRequired)
+      throw new SerametHttpError(403, "Replace the temporary PIN before using Seramet");
+    return actor;
   }
 
   if (

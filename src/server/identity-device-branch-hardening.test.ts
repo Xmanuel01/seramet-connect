@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
+import { authenticateSerametRequest } from "@/lib/seramet-auth";
 import { handleIdentityDeviceApi } from "@/server/identity-device-api";
 import { OnboardingService } from "@/onboarding/onboarding-service";
 import {
@@ -264,6 +265,83 @@ describe.sequential("identity, device and branch hardening", () => {
       )?.count,
     ).toBe(1);
   });
+
+  it("requires temporary PIN replacement before protected operations and revokes setup sessions", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const roleId = crypto.randomUUID();
+    const deviceId = crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    await db
+      .prepare(
+        "INSERT INTO roles(tenant_id,id,code,name,active,payload_json) VALUES(?,?,'ATTENDANCE_STAFF','Attendance',1,'{}')",
+      )
+      .bind(owner.tenantId, roleId)
+      .run();
+    await db
+      .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+      .bind(owner.tenantId, roleId, permissions.attendanceUse)
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,registered_by,registered_at,payload_json,lifecycle_state,credential_version) VALUES(?,?,?,'POS_TERMINAL','Disposable terminal','PENDING',?,?,'{}','ACTIVATION_PENDING',0)",
+      )
+      .bind(owner.tenantId, deviceId, owner.branchId, owner.id, stamp)
+      .run();
+    const service = new PosIdentityService(db);
+    const device = await service.issueDeviceCredential(owner, deviceId);
+    await service.createEmployee(owner, {
+      ...employeeInput(roleId, owner.branchId, "602947"),
+      temporaryPin: true,
+    });
+    const setup = await service.loginEmployee(device.credential, "CASH-01", "602947");
+    expect(setup.mustChangePin).toBe(true);
+    const env = { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv;
+    const protectedRequest = new Request("https://pos.seramet.test/api/seramet/auth/session", {
+      headers: { cookie: `seramet_pos_session=${setup.token}` },
+    });
+    await expect(authenticateSerametRequest(protectedRequest, env)).rejects.toThrow(
+      /temporary PIN/,
+    );
+    await expect(
+      service.completeTemporaryPin(setup.token, undefined, {
+        currentPin: "602947",
+        pin: "830275",
+        pinConfirmation: "830275",
+      }),
+    ).rejects.toThrow(/authorized POS device/);
+    const complete = await handleIdentityDeviceApi(
+      new Request("https://pos.seramet.test/api/seramet/public/employee/change-pin", {
+        method: "POST",
+        headers: {
+          origin: "https://pos.seramet.test",
+          "content-type": "application/json",
+          cookie: `seramet_device=${device.credential}; seramet_pos_session=${setup.token}`,
+        },
+        body: JSON.stringify({ currentPin: "602947", pin: "830275", pinConfirmation: "830275" }),
+      }),
+      env,
+    );
+    expect(complete?.status).toBe(200);
+    expect(await complete!.json()).toMatchObject({ reauthenticationRequired: true });
+    await expect(service.authenticatePosSession(setup.token)).rejects.toThrow(/revoked/);
+    const fresh = await service.loginEmployee(device.credential, "CASH-01", "830275");
+    expect(fresh.mustChangePin).toBe(false);
+    expect((await service.authenticatePosSession(fresh.token)).permissions).toEqual([
+      permissions.attendanceUse,
+    ]);
+    expect(db.sqlite.prepare("SELECT COUNT(*) count FROM employee_pin_history").get()?.count).toBe(
+      1,
+    );
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) count FROM audit_events WHERE action='EMPLOYEE_PIN_CHANGED'")
+        .get()?.count,
+    ).toBe(1);
+  }, 30_000);
 
   it("creates a later branch idempotently with hierarchy and owner access", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(

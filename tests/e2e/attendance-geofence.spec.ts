@@ -4,6 +4,53 @@ import { randomUUID, createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
+test("temporary PIN sign-in stays in credential setup until replacement is acknowledged", async ({
+  page,
+}) => {
+  await page.route("**/api/seramet/public/device/startup", (route) =>
+    route.fulfill({
+      json: {
+        state: "ACTIVE",
+        device: {
+          id: "disposable-terminal",
+          name: "Pilot terminal",
+          tenantName: "Pilot E2E",
+          branchId: "disposable-branch",
+          branchName: "Pilot branch",
+        },
+        policy: { pinLength: 6, allowEmployeeTiles: false, inactivityLockMinutes: 15 },
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/employee/login", (route) =>
+    route.fulfill({ json: { ok: true, mustChangePin: true, nextPath: "/attendance" } }),
+  );
+  await page.route("**/api/seramet/public/employee/change-pin", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      currentPin: "602947",
+      pin: "830275",
+      pinConfirmation: "830275",
+    });
+    await route.fulfill({ json: { ok: true, reauthenticationRequired: true } });
+  });
+  await page.goto("/pos-login");
+  await page.getByLabel("Email or employee code").fill("STAFF-SETUP");
+  for (const digit of "602947")
+    await page.getByRole("button", { name: digit, exact: true }).click();
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Replace temporary PIN" })).toBeVisible();
+  await expect(page).toHaveURL(/\/pos-login$/);
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+  ).not.toBe("1");
+  await page.getByLabel("New PIN", { exact: true }).fill("830275");
+  await page.getByLabel("Confirm new PIN", { exact: true }).fill("830276");
+  await expect(page.getByRole("button", { name: "Change PIN", exact: true })).toBeDisabled();
+  await page.getByLabel("Confirm new PIN", { exact: true }).fill("830275");
+  await page.getByRole("button", { name: "Change PIN", exact: true }).click();
+  await expect(page.getByText("PIN changed. Sign in with your new PIN.")).toBeVisible();
+});
+
 type Fixture = {
   tenantId: string;
   userId: string;

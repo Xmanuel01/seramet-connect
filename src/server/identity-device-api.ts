@@ -20,6 +20,13 @@ const employeeLoginSchema = z
     pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
   })
   .strict();
+const completePinSchema = z
+  .object({
+    currentPin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+    pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+    pinConfirmation: z.string().regex(/^\d{4}(?:\d{2})?$/),
+  })
+  .strict();
 
 const employeeCreateSchema = z
   .object({
@@ -116,6 +123,26 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     );
   }
 
+  if (url.pathname === "/api/seramet/public/employee/change-pin" && request.method === "POST") {
+    assertSameOrigin(request, env);
+    const token = readCookie(request, "seramet_pos_session");
+    if (!token)
+      throw new ServerOperationError("PERMISSION_DENIED", 401, "Employee sign-in is required");
+    const actor = await service.authenticatePosSession(token);
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `pin-completion:${actor.tenantId}:${actor.id}`,
+      { bucket: "pin-completion", limit: 5, windowSeconds: 15 * 60 },
+    );
+    await service.completeTemporaryPin(
+      token,
+      readCookie(request, "seramet_device"),
+      parse(completePinSchema, await request.json().catch(() => null)),
+    );
+    const headers = noStore();
+    headers.append("set-cookie", clearPosSessionCookie(secure));
+    return Response.json({ ok: true, reauthenticationRequired: true }, { headers });
+  }
+
   if (url.pathname === "/api/seramet/public/employee/logout" && request.method === "POST") {
     assertSameOrigin(request, env);
     const token = readCookie(request, "seramet_pos_session");
@@ -202,6 +229,7 @@ function isHandledPath(pathname: string) {
     pathname === "/api/seramet/public/device/startup" ||
     pathname === "/api/seramet/public/employee/login" ||
     pathname === "/api/seramet/public/employee/logout" ||
+    pathname === "/api/seramet/public/employee/change-pin" ||
     pathname === "/api/seramet/employees" ||
     /^\/api\/seramet\/employees\/creation-attempts\/[^/]+$/.test(pathname) ||
     pathname === "/api/seramet/owners/transfer" ||

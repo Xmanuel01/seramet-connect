@@ -74,6 +74,11 @@ keys racing for the same employee code. PINs remain in transient form memory and
 are never persisted in browser draft storage. A reload clears that sensitive form;
 check the authoritative roster before attempting new creation. Temporary PIN
 change and existing PIN hashing/rate-limit protections are retained.
+Temporary PIN sessions cannot authorize ordinary protected APIs. The employee
+must replace the PIN on the matching enrolled device, confirm the existing PIN,
+and pass the existing PIN policy. Completion atomically archives the prior
+credential, replaces its hash, revokes setup sessions and audits the change.
+The employee signs in again with the new PIN; no secret is saved in browser drafts.
 
 ## API contract
 

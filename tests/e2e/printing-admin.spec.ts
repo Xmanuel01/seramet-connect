@@ -109,7 +109,9 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     );
     expect(denied).toBe(403);
     await page.reload();
-    await expect(page.getByText("Disposable TCP printer", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "Disposable TCP printer", exact: true }),
+    ).toBeVisible();
     await mkdir(resolve(".seramet/printing-acceptance"), { recursive: true });
     await page.screenshot({
       path: resolve(".seramet/printing-acceptance/admin-desktop.png"),
