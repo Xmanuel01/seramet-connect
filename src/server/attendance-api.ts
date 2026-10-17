@@ -256,7 +256,7 @@ async function correctPunch(ctx: PunchActor, input: z.infer<typeof supervisorSch
   if (input.action === "CORRECT_IN" && record.clock_out_at && instant > record.clock_out_at) deny(400, "Clock-in cannot follow clock-out");
   if (input.action === "CORRECT_OUT" && instant < record.clock_in_at) deny(400, "Clock-out cannot precede clock-in");
   const correctingIn = input.action === "CORRECT_IN";
-  const late = correctingIn ? await lateMinutes(db,actor,branch,input.employeeId,instant,date) : null;
+  const late = correctingIn ? await lateMinutes(db,actor,branch,input.employeeId,instant,record.business_date) : null;
   if (correctingIn && businessDateForTimestamp(instant,branch.timezone,branch.business_day_cutoff_minutes)!==record.business_date)
     deny(400, "Corrected clock-in must remain on the original business date");
   const previous = correctingIn ? record.clock_in_at : record.clock_out_at;
@@ -302,7 +302,7 @@ export async function handleAttendanceApi(request: Request, env: SerametEnv): Pr
   if (url.pathname === "/api/seramet/attendance/supervisor" && request.method === "POST") {
     const body = parse(supervisorSchema,await request.json().catch(()=>null));
     const ctx = await context(actor,db,body.branchId,true);
-    if (body.action.startsWith("CORRECT")) return noStore({ ok:true,...await correctPunch(ctx,body) });
+    if (body.action === "CORRECT_IN" || body.action === "CORRECT_OUT") return noStore({ ok:true,...await correctPunch(ctx,body) });
     if (body.occurredAt) deny(400,"Manual punches use the authoritative server time; use a correction for prior times");
     return noStore({ ok:true,...await recordPunch(ctx,body.employeeId,body.action,body.idempotencyKey,"SUPERVISOR",body.reason) });
   }
