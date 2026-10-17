@@ -123,14 +123,24 @@ function locationOnce(): Promise<{
   });
 }
 export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
-  const { branchId, branchLabel, activeTenantId, currentUser, hasPermission, sessionId, deviceId } =
-    useAppContext();
+  const {
+    branchId,
+    branchLabel,
+    activeTenantId,
+    currentUser,
+    hasPermission,
+    sessionId,
+    deviceId,
+    authenticationLevel,
+  } = useAppContext();
   const scope = JSON.stringify([
     activeTenantId,
     branchId,
     currentUser.id,
     sessionId ?? "development",
     deviceId ?? "account",
+    authenticationLevel,
+    [...currentUser.permissions].sort(),
   ]);
   const activeScope = useRef(scope);
   const scopeGeneration = useRef(0);

@@ -676,6 +676,25 @@ describe.sequential("authoritative geofenced attendance", () => {
     ).toBe(3);
   });
 
+  it("does not let a demoted supervisor recover another employee's private record", async () => {
+    const employeeId = id();
+    const stamp = new Date().toISOString();
+    db.sqlite
+      .prepare("INSERT INTO users(tenant_id,id,name,created_at,updated_at) VALUES(?,?,?,?,?)")
+      .run(tenantId, employeeId, "Private employee", stamp, stamp);
+    db.sqlite
+      .prepare("INSERT INTO user_branches(tenant_id,user_id,branch_id) VALUES(?,?,?)")
+      .run(tenantId, employeeId, branchId);
+    const input = supervisor({ employeeId });
+    await call("/api/seramet/attendance/supervisor", "POST", input);
+    actor = { ...actor, permissions: [permissions.attendanceUse] };
+    const result = await handleAttendanceApi(
+      request(`/api/seramet/attendance/requests/${input.idempotencyKey}?branchId=${branchId}`),
+      { SERAMET_DB: db } as SerametEnv,
+    );
+    expect(await result!.json()).toEqual({ ok: true, found: false, session: null });
+  });
+
   it("denies legacy attendance transactions that would bypass location enforcement", () => {
     expect(() => authorizeSerametMutation(actor, "clockInEmployee")).toThrow(
       /Legacy attendance mutations are disabled/,

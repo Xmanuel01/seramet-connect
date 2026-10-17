@@ -171,6 +171,9 @@ and an allowlist (selection, reason, correction input, pending key). No coordina
 PINs, tokens or credentials are stored. Successful logout removes attendance drafts;
 storage unavailability must not grant authority. Branch switches discard visible
 state and stale responses; they cannot import another cashier's draft.
+Confirmed permission/authentication-level changes also change the visible-data
+scope. A demoted supervisor cannot use an old request key to retrieve another
+employee's session.
 
 Owner-approved release procedure: review both PRs and exact CI -> establish current
 recovery/restore evidence -> review migrations 28 then 29 against the actual schema

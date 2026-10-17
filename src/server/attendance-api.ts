@@ -821,6 +821,8 @@ export async function handleAttendanceApi(
       )
       .bind(actor.tenantId, actor.id, lookup[1], ctx.branch.id)
       .first<SessionRow>();
+    if (row && !manager(actor) && row.user_id !== actor.id)
+      return noStore({ ok: true, found: false, session: null });
     return noStore({ ok: true, found: Boolean(row), session: row ? publicSession(row) : null });
   }
   const history = /^\/api\/seramet\/attendance\/sessions\/([0-9a-f-]{36})\/history$/.exec(
