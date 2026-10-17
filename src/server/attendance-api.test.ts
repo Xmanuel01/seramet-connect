@@ -286,7 +286,7 @@ describe.sequential("authoritative geofenced attendance", () => {
     ).rejects.toThrow(/changed/i);
     const after = (await call("/api/seramet/attendance?branchId=" + branchId)).data;
     expect(
-      after.employees.find((value: { id: string }) => value.id === actor.id).scheduled_start,
+      after.employees.find((value: { id: string }) => value.id === actor.id)?.scheduled_start,
     ).toBe("09:30");
     const events = db.sqlite
       .prepare("SELECT COUNT(*) count FROM attendance_management_events WHERE tenant_id=?")
