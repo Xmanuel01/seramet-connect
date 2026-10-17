@@ -1,229 +1,215 @@
-﻿import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowRight, Clock3, ShieldCheck, UserPlus } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { cn } from "@/lib/utils";
-import { useAppContext, useBranchRows } from "@/lib/app-context";
-import { useTransactionEngine } from "@/hooks/use-transaction-engine";
+import { getSerametAccessToken } from "@/lib/access-token";
+import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 export const Route = createFileRoute("/people")({
   head: () => ({
     meta: [
       { title: "People - Seramet" },
-      {
-        name: "description",
-        content: "Attendance, shift scheduling, payroll estimates and employee records.",
-      },
-      { property: "og:title", content: "People - Seramet" },
-      {
-        property: "og:description",
-        content: "Attendance, scheduling and payroll for every branch.",
-      },
+      { name: "description", content: "Verified attendance and employee administration by branch." },
     ],
   }),
   component: People,
 });
 
-const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const shiftFor = (i: number, d: number) =>
-  (i + d) % 4 === 0 ? "OFF" : (i + d) % 3 === 0 ? "12:00-21:30" : "09:30-21:30";
+type VerifiedEmployee = {
+  id: string;
+  name: string;
+  employee_code: string | null;
+  scheduled_start: string | null;
+};
+type VerifiedSession = {
+  employeeId: string;
+  clockInAt: string;
+  clockOutAt: string | null;
+  minutesLate: number | null;
+};
+type VerifiedPeople = {
+  branchTimezone: string;
+  businessDate: string;
+  canManage: boolean;
+  records: VerifiedSession[];
+  employees: VerifiedEmployee[];
+  me: VerifiedSession | null;
+};
+const renderTime = (value: string | null | undefined, zone: string) =>
+  value
+    ? new Intl.DateTimeFormat("en-KE", {
+        timeZone: zone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(value))
+    : "—";
 
 function People() {
   const navigate = useNavigate();
-  const { branchLabel } = useAppContext();
-  const { state } = useTransactionEngine();
-  const employees = useBranchRows(state.employees);
-  const rows = employees.map((employee) => {
-    const attendance = state.attendanceRecords.find((record) => record.employeeId === employee.id);
-    return {
-      ...employee,
-      dept: employee.department,
-      status: attendance?.status.replaceAll("_", " ") ?? "Not clocked in",
+  const { branchId, branchLabel, activeTenantId, hasPermission } = useAppContext();
+  const [people, setPeople] = useState<VerifiedPeople | null>(null);
+  const [notice, setNotice] = useState("");
+  const mayRead = hasPermission(permissions.staffManage) || hasPermission(permissions.attendanceUse);
+
+  useEffect(() => {
+    if (!mayRead) return;
+    let active = true;
+    const controller = new AbortController();
+    const token = getSerametAccessToken();
+    void fetch("/api/seramet/attendance?branchId=" + encodeURIComponent(branchId), {
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        "x-seramet-tenant-id": activeTenantId,
+        "x-seramet-branch-id": branchId,
+        ...(token ? { authorization: "Bearer " + token } : {}),
+      },
+    })
+      .then(async (response) => {
+        const result = (await response.json().catch(() => ({}))) as VerifiedPeople & {
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message ?? "Attendance is unavailable");
+        if (active) {
+          setPeople(result);
+          setNotice("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setNotice(error instanceof Error ? error.message : "Attendance is unavailable");
+      });
+    return () => {
+      active = false;
+      controller.abort();
     };
-  });
-  const present = rows.filter((employee) => employee.status === "PRESENT").length;
-  const absent = rows.filter((employee) => employee.status === "ABSENT").length;
-  const late = rows.filter((employee) => employee.status === "LATE").length;
-  const onLeave = rows.filter((employee) => employee.status === "ON LEAVE").length;
-  const overtime = state.attendanceRecords.reduce(
-    (total, record) => total + record.overtimeMinutes,
-    0,
-  );
+  }, [activeTenantId, branchId, mayRead]);
+
+  const records = people?.records ?? [];
+  const count = people?.employees.length ?? 0;
+  const recorded = records.length;
+  const working = records.filter((row) => !row.clockOutAt).length;
+  const late = records.filter((row) => (row.minutesLate ?? 0) > 0).length;
+  const canSeeRoster = people?.canManage ?? false;
   return (
     <AppShell
       title="People"
-      subtitle={`${rows.length} employees - ${branchLabel}`}
+      subtitle={"Employee records and verified timekeeping · " + branchLabel}
       actions={
         <>
-          <Btn onClick={() => void navigate({ to: "/attendance" })}>Attendance</Btn>
+          <Btn onClick={() => void navigate({ to: "/attendance" })}>
+            <Clock3 className="h-4 w-4" />
+            Attendance
+          </Btn>
           <Btn variant="primary" onClick={() => void navigate({ to: "/employees" })}>
+            <UserPlus className="h-4 w-4" />
             Add Employee
           </Btn>
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <Metric label="Employees" value={rows.length} />
-        <Metric label="Present" value={present} />
-        <Metric label="Absent" value={absent} />
-        <Metric label="Late" value={late} invert />
-        <Metric label="On leave" value={onLeave} />
-        <Metric label="Overtime hrs" value={(overtime / 60).toFixed(1)} />
-        <Metric
-          label="Payroll estimate"
-          value={rows.reduce((sum, row) => sum + row.netMonthlyPay, 0)}
-          money
-        />
-        <Metric label="Open positions" value={0} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric label="Employees" value={canSeeRoster ? count : "—"} />
+        <Metric label="Recorded today" value={canSeeRoster ? recorded : people?.me ? 1 : 0} />
+        <Metric label="Currently working" value={canSeeRoster ? working : people?.me && !people.me.clockOutAt ? 1 : 0} />
+        <Metric label="Late arrivals" value={canSeeRoster ? late : people?.me && (people.me.minutesLate ?? 0) > 0 ? 1 : 0} />
       </div>
-
-      <Panel className="mt-4">
-        <PanelHead
-          title="Weekly schedule"
-          sub={`${branchLabel}  -  drag to reassign  -  conflicts highlighted`}
-          right={<Btn>Filter branch</Btn>}
-        />
-        <div className="grid gap-3 p-3 md:hidden">
-          {rows.map((e, i) => (
-            <article key={e.name} className="rounded-lg border border-border bg-card p-3">
-              <div className="mb-3">
-                <div className="text-[13px] font-semibold">{e.name}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {e.role} - {e.branch}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {days.map((d, di) => {
-                  const s = shiftFor(i, di);
-                  const off = s === "OFF";
-                  const ot = !off && i % 5 === 0 && di > 4;
+      {notice && (
+        <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
+          {notice}
+        </p>
+      )}
+      {!mayRead && (
+        <p role="status" className="mt-4 text-sm text-muted-foreground">
+          Attendance access has not been assigned to your account.
+        </p>
+      )}
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <Panel>
+          <PanelHead
+            title="Employee management"
+            sub="Active POS identities, assigned branches and PIN credentials"
+            right={<UserPlus className="h-4 w-4 text-primary" />}
+          />
+          <div className="p-4">
+            <p className="text-sm text-muted-foreground">
+              Add employees, assign an authorized role and configure their login credentials.
+              Account owners manage who can create new employee accounts.
+            </p>
+            <Btn className="mt-4" onClick={() => void navigate({ to: "/employees" })}>
+              Open employee register <ArrowRight className="h-4 w-4" />
+            </Btn>
+          </div>
+        </Panel>
+        <Panel>
+          <PanelHead
+            title="Attendance and shifts"
+            sub="Location-verified punches, exceptions and assigned start times"
+            right={<ShieldCheck className="h-4 w-4 text-primary" />}
+          />
+          <div className="p-4">
+            <p className="text-sm text-muted-foreground">
+              Clock in or out from your assigned branch. Supervisors can record exceptions and
+              manage employee scheduled start times with an audit trail.
+            </p>
+            <Btn className="mt-4" onClick={() => void navigate({ to: "/attendance" })}>
+              Open attendance <ArrowRight className="h-4 w-4" />
+            </Btn>
+          </div>
+        </Panel>
+      </div>
+      {canSeeRoster && (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Today's employee register"
+            sub={"Verified attendance for " + people?.businessDate + "; no fabricated schedules or deductions"}
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[650px]">
+              <thead>
+                <tr>
+                  <TH>Employee</TH>
+                  <TH>Start time</TH>
+                  <TH>Clock in</TH>
+                  <TH>Clock out</TH>
+                  <TH>Status</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {people?.employees.map((employee) => {
+                  const record = records.find((row) => row.employeeId === employee.id);
+                  const zone = people.branchTimezone;
                   return (
-                    <div
-                      key={d}
-                      className={cn(
-                        "rounded-md px-2 py-1.5 text-[11px] font-semibold",
-                        off
-                          ? "bg-secondary text-muted-foreground"
-                          : ot
-                            ? "bg-warning-soft text-warning"
-                            : "bg-accent text-accent-foreground",
-                      )}
-                    >
-                      {d} {s}
-                      {ot && <div className="text-[10px] font-medium">Overtime</div>}
-                    </div>
+                    <tr key={employee.id}>
+                      <TD className="font-semibold">{employee.name}</TD>
+                      <TD>{employee.scheduled_start ?? "Not assigned"}</TD>
+                      <TD>{renderTime(record?.clockInAt, zone)}</TD>
+                      <TD>{renderTime(record?.clockOutAt, zone)}</TD>
+                      <TD>
+                        <Status>
+                          {!record
+                            ? "NOT CLOCKED"
+                            : record.clockOutAt
+                              ? "COMPLETED"
+                              : (record.minutesLate ?? 0) > 0
+                                ? "LATE"
+                                : "PRESENT"}
+                        </Status>
+                      </TD>
+                    </tr>
                   );
                 })}
-              </div>
-            </article>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[880px]">
-            <thead>
-              <tr>
-                <TH>Employee</TH>
-                {days.map((d) => (
-                  <TH key={d}>{d}</TH>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((e, i) => (
-                <tr key={e.name}>
-                  <TD className="whitespace-nowrap">
-                    <div className="font-semibold">{e.name}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {e.role} - {e.branch}
-                    </div>
-                  </TD>
-                  {days.map((d, di) => {
-                    const s = shiftFor(i, di);
-                    const off = s === "OFF";
-                    const ot = !off && i % 5 === 0 && di > 4;
-                    return (
-                      <TD key={d}>
-                        <div
-                          className={cn(
-                            "rounded-md px-2 py-1.5 text-[11px] font-semibold",
-                            off
-                              ? "bg-secondary text-muted-foreground"
-                              : ot
-                                ? "bg-warning-soft text-warning"
-                                : "bg-accent text-accent-foreground",
-                          )}
-                        >
-                          {s}
-                          {ot && <div className="text-[10px] font-medium">Overtime</div>}
-                        </div>
-                      </TD>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <Panel className="mt-4">
-        <PanelHead title="Today's attendance" sub="Clock-in from POS terminals and mobile" />
-        <div className="grid gap-3 p-3 md:hidden">
-          {rows.map((e) => (
-            <article
-              key={e.name}
-              className="rounded-lg border border-border bg-card p-3 shadow-card"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-[13px] font-bold">{e.name}</div>
-                  <div className="text-[12px] text-muted-foreground">
-                    {e.role} - {e.dept}
-                  </div>
-                </div>
-                <Status>{e.status}</Status>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                  <span className="text-muted-foreground">Branch </span>
-                  <span className="font-semibold">{e.branch}</span>
-                </div>
-                <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                  <span className="text-muted-foreground">Shift </span>
-                  <span className="num font-semibold">{e.shift}</span>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[760px]">
-            <thead>
-              <tr>
-                <TH>Employee</TH>
-                <TH>Role</TH>
-                <TH>Department</TH>
-                <TH>Branch</TH>
-                <TH>Scheduled</TH>
-                <TH>Status</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((e) => (
-                <tr key={e.name} className="hover:bg-secondary/50">
-                  <TD className="font-semibold">{e.name}</TD>
-                  <TD className="text-muted-foreground">{e.role}</TD>
-                  <TD className="text-muted-foreground">{e.dept}</TD>
-                  <TD className="text-muted-foreground">{e.branch}</TD>
-                  <TD className="num">{e.shift}</TD>
-                  <TD>
-                    <Status>{e.status}</Status>
-                  </TD>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
+      <p className="mt-3 text-xs text-muted-foreground">
+        Verified punches are maintained separately from historical payroll records.
+        Attendance does not automatically deduct wages.
+      </p>
     </AppShell>
   );
 }
