@@ -28,3 +28,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Retain sanitized POS lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-stability-evidence
+          path: .seramet/pos-stability/*.json
+          if-no-files-found: ignore
+          retention-days: 14

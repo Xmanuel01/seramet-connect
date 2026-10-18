@@ -1,5 +1,5 @@
 import { permissions } from "@/platform/permissions";
-
+import { clearPosDrafts } from "@/lib/pos-draft";
 export type AuthRestaurant = { tenantId: string; slug: string; name: string };
 
 export type AuthStatus = {
@@ -114,7 +114,8 @@ export function hasInteractiveSignIn() {
 }
 
 export function clearInteractiveSignIn() {
-  if (typeof window !== "undefined") window.sessionStorage.removeItem(interactiveSignInKey);
+  clearPosDrafts();
+  if (typeof window !== "undefined") window.sessionStorage?.removeItem(interactiveSignInKey);
 }
 
 /** Revoke both account and device-PIN sessions; never treat a failed request as success. */

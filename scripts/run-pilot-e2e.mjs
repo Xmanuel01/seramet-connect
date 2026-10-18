@@ -22,8 +22,16 @@ const allowed = new Set([
   "tests/e2e/settings-setup-auth.spec.ts",
   "tests/e2e/attendance-geofence.spec.ts",
   "tests/e2e/printing-admin.spec.ts",
+  "tests/e2e/pos-stability.spec.ts",
 ]);
-if (focused.some((suite) => !allowed.has(suite) && suite !== operational))
+if (
+  focused.some(
+    (suite) =>
+      !allowed.has(suite) &&
+      suite !== operational &&
+      suite !== "tests/e2e/pos-session-soak.spec.ts",
+  )
+)
   throw new Error("Unknown local pilot acceptance suite");
 if (focused.includes(operational)) {
   env.SERAMET_BRIDGE_MODE = "local-test";

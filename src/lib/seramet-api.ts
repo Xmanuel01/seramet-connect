@@ -671,9 +671,13 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
 
 async function getTransactions(request: Request, env: SerametEnv, repo: TransactionRepository) {
   const actor = await authenticateSerametRequest(request, env);
-  const state = await repo.loadState(actor.tenantId);
   const branchId = new URL(request.url).searchParams.get("branchId") ?? actor.branchId;
   authorizeBranchRead(actor, actor.tenantId, branchId);
+  const revision = await repo.revision(actor.tenantId);
+  const known = new URL(request.url).searchParams.get("knownRevision");
+  if (known !== null && /^\d+$/.test(known) && Number(known) === revision)
+    return json({ ok: true, unchanged: true, revision });
+  const state = await repo.loadState(actor.tenantId);
   return json({
     ok: true,
     state: filterStateForActor(state, actor),

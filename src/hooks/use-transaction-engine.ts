@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { closingMutationActions } from "@/payments/daily-closing";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { posConnectivity, usePosConnectivity } from "@/lib/pos-connectivity";
+import { tracePos } from "@/lib/pos-lifecycle-trace";
+import { serializeOfflineReplay } from "@/offline/replay-coordinator";
 import { useAppContext } from "@/lib/app-context";
 import { applyServerMutation } from "@/lib/seramet-repository";
 import {
@@ -28,6 +32,9 @@ type PersistenceMode = "unknown" | "development" | "authoritative";
 export function useTransactionEngine() {
   const { activeTenantId, branch, branchId, role, currentUser } = useAppContext();
   const [state, setState] = useState<TransactionState>(() => createEmptyTransactionState(""));
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const connection = usePosConnectivity();
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("loading");
   const [persistenceMode, setPersistenceMode] = useState<PersistenceMode>("unknown");
   const [revision, setRevision] = useState(0);
@@ -35,8 +42,9 @@ export function useTransactionEngine() {
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [activeMutationCount, setActiveMutationCount] = useState(0);
   const [offlineReplayInProgress, setOfflineReplayInProgress] = useState(false);
+  const [offlineStorageAvailable, setOfflineStorageAvailable] = useState(true);
   const deviceIdRef = useRef("development-pos");
-  const scopeKey = `${activeTenantId}:${branchId}`;
+  const scopeKey = `${activeTenantId}:${branchId}:${currentUser.id}:${currentUser.deviceId ?? "account"}`;
   const scopeRef = useRef(scopeKey);
   const hydrationScopeRef = useRef("");
   const sessionScopeRef = useRef("");
@@ -67,12 +75,15 @@ export function useTransactionEngine() {
 
   const refreshPendingCount = useCallback(async () => {
     try {
-      const pending = await offlineStore.pending(activeTenantId, deviceIdRef.current);
+      const pending = (await offlineStore.pending(activeTenantId, deviceIdRef.current)).filter(
+        (command) => command.branchId === branchId && command.actorId === currentUser.id,
+      );
       setPendingSyncCount(pending.length);
+      setOfflineStorageAvailable(true);
     } catch {
-      setPendingSyncCount(0);
+      setOfflineStorageAvailable(false);
     }
-  }, [activeTenantId]);
+  }, [activeTenantId, branchId, currentUser.id]);
 
   // Refresh is a silent read once the POS is online. An in-flight background
   // read must never overwrite a newer mutation or a different branch.
@@ -95,6 +106,8 @@ export function useTransactionEngine() {
             });
           }
           const healthBody = (await health.json()) as { database?: string };
+          if (healthBody.database !== "authoritative" && !import.meta.env.DEV)
+            throw new Error("Authoritative persistence unavailable");
           mode = healthBody.database === "authoritative" ? "authoritative" : "development";
           if (scopeRef.current !== requestScope) return undefined;
           modeRef.current = mode;
@@ -111,7 +124,10 @@ export function useTransactionEngine() {
           return { state: localState, revision: 0 };
         }
         if (sessionScopeRef.current !== requestScope) {
-          const session = await fetch("/api/seramet/auth/session", { headers });
+          const session = await authenticatedFetch("/api/seramet/auth/session", {
+            headers,
+            signal: AbortSignal.timeout(12_000),
+          });
           if (!session.ok) {
             throw Object.assign(new Error(`Session validation failed: ${session.status}`), {
               httpStatus: session.status,
@@ -127,7 +143,7 @@ export function useTransactionEngine() {
           // Browsers with unavailable IndexedDB can still use the authoritative POS.
           const hydrationGeneration = localMutationGenerationRef.current;
           const cached = await readOptionalOfflineSnapshot(() =>
-            offlineStore.readCachedState(activeTenantId, branchId),
+            offlineStore.readCachedState(activeTenantId, branchId, scopeKey),
           );
           if (
             cached &&
@@ -140,16 +156,31 @@ export function useTransactionEngine() {
             revisionRef.current = cached.revision;
           }
         }
-        const response = await fetch(
-          `/api/seramet/transactions?branchId=${encodeURIComponent(branchId)}`,
-          { headers },
+        const response = await authenticatedFetch(
+          `/api/seramet/transactions?branchId=${encodeURIComponent(branchId)}${serverScopeRef.current === requestScope ? `&knownRevision=${revisionRef.current}` : ""}`,
+          { headers, signal: AbortSignal.timeout(12_000) },
         );
         if (!response.ok) {
           throw Object.assign(new Error(`Transaction refresh failed: ${response.status}`), {
             httpStatus: response.status,
           });
         }
-        const body = (await response.json()) as { state?: TransactionState; revision?: number };
+        const body = (await response.json()) as {
+          state?: TransactionState;
+          revision?: number;
+          unchanged?: boolean;
+        };
+        tracePos(
+          body.unchanged ? "SNAPSHOT_UNCHANGED" : "SNAPSHOT_READ",
+          posConnectivity.id,
+          body.revision,
+        );
+        if (body.unchanged && serverScopeRef.current === requestScope) {
+          if (scopeRef.current !== requestScope) return undefined;
+          await refreshPendingCount();
+          setBackendStatus((current) => (current === "conflict" ? current : "synced"));
+          return { state: stateRef.current, revision: revisionRef.current };
+        }
         if (!body.state) throw new Error("Transaction refresh did not return state");
         if (scopeRef.current !== requestScope) return undefined;
         const nextRevision = body.revision ?? 0;
@@ -159,13 +190,15 @@ export function useTransactionEngine() {
         const unresolved =
           typeof indexedDB === "undefined"
             ? []
-            : await offlineStore.pending(activeTenantId, deviceIdRef.current);
+            : await offlineStore.pending(activeTenantId, deviceIdRef.current).catch(() => []);
         if (scopeRef.current !== requestScope) return undefined;
         if (mutationInFlightRef.current > 0) {
           refreshAfterMutationRef.current = true;
           return undefined;
         }
-        const branchPending = unresolved.filter((command) => command.branchId === branchId);
+        const branchPending = unresolved.filter(
+          (command) => command.branchId === branchId && command.actorId === currentUser.id,
+        );
         if (branchPending.length > 0) {
           setPendingSyncCount(unresolved.length);
           setBackendStatus(
@@ -194,22 +227,20 @@ export function useTransactionEngine() {
           revisionRef.current = nextRevision;
           serverScopeRef.current = requestScope;
           void offlineStore
-            .cacheState(activeTenantId, branchId, body.state, nextRevision)
-            .catch((cause) => console.warn("Unable to update the offline read cache", cause));
+            .cacheState(activeTenantId, branchId, body.state, nextRevision, scopeKey)
+            .catch(() => undefined);
         }
         setBackendStatus("synced");
         await refreshPendingCount();
         return { state: body.state, revision: nextRevision };
       } catch (error) {
         if (scopeRef.current !== requestScope) return undefined;
-        console.error(error);
         const httpStatus = (error as { httpStatus?: number }).httpStatus;
         // HTTP rejections are NOT an internet outage and must not enable
         // offline mutations or overwrite a valid working state with stale cache.
-        const transportFailure = error instanceof TypeError || !navigator.onLine;
-        setBackendStatus(
-          httpStatus !== undefined ? "error" : transportFailure ? "offline" : "error",
-        );
+        posConnectivity.failure(httpStatus, !navigator.onLine);
+        void posConnectivity.requestVerification();
+        setBackendStatus(httpStatus === 409 ? "conflict" : "error");
         return undefined;
       }
     };
@@ -222,25 +253,50 @@ export function useTransactionEngine() {
         refreshInFlightRef.current = null;
       }
     }
-  }, [activeTenantId, branchId, headers, refreshPendingCount, scopeKey]);
+  }, [activeTenantId, branchId, headers, refreshPendingCount, scopeKey, currentUser.id]);
 
   const flushOfflineCommands = useCallback(async () => {
     if (flushInFlightRef.current) return flushInFlightRef.current;
+    let replayStarted = false;
     const run = async () => {
-      const commands = await offlineStore.replayable(activeTenantId, deviceIdRef.current);
+      const requestScope = scopeKey;
+      if (posConnectivity.getSnapshot().state !== "ONLINE") return;
+      const replayable = await readOptionalOfflineSnapshot(() =>
+        offlineStore.replayable(activeTenantId, deviceIdRef.current),
+      );
+      if (!replayable) {
+        setOfflineStorageAvailable(false);
+        return;
+      }
+      const commands = replayable
+        .filter((command) => command.branchId === branchId && command.actorId === currentUser.id)
+        .slice(0, 50);
       if (!commands.length) return;
+      if (scopeRef.current !== requestScope) return;
+      tracePos("REPLAY_START", posConnectivity.id, commands.length);
+      replayStarted = true;
       setOfflineReplayInProgress(true);
       for (const command of commands) {
         await offlineStore.updateCommand({ ...command, syncStatus: "SYNCING" });
       }
-      const response = await fetch("/api/seramet/offline/sync", {
+      const response = await authenticatedFetch("/api/seramet/offline/sync", {
         method: "POST",
         headers,
         body: JSON.stringify({ commands }),
+        signal: AbortSignal.timeout(20_000),
       });
       if (!response.ok) {
         // Keep original identities unresolved for idempotent replay.
-        throw new Error(`Offline synchronization failed: ${response.status}`);
+        if ([401, 403].includes(response.status))
+          for (const command of commands)
+            await offlineStore.updateCommand({
+              ...command,
+              syncStatus: "FAILED",
+              error: "AUTHORIZATION_REJECTED",
+            });
+        throw Object.assign(new Error("Offline synchronization unavailable"), {
+          httpStatus: response.status,
+        });
       }
       const result = (await response.json()) as {
         commands?: Array<{ id: string; status: string; code?: string }>;
@@ -260,21 +316,31 @@ export function useTransactionEngine() {
         });
       }
       await refreshPendingCount();
+      if (scopeRef.current !== requestScope) return;
       if (conflicts || failures) {
         setBackendStatus(conflicts ? "conflict" : "error");
         return;
       }
       await syncFromBackend();
     };
-    const promise = run();
+    const promise = serializeOfflineReplay(scopeKey, run);
     flushInFlightRef.current = promise;
     try {
       await promise;
     } finally {
+      if (replayStarted) tracePos("REPLAY_END", posConnectivity.id);
       setOfflineReplayInProgress(false);
       if (flushInFlightRef.current === promise) flushInFlightRef.current = null;
     }
-  }, [activeTenantId, headers, refreshPendingCount, syncFromBackend]);
+  }, [
+    activeTenantId,
+    branchId,
+    currentUser.id,
+    headers,
+    refreshPendingCount,
+    syncFromBackend,
+    scopeKey,
+  ]);
 
   useEffect(() => {
     // Switching branches must invalidate all branch-filtered snapshots.
@@ -288,8 +354,9 @@ export function useTransactionEngine() {
     setState(createEmptyTransactionState(activeTenantId));
     setPersistenceMode("unknown");
     setBackendStatus("loading");
+    const requestScope = scopeKey;
     void syncFromBackend().then((snapshot) => {
-      if (snapshot && navigator.onLine) {
+      if (snapshot && navigator.onLine && scopeRef.current === requestScope) {
         void flushOfflineCommands().catch(() => setBackendStatus("error"));
       }
     });
@@ -316,18 +383,13 @@ export function useTransactionEngine() {
   }, [syncFromBackend]);
 
   useEffect(() => {
-    const online = () => {
+    const verified = () => {
+      if (posConnectivity.getSnapshot().state !== "ONLINE") return;
       void syncFromBackend().then((snapshot) => {
         if (snapshot) void flushOfflineCommands().catch(() => setBackendStatus("error"));
       });
     };
-    const offline = () => setBackendStatus("offline");
-    window.addEventListener("online", online);
-    window.addEventListener("offline", offline);
-    return () => {
-      window.removeEventListener("online", online);
-      window.removeEventListener("offline", offline);
-    };
+    return posConnectivity.subscribe(verified);
   }, [flushOfflineCommands, syncFromBackend]);
 
   const localActor = useMemo(
@@ -354,6 +416,7 @@ export function useTransactionEngine() {
       payload: unknown,
       idempotencyKey: string,
       localEffects?: OfflineCommand["localEffects"],
+      expectedRevision?: number,
     ): Promise<OfflineCommand> => {
       const id = crypto.randomUUID();
       return {
@@ -369,7 +432,7 @@ export function useTransactionEngine() {
         idempotencyKey,
         syncStatus: "PENDING",
         correlationId: crypto.randomUUID(),
-        expectedRevision: revisionRef.current,
+        expectedRevision: expectedRevision ?? revisionRef.current,
         ...(localEffects ? { localEffects } : {}),
       };
     },
@@ -382,6 +445,7 @@ export function useTransactionEngine() {
       payload: unknown,
       optimistic?: (current: TransactionState) => TransactionState,
       localEffects?: OfflineCommand["localEffects"],
+      expectedRevision?: number,
     ) => {
       const idempotencyKey = `command:${crypto.randomUUID()}`;
       const mutationScope = `${activeTenantId}:${branchId}`;
@@ -391,7 +455,9 @@ export function useTransactionEngine() {
           ? optimistic(state)
           : applyServerMutation(state, action, payload, localActor);
         setState(next);
-        void offlineStore.cacheState(activeTenantId, branchId, next, revision);
+        void offlineStore
+          .cacheState(activeTenantId, branchId, next, revision, scopeKey)
+          .catch(() => undefined);
         return next;
       };
       if (persistenceMode === "development") {
@@ -407,15 +473,21 @@ export function useTransactionEngine() {
         await persistDevelopmentSnapshot(next, headers);
         return { state: next, revision };
       }
-      if (!navigator.onLine || backendStatus === "offline") {
+      if (!navigator.onLine || posConnectivity.getSnapshot().state === "OFFLINE") {
         if (!offlineAllowedCommands.has(action as OfflineAllowedCommand)) {
           throw new Error(`${action} is unavailable while the POS is offline`);
         }
+        if (
+          !currentUser.deviceId ||
+          Date.now() - posConnectivity.getSnapshot().verifiedAt > 5 * 60_000
+        )
+          throw new Error("Verify this device session online before queuing further commands");
         const command = await createOfflineCommand(
           action as OfflineAllowedCommand,
           payload,
           idempotencyKey,
           localEffects,
+          expectedRevision,
         );
         await offlineStore.enqueue(command);
         const nextState = applyOptimistic();
@@ -429,16 +501,18 @@ export function useTransactionEngine() {
       setActiveMutationCount((count) => count + 1);
       let receivedServerResponse = false;
       let serverConflict = false;
+      const requestScope = scopeKey;
       try {
-        const response = await fetch("/api/seramet/transactions/mutate", {
+        const response = await authenticatedFetch("/api/seramet/transactions/mutate", {
           method: "POST",
           headers: { ...headers, "Idempotency-Key": idempotencyKey },
           body: JSON.stringify({
             action,
             payload,
             idempotencyKey,
-            expectedRevision: revisionRef.current,
+            expectedRevision: expectedRevision ?? revisionRef.current,
           }),
+          signal: AbortSignal.timeout(20_000),
         });
         receivedServerResponse = true;
         if (closingMutationActions.has(action) && scopeRef.current !== mutationScope) {
@@ -459,45 +533,64 @@ export function useTransactionEngine() {
           if (response.status === 409 && failure.current?.state) {
             serverConflict = true;
             const currentRevision = failure.current.revision ?? revisionRef.current;
+            if (scopeRef.current !== requestScope)
+              throw new Error("Branch changed while command was processing");
             setState(failure.current.state);
             setRevision(currentRevision);
             revisionRef.current = currentRevision;
             setBackendStatus("conflict");
           }
-          throw new Error(
-            failure.message ?? `Transaction command failed with status ${response.status}`,
+          throw Object.assign(
+            new Error(
+              failure.message ?? `Transaction command failed with status ${response.status}`,
+            ),
+            { httpStatus: response.status },
           );
         }
         const body = (await response.json()) as { state: TransactionState; revision?: number };
+        if (scopeRef.current !== requestScope) return body;
         setState(body.state);
         const nextRevision = body.revision ?? revisionRef.current + 1;
         setRevision(nextRevision);
         revisionRef.current = nextRevision;
         // IndexedDB cache failures must never misreport a committed server save as failed.
         void offlineStore
-          .cacheState(activeTenantId, branchId, body.state, nextRevision)
-          .catch((cause) => console.warn("Unable to update the offline read cache", cause));
+          .cacheState(activeTenantId, branchId, body.state, nextRevision, scopeKey)
+          .catch(() => undefined);
         setBackendStatus("synced");
         return body;
       } catch (error) {
         if (closingMutationActions.has(action) && scopeRef.current !== mutationScope) throw error;
         if (
           !receivedServerResponse &&
-          offlineAllowedCommands.has(action as OfflineAllowedCommand)
+          offlineAllowedCommands.has(action as OfflineAllowedCommand) &&
+          scopeRef.current === requestScope &&
+          currentUser.deviceId &&
+          Date.now() - posConnectivity.getSnapshot().verifiedAt <= 5 * 60_000
         ) {
           const command = await createOfflineCommand(
             action as OfflineAllowedCommand,
             payload,
             idempotencyKey,
             localEffects,
+            expectedRevision,
           );
           await offlineStore.enqueue(command);
           const nextState = applyOptimistic();
-          setBackendStatus("offline");
+          posConnectivity.failure(undefined, !navigator.onLine);
+          void posConnectivity.requestVerification();
           await refreshPendingCount();
           return { state: nextState, revision, offline: true as const };
         }
-        if (!serverConflict) setBackendStatus("error");
+        if (!serverConflict && scopeRef.current === requestScope) {
+          const status = (error as { httpStatus?: number }).httpStatus;
+          if (status === undefined || status >= 500) {
+            setBackendStatus("error");
+            posConnectivity.failure(status, !navigator.onLine);
+          }
+          if (status === undefined || status >= 500 || status === 401 || status === 403)
+            void posConnectivity.requestVerification();
+        }
         throw error;
       } finally {
         mutationInFlightRef.current -= 1;
@@ -510,7 +603,6 @@ export function useTransactionEngine() {
     },
     [
       activeTenantId,
-      backendStatus,
       branchId,
       createOfflineCommand,
       headers,
@@ -519,6 +611,8 @@ export function useTransactionEngine() {
       refreshPendingCount,
       revision,
       state,
+      scopeKey,
+      currentUser.deviceId,
       syncFromBackend,
     ],
   );
@@ -553,14 +647,24 @@ export function useTransactionEngine() {
 
   return {
     state,
+    revision,
     apply,
     mutate,
     reset,
-    backendStatus,
+    backendStatus: (backendStatus === "conflict"
+      ? "conflict"
+      : connection.state === "OFFLINE"
+        ? "offline"
+        : connection.state === "RECONNECTING"
+          ? "reconnecting"
+          : connection.state === "DEGRADED"
+            ? "error"
+            : backendStatus) as BackendStatus,
     persistenceMode,
     pendingSyncCount,
     activeMutationCount,
     offlineReplayInProgress,
+    offlineStorageAvailable,
     syncFromBackend,
     flushOfflineCommands,
   };

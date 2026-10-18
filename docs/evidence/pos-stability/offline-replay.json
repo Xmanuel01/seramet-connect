@@ -1,0 +1,110 @@
+{
+  "replays": 1,
+  "entries": [
+    {
+      "at": 1792169339344,
+      "correlationId": "2c170607-1e81-4344-8388-3104c948216e",
+      "kind": "APP_MOUNT"
+    },
+    {
+      "at": 1792169339458,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "CONNECTIVITY",
+      "value": "ONLINE"
+    },
+    {
+      "at": 1792169339849,
+      "correlationId": "f5b219ad-62df-4c80-bc14-49fbe8be4bf5",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169339857,
+      "correlationId": "f5b219ad-62df-4c80-bc14-49fbe8be4bf5",
+      "kind": "POS_UNMOUNT"
+    },
+    {
+      "at": 1792169339862,
+      "correlationId": "f5b219ad-62df-4c80-bc14-49fbe8be4bf5",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169340757,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "SNAPSHOT_READ",
+      "value": 5
+    },
+    {
+      "at": 1792169341692,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "CONNECTIVITY",
+      "value": "OFFLINE"
+    },
+    {
+      "at": 1792169342427,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "CONNECTIVITY",
+      "value": "RECONNECTING"
+    },
+    {
+      "at": 1792169342427,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "AUTH_CHECK"
+    },
+    {
+      "at": 1792169342822,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "CONNECTIVITY",
+      "value": "RECONNECTING"
+    },
+    {
+      "at": 1792169342822,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "AUTH_OK"
+    },
+    {
+      "at": 1792169347830,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "AUTH_CHECK"
+    },
+    {
+      "at": 1792169347912,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "CONNECTIVITY",
+      "value": "ONLINE"
+    },
+    {
+      "at": 1792169347912,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "AUTH_OK"
+    },
+    {
+      "at": 1792169348305,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "SNAPSHOT_UNCHANGED",
+      "value": 5
+    },
+    {
+      "at": 1792169348754,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "REPLAY_START",
+      "value": 1
+    },
+    {
+      "at": 1792169349308,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "SNAPSHOT_READ",
+      "value": 6
+    },
+    {
+      "at": 1792169349668,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "REPLAY_END"
+    },
+    {
+      "at": 1792169350002,
+      "correlationId": "8994eeca-e765-4230-9253-a428e87cbc76",
+      "kind": "SNAPSHOT_UNCHANGED",
+      "value": 6
+    }
+  ]
+}
