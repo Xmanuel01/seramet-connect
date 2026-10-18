@@ -1,0 +1,32 @@
+        Disposable Test Restaurant
+
+            Disposable branch
++----------------------------------------+
+|             KITCHEN ORDER              |
++----------------------------------------+
+| KOT #ACCEPTANCE                        |
+| ORDER #ACCEPTANCE                      |
+| STATION: MAIN KITCHEN                  |
++----------------------------------------+
+| ORDER DETAILS                          |
++----------------------------------------+
+| Date: Oct 15, 2026 13:00               |
+| Mode: Takeaway                         |
+| Server: Disposable operator            |
+| Requested by: Disposable operator      |
++----------------------------------------+
++---+------------------------------------+
+|QTY|ITEM                                |
++---+------------------------------------+
+|  2|LONG NAMED KITCHEN MEAL WITH        |
+|   |DISTINGUISHING EXTRA DETAILS        |
+|   - NO ONION                           |
+|   Note: SEPARATE SAUCE                 |
++---+------------------------------------+
++----------------------------------------+
+| SPECIAL REQUEST                        |
++----------------------------------------+
+| No salt. Allergy test only.            |
++----------------------------------------+
+                NEW ORDER
+

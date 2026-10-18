@@ -1,0 +1,2 @@
+# Preserve captured printer text and intentional trailing paper-feed lines.
+*.txt -text whitespace=-blank-at-eof

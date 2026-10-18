@@ -10,6 +10,7 @@ import { permissions } from "@/platform/permissions";
 import {
   printerConfigurationSchema,
   printerTarget,
+  printerRenderingProfile,
   type PrinterConfiguration,
 } from "@/printing/printer-configuration";
 import type { TransactionRepository } from "@/lib/seramet-repository";
@@ -18,6 +19,7 @@ import { billingRecordToPrintOrder, receiptRecordToPrintOrder } from "@/lib/prin
 import type { D1Database } from "@/server/database/d1";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { buildThermalLayout, validateRenderJob } from "../../printing-core/thermal-layout.mjs";
 
 const authorizationSchema = z
   .object({
@@ -37,6 +39,7 @@ const authorizationSchema = z
     reprintReason: z.string().trim().min(12).max(240).optional(),
     reprintId: z.string().uuid().optional(),
     testKind: z.enum(["BILL", "RECEIPT", "FOOD_KOT"]).optional(),
+    testRenderingMode: z.enum(["TEXT_ESC_POS", "RASTER_ESC_POS"]).optional(),
   })
   .strict();
 
@@ -179,7 +182,7 @@ async function digest(value: unknown) {
 }
 const deliverySchema = z
   .object({
-    v: z.literal(1),
+    v: z.union([z.literal(1), z.literal(2)]),
     id: z.string().min(1).max(300),
     tenantId: z.string().min(1),
     branchId: z.string().min(1),
@@ -475,12 +478,21 @@ export async function handlePrintingApi(
     if (printer.fallbackPrinterId) {
       const fallback = await db
         .prepare(
-          "SELECT id FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+          "SELECT id,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
         )
         .bind(actor.tenantId, actor.branchId, printer.fallbackPrinterId)
-        .first();
+        .first<{ id: string; payload_json: string }>();
       if (!fallback || printer.fallbackPrinterId === id)
         throw new SerametHttpError(400, "Invalid branch fallback printer");
+      const fallbackConfig = printerConfigurationSchema.safeParse(
+        JSON.parse(fallback.payload_json).printing,
+      );
+      if (
+        fallbackConfig.success &&
+        [printer.renderingMode, fallbackConfig.data.renderingMode].includes("RASTER_ESC_POS") &&
+        printer.paperWidth !== fallbackConfig.data.paperWidth
+      )
+        throw new SerametHttpError(400, "Raster fallback requires the same paper profile");
     }
     const stations =
       (
@@ -616,7 +628,7 @@ export async function handlePrintingApi(
       terminalId: actor.deviceId ?? "authorized-terminal",
       kitchenObligationId: obligation.id,
       orderType: order.channel,
-      requestedBy: order.cashier,
+      requestedBy: obligation.kind === "REPRINT" ? actor.name : order.cashier,
       cashier: order.cashier,
       waiter: order.waiter ?? order.cashier,
       createdAt: obligation.createdAt,
@@ -650,7 +662,7 @@ export async function handlePrintingApi(
     if (obligation.reviewReason) recoveryId = obligation.claimToken;
   } else if (input.documentType === "TEST") {
     manage(actor);
-    content = `SERAMET\n*** TEST ${input.testKind ?? "BILL"} ***\n1 x Printer diagnostic\n  Modifier: no salt\nTOTAL KES 0.00\nNOT A SALE`;
+    content = `SERAMET\n*** TEST ${input.testKind ?? "BILL"} ***\n+---+--------------------------+\n|QTY|ITEM                      |\n+---+--------------------------+\n|  1|Printer diagnostic        |\n+---+--------------------------+\nTOTAL KES 0.00\nNOT A SALE`;
     id = `TEST:${actor.id}:${input.recordId}:${input.copyIndex}`;
   } else {
     requirePermission(actor, permissions.invoicesManage);
@@ -706,13 +718,37 @@ export async function handlePrintingApi(
         });
       }
       await auditStatement(db, actor, id, "PRINT_REPRINT_AUTHORIZED", input.reprintReason).run();
-      content = `*** DUPLICATE COPY ***\n${content}`;
+      content = SerametPrintService.formatDuplicateCopy(content, printer.paperWidth);
     }
   }
   if (!env.SERAMET_PRINT_SIGNING_KEY || env.SERAMET_PRINT_SIGNING_KEY.length < 32)
     throw new SerametHttpError(503, "Protected print signing is not configured");
+  if (input.testRenderingMode && input.documentType !== "TEST")
+    throw new SerametHttpError(400, "Rendering overrides are diagnostic-only");
+  const profile = printerRenderingProfile(
+    printer,
+    input.testRenderingMode ?? printer.renderingMode,
+  );
+  const fallbackProfile = fallback ? printerRenderingProfile(fallback) : undefined;
+  const hasRaster = [profile, fallbackProfile].some((p) => p?.renderingMode === "RASTER_ESC_POS");
+  if (hasRaster && fallback && fallback.paperWidth !== printer.paperWidth)
+    throw new SerametHttpError(400, "Raster fallback requires the same paper profile");
+  let document: ReturnType<typeof buildThermalLayout> | undefined;
+  try {
+    document = hasRaster ? buildThermalLayout(content, printer.paperWidth) : undefined;
+    validateRenderJob({
+      v: hasRaster ? 2 : 1,
+      content,
+      document,
+      target: printerTarget(printer),
+      profile,
+      ...(fallback ? { fallbackTarget: printerTarget(fallback), fallbackProfile } : {}),
+    });
+  } catch {
+    throw new SerametHttpError(400, "Unsupported or oversized document rendering profile");
+  }
   const delivery = await authorizeDelivery(db, actor, {
-    v: 1,
+    v: hasRaster ? 2 : 1,
     id,
     bridgeId: printer.bridgeId,
     tenantId: actor.tenantId,
@@ -724,26 +760,17 @@ export async function handlePrintingApi(
     reprintId: input.reprintId ?? null,
     documentType: input.documentType,
     content,
+    ...(document ? { document } : {}),
     target: printerTarget(printer),
     printerConfigurationHash: await digest(printer),
     ...(fallback
       ? {
           fallbackTarget: printerTarget(fallback),
           fallbackConfigurationHash: await digest(fallback),
-          fallbackProfile: {
-            paperWidth: fallback.paperWidth,
-            encoding: fallback.encoding,
-            cutter: fallback.cutter,
-            emphasis: fallback.emphasis,
-          },
+          fallbackProfile,
         }
       : {}),
-    profile: {
-      paperWidth: printer.paperWidth,
-      encoding: printer.encoding,
-      cutter: printer.cutter,
-      emphasis: printer.emphasis,
-    },
+    profile,
     expiresAt: Date.now() + 90000,
     localTest:
       resolveRuntimeConfiguration(env).environment === "development" &&

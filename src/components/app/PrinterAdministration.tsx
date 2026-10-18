@@ -171,6 +171,7 @@ export function PrinterAdministration() {
   const testPrinter = async (
     printer: SavedPrinter,
     documentType: "BILL" | "RECEIPT" | "FOOD_KOT",
+    renderingMode?: "TEXT_ESC_POS" | "RASTER_ESC_POS",
   ) => {
     setBusy(true);
     try {
@@ -190,6 +191,7 @@ export function PrinterAdministration() {
         retryCount: 0,
         template: printer.paperWidth,
         content: "Server-generated diagnostic",
+        ...(renderingMode ? { diagnosticRenderingMode: renderingMode } : {}),
         duplicateKey: crypto.randomUUID(),
       };
       const result = await SerametLocalPrintBridge.submitToInstalledBridge(
@@ -320,6 +322,22 @@ export function PrinterAdministration() {
                               Test {kind === "FOOD_KOT" ? "KOT" : kind.toLowerCase()}
                             </Btn>
                           ))}
+                          <Btn
+                            disabled={busy || !printer.enabled}
+                            onClick={() => void testPrinter(printer, "BILL", "TEXT_ESC_POS")}
+                          >
+                            <Printer className="h-4 w-4" />
+                            Test text
+                          </Btn>
+                          {printer.transport === "TCP" && printer.raster && (
+                            <Btn
+                              disabled={busy || !printer.enabled}
+                              onClick={() => void testPrinter(printer, "BILL", "RASTER_ESC_POS")}
+                            >
+                              <Printer className="h-4 w-4" />
+                              Test raster
+                            </Btn>
+                          )}
                         </>
                       )}
                     </div>
@@ -435,6 +453,92 @@ export function PrinterAdministration() {
                 <option value="NO_DEDICATED_KITCHEN_SYSTEM">Assigned front printer</option>
               </select>
             </label>
+            <label>
+              Rendering mode
+              <select
+                className={inputClass}
+                value={draft.renderingMode ?? "TEXT_ESC_POS"}
+                onChange={(event) => {
+                  const renderingMode = event.target.value as "TEXT_ESC_POS" | "RASTER_ESC_POS";
+                  setDraft({
+                    ...draft,
+                    renderingMode,
+                    ...(renderingMode === "RASTER_ESC_POS" && !draft.raster
+                      ? {
+                          emphasis: true,
+                          raster: {
+                            command: "GS_V_0",
+                            printableWidthDots: draft.paperWidth === "58mm" ? 384 : 576,
+                            dpi: 203,
+                            maxBandHeight: 128,
+                            maxHeightDots: 8192,
+                            maxBytes: 524288,
+                          },
+                        }
+                      : {}),
+                  });
+                }}
+              >
+                <option value="TEXT_ESC_POS">Text ESC/POS</option>
+                <option value="RASTER_ESC_POS" disabled={draft.transport !== "TCP"}>
+                  Raster ESC/POS (RAW TCP)
+                </option>
+              </select>
+            </label>
+            {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
+              <details className="sm:col-span-2">
+                <summary>Raster capabilities</summary>
+                <div className="grid gap-3 py-3 sm:grid-cols-2">
+                  <label>
+                    Raster command
+                    <input readOnly className={inputClass} value="GS v 0" />
+                  </label>
+                  <label>
+                    Resolution (DPI)
+                    <select
+                      className={inputClass}
+                      value={draft.raster.dpi}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          raster: { ...draft.raster!, dpi: Number(e.target.value) as 203 | 300 },
+                        })
+                      }
+                    >
+                      <option value={203}>203</option>
+                      <option value={300}>300</option>
+                    </select>
+                  </label>
+                  {(
+                    [
+                      ["printableWidthDots", "Printable width (dots)", 256, 832, 8],
+                      ["maxBandHeight", "Maximum band height (dots)", 16, 256, 1],
+                      ["maxHeightDots", "Maximum document height (dots)", 256, 32768, 1],
+                      ["maxBytes", "Maximum encoded bytes", 4096, 1048576, 1],
+                    ] as const
+                  ).map(([key, label, min, max, step]) => (
+                    <label key={key}>
+                      {label}
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={min}
+                        max={max}
+                        step={step}
+                        required
+                        value={draft.raster![key]}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            raster: { ...draft.raster!, [key]: Number(e.target.value) },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
+            )}
             <label>
               Cutter
               <select

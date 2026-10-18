@@ -144,6 +144,12 @@ ledger as if it establishes non-delivery. Preserve uncertainty after disk loss.
 
 ## Local Acceptance
 
+Native solid-border RAW TCP rendering is opt-in and requires bridge 3.0.0 plus
+explicit supported capabilities. See [Native Raster ESC/POS](../docs/RASTER_ESC_POS.md)
+for signed-envelope compatibility, bounds, test evidence and safe fallback rules.
+Distribute the sibling `printing-core` folder with the bridge; keep existing
+enrollment and ledgers. Windows spooler output remains text-only.
+
 ```powershell
 node --test local-print-bridge/printing.test.mjs
 node scripts/run-pilot-e2e.mjs tests/e2e/printing-admin.spec.ts

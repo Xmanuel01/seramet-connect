@@ -92,6 +92,58 @@ const configuration = () =>
     roles: ["BILL", "RECEIPT"],
   });
 
+it("binds explicit raster capabilities and canonical layout; text diagnostics cannot alter an existing identity", async () => {
+  const raster = {
+    command: "GS_V_0",
+    printableWidthDots: 576,
+    dpi: 203,
+    maxBandHeight: 128,
+    maxHeightDots: 8192,
+    maxBytes: 524288,
+  };
+  const config = { ...configuration(), renderingMode: "RASTER_ESC_POS", raster };
+  const printer = (
+    await (await handlePrintingApi(request("printers", config), env(), repository))!.json()
+  ).printer;
+  const input = { printerId: printer.id, documentType: "TEST", recordId: crypto.randomUUID() };
+  const issue = async (data: unknown) =>
+    await (await handlePrintingApi(request("authorize", data), env(), repository))!.json();
+  const first = await issue(input);
+  const decoded = JSON.parse(Buffer.from(first.authorization.payload, "base64url").toString());
+  expect(decoded.profile.renderingMode).toBe("RASTER_ESC_POS");
+  expect(decoded.v).toBe(2);
+  expect(decoded.profile.raster).toEqual(raster);
+  expect(decoded.document.version).toBe(1);
+  expect(decoded.document.rows.some((r: { kind: string }) => r.kind === "table")).toBe(true);
+  await expect(issue({ ...input, testRenderingMode: "TEXT_ESC_POS" })).rejects.toMatchObject({
+    status: 409,
+  });
+  const text = await issue({
+    ...input,
+    recordId: crypto.randomUUID(),
+    testRenderingMode: "TEXT_ESC_POS",
+  });
+  const textJob = JSON.parse(Buffer.from(text.authorization.payload, "base64url").toString());
+  expect(textJob.profile.renderingMode).toBe("TEXT_ESC_POS");
+  expect(textJob.v).toBe(1);
+  expect(textJob.document).toBeUndefined();
+  const changed = await signPrintJob(
+    { ...decoded, profile: { ...decoded.profile, raster: { ...raster, printableWidthDots: 640 } } },
+    await deriveBridgeSigningKey(signingKey, actor.tenantId, branchId, printer.bridgeId),
+  );
+  await expect(
+    handlePrintingApi(request("consume", { authorization: changed }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  expect(
+    printerConfigurationSchema.safeParse({ ...config, transport: "WINDOWS", osPrinterName: "test" })
+      .success,
+  ).toBe(false);
+  expect(
+    printerConfigurationSchema.safeParse({ ...config, raster: { ...raster, command: "UNKNOWN" } })
+      .success,
+  ).toBe(false);
+});
+
 it("consumes one global attempt across terminals, old evidence, ledger loss and bounded recovery", async () => {
   const printer = (
     await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
@@ -601,7 +653,7 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     JSON.parse(Buffer.from(result.authorization.payload, "base64url").toString("utf8"));
   expect(decode(first).content).toBe(decode(second).content);
   expect(decode(first).id).toBe(`${obligationId}:0`);
-  expect(decode(first).content).toContain("2 x PERSISTED MEAL");
+  expect(decode(first).content).toMatch(/\|\s*2\|PERSISTED MEAL/);
   expect(decode(first).content).toContain("NO SALT");
   await handlePrintingApi(
     request("consume", { authorization: first.authorization }),
@@ -645,4 +697,24 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     env(),
     repository,
   );
+  const reprintId = crypto.randomUUID();
+  const reprintClaim = crypto.randomUUID();
+  actor.name = "Reviewing manager";
+  state.kitchenPrintObligations!.push({
+    ...state.kitchenPrintObligations![0]!,
+    id: reprintId,
+    sourceId: crypto.randomUUID(),
+    kind: "REPRINT",
+    claimToken: reprintClaim,
+  });
+  await repository.saveState(state, actor, "Disposable authorized KOT reprint");
+  const reprint = await (await handlePrintingApi(
+    request("authorize", { ...input, recordId: reprintId, claimToken: reprintClaim }),
+    env(),
+    repository,
+  ))!.json();
+  const text = decode(reprint).content.replace(/\s+/g, " ");
+  expect(text).toContain("REPRINT");
+  expect(text).toContain("Reprinted by: Reviewing manager");
+  expect(text).not.toContain(`Reprinted by: ${state.orders[0]!.cashier}`);
 });

@@ -1,0 +1,41 @@
+        Disposable Test Restaurant
+            Disposable branch
+            Test-only address
+             Tel: 0000000000
+         contact@example.invalid
+            PIN: TEST-PIN-ONLY
+------------------------------------------
+               TAX INVOICE
+Invoice: INV-TEST-ONLY
+Order  : #ACCEPTANCE
+Date   : Oct 15, 2026 13:00
+Type   : Takeaway
+Cashier: Disposable operator
++---+-----------------------+------------+
+|QTY|ITEM                   |AMOUNT      |
++---+-----------------------+------------+
+|  2|Long named kitchen meal|  KES 246.90|
+|   |with distinguishing    |            |
+|   |extra details          |            |
+|   Unit: KES 123.45                     |
+|   - No onion                           |
+|   Note: Separate sauce                 |
++---+-----------------------+------------+
++-------------------------+--------------+
+|SUBTOTAL                 |    KES 246.90|
+|TAX                      |     KES 32.00|
+|SERVICE                  |     KES 10.00|
+|DISCOUNT                 |      KES 5.00|
++-------------------------+--------------+
+|TOTAL                    |    KES 283.90|
++=========================+==============+
++----------------------------------------+
+| Paid: KES 283.90                       |
+| CASH KES 283.90                        |
++----------------------------------------+
+| PAYMENT OPTIONS                        |
+| Diagnostic only - no payment           |
+| destination                            |
++----------------------------------------+
+------------------------------------------
+       Thank you for your business!

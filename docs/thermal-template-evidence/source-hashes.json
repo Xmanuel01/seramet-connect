@@ -1,0 +1,17 @@
+{
+  "baseCommit": "f5c0d8c4cfcd627ab92be0ada7cc9b5d2cc1fe38",
+  "provenance": "Final local working tree; not a claim that the redesign exists in baseCommit",
+  "sha256": {
+    "src/lib/seramet-print-service.ts": "e9cf07942d137094e833ecd36b884f2118b8c60956411ffa2657875a3208621b",
+    "src/server/printing-api.ts": "5522cac9964537215a244125f4c9087bfa3ef0615c79e64526da447914c0ac0c",
+    "local-print-bridge/escpos-encoder.mjs": "56eab2ff42cfc2c55d6a6c9481e9a4d1e4e024c3cff09b088ca4b3371734f18c",
+    "local-print-bridge/printing.test.mjs": "6ad532ea194fd5132a1b20ec4f22da7a615feb5ee283203560c293dc17a5fd3a",
+    "src/lib/thermal-print-layout.test.ts": "010664e0eaa1a7e010b81ed478c5b5bead36bbc59d9776291f673a292addcd39",
+    "src/server/printing-api.test.ts": "7ed23cd5ef8b2ce68dff058831ac241dec7e688d645cd4c7bc2cd0b74bfbf740",
+    "src/lib/seramet-flows.test.ts": "210ce510797306795d0185cfa5f56d114d1bc368cafa7273d549d2cc140191fd",
+    "scripts/printing-acceptance-fixtures.ts": "cce2b68a9815f6b5986cf106d2e90991e8d0bd4e43825c81ea50bd3a8c82a6e7",
+    "scripts/verify-print-emulator.mjs": "183d7fde31ffa28d23d64fceff3561d9f7bd9d9c4e4e45f95bb197b203634ced",
+    "tests/e2e/printing-operational.spec.ts": "759dd147f8c62d804d8e2312720d4a28183af85a70c7cbdd4cb083214a0df23b",
+    "src/platform/platform-foundation.test.ts": "47311fa6cb9d406dbe28528eb3dc61c67cbe3bb094167c0ee5c1f09433b0830d"
+  }
+}
