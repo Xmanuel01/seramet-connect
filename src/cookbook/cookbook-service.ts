@@ -101,9 +101,23 @@ export class CookbookService {
         this.ingredients(recipeVersionId),
         this.previousPublished(recipeId, recipeVersionId),
       ]);
+      if (
+        !published &&
+        !this.actor.permissions.includes(permissions.cookbookManage) &&
+        !this.actor.permissions.includes(permissions.cookbookPublish)
+      )
+        continue;
       rows.push({
         ...recipe,
-        latestContent: latest ? serializeContent(latest) : null,
+        latestContent:
+          this.actor.permissions.includes(permissions.cookbookManage) ||
+          this.actor.permissions.includes(permissions.cookbookPublish)
+            ? latest
+              ? serializeContent(latest)
+              : null
+            : published
+              ? serializeContent(published)
+              : null,
         publishedContent: published ? serializeContent(published) : null,
         ingredients,
         previousPublishedContent: priorPublished ? serializeContent(priorPublished) : null,
@@ -125,7 +139,12 @@ export class CookbookService {
     const rows = await this.db
       .prepare(
         "SELECT * FROM cookbook_recipe_content_versions" +
-          " WHERE tenant_id=? AND recipe_version_id=? ORDER BY revision DESC",
+          " WHERE tenant_id=? AND recipe_version_id=?" +
+          (this.actor.permissions.includes(permissions.cookbookManage) ||
+          this.actor.permissions.includes(permissions.cookbookPublish)
+            ? ""
+            : " AND status='PUBLISHED'") +
+          " ORDER BY revision DESC",
       )
       .bind(this.actor.tenantId, recipeVersionId)
       .all<ContentRow>();

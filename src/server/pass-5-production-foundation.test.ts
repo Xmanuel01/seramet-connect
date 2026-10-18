@@ -1121,8 +1121,8 @@ async function seedTenant(
     .run();
   await db
     .prepare(
-      `INSERT INTO hardware_devices (tenant_id,id,branch_id,device_type,name,trust_status,registered_at,payload_json)
-     VALUES (?,?,?,'POS_TERMINAL',?,'ACTIVE',?,'{}')`,
+      `INSERT INTO hardware_devices (tenant_id,id,branch_id,device_type,name,trust_status,lifecycle_state,registered_at,payload_json)
+     VALUES (?,?,?,'POS_TERMINAL',?,'ACTIVE','ACTIVE',?,'{}')`,
     )
     .bind(tenantId, tenantId === tenantA ? deviceA : `device-${tenantId}`, branchId, "POS", stamp)
     .run();

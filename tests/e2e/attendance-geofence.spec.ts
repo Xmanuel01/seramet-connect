@@ -127,7 +127,11 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   const rejected = page.waitForResponse((response) => response.url().endsWith("/attendance/punch"));
   await page.getByRole("button", { name: "Clock in" }).click();
   expect((await rejected).status()).toBe(422);
-  await expect(page.getByRole("status").filter({ hasText: "OUTSIDE_GEOFENCE" })).toBeVisible();
+  const deniedDialog = page.getByRole("dialog", { name: "Attendance not confirmed" });
+  await expect(deniedDialog).toContainText("within 10 metres");
+  await deniedDialog.getByRole("button", { name: "Report a delay", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Report a delay" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await context.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await page.getByRole("button", { name: "Clock in" }).click();
   await expect(
@@ -164,6 +168,9 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
     { times: 1 },
   );
   await page.getByRole("button", { name: "Clock in", exact: true }).click();
+  const uncertainDialog = page.getByRole("dialog", { name: "Attendance not confirmed" });
+  await expect(uncertainDialog).toContainText("Attendance is not confirmed");
+  await uncertainDialog.getByRole("button", { name: "Back to attendance", exact: true }).click();
   await expect(page.getByRole("button", { name: "Check / retry request" })).toBeEnabled();
   await page.reload();
   await page.getByRole("button", { name: "Check / retry request" }).click();

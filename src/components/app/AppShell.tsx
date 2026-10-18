@@ -1,5 +1,6 @@
 import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
+import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -233,7 +234,8 @@ export function AppShell({
   const visibleNotifications = notifications.filter(
     (item) => !mutedCategories.includes(item.category),
   );
-  const unreadCount = visibleNotifications.filter((item) => !item.read).length;
+  const delayFeed = useAttendanceDelays();
+  const unreadCount = visibleNotifications.filter((item) => !item.read).length + delayFeed.unread;
   const availableQuickCreate = useMemo(
     () =>
       quickCreateOptions.filter(
@@ -896,18 +898,27 @@ export function AppShell({
               <DropdownMenuContent align="end" className="w-[320px]">
                 <div className="flex items-center justify-between px-2 py-1.5">
                   <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
-                  <button
-                    onClick={() =>
-                      setNotifications((current) =>
-                        current.map((item) => ({ ...item, read: true })),
-                      )
-                    }
-                    className="text-[11px] font-semibold text-primary hover:underline"
-                  >
-                    Mark all read
-                  </button>
+                  {visibleNotifications.length > 0 && (
+                    <button
+                      onClick={() =>
+                        setNotifications((current) =>
+                          current.map((item) => ({ ...item, read: true })),
+                        )
+                      }
+                      className="text-[11px] font-semibold text-primary hover:underline"
+                    >
+                      Mark general alerts read
+                    </button>
+                  )}
                 </div>
                 <DropdownMenuSeparator />
+                {delayFeed.canManage && delayFeed.unread > 0 && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/attendance">
+                      {delayFeed.unread} unread arrival request(s) · Review
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 {visibleNotifications.map((item) => {
                   const Icon = item.icon;
                   return (
@@ -956,7 +967,7 @@ export function AppShell({
                     </DropdownMenuItem>
                   );
                 })}
-                {visibleNotifications.length === 0 && (
+                {visibleNotifications.length === 0 && delayFeed.unread === 0 && (
                   <DropdownMenuItem disabled>No active notifications</DropdownMenuItem>
                 )}
                 {mutedCategories.length > 0 && (

@@ -6,6 +6,8 @@ import { CrmLeadService } from "@/crm/crm-lead-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import { PostgresD1Database } from "@/server/database/postgres-database";
+import { handleAttendanceDelays } from "@/server/attendance-delay-api";
+import { staffStationAccess } from "@/server/staff-station-access";
 
 const url = process.env.SERAMET_POSTGRES_URL;
 const target = url ? new URL(url) : null;
@@ -68,8 +70,142 @@ try {
   assert.deepEqual(campaignRows, []);
   console.log("Authoritative CRM pipeline read/write and scoped campaign SQL on PostgreSQL: PASS");
   await verifyAttendanceTransactions(seeded.tenant_id, seeded.id);
+  await verifyStaffPilotTransactions(seeded.tenant_id, seeded.id);
 } finally {
   await db.close();
+}
+
+async function verifyStaffPilotTransactions(tenantId: string, branchId: string) {
+  const second = PostgresD1Database.fromHyperdrive({ connectionString: url! });
+  const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+  const stamp = new Date().toISOString();
+  try {
+    for (const id of ids) {
+      await db
+        .prepare("INSERT INTO users(tenant_id,id,name,created_at,updated_at) VALUES(?,?,?,?,?)")
+        .bind(tenantId, id, "Disposable staff certification", stamp, stamp)
+        .run();
+      await db
+        .prepare("INSERT INTO user_branches(tenant_id,user_id,branch_id) VALUES(?,?,?)")
+        .bind(tenantId, id, branchId)
+        .run();
+    }
+    const actor = (id: string): ServerActor => ({
+      id,
+      name: "Disposable",
+      tenantId,
+      branchId,
+      branch: "CI",
+      authLevel: "FULL",
+      role: "CI staff",
+      roleIds: [],
+      permissions: [
+        permissions.attendanceUse,
+        permissions.staffManage,
+        permissions.usersManage,
+        permissions.employeeCredentialsManage,
+      ],
+      assignedBranches: [{ id: branchId, name: "CI" }],
+      assignedBranchIds: [branchId],
+      branchScope: { type: "BRANCH", branchId },
+    });
+    const invoke = (
+      database: PostgresD1Database,
+      who: string,
+      path: string,
+      body: unknown,
+      manage = false,
+    ) =>
+      handleAttendanceDelays(
+        new Request("http://127.0.0.1/api/seramet/attendance/delays" + path, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        actor(who),
+        database,
+        async (selected) => {
+          assert.equal(selected, branchId);
+          return {
+            actor: actor(who),
+            db: database,
+            branch: { id: branchId, timezone: "Africa/Nairobi", business_day_cutoff_minutes: 240 },
+          };
+        },
+        manage,
+      );
+    const request = {
+      branchId,
+      idempotencyKey: crypto.randomUUID(),
+      expectedArrivalAt: new Date(Date.now() + 1800000).toISOString(),
+      reason: "Disposable transport delay",
+    };
+    const submissions = await Promise.all([
+      invoke(db, ids[0]!, "", request),
+      invoke(second, ids[0]!, "", request),
+    ]);
+    const body = (await submissions[0]!.json()) as { id: string };
+    const count = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM attendance_delay_requests WHERE tenant_id=? AND user_id=?",
+      )
+      .bind(tenantId, ids[0])
+      .first<{ count: string }>();
+    assert.equal(Number(count?.count), 1);
+    const decision = (status: string) => ({
+      branchId,
+      idempotencyKey: crypto.randomUUID(),
+      expectedVersion: 1,
+      status,
+      note: "Disposable supervisor decision",
+    });
+    const results = await Promise.allSettled([
+      invoke(db, ids[1]!, `/${body.id}/decision`, decision("APPROVED"), true),
+      invoke(second, ids[2]!, `/${body.id}/decision`, decision("REJECTED"), true),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    const history = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM attendance_delay_events WHERE tenant_id=? AND request_id=?",
+      )
+      .bind(tenantId, body.id)
+      .first<{ count: string }>();
+    assert.equal(Number(history?.count), 2);
+    const station = crypto.randomUUID();
+    await db
+      .prepare(
+        "INSERT INTO stations(tenant_id,id,branch_id,code,name,station_type,active,payload_json) VALUES(?,?,?,?,?,'KITCHEN',1,'{}')",
+      )
+      .bind(tenantId, station, branchId, station, "Disposable station")
+      .run();
+    const stationRequest = () =>
+      new Request("http://127.0.0.1/api", {
+        method: "PUT",
+        body: JSON.stringify({ branchId, stationIds: [station], expectedVersion: 0 }),
+      });
+    const assignments = await Promise.allSettled([
+      staffStationAccess(stationRequest(), { SERAMET_DB: db }, actor(ids[1]!), ids[0]!),
+      staffStationAccess(stationRequest(), { SERAMET_DB: second }, actor(ids[2]!), ids[0]!),
+    ]);
+    assert.equal(assignments.filter((r) => r.status === "fulfilled").length, 1);
+    const audit = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM staff_access_events WHERE tenant_id=? AND entity_type='STATION_ACCESS'",
+      )
+      .bind(tenantId)
+      .first<{ count: string }>();
+    assert.equal(Number(audit?.count), 1);
+    const rls = await db
+      .prepare(
+        "SELECT COUNT(*) count FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN ('attendance_delay_requests','attendance_delay_events','attendance_delay_reads','employee_account_invitations','employee_station_access','staff_access_events') AND relrowsecurity=true",
+      )
+      .first<{ count: string }>();
+    assert.equal(Number(rls?.count), 6);
+    console.log(
+      "PostgreSQL staff pilot: duplicate delay submission, one decision winner, station CAS/audit and six-table RLS: PASS",
+    );
+  } finally {
+    await second.close();
+  }
 }
 
 async function verifyAttendanceTransactions(tenantId: string, branchId: string) {

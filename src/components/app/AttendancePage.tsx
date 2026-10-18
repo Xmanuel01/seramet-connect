@@ -6,6 +6,14 @@ import { useAppContext } from "@/lib/app-context";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
 import { AttendanceHistory } from "@/components/app/AttendanceHistory";
+import { AttendanceDelays } from "@/components/app/AttendanceDelays";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import {
   readAttendanceDraft,
   writeAttendanceDraft,
@@ -150,6 +158,8 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [message, setMessage] = useState("");
+  const [punchError, setPunchError] = useState("");
+  const [delayOpen, setDelayOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [selected, setSelected] = useState("");
   const [selectedSession, setSelectedSession] = useState("");
@@ -244,6 +254,8 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
     setBusy(false);
     setMessage("");
     setReason("");
+    setPunchError("");
+    setDelayOpen(false);
     setOccurredAt("");
     setSchedule("");
     setScheduledEnd("");
@@ -295,7 +307,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
     }, 30000);
     return () => window.clearInterval(timer);
   }, [refresh]);
-  const run = async (work: () => Promise<void>) => {
+  const run = async (work: () => Promise<void>, punch = false) => {
     if (operation.current || activeScope.current !== scope) return;
     const generation = scopeGeneration.current;
     operation.current = true;
@@ -312,8 +324,11 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         setHistoryRevision((revision) => revision + 1);
       }
     } catch (error) {
-      if (activeScope.current === scope && generation === scopeGeneration.current)
-        setMessage(error instanceof Error ? error.message : "Request could not be completed");
+      if (activeScope.current === scope && generation === scopeGeneration.current) {
+        const failure = error instanceof Error ? error.message : "Request could not be completed";
+        setMessage(punch ? "" : failure);
+        if (punch) setPunchError(failure);
+      }
     } finally {
       if (activeScope.current === scope && generation === scopeGeneration.current) {
         operation.current = false;
@@ -385,7 +400,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       setMessage(
         action === "IN" ? "Clock-in recorded by the server." : "Clock-out recorded by the server.",
       );
-    });
+    }, true);
   const managePunch = () =>
     void run(async () => {
       if (supervisorRequest.current) {
@@ -603,6 +618,34 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           </Btn>
         </div>
       </Panel>
+      {!scheduling && <AttendanceDelays open={delayOpen} setOpen={setDelayOpen} />}
+      <Dialog
+        open={!!punchError}
+        onOpenChange={(open) => {
+          if (!open) setPunchError("");
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Attendance not confirmed</DialogTitle>
+            <DialogDescription>{punchError}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2">
+            <Btn onClick={() => setPunchError("")}>Back to attendance</Btn>
+            {!scheduling && !unknown && (
+              <Btn
+                variant="primary"
+                onClick={() => {
+                  setPunchError("");
+                  setDelayOpen(true);
+                }}
+              >
+                Report a delay
+              </Btn>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       {data?.canManage && (
         <>
           <Panel className="mt-4">

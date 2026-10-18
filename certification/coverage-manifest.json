@@ -170,6 +170,9 @@
     "src/routes/login.tsx": {
       "directBrowser": "LOCAL_FIXTURE"
     },
+    "src/routes/staff-login.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
     "src/routes/loyalty.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },
@@ -439,6 +442,10 @@
       "servicePostgres": "NOT_VERIFIED"
     },
     "src/server/attendance-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/attendance-delay-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
     }

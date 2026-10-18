@@ -78,6 +78,8 @@ export async function handleOperationsApi(
         sessionId: actor.sessionId,
         deviceId: actor.deviceId,
         authLevel: actor.authLevel,
+        salesTerminal: actor.salesTerminal,
+        kitchenStationIds: actor.kitchenStationIds,
         moduleAccess,
       },
     });

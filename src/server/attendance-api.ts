@@ -15,6 +15,7 @@ import { requireFullAuthentication } from "@/server/pos-auth-service";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { attendanceRecords, attendanceCsv } from "@/server/attendance-reporting";
 import { attendanceTiming } from "@/lib/attendance-timing";
+import { handleAttendanceDelays } from "@/server/attendance-delay-api";
 
 const key = z.string().uuid();
 const location = z
@@ -778,6 +779,19 @@ export async function handleAttendanceApi(
       limit: 40,
       windowSeconds: 60,
     });
+  if (url.pathname.startsWith("/api/seramet/attendance/delays")) {
+    return handleAttendanceDelays(
+      request,
+      actor,
+      db,
+      async (branchId, managed) => {
+        const ctx = await context(actor, db, branchId, managed);
+        await ensureEmployee(db, actor, actor.id, branchId);
+        return ctx;
+      },
+      manager(actor),
+    );
+  }
   if (
     request.method === "GET" &&
     ["/api/seramet/attendance/records", "/api/seramet/attendance/export"].includes(url.pathname)
@@ -871,7 +885,15 @@ export async function handleAttendanceApi(
       maximumAccuracyMeters: fence.max_accuracy_m,
       maximumFixAgeSeconds: fence.max_fix_age_seconds,
     });
-    if (!decision.allowed) deny(422, "Location verification failed: " + decision.reason);
+    if (!decision.allowed) {
+      const message =
+        decision.reason === "OUTSIDE_GEOFENCE"
+          ? `Unable to check in or out. You must be within ${fence.radius_m} metres of your workplace. Move closer and try again, or contact your supervisor.`
+          : decision.reason === "LOW_ACCURACY"
+            ? "Your location is not accurate enough to verify attendance. Enable precise location, try outdoors, or contact your supervisor."
+            : "Your location could not be verified. Request a fresh precise location and try again, or contact your supervisor.";
+      deny(422, message);
+    }
     return noStore({
       ok: true,
       ...(await executeAttendance(

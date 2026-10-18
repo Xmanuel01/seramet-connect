@@ -12,6 +12,7 @@ import {
 } from "@/server/environment";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { PosIdentityService, readCookie as readPosCookie } from "@/server/pos-auth-service";
+import { applyStaffDevicePolicy, terminalPermissions } from "@/server/staff-device-policy";
 
 export type ServerActor = {
   id: string;
@@ -31,6 +32,8 @@ export type ServerActor = {
   tokenId?: string;
   authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
   credentialChangeRequired?: boolean;
+  salesTerminal?: boolean;
+  kitchenStationIds?: string[];
 };
 
 export type SerametEnv = ProviderRuntimeEnv &
@@ -83,7 +86,10 @@ export async function authenticateSerametRequest(
   if (token) {
     if (!env.SERAMET_DB)
       throw new SerametHttpError(503, "Authoritative identity store unavailable");
-    return authenticateBearer(token, request, env.SERAMET_DB, runtime, env);
+    return applyStaffDevicePolicy(
+      await authenticateBearer(token, request, env.SERAMET_DB, runtime, env),
+      env.SERAMET_DB,
+    );
   }
 
   const posSession = readPosCookie(request, "seramet_pos_session");
@@ -93,7 +99,7 @@ export async function authenticateSerametRequest(
     const actor = await new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
     if (actor.credentialChangeRequired)
       throw new SerametHttpError(403, "Replace the temporary PIN before using Seramet");
-    return actor;
+    return applyStaffDevicePolicy(actor, env.SERAMET_DB);
   }
 
   if (
@@ -114,6 +120,12 @@ export function authorizeSerametMutation(
   tenantIdOrBranchId?: string,
   branchIdInput?: string,
 ) {
+  if (
+    actor.salesTerminal === false &&
+    ["replaceState", "reviewKitchenPrintObligation", "requestKitchenReprint"].includes(action)
+  ) {
+    throw new SerametHttpError(403, "Use an enrolled sales terminal for this operation");
+  }
   // Legacy snapshot attendance is not a geofenced, identity-bound timekeeping source.
   // Do not let authorized staff bypass the verified attendance API with old actions.
   if (action === "clockInEmployee" || action === "clockOutEmployee") {
@@ -124,6 +136,11 @@ export function authorizeSerametMutation(
   }
   const requiredPermission = mutationPermission[action];
   if (!requiredPermission) throw new SerametHttpError(400, `Unknown transaction action: ${action}`);
+  if (actor.salesTerminal === false && terminalPermissions.has(requiredPermission))
+    throw new SerametHttpError(
+      403,
+      "Use an enrolled sales terminal for sales, invoicing or payment operations",
+    );
   if (!actor.permissions.includes(requiredPermission)) {
     throw new SerametHttpError(403, `Permission ${requiredPermission} is required`);
   }
@@ -135,6 +152,16 @@ export function authorizeSerametMutation(
   }
   if (!branchIdOrName) return;
   const branchId = resolveActorBranchId(actor, branchIdOrName);
+  if (
+    actor.salesTerminal === true &&
+    terminalPermissions.has(requiredPermission) &&
+    branchId !== actor.branchId
+  ) {
+    throw new SerametHttpError(
+      403,
+      "Sales commands must use the enrolled terminal's active branch",
+    );
+  }
   if (branchId === actor.branchId) return;
   const canSwitchBranch = actor.permissions.includes(permissions.branchSwitch);
   if (!canSwitchBranch || !actor.assignedBranchIds.includes(branchId)) {

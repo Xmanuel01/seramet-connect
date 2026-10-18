@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { createFileRoute } from "@tanstack/react-router";
 import { Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { EmployeeStationAccess } from "@/components/app/EmployeeStationAccess";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
@@ -56,8 +57,10 @@ function Employees() {
   const [assignedBranchIds, setAssignedBranchIds] = useState<string[]>([branchId]);
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
   const [showForm, setShowForm] = useState(false);
+  const [stationEmployee, setStationEmployee] = useState<EmployeeRow | null>(null);
   const [busy, setBusy] = useState(true);
   const [notice, setNotice] = useState("");
+  const invitationKeys = useRef(new Map<string, string>());
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
   const effectiveFrom = useRef(new Date().toISOString());
   const submitting = useRef(false);
@@ -117,6 +120,7 @@ function Employees() {
     setEmployees([]);
     setDraft(emptyDraft);
     setShowForm(false);
+    setStationEmployee(null);
     setNotice("");
     setAssignedBranchIds([branchId]);
     setPrimaryBranchId(branchId);
@@ -213,6 +217,46 @@ function Employees() {
   const active = employees.filter(
     (employee) => employee.active && employee.employment_status === "ACTIVE",
   );
+  async function invitation(employee: EmployeeRow, revoke = false, statusOnly = false) {
+    if (!canManage || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setNotice("");
+    const scopeAtStart = scope;
+    const key = invitationKeys.current.get(employee.id) ?? crypto.randomUUID();
+    invitationKeys.current.set(employee.id, key);
+    try {
+      const response = await fetch(
+        `/api/seramet/employees/${encodeURIComponent(employee.id)}/invitation`,
+        {
+          method: statusOnly ? "GET" : revoke ? "DELETE" : "POST",
+          headers: headers(),
+          ...(!revoke && !statusOnly ? { body: JSON.stringify({ idempotencyKey: key }) } : {}),
+          signal: AbortSignal.timeout(20000),
+        },
+      );
+      const result = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        status?: string;
+      };
+      if (!response.ok) throw Error(result.message ?? "Invitation request was not confirmed.");
+      if (activeScope.current !== scopeAtStart) return;
+      if (revoke) invitationKeys.current.delete(employee.id);
+      setNotice(
+        revoke
+          ? "Outstanding invitation revoked. An already linked account is not revoked by this action."
+          : `Invitation status: ${result.status}. Provider acceptance does not confirm inbox delivery.`,
+      );
+    } catch (error) {
+      if (activeScope.current === scopeAtStart)
+        setNotice(error instanceof Error ? error.message : "Invitation request unavailable.");
+    } finally {
+      if (activeScope.current === scopeAtStart) {
+        submitting.current = false;
+        setBusy(false);
+      }
+    }
+  }
   const locked = employees.filter(
     (employee) => employee.locked_until && Date.parse(employee.locked_until) > Date.now(),
   );
@@ -430,6 +474,7 @@ function Employees() {
               <TH>Primary branch</TH>
               <TH>Credential</TH>
               <TH>Status</TH>
+              {canManage && <TH>Phone account</TH>}
             </tr>
           </thead>
           <tbody>
@@ -461,6 +506,27 @@ function Employees() {
                 <TD>
                   <Status>{employee.employment_status}</Status>
                 </TD>
+                {canManage && (
+                  <TD>
+                    <div className="flex flex-wrap gap-2">
+                      <Btn
+                        disabled={busy || !employee.email}
+                        onClick={() => void invitation(employee)}
+                      >
+                        Invite account
+                      </Btn>
+                      <Btn disabled={busy} onClick={() => void invitation(employee, false, true)}>
+                        Invitation status
+                      </Btn>
+                      <Btn disabled={busy} onClick={() => void invitation(employee, true)}>
+                        Revoke invite
+                      </Btn>
+                      <Btn disabled={busy} onClick={() => setStationEmployee(employee)}>
+                        Preparation stations
+                      </Btn>
+                    </div>
+                  </TD>
+                )}
               </tr>
             ))}
             {!employees.length && !busy ? (
@@ -471,6 +537,13 @@ function Employees() {
           </tbody>
         </table>
       </Panel>
+      {stationEmployee && canManage && (
+        <EmployeeStationAccess
+          employeeId={stationEmployee.id}
+          name={stationEmployee.name}
+          onClose={() => setStationEmployee(null)}
+        />
+      )}
     </AppShell>
   );
 }

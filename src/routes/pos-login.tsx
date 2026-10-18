@@ -149,10 +149,7 @@ function PosLoginPage() {
           >
             Administrator sign in
           </a>
-          <a
-            href="/login?account=1&next=attendance"
-            className="mt-3 block text-sm font-semibold text-primary"
-          >
+          <a href="/staff-login" className="mt-3 block text-sm font-semibold text-primary">
             My attendance — linked account sign in
           </a>
           <button
@@ -349,10 +346,7 @@ function PosLoginPage() {
               >
                 Use administrator account
               </a>
-              <a
-                href="/login?account=1&next=attendance"
-                className="mt-3 block text-sm font-semibold text-primary"
-              >
+              <a href="/staff-login" className="mt-3 block text-sm font-semibold text-primary">
                 My attendance — linked account sign in
               </a>
             </div>

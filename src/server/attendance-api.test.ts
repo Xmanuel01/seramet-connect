@@ -340,19 +340,19 @@ describe.sequential("authoritative geofenced attendance", () => {
         ...base,
         location: { ...freshLocation(), capturedAt: new Date(Date.now() - 60000).toISOString() },
       }),
-    ).rejects.toThrow(/STALE_FIX/);
+    ).rejects.toThrow(/fresh precise location/);
     await expect(
       call("/api/seramet/attendance/punch", "POST", {
         ...base,
         location: { ...freshLocation(), accuracyMeters: 50 },
       }),
-    ).rejects.toThrow(/LOW_ACCURACY/);
+    ).rejects.toThrow(/not accurate enough/);
     await expect(
       call("/api/seramet/attendance/punch", "POST", {
         ...base,
         location: { ...freshLocation(), latitude: -1.263 },
       }),
-    ).rejects.toThrow(/OUTSIDE_GEOFENCE/);
+    ).rejects.toThrow(/within 10 metres/);
     const count = db.sqlite
       .prepare("SELECT COUNT(*) count FROM employee_attendance_sessions")
       .get() as { count: number };

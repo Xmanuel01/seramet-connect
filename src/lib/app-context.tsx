@@ -89,6 +89,7 @@ type AppContextValue = {
   authenticationLevel: "FULL" | "POS_PIN" | "DEVELOPMENT" | undefined;
   sessionId: string | undefined;
   deviceId: string | undefined;
+  salesTerminal: boolean;
   activeTenantId: TenantId;
   activeBrandId: string | undefined;
   branchScope: BranchScope;
@@ -459,6 +460,7 @@ function ConfiguredAppProvider({
       authenticationLevel: actor?.authLevel,
       sessionId: actor?.sessionId,
       deviceId: actor?.deviceId,
+      salesTerminal: actor?.authLevel === "DEVELOPMENT" || actor?.salesTerminal === true,
       activeBrandId: platformState.brands.find((brand) => brand.tenantId === activeTenantId)?.id,
       branchScope,
       branchId: fallbackBranch.id,
@@ -515,6 +517,7 @@ function ConfiguredAppProvider({
     displayTimeZone,
     actor?.moduleAccess,
     actor?.authLevel,
+    actor?.salesTerminal,
     actor?.deviceId,
     actor?.sessionId,
     assignedBranchIds,
@@ -660,6 +663,7 @@ type AuthoritativeActor = {
   sessionId?: string;
   deviceId?: string;
   moduleAccess: ModuleAccessProfile;
+  salesTerminal?: boolean;
 };
 
 async function bootstrapAuthoritativeSession(

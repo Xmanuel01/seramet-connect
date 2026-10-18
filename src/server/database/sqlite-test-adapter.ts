@@ -114,6 +114,7 @@ export const migrationFiles = [
   "0027_menu_import_pipeline.sql",
   "0028_geofenced_employee_attendance.sql",
   "0029_attendance_workforce_completion.sql",
+  "0030_staff_pilot_workflows.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

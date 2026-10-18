@@ -159,6 +159,12 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Recipes", to: "/recipes", icon: ChefHat, permission: permissions.productionView },
       { label: "Cookbook", to: "/cookbook", icon: BookOpen, permission: permissions.cookbookView },
+      {
+        label: "Stock Requests",
+        to: "/requisitions",
+        icon: ClipboardList,
+        permission: permissions.procurementRequisitionCreate,
+      },
       { label: "Prep", to: "/prep", icon: ChefHat, permission: permissions.productionView },
       { label: "Kitchen Analytics", to: "/kitchen-analytics", icon: ChefHat },
     ],

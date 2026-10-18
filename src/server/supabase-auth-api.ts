@@ -6,6 +6,7 @@ import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
 import { clearPosSessionCookie, PosIdentityService } from "@/server/pos-auth-service";
+import { acceptEmployeeInvitation } from "@/server/employee-invitations";
 
 const credentialsSchema = z
   .object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(200) })
@@ -40,6 +41,12 @@ export async function handleSupabaseAuthApi(
     });
   }
   assertSameOrigin(request, env);
+  if (url.pathname === "/api/seramet/public/auth/accept-invitation" && request.method === "POST") {
+    if (!database)
+      throw new ServerOperationError("DATABASE_UNAVAILABLE", 503, "Identity database unavailable");
+    await throttle(env, request, "staff-activation", 10, 900);
+    return acceptEmployeeInvitation(request, env);
+  }
 
   if (url.pathname === "/api/seramet/public/auth/signup" && request.method === "POST") {
     const body = parse(signupSchema, await request.json().catch(() => null));

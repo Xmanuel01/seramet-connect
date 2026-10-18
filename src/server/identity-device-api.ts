@@ -13,6 +13,12 @@ import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { appendClearedAccountCookies } from "@/server/supabase-auth-api";
 import { permissions } from "@/platform/permissions";
 import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import {
+  createEmployeeInvitation,
+  revokeEmployeeInvitation,
+  employeeInvitationStatus,
+} from "@/server/employee-invitations";
+import { staffStationAccess } from "@/server/staff-station-access";
 
 const employeeLoginSchema = z
   .object({
@@ -204,6 +210,26 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     );
   }
 
+  const stationAccess = /^\/api\/seramet\/employees\/([^/]+)\/stations$/.exec(url.pathname);
+  if (stationAccess && ["GET", "PUT"].includes(request.method)) {
+    if (request.method !== "GET") assertSameOrigin(request, env);
+    return staffStationAccess(
+      request,
+      env,
+      await authenticateSerametRequest(request, env),
+      decodeURIComponent(stationAccess[1]!),
+    );
+  }
+  const invitation = /^\/api\/seramet\/employees\/([^/]+)\/invitation$/.exec(url.pathname);
+  if (invitation && ["GET", "POST", "DELETE"].includes(request.method)) {
+    if (request.method !== "GET") assertSameOrigin(request, env);
+    const actor = await authenticateSerametRequest(request, env);
+    if (request.method === "GET")
+      return employeeInvitationStatus(env, actor, decodeURIComponent(invitation[1]!));
+    return request.method === "POST"
+      ? createEmployeeInvitation(request, env, actor, decodeURIComponent(invitation[1]!))
+      : revokeEmployeeInvitation(env, actor, decodeURIComponent(invitation[1]!));
+  }
   const pinReset = /^\/api\/seramet\/employees\/([^/]+)\/pin-reset$/.exec(url.pathname);
   if (pinReset && request.method === "POST") {
     assertSameOrigin(request, env);
@@ -231,6 +257,8 @@ function isHandledPath(pathname: string) {
     pathname === "/api/seramet/public/employee/logout" ||
     pathname === "/api/seramet/public/employee/change-pin" ||
     pathname === "/api/seramet/employees" ||
+    /^\/api\/seramet\/employees\/[^/]+\/invitation$/.test(pathname) ||
+    /^\/api\/seramet\/employees\/[^/]+\/stations$/.test(pathname) ||
     /^\/api\/seramet\/employees\/creation-attempts\/[^/]+$/.test(pathname) ||
     pathname === "/api/seramet/owners/transfer" ||
     /^\/api\/seramet\/employees\/[^/]+\/pin-reset$/.test(pathname)

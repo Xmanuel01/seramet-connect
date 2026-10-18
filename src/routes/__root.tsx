@@ -151,6 +151,7 @@ function RootComponent() {
   const isPublicAuthRoute = useRouterState({
     select: (state: { location: { pathname: string } }) =>
       state.location.pathname === "/login" ||
+      state.location.pathname === "/staff-login" ||
       state.location.pathname === "/register" ||
       state.location.pathname === "/pos-login",
   });

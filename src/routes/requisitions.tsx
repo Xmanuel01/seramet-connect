@@ -6,6 +6,8 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { formatDate, formatNumber } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { StaffStockRequests } from "@/components/app/StaffStockRequests";
+import { permissions } from "@/platform/permissions";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
   type ProcurementRequisitionRow,
@@ -23,8 +25,12 @@ export const Route = createFileRoute("/requisitions")({
       },
     ],
   }),
-  component: Requisitions,
+  component: RequisitionEntry,
 });
+function RequisitionEntry() {
+  const { hasPermission } = useAppContext();
+  return hasPermission(permissions.procurementView) ? <Requisitions /> : <StaffStockRequests />;
+}
 
 function Requisitions() {
   const { branchId, branchLabel } = useAppContext();
