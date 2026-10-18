@@ -6,6 +6,7 @@ import {
   deviceStartup,
   employeePinLogin,
   markInteractiveSignIn,
+  clearInteractiveSignIn,
   type DeviceStartup,
 } from "@/lib/auth-client";
 import { pinAfterIdentityChange, shouldCapturePinKeyboardEvent } from "@/lib/pos-login-input";
@@ -19,6 +20,9 @@ function PosLoginPage() {
   const [startup, setStartup] = useState<DeviceStartup>();
   const [identifier, setIdentifier] = useState("");
   const [pin, setPin] = useState("");
+  const [mustChangePin, setMustChangePin] = useState(false);
+  const [replacementPin, setReplacementPin] = useState("");
+  const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -32,7 +36,12 @@ function PosLoginPage() {
     try {
       const result = await deviceStartup();
       const nextDeviceContext = `${result.device?.id ?? result.state}:${result.policy?.pinLength ?? ""}`;
-      if (deviceContextRef.current && deviceContextRef.current !== nextDeviceContext) setPin("");
+      if (deviceContextRef.current && deviceContextRef.current !== nextDeviceContext) {
+        setPin("");
+        setMustChangePin(false);
+        setReplacementPin("");
+        setConfirmation("");
+      }
       deviceContextRef.current = nextDeviceContext;
       setStartup(result);
       if (result.state !== "ACTIVE") setMessage(deviceMessage(result.state));
@@ -69,6 +78,13 @@ function PosLoginPage() {
     setMessage("");
     try {
       const result = await employeePinLogin(identifier, pin);
+      if (result.mustChangePin) {
+        clearInteractiveSignIn();
+        setMustChangePin(true);
+        return;
+      }
+      if (result.employee?.tenantId)
+        window.localStorage.setItem("seramet.session.tenant-id", result.employee.tenantId);
       markInteractiveSignIn();
       window.location.assign(result.nextPath ?? "/pos");
     } catch (error) {
@@ -94,7 +110,7 @@ function PosLoginPage() {
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (busy || startup?.state !== "ACTIVE") return;
+      if (busy || mustChangePin || startup?.state !== "ACTIVE") return;
       if (!shouldCapturePinKeyboardEvent(event.target)) return;
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
@@ -103,7 +119,7 @@ function PosLoginPage() {
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [appendDigit, busy, pin.length, requiredLength, startup?.state, submit]);
+  }, [appendDigit, busy, mustChangePin, pin.length, requiredLength, startup?.state, submit]);
 
   const maskedPin = useMemo(
     () => Array.from({ length: requiredLength }, (_, index) => index < pin.length),
@@ -133,6 +149,12 @@ function PosLoginPage() {
           >
             Administrator sign in
           </a>
+          <a
+            href="/login?account=1&next=attendance"
+            className="mt-3 block text-sm font-semibold text-primary"
+          >
+            My attendance — linked account sign in
+          </a>
           <button
             className="h-11 rounded-md border border-border bg-card px-4 text-sm font-semibold"
             onClick={() => void load()}
@@ -143,6 +165,117 @@ function PosLoginPage() {
       </ScreenMessage>
     );
   }
+
+  if (mustChangePin)
+    return (
+      <ScreenMessage
+        title="Replace temporary PIN"
+        detail="Choose your own PIN before accessing Seramet."
+      >
+        <form
+          className="mt-5 grid gap-4 text-left"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (submittingRef.current) return;
+            submittingRef.current = true;
+            setBusy(true);
+            setMessage("");
+            void (async () => {
+              try {
+                const response = await fetch("/api/seramet/public/employee/change-pin", {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "content-type": "application/json" },
+                  signal: AbortSignal.timeout(15000),
+                  body: JSON.stringify({
+                    currentPin: pin,
+                    pin: replacementPin,
+                    pinConfirmation: confirmation,
+                  }),
+                });
+                const value = (await response.json().catch(() => ({}))) as { message?: string };
+                if (!response.ok)
+                  throw new Error(
+                    value.message ??
+                      "PIN change was not confirmed. Sign in again with your new PIN or ask a manager for a reset.",
+                  );
+                setMustChangePin(false);
+                setPin("");
+                setReplacementPin("");
+                setConfirmation("");
+                setMessage("PIN changed. Sign in with your new PIN.");
+              } catch (error) {
+                setMessage(
+                  error instanceof Error
+                    ? error.message
+                    : "PIN change was not confirmed. Sign in again or ask a manager.",
+                );
+              } finally {
+                submittingRef.current = false;
+                setBusy(false);
+              }
+            })();
+          }}
+        >
+          <label className="grid gap-1 text-sm font-semibold">
+            New PIN
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="new-password"
+              required
+              minLength={requiredLength}
+              maxLength={requiredLength}
+              className="h-12 rounded-md border border-input bg-background px-3"
+              value={replacementPin}
+              onChange={(event) => setReplacementPin(event.target.value.replace(/\D/g, ""))}
+            />
+          </label>
+          <label className="grid gap-1 text-sm font-semibold">
+            Confirm new PIN
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="new-password"
+              required
+              minLength={requiredLength}
+              maxLength={requiredLength}
+              className="h-12 rounded-md border border-input bg-background px-3"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value.replace(/\D/g, ""))}
+            />
+          </label>
+          {message && (
+            <p role="status" className="text-sm">
+              {message}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={
+              busy || replacementPin.length !== requiredLength || confirmation !== replacementPin
+            }
+            className="h-12 rounded-md bg-primary px-4 font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Change PIN"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setMustChangePin(false);
+              setPin("");
+              setReplacementPin("");
+              setConfirmation("");
+              setMessage("");
+            }}
+            className="h-11 text-sm font-semibold text-primary"
+          >
+            Return to sign in
+          </button>
+        </form>
+      </ScreenMessage>
+    );
 
   return (
     <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:py-10">
@@ -215,6 +348,12 @@ function PosLoginPage() {
                 className="mt-6 inline-block text-sm font-semibold text-primary"
               >
                 Use administrator account
+              </a>
+              <a
+                href="/login?account=1&next=attendance"
+                className="mt-3 block text-sm font-semibold text-primary"
+              >
+                My attendance — linked account sign in
               </a>
             </div>
             <div className="p-6 sm:p-8">

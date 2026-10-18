@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { EnterpriseService } from "@/enterprise/enterprise-service";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { IntelligenceEvidenceService } from "@/intelligence/evidence-tools";
@@ -37,7 +38,7 @@ describe.sequential("Pass 12 enterprise, franchise and HQ control", () => {
   it("applies the current schema with the complete authoritative enterprise table set", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get(),
-    ).toMatchObject({ version: 27 });
+    ).toMatchObject({ version: CURRENT_SCHEMA_VERSION });
     const tables = db.sqlite
       .prepare(
         `SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name IN

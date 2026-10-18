@@ -437,6 +437,10 @@
     "src/server/table-management-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/attendance-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
     }
   },
   "expectedLoadSuites": [

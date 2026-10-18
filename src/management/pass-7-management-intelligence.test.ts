@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import type { ServerActor } from "@/lib/seramet-auth";
 import {
   basisPoints,
@@ -35,7 +36,7 @@ describe.sequential("Pass 7 management intelligence and restaurant finance", () 
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(27);
+    expect(version?.version).toBe(CURRENT_SCHEMA_VERSION);
     for (const table of [
       "management_actions",
       "management_action_events",

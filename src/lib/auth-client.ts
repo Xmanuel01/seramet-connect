@@ -1,3 +1,5 @@
+import { permissions } from "@/platform/permissions";
+
 export type AuthRestaurant = { tenantId: string; slug: string; name: string };
 
 export type AuthStatus = {
@@ -35,6 +37,7 @@ export async function employeePinLogin(identifier: string, pin: string) {
     message?: string;
     nextPath?: string;
     mustChangePin?: boolean;
+    employee?: { tenantId?: string };
   };
   if (!response.ok) throw new Error(payload.message ?? "Employee identifier or PIN is incorrect");
   return payload;
@@ -70,9 +73,31 @@ export async function authMutation(
   return payload;
 }
 
-export function enterRestaurant(tenantId: string, path = "/") {
+export async function enterRestaurant(tenantId: string, path?: string) {
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
-  window.location.assign(path);
+  if (path) {
+    window.location.assign(path);
+    return;
+  }
+  try {
+    const response = await fetch("/api/seramet/auth/session", {
+      credentials: "same-origin",
+      headers: { "x-seramet-tenant-id": tenantId },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("Session access could not be verified");
+    const result = (await response.json()) as { actor: { permissions: string[] } };
+    const allowed = result.actor.permissions;
+    window.location.assign(
+      !allowed.includes(permissions.dashboardView) &&
+        (allowed.includes(permissions.attendanceUse) || allowed.includes(permissions.staffManage))
+        ? "/attendance"
+        : "/",
+    );
+  } catch {
+    // The protected entry point will enforce authentication; no cached access is granted.
+    window.location.assign("/");
+  }
 }
 
 // This is only a browser navigation gate. Authorization always happens on the server.
@@ -100,5 +125,11 @@ export async function revokeAllBrowserSessions() {
   );
   if (results.some((result) => result.status === "rejected" || !result.value.ok)) {
     throw new Error("Could not confirm that all sessions were revoked. Check your connection.");
+  }
+  try {
+    for (const key of Object.keys(window.sessionStorage))
+      if (key.startsWith("seramet.attendance.")) window.sessionStorage.removeItem(key);
+  } catch {
+    /* Storage may be disabled; server revocation remains authoritative. */
   }
 }

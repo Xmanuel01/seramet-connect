@@ -30,6 +30,7 @@ export type ServerActor = {
   branch: string;
   tokenId?: string;
   authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
+  credentialChangeRequired?: boolean;
 };
 
 export type SerametEnv = ProviderRuntimeEnv &
@@ -89,7 +90,10 @@ export async function authenticateSerametRequest(
   if (posSession) {
     if (!env.SERAMET_DB)
       throw new SerametHttpError(503, "Authoritative identity store unavailable");
-    return new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
+    const actor = await new PosIdentityService(env.SERAMET_DB).authenticatePosSession(posSession);
+    if (actor.credentialChangeRequired)
+      throw new SerametHttpError(403, "Replace the temporary PIN before using Seramet");
+    return actor;
   }
 
   if (
@@ -110,6 +114,14 @@ export function authorizeSerametMutation(
   tenantIdOrBranchId?: string,
   branchIdInput?: string,
 ) {
+  // Legacy snapshot attendance is not a geofenced, identity-bound timekeeping source.
+  // Do not let authorized staff bypass the verified attendance API with old actions.
+  if (action === "clockInEmployee" || action === "clockOutEmployee") {
+    throw new SerametHttpError(
+      410,
+      "Legacy attendance mutations are disabled; use authenticated attendance punches",
+    );
+  }
   const requiredPermission = mutationPermission[action];
   if (!requiredPermission) throw new SerametHttpError(400, `Unknown transaction action: ${action}`);
   if (!actor.permissions.includes(requiredPermission)) {
@@ -264,9 +276,18 @@ async function authenticateStoredSession(
               s.token_version, u.password_version
        FROM auth_sessions s
        JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
-       WHERE s.tenant_id = ? AND s.id = ? AND s.user_id = ? AND u.active = 1`,
+       WHERE s.tenant_id = ? AND s.id = ? AND s.user_id = ? AND u.active = 1
+         AND u.employment_status = 'ACTIVE'
+         AND (u.effective_from IS NULL OR u.effective_from <= ?)
+         AND (u.effective_until IS NULL OR u.effective_until > ?)`,
     )
-    .bind(identity.tenantId, identity.sessionId, identity.userId)
+    .bind(
+      identity.tenantId,
+      identity.sessionId,
+      identity.userId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    )
     .first<SessionIdentityRow>();
   if (!session || session.revoked_at)
     throw new SerametHttpError(401, "Session is invalid or revoked");
@@ -303,6 +324,7 @@ async function authenticateStoredSession(
     db
       .prepare(
         `SELECT DISTINCT rp.permission_code FROM user_roles ur
+         JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.active = 1
          JOIN role_permissions rp ON rp.tenant_id = ur.tenant_id AND rp.role_id = ur.role_id
          WHERE ur.tenant_id = ? AND ur.user_id = ?`,
       )

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { authenticateSerametRequest, type SerametEnv, type ServerActor } from "@/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
@@ -47,7 +48,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(27);
+    expect(version?.version).toBe(CURRENT_SCHEMA_VERSION);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();

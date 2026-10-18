@@ -105,6 +105,16 @@ try {
   }
   await db
     .prepare(
+      "INSERT INTO roles(tenant_id,id,code,name,active,payload_json) VALUES(?,?,'ATTENDANCE_STAFF','Attendance employee',1,'{}')",
+    )
+    .bind(tenantId, `attendance-role-${suffix}`)
+    .run();
+  await db
+    .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+    .bind(tenantId, `attendance-role-${suffix}`, permissions.attendanceUse)
+    .run();
+  await db
+    .prepare(
       "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,?,1,'{}')",
     )
     .bind(tenantId, restrictedRoleId, "PILOT_RESTRICTED", "Restricted branch manager")

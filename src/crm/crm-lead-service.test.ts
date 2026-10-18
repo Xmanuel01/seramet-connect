@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { CrmLeadService } from "@/crm/crm-lead-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
@@ -64,7 +65,7 @@ describe("CRM lead pipeline real workflow", () => {
 
   it("migrates independently with immutable tenant and branch-scoped lead events", () => {
     expect(db.sqlite.prepare("SELECT MAX(version) version FROM schema_migrations").get()).toEqual({
-      version: 27,
+      version: CURRENT_SCHEMA_VERSION,
     });
     const tables = db.sqlite
       .prepare(

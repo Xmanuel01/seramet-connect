@@ -20,6 +20,7 @@ const allowed = new Set([
   "tests/e2e/pilot-two-terminal.spec.ts",
   "tests/e2e/menu-import-pipeline.spec.ts",
   "tests/e2e/settings-setup-auth.spec.ts",
+  "tests/e2e/attendance-geofence.spec.ts",
   "tests/e2e/printing-admin.spec.ts",
 ]);
 if (focused.some((suite) => !allowed.has(suite) && suite !== operational))

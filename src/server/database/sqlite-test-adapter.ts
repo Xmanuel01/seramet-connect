@@ -112,6 +112,8 @@ export const migrationFiles = [
   "0025_supplier_invoice_receipt_uniqueness.sql",
   "0026_crm_lead_pipeline.sql",
   "0027_menu_import_pipeline.sql",
+  "0028_geofenced_employee_attendance.sql",
+  "0029_attendance_workforce_completion.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {
@@ -128,7 +130,14 @@ export function applyPendingMigrations(database: SqliteD1TestDatabase) {
   for (const file of migrationFiles) {
     const version = Number(file.slice(0, 4));
     if (version <= currentVersion) continue;
-    database.sqlite.exec(readFileSync(resolve(process.cwd(), "migrations", file), "utf8"));
+    database.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      database.sqlite.exec(readFileSync(resolve(process.cwd(), "migrations", file), "utf8"));
+      database.sqlite.exec("COMMIT");
+    } catch (error) {
+      database.sqlite.exec("ROLLBACK");
+      throw error;
+    }
   }
   return database;
 }

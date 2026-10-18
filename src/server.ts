@@ -165,7 +165,9 @@ async function secureResponse(response: Response, env: SerametEnv, api: boolean)
 
   headers.set("x-frame-options", "SAMEORIGIN");
 
-  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  // SPA navigation retains the entry document's policy. Attendance needs same-origin,
+  // user-consented foreground location even when entry was through another page.
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(self), payment=()");
 
   if (productionLike) {
     headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");

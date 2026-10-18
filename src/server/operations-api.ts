@@ -10,6 +10,7 @@ import { moduleDecision, type ModuleKey } from "@/platform/module-access-registr
 import { ServerOperationError } from "@/server/errors";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { handleConfigurationApi } from "@/server/configuration-api";
+import { handleAttendanceApi } from "@/server/attendance-api";
 import { resolveServerModuleAccess } from "@/server/module-access-service";
 import {
   deviceCredentialCookie,
@@ -55,6 +56,8 @@ export async function handleOperationsApi(
   env: SerametEnv,
 ): Promise<Response | null> {
   const url = new URL(request.url);
+  const attendanceResponse = await handleAttendanceApi(request, env);
+  if (attendanceResponse) return attendanceResponse;
   const configurationResponse = await handleConfigurationApi(request, env);
   if (configurationResponse) return configurationResponse;
   if (url.pathname === "/api/seramet/auth/session" && request.method === "GET") {
@@ -74,6 +77,7 @@ export async function handleOperationsApi(
         primaryBranchId: actor.primaryBranchId,
         sessionId: actor.sessionId,
         deviceId: actor.deviceId,
+        authLevel: actor.authLevel,
         moduleAccess,
       },
     });

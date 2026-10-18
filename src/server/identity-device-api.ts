@@ -5,16 +5,26 @@ import { ServerOperationError } from "@/server/errors";
 import {
   clearPosSessionCookie,
   PosIdentityService,
+  requireFullAuthentication,
   posSessionCookie,
   readCookie,
 } from "@/server/pos-auth-service";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { appendClearedAccountCookies } from "@/server/supabase-auth-api";
+import { permissions } from "@/platform/permissions";
+import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 
 const employeeLoginSchema = z
   .object({
     identifier: z.string().trim().min(2).max(254),
     pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+  })
+  .strict();
+const completePinSchema = z
+  .object({
+    currentPin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+    pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+    pinConfirmation: z.string().regex(/^\d{4}(?:\d{2})?$/),
   })
   .strict();
 
@@ -103,10 +113,34 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
         employee: login.employee,
         mustChangePin: login.mustChangePin,
         expiresAt: login.expiresAt,
-        nextPath: "/pos",
+        nextPath: (await service.authenticatePosSession(login.token)).permissions.includes(
+          permissions.posAccess,
+        )
+          ? "/pos"
+          : "/attendance",
       },
       { headers },
     );
+  }
+
+  if (url.pathname === "/api/seramet/public/employee/change-pin" && request.method === "POST") {
+    assertSameOrigin(request, env);
+    const token = readCookie(request, "seramet_pos_session");
+    if (!token)
+      throw new ServerOperationError("PERMISSION_DENIED", 401, "Employee sign-in is required");
+    const actor = await service.authenticatePosSession(token);
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `pin-completion:${actor.tenantId}:${actor.id}`,
+      { bucket: "pin-completion", limit: 5, windowSeconds: 15 * 60 },
+    );
+    await service.completeTemporaryPin(
+      token,
+      readCookie(request, "seramet_device"),
+      parse(completePinSchema, await request.json().catch(() => null)),
+    );
+    const headers = noStore();
+    headers.append("set-cookie", clearPosSessionCookie(secure));
+    return Response.json({ ok: true, reauthenticationRequired: true }, { headers });
   }
 
   if (url.pathname === "/api/seramet/public/employee/logout" && request.method === "POST") {
@@ -129,9 +163,45 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
   if (url.pathname === "/api/seramet/employees" && request.method === "POST") {
     assertSameOrigin(request, env);
     const actor = await authenticateSerametRequest(request, env);
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `employee-create:${actor.tenantId}:${actor.id}`,
+      { bucket: "employee-create", limit: 15, windowSeconds: 60 },
+    );
     const body = parse(employeeCreateSchema, await request.json().catch(() => null));
     const employee = await service.createEmployee(actor, body);
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
     return Response.json({ ok: true, employee }, { status: 201, headers: noStore() });
+  }
+  const creationAttempt = /^\/api\/seramet\/employees\/creation-attempts\/([^/]+)$/.exec(
+    url.pathname,
+  );
+  if (creationAttempt && request.method === "GET") {
+    const actor = await authenticateSerametRequest(request, env);
+    requireFullAuthentication(actor);
+    if (
+      !actor.permissions.includes(permissions.usersManage) ||
+      !actor.permissions.includes(permissions.employeeCredentialsManage)
+    )
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Employee management permissions are required",
+      );
+    const row = await env.SERAMET_DB.prepare(
+      "SELECT a.response_json FROM employee_creation_attempts a WHERE a.tenant_id=? AND a.idempotency_key=? AND a.created_by=? AND (?='ALL' OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.tenant_id=a.tenant_id AND ub.user_id=json_extract(a.response_json,'$.id') AND ub.branch_id=?))",
+    )
+      .bind(
+        actor.tenantId,
+        decodeURIComponent(creationAttempt[1]!),
+        actor.id,
+        actor.branchScope.type,
+        actor.branchId,
+      )
+      .first<{ response_json: string }>();
+    return Response.json(
+      { ok: true, found: Boolean(row), employee: row ? JSON.parse(row.response_json) : null },
+      { headers: noStore() },
+    );
   }
 
   const pinReset = /^\/api\/seramet\/employees\/([^/]+)\/pin-reset$/.exec(url.pathname);
@@ -159,7 +229,9 @@ function isHandledPath(pathname: string) {
     pathname === "/api/seramet/public/device/startup" ||
     pathname === "/api/seramet/public/employee/login" ||
     pathname === "/api/seramet/public/employee/logout" ||
+    pathname === "/api/seramet/public/employee/change-pin" ||
     pathname === "/api/seramet/employees" ||
+    /^\/api\/seramet\/employees\/creation-attempts\/[^/]+$/.test(pathname) ||
     pathname === "/api/seramet/owners/transfer" ||
     /^\/api\/seramet\/employees\/[^/]+\/pin-reset$/.test(pathname)
   );

@@ -81,6 +81,9 @@ const readBranchScope = (allowedBranchIds: BranchId[], canSeeAllBranches: boolea
 };
 
 type AppContextValue = {
+  authenticationLevel: "FULL" | "POS_PIN" | "DEVELOPMENT" | undefined;
+  sessionId: string | undefined;
+  deviceId: string | undefined;
   activeTenantId: TenantId;
   activeBrandId: string | undefined;
   branchScope: BranchScope;
@@ -389,6 +392,9 @@ function ConfiguredAppProvider({
 
     return {
       activeTenantId,
+      authenticationLevel: actor?.authLevel,
+      sessionId: actor?.sessionId,
+      deviceId: actor?.deviceId,
       activeBrandId: platformState.brands.find((brand) => brand.tenantId === activeTenantId)?.id,
       branchScope,
       branchId: fallbackBranch.id,
@@ -444,6 +450,9 @@ function ConfiguredAppProvider({
     activeTenant?.timezone,
     displayTimeZone,
     actor?.moduleAccess,
+    actor?.authLevel,
+    actor?.deviceId,
+    actor?.sessionId,
     assignedBranchIds,
     branchRecords,
     branchScope,
@@ -574,6 +583,7 @@ function bootstrapFailure(error: unknown): { kind: BootstrapFailureKind; message
 }
 
 type AuthoritativeActor = {
+  authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
   id: string;
   name: string;
   tenantId: string;

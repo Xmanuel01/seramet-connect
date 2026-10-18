@@ -39,7 +39,12 @@ function LoginPage() {
       }
       if (status.restaurants.length === 1) {
         markInteractiveSignIn();
-        enterRestaurant(status.restaurants[0]!.tenantId);
+        void enterRestaurant(
+          status.restaurants[0]!.tenantId,
+          new URLSearchParams(window.location.search).get("next") === "attendance"
+            ? "/attendance"
+            : undefined,
+        );
         return;
       }
       setRestaurants(status.restaurants);
@@ -72,7 +77,12 @@ function LoginPage() {
               type="button"
               onClick={() => {
                 markInteractiveSignIn();
-                enterRestaurant(restaurant.tenantId);
+                void enterRestaurant(
+                  restaurant.tenantId,
+                  new URLSearchParams(window.location.search).get("next") === "attendance"
+                    ? "/attendance"
+                    : undefined,
+                );
               }}
               className="flex w-full items-center justify-between rounded-md border border-border px-3 py-3 text-left text-sm transition hover:border-primary hover:bg-accent/50"
             >
