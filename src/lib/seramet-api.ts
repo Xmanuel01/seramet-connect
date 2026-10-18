@@ -694,7 +694,7 @@ async function getTransactions(request: Request, env: SerametEnv, repo: Transact
   const known = new URL(request.url).searchParams.get("knownRevision");
   if (
     actor.salesTerminal !== false &&
-    !actor.permissions.includes(permissions.kitchenOperate) &&
+    actor.permissions.includes(permissions.ordersView) &&
     known !== null &&
     /^\d+$/.test(known) &&
     Number(known) === revision

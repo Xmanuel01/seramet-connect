@@ -32,6 +32,7 @@ describe("enterprise module access registry", () => {
           file.endsWith(".tsx") &&
           file !== "__root.tsx" &&
           file !== "login.tsx" &&
+          file !== "staff-login.tsx" &&
           file !== "register.tsx" &&
           !file.startsWith("guest.") &&
           file !== "guest.$restaurant.tsx",

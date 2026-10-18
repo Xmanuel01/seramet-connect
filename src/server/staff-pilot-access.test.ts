@@ -222,4 +222,34 @@ describe("staff role/device HTTP boundaries", () => {
     };
     expect(() => authorizeSerametMutation(actor, "createOrder", tenant, other)).toThrow();
   });
+  it("keeps unchanged-revision POS reads cheap while rechecking phone and station projections", async () => {
+    const revision = await new D1AuthoritativeTransactionRepository(db).revision(tenant);
+    const read = () =>
+      handleSerametApiRequest(
+        new Request(
+          `http://localhost/api/seramet/transactions?branchId=${branch}&knownRevision=${revision}`,
+        ),
+        { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" },
+      );
+    const terminal = await read();
+    expect(terminal.status).toBe(200);
+    expect(await terminal.json()).toMatchObject({ unchanged: true, revision });
+    actor = {
+      ...actor,
+      salesTerminal: false,
+      permissions: staffRolePresets.chef!.permissions,
+      kitchenStationIds: [],
+    };
+    const station = await read();
+    expect(station.status).toBe(200);
+    const filtered = await station.json();
+    expect(filtered.unchanged).toBeUndefined();
+    expect(filtered.state.orders).toEqual([]);
+    actor = { ...actor, permissions: staffRolePresets.cashier!.permissions };
+    const phone = await read();
+    expect(phone.status).toBe(200);
+    const readonly = await phone.json();
+    expect(readonly.unchanged).toBeUndefined();
+    expect(readonly.state.cashDrawers).toEqual([]);
+  });
 });

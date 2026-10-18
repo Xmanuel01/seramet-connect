@@ -125,7 +125,10 @@ describe.sequential("commercial launch foundation", () => {
       authEnv(),
     );
     expect(actor.tenantId).toBe(provisioned.tenantId);
-    expect(actor.permissions).toContain(permissions.posAccess);
+    // Verified account identity is not proof of an enrolled sales-terminal session.
+    expect(actor.salesTerminal).toBe(false);
+    expect(actor.permissions).not.toContain(permissions.posAccess);
+    expect(actor.permissions).toContain(permissions.settingsBranchManage);
     expect(actor.permissions).not.toContain(permissions.platformTenantsProvision);
     const session = await database
       .prepare("SELECT revoked_at FROM auth_sessions WHERE tenant_id=? AND id=?")

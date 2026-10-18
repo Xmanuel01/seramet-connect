@@ -98,6 +98,13 @@ Phone transaction reads are projected to orders only; kitchen-only readers see
 their station lines without financial/customer-private records. Zero-valued KDS
 price fields are presentation redaction, never persisted accounting values.
 
+Enrolled sales readers with order-view permission retain unchanged-revision
+responses, including supervisors who also hold kitchen permissions. Phone and
+station-filtered readers recheck their projection even when the transaction
+revision is unchanged, because station/device access can change independently.
+The combined browser gate caught and corrected an overly broad kitchen-permission
+condition that had disabled the enrolled POS fast path.
+
 ### Stock requests and cookbook
 
 The limited stock-request workspace lists active items/base units, authorized
