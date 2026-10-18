@@ -26,6 +26,7 @@ export function emptyPaymentOperationsState(): PaymentOperationsState {
     disputes: [],
     journals: [],
     dayCloses: [],
+    closingPolicies: [],
     storedValueAccounts: [],
     customerAccounts: [],
     customerAccountEntries: [],

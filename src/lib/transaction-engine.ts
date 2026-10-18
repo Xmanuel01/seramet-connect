@@ -9,6 +9,13 @@ import type { PaymentOperationsState } from "@/payments/types";
 import type { CostControlSnapshot } from "@/cost-control/types";
 import { cashCount } from "@/payments/cash-count";
 import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
+import { QUANTITY_SCALE, quantityCostMinor } from "@/inventory/quantity";
+import {
+  allocateInvoiceMinor,
+  splitInvoiceComponents,
+  verifyInvoiceComponents,
+  type InvoiceComponents,
+} from "@/payments/invoice-components";
 
 export type OrderStatus =
   | "DRAFT"
@@ -99,6 +106,7 @@ export type TransactionOrder = {
   businessDate?: string;
   lines: TransactionLine[];
   subtotal: number;
+  financialComponents?: InvoiceComponents;
   tax: number;
   total: number;
   externalSource?: ExternalOrderSource;
@@ -323,6 +331,7 @@ export type BillingRecord = {
   dueAt: string;
   lines: TransactionLine[];
   subtotal: number;
+  financialComponents?: InvoiceComponents;
   tax: number;
   total: number;
   paid: number;
@@ -681,6 +690,7 @@ export type OrderDraft = {
     subtotal: number;
     tax: number;
     total: number;
+    financialComponents?: InvoiceComponents;
   };
   lines: TransactionLine[];
 };
@@ -785,9 +795,50 @@ function id(prefix: string, state: TransactionState, collection: keyof Transacti
   );
 }
 
-function totals(lines: TransactionLine[]) {
-  const subtotal = money(lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0));
-  return { subtotal, tax: 0, total: subtotal };
+function pricedTotals(
+  lines: TransactionLine[],
+  tenantId: string,
+  override?: OrderDraft["financialOverride"],
+) {
+  const currency = configurationRepository.getTenant(tenantId).defaultCurrency;
+  if (override) {
+    const { financialComponents, ...amounts } = override;
+    return {
+      ...amounts,
+      financialComponents: financialComponents
+        ? verifyInvoiceComponents(financialComponents, amounts, currency)
+        : undefined,
+    };
+  }
+  const totalMinor = sumMinor(
+    lines.map((line) => {
+      if (!Number.isFinite(line.quantity) || line.quantity < 0)
+        throw new Error("Invalid item quantity");
+      return quantityCostMinor(
+        Math.round(line.quantity * QUANTITY_SCALE),
+        parseMajorAmount(line.unitPrice, currency),
+      );
+    }),
+  );
+  const subtotal = majorFromMinor(totalMinor, currency);
+  const amounts = { subtotal, tax: 0, total: subtotal };
+  return {
+    ...amounts,
+    financialComponents: verifyInvoiceComponents(
+      {
+        version: 1,
+        currency,
+        grossSalesMinor: totalMinor,
+        discountsMinor: 0,
+        netSalesMinor: totalMinor,
+        serviceChargeMinor: 0,
+        taxMinor: 0,
+        totalMinor,
+      },
+      amounts,
+      currency,
+    ),
+  };
 }
 
 function audit(state: TransactionState, event: Omit<AuditEvent, "id" | "time">) {
@@ -1640,6 +1691,7 @@ export const TransactionEngine = {
     }
     const shift = input.shift?.trim() || "10:00-21:30";
     const employee: EmployeeRecord = {
+      ...resolveScope(input.branch.trim(), next.tenantId),
       id: id("EMP", next, "employees"),
       name,
       role: "Rider",
@@ -1770,7 +1822,7 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = draft.financialOverride ?? totals(normalizedLines);
+    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
     const {
       delivery,
       externalSource,
@@ -2252,7 +2304,7 @@ export const TransactionEngine = {
       });
     }
 
-    const total = draft.financialOverride ?? totals(normalizedLines);
+    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -2273,6 +2325,7 @@ export const TransactionEngine = {
     order.subtotal = total.subtotal;
     order.tax = total.tax;
     order.total = total.total;
+    order.financialComponents = total.financialComponents;
     if (additions.length) order.status = "SENT_TO_KITCHEN";
     if (additionAmendmentId) {
       this.queueKitchenPrintObligations(
@@ -2489,6 +2542,9 @@ export const TransactionEngine = {
       dueAt: addMinutes(now(), 120),
       lines: order.lines.map((line) => ({ ...line, sourceOrderId: order.id })),
       subtotal: order.subtotal,
+      ...(order.financialComponents
+        ? { financialComponents: { ...order.financialComponents } }
+        : {}),
       tax: order.tax,
       total: order.total,
       paid: 0,
@@ -2692,7 +2748,7 @@ export const TransactionEngine = {
       reason: string;
       requestedBy: string;
       providerStatus?: string;
-      financialOverride?: { subtotal: number; tax: number; total: number };
+      financialOverride?: OrderDraft["financialOverride"];
     },
   ) {
     const next = clone(normalizeTransactionState(state));
@@ -2763,11 +2819,16 @@ export const TransactionEngine = {
         });
       }
     }
-    const nextTotals = input.financialOverride ?? totals(normalizedLines);
+    const nextTotals = pricedTotals(
+      normalizedLines,
+      order.tenantId ?? next.tenantId!,
+      input.financialOverride,
+    );
     order.lines = normalizedLines;
     order.subtotal = nextTotals.subtotal;
     order.tax = nextTotals.tax;
     order.total = nextTotals.total;
+    order.financialComponents = nextTotals.financialComponents;
     order.updatedAt = now();
     if (order.externalSource && input.providerStatus) {
       order.externalSource.providerStatus = input.providerStatus;
@@ -2790,6 +2851,7 @@ export const TransactionEngine = {
         bill.subtotal = nextTotals.subtotal;
         bill.tax = nextTotals.tax;
         bill.total = nextTotals.total;
+        bill.financialComponents = nextTotals.financialComponents;
       }
       next.journalEntries.unshift(
         createMarketplaceAdjustmentJournal(next, order, receivable, delta),
@@ -2863,7 +2925,7 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = draft.financialOverride ?? totals(normalizedLines);
+    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride);
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -2885,6 +2947,7 @@ export const TransactionEngine = {
     order.subtotal = total.subtotal;
     order.tax = total.tax;
     order.total = total.total;
+    order.financialComponents = total.financialComponents;
     order.updatedAt = now();
     audit(next, {
       actor: user,
@@ -3263,7 +3326,6 @@ export const TransactionEngine = {
       throw new Error("Invoices from different tenants or branches cannot be merged");
     }
     const allLines = bills.flatMap((bill) => bill.lines);
-    const total = totals(allLines);
     const firstBill = bills[0]!;
     const customerIds = [...new Set(bills.map((bill) => bill.customerId).filter(Boolean))];
     const customerCodes = [...new Set(bills.map((bill) => bill.customerCode).filter(Boolean))];
@@ -3271,6 +3333,46 @@ export const TransactionEngine = {
       firstBill.branchId ?? firstBill.branch,
       firstBill.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
     );
+    const currency = configurationRepository.getTenant(scope.tenantId).defaultCurrency;
+    const total = Object.fromEntries(
+      (["subtotal", "tax", "total"] as const).map((field) => [
+        field,
+        majorFromMinor(
+          sumMinor(bills.map((bill) => parseMajorAmount(bill[field], currency))),
+          currency,
+        ),
+      ]),
+    ) as { subtotal: number; tax: number; total: number };
+    const financialComponents = bills.every((bill) => bill.financialComponents)
+      ? verifyInvoiceComponents(
+          {
+            version: 1,
+            currency,
+            ...Object.fromEntries(
+              (
+                [
+                  "grossSalesMinor",
+                  "discountsMinor",
+                  "netSalesMinor",
+                  "serviceChargeMinor",
+                  "taxMinor",
+                  "totalMinor",
+                ] as const
+              ).map((field) => [
+                field,
+                sumMinor(
+                  bills.map(
+                    (bill) =>
+                      verifyInvoiceComponents(bill.financialComponents!, bill, currency)[field],
+                  ),
+                ),
+              ]),
+            ),
+          } as InvoiceComponents,
+          total,
+          currency,
+        )
+      : undefined;
     const merged: BillingRecord = {
       id: id("BILL", next, "bills"),
       ...scope,
@@ -3288,6 +3390,7 @@ export const TransactionEngine = {
       lines: allLines,
       paid: 0,
       ...total,
+      ...(financialComponents ? { financialComponents } : {}),
     };
     bills.forEach((bill) => {
       bill.status = "MERGED";
@@ -3321,21 +3424,23 @@ export const TransactionEngine = {
     if (splits.length < 2 || splits.some((split) => !split.label.trim() || split.amount <= 0)) {
       throw new Error("A split requires at least two positive, labelled allocations");
     }
-    const splitTotal = money(splits.reduce((sum, split) => sum + split.amount, 0));
-    if (splitTotal !== bill.total)
+    const currency = configurationRepository.getTenant(
+      bill.tenantId ?? next.tenantId!,
+    ).defaultCurrency;
+    const splitAmounts = splits.map((split) => parseMajorAmount(split.amount, currency));
+    if (sumMinor(splitAmounts) !== parseMajorAmount(bill.total, currency))
       throw new Error("Split allocations must equal the invoice total");
     bill.status = "SPLIT";
-    let allocatedSubtotal = 0;
-    let allocatedTax = 0;
+    const splitTaxes = allocateInvoiceMinor(parseMajorAmount(bill.tax, currency), splitAmounts);
+    const components = bill.financialComponents
+      ? splitInvoiceComponents(
+          verifyInvoiceComponents(bill.financialComponents, bill, currency),
+          splitAmounts,
+        )
+      : undefined;
     splits.forEach((split, index) => {
-      const last = index === splits.length - 1;
-      const ratio = split.amount / bill.total;
-      const subtotal = last
-        ? money(bill.subtotal - allocatedSubtotal)
-        : money(bill.subtotal * ratio);
-      const tax = last ? money(bill.tax - allocatedTax) : money(bill.tax * ratio);
-      allocatedSubtotal = money(allocatedSubtotal + subtotal);
-      allocatedTax = money(allocatedTax + tax);
+      const tax = majorFromMinor(splitTaxes[index]!, currency);
+      const subtotal = majorFromMinor(splitAmounts[index]! - splitTaxes[index]!, currency);
       next.bills.unshift({
         ...bill,
         id: id("BILL", next, "bills"),
@@ -3348,6 +3453,7 @@ export const TransactionEngine = {
         total: split.amount,
         paid: 0,
         paymentStatus: "UNPAID",
+        financialComponents: components?.[index],
       });
     });
     audit(next, {

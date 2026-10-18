@@ -899,6 +899,7 @@ export class ReconciliationEngine {
         day.branchId === input.branchId &&
         day.businessDate === input.businessDate,
     );
+    if (existing?.status === "CLOSED") return next;
     const accountingContext = this.branchAccountingContext(input.tenantId, input.branchId);
     const readiness = financialCloseReadiness(next, { ...input, ...accountingContext });
     const ids = readiness.map((item) => item.id);

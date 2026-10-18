@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangle, CheckCircle2, FileUp, RefreshCcw, Search, ShieldCheck } from "lucide-react";
+import { FileUp, RefreshCcw, Search, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -15,12 +15,14 @@ import {
   type NormalizedSettlementImport,
   type StatementPreview,
 } from "@/payments/statement-adapters";
-import type { CashDrawerSession, PaymentTransaction } from "@/payments/types";
+import type { PaymentTransaction } from "@/payments/types";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { cn } from "@/lib/utils";
 import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 import { recordBusinessDate } from "@/lib/pos-workflow";
+import { DailyClosingPanel } from "@/components/app/DailyClosingPanel";
+import { closingPolicy } from "@/payments/daily-closing";
 
 export const Route = createFileRoute("/payment-control")({
   head: () => ({
@@ -48,7 +50,8 @@ const tabs = [
 type Tab = (typeof tabs)[number];
 
 function PaymentControlCentre() {
-  const { state, mutate: mutateTransaction } = useTransactionEngine();
+  const engine = useTransactionEngine();
+  const { state, mutate: mutateTransaction } = engine;
   const {
     activeTenantId,
     branchId,
@@ -73,11 +76,9 @@ function PaymentControlCentre() {
   const [notice, setNotice] = useState("");
   const [selectedTransactionId, setSelectedTransactionId] = useState("");
   const [openingFloat, setOpeningFloat] = useState("5000");
-  const [drawerCounts, setDrawerCounts] = useState<Record<string, string>>({});
   const [manualPaymentId, setManualPaymentId] = useState("");
   const [manualBankId, setManualBankId] = useState("");
   const [manualReason, setManualReason] = useState("");
-  const [overrideReason, setOverrideReason] = useState("");
   const [bankPreview, setBankPreview] =
     useState<StatementPreview<NormalizedBankStatementRow> | null>(null);
   const [settlementPreview, setSettlementPreview] =
@@ -144,7 +145,6 @@ function PaymentControlCentre() {
   );
   const refunds = scoped(operations?.refunds ?? []);
   const matches = scoped(operations?.matches ?? []);
-  const dayCloses = scoped(operations?.dayCloses ?? []);
   const unmatchedTransactions = transactions.filter((transaction) =>
     ["PENDING", "UNVERIFIED", "VERIFYING", "NOT_FOUND", "AMOUNT_MISMATCH"].includes(
       transaction.status,
@@ -238,24 +238,6 @@ function PaymentControlCentre() {
         actor: currentUser.name,
       },
     });
-
-  const closeDrawer = (drawer: CashDrawerSession) => {
-    const countedByCurrency = Object.fromEntries(
-      Object.keys(drawer.currencyBalances).map((currencyCode) => [
-        currencyCode,
-        parseMajorAmount(drawerCounts[`${drawer.id}:${currencyCode}`] ?? "0", currencyCode),
-      ]),
-    );
-    runMutation("Drawer counted. Variance is ready for manager review.", "closePaymentDrawer", {
-      input: {
-        tenantId: activeTenantId,
-        drawerSessionId: drawer.id,
-        countedCashMinor: countedByCurrency[drawer.baseCurrency] ?? 0,
-        countedByCurrency,
-        actor: currentUser.name,
-      },
-    });
-  };
 
   const approveDrawer = (drawerId: string) =>
     runMutation("Cash variance approved with an audit reason.", "approveDrawerVariance", {
@@ -379,31 +361,6 @@ function PaymentControlCentre() {
     );
   };
 
-  const prepareEod = () =>
-    runMutation(
-      "EOD review prepared from authoritative operational and financial state.",
-      "prepareDayClose",
-      {
-        input: {
-          tenantId: activeTenantId,
-          branchId,
-          businessDate: periodDate,
-          actor: currentUser.name,
-        },
-      },
-    );
-
-  const closeEod = (dayCloseId: string) =>
-    runMutation("Business day closed with immutable review history.", "closeDay", {
-      input: {
-        tenantId: activeTenantId,
-        dayCloseId,
-        actor: currentUser.name,
-        hasOverridePermission: hasPermission(permissions.reconciliationApprove),
-        ...(overrideReason.trim() ? { overrideReason: overrideReason.trim() } : {}),
-      },
-    });
-
   return (
     <AppShell
       title="Payment Control Centre"
@@ -415,10 +372,10 @@ function PaymentControlCentre() {
           </Btn>
           <Btn
             variant="primary"
-            onClick={prepareEod}
-            disabled={!hasPermission(permissions.reconciliationManage)}
+            onClick={() => setTab("EOD")}
+            disabled={!hasPermission(permissions.reconciliationView)}
           >
-            <ShieldCheck className="h-4 w-4" /> Prepare EOD
+            <ShieldCheck className="h-4 w-4" /> Daily closing
           </Btn>
         </>
       }
@@ -639,14 +596,16 @@ function PaymentControlCentre() {
                     </div>
                     <Status>{drawer.status}</Status>
                     <div className="flex gap-2">
-                      {drawer.status === "OPEN" && (
-                        <Btn
-                          onClick={() => closeDrawer(drawer)}
-                          disabled={!hasPermission(permissions.cashClose)}
-                        >
-                          Close
-                        </Btn>
-                      )}
+                      {drawer.status === "OPEN" &&
+                        closingPolicy(state, activeTenantId, branchId).mode ===
+                          "MULTI_CASHIER_SHIFTS" && (
+                          <Btn
+                            onClick={() => setTab("EOD")}
+                            disabled={!hasPermission(permissions.cashClose)}
+                          >
+                            Shift review
+                          </Btn>
+                        )}
                       {drawer.status === "REVIEW_REQUIRED" && (
                         <Btn
                           variant="primary"
@@ -671,20 +630,9 @@ function PaymentControlCentre() {
                           </span>
                         </div>
                         {drawer.status === "OPEN" ? (
-                          <label className="mt-2 block text-[11px] font-semibold text-muted-foreground">
-                            Counted {currencyCode}
-                            <input
-                              inputMode="decimal"
-                              value={drawerCounts[`${drawer.id}:${currencyCode}`] ?? "0"}
-                              onChange={(event) =>
-                                setDrawerCounts((current) => ({
-                                  ...current,
-                                  [`${drawer.id}:${currencyCode}`]: event.target.value,
-                                }))
-                              }
-                              className="mt-1 h-9 w-full rounded-md border border-border bg-card px-3 text-[12px] text-foreground outline-none focus:border-primary"
-                            />
-                          </label>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Counted in the closing review.
+                          </p>
                         ) : (
                           <div className="num mt-2 flex justify-between gap-2 text-[11px]">
                             <span>
@@ -825,94 +773,7 @@ function PaymentControlCentre() {
         )}
 
         {tab === "EOD" && (
-          <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-            <div className="space-y-2">
-              <EodLine
-                label="Cash"
-                status={
-                  cashVarianceMinor === 0 ? "Reconciled" : formatMinor(cashVarianceMinor, currency)
-                }
-                ok={cashVarianceMinor === 0}
-              />
-              <EodLine
-                label="Digital payments"
-                status={`${unmatchedTransactions.length} unmatched`}
-                ok={unmatchedTransactions.length === 0}
-              />
-              <EodLine
-                label="Marketplace"
-                status={`${settlements.filter((item) => !["POSTED", "REVERSED"].includes(item.status)).length} settlement pending`}
-                ok={settlements.every((item) => ["POSTED", "REVERSED"].includes(item.status))}
-              />
-              <EodLine
-                label="Refunds"
-                status={`${refunds.filter((item) => ["REQUESTED", "APPROVED", "PROCESSING"].includes(item.status)).length} awaiting completion`}
-                ok={
-                  !refunds.some((item) =>
-                    ["REQUESTED", "APPROVED", "PROCESSING"].includes(item.status),
-                  )
-                }
-              />
-              <EodLine
-                label="Manager exceptions"
-                status={`${exceptions.length} open`}
-                ok={exceptions.length === 0}
-              />
-            </div>
-            <div className="space-y-3 rounded-lg border border-border p-3">
-              <div className="text-[13px] font-semibold">Day close</div>
-              <input
-                value={overrideReason}
-                onChange={(event) => setOverrideReason(event.target.value)}
-                className="h-10 w-full rounded-md border border-border bg-card px-3 text-[12px]"
-                placeholder="Override reason for unresolved close blockers"
-              />
-              <Btn
-                className="w-full"
-                onClick={prepareEod}
-                disabled={!hasPermission(permissions.reconciliationManage)}
-              >
-                Refresh EOD review
-              </Btn>
-              {dayCloses
-                .filter((item) => item.businessDate === periodDate)
-                .map((day) => (
-                  <div key={day.id} className="rounded-md bg-secondary/60 p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold">{day.businessDate}</span>
-                      <Status>{day.status}</Status>
-                    </div>
-                    <div className="mt-1 text-[12px] text-muted-foreground">
-                      {day.readiness.length} close blocker(s)
-                    </div>
-                    {day.readiness.length ? (
-                      <ul className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-                        {day.readiness.slice(0, 5).map((issue) => (
-                          <li key={issue.id}>
-                            {issue.code}: {issue.message}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {day.snapshot ? (
-                      <div className="mt-2 text-[11px] text-muted-foreground">
-                        Snapshot revision {day.snapshot.revision} at {day.snapshot.closedAt}
-                      </div>
-                    ) : null}
-                    <Btn
-                      variant="primary"
-                      className="mt-3 w-full"
-                      onClick={() => closeEod(day.id)}
-                      disabled={
-                        day.status === "CLOSED" || !hasPermission(permissions.reconciliationApprove)
-                      }
-                    >
-                      Close business day
-                    </Btn>
-                  </div>
-                ))}
-            </div>
-          </div>
+          <DailyClosingPanel key={`${activeTenantId}:${branchId}`} engine={engine} />
         )}
       </Panel>
     </AppShell>
@@ -1230,22 +1091,6 @@ function EmptyLine({ text }: { text: string }) {
     </div>
   );
 }
-function EodLine({ label, status, ok }: { label: string; status: string; ok: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-      <div className="flex items-center gap-2">
-        {ok ? (
-          <CheckCircle2 className="h-4 w-4 text-success" />
-        ) : (
-          <AlertTriangle className="h-4 w-4 text-warning" />
-        )}
-        <span className="font-semibold">{label}</span>
-      </div>
-      <span className="text-[12px] text-muted-foreground">{status}</span>
-    </div>
-  );
-}
-
 function isSettlementAccountMappings(value: unknown): value is SettlementAccountMappings {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;

@@ -16,6 +16,24 @@ export type ImportProgressSnapshot = {
   observedAt: number;
 };
 
+/** Commit verification is not publication confirmation. */
+export function importPresentationStage(result: {
+  status: string;
+  publishStatus?: string;
+  verification?: { status: string };
+}) {
+  if (result.publishStatus === "PUBLISHED") return "PUBLISHED";
+  if (result.publishStatus === "PUBLISHING") return "PUBLISHING";
+  if (result.publishStatus === "FAILED" || result.status === "FAILED") return "FAILED";
+  if (
+    result.status === "COMMITTED" &&
+    result.verification?.status === "VERIFIED" &&
+    result.publishStatus === "READY"
+  )
+    return "STAGED";
+  return "PROCESSING";
+}
+
 export function summarizeImportProgress(progress: PersistedImportProgress) {
   const total = Math.max(0, progress.total);
   const processed = Math.min(

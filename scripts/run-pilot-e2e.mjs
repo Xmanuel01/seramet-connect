@@ -16,6 +16,7 @@ run(["exec", "vite-node", "scripts/seed-pilot-e2e.ts"], env);
 const focused = process.argv.slice(2);
 const operational = "tests/e2e/printing-operational.spec.ts";
 const allowed = new Set([
+  "tests/e2e/daily-closing.spec.ts",
   "tests/e2e/pilot-two-terminal.spec.ts",
   "tests/e2e/menu-import-pipeline.spec.ts",
   "tests/e2e/settings-setup-auth.spec.ts",

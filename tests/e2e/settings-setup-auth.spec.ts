@@ -214,9 +214,9 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
         expectedRevision: snapshot.revision,
       }),
     });
-    return response.status;
+    return { status: response.status, message: (await response.json()).message };
   }, name);
-  expect(created).toBe(200);
+  expect(created).toMatchObject({ status: 200 });
 
   for (const path of ["/attendance", "/payroll"]) {
     let release!: () => void;

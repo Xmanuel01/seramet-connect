@@ -172,6 +172,7 @@ export type CashDrawerSession = {
   closedBy?: string;
   approvedBy?: string;
   approvalReason?: string;
+  varianceReason?: string;
   currencyBalances: Record<
     string,
     {
@@ -534,6 +535,7 @@ export type DayClose = {
   overrideReason?: string;
   readiness: import("@/lib/financial-lifecycle").DayCloseReadinessIssue[];
   snapshot?: import("@/lib/financial-lifecycle").FinancialLifecycleProjection & {
+    dailyReport?: import("@/payments/daily-closing").DailyClosingReport;
     revision: number;
     closedBy: string;
     closedAt: string;
@@ -541,6 +543,7 @@ export type DayClose = {
   };
   snapshots: Array<
     import("@/lib/financial-lifecycle").FinancialLifecycleProjection & {
+      dailyReport?: import("@/payments/daily-closing").DailyClosingReport;
       revision: number;
       closedBy: string;
       closedAt: string;
@@ -650,6 +653,7 @@ export type PaymentOperationsState = {
   disputes: PaymentDispute[];
   journals: FinancialJournal[];
   dayCloses: DayClose[];
+  closingPolicies?: import("@/payments/daily-closing").ClosingPolicy[];
   storedValueAccounts: StoredValueAccount[];
   customerAccounts: CustomerAccount[];
   customerAccountEntries: CustomerAccountEntry[];
