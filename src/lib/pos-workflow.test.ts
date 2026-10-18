@@ -22,6 +22,7 @@ import {
   recordBusinessDate,
   resolvePosTimeZone,
   unbilledKitchenOrders,
+  acknowledgedKitchenDispatch,
 } from "./pos-workflow";
 
 describe("POS production queue separation", () => {
@@ -52,6 +53,19 @@ describe("POS production queue separation", () => {
 });
 
 describe("POS business-branch clock", () => {
+  it.each(["UTC", "Etc/UTC", "Etc/GMT", "GMT"])(
+    "normalizes the %s onboarding default before Kenyan clock resolution",
+    (zone) => {
+      const resolved = resolvePosTimeZone(zone, zone, "KE", "KES");
+      expect(resolved).toBe("Africa/Nairobi");
+      expect(formatPosClock(new Date("2026-10-18T11:21:00Z"), "en-KE", resolved)).toBe("14:21:00");
+      expect(resolvePosTimeZone(zone, zone, "GB", "GBP")).toBe(zone);
+    },
+  );
+  it("displays the reported 11:21 UTC instant as 14:21 restaurant time", () => {
+    const zone = resolvePosTimeZone("UTC", "UTC", "KE", "KES");
+    expect(formatPosClock(new Date("2026-10-18T11:21:00Z"), "en-KE", zone)).toBe("14:21:00");
+  });
   it.each(["en-US", "en-GB", "en-KE"])("displays midnight as 00 rather than 24 in %s", (locale) => {
     expect(formatPosClock(new Date("2026-10-14T21:00:00Z"), locale, "Africa/Nairobi")).toBe(
       "00:00:00",
@@ -98,6 +112,51 @@ describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
     setConfigurationRepositoryForTests(
       new ConfigurationRepository(createDefaultDemoPlatformState()),
     );
+  });
+  it("recovers acknowledged multi-station dispatch on another terminal without local print jobs", () => {
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      table: "04",
+      customer: "Table 04",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: ["MAIN KITCHEN", "BAR"].map((station, index) => ({
+        id: `recovered-${index}`,
+        productId: `p${index}`,
+        name: `Meal ${index}`,
+        category: "Meals",
+        quantity: 1,
+        unitPrice: 100,
+        productionStation: station,
+      })),
+    });
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const pending = state.kitchenPrintObligations!;
+    expect(pending).toHaveLength(2);
+    const order = state.orders[0]!;
+    const accepted = pending.map((ticket) => ({ ...ticket, status: "BRIDGE_ACCEPTED" as const }));
+    const check = (tickets: typeof accepted | typeof pending) =>
+      acknowledgedKitchenDispatch(order, tickets, DEMO_TENANT_ID, DEMO_WESTLANDS_BRANCH_ID);
+    expect(check(pending)).toBe(false);
+    expect(check(accepted)).toBe(true);
+    expect(check([])).toBe(false);
+    expect(check(accepted.slice(0, 1))).toBe(false);
+    for (const status of ["PENDING", "CLAIMED", "UNCERTAIN"] as const)
+      expect(check([{ ...accepted[0]!, status }, accepted[1]!])).toBe(false);
+    expect(check(accepted.map((ticket) => ({ ...ticket, tenantId: "another-tenant" })))).toBe(
+      false,
+    );
+    expect(check(accepted.map((ticket) => ({ ...ticket, branchId: DEMO_NGONG_BRANCH_ID })))).toBe(
+      false,
+    );
+    expect(check(accepted.map((ticket) => ({ ...ticket, orderId: "another-order" })))).toBe(false);
+    expect(check(accepted.map((ticket) => ({ ...ticket, kind: "REPRINT" })))).toBe(false);
+    expect(check(accepted.map((ticket) => ({ ...ticket, lines: [] })))).toBe(false);
+    const repeated = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    expect(repeated.kitchenPrintObligations).toHaveLength(2);
   });
   it("moves the exact held order out of entry pending without deleting the kitchen or invoice record", () => {
     const draft: OrderDraft = {

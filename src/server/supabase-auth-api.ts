@@ -53,7 +53,7 @@ export async function handleSupabaseAuthApi(
     if (databaseAvailable) {
       await throttle(env, request, `signup:${body.email.toLowerCase()}`, 5, 60 * 60);
     }
-    const redirect = `${trustedOrigin(request, env)}/login?verified=1`;
+    const redirect = `${trustedOrigin(request, env)}/login?account=1&verified=1`;
     const response = await supabaseRequest<SupabaseSessionPayload>(
       env,
       `/auth/v1/signup?redirect_to=${encodeURIComponent(redirect)}`,

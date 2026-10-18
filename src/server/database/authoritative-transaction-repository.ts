@@ -2397,7 +2397,19 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     const nestedInvoice = nestedInvoiceId
       ? state.bills.find((candidate) => candidate.id === nestedInvoiceId)
       : undefined;
+    const sourceRefund = ["approveRefund", "rejectRefund"].includes(input.action)
+      ? state.refunds.find((row) => row.id === payload["refundId"])
+      : undefined;
+    const sourceReceiptId =
+      input.action === "requestRefund"
+        ? stringValue(nested?.["receiptId"])
+        : sourceRefund?.receiptId;
+    const sourceReceipt = sourceReceiptId
+      ? state.receipts.find((row) => row.id === sourceReceiptId)
+      : undefined;
     const requestedBranchId =
+      sourceReceipt?.branchId ??
+      sourceRefund?.branchId ??
       stringValue(nested?.["branchId"]) ??
       nestedInvoice?.branchId ??
       stringValue(draft?.["branchId"]) ??
@@ -3681,6 +3693,7 @@ const financiallyLockedActions = new Set([
   "recordRiderBatchRemittance",
   "requestRefund",
   "approveRefund",
+  "rejectRefund",
   "recordWastage",
   "approveWastage",
   "recordBreakage",

@@ -6160,7 +6160,7 @@ export class InventoryIntelligenceService {
                 po.approved_at,po.received_at,
                 COALESCE(json_extract(po.payload_json,'$.overReceiptPolicy'),'REJECT_OVER_RECEIPT')
                   AS over_receipt_policy,
-                COALESCE(json_extract(po.payload_json,'$.overReceiptToleranceBps'),0)
+                COALESCE(CAST(json_extract(po.payload_json,'$.overReceiptToleranceBps') AS INTEGER),0)
                   AS over_receipt_tolerance_bps
          FROM purchase_orders po
          JOIN suppliers s ON s.tenant_id=po.tenant_id AND s.id=po.supplier_id
@@ -6206,7 +6206,7 @@ export class InventoryIntelligenceService {
          LEFT JOIN purchase_orders po ON po.tenant_id=s.tenant_id AND po.supplier_id=s.id
            AND po.branch_id=?
          WHERE s.tenant_id=? AND s.active=1
-         GROUP BY s.id ORDER BY ordered_minor DESC,s.name LIMIT ?`,
+         GROUP BY s.tenant_id,s.id ORDER BY ordered_minor DESC,s.name LIMIT ?`,
       )
       .bind(branchId, this.actor.tenantId, pageSize)
       .all<Record<string, unknown>>();
@@ -6271,7 +6271,8 @@ export class InventoryIntelligenceService {
          LEFT JOIN goods_receipt_lines grl
            ON grl.tenant_id=gr.tenant_id AND grl.goods_receipt_id=gr.id
          WHERE gr.tenant_id=? AND gr.branch_id=?
-         GROUP BY gr.id ORDER BY gr.received_at DESC LIMIT ?`,
+         GROUP BY gr.tenant_id,gr.id,po.purchase_order_number,po.currency,s.name
+         ORDER BY gr.received_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, branchId, pageSize)
       .all<Record<string, unknown>>();
@@ -7460,6 +7461,8 @@ export class InventoryIntelligenceService {
   async summary(branchId: string): Promise<InventorySummary> {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const expiryHorizon = new Date();
+    expiryHorizon.setUTCDate(expiryHorizon.getUTCDate() + 3);
     const [catalogue, low, expiry, po, variance, quality] = await Promise.all([
       this.db
         .prepare(
@@ -7522,9 +7525,9 @@ export class InventoryIntelligenceService {
         .prepare(
           `SELECT COUNT(*) AS count FROM inventory_lots WHERE tenant_id=? AND branch_id=?
              AND status='AVAILABLE' AND expiry_date IS NOT NULL
-             AND expiry_date<=date('now','+3 day')`,
+             AND expiry_date<=?`,
         )
-        .bind(this.actor.tenantId, branchId)
+        .bind(this.actor.tenantId, branchId, expiryHorizon.toISOString().slice(0, 10))
         .first<{ count: number }>(),
       this.db
         .prepare(

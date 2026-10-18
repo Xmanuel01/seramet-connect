@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -23,7 +23,12 @@ import {
 } from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
-import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import {
+  acknowledgedKitchenDispatch,
+  formatPosClock,
+  pendingPosOrders,
+  resolvePosTimeZone,
+} from "@/lib/pos-workflow";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { permissions } from "@/platform/permissions";
 import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
@@ -49,6 +54,7 @@ import {
   type TransactionOrder,
 } from "@/lib/transaction-engine";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
+import { posInvoicePricing } from "@/payments/pos-invoice-components";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -476,6 +482,7 @@ function POS() {
     [branchOrders],
   );
   const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
+  const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
   const mutateTransaction: typeof mutateBackendTransaction = async (
     action,
     payload,
@@ -631,6 +638,13 @@ function POS() {
 
   const runOrderAction = async (action: () => Promise<void>) => {
     if (orderActionRef.current) return;
+    if (selectedOrderUnavailable) {
+      setPrintNotice(
+        "The selected order has not loaded. Wait for reconnection or verify it in Orders before continuing.",
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
     if (recoverCustomerId) {
       setPrintNotice("Verify the recovered customer selection before saving.");
       setPrintNoticeType("warning");
@@ -858,7 +872,17 @@ function POS() {
       },
       { reported: 0, added: 0 },
     );
-  const subtotal = majorFromMinor(subtotalMinor, tenant.defaultCurrency);
+  const invoicePricing = posInvoicePricing({
+    currency: tenant.defaultCurrency,
+    itemsMinor: subtotalMinor,
+    taxMinor: taxTotals.reported,
+    serviceMinor: serviceTotals.reported,
+    exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
+  });
+  const subtotal = majorFromMinor(
+    invoicePricing.financialComponents.netSalesMinor,
+    tenant.defaultCurrency,
+  );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
   const total = majorFromMinor(
     subtotalMinor + taxTotals.added + serviceTotals.added,
@@ -920,8 +944,8 @@ function POS() {
       productionStation: line.p.productionStation ?? "NONE",
       ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
     })),
-    subtotal,
-    tax,
+    subtotal: invoicePricing.subtotal,
+    tax: invoicePricing.tax,
     total,
     paid,
     change,
@@ -1014,7 +1038,10 @@ function POS() {
       cashier: currentUser.name,
       waiter: currentUser.name,
       ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
-      financialOverride: { subtotal, tax, total },
+      financialOverride:
+        activeOrder && !activeOrder.financialComponents
+          ? { subtotal: invoicePricing.subtotal, tax: invoicePricing.tax, total }
+          : invoicePricing,
       lines: draftLines,
     };
   };
@@ -1360,12 +1387,6 @@ function POS() {
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Select a table before sending a dine-in order to kitchen.");
     }
-    if (!profile) {
-      throw new Error(
-        `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
-      );
-    }
-
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const sentLineIds = new Set(
       activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
@@ -1395,6 +1416,11 @@ function POS() {
         state: transactionState,
         printResult: null,
       };
+    }
+    if (!profile) {
+      throw new Error(
+        `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
+      );
     }
     if (profile) {
       const preflight = SerametPrintService.createProductionTicketJobs(
@@ -1604,13 +1630,11 @@ function POS() {
     Boolean(
       result.printResult?.jobs.length ||
       (result.printResult === null &&
-        printJobs.some(
-          (job) =>
-            job.orderId === result.order.id &&
-            ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
-            ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-              job.status,
-            ),
+        acknowledgedKitchenDispatch(
+          result.order,
+          result.state.kitchenPrintObligations ?? [],
+          activeTenantId,
+          branchId,
         )),
     );
 
@@ -2565,16 +2589,27 @@ function POS() {
             <div className="mt-3 grid grid-cols-3 gap-2">
               <Btn
                 onClick={holdOrder}
-                disabled={orderActionBusy || !items.length || activeOrderHasSentLines}
+                disabled={
+                  orderActionBusy ||
+                  selectedOrderUnavailable ||
+                  !items.length ||
+                  activeOrderHasSentLines
+                }
               >
                 Hold
               </Btn>
               {canPrintBill ? (
                 <>
-                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(true)}
+                    disabled={orderActionBusy || selectedOrderUnavailable}
+                  >
                     Print bill
                   </Btn>
-                  <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(false)}
+                    disabled={orderActionBusy || selectedOrderUnavailable}
+                  >
                     <FileText className="h-4 w-4" />
                     Invoice
                   </Btn>
@@ -2584,14 +2619,23 @@ function POS() {
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets} disabled={orderActionBusy || !items.length}>
+              <Btn
+                onClick={queueKitchenTickets}
+                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
+              >
                 {orderActionBusy ? "Working..." : "Send kitchen"}
               </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={orderActionBusy || paymentBusy || !items.length || !dineInPaymentReady}
+                disabled={
+                  orderActionBusy ||
+                  selectedOrderUnavailable ||
+                  paymentBusy ||
+                  !items.length ||
+                  !dineInPaymentReady
+                }
                 title={
                   !dineInPaymentReady && selectedChannel?.requiresTable
                     ? "Select a table and send all items to kitchen first"
@@ -2609,7 +2653,7 @@ function POS() {
               <Btn
                 className="w-full"
                 onClick={sendKitchenAndBill}
-                disabled={orderActionBusy || !items.length}
+                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
               >
                 {orderActionBusy ? "Working..." : "Send kitchen & bill"}
               </Btn>
@@ -2656,6 +2700,20 @@ function POS() {
                       ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
                       : "Operational feedback and printing state appear here."}
                   </div>
+                  {configurationError && (
+                    <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+                      <Link to="/seramet-printers" className="underline">
+                        Check printers and kitchen routes
+                      </Link>
+                      <Link
+                        to="/seramet-setup"
+                        search={{ section: "DOCUMENTS" }}
+                        className="underline"
+                      >
+                        Review document settings
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3156,7 +3214,7 @@ function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
     };
   }, []);
   return (
-    <span aria-label="POS clock" title={timeZone} suppressHydrationWarning>
+    <span aria-label="POS clock" title={`Restaurant time (${timeZone})`} suppressHydrationWarning>
       {formatPosClock(now, locale, timeZone)}
     </span>
   );

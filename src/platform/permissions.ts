@@ -247,6 +247,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   cancelOrder: permissions.ordersCancel,
   requestRefund: permissions.paymentsRefundRequest,
   approveRefund: permissions.paymentsRefundApprove,
+  rejectRefund: permissions.paymentsRefundApprove,
   importExternalTransaction: permissions.paymentsReconcile,
   suggestReconciliation: permissions.paymentsReconcile,
   manuallyReconcile: permissions.paymentsReconcile,

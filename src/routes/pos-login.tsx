@@ -144,10 +144,10 @@ function PosLoginPage() {
       >
         <div className="mt-5 grid gap-2 sm:grid-cols-2">
           <a
-            className="h-11 rounded-md bg-primary px-4 py-3 text-center text-sm font-semibold text-primary-foreground"
+            className="min-h-11 rounded-md bg-primary px-4 py-3 text-center text-sm font-semibold text-primary-foreground"
             href="/login?account=1"
           >
-            Administrator sign in
+            Use administrator account
           </a>
           <a href="/staff-login" className="mt-3 block text-sm font-semibold text-primary">
             My attendance — linked account sign in

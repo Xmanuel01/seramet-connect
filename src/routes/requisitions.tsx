@@ -1,6 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { InventoryActionLink } from "@/inventory/inventory-action-link";
 import { useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ClipboardCheck, Download, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { requisitionCsv } from "@/inventory/requisition-export";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -63,6 +65,19 @@ function Requisitions() {
       !["ORDERED", "REJECTED", "CANCELLED"].includes(row.status),
   ).length;
 
+  const exportRequests = () => {
+    const url = URL.createObjectURL(
+      new Blob([requisitionCsv(rows)], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `seramet-requisitions-${branchId.replace(/[^a-zA-Z0-9_-]/g, "_")}.csv`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   const run = async (operation: () => Promise<unknown>, success: string) => {
     setBusy(true);
     setNotice("");
@@ -87,9 +102,15 @@ function Requisitions() {
           <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
-          <Link to="/purchase-orders">
-            <Btn>Purchase orders</Btn>
-          </Link>
+          <InventoryActionLink to="/purchase-orders">Purchase orders</InventoryActionLink>
+          <Btn
+            disabled={control.status !== "ready" || !rows.length}
+            title="Export loaded requests for the selected branch"
+            onClick={exportRequests}
+          >
+            <Download className="h-4 w-4" />
+            Export requests
+          </Btn>
           <Btn
             variant="primary"
             disabled={!authoritative || busy}
@@ -219,9 +240,7 @@ function Requisitions() {
                 </div>
                 <div className="flex gap-2">
                   {selected.status === "APPROVED" && (
-                    <Link to="/purchase-orders">
-                      <Btn>Continue to PO</Btn>
-                    </Link>
+                    <InventoryActionLink to="/purchase-orders">Continue to PO</InventoryActionLink>
                   )}
                   <Btn
                     variant="primary"

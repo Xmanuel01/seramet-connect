@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { GuestExperienceService } from "@/guest/guest-service";
+import { GuestDomainError } from "@/guest/types";
 import { hashCapabilityToken } from "@/guest/security";
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
@@ -258,6 +259,93 @@ describe("Pass 11 digital guest experience", () => {
     });
   });
 
+  it("lists QR table metadata for QR-only staff without disclosing host records or another branch", async () => {
+    const actor = {
+      ...manager(),
+      permissions: [permissions.qrManage],
+      branchScope: { type: "BRANCH" as const, branchId },
+      assignedBranchIds: [branchId],
+    };
+    const rows = await service.listQrTables(actor, branchId);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]).not.toHaveProperty("table_session_id");
+    await expect(service.hostDashboard(actor, branchId)).rejects.toMatchObject({ status: 403 });
+    await expect(service.listQrTables(actor, "branch-demo-ngong-road")).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(
+      service.listQrTables({ ...actor, permissions: [] }, branchId),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("does not rotate a QR or write an audit event when its public destination is unavailable", async () => {
+    await service.rotateQrToken(manager(), {
+      branchId,
+      tableId: "table-demo-w-01",
+      mode: "MENU_ONLY",
+    });
+    const before = db.sqlite
+      .prepare("SELECT * FROM table_qr_tokens WHERE tenant_id=? ORDER BY id")
+      .all(tenantId);
+    const events = db.sqlite
+      .prepare("SELECT COUNT(*) count FROM table_qr_token_events WHERE tenant_id=?")
+      .get(tenantId);
+    db.sqlite
+      .prepare(
+        "UPDATE public_branch_profiles SET publicly_enabled=0 WHERE tenant_id=? AND branch_id=?",
+      )
+      .run(tenantId, branchId);
+    await expect(
+      service.rotateQrToken(manager(), { branchId, tableId: "table-demo-w-01", mode: "MENU_ONLY" }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(
+      db.sqlite
+        .prepare("SELECT * FROM table_qr_tokens WHERE tenant_id=? ORDER BY id")
+        .all(tenantId),
+    ).toEqual(before);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) count FROM table_qr_token_events WHERE tenant_id=?")
+        .get(tenantId),
+    ).toEqual(events);
+  });
+
+  it("rejects missing QR channels before token rotation or guest session side effects", async () => {
+    const qr = await service.rotateQrToken(manager(), {
+      branchId,
+      tableId: "table-demo-w-01",
+      mode: "MENU_ONLY",
+    });
+    db.sqlite
+      .prepare("UPDATE order_channels SET active=0 WHERE tenant_id=? AND channel_type='QR'")
+      .run(tenantId);
+    await hydrateAuthoritativeConfiguration(db, {}, true);
+    const beforeTokens = await service.listQrTokens(manager(), branchId);
+    const beforeSessions = db.sqlite
+      .prepare("SELECT COUNT(*) count FROM guest_table_sessions WHERE tenant_id=?")
+      .get(tenantId);
+    const beforeEvents = db.sqlite
+      .prepare("SELECT COUNT(*) count FROM table_qr_token_events WHERE tenant_id=?")
+      .get(tenantId);
+    await expect(
+      service.rotateQrToken(manager(), { branchId, tableId: "table-demo-w-01", mode: "MENU_ONLY" }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      service.createSession({ restaurantSlug, branchSlug, sessionType: "QR", qrToken: qr.token }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await service.listQrTokens(manager(), branchId)).toEqual(beforeTokens);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) count FROM guest_table_sessions WHERE tenant_id=?")
+        .get(tenantId),
+    ).toEqual(beforeSessions);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) count FROM table_qr_token_events WHERE tenant_id=?")
+        .get(tenantId),
+    ).toEqual(beforeEvents);
+  });
+
   it("rotates and revokes non-guessable table QR capability tokens", async () => {
     const first = await service.rotateQrToken(manager(), {
       branchId,
@@ -491,6 +579,118 @@ describe("Pass 11 digital guest experience", () => {
         branchId,
       ),
     ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("loads host reservations without SQLite-only aggregation and excludes released or wrong-branch assignments", async () => {
+    const startsAt = futureLocalIso(4, 18);
+    const reservation = await service.createReservation(restaurantSlug, branchSlug, {
+      startsAt,
+      partySize: 2,
+      guestName: "Portable host query",
+      idempotencyKey: "portable-host-query-reservation",
+    });
+    const date = db.sqlite
+      .prepare("SELECT business_date FROM reservations WHERE tenant_id=? AND id=?")
+      .get(tenantId, reservation.id) as { business_date: string };
+    const table = db.sqlite
+      .prepare(
+        "SELECT id,code FROM restaurant_tables WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY code LIMIT 1",
+      )
+      .get(tenantId, branchId) as { id: string; code: string };
+    db.sqlite
+      .prepare(
+        "UPDATE reservation_table_assignments SET released_at=? WHERE tenant_id=? AND reservation_id=?",
+      )
+      .run(new Date().toISOString(), tenantId, reservation.id);
+    db.sqlite
+      .prepare(
+        `INSERT INTO reservation_table_assignments(tenant_id,id,branch_id,reservation_id,table_id,assigned_by,assigned_at) VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        tenantId,
+        crypto.randomUUID(),
+        branchId,
+        reservation.id,
+        table.id,
+        manager().id,
+        new Date().toISOString(),
+      );
+    const queries: string[] = [];
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      queries.push(sql);
+      if (/GROUP_CONCAT|GROUP BY r\.id\b/i.test(sql))
+        throw new Error("SQLite-only host aggregate rejected");
+      return prepare(sql);
+    });
+    try {
+      const dashboard = await service.hostDashboard(manager(), branchId, date.business_date);
+      expect(dashboard.reservations.find((row) => row.id === reservation.id)?.table_codes).toBe(
+        table.code,
+      );
+      expect(
+        queries.filter((sql) => /FROM reservation_table_assignments a/.test(sql)),
+      ).toHaveLength(1);
+      db.sqlite
+        .prepare(
+          "UPDATE reservation_table_assignments SET released_at=? WHERE tenant_id=? AND reservation_id=?",
+        )
+        .run(new Date().toISOString(), tenantId, reservation.id);
+      const secondBranchTable = db.sqlite
+        .prepare("SELECT id FROM restaurant_tables WHERE tenant_id=? AND branch_id<>? LIMIT 1")
+        .get(tenantId, branchId) as { id: string };
+      db.sqlite
+        .prepare(
+          `INSERT INTO reservation_table_assignments(tenant_id,id,branch_id,reservation_id,table_id,assigned_by,assigned_at) VALUES(?,?,?,?,?,?,?)`,
+        )
+        .run(
+          tenantId,
+          crypto.randomUUID(),
+          branchId,
+          reservation.id,
+          secondBranchTable.id,
+          manager().id,
+          new Date().toISOString(),
+        );
+      expect(
+        (await service.hostDashboard(manager(), branchId, date.business_date)).reservations.find(
+          (row) => row.id === reservation.id,
+        )?.table_codes,
+      ).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("returns asynchronous guest-admin denials as 403 instead of a generic API 500", async () => {
+    const spy = vi
+      .spyOn(GuestExperienceService.prototype, "hostDashboard")
+      .mockRejectedValue(new GuestDomainError("FORBIDDEN", 403, "Branch access is not assigned"));
+    try {
+      const response = await handleSerametApiRequest(
+        new Request(`http://localhost/api/seramet/guest-admin/host?branchId=${branchId}`, {
+          headers: {
+            "x-seramet-dev-auth": "enabled",
+            "x-seramet-tenant-id": tenantId,
+            "x-seramet-branch-id": branchId,
+          },
+        }),
+        {
+          SERAMET_ENVIRONMENT: "development",
+          SERAMET_ENABLE_DEV_AUTH: "true",
+          SERAMET_DB: db,
+          SERAMET_JWT_SECRET: secret,
+        },
+      );
+      expect(spy).toHaveBeenCalledOnce();
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "FORBIDDEN",
+        message: "Branch access is not assigned",
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("blocks cross-session payment access and never trusts a browser payment state", async () => {

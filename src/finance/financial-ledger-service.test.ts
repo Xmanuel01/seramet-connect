@@ -293,6 +293,21 @@ describe("Authoritative finance and ERP-style reporting integrity", () => {
     expect(report.scope.currency).toBe("KES");
   });
 
+  it("reports an empty selected period even when earlier posted opening balances exist", async () => {
+    const report = await new FinancialLedgerService(db, actor()).statement({
+      from: "2026-10-01",
+      to: "2026-10-18",
+    });
+    expect(report.lines.find((line) => line.accountId === "cash")).toMatchObject({
+      openingDebitMinor: 1000,
+      periodDebitMinor: 0,
+      periodCreditMinor: 0,
+    });
+    expect(report.issues.map((issue) => issue.code)).toContain("NO_POSTED_LEDGER_ENTRIES");
+    expect(report.trial).toMatchObject({ periodDebitMinor: 0, periodCreditMinor: 0 });
+    expect(report.cashMovement).toEqual({ openingMinor: 1000, periodMinor: 0 });
+  });
+
   it("does not add unconverted foreign bank funds to the base-currency cash total", async () => {
     db.sqlite
       .prepare(

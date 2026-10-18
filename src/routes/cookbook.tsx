@@ -4,7 +4,8 @@ import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { QUANTITY_SCALE } from "@/inventory/quantity";
+import { ScaledIngredients } from "@/cookbook/ScaledIngredients";
+import { sourceQuantityLabel } from "@/cookbook/scaling";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
@@ -24,7 +25,7 @@ export const Route = createFileRoute("/cookbook")({
 });
 
 function Cookbook() {
-  const { branchLabel, hasPermission, isAllBranches } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, hasPermission, isAllBranches } = useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const cookbook = useCookbook(authoritative && !isAllBranches);
@@ -205,30 +206,10 @@ function Cookbook() {
             <div className="p-4">
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
                 <div>
-                  <SectionTitle>Ingredients</SectionTitle>
-                  <div className="mt-2 overflow-hidden rounded-lg border border-border">
-                    {selected.ingredients.map((ingredient, index) => (
-                      <div
-                        key={String(ingredient["id"] ?? index)}
-                        className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-[12px] last:border-b-0"
-                      >
-                        <span className="font-medium">
-                          {String(
-                            ingredient["inventory_item_name"] ??
-                              ingredient["sub_recipe_name"] ??
-                              "Unknown ingredient",
-                          )}
-                        </span>
-                        <span className="num text-muted-foreground">
-                          {formatMicro(Number(ingredient["quantity_minor"] ?? 0))}{" "}
-                          {String(ingredient["unit_symbol"] ?? "")}
-                          {Number(ingredient["waste_factor_bps"] ?? 0) > 0
-                            ? ` + ${(Number(ingredient["waste_factor_bps"]) / 100).toFixed(1)}% waste`
-                            : ""}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  <ScaledIngredients
+                    key={`${activeTenantId}:${branchId}:${selected.id}:${selected.current_version_id}`}
+                    recipe={selected}
+                  />
 
                   <SectionTitle className="mt-5">Method</SectionTitle>
                   {displayContent?.method.length ? (
@@ -554,11 +535,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function formatYield(recipe: CookbookRecipe) {
-  return `${formatMicro(recipe.yield_quantity_minor)} ${recipe.yield_unit_symbol ?? ""}`.trim();
-}
-
-function formatMicro(value: number) {
-  return (Number(value) / QUANTITY_SCALE).toLocaleString(undefined, { maximumFractionDigits: 3 });
+  return `${sourceQuantityLabel(recipe.yield_quantity_minor)} ${recipe.yield_unit_symbol ?? ""}`.trim();
 }
 
 const inputClass =

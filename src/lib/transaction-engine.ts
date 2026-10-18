@@ -10,6 +10,7 @@ import type { CostControlSnapshot } from "@/cost-control/types";
 import { cashCount } from "@/payments/cash-count";
 import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 import { QUANTITY_SCALE, quantityCostMinor } from "@/inventory/quantity";
+import { refundableReceiptMinor } from "@/payments/refund-eligibility";
 import {
   allocateInvoiceMinor,
   splitInvoiceComponents,
@@ -617,8 +618,12 @@ export type RefundRecord = {
   method: PaymentMethod;
   reason: string;
   requestedBy: string;
+  requestedById?: string;
+  requestKey?: string;
   approvedBy?: string;
   status: "REQUESTED" | "APPROVED" | "REJECTED" | "COMPLETED";
+  rejectedBy?: string;
+  rejectionReason?: string;
   createdAt: string;
   completedAt?: string;
   businessDate?: string;
@@ -1678,25 +1683,32 @@ export const TransactionEngine = {
   ) {
     const next = clone(normalizeTransactionState(state));
     const name = input.name.trim();
-    if (!name || !input.branch.trim()) return next;
+    if (name.length < 2 || name.length > 120 || !input.branch.trim())
+      throw new Error("Enter a rider name and branch");
+    if (
+      input.shift &&
+      !/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/.test(input.shift.trim())
+    )
+      throw new Error("Enter a valid rider shift as HH:MM-HH:MM");
+    const scope = resolveScope(input.branch.trim(), next.tenantId);
     if (
       next.employees.some(
         (employee) =>
           employee.active &&
           employee.name.toLowerCase() === name.toLowerCase() &&
-          employee.branch === input.branch,
+          (employee.branchId === scope.branchId || employee.branch === scope.branch),
       )
     ) {
       return next;
     }
     const shift = input.shift?.trim() || "10:00-21:30";
     const employee: EmployeeRecord = {
-      ...resolveScope(input.branch.trim(), next.tenantId),
+      ...scope,
       id: id("EMP", next, "employees"),
       name,
       role: "Rider",
       department: "Delivery",
-      branch: input.branch.trim(),
+      branch: scope.branch,
       shift,
       netMonthlyPay: money(input.netMonthlyPay ?? 0),
       monthlyWorkDays: 26,
@@ -3550,12 +3562,76 @@ export const TransactionEngine = {
   },
 
   requestRefund(state: TransactionState, input: Omit<RefundRecord, "id" | "status" | "createdAt">) {
+    const receipt = state.receipts.find((item) => item.id === input.receiptId);
+    const invoice = state.bills.find((item) => item.id === input.invoiceId);
+    if (
+      !receipt ||
+      !invoice ||
+      receipt.invoiceId !== invoice.id ||
+      receipt.orderId !== input.orderId ||
+      !invoice.orderIds.includes(input.orderId)
+    )
+      throw new Error("Select an authoritative source receipt and invoice");
+    const scope = resolveScope(
+      receipt.branchId ?? receipt.branch,
+      state.tenantId ?? LOCAL_PILOT_TENANT_ID,
+    );
+    if (
+      (input.tenantId && input.tenantId !== scope.tenantId) ||
+      (receipt.tenantId && receipt.tenantId !== scope.tenantId) ||
+      (invoice.tenantId && invoice.tenantId !== scope.tenantId) ||
+      (invoice.branchId && invoice.branchId !== scope.branchId) ||
+      (input.branchId && input.branchId !== scope.branchId) ||
+      ![receipt.branch, scope.branchId].includes(input.branch)
+    )
+      throw new Error("Refund source scope mismatch");
+    const currency = configurationRepository.getTenant(scope.tenantId).defaultCurrency;
+    const amountMinor = parseMajorAmount(input.amount, currency);
+    const reason = input.reason?.trim();
+    if (!reason || reason.length < 3 || reason.length > 1000)
+      throw new Error("Enter a refund reason between 3 and 1000 characters");
+    if (input.requestKey !== undefined) {
+      if (
+        typeof input.requestKey !== "string" ||
+        !input.requestKey.trim() ||
+        input.requestKey.length > 128
+      )
+        throw new Error("Invalid refund request identity");
+      const prior = state.refunds.find((item) => item.requestKey === input.requestKey);
+      if (prior) {
+        if (
+          prior.receiptId !== receipt.id ||
+          prior.invoiceId !== invoice.id ||
+          prior.amount !== input.amount ||
+          prior.method !== input.method ||
+          prior.reason !== reason ||
+          prior.requestedById !== input.requestedById
+        )
+          throw new Error("Refund request identity was reused with different values");
+        return state;
+      }
+    }
+    if (
+      amountMinor <= 0 ||
+      amountMinor > refundableReceiptMinor(state, receipt, input.method, currency)
+    )
+      throw new Error("Refund exceeds the remaining confirmed collection for this method");
     const next = clone(state);
     const refund: RefundRecord = {
       id: id("RF", next, "refunds"),
       status: "REQUESTED",
       createdAt: now(),
-      ...input,
+      ...scope,
+      orderId: receipt.orderId,
+      invoiceId: receipt.invoiceId,
+      receiptId: receipt.id,
+      amount: majorFromMinor(amountMinor, currency),
+      method: input.method,
+      reason,
+      requestedBy: input.requestedBy,
+      ...(input.requestedById ? { requestedById: input.requestedById } : {}),
+      ...(input.requestKey ? { requestKey: input.requestKey } : {}),
+      ...(input.businessDate ? { businessDate: input.businessDate } : {}),
     };
     next.refunds.unshift(refund);
     audit(next, {
@@ -3574,7 +3650,22 @@ export const TransactionEngine = {
   approveRefund(state: TransactionState, refundId: string, approvedBy: string) {
     const next = clone(state);
     const refund = next.refunds.find((item) => item.id === refundId);
-    if (!refund || refund.status !== "REQUESTED") return next;
+    if (!refund) throw new Error("Selected refund was not found");
+    if (refund.status === "APPROVED" && refund.approvedBy === approvedBy) return state;
+    if (refund.status !== "REQUESTED") throw new Error("Selected refund is not awaiting approval");
+    const receipt = next.receipts.find((item) => item.id === refund.receiptId);
+    const currency = configurationRepository.getTenant(
+      refund.tenantId ?? next.tenantId ?? LOCAL_PILOT_TENANT_ID,
+    ).defaultCurrency;
+    if (
+      !receipt ||
+      receipt.invoiceId !== refund.invoiceId ||
+      receipt.orderId !== refund.orderId ||
+      parseMajorAmount(refund.amount, currency) <= 0 ||
+      parseMajorAmount(refund.amount, currency) >
+        refundableReceiptMinor(next, receipt, refund.method, currency, refund.id)
+    )
+      throw new Error("The refund source no longer supports this amount");
     refund.status = "APPROVED";
     refund.approvedBy = approvedBy;
     audit(next, {
@@ -3586,6 +3677,38 @@ export const TransactionEngine = {
       record: refund.id,
       before: "REQUESTED",
       after: "APPROVED",
+    });
+    return next;
+  },
+
+  rejectRefund(state: TransactionState, refundId: string, rejectedBy: string, reason: string) {
+    const refund = state.refunds.find((item) => item.id === refundId);
+    const explanation = reason?.trim();
+    if (!refund) throw new Error("Selected refund was not found");
+    if (!explanation || explanation.length < 3 || explanation.length > 1000)
+      throw new Error("Enter a rejection reason between 3 and 1000 characters");
+    if (
+      refund.status === "REJECTED" &&
+      refund.rejectedBy === rejectedBy &&
+      refund.rejectionReason === explanation
+    )
+      return state;
+    if (refund.status !== "REQUESTED")
+      throw new Error("Only a pending refund request can be rejected");
+    const next = clone(state);
+    Object.assign(
+      next.refunds.find((row) => row.id === refundId)!,
+      { status: "REJECTED", rejectedBy, rejectionReason: explanation },
+    );
+    audit(next, {
+      actor: rejectedBy,
+      role: "Branch Manager",
+      branch: refund.branch,
+      module: "Refunds",
+      action: "Rejected refund",
+      record: refund.id,
+      before: "REQUESTED",
+      after: explanation,
     });
     return next;
   },

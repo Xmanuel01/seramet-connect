@@ -23,18 +23,49 @@ test("employee entry is default and administrator access is explicit on any devi
       body: JSON.stringify({ state: "UNREGISTERED" }),
     }),
   );
-  for (const path of ["/", "/pos", "/login", "/login?account=0"]) {
+  for (const path of [
+    "/",
+    "/pos",
+    "/login",
+    "/login?account=0",
+    "/login?verified=1",
+    "/pos-login?reason=session-expired",
+  ]) {
     await page.goto(path);
     await expect(page).toHaveURL(/\/pos-login(?:\?|$)/);
     await expect(page.getByRole("heading", { name: "Device activation required" })).toBeVisible();
     await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+    await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", "/pos.webmanifest");
   }
-  await page.getByRole("link", { name: "Administrator sign in" }).click();
+  const manifest = await (await page.request.get("/pos.webmanifest")).json();
+  expect(manifest).toMatchObject({ id: "/pos-login", start_url: "/pos-login", scope: "/" });
+  await expect
+    .poll(() =>
+      page.getByRole("link", { name: "Use administrator account" }).evaluate((element) => {
+        const text = document.createRange();
+        text.selectNodeContents(element);
+        const label = text.getBoundingClientRect();
+        const button = element.getBoundingClientRect();
+        return label.top >= button.top && label.bottom <= button.bottom;
+      }),
+    )
+    .toBe(true);
+  await page.getByRole("link", { name: "Use administrator account" }).click();
   await expect(page).toHaveURL(/\/login\?account=1$/);
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Administrator sign in", exact: true }),
+  ).toBeVisible();
   await page.reload();
   await expect(page).toHaveURL(/\/login\?account=1$/);
   await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Back to employee sign in" }).click();
+  await expect(page).toHaveURL(/\/pos-login$/);
+  await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+  await page.goto("/login?account=1&verified=1");
+  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Create a restaurant", exact: true }).click();
+  await expect(page).toHaveURL(/\/register$/);
 
   await page.route("**/api/seramet/public/device/startup", (route) =>
     route.fulfill({
@@ -60,6 +91,14 @@ test("employee entry is default and administrator access is explicit on any devi
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   await page.goto("/register");
   await expect(page).toHaveURL(/\/register/);
+  await page.goto("/guest/unpublished-local-fixture");
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+    "href",
+    "/manifest.webmanifest",
+  );
+  expect(await (await page.request.get("/manifest.webmanifest")).json()).toMatchObject({
+    start_url: "/guest/",
+  });
 });
 
 async function authorize(context: BrowserContext) {
@@ -94,6 +133,31 @@ async function establishSession(page: Page) {
     { tenantId: fixture.tenantId, userId: fixture.userId, branchId: fixture.firstBranchId },
   );
 }
+
+test("authenticated deep links survive refresh and logout returns to employee entry", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  try {
+    await authorize(context);
+    const page = await context.newPage();
+    await establishSession(page);
+    await page.goto("/settings");
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(page).toHaveURL(/\/pos-login$/);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/pos-login$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/pos-login$/);
+  } finally {
+    await context.close();
+  }
+});
 
 test("settings waits for authoritative persistence and Setup Centre fails visibly", async ({
   browser,

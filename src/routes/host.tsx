@@ -11,5 +11,5 @@ export const Route = createFileRoute("/host")({
       },
     ],
   }),
-  component: HostStation,
+  component: () => <HostStation view="/host" />,
 });

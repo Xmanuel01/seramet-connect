@@ -286,7 +286,10 @@ export class ConfigurationRepository {
       this.state.documentIdentities.find(
         (item) => item.tenantId === tenantId && item.branchId === undefined,
       );
-    if (!identity) throw new PlatformConfigurationError("Business profile not configured");
+    if (!identity)
+      throw new PlatformConfigurationError(
+        "Print document identity is not configured. Review document settings in Setup Centre.",
+      );
     return clone(identity);
   }
 

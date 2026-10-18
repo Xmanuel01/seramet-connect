@@ -552,13 +552,23 @@ export function applyServerMutation(
         reason,
       });
     }
-    case "requestRefund":
-      return TransactionEngine.requestRefund(
-        state,
-        input["input"] as Parameters<typeof TransactionEngine.requestRefund>[1],
-      );
+    case "requestRefund": {
+      const requested = input["input"] as Parameters<typeof TransactionEngine.requestRefund>[1];
+      return TransactionEngine.requestRefund(state, {
+        ...requested,
+        requestedBy: actor.name,
+        requestedById: actor.id,
+      });
+    }
     case "approveRefund":
       return TransactionEngine.approveRefund(state, String(input["refundId"]), actor.name);
+    case "rejectRefund":
+      return TransactionEngine.rejectRefund(
+        state,
+        String(input["refundId"]),
+        actor.name,
+        String(input["reason"] ?? ""),
+      );
     case "importExternalTransaction":
       return TransactionEngine.importExternalTransaction(
         state,

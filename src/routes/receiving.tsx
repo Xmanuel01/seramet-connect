@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { InventoryActionLink } from "@/inventory/inventory-action-link";
 import { useEffect, useMemo, useState } from "react";
 import { PackageCheck, RefreshCw, RotateCcw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -218,9 +219,7 @@ function Receiving() {
       }
       actions={
         <>
-          <Link to="/purchase-orders">
-            <Btn>Purchase orders</Btn>
-          </Link>
+          <InventoryActionLink to="/purchase-orders">Purchase orders</InventoryActionLink>
           <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>

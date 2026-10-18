@@ -355,7 +355,7 @@ describe("branch capabilities and module visibility", () => {
     ).toBe(true);
   });
 
-  it("exposes every first-class brief route through role-aware navigation", () => {
+  it("exposes implemented brief routes while excluding unimplemented pilot registers", () => {
     const westlands = getVisibleNavGroups(
       "General Manager",
       "Westlands",
@@ -363,14 +363,16 @@ describe("branch capabilities and module visibility", () => {
       DEMO_TENANT_ID,
     ).flatMap((group) => group.items.map((item) => item.to));
 
-    ["/purchase-orders", "/payables", "/crm", "/decisions", "/online-orders", "/bar"].forEach(
-      (path) => {
-        expect(westlands).toContain(path);
-        expect(
-          roleCanAccessPath("General Manager", path, "Westlands", undefined, DEMO_TENANT_ID),
-        ).toBe(true);
-      },
-    );
+    ["/purchase-orders", "/payables", "/crm", "/online-orders", "/bar"].forEach((path) => {
+      expect(westlands).toContain(path);
+      expect(
+        roleCanAccessPath("General Manager", path, "Westlands", undefined, DEMO_TENANT_ID),
+      ).toBe(true);
+    });
+    expect(westlands).not.toContain("/decisions");
+    expect(
+      roleCanAccessPath("General Manager", "/decisions", "Westlands", undefined, DEMO_TENANT_ID),
+    ).toBe(false);
   });
 
   it("keeps the sensitive dashboard hidden from frontline operational roles by default", () => {

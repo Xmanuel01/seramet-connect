@@ -149,7 +149,7 @@ export async function handleGuestApi(
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
 
     if (parts[2] === "guest-admin") {
-      return handleGuestAdmin(request, url, parts.slice(3), env, service);
+      return await handleGuestAdmin(request, url, parts.slice(3), env, service);
     }
     if (parts[2] !== "guest") return null;
     const route = parts.slice(3);
@@ -532,7 +532,10 @@ async function handleGuestAdmin(
       )),
     });
   }
-  if (route[0] === "qr" && request.method === "GET") {
+  if (route[0] === "qr" && route[1] === "tables" && request.method === "GET") {
+    return response({ ok: true, tables: await service.listQrTables(actor, branchId) });
+  }
+  if (route[0] === "qr" && !route[1] && request.method === "GET") {
     return response({ ok: true, tokens: await service.listQrTokens(actor, branchId) });
   }
   if (route[0] === "qr" && route[1] === "rotate" && request.method === "POST") {

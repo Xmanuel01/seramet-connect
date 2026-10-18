@@ -701,8 +701,12 @@ export function TaxCentrePage() {
 }
 
 export function DailySalesJournalPage() {
-  const { branchLabel } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, isAllBranches } = useAppContext();
   const dates = useFinancePeriod();
+  const [pageState, setPageState] = useState({ period: "", page: 0 });
+  const period = `${activeTenantId}:${isAllBranches ? "ALL" : branchId}:${dates.from}:${dates.to}`;
+  const page = pageState.period === period ? pageState.page : 0;
+  const ledger = useFinanceReport<FinanceLedger>("ledger", dates.from, dates.to, page);
   const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
   const data = result.report;
   return (
@@ -710,11 +714,40 @@ export function DailySalesJournalPage() {
       title="Daily sales journal control"
       subtitle={"Verify posted Z-report coverage — " + branchLabel}
     >
-      <FinanceDates {...dates} refresh={result.refresh} />
+      <FinanceDates
+        {...dates}
+        refresh={() => {
+          setPageState({ period, page: 0 });
+          ledger.refresh();
+          result.refresh();
+        }}
+      />
       <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
+      <FinanceFetchState status={ledger.status} error={ledger.error} retry={ledger.refresh} />
       {data && <FinanceQuality quality={data.quality} issues={data.issues} />}
+      {ledger.report && (
+        <Panel className="mt-4">
+          <PanelHead
+            title="Posted journal evidence"
+            sub="All posted sources for the selected branch and period; not a generated sales summary."
+          />
+          <JournalLines report={ledger.report} />
+          <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+            <Btn disabled={page === 0} onClick={() => setPageState({ period, page: page - 1 })}>
+              Previous
+            </Btn>
+            <span className="text-[12px]">Page {page + 1}</span>
+            <Btn
+              disabled={!ledger.report.hasMore}
+              onClick={() => setPageState({ period, page: page + 1 })}
+            >
+              Next
+            </Btn>
+          </div>
+        </Panel>
+      )}
       <Panel className="mt-4 p-5 text-[13px]">
-        <strong>Never manually post synthetic sales</strong>
+        <strong>Sales-to-ledger reconciliation</strong>
         <p className="mt-2 text-[12px] text-muted-foreground">
           Each day's settled POS payments, tax, refunds, discounts, marketplace clearing and cash
           variance must be reconciled to configured journal accounts using an idempotent

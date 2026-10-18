@@ -282,9 +282,15 @@ try {
   for (const branchId of [firstBranchId, secondBranchId]) {
     await db
       .prepare(
-        "INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,updated_at) VALUES (?,?,?,100000,1,'{}',?)",
+        "INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,station_id,updated_at) VALUES (?,?,?,100000,1,'{}',?,?)",
       )
-      .bind(tenantId, branchId, menuItemId, stamp)
+      .bind(
+        tenantId,
+        branchId,
+        menuItemId,
+        branchId === firstBranchId ? stationId : secondStationId,
+        stamp,
+      )
       .run();
   }
   await db

@@ -235,11 +235,30 @@ describe.sequential("pass 1 platform foundation acceptance", () => {
       "No active order channels",
     );
     expect(() => repository.getDocumentIdentity(tenantA, branchA)).toThrow(
-      "Business profile not configured",
+      "Print document identity is not configured",
     );
     expect(() =>
       new ProviderService(repository, new ProviderRegistry()).resolveConnection(tenantA, "missing"),
     ).toThrow("Provider connection incomplete");
+  });
+
+  it("uses registered branch identity for legacy printing without inventing business or tax details", () => {
+    const state = createDefaultDemoPlatformState();
+    const branch = state.branches[0]!;
+    const tenant = state.tenants.find((item) => item.id === branch.tenantId)!;
+    state.documentIdentities = [];
+    setConfigurationRepositoryForTests(new ConfigurationRepository(state));
+    const profile = getConfiguredBranchHardwareProfile(branch.id, tenant.id);
+    expect(profile.printIdentity.businessName).toBe(tenant.tradingName || tenant.legalName);
+    expect(profile.printIdentity.address).toBe(branch.address);
+    expect(profile.printIdentity.phone).toBe(branch.phone);
+    expect(profile.printIdentity.pin).toBe("");
+    expect(profile.tenantId).toBe(tenant.id);
+    expect(profile.branchId).toBe(branch.id);
+
+    state.printRoutes = [];
+    setConfigurationRepositoryForTests(new ConfigurationRepository(state));
+    expect(() => getConfiguredBranchHardwareProfile(branch.id, tenant.id)).toThrow(/routes/);
   });
 });
 

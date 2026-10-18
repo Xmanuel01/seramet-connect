@@ -11,8 +11,12 @@ import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
 import { encodePrintDocument } from "./raster-renderer.mjs";
 import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
+import { createPrinterDiscovery } from "./printer-discovery.mjs";
 
-export async function createBridge(config, { deliver, localTest = false, consume } = {}) {
+export async function createBridge(
+  config,
+  { deliver, localTest = false, consume, discoverPrinters = createPrinterDiscovery() } = {},
+) {
   if (config.host && config.host !== "127.0.0.1") throw new Error("LOOPBACK_BIND_REQUIRED");
   if (
     !config.token ||
@@ -122,8 +126,19 @@ export async function createBridge(config, { deliver, localTest = false, consume
     try {
       if (request.method === "GET" && request.url === "/jobs")
         return reply(200, { jobs: store.list() });
-      if (request.method === "GET" && request.url === "/printers")
-        return reply(200, { printers: [] });
+      if (request.method === "GET" && request.url === "/printers") {
+        try {
+          const printers = await discoverPrinters();
+          return reply(200, {
+            bridgeId: config.bridgeId,
+            tenantId: config.tenantId,
+            branchId: config.branchId,
+            printers,
+          });
+        } catch {
+          return reply(503, { code: "PRINTER_DISCOVERY_UNAVAILABLE" });
+        }
+      }
       if (request.method !== "POST" || request.url !== "/jobs")
         return reply(404, { code: "NOT_FOUND" });
       const chunks = [];

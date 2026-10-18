@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth-client";
 
 export const Route = createFileRoute("/login")({
+  head: () => ({ meta: [{ title: "Administrator sign in - Seramet" }] }),
   beforeLoad: ({ location }) => {
     if (new URLSearchParams(location.searchStr).get("account") !== "1") {
       throw redirect({ to: "/pos-login", replace: true });
@@ -57,13 +58,18 @@ function LoginPage() {
 
   return (
     <AuthShell
-      title="Sign in"
+      title="Administrator sign in"
       subtitle="Use your verified account to access the restaurants and branches assigned to you."
       footer={
         <>
-          New to Seramet?{" "}
-          <Link to="/register" className="font-semibold text-primary">
-            Create a restaurant
+          <div>
+            New to Seramet?{" "}
+            <Link to="/register" className="font-semibold text-primary">
+              Create a restaurant
+            </Link>
+          </div>
+          <Link to="/pos-login" className="mt-3 inline-block font-semibold text-primary">
+            Back to employee sign in
           </Link>
         </>
       }

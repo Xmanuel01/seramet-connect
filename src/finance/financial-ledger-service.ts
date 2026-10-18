@@ -353,7 +353,7 @@ export class FinancialLedgerService {
       )
       .reduce((sum, row) => sum + row.periodDebitMinor - row.periodCreditMinor, 0);
     const balanceDifferenceMinor = assetsMinor - liabilitiesMinor - equityMinor - retainedMinor;
-    const hasMovement = lines.some((line) => line.debitMinor || line.creditMinor);
+    const hasMovement = lines.some((line) => line.periodDebitMinor || line.periodCreditMinor);
     if (!hasMovement) {
       issues.push({
         code: "NO_POSTED_LEDGER_ENTRIES",

@@ -28,6 +28,7 @@ export function multiplyDivide(
 export function quantityCostMinor(quantityMicro: number, unitCostMinor: number) {
   assertScaledInteger(quantityMicro, "quantity", true);
   assertScaledInteger(unitCostMinor, "unit cost");
+  if (unitCostMinor === 0) return 0;
   return multiplyDivide(quantityMicro, unitCostMinor, QUANTITY_SCALE, "quantity cost");
 }
 

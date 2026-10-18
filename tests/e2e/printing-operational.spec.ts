@@ -430,7 +430,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.goto("/invoices");
     await manager
       .getByRole("row")
-      .filter({ hasText: bill.id })
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
       .getByRole("button", { name: "Preview bill", exact: true })
       .click();
     await manager.getByRole("dialog").getByRole("button", { name: "Print", exact: true }).click();
@@ -459,7 +459,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await cashier.reload();
     await cashier
       .getByRole("row")
-      .filter({ hasText: bill.id })
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
       .getByRole("button", { name: "Settle", exact: true })
       .click();
     await cashier.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();

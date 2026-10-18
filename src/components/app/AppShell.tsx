@@ -1,5 +1,6 @@
 import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
+import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -30,7 +31,7 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { getVisibleNavGroups, roleCanAccessPath } from "./nav";
+import { getVisibleNavGroups, navItemMatchesPath, roleCanAccessPath } from "./nav";
 import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
@@ -218,11 +219,23 @@ export function AppShell({
     moduleAccess,
   );
   const path = useRouterState().location.pathname;
+  const unavailable = pilotUnavailable[path];
+  const pageContent = unavailable ? (
+    <section role="status" className="rounded-md border border-border bg-card p-6">
+      <h2 className="text-base font-semibold">{unavailable} is not available in the pilot</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        This register is not connected to an authoritative workflow. No complete or empty record
+        history can be confirmed here.
+      </p>
+    </section>
+  ) : (
+    children
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
     const activeGroup = visibleNavGroups.find(
-      (group) => group.group && group.items.some((item) => item.to === path),
+      (group) => group.group && group.items.some((item) => navItemMatchesPath(item, path)),
     )?.group;
     if (!activeGroup) return;
     setOpenNavGroups((current) => {
@@ -455,7 +468,7 @@ export function AppShell({
   const navContent = (isCollapsed = false, onNavigate?: () => void) => (
     <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Main navigation">
       {visibleNavGroups.map((g) => {
-        const hasActiveItem = g.items.some((item) => item.to === path);
+        const hasActiveItem = g.items.some((item) => navItemMatchesPath(item, path));
         const isOpen = !g.group || isCollapsed || openNavGroups.has(g.group);
         const GroupIcon = g.items.find((item) => item.icon)?.icon;
         const groupId = `nav-group-${g.group.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -506,7 +519,7 @@ export function AppShell({
             >
               {g.items.map((item, idx, items) => {
                 const active =
-                  item.to === path &&
+                  navItemMatchesPath(item, path) &&
                   items.findIndex((candidate) => candidate.to === item.to) === idx;
                 const Icon = item.icon;
                 const content = (
@@ -528,6 +541,7 @@ export function AppShell({
                     key={item.label + item.to}
                     to={item.to}
                     title={item.label}
+                    aria-current={active ? "page" : undefined}
                     onClick={onNavigate}
                   >
                     {content}
@@ -1032,7 +1046,7 @@ export function AppShell({
         </Dialog>
 
         {bare ? (
-          <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
+          <main className="min-w-0 flex-1 overflow-x-hidden">{pageContent}</main>
         ) : (
           <main className="min-w-0 flex-1 overflow-x-hidden px-4 py-5 md:px-6">
             {title && (
@@ -1043,14 +1057,14 @@ export function AppShell({
                     <div className="mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>
                   )}
                 </div>
-                {actions && (
+                {actions && !unavailable && (
                   <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                     {actions}
                   </div>
                 )}
               </div>
             )}
-            {children}
+            {pageContent}
           </main>
         )}
       </div>

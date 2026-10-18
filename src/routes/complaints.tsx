@@ -25,6 +25,8 @@ type Feedback = {
   customer_id: string | null;
   display_name: string | null;
   order_id: string | null;
+  invoice_id: string | null;
+  invoice_number: string | null;
   category: string;
   survey_type: "GENERAL" | "NPS" | "CSAT";
   rating: number;
@@ -56,6 +58,8 @@ function Complaints() {
   const [survey, setSurvey] = useState<"GENERAL" | "CSAT" | "NPS">("GENERAL");
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
+  const [invoiceReference, setInvoiceReference] = useState("");
+  const [orderId, setOrderId] = useState("");
   const [customer, setCustomer] = useState<PosCustomerIdentity | null>(null);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -85,6 +89,8 @@ function Complaints() {
         branchId,
         categoryId: chosenCategory,
         ...(customer ? { customerId: customer.id } : {}),
+        ...(invoiceReference.trim() ? { invoiceReference: invoiceReference.trim() } : {}),
+        ...(orderId.trim() ? { orderId: orderId.trim() } : {}),
         surveyType: survey,
         rating,
         ...(comment.trim() ? { comment: comment.trim() } : {}),
@@ -93,6 +99,8 @@ function Complaints() {
       setOpenForm(false);
       setCustomer(null);
       setComment("");
+      setInvoiceReference("");
+      setOrderId("");
       setCategoryId("");
       feedback.refresh();
     } catch (error) {
@@ -200,6 +208,24 @@ function Complaints() {
                 <div className="md:col-span-2">
                   <PosCustomerPicker value={customer} disabled={busy} onSelect={setCustomer} />
                 </div>
+                <label className="grid gap-1 text-[12px] font-medium">
+                  Invoice number or ID (optional)
+                  <input
+                    className={crmFieldClass}
+                    value={invoiceReference}
+                    maxLength={128}
+                    onChange={(event) => setInvoiceReference(event.target.value)}
+                  />
+                </label>
+                <label className="grid gap-1 text-[12px] font-medium">
+                  Order ID (optional; required for multi-order invoices)
+                  <input
+                    className={crmFieldClass}
+                    value={orderId}
+                    maxLength={128}
+                    onChange={(event) => setOrderId(event.target.value)}
+                  />
+                </label>
                 <label className="grid gap-1 text-[12px] font-medium md:col-span-2">
                   Customer's feedback
                   <textarea
@@ -264,6 +290,10 @@ function Complaints() {
                       <Status>{readableStatus(row.status)}</Status>
                     </div>
                     <p>{row.comment || "No written feedback supplied."}</p>
+                    <p className="text-[12px] text-muted-foreground">
+                      Order: {row.order_id || "Not linked"} · Invoice:{" "}
+                      {row.invoice_number || row.invoice_id || "Not linked"}
+                    </p>
                     <p className="text-[12px] text-muted-foreground">
                       {row.display_name || "Anonymous customer"} · {row.survey_type} {row.rating}/10
                       {" · "}

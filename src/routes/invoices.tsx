@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { invoiceBusinessDate, resolvePosTimeZone, unbilledKitchenOrders } from "@/lib/pos-workflow";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
+import { invoiceDisplayName } from "@/lib/invoice-split";
+import { permissions } from "@/platform/permissions";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
@@ -137,6 +140,7 @@ function InvoiceDeliveryActions({
 function Invoices() {
   const [deliveryLog, setDeliveryLog] = useState<DeliveryLogEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [splitInvoice, setSplitInvoice] = useState<BillingRecord | null>(null);
   const [settleInvoice, setSettleInvoice] = useState<BillingRecord | null>(null);
   const [settlementMethod, setSettlementMethod] = useState("");
   const [settlementReference, setSettlementReference] = useState("");
@@ -148,7 +152,14 @@ function Invoices() {
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
   const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
   const [periodDate, setPeriodDate] = useState("");
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, hasPermission } =
+    useAppContext();
+  const canSplit = hasPermission(permissions.invoicesManage);
+  const scope = `${activeTenantId}:${branchId}`;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const splitScope = useRef("");
+  const currency = getConfigurationRepository().getTenant(activeTenantId).defaultCurrency;
   const { state, mutate, syncFromBackend } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
   const settlementService = new SettlementService();
@@ -323,19 +334,23 @@ function Invoices() {
   };
 
   const splitFirstOpenBill = () => {
-    const bill = selectedBills[0];
-    if (!bill) {
+    if (selectedBills.length !== 1) {
       setWarning("Select one invoice before splitting.");
       return;
     }
-    void mutate("splitBill", {
-      billId: bill.id,
-      splits: [
-        { label: "Guest 1", amount: Math.floor(bill.total / 2) },
-        { label: "Guest 2", amount: bill.total - Math.floor(bill.total / 2) },
-      ],
-    });
-    setSelectedIds([]);
+    openSplit(selectedBills[0]!);
+  };
+  const openSplit = (invoice: BillingRecord) => {
+    if (!canSplit) {
+      setWarning("Invoice management permission is required to split invoices.");
+      return;
+    }
+    if (invoice.status !== "OPEN" || invoice.paymentStatus !== "UNPAID" || invoice.paid !== 0) {
+      setWarning("Only an open unpaid invoice can be split.");
+      return;
+    }
+    splitScope.current = scope;
+    setSplitInvoice(invoice);
   };
 
   const printSelectedInvoice = () => {
@@ -439,11 +454,13 @@ function Invoices() {
   return (
     <AppShell
       title="Invoices"
-      subtitle={`Customer billing, open bills and settlement - ${branchLabel}`}
+      subtitle={`Customer invoices and settlement - ${branchLabel}`}
       actions={
         <>
           <Btn onClick={mergeFirstOpenBills}>Merge selected</Btn>
-          <Btn onClick={splitFirstOpenBill}>Split selected</Btn>
+          <Btn disabled={!canSplit} onClick={splitFirstOpenBill}>
+            Split selected
+          </Btn>
           <Btn onClick={printSelectedInvoice}>Print invoice</Btn>
         </>
       }
@@ -494,7 +511,7 @@ function Invoices() {
       )}
       <Panel className="mt-4">
         <PanelHead
-          title="Bills and invoices"
+          title="Invoices"
           sub={`${activeRows.length} active billing records; merged/split source records retained`}
           right={<SearchInput placeholder="Search invoice or customer..." />}
         />
@@ -551,12 +568,21 @@ function Invoices() {
                 <TD>
                   <input
                     type="checkbox"
+                    aria-label={`Select ${invoiceDisplayName(row.id)}`}
                     checked={selectedIds.includes(row.id)}
                     onChange={() => toggleInvoice(row.id)}
                     className="h-4 w-4 accent-primary"
                   />
                 </TD>
-                <TD className="num font-semibold">{row.id}</TD>
+                <TD className="num font-semibold">
+                  <button
+                    type="button"
+                    className="text-left underline underline-offset-2"
+                    onClick={() => openSplit(row)}
+                  >
+                    {invoiceDisplayName(row.id)}
+                  </button>
+                </TD>
                 <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
                 <TD>{row.customer}</TD>
                 <TD className="num text-right">{ksh(row.total)}</TD>
@@ -591,20 +617,27 @@ function Invoices() {
           {activeRows.map((row) => (
             <article key={row.id} className="space-y-3 px-4 py-3">
               <div className="flex items-start justify-between gap-3">
-                <label className="flex min-w-0 items-start gap-2.5">
+                <div className="flex min-w-0 items-start gap-2.5">
                   <input
                     type="checkbox"
+                    aria-label={`Select ${invoiceDisplayName(row.id)}`}
                     checked={selectedIds.includes(row.id)}
                     onChange={() => toggleInvoice(row.id)}
                     className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
                   />
                   <span className="min-w-0">
-                    <span className="num block truncate text-[13px] font-bold">{row.id}</span>
+                    <button
+                      type="button"
+                      className="num block text-left text-[13px] font-bold underline underline-offset-2"
+                      onClick={() => openSplit(row)}
+                    >
+                      {invoiceDisplayName(row.id)}
+                    </button>
                     <span className="block truncate text-[12px] text-muted-foreground">
                       {row.customer}
                     </span>
                   </span>
-                </label>
+                </div>
                 <Status>{settlementLabel(row)}</Status>
               </div>
               <div className="grid grid-cols-2 gap-3 text-[12px]">
@@ -698,7 +731,7 @@ function Invoices() {
           <DialogHeader>
             <DialogTitle>Settle invoice</DialogTitle>
             <DialogDescription>
-              {settleInvoice?.id} - {settleInvoice?.customer}
+              {settleInvoice && invoiceDisplayName(settleInvoice.id)} - {settleInvoice?.customer}
             </DialogDescription>
           </DialogHeader>
           {settleInvoice && (
@@ -896,6 +929,34 @@ function Invoices() {
           )}
         </DialogContent>
       </Dialog>
+      {splitInvoice && splitScope.current === scope && (
+        <InvoiceSplitDialog
+          key={`${scope}:${splitInvoice.id}`}
+          invoiceId={splitInvoice.id}
+          total={splitInvoice.total}
+          currency={currency}
+          close={() => {
+            if (scopeRef.current === scope)
+              setSplitInvoice((current) => (current?.id === splitInvoice.id ? null : current));
+          }}
+          confirm={async (splits) => {
+            const requestedScope = scope;
+            const result = await mutate("splitBill", { billId: splitInvoice.id, splits });
+            if (scopeRef.current !== requestedScope) return;
+            const confirmed = result?.state?.bills.filter(
+              (invoice) => invoice.splitFromBillId === splitInvoice.id,
+            );
+            if (
+              (result && "offline" in result && result.offline) ||
+              confirmed?.length !== splits.length
+            )
+              throw new Error(
+                "The server has not confirmed the split. Your amounts were retained.",
+              );
+            setSelectedIds([]);
+          }}
+        />
+      )}
       <Dialog open={!!warning} onOpenChange={(open) => !open && setWarning("")}>
         <DialogContent className="max-w-[420px] border-border bg-card">
           <DialogHeader>

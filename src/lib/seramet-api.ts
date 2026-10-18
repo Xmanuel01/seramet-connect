@@ -752,7 +752,7 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
   if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
     throw new SerametHttpError(400, "Production mutations require a non-negative expectedRevision");
   }
-  if (["requestRefund", "approveRefund"].includes(body.action)) {
+  if (["requestRefund", "approveRefund", "rejectRefund"].includes(body.action)) {
     await consumeRateLimit(env, `${actor.tenantId}:${actor.id}`, sensitiveRateLimits.refund);
   }
   const current = await repo.loadState(actor.tenantId);
@@ -1068,9 +1068,14 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   if (!input) return [];
   const draft = input["draft"] as { branch?: string } | undefined;
   const nestedInput = input["input"] as
-    { branch?: string; invoiceId?: string; orderId?: string } | undefined;
+    { branch?: string; invoiceId?: string; orderId?: string; receiptId?: string } | undefined;
   if (draft?.branch) branches.add(draft.branch);
   if (nestedInput?.branch) branches.add(nestedInput.branch);
+  if (nestedInput?.receiptId)
+    addBranch(
+      branches,
+      state.receipts.find((receipt) => receipt.id === nestedInput.receiptId)?.branch,
+    );
   const invoiceId = String(input["invoiceId"] ?? "");
   const orderId = String(input["orderId"] ?? "");
   const billId = String(input["billId"] ?? "");
@@ -1093,7 +1098,11 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   if (invoiceId) addBranch(branches, state.bills.find((item) => item.id === invoiceId)?.branch);
   if (billId) addBranch(branches, state.bills.find((item) => item.id === billId)?.branch);
   if (orderId) addBranch(branches, state.orders.find((item) => item.id === orderId)?.branch);
-  if (refundId) addBranch(branches, state.refunds.find((item) => item.id === refundId)?.branch);
+  if (refundId) {
+    const refund = state.refunds.find((item) => item.id === refundId);
+    addBranch(branches, refund?.branch);
+    addBranch(branches, state.receipts.find((item) => item.id === refund?.receiptId)?.branch);
+  }
   if (drawerId) addBranch(branches, state.cashDrawers.find((item) => item.id === drawerId)?.branch);
   if (externalTransactionId)
     addBranch(
