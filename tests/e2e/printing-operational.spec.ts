@@ -146,7 +146,13 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       platform: "browser",
       format: "iife",
       jsx: "automatic",
-      alias: { "@shared": join(source, "src/shared") },
+      // A pinned emulator shared through a worktree link must use the same
+      // React instance as createRoot, rather than its physical parent's runtime.
+      alias: {
+        "@shared": join(source, "src/shared"),
+        react: resolve("node_modules/react"),
+        "react-dom": resolve("node_modules/react-dom"),
+      },
     });
     const css = await readFile(join(source, "src/renderer/styles.css"), "utf8");
     await viewer.setContent(

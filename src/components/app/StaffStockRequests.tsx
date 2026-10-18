@@ -85,6 +85,7 @@ export function StaffStockRequests() {
     try {
       if (payload) {
         const latest = await load();
+        if (active.current !== scope) return;
         if (latest.requests.some((row) => row.id === payload!.id)) {
           setPending(null);
           try {
@@ -155,10 +156,17 @@ export function StaffStockRequests() {
         /* No stored draft. */
       }
       setNotes("");
+      setItem("");
+      setQuantity("1");
       setMessage(
         "Stock request submitted for purchasing review. No purchase or stock deduction was made.",
       );
-      await load();
+      await load().catch(() => {
+        if (active.current === scope)
+          setMessage(
+            "Stock request saved. The list could not refresh; reload before making another request.",
+          );
+      });
     } catch (error) {
       if (active.current === scope)
         setMessage(error instanceof Error ? error.message : "Stock request unavailable.");
