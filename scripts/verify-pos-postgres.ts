@@ -344,12 +344,6 @@ try {
       closeRevision,
     ),
   ]);
-  const closeFailures = closes.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => ({
-    code: (result.reason as { code?: string }).code ?? "UNSPECIFIED",
-    status: (result.reason as { status?: number }).status ?? 0,
-    message: result.reason instanceof Error ? result.reason.message : String(result.reason),
-  }));
-  console.log("Disposable close race result:", JSON.stringify({ successful: closes.filter((result) => result.status === "fulfilled").length, failures: closeFailures }));
   assert.equal(closes.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(closes.filter((result) => result.status === "rejected").length, 1);
   state = await first.loadState(tenantId);
