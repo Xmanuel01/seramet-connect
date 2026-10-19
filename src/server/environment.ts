@@ -65,6 +65,8 @@ export type ProductionRuntimeEnv = {
   SERAMET_WORK_QUEUE?: DurableQueue;
   SERAMET_SCAN_QUEUE?: DurableQueue<FileScanQueueMessage>;
   SERAMET_OBJECTS?: ObjectStoreBinding;
+  SERAMET_CLOSING_EMAIL_API_KEY?: string;
+  SERAMET_CLOSING_EMAIL_FROM?: string;
   SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;
   SERAMET_SCANNER_EVIDENCE_SECRET?: string;
   SERAMET_DATABASE_PROVIDER?: string;

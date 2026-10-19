@@ -12,12 +12,14 @@ import { SettlementService } from "@/payments/settlement-service";
 import {
   closeBusinessDay,
   closeCashierShift,
+  closeCompatibleDrawer,
   configureClosing,
   type DrawerCount,
   type ClosingMode,
 } from "@/payments/daily-closing";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { parseMajorAmount } from "@/payments/money";
 
 export class TransactionConflictError extends Error {
   readonly code = "CONFLICT";
@@ -572,13 +574,29 @@ export function applyServerMutation(
         actor.name,
         String(input["notes"] ?? "Manual reconciliation"),
       );
-    case "closeCashDrawer":
-      return TransactionEngine.closeCashDrawer(
-        state,
-        String(input["drawerId"]),
-        input["physicalCount"],
-        actor.name,
+    case "closeCashDrawer": {
+      const normalized = normalizeTransactionState(state);
+      const legacy = normalized.cashDrawers.find(
+        (d) =>
+          d.id === input["drawerId"] &&
+          d.branchId === actor.branchId &&
+          d.tenantId === actor.tenantId,
       );
+      if (!legacy) throw new Error("Cash drawer was not found in the active branch");
+      const currency = getConfigurationRepository().getTenant(actor.tenantId).defaultCurrency;
+      return closeCompatibleDrawer(
+        normalized,
+        actor,
+        {
+          drawerSessionId: `MIGRATED-${legacy.id}`,
+          countedByCurrency: {
+            [currency]: parseMajorAmount(input["physicalCount"] as string | number, currency),
+          },
+          varianceReason: String(input["varianceReason"] ?? ""),
+        },
+        input["confirmed"] === true,
+      );
+    }
     case "markBillPending": {
       const billId = String(input["invoiceId"]);
       const timestamp = new Date().toISOString();
@@ -1126,21 +1144,65 @@ export function applyServerMutation(
         state,
         input["input"] as Parameters<ReconciliationEngine["resolveException"]>[1],
       );
-    case "openPaymentDrawer":
-      return paymentOrchestrator.openDrawer(
-        state,
-        input["input"] as Parameters<typeof paymentOrchestrator.openDrawer>[1],
+    case "openPaymentDrawer": {
+      const requested = input["input"] as Parameters<typeof paymentOrchestrator.openDrawer>[1];
+      if (requested.tenantId !== actor.tenantId || requested.branchId !== actor.branchId)
+        throw new Error("Cash drawer must belong to the active tenant and branch");
+      if (
+        requested.employeeId !== actor.id &&
+        !actor.permissions.includes(permissions.reconciliationApprove)
+      )
+        throw new Error("Cannot open another cashier's drawer");
+      return paymentOrchestrator.openDrawer(state, { ...requested, actor: actor.id });
+    }
+    case "closePaymentDrawer": {
+      const requested = input["input"] as Parameters<typeof paymentOrchestrator.closeDrawer>[1] & {
+        confirmed?: boolean;
+        varianceReason?: string;
+      };
+      const drawer = state.paymentOperations?.drawerSessions.find(
+        (d) =>
+          d.id === requested.drawerSessionId &&
+          d.branchId === actor.branchId &&
+          d.tenantId === actor.tenantId,
       );
-    case "closePaymentDrawer":
-      return paymentOrchestrator.closeDrawer(
+      if (!drawer || requested.tenantId !== actor.tenantId)
+        throw new Error("Cash drawer was not found in the active branch");
+      return closeCompatibleDrawer(
         state,
-        input["input"] as Parameters<typeof paymentOrchestrator.closeDrawer>[1],
+        actor,
+        {
+          drawerSessionId: drawer.id,
+          countedByCurrency: {
+            ...requested.countedByCurrency,
+            [drawer.baseCurrency]: requested.countedCashMinor,
+          },
+          varianceReason: requested.varianceReason,
+        },
+        requested.confirmed === true,
       );
-    case "approveDrawerVariance":
-      return paymentOrchestrator.approveDrawerVariance(
-        state,
-        input["input"] as Parameters<typeof paymentOrchestrator.approveDrawerVariance>[1],
-      );
+    }
+    case "approveDrawerVariance": {
+      const requested = input["input"] as Parameters<
+        typeof paymentOrchestrator.approveDrawerVariance
+      >[1];
+      if (
+        requested.tenantId !== actor.tenantId ||
+        !actor.permissions.includes(permissions.cashAdjust) ||
+        !actor.permissions.includes(permissions.reconciliationApprove) ||
+        !state.paymentOperations?.drawerSessions.some(
+          (d) =>
+            d.id === requested.drawerSessionId &&
+            d.branchId === actor.branchId &&
+            d.tenantId === actor.tenantId,
+        )
+      )
+        throw new Error("Supervisor variance approval is required in the active branch");
+      return paymentOrchestrator.approveDrawerVariance(state, {
+        ...requested,
+        approvedBy: actor.id,
+      });
+    }
     case "importBankTransactions":
       return reconciliationEngine.importBankTransactions(
         state,

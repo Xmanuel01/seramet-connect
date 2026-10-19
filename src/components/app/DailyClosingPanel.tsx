@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, ShieldCheck } from "lucide-react";
+import { Download, RefreshCcw, ShieldCheck } from "lucide-react";
 import { Btn, Status } from "@/components/app/ui";
 import {
   Dialog,
@@ -13,6 +13,7 @@ import type { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
   closingPolicy,
   drawersForDay,
+  unresolvedClosingPaymentStatuses,
   type ClosingMode,
   type DrawerCount,
 } from "@/payments/daily-closing";
@@ -21,6 +22,7 @@ import { formatMinor, majorFromMinor, parseMajorAmount, sumMinor } from "@/payme
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { permissions } from "@/platform/permissions";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { ClosingDeliveryStatus } from "@/components/app/ClosingDeliveryStatus";
 
 type Engine = ReturnType<typeof useTransactionEngine>;
 export function DailyClosingPanel({ engine }: { engine: Engine }) {
@@ -40,6 +42,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   const zone = branch.timezone ?? timeZone;
   const cutoff = Number(branch.metadata["businessDayCutoffMinutes"] ?? 0);
   const [currentDate, setCurrentDate] = useState("");
+  const [contextRefresh, setContextRefresh] = useState(0);
   const policy = closingPolicy(state, activeTenantId, branchId);
   const [date, setDate] = useState("");
   const [open, setOpen] = useState(false);
@@ -54,8 +57,19 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
     String(majorFromMinor(policy.materialVarianceMinor, currency)),
   );
   const [recipients, setRecipients] = useState<string[]>(policy.recipientUserIds);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const settingsVersion = useRef("");
   const lock = useRef(false);
   const cancel = useRef<HTMLButtonElement>(null);
+  function beginSettingsEdit() {
+    if (!settingsDirty) {
+      settingsVersion.current = policy.updatedAt;
+      setMode(policy.mode);
+      setThreshold(String(majorFromMinor(policy.materialVarianceMinor, currency)));
+      setRecipients([...policy.recipientUserIds]);
+    }
+    setSettingsDirty(true);
+  }
   useEffect(() => {
     const controller = new AbortController();
     const token = getSerametAccessToken();
@@ -74,7 +88,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
           throw new Error("Closing context does not match the selected branch");
         if (!controller.signal.aborted) {
           setCurrentDate(context.businessDate);
-          setDate(context.businessDate);
+          setDate((selected) => selected || context.businessDate);
         }
       })
       .catch((error) => {
@@ -82,7 +96,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
           setNotice(error instanceof Error ? error.message : "Closing context unavailable");
       });
     return () => controller.abort();
-  }, [activeTenantId, branchId]);
+  }, [activeTenantId, branchId, contextRefresh]);
   const drawers = drawersForDay(state, activeTenantId, branchId, date);
   const selectedDrawers = targetShift ? drawers.filter((d) => d.id === targetShift) : drawers;
   const countsNeeded = selectedDrawers.filter((d) => d.status === "OPEN");
@@ -101,7 +115,17 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
     timeZone: zone,
     businessDayCutoffMinutes: cutoff,
   });
+  const pendingPayments =
+    (state.paymentOperations?.intents ?? []).filter(
+      (intent) =>
+        intent.branchId === branchId && unresolvedClosingPaymentStatuses.has(intent.status),
+    ).length +
+    state.paymentIntents.filter(
+      (intent) =>
+        intent.branchId === branchId && unresolvedClosingPaymentStatuses.has(intent.status),
+    ).length;
   const fingerprint = JSON.stringify({
+    pendingPayments,
     date,
     projection: { ...projection, calculatedAt: undefined },
     drawers,
@@ -122,7 +146,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   );
   const closed = days.some((d) => d.businessDate === date && d.status === "CLOSED");
   const eligible = repository.snapshot().users.filter((user) => {
-    if (user.tenantId !== activeTenantId || !user.active) return false;
+    if (user.tenantId !== activeTenantId || !user.active || !user.email) return false;
     const session = repository.getUserSession(activeTenantId, user.id);
     return (
       session.assignedBranchIds.includes(branchId) &&
@@ -179,6 +203,30 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Closing failed");
       setConfirmFingerprint(null);
+      const authoritative = await engine.syncFromBackend().catch(() => undefined);
+      const shiftConfirmed =
+        !!targetShift &&
+        authoritative?.state.paymentOperations?.drawerSessions.some(
+          (drawer) => drawer.id === targetShift && ["CLOSED", "APPROVED"].includes(drawer.status),
+        );
+      if (
+        shiftConfirmed ||
+        (!targetShift &&
+          authoritative?.state.paymentOperations?.dayCloses.some(
+            (day) =>
+              day.tenantId === activeTenantId &&
+              day.branchId === branchId &&
+              day.businessDate === date &&
+              day.status === "CLOSED",
+          ))
+      ) {
+        setOpen(false);
+        setNotice(
+          shiftConfirmed
+            ? "Cashier shift closure confirmed from the server."
+            : "Business day closure confirmed from the server. Review the saved report and email status below.",
+        );
+      }
     } finally {
       lock.current = false;
       setBusy(false);
@@ -212,6 +260,17 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   return (
     <section className="space-y-4 p-4" aria-label="Daily closing">
       <div className="flex flex-wrap items-end justify-between gap-3">
+        <Btn
+          title="Refresh closing review"
+          aria-label="Refresh closing review"
+          disabled={busy}
+          onClick={() => {
+            setContextRefresh((value) => value + 1);
+            void engine.syncFromBackend();
+          }}
+        >
+          <RefreshCcw className="h-4 w-4" />
+        </Btn>
         <label className="grid gap-1 text-sm">
           Business date
           <input
@@ -307,6 +366,12 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                   <Download className="h-4 w-4" />
                   Download PDF
                 </Btn>
+                <ClosingDeliveryStatus
+                  tenantId={activeTenantId}
+                  branchId={branchId}
+                  dayId={day.id}
+                  revision={snapshot.revision}
+                />
               </div>
             )),
         )}
@@ -318,8 +383,11 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
             <label className="grid gap-1 text-sm">
               Closing mode
               <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as ClosingMode)}
+                value={settingsDirty ? mode : policy.mode}
+                onChange={(e) => {
+                  beginSettingsEdit();
+                  setMode(e.target.value as ClosingMode);
+                }}
                 className="rounded-md border p-2"
               >
                 <option value="SUPERVISOR_DAILY_CLOSE">Supervisor-led daily closing</option>
@@ -330,10 +398,17 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
               Material variance threshold ({currency})
               <input
                 type="number"
-                min="0.01"
+                min="0"
                 step="any"
-                value={threshold}
-                onChange={(e) => setThreshold(e.target.value)}
+                value={
+                  settingsDirty
+                    ? threshold
+                    : String(majorFromMinor(policy.materialVarianceMinor, currency))
+                }
+                onChange={(e) => {
+                  beginSettingsEdit();
+                  setThreshold(e.target.value);
+                }}
                 className="rounded-md border p-2"
               />
             </label>
@@ -343,21 +418,31 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                 <label key={user.id} className="mt-2 flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={recipients.includes(user.id)}
-                    onChange={(e) =>
+                    checked={(settingsDirty ? recipients : policy.recipientUserIds).includes(
+                      user.id,
+                    )}
+                    onChange={(e) => {
+                      beginSettingsEdit();
                       setRecipients((ids) =>
                         e.target.checked ? [...ids, user.id] : ids.filter((id) => id !== user.id),
-                      )
-                    }
+                      );
+                    }}
                   />
                   {user.name}
                 </label>
               ))}
             </fieldset>
             <Btn
-              disabled={unavailable || busy}
+              disabled={unavailable || busy || !settingsDirty}
               onClick={async () => {
                 if (lock.current) return;
+                if (!settingsDirty) return;
+                if (policy.updatedAt !== settingsVersion.current) {
+                  setNotice(
+                    "Closing settings changed on another terminal. Reload settings before saving.",
+                  );
+                  return;
+                }
                 lock.current = true;
                 setBusy(true);
                 try {
@@ -368,8 +453,10 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                     recipientUserIds: recipients,
                   });
                   setNotice("Closing settings saved.");
+                  setSettingsDirty(false);
                 } catch (e) {
                   setNotice(e instanceof Error ? e.message : "Settings were not saved");
+                  await engine.syncFromBackend().catch(() => undefined);
                 } finally {
                   lock.current = false;
                   setBusy(false);
@@ -377,6 +464,9 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
               }}
             >
               Save closing settings
+            </Btn>
+            <Btn onClick={() => setSettingsDirty(false)} disabled={busy || !settingsDirty}>
+              Reload settings
             </Btn>
           </div>
         </details>
@@ -397,7 +487,11 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
           <DialogHeader>
             <DialogTitle>{targetShift ? "End cashier shift" : "Close Business Day"}</DialogTitle>
             <DialogDescription>
-              {branchLabel} / {date} / {zone}. Supervisor: {currentUser.name}.
+              {branchLabel} / {date} / {zone}. Supervisor: {currentUser.name}. Cutoff{" "}
+              {Math.floor(cutoff / 60)
+                .toString()
+                .padStart(2, "0")}
+              :{(cutoff % 60).toString().padStart(2, "0")}.
             </DialogDescription>
           </DialogHeader>
           {!confirmFingerprint ? (
@@ -437,11 +531,27 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                 </p>
               )}
               <h3 className="font-semibold">2. Reconcile cash</h3>
+              <dl className="grid grid-cols-2 gap-2 text-sm">
+                {projection.tenders.map((tender) => (
+                  <div key={tender.method}>
+                    <dt>{tender.method}</dt>
+                    <dd>{formatMinor(tender.amountMinor, currency)}</dd>
+                  </div>
+                ))}
+              </dl>
               {selectedDrawers.map((drawer) => (
                 <fieldset key={drawer.id} className="space-y-2 border-t py-3">
                   <legend className="text-sm">
                     Cashier {drawer.employeeId} / {drawer.id} / {drawer.status}
                   </legend>
+                  <p className="text-xs text-muted-foreground">
+                    Opened{" "}
+                    {new Intl.DateTimeFormat("en-GB", {
+                      timeZone: zone,
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }).format(new Date(drawer.openedAt))}
+                  </p>
                   {Object.entries(drawer.currencyBalances).map(([code, balance]) => (
                     <div key={code} className="grid gap-2 text-sm sm:grid-cols-2">
                       <span>
@@ -492,6 +602,12 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                 </fieldset>
               ))}
               <h3 className="font-semibold">3. Review outstanding obligations</h3>
+              {pendingPayments > 0 && (
+                <p role="alert">
+                  {pendingPayments} unresolved payment confirmation(s) must be resolved before
+                  closing.
+                </p>
+              )}
               <ul className="space-y-1 text-sm">
                 {readiness.map((issue) => (
                   <li key={issue.id}>

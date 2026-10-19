@@ -12,8 +12,34 @@ import { assertMinorAmount, majorFromMinor, parseMajorAmount, sumMinor } from "@
 import type { CashDrawerSession, CashMovement, DayClose } from "@/payments/types";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { permissions } from "@/platform/permissions";
+export class DailyClosingError extends Error {
+  readonly code: "PERMISSION_DENIED" | "INVALID_STATE_TRANSITION";
+  constructor(
+    message: string,
+    public readonly status = 409,
+  ) {
+    super(message);
+    this.code = status === 403 ? "PERMISSION_DENIED" : "INVALID_STATE_TRANSITION";
+  }
+}
 
 export type ClosingMode = "SUPERVISOR_DAILY_CLOSE" | "MULTI_CASHIER_SHIFTS";
+export const closingMutationActions = new Set([
+  "closeBusinessDay",
+  "closeCashierShift",
+  "closeDay",
+  "recordPeriodClose",
+  "configureDailyClosing",
+]);
+export const unresolvedClosingPaymentStatuses = new Set([
+  "CREATED",
+  "PENDING",
+  "AWAITING_CUSTOMER",
+  "PROCESSING",
+  "AUTHORIZED",
+  "PARTIALLY_PAID",
+  "REFUND_PENDING",
+]);
 export type ClosingPolicy = {
   id: string;
   tenantId: string;
@@ -37,6 +63,7 @@ export type DailyClosingReport = {
   timeZone: string;
   cutoffMinutes: number;
   supervisorId: string;
+  operatorNames?: Record<string, string>;
   drawers: CashDrawerSession[];
   cashMovements: CashMovement[];
   outstandingInvoices: Array<{ id: string; balanceMinor: number }>;
@@ -67,16 +94,38 @@ export function closingPolicy(
   );
 }
 
+export function closingStateForReader(
+  state: TransactionState,
+  canReadReports: boolean,
+): TransactionState {
+  if (canReadReports || !state.paymentOperations) return state;
+  return {
+    ...state,
+    paymentOperations: {
+      ...state.paymentOperations,
+      dayCloses: state.paymentOperations.dayCloses.map((day) => ({
+        ...day,
+        snapshot: undefined,
+        snapshots: [],
+      })),
+      closingPolicies: state.paymentOperations.closingPolicies?.map((policy) => ({
+        ...policy,
+        recipientUserIds: [],
+      })),
+    },
+  };
+}
+
 function scope(actor: ServerActor, tenantId: string, branchId: string, permission: string) {
   if (
     actor.tenantId !== tenantId ||
     actor.branchId !== branchId ||
     !actor.assignedBranchIds.includes(branchId)
   ) {
-    throw new Error("Closing requires the authorized active tenant and branch");
+    throw new DailyClosingError("Closing requires the authorized active tenant and branch", 403);
   }
   if (!actor.permissions.includes(permission))
-    throw new Error(`Permission ${permission} is required`);
+    throw new DailyClosingError(`Permission ${permission} is required`, 403);
 }
 
 export function configureClosing(
@@ -90,13 +139,13 @@ export function configureClosing(
   },
 ) {
   if (state.tenantId !== actor.tenantId)
-    throw new Error("Cross-tenant closing configuration denied");
+    throw new DailyClosingError("Cross-tenant closing configuration denied");
   scope(actor, actor.tenantId, input.branchId, permissions.reconciliationApprove);
   if (!["SUPERVISOR_DAILY_CLOSE", "MULTI_CASHIER_SHIFTS"].includes(input.mode))
-    throw new Error("Invalid closing mode");
+    throw new DailyClosingError("Invalid closing mode");
   assertMinorAmount(input.materialVarianceMinor, "Material variance threshold");
   if (input.materialVarianceMinor <= 0)
-    throw new Error("Material variance threshold must be positive");
+    throw new DailyClosingError("Material variance threshold must be positive");
   const next = normalizeTransactionState(state);
   const operations = next.paymentOperations!;
   const prior = closingPolicy(next, actor.tenantId, input.branchId);
@@ -106,18 +155,24 @@ export function configureClosing(
       (d) => d.branchId === input.branchId && ["OPEN", "REVIEW_REQUIRED"].includes(d.status),
     )
   ) {
-    throw new Error("Resolve active drawer reconciliations before changing closing mode");
+    throw new DailyClosingError(
+      "Resolve active drawer reconciliations before changing closing mode",
+    );
   }
   const repository = getConfigurationRepository();
   const ids = [...new Set(input.recipientUserIds)];
-  if (ids.length > 20) throw new Error("At most 20 report recipients are supported");
+  if (ids.length > 20) throw new DailyClosingError("At most 20 report recipients are supported");
   for (const id of ids) {
     const recipient = repository.getUserSession(actor.tenantId, id);
+    if (!recipient.email || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(recipient.email))
+      throw new DailyClosingError("Report recipients need a valid email address");
     if (
       !recipient.assignedBranchIds.includes(input.branchId) ||
       !recipient.permissions.includes(permissions.reconciliationView)
     ) {
-      throw new Error("Report recipients require branch access and reconciliation view permission");
+      throw new DailyClosingError(
+        "Report recipients require branch access and reconciliation view permission",
+      );
     }
   }
   operations.closingPolicies = [
@@ -179,16 +234,16 @@ function finalizeDrawer(
       d.tenantId === actor.tenantId,
   );
   if (!drawer || drawer.status !== "OPEN")
-    throw new Error("Open drawer was not found in the active branch");
+    throw new DailyClosingError("Open drawer was not found in the active branch");
   const currencies = Object.keys(drawer.currencyBalances).sort();
   if (currencies.join() !== Object.keys(count.countedByCurrency).sort().join())
-    throw new Error("Count every drawer currency exactly once");
+    throw new DailyClosingError("Count every drawer currency exactly once");
   let hasVariance = false;
   let materialVariance = false;
   for (const currency of currencies) {
     const counted = count.countedByCurrency[currency]!;
     assertMinorAmount(counted, "Counted cash");
-    if (counted < 0) throw new Error("Counted cash cannot be negative");
+    if (counted < 0) throw new DailyClosingError("Counted cash cannot be negative");
     const variance = sumMinor([counted, -drawer.currencyBalances[currency]!.expectedCashMinor]);
     hasVariance ||= variance !== 0;
     // A foreign-currency variance cannot be compared with the base-currency threshold without FX evidence.
@@ -198,13 +253,13 @@ function finalizeDrawer(
         : Math.abs(variance) >= policy.materialVarianceMinor;
   }
   if (hasVariance && !count.varianceReason?.trim())
-    throw new Error("A cash variance explanation is required");
+    throw new DailyClosingError("A cash variance explanation is required");
   if (
     materialVariance &&
     (!actor.permissions.includes(permissions.cashAdjust) ||
       !actor.permissions.includes(permissions.reconciliationApprove))
   ) {
-    throw new Error("Material variance requires supervisor cash-adjustment approval");
+    throw new DailyClosingError("Material variance requires supervisor cash-adjustment approval");
   }
   let next = paymentOrchestrator.closeDrawer(state, {
     tenantId: actor.tenantId,
@@ -237,24 +292,42 @@ function finalizeDrawer(
 }
 
 export function closeCashierShift(state: TransactionState, actor: ServerActor, count: DrawerCount) {
-  if (state.tenantId !== actor.tenantId) throw new Error("Cross-tenant shift closure denied");
+  if (state.tenantId !== actor.tenantId)
+    throw new DailyClosingError("Cross-tenant shift closure denied");
   scope(actor, actor.tenantId, actor.branchId, permissions.cashClose);
   const policy = closingPolicy(state, actor.tenantId, actor.branchId);
   if (policy.mode !== "MULTI_CASHIER_SHIFTS")
-    throw new Error("This branch uses supervisor-led daily closing");
+    throw new DailyClosingError("This branch uses supervisor-led daily closing");
   const drawer = state.paymentOperations?.drawerSessions.find(
     (d) =>
       d.id === count.drawerSessionId &&
       d.tenantId === actor.tenantId &&
       d.branchId === actor.branchId,
   );
-  if (!drawer) throw new Error("Cashier drawer was not found");
+  if (!drawer) throw new DailyClosingError("Cashier drawer was not found");
   if (
     drawer.employeeId !== actor.id &&
     !actor.permissions.includes(permissions.reconciliationApprove)
   )
-    throw new Error("Cannot close another cashier's shift");
-  if (drawer.status !== "OPEN") throw new Error("This shift is already finalized");
+    throw new DailyClosingError("Cannot close another cashier's shift");
+  if (drawer.status !== "OPEN") throw new DailyClosingError("This shift is already finalized");
+  return finalizeDrawer(state, actor, count, policy);
+}
+
+export function closeCompatibleDrawer(
+  state: TransactionState,
+  actor: ServerActor,
+  count: DrawerCount,
+  confirmed: boolean,
+) {
+  if (!confirmed) throw new DailyClosingError("Explicit drawer confirmation is required");
+  if (state.tenantId !== actor.tenantId)
+    throw new DailyClosingError("Cross-tenant shift closure denied");
+  scope(actor, actor.tenantId, actor.branchId, permissions.cashClose);
+  const policy = closingPolicy(state, actor.tenantId, actor.branchId);
+  if (policy.mode === "MULTI_CASHIER_SHIFTS") return closeCashierShift(state, actor, count);
+  if (!actor.permissions.includes(permissions.reconciliationApprove))
+    throw new DailyClosingError("This branch uses supervisor-led daily closing");
   return finalizeDrawer(state, actor, count, policy);
 }
 
@@ -268,17 +341,24 @@ export function closeBusinessDay(
   },
 ) {
   if (state.tenantId !== actor.tenantId)
-    throw new Error("Cross-tenant business-day closure denied");
+    throw new DailyClosingError("Cross-tenant business-day closure denied");
   scope(actor, actor.tenantId, actor.branchId, permissions.reconciliationApprove);
-  if (input.confirmed !== true) throw new Error("Explicit business-day confirmation is required");
+  if (input.confirmed !== true)
+    throw new DailyClosingError("Explicit business-day confirmation is required");
   const accounting = context(actor.tenantId, actor.branchId);
   const currentDate = businessDateForTimestamp(
     new Date(),
     accounting.timeZone,
     accounting.businessDayCutoffMinutes,
   );
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.businessDate) || input.businessDate > currentDate)
-    throw new Error("Invalid or future business date");
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.businessDate) ||
+    !Number.isFinite(Date.parse(`${input.businessDate}T12:00:00.000Z`)) ||
+    new Date(`${input.businessDate}T12:00:00.000Z`).toISOString().slice(0, 10) !==
+      input.businessDate ||
+    input.businessDate > currentDate
+  )
+    throw new DailyClosingError("Invalid or future business date");
   const existing = state.paymentOperations?.dayCloses.find(
     (d) =>
       d.tenantId === actor.tenantId &&
@@ -296,21 +376,36 @@ export function closeBusinessDay(
           ([currency, amount]) => drawer.currencyBalances[currency]?.countedCashMinor !== amount,
         )
       )
-        throw new Error("Closed reconciliation is immutable");
+        throw new DailyClosingError("Closed reconciliation is immutable");
     }
     return normalizeTransactionState(state);
   }
   const policy = closingPolicy(state, actor.tenantId, actor.branchId);
   let next = normalizeTransactionState(state);
   const drawers = drawersForDay(next, actor.tenantId, actor.branchId, input.businessDate);
+  if (
+    next.paymentOperations!.cashMovements.some(
+      (movement) =>
+        drawers.some((drawer) => drawer.id === movement.drawerSessionId) &&
+        businessDateForTimestamp(
+          movement.timestamp,
+          accounting.timeZone,
+          accounting.businessDayCutoffMinutes,
+        ) > input.businessDate,
+    )
+  ) {
+    throw new DailyClosingError(
+      "A drawer spans accounting periods; reconcile its later-period cash before closing this business date",
+    );
+  }
   const open = drawers.filter((d) => d.status === "OPEN");
   if (policy.mode === "MULTI_CASHIER_SHIFTS" && (open.length || input.drawerCounts.length))
-    throw new Error(
+    throw new DailyClosingError(
       "Finalize individual cashier shifts before branch closing; do not recount closed drawers",
     );
   if (policy.mode === "SUPERVISOR_DAILY_CLOSE") {
     if (open.length > 1)
-      throw new Error(
+      throw new DailyClosingError(
         "More than one active cashier requires separate authorized shift reconciliation",
       );
     const countIds = input.drawerCounts.map((c) => c.drawerSessionId);
@@ -319,7 +414,7 @@ export function closeBusinessDay(
       open.length !== countIds.length ||
       open.some((d) => !countIds.includes(d.id))
     )
-      throw new Error("Provide exactly one count for each associated open drawer");
+      throw new DailyClosingError("Provide exactly one count for each associated open drawer");
     for (const count of input.drawerCounts) next = finalizeDrawer(next, actor, count, policy);
   }
   if (
@@ -327,13 +422,31 @@ export function closeBusinessDay(
       (d) => !["CLOSED", "APPROVED"].includes(d.status),
     )
   )
-    throw new Error("Drawer reconciliation requires approval");
+    throw new DailyClosingError("Drawer reconciliation requires approval");
+  for (const drawer of drawersForDay(next, actor.tenantId, actor.branchId, input.businessDate)) {
+    for (const balance of Object.values(drawer.currencyBalances)) {
+      if (
+        !Number.isSafeInteger(balance.countedCashMinor) ||
+        !Number.isSafeInteger(balance.varianceMinor) ||
+        balance.countedCashMinor! < 0 ||
+        sumMinor([balance.countedCashMinor!, -balance.expectedCashMinor]) !== balance.varianceMinor
+      )
+        throw new DailyClosingError(
+          "Finalized drawer reconciliation is incomplete or inconsistent",
+        );
+      if (
+        balance.varianceMinor !== 0 &&
+        !(drawer.varianceReason?.trim() || drawer.approvalReason?.trim())
+      )
+        throw new DailyClosingError("Finalized cash variance requires an explanation");
+    }
+  }
   if (
     next.paymentOperations!.drawerSessions.some(
       (d) => d.branchId === actor.branchId && ["OPEN", "REVIEW_REQUIRED"].includes(d.status),
     )
   )
-    throw new Error("Another active cashier session must be resolved before closing");
+    throw new DailyClosingError("Another active cashier session must be resolved before closing");
   const readiness = financialCloseReadiness(next, {
     tenantId: actor.tenantId,
     branchId: actor.branchId,
@@ -343,8 +456,13 @@ export function closeBusinessDay(
   const outstanding = next.bills.filter(
     (b) =>
       b.branchId === actor.branchId &&
-      b.businessDate === input.businessDate &&
-      !["VOID", "MERGED", "SPLIT"].includes(b.status) &&
+      (b.businessDate ??
+        businessDateForTimestamp(
+          b.issuedAt,
+          accounting.timeZone,
+          accounting.businessDayCutoffMinutes,
+        )) === input.businessDate &&
+      ["OPEN", "PARTIAL", "PENDING"].includes(b.status) &&
       !["PAID", "PROVIDER_RECEIVABLE"].includes(b.paymentStatus),
   );
   const invoiceOrderIds = new Set(
@@ -362,26 +480,34 @@ export function closeBusinessDay(
   );
   const nonblocking = readiness.filter(
     (i) =>
-      i.code === "UNSETTLED_INVOICE" ||
+      (i.code === "UNSETTLED_INVOICE" && outstanding.some((b) => b.id === i.sourceId)) ||
       (i.code === "OPEN_ORDER" && invoiceOrderIds.has(i.sourceId)),
   );
   const blockers = readiness.filter((i) => !nonblocking.includes(i));
   if (blockers.length)
-    throw new Error(`Business day cannot close: ${blockers.map((i) => i.code).join(", ")}`);
+    throw new DailyClosingError(
+      `Business day cannot close: ${blockers.map((i) => i.code).join(", ")}`,
+    );
   if (
     next.refunds.some(
       (refund) =>
         refund.branchId === actor.branchId && ["REQUESTED", "APPROVED"].includes(refund.status),
     )
   )
-    throw new Error("Refund has not reached a final state");
+    throw new DailyClosingError("Refund has not reached a final state");
   if (
     next.paymentOperations!.intents.some(
-      (i) =>
-        i.branchId === actor.branchId && ["PENDING", "PROCESSING", "UNKNOWN"].includes(i.status),
+      (i) => i.branchId === actor.branchId && unresolvedClosingPaymentStatuses.has(i.status),
     )
   )
-    throw new Error("Payment confirmation is unresolved");
+    throw new DailyClosingError("Payment confirmation is unresolved");
+  if (
+    next.paymentIntents.some(
+      (intent) =>
+        intent.branchId === actor.branchId && unresolvedClosingPaymentStatuses.has(intent.status),
+    )
+  )
+    throw new DailyClosingError("Payment confirmation is unresolved");
   if (
     next.paymentOperations!.transactions.some(
       (p) =>
@@ -389,7 +515,7 @@ export function closeBusinessDay(
         ["PENDING", "UNVERIFIED", "VERIFYING", "AMOUNT_MISMATCH"].includes(p.status),
     )
   )
-    throw new Error("Payment evidence requires resolution");
+    throw new DailyClosingError("Payment evidence requires resolution");
   const engine = new ReconciliationEngine();
   next = engine.prepareDayClose(next, {
     tenantId: actor.tenantId,
@@ -403,6 +529,22 @@ export function closeBusinessDay(
   )!;
   // Only explicitly classified receivables are allowed. No financial blocker can be overridden here.
   const closedAt = new Date().toISOString();
+  const finalDrawers = drawersForDay(next, actor.tenantId, actor.branchId, input.businessDate);
+  const operatorIds = new Set([
+    actor.id,
+    ...finalDrawers.flatMap((drawer) => [
+      drawer.employeeId,
+      drawer.closedBy ?? "",
+      drawer.approvedBy ?? "",
+    ]),
+  ]);
+  const operatorNames = Object.fromEntries(
+    getConfigurationRepository()
+      .snapshot()
+      .users.filter((user) => user.tenantId === actor.tenantId && operatorIds.has(user.id))
+      .map((user) => [user.id, user.name]),
+  );
+  operatorNames[actor.id] = actor.name;
   const snapshot: NonNullable<DayClose["snapshot"]> = {
     ...projectFinancialLifecycle(next, {
       tenantId: actor.tenantId,
@@ -423,6 +565,7 @@ export function closeBusinessDay(
       timeZone: accounting.timeZone,
       cutoffMinutes: accounting.businessDayCutoffMinutes,
       supervisorId: actor.id,
+      operatorNames,
       drawers: structuredClone(
         drawersForDay(next, actor.tenantId, actor.branchId, input.businessDate),
       ),

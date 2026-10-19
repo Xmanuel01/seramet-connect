@@ -5,10 +5,12 @@ import {
   closeBusinessDay,
   closeCashierShift,
   closingPolicy,
+  closingStateForReader,
   configureClosing,
   type DrawerCount,
 } from "./daily-closing";
 import { paymentOrchestrator } from "./payment-orchestrator";
+import { applyServerMutation } from "@/lib/seramet-repository";
 import { ReconciliationEngine } from "./reconciliation-engine";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
@@ -86,6 +88,24 @@ function multi(initial = createEmptyTransactionState(tenantId)) {
 }
 
 describe("unified daily closing", () => {
+  it("keeps subsequently created employee records explicitly tenant and branch scoped", () => {
+    const next = applyServerMutation(
+      createEmptyTransactionState(tenantId),
+      "addRider",
+      { name: "Scoped payroll fixture" },
+      supervisor,
+    );
+    expect(next.employees[0]).toMatchObject({ tenantId, branchId });
+  });
+  it("does not expose management closing snapshots through ordinary POS state responses", () => {
+    const state = close(opened());
+    const filtered = closingStateForReader(state, false);
+    expect(filtered.paymentOperations!.dayCloses[0]!.status).toBe("CLOSED");
+    expect(filtered.paymentOperations!.dayCloses[0]!.snapshot).toBeUndefined();
+    expect(filtered.paymentOperations!.dayCloses[0]!.snapshots).toEqual([]);
+    expect(state.paymentOperations!.dayCloses[0]!.snapshots).toHaveLength(1);
+    expect(closingStateForReader(state, true)).toBe(state);
+  });
   it("defaults to supervisor-led closing without an additional cashier close", () => {
     const state = opened();
     expect(closingPolicy(state, tenantId, branchId).mode).toBe("SUPERVISOR_DAILY_CLOSE");
@@ -254,9 +274,70 @@ describe("unified daily closing", () => {
     expect(state).toEqual(before);
   });
   it("attributes an overnight shift to its persisted business day", () => {
+    const configuration = createDefaultDemoPlatformState();
+    configuration.branches.find((branch) => branch.id === branchId)!.metadata[
+      "businessDayCutoffMinutes"
+    ] = 240;
+    setConfigurationRepositoryForTests(new ConfigurationRepository(configuration));
     vi.setSystemTime(new Date("2026-10-16T00:30:00Z"));
     const state = opened();
-    state.paymentOperations!.drawerSessions[0]!.businessDate = date;
+    expect(state.paymentOperations!.drawerSessions[0]!.businessDate).toBe(date);
     expect(close(state).paymentOperations!.dayCloses[0]!.businessDate).toBe(date);
+  });
+  it.each([
+    ["Africa/Nairobi", "2026-10-15T00:59:00Z", "2026-10-14"],
+    ["Africa/Nairobi", "2026-10-15T01:00:00Z", "2026-10-15"],
+    ["America/New_York", "2026-03-08T06:59:00Z", "2026-03-07"],
+    ["America/New_York", "2026-03-08T08:00:00Z", "2026-03-08"],
+    ["America/New_York", "2026-11-01T06:30:00Z", "2026-10-31"],
+    ["America/New_York", "2026-11-01T09:00:00Z", "2026-11-01"],
+  ])("uses %s cutoff and DST at %s", (zone, timestamp, expected) => {
+    const configuration = createDefaultDemoPlatformState();
+    const branch = configuration.branches.find((branch) => branch.id === branchId)!;
+    branch.timezone = zone;
+    branch.metadata["businessDayCutoffMinutes"] = 240;
+    setConfigurationRepositoryForTests(new ConfigurationRepository(configuration));
+    vi.setSystemTime(new Date(timestamp));
+    const state = opened();
+    const closed = closeBusinessDay(state, supervisor, {
+      businessDate: expected,
+      drawerCounts: [count(state)],
+      confirmed: true,
+    });
+    expect(closed.paymentOperations!.dayCloses[0]!.businessDate).toBe(expected);
+  });
+  it("does not let alternate drawer commands close another branch or cashier", () => {
+    const state = opened("other-cashier", multi());
+    expect(() =>
+      applyServerMutation(
+        state,
+        "closePaymentDrawer",
+        {
+          input: {
+            tenantId,
+            drawerSessionId: count(state).drawerSessionId,
+            countedCashMinor: 10000,
+            confirmed: true,
+          },
+        },
+        cashier,
+      ),
+    ).toThrow(/another cashier/);
+    expect(() =>
+      applyServerMutation(
+        state,
+        "openPaymentDrawer",
+        {
+          input: {
+            tenantId,
+            branchId: "another-branch",
+            employeeId: cashier.id,
+            currency: "KES",
+            openingFloatMinor: 0,
+          },
+        },
+        cashier,
+      ),
+    ).toThrow(/active tenant and branch/);
   });
 });

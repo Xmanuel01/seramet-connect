@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { DayClose } from "@/payments/types";
 import { formatMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 import { summarizeInvoiceComponents } from "@/payments/invoice-components";
+import { QUANTITY_SCALE } from "@/inventory/quantity";
 
 export type ClosingSnapshot = NonNullable<DayClose["snapshot"]>;
 export type ClosingReportSection = { title: string; rows: Array<[string, string]> };
@@ -16,7 +17,7 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
       rows: [
         ["Reference", report.reference],
         ["Business date", snapshot.businessDate],
-        ["Supervisor", report.supervisorId],
+        ["Supervisor", report.operatorNames?.[report.supervisorId] ?? report.supervisorId],
         ["Closing mode", report.mode.replaceAll("_", " ")],
         [
           "Closed",
@@ -56,10 +57,27 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
   ];
   for (const drawer of report.drawers) {
     sections.push({
-      title: `Cashier ${drawer.employeeId} / ${drawer.id}`,
+      title: `Cashier ${report.operatorNames?.[drawer.employeeId] ?? drawer.employeeId}`,
       rows: [
-        ["Opened", drawer.openedAt],
-        ["Finalized", drawer.closedAt ?? "Not recorded"],
+        ["Drawer / session", drawer.id],
+        [
+          "Opened",
+          new Intl.DateTimeFormat("en-GB", {
+            timeZone: report.timeZone,
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(new Date(drawer.openedAt)),
+        ],
+        [
+          "Finalized",
+          drawer.closedAt
+            ? new Intl.DateTimeFormat("en-GB", {
+                timeZone: report.timeZone,
+                dateStyle: "medium",
+                timeStyle: "short",
+              }).format(new Date(drawer.closedAt))
+            : "Not recorded",
+        ],
         ["Status", drawer.status],
         ...Object.entries(drawer.currencyBalances).flatMap(
           ([currency, balance]): Array<[string, string]> => [
@@ -140,6 +158,35 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
             ],
           ],
   });
+  const products = new Map<string, { name: string; quantityMicro: number }>();
+  for (const invoice of report.invoices)
+    for (const line of invoice.lines) {
+      const key = line.productId ?? line.name;
+      const current = products.get(key) ?? { name: line.name, quantityMicro: 0 };
+      const quantityMicro = Math.round(line.quantity * QUANTITY_SCALE);
+      if (!Number.isSafeInteger(quantityMicro) || quantityMicro < 0)
+        throw new Error("Report quantity exceeds supported precision");
+      current.quantityMicro = sumMinor([current.quantityMicro, quantityMicro]);
+      products.set(key, current);
+    }
+  const ranked = [...products.values()]
+    .filter((product) => product.quantityMicro > 0)
+    .sort((a, b) => b.quantityMicro - a.quantityMicro || a.name.localeCompare(b.name));
+  const quantities = (rows: typeof ranked): Array<[string, string]> =>
+    rows.map((product) => [
+      product.name,
+      new Intl.NumberFormat("en", { maximumFractionDigits: 6 }).format(
+        product.quantityMicro / QUANTITY_SCALE,
+      ),
+    ]);
+  sections.push({
+    title: "Highest-volume invoiced products (units)",
+    rows: quantities(ranked.slice(0, 5)),
+  });
+  sections.push({
+    title: "Lowest-volume sold products (units; not profit ranking)",
+    rows: quantities([...ranked].reverse().slice(0, 5)),
+  });
   return sections;
 }
 
@@ -166,15 +213,21 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
         }
       })
       .join("");
-  const wrap = (value: string, width: number, size = 10) => {
+  const wrap = (value: string, width: number, size = 10, font = regular) => {
     const lines: string[] = [];
     let line = "";
     for (const char of safe(value)) {
-      if (regular.widthOfTextAtSize(line + char, size) > width && line) {
-        lines.push(line);
-        line = "";
+      if (font.widthOfTextAtSize(line + char, size) > width && line) {
+        const boundary = line.lastIndexOf(" ");
+        if (boundary > 0) {
+          lines.push(line.slice(0, boundary));
+          line = line.slice(boundary + 1);
+        } else {
+          lines.push(line);
+          line = "";
+        }
       }
-      line += char;
+      line = (line + char).trimStart();
     }
     lines.push(line);
     return lines;
@@ -186,7 +239,7 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
     }
   }
   function heading(text: string, size: number) {
-    for (const line of wrap(text, 507, size)) {
+    for (const line of wrap(text, 507, size, bold)) {
       space(size + 12);
       page.drawText(line, { x: 44, y, size, font: bold, color: rgb(0.06, 0.3, 0.27) });
       y -= size + 8;

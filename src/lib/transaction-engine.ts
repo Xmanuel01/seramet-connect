@@ -1691,6 +1691,7 @@ export const TransactionEngine = {
     }
     const shift = input.shift?.trim() || "10:00-21:30";
     const employee: EmployeeRecord = {
+      ...resolveScope(input.branch.trim(), next.tenantId),
       id: id("EMP", next, "employees"),
       name,
       role: "Rider",

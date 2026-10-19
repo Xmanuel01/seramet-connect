@@ -891,6 +891,43 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
             entity.updatedAt,
           ),
       );
+      const snapshot = isRecord(payload["snapshot"]) ? payload["snapshot"] : undefined;
+      const report =
+        snapshot && isRecord(snapshot["dailyReport"]) ? snapshot["dailyReport"] : undefined;
+      const recipients =
+        report && Array.isArray(report["recipientUserIds"])
+          ? report["recipientUserIds"].filter((id): id is string => typeof id === "string")
+          : [];
+      if (payload["status"] === "CLOSED" && snapshot && report) {
+        for (const recipientUserId of new Set(recipients)) {
+          const key = `daily-closing:${entity.entityId}:r${snapshot["revision"]}:${recipientUserId}`;
+          const jobId = `closing-email-${await sha256(key)}`;
+          statements.push(
+            this.db
+              .prepare(
+                `INSERT INTO worker_jobs
+            (tenant_id,id,branch_id,job_type,payload_json,idempotency_key,correlation_id,status,attempt_count,max_attempts,scheduled_at,created_at,updated_at)
+            VALUES (?,?,?,'DAILY_CLOSING_EMAIL',?,?,?,'PENDING',0,8,?,?,?)
+            ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,
+              )
+              .bind(
+                tenantId,
+                jobId,
+                branchId,
+                JSON.stringify({
+                  dayCloseId: entity.entityId,
+                  revision: snapshot["revision"],
+                  recipientUserId,
+                }),
+                key,
+                input.correlationId,
+                stamp,
+                stamp,
+                stamp,
+              ),
+          );
+        }
+      }
     }
     for (const entity of changed.filter((item) => item.entityType === "payments:journals")) {
       const payload = parseObject(entity.payloadJson);
@@ -2384,6 +2421,38 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       timezone: branch.timezone,
       cutoffMinutes: branch.business_day_cutoff_minutes,
     });
+    const sourceOrder = state.orders.find((order) => order.id === payload["orderId"]);
+    if (
+      sourceOrder &&
+      [
+        "updateOrderDraft",
+        "upsertOrderDraft",
+        "upsertAndSendKitchen",
+        "amendKitchenOrder",
+      ].includes(input.action)
+    ) {
+      const sourceDate =
+        sourceOrder.businessDate ??
+        authoritativeBusinessDate({
+          occurredAt: sourceOrder.createdAt,
+          timezone: branch.timezone,
+          cutoffMinutes: branch.business_day_cutoff_minutes,
+        });
+      if (
+        state.paymentOperations?.dayCloses.some(
+          (day) =>
+            day.branchId === sourceOrder.branchId &&
+            day.businessDate === sourceDate &&
+            day.status === "CLOSED",
+        )
+      ) {
+        throw new ServerOperationError(
+          "INVALID_STATE_TRANSITION",
+          409,
+          "The order belongs to a closed business period; use the authorized correction workflow",
+        );
+      }
+    }
     if (draft) draft["businessDate"] = businessDate;
     if (nested) nested["businessDate"] = businessDate;
     if (nested && ["prepareDayClose", "recordPeriodClose"].includes(input.action)) {

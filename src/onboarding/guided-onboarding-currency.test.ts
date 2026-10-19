@@ -434,6 +434,8 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
           countedCashMinor: 0,
           countedByCurrency: { KES: 0, USD: 1_900 },
           actor: provisioned.userId,
+          confirmed: true,
+          varianceReason: "Owner approved the verified USD cash shortage",
         },
       },
       idempotencyKey: "cash-control-close-0001",
@@ -441,7 +443,9 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
       correlationId: "cash-control-close-correlation-0001",
     });
     expect(closed.state.paymentOperations!.drawerSessions[0]).toMatchObject({
-      status: "REVIEW_REQUIRED",
+      status: "APPROVED",
+      approvedBy: provisioned.userId,
+      approvalReason: "Owner approved the verified USD cash shortage",
       currencyBalances: { USD: { countedCashMinor: 1_900, varianceMinor: -30 } },
     });
     expect(
