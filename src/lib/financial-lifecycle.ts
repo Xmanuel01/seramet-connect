@@ -1,6 +1,7 @@
 import type { TransactionState } from "@/lib/transaction-engine";
 import { businessDateForTimestamp } from "@/lib/business-date";
 import { parseMajorAmount, sumMinor } from "@/payments/money";
+import { summarizeInvoiceComponents } from "@/payments/invoice-components";
 
 export type FinancialLifecycleLine = {
   account: string;
@@ -28,6 +29,7 @@ export type FinancialLifecycleProjection = {
   receiptCount: number;
   tenders: Array<{ method: string; amountMinor: number }>;
   journal: FinancialLifecycleLine[];
+  invoiceComponents?: ReturnType<typeof summarizeInvoiceComponents>;
 };
 
 export type DayCloseReadinessIssue = {
@@ -170,6 +172,7 @@ export function projectFinancialLifecycle(
     calculatedAt: scope.calculatedAt ?? new Date().toISOString(),
     orderedMinor: sumMinor(orders.map((order) => moneyMinor(order.total, scope.currency))),
     invoicedMinor: sumMinor(invoices.map((bill) => moneyMinor(bill.total, scope.currency))),
+    invoiceComponents: summarizeInvoiceComponents(invoices, scope.currency),
     settledMinor: sumMinor(settledInvoices.map((bill) => moneyMinor(bill.total, scope.currency))),
     collectedMinor: sumMinor(payments.map((payment) => moneyMinor(payment.amount, scope.currency))),
     netRevenueMinor: sumMinor(

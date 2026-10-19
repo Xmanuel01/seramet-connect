@@ -215,44 +215,6 @@ try {
     1,
   );
 
-  const receipt = paid.state.receipts[0]!;
-  const requested = await command(first, "refund-request", "refund-request", "requestRefund", {
-    input: {
-      tenantId,
-      branchId,
-      branch: branchId,
-      orderId,
-      invoiceId: bill.id,
-      receiptId: receipt.id,
-      amount: 1,
-      method: "CASH",
-      reason: "PostgreSQL concurrency verification",
-      requestedBy: userId,
-    },
-  });
-  const refundId = requested.state.refunds[0]!.id;
-  const refundRevision = requested.revision;
-  const refundApprovals = await Promise.allSettled([
-    command(
-      first,
-      "refund-approve-a",
-      "refund-approve-a",
-      "approveRefund",
-      { refundId },
-      refundRevision,
-    ),
-    command(
-      second,
-      "refund-approve-b",
-      "refund-approve-b",
-      "approveRefund",
-      { refundId },
-      refundRevision,
-    ),
-  ]);
-  assert.equal(refundApprovals.filter((result) => result.status === "fulfilled").length, 1);
-  assert.equal(refundApprovals.filter((result) => result.status === "rejected").length, 1);
-
   state = await first.loadState(tenantId);
   const drawer = state.paymentOperations!.drawerSessions[0]!;
   const countedByCurrency = Object.fromEntries(
@@ -375,6 +337,51 @@ try {
     }),
     /closed/,
   );
+
+  // Close while no refund remains pending; an APPROVED refund is not a final
+  // payout and correctly blocks closing. Verify refund concurrency only after
+  // reopening the completed day so the close snapshot remains immutable.
+  await command(first, "refund-reopen", "refund-reopen", "reopenDay", {
+    dayCloseId,
+    reason: "Disposable post-close refund concurrency verification",
+  });
+  const receipt = paid.state.receipts[0]!;
+  const requested = await command(first, "refund-request", "refund-request", "requestRefund", {
+    input: {
+      tenantId,
+      branchId,
+      branch: branchId,
+      orderId,
+      invoiceId: bill.id,
+      receiptId: receipt.id,
+      amount: 1,
+      method: "CASH",
+      reason: "PostgreSQL concurrency verification",
+      requestedBy: userId,
+    },
+  });
+  const refundId = requested.state.refunds[0]!.id;
+  const refundRevision = requested.revision;
+  const refundApprovals = await Promise.allSettled([
+    command(
+      first,
+      "refund-approve-a",
+      "refund-approve-a",
+      "approveRefund",
+      { refundId },
+      refundRevision,
+    ),
+    command(
+      second,
+      "refund-approve-b",
+      "refund-approve-b",
+      "approveRefund",
+      { refundId },
+      refundRevision,
+    ),
+  ]);
+  assert.equal(refundApprovals.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(refundApprovals.filter((result) => result.status === "rejected").length, 1);
 
   const commits = await count("mutation_commits");
   assert.equal(await count("realtime_events"), commits);

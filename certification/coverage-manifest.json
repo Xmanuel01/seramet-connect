@@ -358,6 +358,10 @@
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "CRM"
     },
+    "src/server/daily-closing-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
     "src/server/enterprise-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"

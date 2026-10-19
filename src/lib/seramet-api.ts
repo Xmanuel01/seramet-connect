@@ -48,6 +48,7 @@ import { handleKitchenAnalyticsApi } from "@/server/kitchen-analytics-api";
 import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
 import { handleFinanceApi } from "@/server/finance-api";
+import { handleDailyClosingApi } from "@/server/daily-closing-api";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
 import { handleTableManagementApi } from "@/server/table-management-api";
@@ -164,6 +165,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+    const closingReportResponse = await handleDailyClosingApi(request, env, repo);
+    if (closingReportResponse) return closingReportResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
 

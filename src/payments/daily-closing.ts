@@ -42,6 +42,8 @@ export type DailyClosingReport = {
   outstandingInvoices: Array<{ id: string; balanceMinor: number }>;
   nonblocking: DayCloseReadinessIssue[];
   recipientUserIds: string[];
+  invoices: TransactionState["bills"];
+  voidedInvoiceIds: string[];
 };
 
 export function closingPolicy(
@@ -328,7 +330,7 @@ export function closeBusinessDay(
     throw new Error("Drawer reconciliation requires approval");
   if (
     next.paymentOperations!.drawerSessions.some(
-      (d) => d.branchId === actor.branchId && d.status === "OPEN",
+      (d) => d.branchId === actor.branchId && ["OPEN", "REVIEW_REQUIRED"].includes(d.status),
     )
   )
     throw new Error("Another active cashier session must be resolved before closing");
@@ -345,7 +347,19 @@ export function closeBusinessDay(
       !["VOID", "MERGED", "SPLIT"].includes(b.status) &&
       !["PAID", "PROVIDER_RECEIVABLE"].includes(b.paymentStatus),
   );
-  const invoiceOrderIds = new Set(outstanding.flatMap((b) => b.orderIds));
+  const invoiceOrderIds = new Set(
+    outstanding
+      .flatMap((b) => b.orderIds)
+      .filter((id) =>
+        next.orders.some(
+          (order) =>
+            order.id === id &&
+            ["SERVED", "BILL_REQUESTED", "AWAITING_PAYMENT", "PARTIALLY_PAID"].includes(
+              order.status,
+            ),
+        ),
+      ),
+  );
   const nonblocking = readiness.filter(
     (i) =>
       i.code === "UNSETTLED_INVOICE" ||
@@ -354,6 +368,13 @@ export function closeBusinessDay(
   const blockers = readiness.filter((i) => !nonblocking.includes(i));
   if (blockers.length)
     throw new Error(`Business day cannot close: ${blockers.map((i) => i.code).join(", ")}`);
+  if (
+    next.refunds.some(
+      (refund) =>
+        refund.branchId === actor.branchId && ["REQUESTED", "APPROVED"].includes(refund.status),
+    )
+  )
+    throw new Error("Refund has not reached a final state");
   if (
     next.paymentOperations!.intents.some(
       (i) =>
@@ -419,6 +440,32 @@ export function closeBusinessDay(
       })),
       nonblocking: structuredClone(nonblocking),
       recipientUserIds: [...policy.recipientUserIds],
+      invoices: structuredClone(
+        next.bills.filter(
+          (b) =>
+            b.branchId === actor.branchId &&
+            (b.businessDate ??
+              businessDateForTimestamp(
+                b.issuedAt,
+                accounting.timeZone,
+                accounting.businessDayCutoffMinutes,
+              )) === day.businessDate &&
+            !["VOID", "MERGED", "SPLIT"].includes(b.status),
+        ),
+      ),
+      voidedInvoiceIds: next.bills
+        .filter(
+          (b) =>
+            b.branchId === actor.branchId &&
+            b.status === "VOID" &&
+            (b.businessDate ??
+              businessDateForTimestamp(
+                b.issuedAt,
+                accounting.timeZone,
+                accounting.businessDayCutoffMinutes,
+              )) === day.businessDate,
+        )
+        .map((b) => b.id),
     },
   };
   day.status = "CLOSED";

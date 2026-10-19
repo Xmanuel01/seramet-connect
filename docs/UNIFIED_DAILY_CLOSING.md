@@ -50,6 +50,27 @@ overnight drawers, and rollback on failed readiness. Repository tests cover revi
 duplicate/altered keys, schema-compatible policy persistence and injected SQL failure.
 The existing two-connection PostgreSQL verifier covers combined drawer/day closure.
 
+## Guided Review And PDF
+
+Payment Control's EOD tab now presents one Close Business Day action. In supervisor
+mode, drawer counting lives inside that review, not in a mandatory separate drawer-close
+form. Multiple-shift branches expose End Shift for the assigned cashier or authorized
+supervisor. Escape, outside-click and Cancel dismiss without mutation; Cancel receives
+initial focus. Final confirmation is a separate step, guarded by an immediate submission
+lock. Changes to the reviewed financial state invalidate confirmation.
+
+The closing date comes from the authenticated server's branch context. PDF downloads
+require reconciliation view permission and authorized branch scope and return private,
+no-store responses. They render only the requested stored revision, including after
+reopening. The PDF library is lazy-loaded server-side, never included in the POS client
+for report generation. No public report URL or financial-data URL token is created.
+
+Known report limitations: the current invoice ledger does not separately persist
+discount and service-charge components. Reports label that absence rather than inferring
+amounts. The built-in PDF font renders unsupported characters as explicit Unicode codepoint
+tokens; full multilingual font embedding remains unverified. These limitations must be
+resolved before claiming the complete requested report specification is certified.
+
 Review the engine, UI/PDF and notification changes as a stack. Do not merge an incomplete
 stack. Real email delivery requires protected provider configuration and is not certified
 by disposable tests. No live database mutation, migration, merge or deployment is authorized.

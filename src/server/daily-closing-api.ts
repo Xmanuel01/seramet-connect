@@ -1,0 +1,65 @@
+import {
+  authenticateSerametRequest,
+  authorizeBranchRead,
+  SerametHttpError,
+  type SerametEnv,
+} from "@/lib/seramet-auth";
+import type { TransactionRepository } from "@/lib/seramet-repository";
+import { permissions } from "@/platform/permissions";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { businessDateForTimestamp } from "@/lib/business-date";
+
+export async function handleDailyClosingApi(
+  request: Request,
+  env: SerametEnv,
+  repository: TransactionRepository,
+) {
+  if (new URL(request.url).pathname === "/api/seramet/daily-closing/context") {
+    if (request.method !== "GET") throw new SerametHttpError(405, "Read-only closing context");
+    const actor = await authenticateSerametRequest(request, env);
+    if (
+      !actor.permissions.includes(permissions.reconciliationView) &&
+      !actor.permissions.includes(permissions.cashClose)
+    )
+      throw new SerametHttpError(403, "Closing review permission is required");
+    const configuration = getConfigurationRepository();
+    const branch = configuration.getBranch(actor.tenantId, actor.branchId);
+    const timezone = branch.timezone ?? configuration.getTenant(actor.tenantId).timezone;
+    const cutoffMinutes = Number(branch.metadata["businessDayCutoffMinutes"] ?? 0);
+    return Response.json(
+      {
+        branchId: branch.id,
+        businessDate: businessDateForTimestamp(new Date(), timezone, cutoffMinutes),
+        timezone,
+        cutoffMinutes,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  const route = /^\/api\/seramet\/daily-closing\/reports\/([^/]+)\/(\d+)\.pdf$/.exec(
+    new URL(request.url).pathname,
+  );
+  if (!route) return null;
+  if (request.method !== "GET") throw new SerametHttpError(405, "Read-only report route");
+  const actor = await authenticateSerametRequest(request, env);
+  if (!actor.permissions.includes(permissions.reconciliationView))
+    throw new SerametHttpError(403, "Reconciliation view permission is required");
+  const state = await repository.loadState(actor.tenantId);
+  const day = state.paymentOperations?.dayCloses.find(
+    (d) => d.id === decodeURIComponent(route[1]!) && d.tenantId === actor.tenantId,
+  );
+  if (!day) throw new SerametHttpError(404, "Closing report was not found");
+  authorizeBranchRead(actor, actor.tenantId, day.branchId);
+  const snapshot = day.snapshots.find((s) => s.revision === Number(route[2]));
+  if (!snapshot?.dailyReport) throw new SerametHttpError(404, "Report revision was not found");
+  const { renderDailyClosingPdf } = await import("@/server/daily-closing-report");
+  const pdf = await renderDailyClosingPdf(snapshot);
+  return new Response(new Uint8Array(pdf), {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="daily-closing-${snapshot.businessDate}-r${snapshot.revision}.pdf"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
