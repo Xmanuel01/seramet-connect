@@ -47,6 +47,24 @@ The preceding integration head `8e28ff4133e8934fd70357daa36ef4507ee7acf6` passed
 all nine applicable CI checks, 1,095 local unit tests and 35 standard CI browser cases.
 Those counts are evidence for that revision, not a claim about a later commit.
 
+The main-integrated head `132af44a658f19e4fb512ea55bb400590790acb5` passed all
+1,096 unit tests, build/security and independent database checks. Its browser run
+[39466885903](https://github.com/Xmanuel01/seramet-connect/actions/runs/39466885903)
+found two shared-fixture interactions, with 34 scenarios passing and two failing:
+
+- The cash-shift fixture now seeds genuine cash and receivable accounts. Accounting
+  must not falsely display an absent chart; missing cash classification, missing
+  journals, Setup Centre guidance and invalid-filter recovery remain asserted.
+- The earlier daily-closing scenario performs an authorized reopen for fixture
+  cleanup. The later cash shift must retain that earlier immutable report, append
+  exactly one new snapshot, and leave the entire closed record unchanged on a
+  repeated confirmation, rather than assuming the branch has no closing history.
+
+After those test-only corrections, the six affected accounting, closing and
+two-terminal scenarios pass together in one local run. No application guard,
+financial calculation, timeout, authorization or production setting was changed.
+Final-head CI remains the authoritative combined gate, not the earlier failed run.
+
 Do not merge a known-failing or unresolved-critical candidate just because GitHub reports
 it mergeable. Older overlapping and stacked PRs must not be merged independently into
 main after their consolidated integration. Temporary work marked DO NOT MERGE is not a

@@ -372,6 +372,8 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   const day = pending.state.paymentOperations!.dayCloses.find(
     (item) => item.branchId === scope.branchId,
   )!;
+  const priorDay = before.state.paymentOperations?.dayCloses.find((item) => item.id === day.id);
+  const priorSnapshots = priorDay?.snapshots ?? (priorDay?.snapshot ? [priorDay.snapshot] : []);
   expect(day.readiness?.some((issue) => issue.code === "OPEN_CASH_DRAWER")).toBe(true);
   await mutate("closePaymentDrawer", {
     input: {
@@ -386,7 +388,7 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   expect(
     ready.state.paymentOperations!.dayCloses.find((item) => item.id === day.id)?.readiness,
   ).toEqual([]);
-  await mutate("closeDay", {
+  const firstClosed = await mutate("closeDay", {
     input: {
       tenantId: scope.tenantId,
       dayCloseId: day.id,
@@ -404,7 +406,11 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   });
   const finalDay = closed.state.paymentOperations!.dayCloses.find((item) => item.id === day.id)!;
   expect(finalDay.status).toBe("CLOSED");
-  expect(finalDay.snapshots).toHaveLength(1);
+  expect(finalDay.snapshots).toHaveLength(priorSnapshots.length + 1);
+  expect(finalDay.snapshots!.slice(0, priorSnapshots.length)).toEqual(priorSnapshots);
+  expect(finalDay).toEqual(
+    firstClosed.state.paymentOperations!.dayCloses.find((item) => item.id === day.id),
+  );
   expect(finalDay.snapshot?.settledMinor).toBe(Math.round(invoice.total * 100));
   expect(
     closed.state.paymentOperations!.drawerSessions.find((item) => item.id === drawer.id),

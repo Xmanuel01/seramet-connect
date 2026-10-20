@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 const fixture = JSON.parse(readFileSync(".seramet/e2e-fixture.json", "utf8"));
 
-test("accounting pages preserve missing-configuration evidence and recover from invalid filters", async ({
+test("accounting pages preserve configuration evidence and recover from invalid filters", async ({
   browser,
 }) => {
   test.setTimeout(180000);
@@ -52,9 +52,11 @@ test("accounting pages preserve missing-configuration evidence and recover from 
       await page.goto(path);
       await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
       const main = page.locator("main");
-      await expect(
-        main.getByText("Chart of accounts not configured", { exact: true }),
-      ).toBeVisible();
+      // The shared tenant has genuine cash/receivable accounts for the cash shift.
+      // Missing classifications and journals must still remain visible below.
+      await expect(main.getByText("Chart of accounts not configured", { exact: true })).toHaveCount(
+        0,
+      );
       await expect(
         main.getByText("Cash and bank accounts need classification", { exact: true }),
       ).toBeVisible();
@@ -99,8 +101,11 @@ test("accounting pages preserve missing-configuration evidence and recover from 
       await expect(page.getByText("This page didn't load", { exact: true })).toHaveCount(0);
       await from.fill(original);
       await expect(
-        main.getByText("Chart of accounts not configured", { exact: true }),
+        main.getByText("Cash and bank accounts need classification", { exact: true }),
       ).toBeVisible();
+      await expect(main.getByText("Chart of accounts not configured", { exact: true })).toHaveCount(
+        0,
+      );
     }
     expect(errors).toEqual([]);
   } finally {
