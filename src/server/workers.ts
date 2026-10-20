@@ -13,6 +13,7 @@ import { CrmAnalyticsService } from "@/crm/crm-analytics";
 import { CrmService } from "@/crm/crm-service";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { CampaignService } from "@/crm/campaign-service";
+import { createCampaignEmailRegistry } from "@/server/campaign-email-provider";
 import {
   capabilityForChannel,
   getCampaignProviderRegistry,
@@ -1573,7 +1574,11 @@ async function dispatchCrmCampaigns(env: SerametEnv, job: WorkerJobRow) {
       new Date().toISOString(),
     )
     .all<{ id: string }>();
-  const service = new CampaignService(env.SERAMET_DB!, actor);
+  const service = new CampaignService(
+    env.SERAMET_DB!,
+    actor,
+    createCampaignEmailRegistry(env, job.tenant_id),
+  );
   let sent = 0;
   let failed = 0;
   for (const campaign of rows.results ?? []) {

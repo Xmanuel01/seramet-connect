@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAttendanceDelays, type DelayRequest } from "@/hooks/use-attendance-delays";
+import { attendanceTime } from "@/lib/attendance-display";
 
 type Pending = { path: string; body: Record<string, unknown> };
 function readPending(key: string): Pending | null {
@@ -115,12 +116,7 @@ export function AttendanceDelays({
       }
     }
   }
-  const date = (value: string) =>
-    new Intl.DateTimeFormat(undefined, {
-      timeZone: feed.timeZone,
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(value));
+  const date = (value: string) => attendanceTime(value, feed.timeZone, true);
   return (
     <Panel className="mt-4">
       <PanelHead

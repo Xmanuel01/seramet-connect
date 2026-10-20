@@ -15,7 +15,7 @@ const limits: Record<ImportKind, { maxBytes: number; maxRows: number; extensions
   BANK: { maxBytes: 10 * 1024 * 1024, maxRows: 50_000, extensions: ["csv", "ofx", "xlsx"] },
   SETTLEMENT: { maxBytes: 20 * 1024 * 1024, maxRows: 100_000, extensions: ["csv", "xlsx"] },
   MENU: { maxBytes: 10 * 1024 * 1024, maxRows: 25_000, extensions: ["csv", "xlsx"] },
-  INVENTORY: { maxBytes: 15 * 1024 * 1024, maxRows: 50_000, extensions: ["csv", "xlsx"] },
+  INVENTORY: { maxBytes: 10 * 1024 * 1024, maxRows: 5_000, extensions: ["csv", "xlsx"] },
   SUPPLIER: { maxBytes: 10 * 1024 * 1024, maxRows: 25_000, extensions: ["csv", "xlsx"] },
   STAFF: { maxBytes: 10 * 1024 * 1024, maxRows: 25_000, extensions: ["csv", "xlsx"] },
   OPENING_STOCK: { maxBytes: 15 * 1024 * 1024, maxRows: 50_000, extensions: ["csv", "xlsx"] },

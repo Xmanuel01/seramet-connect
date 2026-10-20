@@ -7,6 +7,7 @@ import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
 import { AttendanceHistory } from "@/components/app/AttendanceHistory";
 import { AttendanceDelays } from "@/components/app/AttendanceDelays";
+import { attendanceCollection } from "@/lib/attendance-display";
 import {
   Dialog,
   DialogContent,
@@ -227,6 +228,16 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
             "/api/seramet/attendance?branchId=" + encodeURIComponent(branchId),
           )) as Data;
           if (sequence !== refreshSequence.current) return;
+          attendanceCollection<Employee>(answer, "employees", ["id", "name"]);
+          attendanceCollection<Session>(answer, "records", ["id", "employeeId", "clockInAt"]);
+          if (
+            !answer.geofence ||
+            typeof answer.branchTimezone !== "string" ||
+            answer.branchId !== branchId
+          )
+            throw new Error(
+              "Attendance configuration is incomplete. Refresh or contact your supervisor.",
+            );
           setData(answer);
           if (!preserveSettings) setEditFence(answer.geofence);
         } catch (error) {

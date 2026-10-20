@@ -1,5 +1,9 @@
 # Sales Through Finance: Corrections and Acceptance
 
+Follow-up: `PAGE_COMPLETION_2026-10-20.md` records the subsequent inventory-import,
+Attendance and Brevo campaign changes and 90-page scan. Limitations below describe
+the earlier delivery and are superseded only where that follow-up provides evidence.
+
 ## Release Boundary
 
 These corrections are prepared for delivery through existing PR #138 on `codex/pilot-staff-integration` from `seramet-pilot-completion`. They are not installed on the live restaurant computer. No merge, deployment, protected database change, credential provisioning or migration was performed. Earlier local corrections were preserved. Pushing the branch does not certify deployment or live operation; GitHub CI results must be checked separately for the pushed commit.

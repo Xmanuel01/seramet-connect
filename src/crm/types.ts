@@ -147,6 +147,7 @@ export type CampaignProviderResult = {
   status: "SENT" | "FAILED" | "UNKNOWN";
   providerMessageId?: string;
   errorCode?: string;
+  retryable?: boolean;
 };
 
 export type CampaignMessage = {
@@ -157,4 +158,5 @@ export type CampaignMessage = {
   subject?: string;
   body: string;
   idempotencyKey: string;
+  customerId?: string;
 };

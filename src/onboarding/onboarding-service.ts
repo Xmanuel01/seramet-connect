@@ -119,6 +119,9 @@ type ImportValue = {
   stationCode?: unknown;
   stationId?: unknown;
   baseUnitCode?: unknown;
+  baseUnitId?: unknown;
+  purchaseUnitId?: unknown;
+  categoryId?: unknown;
   purchaseUnitCode?: unknown;
   dimension?: unknown;
   factorNumerator?: unknown;
@@ -1175,6 +1178,8 @@ export class OnboardingService {
         "File imports are unavailable until security scanning, quarantine storage and durable workers are configured",
       );
     }
+    if (input.kind === "INVENTORY" && !input.branchId)
+      throw validation("Select one authorized branch for inventory imports");
     const file = await validateImportFile({
       kind: input.kind,
       filename: input.originalName,
@@ -1416,6 +1421,8 @@ export class OnboardingService {
       contentType: input.mimeType,
       bytes: input.bytes,
     });
+    if (input.kind === "INVENTORY" && !input.branchId)
+      throw validation("Select one authorized branch for inventory imports");
     const scanEvidence = options.cleanEvidence
       ? options.cleanEvidence
       : await requireCleanMalwareScan({
@@ -1694,7 +1701,7 @@ export class OnboardingService {
     }
     // Every menu import uses the same durable path. Approval freezes the exact
     // server-side plan; workers then apply bounded batches without replaying rows.
-    if (record.import_kind === "MENU" && !options.worker) {
+    if (["MENU", "INVENTORY"].includes(record.import_kind) && !options.worker) {
       const planDigest = await this.importPlanDigest(importId, record.file_checksum);
       if (record.approved_plan_digest && record.approved_plan_digest !== planDigest) {
         throw invalidTransition("Approved import plan no longer matches its staged rows");
@@ -1746,13 +1753,15 @@ export class OnboardingService {
     }
     if (
       options.worker &&
-      record.import_kind === "MENU" &&
+      ["MENU", "INVENTORY"].includes(record.import_kind) &&
       (!record.approved_plan_digest ||
         record.approved_plan_digest !==
           (await this.importPlanDigest(importId, record.file_checksum)))
     ) {
       throw invalidTransition("Worker rejected a changed or unapproved import plan");
     }
+    if (record.import_kind === "INVENTORY")
+      return this.commitInventoryPlan(importId, idempotencyKey, record.row_count);
     const rowLimit =
       record.import_kind === "MENU" ? Math.max(10, Math.min(25, record.batch_size)) : 100000;
     const rows = await this.db
@@ -2009,12 +2018,323 @@ export class OnboardingService {
     };
   }
 
+  private async commitInventoryPlan(importId: string, commitKey: string, rowCount: number) {
+    const batch = await this.db
+      .prepare(
+        `SELECT row_number,action,after_json FROM setup_import_rows
+      WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING') ORDER BY row_number LIMIT 20`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .all<{ row_number: number; action: string; after_json: string }>();
+    const stamp = now();
+    await this.db.batch(
+      (batch.results ?? []).map((row) => {
+        const value = parseJson<Record<string, unknown>>(row.after_json, {});
+        return this.db
+          .prepare(
+            `UPDATE setup_import_rows SET status=?,committed_entity_type='INVENTORY',committed_entity_id=?,materialized_at=?
+        WHERE tenant_id=? AND import_id=? AND row_number=? AND status IN ('VALID','WARNING')`,
+          )
+          .bind(
+            row.action === "SKIP" ? "SKIPPED" : "COMMITTED",
+            value.existingId ?? stableId("inventory", string(value.code).toUpperCase()),
+            stamp,
+            this.actor.tenantId,
+            importId,
+            row.row_number,
+          );
+      }),
+    );
+    const remaining = await count(
+      this.db,
+      "SELECT COUNT(*) count FROM setup_import_rows WHERE tenant_id=? AND import_id=? AND status IN ('VALID','WARNING')",
+      this.actor.tenantId,
+      importId,
+    );
+    if (remaining) {
+      const jobKey = `setup-import-commit:${importId}:${rowCount - remaining}`;
+      const correlationId = crypto.randomUUID();
+      await this.db.batch([
+        this.enqueueJobStatement("SETUP_IMPORT_COMMIT", importId, jobKey, correlationId, {
+          importId,
+          commitKey,
+        }),
+        this.audit("INVENTORY_IMPORT_BATCH_STAGED", "SETUP_IMPORT", importId, { remaining }),
+      ]);
+      await this.dispatchWorkerJob(stableId("worker", jobKey), correlationId);
+      return { id: importId, duplicate: false, queued: true, status: "QUEUED" as const };
+    }
+    const totals = await this.db
+      .prepare(
+        `SELECT COUNT(*) count,
+      SUM(CASE WHEN status='COMMITTED' THEN 1 ELSE 0 END) created,
+      SUM(CASE WHEN status='SKIPPED' THEN 1 ELSE 0 END) skipped FROM setup_import_rows WHERE tenant_id=? AND import_id=?`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .first<{ count: number; created: number; skipped: number }>();
+    if (
+      !totals ||
+      totals.count !== rowCount ||
+      totals.created + totals.skipped !== rowCount ||
+      !rowCount
+    )
+      throw invalidTransition("The complete approved inventory plan was not staged");
+    const verification = {
+      status: "VERIFIED" as const,
+      created: totals.created,
+      updated: 0,
+      skipped: totals.skipped,
+      failed: 0,
+      branchSettings: 0,
+      catalogueVerified: true,
+      warnings: [] as string[],
+    };
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE setup_imports SET status='COMMITTED',pipeline_state='READY_TO_PUBLISH',verification_status='VERIFIED',
+        verification_json=?,publish_status='READY',committed_at=?,updated_at=? WHERE tenant_id=? AND id=? AND status='COMMITTING'`,
+        )
+        .bind(json(verification), stamp, stamp, this.actor.tenantId, importId),
+      this.audit("INVENTORY_IMPORT_PLAN_VERIFIED", "SETUP_IMPORT", importId, verification),
+    ]);
+    return {
+      id: importId,
+      duplicate: false,
+      queued: false,
+      status: "COMMITTED" as const,
+      verification,
+    };
+  }
+
+  private async publishInventoryPlan(importId: string, publishKey: string, worker: boolean) {
+    const record = await this.db
+      .prepare(
+        `SELECT i.*,o.object_key,o.object_version,o.scan_evidence_id,o.status object_status
+      FROM setup_imports i LEFT JOIN stored_objects o ON o.tenant_id=i.tenant_id AND o.id=i.source_object_id
+      WHERE i.tenant_id=? AND i.id=? AND i.import_kind='INVENTORY'`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .first<Record<string, unknown>>();
+    if (!record || !record.branch_id) throw notFound("Branch inventory import was not found");
+    await this.assertImportBranch(string(record.branch_id));
+    if (worker) {
+      await this.assertQueuedImportAuthority(string(record.created_by), [string(record.branch_id)]);
+      await this.assertQueuedImportAuthority(string(record.approved_by), [
+        string(record.branch_id),
+      ]);
+    }
+    const digest = string(record.approved_plan_digest);
+    if (
+      !digest ||
+      publishKey !== `publish:${digest}` ||
+      digest !== (await this.importPlanDigest(importId, string(record.file_checksum)))
+    )
+      throw invalidTransition("Publication does not match the approved immutable inventory plan");
+    if (record.publish_status === "PUBLISHED")
+      return { id: importId, duplicate: true, queued: false, status: "PUBLISHED" as const };
+    if (
+      record.status !== "COMMITTED" ||
+      record.verification_status !== "VERIFIED" ||
+      !["READY", "PUBLISHING"].includes(string(record.publish_status))
+    )
+      throw invalidTransition("Inventory import is not fully verified for publication");
+    if (
+      !hasValidCleanEvidence(
+        string(record.file_checksum),
+        string(record.scan_status),
+        string(record.scan_evidence_json),
+        record.source_object_id
+          ? {
+              objectKey: string(record.object_key),
+              objectVersion: string(record.object_version),
+              evidenceId: string(record.scan_evidence_id),
+              objectStatus: string(record.object_status),
+            }
+          : {},
+      )
+    )
+      throw invalidTransition(
+        "Inventory publication requires matching authenticated CLEAN evidence",
+      );
+    if (resolveRuntimeConfiguration(this.env).productionLike && !record.source_object_id)
+      throw invalidTransition("Quarantined source object is required");
+    const stamp = now();
+    if (!worker) {
+      const jobKey = `setup-import-publish:${importId}:0`;
+      const correlationId = crypto.randomUUID();
+      await this.db.batch([
+        this.db
+          .prepare(
+            `UPDATE setup_imports SET publish_status='PUBLISHING',pipeline_state='PUBLISHING',publish_idempotency_key=?,updated_at=?
+          WHERE tenant_id=? AND id=? AND publish_status IN ('READY','PUBLISHING') AND (publish_idempotency_key IS NULL OR publish_idempotency_key=?)`,
+          )
+          .bind(publishKey, stamp, this.actor.tenantId, importId, publishKey),
+        this.enqueueJobStatement("SETUP_IMPORT_PUBLISH", importId, jobKey, correlationId, {
+          importId,
+          publishKey,
+        }),
+        this.audit("INVENTORY_IMPORT_PUBLISH_APPROVED", "SETUP_IMPORT", importId, {
+          digest,
+          correlationId,
+        }),
+      ]);
+      await this.dispatchWorkerJob(stableId("worker", jobKey), correlationId);
+      return { id: importId, duplicate: false, queued: true, status: "PUBLISHING" as const };
+    }
+    if (record.publish_status !== "PUBLISHING")
+      throw invalidTransition("Inventory publication is not authorized");
+    // Verification work is bounded. The final set-based insert and visibility change share
+    // one database transaction, so partially published stock masters cannot become live.
+    const pending = await this.db
+      .prepare(
+        `SELECT row_number FROM setup_import_rows WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+      AND publication_verified_at IS NULL ORDER BY row_number LIMIT 20`,
+      )
+      .bind(this.actor.tenantId, importId)
+      .all<{ row_number: number }>();
+    if (pending.results?.length)
+      await this.db.batch(
+        pending.results.map((row) =>
+          this.db
+            .prepare(
+              `UPDATE setup_import_rows SET publication_verified_at=?
+      WHERE tenant_id=? AND import_id=? AND row_number=? AND status='COMMITTED'`,
+            )
+            .bind(stamp, this.actor.tenantId, importId, row.row_number),
+        ),
+      );
+    const left = await count(
+      this.db,
+      "SELECT COUNT(*) count FROM setup_import_rows WHERE tenant_id=? AND import_id=? AND status='COMMITTED' AND publication_verified_at IS NULL",
+      this.actor.tenantId,
+      importId,
+    );
+    if (left) {
+      const jobKey = `setup-import-publish:${importId}:${Number(record.row_count) - left}`;
+      const correlationId = crypto.randomUUID();
+      await this.db.batch([
+        this.enqueueJobStatement("SETUP_IMPORT_PUBLISH", importId, jobKey, correlationId, {
+          importId,
+          publishKey,
+        }),
+      ]);
+      await this.dispatchWorkerJob(stableId("worker", jobKey), correlationId);
+      return { id: importId, duplicate: false, queued: true, status: "PUBLISHING" as const };
+    }
+    const approvedRows = await count(
+      this.db,
+      "SELECT COUNT(*) count FROM setup_import_rows WHERE tenant_id=? AND import_id=? AND status IN ('COMMITTED','SKIPPED')",
+      this.actor.tenantId,
+      importId,
+    );
+    if (!approvedRows || approvedRows !== Number(record.row_count))
+      throw invalidTransition("Inventory publication is incomplete");
+    const results = await this.db.batch([
+      // Lock the authoritative import before examining its current publication state.
+      this.db
+        .prepare(
+          "UPDATE setup_imports SET updated_at=? WHERE tenant_id=? AND id=? AND publish_status='PUBLISHING'",
+        )
+        .bind(stamp, this.actor.tenantId, importId),
+      ...["base", "purchase"].map((unit) =>
+        this.db
+          .prepare(
+            `INSERT INTO unit_definitions (tenant_id,id,code,name,symbol,dimension,active,created_at,updated_at)
+        SELECT r.tenant_id,json_extract(r.after_json,'$.${unit}UnitId'),json_extract(r.after_json,'$.${unit}UnitCode'),
+          json_extract(r.after_json,'$.${unit}UnitCode'),json_extract(r.after_json,'$.${unit}UnitCode'),json_extract(r.after_json,'$.dimension'),1,?,?
+        FROM setup_import_rows r JOIN setup_imports i ON i.tenant_id=r.tenant_id AND i.id=r.import_id
+        WHERE r.tenant_id=? AND r.import_id=? AND r.status='COMMITTED' AND i.publish_status='PUBLISHING'
+        ON CONFLICT(tenant_id,code) DO NOTHING`,
+          )
+          .bind(stamp, stamp, this.actor.tenantId, importId),
+      ),
+      this.db
+        .prepare(
+          `INSERT INTO inventory_items (tenant_id,id,sku,name,unit,active,payload_json,code,description,base_unit_id,purchase_unit_id,
+        storage_unit_id,issue_unit_id,track_inventory,track_expiry,default_warehouse_id,barcode,category_id,updated_at)
+        SELECT r.tenant_id,r.committed_entity_id,UPPER(json_extract(r.after_json,'$.code')),json_extract(r.after_json,'$.name'),
+          json_extract(r.after_json,'$.baseUnitCode'),1,?,UPPER(json_extract(r.after_json,'$.code')),json_extract(r.after_json,'$.description'),
+          json_extract(r.after_json,'$.baseUnitId'),json_extract(r.after_json,'$.purchaseUnitId'),json_extract(r.after_json,'$.baseUnitId'),json_extract(r.after_json,'$.baseUnitId'),
+          1,CASE WHEN CAST(json_extract(r.after_json,'$.trackExpiry') AS TEXT) IN ('1','true') THEN 1 ELSE 0 END,
+          json_extract(r.after_json,'$.warehouseId'),json_extract(r.after_json,'$.barcode'),json_extract(r.after_json,'$.categoryId'),?
+        FROM setup_import_rows r JOIN setup_imports i ON i.tenant_id=r.tenant_id AND i.id=r.import_id
+        WHERE r.tenant_id=? AND r.import_id=? AND r.status='COMMITTED' AND i.publish_status='PUBLISHING'`,
+        )
+        .bind(json({ imported: true, importId }), stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `INSERT INTO item_unit_conversions (tenant_id,id,inventory_item_id,from_unit_id,to_unit_id,factor_numerator,factor_denominator,effective_from,created_at)
+        SELECT r.tenant_id,r.committed_entity_id || ':purchase',r.committed_entity_id,json_extract(r.after_json,'$.purchaseUnitId'),
+          json_extract(r.after_json,'$.baseUnitId'),CAST(json_extract(r.after_json,'$.factorNumerator') AS INTEGER),CAST(json_extract(r.after_json,'$.factorDenominator') AS INTEGER),'1970-01-01',?
+        FROM setup_import_rows r JOIN setup_imports i ON i.tenant_id=r.tenant_id AND i.id=r.import_id
+        WHERE r.tenant_id=? AND r.import_id=? AND r.status='COMMITTED' AND i.publish_status='PUBLISHING'
+          AND json_extract(r.after_json,'$.purchaseUnitId')<>json_extract(r.after_json,'$.baseUnitId')`,
+        )
+        .bind(stamp, this.actor.tenantId, importId),
+      // The existing publication trigger aborts the entire batch if even one created
+      // item or required reference cannot be independently verified here.
+      this.db
+        .prepare(
+          `UPDATE setup_import_rows SET publication_verified_at=CASE WHEN EXISTS (
+        SELECT 1 FROM inventory_items m JOIN warehouses w ON w.tenant_id=m.tenant_id AND w.id=m.default_warehouse_id AND w.active=1
+        JOIN unit_definitions u ON u.tenant_id=m.tenant_id AND u.id=m.base_unit_id AND u.active=1
+        JOIN unit_definitions p ON p.tenant_id=m.tenant_id AND p.id=m.purchase_unit_id AND p.active=1
+        JOIN inventory_categories c ON c.tenant_id=m.tenant_id AND c.id=m.category_id AND c.active=1
+        WHERE m.tenant_id=setup_import_rows.tenant_id AND m.id=setup_import_rows.committed_entity_id AND m.active=1
+        AND m.name=json_extract(setup_import_rows.after_json,'$.name') AND m.sku=UPPER(json_extract(setup_import_rows.after_json,'$.code'))
+        AND w.branch_id=? AND w.id=json_extract(setup_import_rows.after_json,'$.warehouseId')
+        AND u.id=json_extract(setup_import_rows.after_json,'$.baseUnitId') AND c.id=json_extract(setup_import_rows.after_json,'$.categoryId')
+        AND p.id=json_extract(setup_import_rows.after_json,'$.purchaseUnitId') AND u.dimension=json_extract(setup_import_rows.after_json,'$.dimension') AND p.dimension=u.dimension
+        AND (p.id=u.id OR EXISTS (SELECT 1 FROM item_unit_conversions v WHERE v.tenant_id=m.tenant_id AND v.inventory_item_id=m.id
+          AND v.from_unit_id=p.id AND v.to_unit_id=u.id AND v.factor_numerator=CAST(json_extract(setup_import_rows.after_json,'$.factorNumerator') AS INTEGER)
+          AND v.factor_denominator=CAST(json_extract(setup_import_rows.after_json,'$.factorDenominator') AS INTEGER)))
+      ) THEN ? ELSE NULL END,published_at=? WHERE tenant_id=? AND import_id=? AND status='COMMITTED'
+        AND EXISTS (SELECT 1 FROM setup_imports i WHERE i.tenant_id=setup_import_rows.tenant_id
+          AND i.id=setup_import_rows.import_id AND i.publish_status='PUBLISHING')`,
+        )
+        .bind(record.branch_id, stamp, stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `UPDATE setup_imports SET publish_status='PUBLISHED',pipeline_state='PUBLISHED',published_at=?,updated_at=?
+        WHERE tenant_id=? AND id=? AND publish_status='PUBLISHING'`,
+        )
+        .bind(stamp, stamp, this.actor.tenantId, importId),
+      this.db
+        .prepare(
+          `INSERT INTO audit_events (tenant_id,id,branch_id,actor_id,action,entity_type,entity_id,reason,correlation_id,metadata_json,created_at)
+        VALUES (?,?,?,?,'INVENTORY_IMPORT_PUBLISHED','SETUP_IMPORT',?,'Explicit approved publication',?,'{}',?) ON CONFLICT(tenant_id,id) DO NOTHING`,
+        )
+        .bind(
+          this.actor.tenantId,
+          `inventory-publish:${importId}`,
+          record.branch_id,
+          this.actor.id,
+          importId,
+          importId,
+          stamp,
+        ),
+    ]);
+    return {
+      id: importId,
+      duplicate: (results[0]?.meta?.changes ?? 0) === 0,
+      queued: false,
+      status: "PUBLISHED" as const,
+    };
+  }
+
   async publishImport(
     importId: string,
     idempotencyKey: string,
     options: { worker?: boolean } = {},
   ) {
     this.require(permissions.setupImport);
+    const kind = await this.db
+      .prepare("SELECT import_kind FROM setup_imports WHERE tenant_id=? AND id=?")
+      .bind(this.actor.tenantId, importId)
+      .first<{ import_kind: string }>();
+    if (kind?.import_kind === "INVENTORY")
+      return this.publishInventoryPlan(importId, idempotencyKey, options.worker === true);
     const record = await this.db
       .prepare(
         `SELECT status,verification_status,approved_plan_digest,publish_status,catalogue_revision,
@@ -4532,6 +4852,98 @@ export class OnboardingService {
               "A base unit cannot have a non-identity conversion to itself",
             ),
           );
+        const unit = await this.db
+          .prepare(
+            "SELECT id,dimension FROM unit_definitions WHERE tenant_id=? AND UPPER(code)=? AND active=1",
+          )
+          .bind(this.actor.tenantId, normalized.baseUnitCode)
+          .first<{ id: string; dimension: string }>();
+        if (
+          !["MASS", "VOLUME", "COUNT", "LENGTH", "OTHER"].includes(string(normalized.dimension)) ||
+          (unit && unit.dimension !== normalized.dimension)
+        )
+          errors.push(
+            importIssue(
+              "baseUnit",
+              "INVALID_UNIT_DIMENSION",
+              "Unit dimension must match the configured unit",
+            ),
+          );
+        normalized.baseUnitId = unit?.id ?? stableId("unit", string(normalized.baseUnitCode));
+        const purchase = await this.db
+          .prepare(
+            "SELECT id,dimension FROM unit_definitions WHERE tenant_id=? AND UPPER(code)=? AND active=1",
+          )
+          .bind(this.actor.tenantId, normalized.purchaseUnitCode)
+          .first<{ id: string; dimension: string }>();
+        if (purchase && purchase.dimension !== normalized.dimension)
+          errors.push(
+            importIssue(
+              "purchaseUnit",
+              "INVALID_UNIT_DIMENSION",
+              "Purchase unit dimension must match the base unit",
+            ),
+          );
+        normalized.purchaseUnitId =
+          purchase?.id ?? stableId("unit", string(normalized.purchaseUnitCode));
+        const warehouse = await this.db
+          .prepare(
+            "SELECT id FROM warehouses WHERE tenant_id=? AND branch_id=? AND active=1 AND (id=? OR UPPER(code)=UPPER(?))",
+          )
+          .bind(
+            this.actor.tenantId,
+            branchId ?? "",
+            normalized.warehouseId ?? "",
+            normalized.warehouseId ?? "",
+          )
+          .first<{ id: string }>();
+        if (!warehouse)
+          errors.push(
+            importIssue(
+              "warehouse",
+              "UNKNOWN_WAREHOUSE",
+              "Choose an active warehouse in the selected branch",
+            ),
+          );
+        else normalized.warehouseId = warehouse.id;
+        const category = await this.db
+          .prepare(
+            "SELECT id FROM inventory_categories WHERE tenant_id=? AND active=1 AND (id=? OR UPPER(code)=UPPER(?))",
+          )
+          .bind(this.actor.tenantId, normalized.categoryCode ?? "", normalized.categoryCode ?? "")
+          .first<{ id: string }>();
+        if (!category)
+          errors.push(
+            importIssue(
+              "category",
+              "UNKNOWN_CATEGORY",
+              "Configure the inventory category before importing",
+            ),
+          );
+        else normalized.categoryId = category.id;
+        const existing = await this.db
+          .prepare("SELECT id FROM inventory_items WHERE tenant_id=? AND UPPER(sku)=UPPER(?)")
+          .bind(this.actor.tenantId, suppliedIdentity)
+          .first<{ id: string }>();
+        if (existing) {
+          if (menuOptions?.duplicateStrategy === "SKIP") normalized.existingId = existing.id;
+          else
+            errors.push(
+              importIssue(
+                "code",
+                "EXISTING_ITEM",
+                "Item exists; use Skip existing or edit the item separately",
+              ),
+            );
+        }
+        if (menuOptions?.duplicateStrategy === "UPDATE")
+          errors.push(
+            importIssue(
+              "duplicateStrategy",
+              "UPDATE_REQUIRES_REVIEW",
+              "Spreadsheet updates to existing stock masters are not supported; edit reviewed item settings instead",
+            ),
+          );
       } else if (kind === "SUPPLIER") {
         if (number(normalized.leadTimeDays ?? 0) < 0)
           errors.push(importIssue("leadTimeDays", "INVALID", "Lead time cannot be negative"));
@@ -4575,6 +4987,15 @@ export class OnboardingService {
         normalized,
         errors,
         warnings,
+        ...(kind === "INVENTORY"
+          ? {
+              action: errors.length
+                ? ("ERROR" as const)
+                : normalized.existingId
+                  ? ("SKIP" as const)
+                  : ("CREATE" as const),
+            }
+          : {}),
       });
     }
     return rows;
@@ -5765,7 +6186,7 @@ export class OnboardingService {
       ? await this.db
           .prepare(
             `SELECT row_number,row_key,status,normalized_json,errors_json,warnings_json,action
-         FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number LIMIT 1000`,
+         FROM setup_import_rows WHERE tenant_id=? AND import_id=? ORDER BY row_number LIMIT ${record["import_kind"] === "INVENTORY" ? 5000 : 1000}`,
           )
           .bind(this.actor.tenantId, id)
           .all<Record<string, unknown>>()
@@ -6269,6 +6690,7 @@ function normalizeImportRow(
       factorDenominator: parseInteger(value("factorDenominator", "conversionDenominator") || "1"),
       trackExpiry: parseBoolean(value("trackExpiry")),
       warehouseId: value("warehouseId") || undefined,
+      categoryCode: value("categoryCode", "category") || undefined,
       barcode: value("barcode") || undefined,
       parMicro: parseInteger(value("parMicro", "par") || "0"),
       safetyStockMicro: parseInteger(value("safetyStockMicro", "safetyStock") || "0"),

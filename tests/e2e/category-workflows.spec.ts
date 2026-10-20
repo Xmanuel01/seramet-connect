@@ -18,6 +18,159 @@ const headers = {
   "x-seramet-tenant-id": fixture.tenantId,
   "x-seramet-branch-id": fixture.firstBranchId,
 };
+test("inventory spreadsheet is scanned, reviewed, published once and visible after reload", async ({
+  context,
+  page,
+}) => {
+  await signIn(context, page);
+  const post = async (path: string, body: unknown) => {
+    const response = await context.request.post(`/api/seramet/${path}`, { headers, data: body });
+    expect(response.ok(), `${path}: ${response.status()}`).toBe(true);
+    return response.json();
+  };
+  const suffix = randomUUID().slice(0, 8).toUpperCase();
+  const { warehouse } = await post("inventory/warehouses", {
+    branchId: fixture.firstBranchId,
+    code: `IMP-${suffix}`,
+    name: `Import store ${suffix}`,
+    locationType: "MAIN",
+  });
+  const { category } = await post("inventory/categories", {
+    code: `IMP-${suffix}`,
+    name: `Import food ${suffix}`,
+  });
+  const code = `IMP-${suffix}-RICE`;
+  await page.goto("/inventory-items");
+  await page.getByRole("button", { name: "Import items", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "Import inventory items" });
+  await expect(dialog.getByLabel("Inventory spreadsheet")).toBeEnabled();
+  await dialog.getByLabel("Inventory spreadsheet").setInputFiles({
+    name: `inventory-${suffix}.csv`,
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      `code,name,categoryCode,baseUnit,dimension,warehouseId\n${code},Imported rice ${suffix},IMP-${suffix},KG,MASS,${warehouse.id}\n`,
+    ),
+  });
+  await expect(dialog.getByText(code, { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect
+    .poll(() =>
+      dialog.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          left: box.left,
+          right: box.right,
+          viewport: innerWidth,
+          scrollWidth: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          withinViewport: box.left >= 0 && box.right <= innerWidth,
+          contentFits: element.scrollWidth <= element.clientWidth,
+        };
+      }),
+    )
+    .toMatchObject({ withinViewport: true, contentFits: true });
+  await mkdir(".seramet/category-acceptance", { recursive: true });
+  await page.screenshot({
+    path: ".seramet/category-acceptance/inventory-import-phone.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(dialog.getByRole("button", { name: "Approve immutable plan" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Approve immutable plan" }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "Import items", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Import inventory items" });
+  await dialog.getByRole("button", { name: "Confirm and publish inventory" }).click();
+  await expect(
+    dialog.getByText("Published and verified. Existing stock balances were not changed."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.reload();
+  await page.getByPlaceholder("Search name, SKU, code or supplier").fill(code);
+  await expect(
+    page.locator("main").getByRole("link", { name: `Imported rice ${suffix}`, exact: true }),
+  ).toBeVisible();
+  const after = await context.request.get(
+    `/api/seramet/inventory/items?branchId=${fixture.firstBranchId}&limit=500`,
+    { headers },
+  );
+  expect(after.ok()).toBe(true);
+  const body = await after.json();
+  expect(body.items.filter((row: { code: string }) => row.code === code)).toHaveLength(1);
+  expect(category).toBeTruthy();
+});
+
+test("attendance survives corrupt history, incomplete responses and a transient backend failure", async ({
+  context,
+  page,
+}) => {
+  await signIn(context, page);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.route("**/api/seramet/attendance/records?**", (route) =>
+    route.fulfill({
+      json: {
+        records: [
+          {
+            id: "corrupt-history-fixture",
+            employeeId: fixture.userId,
+            employeeName: "Historical record",
+            branchId: fixture.firstBranchId,
+            version: 1,
+            businessDate: "2026-10-19",
+            clockInAt: "invalid timestamp",
+            clockOutAt: null,
+            workedMinutes: null,
+            earlyDepartureMinutes: null,
+            minutesLate: null,
+            clockInSource: "SUPERVISOR",
+            clockOutSource: null,
+          },
+        ],
+        hasMore: false,
+      },
+    }),
+  );
+  await page.goto("/attendance");
+  await expect(page.getByText("Invalid recorded time", { exact: true })).toBeVisible();
+  await expect(page.getByText("This page didn't load", { exact: true })).toBeHidden();
+  await page.route("**/api/seramet/attendance?**", (route) =>
+    route.fulfill({ status: 503, json: { message: "Temporary attendance outage" } }),
+  );
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByText("Temporary attendance outage", { exact: true })).toBeVisible();
+  await page.route("**/api/seramet/attendance?**", (route) =>
+    route.fulfill({ json: { ok: true, branchId: fixture.firstBranchId, employees: null } }),
+  );
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(
+    page.getByText("Attendance response is incomplete. Refresh or contact your supervisor.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.unroute("**/api/seramet/attendance?**");
+  await page.unroute("**/api/seramet/attendance/records?**");
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect(page.getByText("This page didn't load", { exact: true })).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("campaign page gives an actionable configuration error without exposing secrets or crashing", async ({
+  context,
+  page,
+}) => {
+  await signIn(context, page);
+  await page.goto("/campaigns");
+  await page.getByRole("button", { name: "Connect email", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("protected server configuration");
+  await expect(page.getByText("This page didn't load", { exact: true })).toBeHidden();
+  expect(await page.locator("main").innerText()).not.toMatch(
+    /api-key:|xkeysib-|disposable-provider-key/,
+  );
+});
 async function signIn(context: BrowserContext, page: Page) {
   await context.route("**/api/seramet/**", (route) =>
     route.continue({ headers: { ...route.request().headers(), ...headers } }),
@@ -42,6 +195,22 @@ test("Sales through Finance routes load without page exceptions or API 5xx", asy
   await signIn(context, page);
   const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Accounting"')[0]!;
   const paths = [...new Set([...nav.matchAll(/to: "([^"]+)"/g)].map((match) => match[1]!))];
+  await scanPages(page, paths, "routes");
+});
+
+test("remaining Accounting, Management, Intelligence, Marketing and System pages load without crashes", async ({
+  context,
+  page,
+}) => {
+  test.setTimeout(600_000);
+  await signIn(context, page);
+  const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Accounting"')[1]!;
+  const paths = [...new Set([...nav.matchAll(/to: "([^"]+)"/g)].map((match) => match[1]!))];
+  expect(paths.length).toBeGreaterThan(0);
+  await scanPages(page, paths, "remaining-routes");
+});
+
+async function scanPages(page: Page, paths: string[], report: string) {
   const results: { path: string; errors: string[]; failures: string[]; crash: boolean }[] = [];
   for (const path of paths) {
     const errors: string[] = [],
@@ -83,13 +252,13 @@ test("Sales through Finance routes load without page exceptions or API 5xx", asy
   }
   await mkdir(".seramet/category-acceptance", { recursive: true });
   await writeFile(
-    ".seramet/category-acceptance/routes.json",
+    `.seramet/category-acceptance/${report}.json`,
     JSON.stringify({ localUncommittedCandidate: true, results }, null, 2),
   );
   expect(results.filter((row) => row.crash || row.errors.length || row.failures.length)).toEqual(
     [],
   );
-});
+}
 
 test("table setup feeds QR selection; generated QR opens a real guest session and revocation is enforced", async ({
   context,

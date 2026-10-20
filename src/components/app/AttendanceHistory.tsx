@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Download, History, RefreshCcw } from "lucide-react";
 import { Btn, Panel, PanelHead, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { attendanceCollection, attendanceTime } from "@/lib/attendance-display";
 
 type Row = {
   id: string;
@@ -96,7 +97,16 @@ export function AttendanceHistory({
         };
         if (!response.ok) throw new Error(body.message ?? "Attendance history unavailable");
         if (active) {
-          setResult({ scope, records: body.records, hasMore: body.hasMore });
+          setResult({
+            scope,
+            records: attendanceCollection<Row>(body, "records", [
+              "id",
+              "clockInAt",
+              "employeeName",
+              "businessDate",
+            ]),
+            hasMore: body.hasMore === true,
+          });
           setNotice("");
         }
       })
@@ -112,15 +122,7 @@ export function AttendanceHistory({
       controller.abort();
     };
   }, [headers, query, refresh, scope, revision]);
-  const time = (at: string | null) =>
-    at
-      ? new Intl.DateTimeFormat("en-KE", {
-          timeZone: timezone,
-          dateStyle: "short",
-          timeStyle: "short",
-          hourCycle: "h23",
-        }).format(new Date(at))
-      : "Open";
+  const time = (at: string | null) => attendanceTime(at, timezone, true);
   const records = result?.scope === scope ? result.records : [];
   const download = async () => {
     setBusy(true);
@@ -159,7 +161,18 @@ export function AttendanceHistory({
       );
       const body = (await response.json()) as { events: Event[]; message?: string };
       if (!response.ok) throw new Error(body.message ?? "Correction history unavailable");
-      setHistory({ scope, events: body.events });
+      if (alive.current)
+        setHistory({
+          scope,
+          events: attendanceCollection<Event>(body, "events", [
+            "id",
+            "type",
+            "at",
+            "actor",
+            "before_json",
+            "after_json",
+          ]),
+        });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Correction history unavailable");
     }

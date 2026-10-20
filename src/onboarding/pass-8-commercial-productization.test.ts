@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { OnboardingService } from "@/onboarding/onboarding-service";
+import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
@@ -1073,13 +1074,24 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("imports inventory with exact rational conversion and supplier data through server preview", async () => {
+    await new InventoryIntelligenceService(db, actor()).createInventoryCategory({
+      code: "OILS",
+      name: "Oils",
+    });
     const inventory = await previewCsv(
       service,
       "INVENTORY",
-      "code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator\nOIL,Oil,L,JERRICAN,VOLUME,20,1",
+      `code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator,categoryCode,warehouseId\nOIL,Oil,L,JERRICAN,VOLUME,20,1,OILS,${warehouseId}`,
       "inventory-import",
     );
+    expect(inventory.canCommit).toBe(true);
     await service.commitImport(inventory.id, inventory.commitKey);
+    await service.commitImport(inventory.id, inventory.commitKey, { worker: true });
+    // Staging must not create active stock masters before explicit publication.
+    expect(await rowCount(db, "inventory_items")).toBe(1);
+    const stagedInventory = await service.inspectImport(inventory.id);
+    await service.publishImport(inventory.id, stagedInventory.publishKey!);
+    await service.publishImport(inventory.id, stagedInventory.publishKey!, { worker: true });
     const supplier = await previewCsv(
       service,
       "SUPPLIER",

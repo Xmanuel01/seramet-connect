@@ -10,6 +10,7 @@ import {
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { ksh } from "@/lib/currency";
+import { InventoryImport } from "@/inventory/InventoryImport";
 
 export const Route = createFileRoute("/inventory-items")({
   head: () => ({
@@ -68,6 +69,7 @@ function InventoryItems() {
       subtitle={`${branchLabel} - authoritative item master and stock position`}
       actions={
         <>
+          {authoritative && <InventoryImport onPublished={() => void control.refresh()} />}
           <Btn onClick={() => exportRows(filtered)}>Export</Btn>
           <Btn
             variant="primary"

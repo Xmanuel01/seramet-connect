@@ -1,5 +1,10 @@
 import { z, type ZodTypeAny } from "zod";
 import { CampaignService } from "@/crm/campaign-service";
+import {
+  campaignEmailKey,
+  createCampaignEmailRegistry,
+  verifyCampaignUnsubscribe,
+} from "@/server/campaign-email-provider";
 import { CrmAnalyticsService } from "@/crm/crm-analytics";
 import { CrmService } from "@/crm/crm-service";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
@@ -122,12 +127,50 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
       "Authoritative CRM database unavailable",
     );
   }
+  if (url.pathname === "/api/seramet/crm/campaigns/unsubscribe") {
+    const identity = await verifyCampaignUnsubscribe(env, url);
+    if (!identity) throw new SerametHttpError(403, "Unsubscribe link is invalid");
+    const headers = {
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+      "Content-Type": "text/html; charset=utf-8",
+    };
+    if (request.method === "GET")
+      return new Response(
+        '<!doctype html><title>Marketing preferences</title><h1>Unsubscribe from marketing email</h1><form method="post"><button type="submit">Confirm unsubscribe</button></form>',
+        { headers },
+      );
+    if (request.method !== "POST")
+      return new Response(null, { status: 405, headers: { Allow: "GET, POST" } });
+    const customer = await env.SERAMET_DB.prepare(
+      "SELECT id FROM customers WHERE tenant_id=? AND id=?",
+    )
+      .bind(identity.tenantId, identity.customerId)
+      .first();
+    if (!customer) throw new SerametHttpError(403, "Unsubscribe link is invalid");
+    const stamp = new Date().toISOString();
+    const id = `email-unsubscribe:${identity.customerId}`;
+    await env.SERAMET_DB.batch([
+      env.SERAMET_DB.prepare(
+        "INSERT INTO customer_suppressions (tenant_id,id,customer_id,channel,reason,source,active,created_by,created_at) VALUES (?,?,?,'EMAIL','UNSUBSCRIBED','SIGNED_EMAIL_LINK',1,'customer',?) ON CONFLICT(tenant_id,id) DO UPDATE SET active=1,released_at=NULL,released_by=NULL",
+      ).bind(identity.tenantId, id, identity.customerId, stamp),
+      env.SERAMET_DB.prepare(
+        "INSERT INTO customer_consents (tenant_id,id,customer_id,channel,status,source,policy_version,actor_id,effective_at,created_at) VALUES (?,?,?,'EMAIL_MARKETING','WITHDRAWN','SIGNED_EMAIL_LINK','email-unsubscribe-v1','customer',?,?) ON CONFLICT(tenant_id,id) DO NOTHING",
+      ).bind(identity.tenantId, id, identity.customerId, stamp, stamp),
+    ]);
+    return new Response(
+      "<!doctype html><title>Marketing preferences</title><h1>Unsubscribed</h1><p>Marketing emails have been disabled. Transactional messages are unaffected.</p>",
+      { headers },
+    );
+  }
   const actor = await authenticateSerametRequest(request, env);
   const phonePolicy = await tenantPhonePolicy(env, actor.tenantId);
   const crm = new CrmService(env.SERAMET_DB, actor, phonePolicy);
   const loyalty = new LoyaltyValueService(env.SERAMET_DB, actor);
   const analytics = new CrmAnalyticsService(env.SERAMET_DB, actor);
-  const campaigns = new CampaignService(env.SERAMET_DB, actor);
+  const campaignProviders = createCampaignEmailRegistry(env, actor.tenantId);
+  const campaigns = new CampaignService(env.SERAMET_DB, actor, campaignProviders);
   const leads = new CrmLeadService(env.SERAMET_DB, actor);
 
   try {
@@ -506,6 +549,28 @@ export async function handleCrmApi(request: Request, env: SerametEnv): Promise<R
     }
     if (url.pathname === "/api/seramet/crm/campaigns/providers" && request.method === "GET") {
       return json({ ok: true, providers: await campaigns.providerHealth() });
+    }
+    if (
+      url.pathname === "/api/seramet/crm/campaigns/providers/email" &&
+      request.method === "POST"
+    ) {
+      if ((await campaignProviders.get(campaignEmailKey).health()) !== "CONFIGURED")
+        throw new SerametHttpError(
+          503,
+          "Campaign email requires a verified sender, tenant-scoped provider credentials and unsubscribe signing secret in protected server configuration.",
+        );
+      return json({
+        ok: true,
+        provider: await campaigns.upsertProviderConfig({
+          id: `email:${actor.tenantId}`,
+          providerKey: campaignEmailKey,
+          displayName: "Campaign email",
+          capabilities: ["SEND_EMAIL"],
+          batchSize: 20,
+          perMinuteLimit: 60,
+          maxAttempts: 5,
+        }),
+      });
     }
     if (url.pathname === "/api/seramet/crm/campaigns/providers" && request.method === "POST") {
       return json({

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { useAppContext } from "@/lib/app-context";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
+import { attendanceCollection } from "@/lib/attendance-display";
 
 export type DelayRequest = {
   id: string;
@@ -75,6 +76,20 @@ function createStore(tenantId: string, branchId: string) {
             { status: response.status },
           );
         const body = (await response.json()) as Omit<Snapshot, "error" | "ready">;
+        attendanceCollection<DelayRequest>(body, "requests", [
+          "id",
+          "employee",
+          "expectedArrivalAt",
+          "reason",
+          "status",
+        ]);
+        if (
+          typeof body.timeZone !== "string" ||
+          typeof body.canManage !== "boolean" ||
+          !Number.isSafeInteger(body.unread) ||
+          body.unread < 0
+        )
+          throw new Error("Attendance response is incomplete. Refresh or contact your supervisor.");
         if (!signal.aborted) publish({ ...body, error: "", ready: true });
       } catch (error) {
         if (!signal.aborted)
