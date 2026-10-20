@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { invoiceBusinessDate, resolvePosTimeZone, unbilledKitchenOrders } from "@/lib/pos-workflow";
 import { useRef, useState } from "react";
+import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
+import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
 import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
 import { invoiceDisplayName } from "@/lib/invoice-split";
 import { permissions } from "@/platform/permissions";
@@ -19,7 +21,6 @@ import { billingDocumentToPrintOrder } from "@/lib/print-order-adapter";
 import {
   createDeliveryLog,
   createInvoicePdfBlob,
-  invoiceEmailLink,
   invoiceWhatsAppLink,
   type DeliveryLogEntry,
   type InvoiceDeliveryRecord,
@@ -148,6 +149,7 @@ function Invoices() {
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [receiptPrompt, setReceiptPrompt] = useState<BillingRecord | null>(null);
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
+  const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
   const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
@@ -155,7 +157,7 @@ function Invoices() {
   const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, hasPermission } =
     useAppContext();
   const canSplit = hasPermission(permissions.invoicesManage);
-  const scope = `${activeTenantId}:${branchId}`;
+  const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   const splitScope = useRef("");
@@ -286,7 +288,7 @@ function Invoices() {
       const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
-        title: `${documentType === "INVOICE" ? "A4 tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
+        title: `${documentType === "INVOICE" ? "Tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
         documentType,
         template: job.template,
         content: job.content,
@@ -304,13 +306,7 @@ function Invoices() {
   };
 
   const openEmail = (invoice: BillingRecord) => {
-    if (!identity.email) {
-      setWarning(identityConfigurationError || "No document email is configured for this branch.");
-      return;
-    }
-    const record = invoiceDeliveryRecord(invoice, identity);
-    window.location.href = invoiceEmailLink(record);
-    logDelivery(createDeliveryLog(record, "Email", record.email ?? "No email"));
+    setEmailInvoice({ id: invoice.id, scope });
   };
 
   const openWhatsApp = (invoice: BillingRecord) => {
@@ -862,7 +858,7 @@ function Invoices() {
         </DialogContent>
       </Dialog>
       <Dialog open={!!printPreview} onOpenChange={(open) => !open && setPrintPreview(null)}>
-        <DialogContent className="max-h-[90vh] max-w-[760px] overflow-y-auto border-border bg-card">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-[760px] grid-cols-[minmax(0,1fr)] overflow-y-auto border-border bg-card">
           <DialogHeader>
             <DialogTitle>{printPreview?.title}</DialogTitle>
             <DialogDescription>
@@ -871,18 +867,8 @@ function Invoices() {
           </DialogHeader>
           {printPreview && (
             <div className="space-y-4">
-              <div className="grid place-items-center rounded-xl border border-border bg-secondary/40 p-4">
-                <pre
-                  className={
-                    printPreview.documentType === "INVOICE"
-                      ? "w-full max-w-[680px] overflow-auto rounded-sm border border-neutral-300 bg-white p-5 font-mono text-[11px] leading-relaxed text-black shadow-sm"
-                      : "w-[320px] overflow-auto rounded-sm border border-neutral-300 bg-white p-4 font-mono text-[11px] leading-relaxed text-black shadow-sm"
-                  }
-                >
-                  {printPreview.content}
-                </pre>
-              </div>
-              <div className="flex justify-end gap-2">
+              <DocumentTextPreview content={printPreview.content} />
+              <div className="flex flex-wrap justify-end gap-2">
                 <Btn onClick={() => setPrintPreview(null)}>Close</Btn>
                 <Btn
                   onClick={() => {
@@ -929,6 +915,15 @@ function Invoices() {
           )}
         </DialogContent>
       </Dialog>
+      {emailInvoice?.scope === scope && (
+        <DocumentEmailDialog
+          key={`${scope}:${emailInvoice.id}`}
+          title={`invoice ${emailInvoice.id}`}
+          documentType="INVOICE"
+          recordId={emailInvoice.id}
+          close={() => setEmailInvoice(null)}
+        />
+      )}
       {splitInvoice && splitScope.current === scope && (
         <InvoiceSplitDialog
           key={`${scope}:${splitInvoice.id}`}

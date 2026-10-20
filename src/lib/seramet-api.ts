@@ -53,6 +53,7 @@ import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
 import { handleFinanceApi } from "@/server/finance-api";
 import { handleDailyClosingApi } from "@/server/daily-closing-api";
+import { handleDocumentEmailApi } from "@/server/document-email-api";
 import {
   closingMutationActions,
   closingStateForReader,
@@ -176,6 +177,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
     const closingReportResponse = await handleDailyClosingApi(request, env, repo);
     if (closingReportResponse) return closingReportResponse;
+    const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
+    if (documentEmailResponse) return documentEmailResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
 

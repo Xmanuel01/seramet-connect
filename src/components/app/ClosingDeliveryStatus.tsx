@@ -6,7 +6,12 @@ import { getSerametAccessToken } from "@/lib/access-token";
 type Delivery = {
   revision: number;
   recipientUserId: string;
-  status: "QUEUED" | "CONFIGURATION_REQUIRED" | "DELIVERY_FAILED" | "PROVIDER_ACCEPTED";
+  status:
+    | "QUEUED"
+    | "CONFIGURATION_REQUIRED"
+    | "DELIVERY_FAILED"
+    | "PROVIDER_ACCEPTED"
+    | "RECONCILIATION_REQUIRED";
 };
 export function ClosingDeliveryStatus({
   tenantId,
@@ -53,6 +58,7 @@ export function ClosingDeliveryStatus({
     QUEUED: "Email queued",
     CONFIGURATION_REQUIRED: "Email requires provider configuration",
     DELIVERY_FAILED: "Email delivery failed - review required",
+    RECONCILIATION_REQUIRED: "Email outcome uncertain - check provider records before retrying",
     PROVIDER_ACCEPTED: "Email accepted by provider; inbox delivery unconfirmed",
   };
   return (

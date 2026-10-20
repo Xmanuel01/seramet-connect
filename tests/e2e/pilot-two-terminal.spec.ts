@@ -175,7 +175,7 @@ test("POS clock ticks each second in branch time and catches up when refocused",
   await page.goto("/pos");
   const clock = page.getByLabel("POS clock", { exact: true });
   await expect(clock).toBeVisible();
-  await expect(clock).toHaveAttribute("title", "Africa/Nairobi");
+  await expect(clock).toHaveAttribute("title", "Restaurant time (Africa/Nairobi)");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(clock).toHaveText("23:59:59");
   await page.clock.runFor(1000);

@@ -1,5 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
+import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
+import { SerametPrintService } from "@/lib/seramet-print-service";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
@@ -36,6 +40,10 @@ export const Route = createFileRoute("/receipts")({
 function Receipts() {
   const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const [printNotice, setPrintNotice] = useState("");
+  const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
+  const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
+    null,
+  );
   const {
     activeTenantId,
     branchId,
@@ -46,6 +54,7 @@ function Receipts() {
     timeZone,
   } = useAppContext();
   const { state, mutate } = useTransactionEngine();
+  const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);
   const configuration = getConfigurationRepository();
   const businessName = configuration.getTenant(activeTenantId).tradingName;
@@ -97,7 +106,19 @@ function Receipts() {
   };
 
   const sendEmail = (receiptId: string) => {
-    window.location.href = `mailto:?subject=${encodeURIComponent(`Receipt ${receiptId}`)}&body=${encodeURIComponent(`${businessName} receipt ${receiptId} is ready.`)}`;
+    setEmailReceipt({ id: receiptId, scope });
+  };
+
+  const receiptContent = (receiptId: string) => {
+    const receipt = rows.find((row) => row.id === receiptId);
+    if (!receipt) throw new Error("The receipt is no longer available in this branch.");
+    const order = receiptRecordToPrintOrder(receipt, state);
+    if (!order) throw new Error("The authoritative receipt is not available.");
+    return SerametPrintService.createDocumentJob(
+      SerametPrintService.getBranchHardwareProfile(receipt.branch),
+      order,
+      "RECEIPT",
+    ).content;
   };
 
   const exportRows = () => {
@@ -207,6 +228,19 @@ function Receipts() {
               </TD>
               <TD>
                 <div className="flex gap-1.5 text-[12px] font-semibold text-primary">
+                  <button
+                    onClick={() => {
+                      try {
+                        setPreview({ id: receipt.id, scope, content: receiptContent(receipt.id) });
+                      } catch (error) {
+                        setPrintNotice(
+                          error instanceof Error ? error.message : "Preview unavailable.",
+                        );
+                      }
+                    }}
+                  >
+                    Preview
+                  </button>
                   <button onClick={() => printReceipt(receipt.id)}>Print</button>
                   <button onClick={() => sendWhatsApp(receipt.id)}>WhatsApp</button>
                   <button onClick={() => sendEmail(receipt.id)}>Email</button>
@@ -223,6 +257,26 @@ function Receipts() {
           )}
         </DataTable>
       </Panel>
+      {preview?.scope === scope && (
+        <Dialog open onOpenChange={(open) => !open && setPreview(null)}>
+          <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-[760px] grid-cols-[minmax(0,1fr)] overflow-y-auto border-border bg-card">
+            <DialogHeader>
+              <DialogTitle>Receipt - {preview.id}</DialogTitle>
+            </DialogHeader>
+            <DocumentTextPreview content={preview.content} />
+            <Btn onClick={() => setPreview(null)}>Close</Btn>
+          </DialogContent>
+        </Dialog>
+      )}
+      {emailReceipt?.scope === scope && (
+        <DocumentEmailDialog
+          key={`${scope}:${emailReceipt.id}`}
+          title={`receipt ${emailReceipt.id}`}
+          documentType="RECEIPT"
+          recordId={emailReceipt.id}
+          close={() => setEmailReceipt(null)}
+        />
+      )}
     </AppShell>
   );
 }

@@ -8,6 +8,7 @@ import type { TransactionRepository } from "@/lib/seramet-repository";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { businessDateForTimestamp } from "@/lib/business-date";
+import { documentEmailStatus } from "@/server/transactional-email";
 
 export async function handleDailyClosingApi(
   request: Request,
@@ -52,19 +53,12 @@ export async function handleDailyClosingApi(
         recipientUserId: string;
       };
       if (payload.dayCloseId !== day.id || payload.revision !== revision) return [];
-      const evidence = JSON.parse(job.result_json) as { acceptedByProvider?: boolean };
       return [
         {
           revision: payload.revision,
           recipientUserId: payload.recipientUserId,
           attempts: job.attempt_count,
-          status: evidence.acceptedByProvider
-            ? "PROVIDER_ACCEPTED"
-            : job.last_error === "CLOSING_EMAIL_CONFIGURATION_REQUIRED"
-              ? "CONFIGURATION_REQUIRED"
-              : ["DEAD_LETTER", "FAILED"].includes(job.status)
-                ? "DELIVERY_FAILED"
-                : "QUEUED",
+          status: documentEmailStatus(job),
         },
       ];
     });

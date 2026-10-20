@@ -96,12 +96,14 @@ management refresh failure as a failed financial close.
 
 The worker rechecks the active recipient, assigned branch and reconciliation-view permission
 directly in PostgreSQL. It prepares a stable request and PDF SHA-256 before contacting
-Resend. Only small request metadata and the PDF fingerprint are retained in PostgreSQL;
+Brevo. Only small request metadata and the PDF fingerprint are retained in PostgreSQL;
 PDF attachments are regenerated from the immutable snapshot and must match that fingerprint
 on retry. No per-recipient PDF copies are stored in the database. Requests have a 15-second
-deadline and at most eight attempts with the existing backoff. A prepared request older
-than 23 hours requires provider/operator reconciliation, because
-[Resend's idempotency guarantee lasts 24 hours](https://resend.com/docs/dashboard/emails/idempotency-keys).
+deadline and at most eight attempts with the existing backoff for confirmed rate limiting
+or unavailable configuration. An in-flight marker is persisted before the external send.
+Timeouts, crashes after that marker, malformed success and uncertain provider errors require
+operator/provider reconciliation and never automatically resend. Prepared legacy Resend
+requests also require reconciliation; the provider is not silently substituted for them.
 An accepted response is recorded durably with an audit event. It is never called confirmed
 inbox delivery. A reopened/superseded close does not send a stale pending report.
 
@@ -113,9 +115,10 @@ selected tenant/branch changed while the request was in flight.
 
 ### Protected Configuration Required Before Live Acceptance
 
-An authorized administrator must choose/approve a Resend account and verify its sender
-domain. Set `SERAMET_CLOSING_EMAIL_API_KEY` as a protected Worker secret and
-`SERAMET_CLOSING_EMAIL_FROM` as protected sender configuration. Configure recipients in
+An authorized administrator must use a verified Brevo sender and configure the protected
+Worker secret `SERAMET_TRANSACTIONAL_EMAIL_CONFIG`, a tenant-ID-keyed JSON object whose
+values contain `apiKey` and `from`. Legacy Resend secrets are not reused. Supabase Auth SMTP
+remains unchanged and does not supply this API credential. Configure recipients in
 the branch closing settings; each must have a valid profile email, branch assignment and
 reconciliation-view permission. No credentials were provisioned by this implementation.
 

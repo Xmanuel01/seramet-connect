@@ -100,8 +100,14 @@ async function queuedEmail() {
   return { jobId: job!.id, request };
 }
 const emailConfiguration = {
-  SERAMET_CLOSING_EMAIL_API_KEY: "disposable-test-only",
-  SERAMET_CLOSING_EMAIL_FROM: "Closing <closing@example.invalid>",
+  get SERAMET_TRANSACTIONAL_EMAIL_CONFIG() {
+    return JSON.stringify({
+      [actor.tenantId]: {
+        apiKey: "disposable-test-only",
+        from: "Closing <closing@example.invalid>",
+      },
+    });
+  },
 };
 describe("durable daily closing email boundary", () => {
   it("recovers an expired email lease through the existing scheduler", async () => {
@@ -123,7 +129,9 @@ describe("durable daily closing email boundary", () => {
     expect(send.mock.calls.some(([body]) => body.jobId === jobId)).toBe(true);
     const transport = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => new Response(JSON.stringify({ id: randomUUID() })));
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ messageId: `<${randomUUID()}@brevo.test>` })),
+      );
     await handleWorkerQueue(
       {
         queue: "disposable",
@@ -146,6 +154,11 @@ describe("durable daily closing email boundary", () => {
       env,
     );
     expect(transport).toHaveBeenCalledTimes(1);
+    const brevoRequest = JSON.parse(transport.mock.calls[0]![1]!.body as string);
+    expect(transport.mock.calls[0]![0]).toBe("https://api.brevo.com/v3/smtp/email");
+    expect(brevoRequest.attachment[0].name).toMatch(/^daily-closing-.*-r1\.pdf$/);
+    expect(atob(brevoRequest.attachment[0].content)).toMatch(/^%PDF-/);
+    expect(brevoRequest.to).toHaveLength(1);
     expect(
       await db.prepare("SELECT status FROM worker_jobs WHERE id=?").bind(jobId).first("status"),
     ).toBe("SUCCEEDED");
@@ -166,7 +179,11 @@ describe("durable daily closing email boundary", () => {
           transport,
         ),
       ).rejects.toThrow(
-        `CLOSING_EMAIL_PROVIDER_HTTP_${status >= 500 ? "5XX" : status === 429 ? "429" : "4XX"}`,
+        status >= 500
+          ? "TRANSACTIONAL_EMAIL_DELIVERY_RECONCILIATION_REQUIRED"
+          : status === 429
+            ? "TRANSACTIONAL_EMAIL_RATE_LIMITED"
+            : "TRANSACTIONAL_EMAIL_PROVIDER_REJECTED",
       );
     },
   );
@@ -183,7 +200,7 @@ describe("durable daily closing email boundary", () => {
         jobId,
         transport,
       ),
-    ).rejects.toThrow("CLOSING_EMAIL_PROVIDER_RESPONSE_UNVERIFIED");
+    ).rejects.toThrow("TRANSACTIONAL_EMAIL_DELIVERY_RECONCILIATION_REQUIRED");
     await db.prepare("UPDATE worker_jobs SET attempt_count=9 WHERE id=?").bind(jobId).run();
     await expect(
       deliverDailyClosingEmail(
@@ -192,14 +209,16 @@ describe("durable daily closing email boundary", () => {
         jobId,
         transport,
       ),
-    ).rejects.toThrow("CLOSING_EMAIL_ATTEMPT_LIMIT_REACHED");
+    ).rejects.toThrow("TRANSACTIONAL_EMAIL_AUTHORIZED_JOB_REQUIRED");
     expect(transport).toHaveBeenCalledTimes(1);
   });
   it("permits only one queued worker claim and provider send under concurrent consumers", async () => {
     const { jobId } = await queuedEmail();
     const send = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(async () => new Response(JSON.stringify({ id: randomUUID() })));
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ messageId: `<${randomUUID()}@brevo.test>` })),
+      );
     const env: SerametEnv = { SERAMET_DB: db, SERAMET_ENVIRONMENT: "test", ...emailConfiguration };
     const message = () => ({
       id: randomUUID(),
@@ -260,27 +279,30 @@ describe("durable daily closing email boundary", () => {
     expect(await repo.loadState(actor.tenantId)).toEqual(initial.state);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM worker_jobs").first("count")).toBe(0);
   });
-  it("replays an uncertain provider request using the exact prepared body and key", async () => {
+  it("retains uncertain Brevo evidence without automatically replaying the report", async () => {
     const { jobId } = await queuedEmail();
     await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
     const transport = vi
       .fn<typeof fetch>()
       .mockRejectedValueOnce(new Error("Private provider details must not be logged"))
-      .mockResolvedValue(new Response(JSON.stringify({ id: randomUUID() })));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ messageId: `<${randomUUID()}@brevo.test>` })),
+      );
     const env = { SERAMET_DB: db, ...emailConfiguration };
     await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
-      "CLOSING_EMAIL_PROVIDER_UNAVAILABLE",
+      "TRANSACTIONAL_EMAIL_DELIVERY_RECONCILIATION_REQUIRED",
     );
-    await deliverDailyClosingEmail(env, actor.tenantId, jobId, transport);
-    expect(transport.mock.calls[0]![1]!.body).toEqual(transport.mock.calls[1]![1]!.body);
-    expect(transport.mock.calls[0]![1]!.headers).toEqual(transport.mock.calls[1]![1]!.headers);
-    await deliverDailyClosingEmail(env, actor.tenantId, jobId, transport);
-    expect(transport).toHaveBeenCalledTimes(2);
+    await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
+      "TRANSACTIONAL_EMAIL_DELIVERY_RECONCILIATION_REQUIRED",
+    );
+    expect(transport).toHaveBeenCalledTimes(1);
     const evidence = await db
       .prepare("SELECT result_json FROM worker_jobs WHERE id=?")
       .bind(jobId)
       .first<{ result_json: string }>();
-    expect(JSON.parse(evidence!.result_json)).toMatchObject({ acceptedByProvider: true });
+    expect(JSON.parse(evidence!.result_json)).toMatchObject({
+      email: { provider: "BREVO", outcome: "UNKNOWN" },
+    });
   });
   it("rejects revoked recipient authorization without contacting the provider", async () => {
     const { jobId } = await queuedEmail();
@@ -300,28 +322,25 @@ describe("durable daily closing email boundary", () => {
     ).rejects.toThrow("CLOSING_EMAIL_RECIPIENT_NOT_AUTHORIZED");
     expect(transport).not.toHaveBeenCalled();
   });
-  it("fails closed outside the provider idempotency window rather than resending ambiguously", async () => {
+  it("requires reconciliation for legacy prepared Resend evidence instead of switching providers", async () => {
     const { jobId } = await queuedEmail();
     await db.prepare("UPDATE worker_jobs SET status='RUNNING' WHERE id=?").bind(jobId).run();
-    const transport = vi.fn<typeof fetch>().mockRejectedValue(new Error("Simulated timeout"));
+    const transport = vi.fn<typeof fetch>();
     const env = { SERAMET_DB: db, ...emailConfiguration };
-    await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
-      "CLOSING_EMAIL_PROVIDER_UNAVAILABLE",
-    );
     const row = await db
       .prepare("SELECT result_json FROM worker_jobs WHERE id=?")
       .bind(jobId)
       .first<{ result_json: string }>();
     const result = JSON.parse(row!.result_json);
-    result.prepared.preparedAt = new Date(Date.now() - 24 * 3600000).toISOString();
+    result.prepared = { preparedAt: new Date(Date.now() - 24 * 3600000).toISOString() };
     await db
       .prepare("UPDATE worker_jobs SET result_json=? WHERE id=?")
       .bind(JSON.stringify(result), jobId)
       .run();
     await expect(deliverDailyClosingEmail(env, actor.tenantId, jobId, transport)).rejects.toThrow(
-      "CLOSING_EMAIL_DELIVERY_RECONCILIATION_REQUIRED",
+      "TRANSACTIONAL_EMAIL_LEGACY_SEND_RECONCILIATION_REQUIRED",
     );
-    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport).not.toHaveBeenCalled();
   });
   it("uses existing queue backoff and attempt limits without reopening a closed day", async () => {
     const { jobId } = await queuedEmail();

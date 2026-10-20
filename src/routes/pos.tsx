@@ -61,6 +61,7 @@ import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
+import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -250,6 +251,7 @@ function POS() {
     Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [printNotice, setPrintNotice] = useState("Print routing is running in the background.");
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
   const [kitchenNote, setKitchenNote] = useState(recoveredDraft?.kitchenNote ?? "");
@@ -1987,6 +1989,19 @@ function POS() {
         setPrintNoticeType("success");
       }
 
+      if (
+        receiptOptions["Email"] &&
+        completedInvoice &&
+        !hasPendingVerification &&
+        backendStatus === "synced"
+      ) {
+        const receipt = nextState?.receipts.find((candidate) => candidate.invoiceId === bill.id);
+        if (receipt)
+          setEmailReceipt({
+            id: receipt.id,
+            scope: `${activeTenantId}:${branchId}:${currentUser.id}`,
+          });
+      }
       setPaymentConfirmed(
         Boolean(
           (completedInvoice || (paymentMode === "partial" && partialInvoice)) &&
@@ -3196,6 +3211,15 @@ function POS() {
           </div>
         </DialogContent>
       </Dialog>
+      {emailReceipt?.scope === `${activeTenantId}:${branchId}:${currentUser.id}` && (
+        <DocumentEmailDialog
+          key={`${emailReceipt.scope}:${emailReceipt.id}`}
+          title={`receipt ${emailReceipt.id}`}
+          documentType="RECEIPT"
+          recordId={emailReceipt.id}
+          close={() => setEmailReceipt(null)}
+        />
+      )}
     </AppShell>
   );
 }

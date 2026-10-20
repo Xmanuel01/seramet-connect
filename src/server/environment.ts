@@ -67,6 +67,8 @@ export type ProductionRuntimeEnv = {
   SERAMET_OBJECTS?: ObjectStoreBinding;
   SERAMET_CLOSING_EMAIL_API_KEY?: string;
   SERAMET_CLOSING_EMAIL_FROM?: string;
+  // Protected server secret: tenant-id -> { apiKey, from }. Never exposed to clients.
+  SERAMET_TRANSACTIONAL_EMAIL_CONFIG?: string;
   // Protected server secret: tenant-id -> { apiKey, from, unsubscribeSecret }.
   SERAMET_CAMPAIGN_EMAIL_CONFIG?: string;
   SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;

@@ -82,10 +82,13 @@ test("another terminal's durable acknowledgement clears a recovered order; uncer
         resolve();
       };
     });
-    await context.route("**/api/seramet/transactions", async (route) => {
-      if (route.request().method() === "GET" && pauseSnapshot) await snapshotGate;
-      await route.fallback();
-    });
+    await context.route(
+      (url) => url.pathname === "/api/seramet/transactions",
+      async (route) => {
+        if (route.request().method() === "GET" && pauseSnapshot) await snapshotGate;
+        await route.fallback();
+      },
+    );
     for (const outcome of ["BRIDGE_ACCEPTED", "UNCERTAIN"] as const) {
       const source = randomUUID();
       await mutate("upsertAndSendKitchen", {

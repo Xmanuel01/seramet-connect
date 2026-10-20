@@ -428,6 +428,93 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       expectedSubtotalMinor + parseMajorAmount(bill.tax.toFixed(2), "KES"),
     );
     await manager.goto("/invoices");
+    const invoiceRow = manager
+      .getByRole("row")
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` });
+    await invoiceRow.getByRole("checkbox").check();
+    await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
+    const verifyPreviewFit = async (page: typeof manager, title: string) => {
+      const preview = page.getByTestId("document-preview");
+      await expect(preview).toContainText(title);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect
+          .poll(() =>
+            preview.evaluate((element) => {
+              const paper = element.querySelector("pre")!.getBoundingClientRect();
+              const box = element.getBoundingClientRect();
+              return (
+                paper.left >= box.left - 1 &&
+                paper.right <= box.right + 1 &&
+                box.left >= 0 &&
+                box.right <= innerWidth
+              );
+            }),
+          )
+          .toBe(true);
+        await page.screenshot({
+          path: join(evidence, `${title.toLowerCase().replaceAll(" ", "-")}-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+    };
+    await verifyPreviewFit(manager, "TAX INVOICE");
+    await manager
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+    await invoiceRow.getByRole("button", { name: "Email invoice", exact: true }).click();
+    let emailDialog = manager.getByRole("dialog");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("");
+    await emailDialog.getByLabel("Recipient name").fill("Disposable invoice recipient");
+    await emailDialog.getByLabel("Recipient email").fill("invoice@example.com");
+    const emailJobId = randomUUID();
+    const emailRequests: Array<{ key: string; body: Record<string, unknown> }> = [];
+    // UI delivery boundary only: actual authenticated API/worker/PDF behavior has separate DB-backed tests.
+    await manager.route("**/api/seramet/document-emails", async (route) => {
+      emailRequests.push({
+        key: route.request().headers()["idempotency-key"]!,
+        body: route.request().postDataJSON(),
+      });
+      await route.fulfill({
+        status: emailRequests.length === 1 ? 503 : 202,
+        contentType: "application/json",
+        body: JSON.stringify(
+          emailRequests.length === 1
+            ? { message: "Disposable queue interruption" }
+            : { jobId: emailJobId, status: "QUEUED" },
+        ),
+      });
+    });
+    await manager.route(`**/api/seramet/document-emails/${emailJobId}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ jobId: emailJobId, status: "PROVIDER_ACCEPTED" }),
+      }),
+    );
+    await emailDialog.getByRole("button", { name: "Send PDF email", exact: true }).click();
+    await expect(emailDialog.getByRole("alert")).toContainText("Disposable queue interruption");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("invoice@example.com");
+    await emailDialog
+      .getByRole("button", { name: "Send PDF email", exact: true })
+      .evaluate((button: HTMLButtonElement) => {
+        button.click();
+        button.click();
+      });
+    await expect(emailDialog).toContainText(
+      "Brevo accepted the email and PDF. Inbox delivery is not yet confirmed.",
+    );
+    expect(emailRequests).toHaveLength(2);
+    expect(emailRequests[0]!.key).toBe(emailRequests[1]!.key);
+    expect(emailRequests[1]!.body).toEqual({
+      documentType: "INVOICE",
+      recordId: bill.id,
+      recipient: { name: "Disposable invoice recipient", email: "invoice@example.com" },
+    });
+    await emailDialog.getByRole("button", { name: "Close", exact: true }).first().click();
     await manager
       .getByRole("row")
       .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
@@ -489,6 +576,25 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .toBe(6);
     const receiptText = await capture("receipt-80mm", devices[3], "80mm");
     expect(receiptText).toContain(receipt.id);
+    await verifyPreviewFit(cashier, "RECEIPT");
+    await manager.goto("/receipts");
+    // A business date can differ from the browser date during overnight operations.
+    await manager.getByRole("button", { name: "Clear all", exact: true }).click();
+    const receiptRow = manager.getByRole("row").filter({ hasText: receipt.id });
+    await receiptRow.getByRole("button", { name: "Preview", exact: true }).click();
+    await verifyPreviewFit(manager, "RECEIPT");
+    await manager
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+    await receiptRow.getByRole("button", { name: "Email", exact: true }).click();
+    emailDialog = manager.getByRole("dialog");
+    await expect(emailDialog.getByLabel("Recipient name")).toHaveValue("");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("");
+    await emailDialog.getByLabel("Recipient name").fill("Disposable receipt recipient");
+    await emailDialog.getByLabel("Recipient email").fill("receipt@example.com");
+    await emailDialog.getByRole("button", { name: "Cancel", exact: true }).click();
     events.push(
       "UI invoice creation for exact dispatched order; manager UI bill printing; employee UI invoice cash settlement and actual receipt printing -> cashier TCP",
     );

@@ -83,9 +83,11 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await page.getByLabel("Enable installed bridge").check();
     await page.getByRole("button", { name: "Save local connection", exact: true }).click();
     await page.getByRole("button", { name: "Test receipt", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText(
-      "Transport submitted; physical delivery unconfirmed",
-    );
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Transport submitted; physical delivery unconfirmed" }),
+    ).toBeVisible();
     await expect.poll(() => Buffer.concat(chunks).toString("ascii")).toContain("TEST RECEIPT");
     await page.getByRole("button", { name: "Inspect bridge queue", exact: true }).click();
     await expect(page.getByText("BYTES_SUBMITTED", { exact: true })).toBeVisible();
