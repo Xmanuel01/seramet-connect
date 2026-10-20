@@ -864,6 +864,56 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     events.push(
       "Manager UI inspected failed queue, edited paper/station configuration, sent real diagnostic, disabled bar printer; new authorization denied",
     );
+    devices[3].printer = (
+      await api("printing/printers", {
+        ...devices[3].printer,
+        paperWidth: "80mm",
+        renderingMode: "RASTER_ESC_POS",
+        raster: {
+          command: "GS_V_0",
+          printableWidthDots: 576,
+          dpi: 203,
+          maxBandHeight: 128,
+          maxHeightDots: 8192,
+          maxBytes: 524288,
+        },
+      })
+    ).printer;
+    devices[3].state.clearHistory();
+    devices[3].state.clearPrinterBuffer();
+    const graphical = await api("printing/authorize", {
+      printerId: devices[3].printer!.id,
+      documentType: "RECEIPT",
+      recordId: receipt.id,
+      reprintId: randomUUID(),
+      reprintReason: "Disposable raster acceptance copy reviewed by manager",
+    });
+    const graphicalJob = JSON.parse(
+      Buffer.from(graphical.authorization.payload, "base64url").toString(),
+    );
+    expect(graphicalJob.profile.renderingMode).toBe("RASTER_ESC_POS");
+    expect(graphicalJob.document.version).toBe(1);
+    expect(graphicalJob.content.replace(/\s/g, "")).toContain(receipt.id);
+    expect(graphicalJob.content).toContain(receipt.total.toFixed(2));
+    expect((await transmit(graphical)).stage).toBe("BYTES_SUBMITTED");
+    await expect
+      .poll(() => devices[3].state.snapshot().history.some((h) => h.command.type === "CutPaper"))
+      .toBe(true);
+    const rasterCommands = devices[3].state
+      .snapshot()
+      .history.filter((h) => h.command.type === "PrintRasterImage").length;
+    expect(rasterCommands).toBeGreaterThan(0);
+    expect(devices[3].state.snapshot().history.some((h) => h.command.type === "Unknown")).toBe(
+      false,
+    );
+    await Promise.all(Array.from({ length: 12 }, () => post(graphical)));
+    await new Promise((done) => setTimeout(done, 100));
+    expect(
+      devices[3].state.snapshot().history.filter((h) => h.command.type === "PrintRasterImage"),
+    ).toHaveLength(rasterCommands);
+    events.push(
+      "Authenticated authoritative cash receipt -> explicit audited raster copy -> actual cashier TCP GS v 0 bands; 12 duplicate submissions produced no additional bands",
+    );
     await writeFile(
       join(evidence, "result.json"),
       JSON.stringify(

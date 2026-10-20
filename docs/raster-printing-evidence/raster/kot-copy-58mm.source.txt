@@ -1,0 +1,24 @@
+KITCHEN ORDER KOT #ACCEPTANCE
+*** REPRINT ***
+--------------------------------
+Order  : #ACCEPTANCE
+Type   : Takeaway
+Date   : Oct 15, 2026 13:00
+STATION: MAIN KITCHEN
+Branch : Disposable branch
+Reprinted by: Disposable reprint
+              operator
++---+--------------------------+
+|QTY|ITEM                      |
++---+--------------------------+
+|  2|LONG NAMED KITCHEN MEAL   |
+|   |WITH DISTINGUISHING EXTRA |
+|   |DETAILS                   |
+|   - NO ONION                 |
+|   Note: SEPARATE SAUCE       |
++---+--------------------------+
++------------------------------+
+|       SPECIAL REQUEST        |
++------------------------------+
+| No salt. Allergy test only.  |
++------------------------------+

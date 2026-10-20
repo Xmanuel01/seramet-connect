@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { validateRenderJob } from "../printing-core/thermal-layout.mjs";
 
 export function verifyPrintAuthorization(authorization, config, now = Date.now()) {
   if (
@@ -15,7 +16,7 @@ export function verifyPrintAuthorization(authorization, config, now = Date.now()
     throw new Error("INVALID_AUTHORIZATION");
   const job = JSON.parse(Buffer.from(authorization.payload, "base64url").toString("utf8"));
   if (
-    job.v !== 1 ||
+    ![1, 2].includes(job.v) ||
     job.bridgeId !== config.bridgeId ||
     job.tenantId !== config.tenantId ||
     job.branchId !== config.branchId ||
@@ -35,5 +36,6 @@ export function verifyPrintAuthorization(authorization, config, now = Date.now()
   ) {
     throw new Error("AUTHORIZATION_SCOPE_DENIED");
   }
+  validateRenderJob(job);
   return job;
 }

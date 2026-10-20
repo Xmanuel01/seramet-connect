@@ -10,7 +10,11 @@ import {
   handlePrintingApi,
   signPrintJob,
 } from "../src/server/printing-api";
-import { printerConfigurationSchema } from "../src/printing/printer-configuration";
+import {
+  printerConfigurationSchema,
+  printerRenderingProfile,
+} from "../src/printing/printer-configuration";
+import { buildThermalLayout } from "../printing-core/thermal-layout.mjs";
 
 const connectionString = process.env.SERAMET_POSTGRES_URL;
 const parsed = connectionString ? new URL(connectionString) : null;
@@ -291,12 +295,13 @@ try {
   assert.equal(await count("realtime_events"), commits);
   assert.equal(await count("audit_events"), commits);
   await verifyPrintingReservations();
+  await verifyPrintingReservations(true);
   console.log("POS PostgreSQL two-connection atomicity and idempotency: PASS");
 } finally {
   await Promise.all([firstDb.close(), secondDb.close()]);
 }
 
-async function verifyPrintingReservations() {
+async function verifyPrintingReservations(raster = false) {
   const printerId = randomUUID();
   const bridgeId = randomUUID();
   const master = randomUUID() + randomUUID();
@@ -307,6 +312,19 @@ async function verifyPrintingReservations() {
     transport: "TCP",
     host: "10.0.0.2",
     roles: ["BILL"],
+    ...(raster
+      ? {
+          renderingMode: "RASTER_ESC_POS",
+          raster: {
+            command: "GS_V_0",
+            printableWidthDots: 576,
+            dpi: 203,
+            maxBandHeight: 128,
+            maxHeightDots: 8192,
+            maxBytes: 524288,
+          },
+        }
+      : {}),
   });
   await firstDb
     .prepare(
@@ -322,7 +340,7 @@ async function verifyPrintingReservations() {
     )
     .run();
   const job = {
-    v: 1,
+    v: raster ? 2 : 1,
     id: `PRINT-CI:${randomUUID()}`,
     tenantId,
     branchId,
@@ -331,6 +349,12 @@ async function verifyPrintingReservations() {
     target: { id: printerId, transport: "TCP", host: "10.0.0.2", port: 9100 },
     documentType: "BILL",
     content: "DISPOSABLE TEST ONLY",
+    ...(raster
+      ? {
+          profile: printerRenderingProfile(printer),
+          document: buildThermalLayout("DISPOSABLE TEST ONLY", printer.paperWidth),
+        }
+      : {}),
     expiresAt: Date.now() + 90000,
   };
   const issued = await authorizeDelivery(firstDb, actor(), job);
@@ -363,7 +387,9 @@ async function verifyPrintingReservations() {
     () => authorizeDelivery(firstDb, actor(), { ...job, recoveryId: randomUUID() }),
     (error) => (error as { status?: number }).status === 409,
   );
-  console.log("Printing PostgreSQL two-connection reservation, replay and attempt limit: PASS");
+  console.log(
+    `Printing PostgreSQL ${raster ? "raster v2" : "legacy text v1"} two-connection reservation, replay and attempt limit: PASS`,
+  );
 }
 
 function command(

@@ -9,7 +9,7 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
-import { encodeEscPos } from "./escpos-encoder.mjs";
+import { encodePrintDocument } from "./raster-renderer.mjs";
 import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
 
 export async function createBridge(config, { deliver, localTest = false, consume } = {}) {
@@ -62,14 +62,14 @@ export async function createBridge(config, { deliver, localTest = false, consume
   const runner = new PrintJobRunner(
     store,
     async (job) => {
-      verifyPrintAuthorization(job.authorization, config);
+      const verified = verifyPrintAuthorization(job.authorization, config);
       await consume(job.authorization);
       return (
         deliver ??
         ((job) =>
           deliverWithFallback(job, async (target, profile) => {
             if (target.transport === "TCP") {
-              return sendTcp(encodeEscPos(job.content, profile), target, {
+              return sendTcp(encodePrintDocument(job, profile), target, {
                 localTest: localTest && job.localTest === true,
               });
             }
@@ -81,7 +81,7 @@ export async function createBridge(config, { deliver, localTest = false, consume
               await unlink(file).catch(() => undefined);
             }
           }))
-      )(job);
+      )({ ...verified, authorization: job.authorization });
     },
     config.concurrency ?? 2,
   );
@@ -106,7 +106,10 @@ export async function createBridge(config, { deliver, localTest = false, consume
     if (request.url === "/health" && request.method === "GET")
       return reply(200, {
         ok: true,
-        version: "2.0.0",
+        version: "3.0.0",
+        authorizationVersions: [1, 2],
+        renderingModes: ["TEXT_ESC_POS", "RASTER_ESC_POS"],
+        rasterCommands: ["GS_V_0"],
         dryRun: false,
         platform: process.platform,
         bridgeId: config.bridgeId,

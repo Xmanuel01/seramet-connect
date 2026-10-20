@@ -1,0 +1,2 @@
+docs/raster-printing-evidence/**/*.bin -text
+docs/raster-printing-evidence/**/*.txt -text whitespace=-blank-at-eof
