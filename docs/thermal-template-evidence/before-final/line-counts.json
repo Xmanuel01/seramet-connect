@@ -1,0 +1,105 @@
+{
+  "candidate": "f5c0d8c4cfcd627ab92be0ada7cc9b5d2cc1fe38",
+  "results": [
+    {
+      "name": "bill-58mm",
+      "encodedTextLines": 48,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-copy-58mm",
+      "encodedTextLines": 51,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-58mm",
+      "encodedTextLines": 50,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-copy-58mm",
+      "encodedTextLines": 53,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-58mm",
+      "encodedTextLines": 54,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-copy-58mm",
+      "encodedTextLines": 57,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-58mm",
+      "encodedTextLines": 32,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-copy-58mm",
+      "encodedTextLines": 36,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-58mm",
+      "encodedTextLines": 32,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-copy-58mm",
+      "encodedTextLines": 36,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-80mm",
+      "encodedTextLines": 45,
+      "feedLines": 3
+    },
+    {
+      "name": "bill-copy-80mm",
+      "encodedTextLines": 48,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-80mm",
+      "encodedTextLines": 48,
+      "feedLines": 3
+    },
+    {
+      "name": "receipt-copy-80mm",
+      "encodedTextLines": 51,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-80mm",
+      "encodedTextLines": 52,
+      "feedLines": 3
+    },
+    {
+      "name": "invoice-copy-80mm",
+      "encodedTextLines": 55,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-80mm",
+      "encodedTextLines": 30,
+      "feedLines": 3
+    },
+    {
+      "name": "kot-copy-80mm",
+      "encodedTextLines": 33,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-80mm",
+      "encodedTextLines": 30,
+      "feedLines": 3
+    },
+    {
+      "name": "bar-copy-80mm",
+      "encodedTextLines": 33,
+      "feedLines": 3
+    }
+  ]
+}

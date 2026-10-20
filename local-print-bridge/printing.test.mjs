@@ -126,6 +126,26 @@ test("encoder emits bounded 58/80mm lines, safe text, feed and opted-in cut", ()
   assert.deepEqual([...bytes.subarray(-3)], [27, 100, 3]);
 });
 
+test("semantic emphasis highlights totals and allergy instructions without leaking to other rows", () => {
+  const bytes = encodeEscPos(
+    "Merchant\n  TAX INVOICE\n|TOTAL    | KES 116.00|\n| Allergy: no nuts |\nOrdinary row",
+    { ...profile, emphasis: true },
+  );
+  const on = Buffer.from([27, 69, 1]);
+  const off = Buffer.from([27, 69, 0]);
+  for (const line of [
+    "Merchant",
+    "  TAX INVOICE",
+    "|TOTAL    | KES 116.00|",
+    "| Allergy: no nuts |",
+  ])
+    assert.ok(bytes.includes(Buffer.concat([on, Buffer.from(line + "\n"), off])));
+  assert.ok(!bytes.includes(Buffer.concat([on, Buffer.from("Ordinary row")])));
+  const disabled = encodeEscPos("TOTAL\nAllergy", { ...profile, emphasis: false });
+  assert.ok(!disabled.includes(on));
+  assert.deepEqual([...bytes.subarray(-6)], [27, 100, 3, 29, 86, 1]);
+});
+
 test("actual loopback TCP captures exact bytes without a Windows printer", async (t) => {
   const chunks = [];
   let complete;

@@ -616,7 +616,7 @@ export async function handlePrintingApi(
       terminalId: actor.deviceId ?? "authorized-terminal",
       kitchenObligationId: obligation.id,
       orderType: order.channel,
-      requestedBy: order.cashier,
+      requestedBy: obligation.kind === "REPRINT" ? actor.name : order.cashier,
       cashier: order.cashier,
       waiter: order.waiter ?? order.cashier,
       createdAt: obligation.createdAt,
@@ -706,7 +706,7 @@ export async function handlePrintingApi(
         });
       }
       await auditStatement(db, actor, id, "PRINT_REPRINT_AUTHORIZED", input.reprintReason).run();
-      content = `*** DUPLICATE COPY ***\n${content}`;
+      content = SerametPrintService.formatDuplicateCopy(content, printer.paperWidth);
     }
   }
   if (!env.SERAMET_PRINT_SIGNING_KEY || env.SERAMET_PRINT_SIGNING_KEY.length < 32)

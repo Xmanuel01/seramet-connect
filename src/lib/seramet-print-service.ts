@@ -153,6 +153,8 @@ export type OrderForPrint = {
   subtotal: number;
   tax: number;
   total: number;
+  serviceCharge?: number;
+  discount?: number;
   paid?: number;
   change?: number;
   paymentMethod?: string;
@@ -331,6 +333,15 @@ type RouteResolution = {
 };
 
 export const SerametPrintService = {
+  formatDuplicateCopy(content: string, paperWidth: "58mm" | "80mm" | "A4", operator?: string) {
+    const width = paperWidth === "58mm" ? 32 : paperWidth === "80mm" ? 42 : 78;
+    return joinThermalSections([
+      ...centeredLines("DUPLICATE COPY", width),
+      ...compactDetails([["Reprinted by", operator]], width),
+      rule(width),
+      content,
+    ]);
+  },
   getBranchHardwareProfile(branch: string, tenantId?: string) {
     return getConfiguredBranchHardwareProfile(branch, tenantId);
   },
@@ -582,10 +593,11 @@ export const SerametPrintService = {
       status: "Queued" as const,
       retryCount: 0,
       content: [
-        "*** DUPLICATE COPY ***",
-        `Original job: ${original.id}`,
-        `Reason: ${reason}`,
-        "---",
+        thermalBox(
+          "DUPLICATE COPY",
+          [`Reprinted by: ${requestedBy}`, `Reason: ${reason}`],
+          productionTicketWidth(profile, original.documentType),
+        ),
         original.content,
       ].join("\n"),
       duplicateKey,
@@ -1086,30 +1098,41 @@ function renderProductionTicket(
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
   if (amendmentType !== "NEW") {
-    return renderAmendmentTicket(amendmentType, order, lines, identity, width, ticketNumber);
+    return renderAmendmentTicket(
+      amendmentType,
+      order,
+      lines,
+      identity,
+      width,
+      ticketNumber,
+      station,
+      title,
+    );
   }
 
-  return [
-    center(identity.receiptBrand, width),
-    center(title, width),
-    ribbon(`${ticketPrefix} ${ticketNumber}`, width),
-    dotted(width),
-    order.table ? serviceLine(order.orderType, order.table, width) : order.orderType.toUpperCase(),
-    `${issued.date.toUpperCase()} - ${issued.time}`,
-    `ORDER ${cleanOrderId(order.orderId)}`,
-    `STATION: ${station}`,
-    profile.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM" ? "ROUTE: POS FRONT PRINTER" : "",
-    dotted(width),
-    row("QTY", showPrices ? "ITEM / AMOUNT" : "ITEM", width),
-    dotted(width),
-    ...lines.flatMap((line) => productionLineRows(line, width, showPrices, money)),
+  return joinThermalSections([
+    ...wrap(`${title} ${ticketPrefix} ${ticketNumber}`, width),
+    rule(width),
+    ...compactDetails(
+      [
+        ["Order", cleanOrderId(order.orderId)],
+        ["Type", order.orderType],
+        ["Table", order.table],
+        ["Date", `${issued.date} ${issued.time}`],
+        ["STATION", station],
+        ["Branch", identity.branchName],
+        ["Server", order.waiter && order.waiter !== order.requestedBy ? order.waiter : undefined],
+        ["Requested by", order.requestedBy],
+        [
+          "Route",
+          profile.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM" ? "POS front printer" : undefined,
+        ],
+      ],
+      width,
+    ),
+    thermalItems(lines, width, showPrices, money, true),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
-    `Requested by: ${order.requestedBy}`,
-    `Issued: ${issued.time}`,
-    ribbon("*** NEW ORDER ***", width),
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ]);
 }
 
 function renderCustomerDocument(
@@ -1118,64 +1141,66 @@ function renderCustomerDocument(
   template: PrintTemplateSettings,
   profile: BranchHardwareProfile,
 ) {
-  if (documentType === "INVOICE" || template.width === "A4") {
+  if (template.width === "A4") {
     return renderA4Invoice(order, template, profile);
   }
 
   const width = template.width === "58mm" ? 32 : 42;
-  const title = documentType === "BILL" ? "BILL" : "RECEIPT";
+  const title = documentType === "INVOICE" ? "TAX INVOICE" : documentType;
   const identity = profile.printIdentity;
   const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const documentNumber =
-    documentType === "BILL"
+    documentType !== "RECEIPT"
       ? (order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`)
       : (order.receiptNumber ?? `RCP ${cleanOrderId(order.orderId)}`);
   const issued = documentDateTime(order.createdAt, identity.timeZone);
-  const paymentRows = documentType === "RECEIPT" ? renderPaymentRows(order, width, money) : [];
+  const paymentRows =
+    documentType === "RECEIPT" || (documentType === "INVOICE" && (order.paid ?? 0) > 0)
+      ? renderPaymentRows(order, width, money)
+      : [];
   const loyaltyRows = documentType === "RECEIPT" ? renderLoyaltyRows(order, width) : [];
   const settlementBanner =
-    documentType === "BILL"
-      ? boxText("PAYMENT PENDING", width)
-      : ribbon(`PAID  ${money(order.paid ?? order.total)}`, width);
+    documentType === "BILL" || (documentType === "INVOICE" && (order.paid ?? 0) < order.total)
+      ? centeredLines("PAYMENT PENDING", width).join("\n")
+      : "";
   const qrBlock =
-    documentType === "BILL" ? ["", boxedPaymentPrompt(identity.paymentInstructions, width)] : [];
-  const footer =
-    documentType === "BILL"
-      ? template.footerMessage
-      : `Thank you for dining with us.\n${identity.footerMessage}`;
+    documentType !== "RECEIPT" ? [boxedPaymentPrompt(identity.paymentInstructions, width)] : [];
+  const footer = documentType !== "RECEIPT" ? template.footerMessage : identity.footerMessage;
 
-  return [
-    center(identity.businessName, width),
-    template.showBranch ? center(identity.branchName, width) : "",
-    center(identity.address, width),
-    center(`Tel: ${identity.phone}`, width),
-    dotted(width),
-    center(title, width),
-    boxText(documentNumber, width),
-    "",
-    row(issued.date, issued.time, width),
-    row(`Order: ${order.orderId}`, order.table ? `Table: ${order.table}` : order.orderType, width),
-    template.showCashier
-      ? `${documentType === "BILL" ? "Served by" : "Cashier"}: ${order.cashier}`
-      : "",
-    template.showCustomer ? `Bill to: ${order.customer ?? "Walk-in Customer"}` : "",
-    dotted(width),
-    row("QTY  ITEM", "AMOUNT", width),
-    dotted(width),
-    ...order.lines.flatMap((line) => customerLineRows(line, width, money)),
-    dotted(width),
-    row("SUBTOTAL", money(order.subtotal), width),
-    template.showTax ? row("TAX", money(order.tax), width) : "",
-    row("TOTAL", money(order.total), width),
+  return joinThermalSections([
+    ...thermalHeader(identity, width, template.showBranch, true),
+    rule(width),
+    ...centeredLines(title, width),
+    ...(documentType === "RECEIPT" ? centeredLines("PAID", width) : []),
+    ...compactDetails(
+      [
+        [
+          documentType === "BILL" ? "Bill" : documentType === "INVOICE" ? "Invoice" : "Receipt",
+          documentNumber,
+        ],
+        ["Order", order.orderId],
+        ["Date", `${issued.date} ${issued.time}`],
+        ["Table", order.table],
+        ["Type", order.orderType],
+        [
+          documentType === "BILL" ? "Server" : "Cashier",
+          template.showCashier ? order.cashier : undefined,
+        ],
+        ["Customer", template.showCustomer ? order.customer : undefined],
+        ["Phone", template.showCustomer ? order.customerPhone : undefined],
+        ["Email", template.showCustomer ? order.customerEmail : undefined],
+      ],
+      width,
+    ),
+    thermalItems(order.lines, width, true, money, false, documentType === "INVOICE"),
+    thermalTotals(order, template, width, money),
     settlementBanner,
     ...paymentRows,
     ...loyaltyRows,
     ...qrBlock,
-    dotted(width),
-    footer,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    rule(width),
+    ...footer.split("\n").flatMap((line) => centeredLines(line, width)),
+  ]);
 }
 
 function renderA4Invoice(
@@ -1188,39 +1213,29 @@ function renderA4Invoice(
   const money = (amount: number) => formatMoney(amount, identity.currency, identity.locale);
   const invoiceNumber = order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`;
   const issued = documentDateTime(order.createdAt, identity.timeZone);
-  return [
-    row(identity.businessName, "TAX INVOICE", width),
-    row(identity.branchName, invoiceNumber, width),
-    row(identity.address, `Date: ${issued.date}`, width),
-    row(`Tel: ${identity.phone}`, `Time: ${issued.time}`, width),
-    row(`Email: ${identity.email}`, `Due Date: ${documentDueDate(order.createdAt)}`, width),
-    row(`PIN: ${identity.pin}`, "", width),
-    rule(width),
-    row("BILL TO", "SERVICE INFO", width),
-    row(order.customer ?? "Walk-in Customer", `Order: ${order.orderId}`, width),
-    row(
-      order.customerEmail ?? "",
-      order.table ? `Table: ${order.table}` : `Channel: ${order.orderType}`,
+  return joinThermalSections([
+    ...thermalHeader(identity, width, true, true),
+    thermalBox("TAX INVOICE", [invoiceNumber], width),
+    thermalBox(
+      "BILL TO / SERVICE INFO",
+      [
+        order.customer ?? "Walk-in Customer",
+        order.customerEmail ?? "",
+        order.customerPhone ?? "",
+        `Order: ${order.orderId}`,
+        `Date: ${issued.date} ${issued.time}`,
+        `Mode: ${order.orderType}${order.table ? ` / Table: ${order.table}` : ""}`,
+        ...(template.showCashier ? [`Cashier: ${order.cashier}`] : []),
+      ],
       width,
     ),
-    row(order.customerPhone ?? "", template.showCashier ? `Cashier: ${order.cashier}` : "", width),
-    rule(width),
-    row("QTY  DESCRIPTION", "UNIT PRICE      AMOUNT", width),
-    rule(width),
-    ...order.lines.flatMap((line) => invoiceLineRows(line, width, money)),
-    rule(width),
-    row("SUBTOTAL", money(order.subtotal), width),
-    template.showTax ? row("TAX", money(order.tax), width) : "",
-    row("TOTAL", money(order.total), width),
-    rule(width),
-    "PAYMENT INFORMATION",
-    ...identity.paymentInstructions,
-    "",
-    row("THANK YOU", "Authorised Signatory", width),
-    template.footerMessage,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    thermalItems(order.lines, width, true, money, false, true),
+    thermalTotals(order, template, width, money),
+    thermalBox("PAYMENT INFORMATION", identity.paymentInstructions, width),
+    ...centeredLines("THANK YOU", width),
+    ...centeredLines("Authorised Signatory", width),
+    ...centeredLines(template.footerMessage, width),
+  ]);
 }
 
 function renderAmendmentTicket(
@@ -1230,6 +1245,8 @@ function renderAmendmentTicket(
   identity: BranchPrintIdentity,
   width: number,
   ticketNumber?: string,
+  station?: ProductionStation,
+  title = "KITCHEN ORDER",
 ) {
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const header =
@@ -1238,33 +1255,44 @@ function renderAmendmentTicket(
       : amendmentType === "REPRINT"
         ? "*** REPRINT ***"
         : "*** ADDITION ***";
-  return [
-    center(identity.receiptBrand, width),
-    ribbon(header, width),
-    amendmentType === "REPRINT" && ticketNumber ? `KOT ${ticketNumber}` : "",
-    `ORDER ${cleanOrderId(order.orderId)}`,
-    order.table ? `TABLE ${order.table}` : order.orderType.toUpperCase(),
-    `${issued.date} - ${issued.time}`,
-    dotted(width),
-    ...lines.flatMap((line) => productionLineRows(line, width, false)),
+  return joinThermalSections([
+    ...wrap(
+      `${title} ${title === "BAR ORDER" ? "BAR" : "KOT"} ${ticketNumber ?? cleanOrderId(order.orderId)}`,
+      width,
+    ),
+    header,
+    rule(width),
+    ...compactDetails(
+      [
+        ["Order", cleanOrderId(order.orderId)],
+        ["Type", order.orderType],
+        ["Table", order.table],
+        ["Date", `${issued.date} ${issued.time}`],
+        ["STATION", station],
+        ["Branch", identity.branchName],
+        [amendmentType === "REPRINT" ? "Reprinted by" : "Requested by", order.requestedBy],
+      ],
+      width,
+    ),
+    thermalItems(lines, width, false, formatMoney, true),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
-    dotted(width),
-    amendmentType === "VOID" ? "Reason: Customer changed order." : "",
-    amendmentType === "VOID" ? `Cancelled by: ${order.cashier}` : "",
-    amendmentType === "VOID" ? "Approved by: Supervisor" : "",
-    amendmentType === "REPRINT"
-      ? `Reprinted by: ${order.cashier}`
-      : `Requested by: ${order.requestedBy}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    ...(amendmentType === "VOID"
+      ? compactDetails(
+          [
+            ["Reason", "Customer changed order."],
+            ["Cancelled by", order.cashier],
+            ["Approved by", "Supervisor"],
+          ],
+          width,
+        )
+      : []),
+  ]);
 }
 
 function boxedPaymentPrompt(paymentInstructions: string[], width: number) {
   const innerWidth = Math.max(10, width - 4);
-  const instructions = paymentInstructions.length
-    ? paymentInstructions
-    : ["Payment instructions not configured"];
+  const instructions = paymentInstructions.filter((line) => line.trim() && line.trim() !== "-");
+  if (!instructions.length) return "";
   return [
     boxLine(width),
     `| ${"PAYMENT OPTIONS".padEnd(innerWidth)} |`,
@@ -1289,55 +1317,169 @@ function printableTicketNumber(kitchenTicketId: string | undefined, orderId: str
   return cleanOrderId(orderId);
 }
 
-function productionLineRows(
-  line: OrderLineForPrint,
+function centeredLines(text: string, width: number) {
+  if (!text.trim()) return [];
+  return wrap(text, width).map((line) => " ".repeat(Math.floor((width - line.length) / 2)) + line);
+}
+
+function compactDetails(entries: Array<[string, string | undefined]>, width: number) {
+  return entries
+    .filter(([, value]) => value?.trim() && value.trim() !== "-")
+    .flatMap(([label, value]) => {
+      const prefix = `${label.padEnd(7)}: `;
+      return wrap(value!, width - prefix.length).map(
+        (line, index) => `${index === 0 ? prefix : " ".repeat(prefix.length)}${line}`,
+      );
+    });
+}
+
+function thermalHeader(
+  identity: BranchPrintIdentity,
   width: number,
-  showPrices: boolean,
-  money: (amount: number) => string = formatMoney,
+  branch: boolean,
+  pin: boolean,
+  contact = true,
 ) {
-  const itemLabel = `${line.quantity} x ${line.name.toUpperCase()}`;
-  const rows = [
-    showPrices
-      ? row(itemLabel, money(line.quantity * line.unitPrice), width)
-      : wrap(itemLabel, width).join("\n"),
+  const brand = /^seramet(?:\s+(?:lite|pos))?$/i.test(identity.receiptBrand.trim())
+    ? identity.businessName
+    : identity.receiptBrand;
+  const lines = [
+    brand,
+    identity.businessName !== brand ? identity.businessName : "",
+    branch ? identity.branchName : "",
+    contact ? identity.address : "",
+    contact && identity.phone.trim() && identity.phone.trim() !== "-"
+      ? `Tel: ${identity.phone}`
+      : "",
+    contact ? identity.email : "",
+    pin && identity.pin.trim() && identity.pin.trim() !== "-" ? `PIN: ${identity.pin}` : "",
   ];
-  if (line.itemNote?.trim()) rows.push(...wrap(`  - ${line.itemNote.toUpperCase()}`, width));
-  if (line.modifiers?.length)
-    rows.push(
-      ...line.modifiers.flatMap((modifier) => wrap(`  - ${modifier.toUpperCase()}`, width)),
-    );
-  return rows;
+  return lines.filter((line) => line.trim() !== "-").flatMap((line) => centeredLines(line, width));
 }
 
-function customerLineRows(
-  line: OrderLineForPrint,
-  width: number,
-  money: (amount: number) => string = formatMoney,
-) {
-  const label = `${line.quantity}  ${line.name}`;
-  const rows = [row(label, money(line.quantity * line.unitPrice), width)];
-  if (line.modifiers?.length) rows.push(...wrap(`   ${line.modifiers.join(", ")}`, width));
-  if (line.itemNote?.trim()) rows.push(...wrap(`   Note: ${line.itemNote}`, width));
-  return rows;
+function thermalBox(title: string, lines: string[], width: number) {
+  const cell = (line: string) => `| ${line.padEnd(width - 4)} |`;
+  const centered = [
+    "BILL",
+    "RECEIPT",
+    "INVOICE",
+    "TAX INVOICE",
+    "KITCHEN ORDER",
+    "BAR ORDER",
+    "KDS ORDER",
+    "DUPLICATE COPY",
+    "PAID",
+    "SPECIAL REQUEST",
+  ].includes(title);
+  return [
+    boxLine(width),
+    ...(title
+      ? (centered ? centeredLines(title, width - 4) : wrap(title, width - 4)).map(cell)
+      : []),
+    ...(title && lines.some(Boolean) ? [boxLine(width)] : []),
+    ...lines.filter(Boolean).flatMap((line) => wrap(line, width - 4).map(cell)),
+    boxLine(width),
+  ].join("\n");
 }
 
-function invoiceLineRows(
-  line: OrderLineForPrint,
+function tableRule(columns: number[]) {
+  return `+${columns.map((width) => "-".repeat(width)).join("+")}+`;
+}
+
+function joinThermalSections(sections: string[]) {
+  const lines: string[] = [];
+  for (const line of sections.filter(Boolean).join("\n").split("\n")) {
+    if (/^\+[+\-=]+\+$/.test(line) && lines.at(-1) === line) continue;
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function tableCells(cells: string[], columns: number[], right: number[] = []) {
+  const wrapped = cells.map((cell, index) => wrap(cell, columns[index]));
+  return Array.from(
+    { length: Math.max(...wrapped.map((lines) => lines.length)) },
+    (_, line) =>
+      `|${columns
+        .map((width, index) => {
+          const value = wrapped[index][line] ?? "";
+          return right.includes(index) ? value.padStart(width) : value.padEnd(width);
+        })
+        .join("|")}|`,
+  );
+}
+
+function thermalItems(
+  lines: OrderLineForPrint[],
   width: number,
-  money: (amount: number) => string = formatMoney,
+  prices: boolean,
+  money: (amount: number) => string,
+  production = false,
+  unitPrices = false,
 ) {
-  const descriptionWidth = Math.max(28, width - 32);
-  const first = `${line.quantity}    ${line.name}`.slice(0, descriptionWidth);
+  const amountWidth = width === 32 ? 10 : 12;
+  const columns = prices ? [3, width - amountWidth - 7, amountWidth] : [3, width - 6];
+  const border = tableRule(columns);
   const rows = [
-    row(
-      first,
-      `${money(line.unitPrice).padStart(12)} ${money(line.quantity * line.unitPrice).padStart(12)}`,
-      width,
+    border,
+    ...tableCells(
+      prices ? ["QTY", "ITEM", width === 32 ? "AMT" : "AMOUNT"] : ["QTY", "ITEM"],
+      columns,
     ),
+    border,
   ];
-  if (line.modifiers?.length) rows.push(...wrap(`     ${line.modifiers.join(", ")}`, width));
-  if (line.itemNote?.trim()) rows.push(...wrap(`     Note: ${line.itemNote}`, width));
-  return rows;
+  for (const [index, line] of lines.entries()) {
+    const amount = prices ? money(line.quantity * line.unitPrice) : "";
+    const name = production ? line.name.toUpperCase() : line.name;
+    rows.push(
+      ...tableCells(
+        prices
+          ? [String(line.quantity), name, amount.length <= amountWidth ? amount : ""]
+          : [String(line.quantity), name],
+        columns,
+        prices ? [0, 2] : [0],
+      ),
+    );
+    if (prices && amount.length > amountWidth)
+      rows.push(
+        ...wrap(`Amount: ${amount}`, width - 4).map((text) => `| ${text.padEnd(width - 4)} |`),
+      );
+    const details = [
+      ...(unitPrices ? [`Unit: ${money(line.unitPrice)}`] : []),
+      ...(line.modifiers ?? []).map((item) => `- ${production ? item.toUpperCase() : item}`),
+      ...(line.itemNote
+        ? [`Note: ${production ? line.itemNote.toUpperCase() : line.itemNote}`]
+        : []),
+    ];
+    // Details span the table interior, preserving indentation without squeezing
+    // instructions into the narrow description column.
+    for (const detail of details)
+      rows.push(...wrap(detail, width - 6).map((text) => `|   ${text.padEnd(width - 6)} |`));
+    if (production || index === lines.length - 1) rows.push(border);
+  }
+  return rows.join("\n");
+}
+
+function thermalTotals(
+  order: OrderForPrint,
+  template: PrintTemplateSettings,
+  width: number,
+  money: (amount: number) => string,
+) {
+  const columns = [width - 17, 14];
+  const values: Array<[string, number]> = [
+    ["SUBTOTAL", order.subtotal],
+    ...(template.showTax ? [["TAX", order.tax] as [string, number]] : []),
+    ...(order.serviceCharge ? [["SERVICE", order.serviceCharge] as [string, number]] : []),
+    ...(order.discount ? [["DISCOUNT", order.discount] as [string, number]] : []),
+  ];
+  return [
+    tableRule(columns),
+    ...values.flatMap(([label, amount]) => tableCells([label, money(amount)], columns, [1])),
+    tableRule(columns),
+    ...tableCells(["TOTAL", money(order.total)], columns, [1]),
+    tableRule(columns).replace(/-/g, "="),
+  ].join("\n");
 }
 
 function renderPaymentRows(
@@ -1355,12 +1497,20 @@ function renderPaymentRows(
         },
       ];
 
-  return breakdown
-    .flatMap((payment) => [
-      row(payment.method.toUpperCase(), money(payment.amount), width),
-      payment.reference ? `Ref: ${payment.reference}` : "",
-    ])
-    .filter(Boolean);
+  return [
+    thermalBox(
+      "",
+      [
+        `Paid: ${money(order.paid ?? order.total)}`,
+        ...(order.change ? [`Change: ${money(order.change)}`] : []),
+        ...breakdown.flatMap((payment) => [
+          `${payment.method.toUpperCase()} ${money(payment.amount)}`,
+          ...(payment.reference ? [`Ref: ${payment.reference}`] : []),
+        ]),
+      ],
+      width,
+    ),
+  ];
 }
 
 function renderLoyaltyRows(order: OrderForPrint, width: number) {
@@ -1379,36 +1529,15 @@ function renderLoyaltyRows(order: OrderForPrint, width: number) {
     summary.rewardUsed ? `Reward: ${summary.rewardUsed}` : "",
     summary.voucherUsed ? `Voucher: ${summary.voucherUsed}` : "",
     ...(summary.message ? wrap(summary.message, width) : []),
-  ].filter(Boolean) as string[];
+  ]
+    .filter((line): line is string => Boolean(line))
+    .flatMap((line) => line.split("\n").flatMap((part) => wrap(part, width)));
 }
 
 function boxedNote(label: string, note: string | undefined, width: number) {
   const trimmed = note?.trim();
   if (!trimmed) return "";
-  const innerWidth = Math.max(10, width - 4);
-  return [
-    boxLine(width),
-    center(label, width),
-    ...wrap(`"${trimmed}"`, innerWidth).map((line) => `| ${line.padEnd(innerWidth)} |`),
-    boxLine(width),
-  ].join("\n");
-}
-
-function serviceLine(orderType: string, table: string, width: number) {
-  return `${orderType.toUpperCase()} - TABLE ${table}`.slice(0, width);
-}
-
-function boxText(text: string, width: number) {
-  const clean = sanitizePrintText(text);
-  return `[ ${clean} ]`.slice(0, width);
-}
-
-function ribbon(text: string, width: number) {
-  const clean = sanitizePrintText(text);
-  const padded = ` ${clean} `;
-  if (padded.length >= width) return padded.slice(0, width);
-  const side = Math.floor((width - padded.length) / 2);
-  return `${"=".repeat(side)}${padded}${"=".repeat(width - padded.length - side)}`;
+  return thermalBox(label, [trimmed], width);
 }
 
 function dotted(width: number) {
@@ -1429,19 +1558,21 @@ function row(left: string, right: string, width: number) {
   return `${cleanLeft}${" ".repeat(gap)}${cleanRight}`.slice(0, width);
 }
 
-function center(text: string, width: number) {
-  const clean = sanitizePrintText(text).slice(0, width);
-  const left = Math.max(0, Math.floor((width - clean.length) / 2));
-  return `${" ".repeat(left)}${clean}`;
-}
-
 function rule(width: number) {
   return "-".repeat(width);
 }
 
 function wrap(text: string, width: number) {
   const clean = sanitizePrintText(text);
-  const words = clean.split(/\s+/).filter(Boolean);
+  const words = clean
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap((word) => {
+      const chunks = [];
+      for (let start = 0; start < word.length; start += width)
+        chunks.push(word.slice(start, start + width));
+      return chunks;
+    });
   const lines: string[] = [];
   let current = "";
 
@@ -1505,10 +1636,6 @@ function documentDateTime(value: string, timeZone = localTimeZone) {
     ? value
     : parsed.toLocaleTimeString(activeLocale(), timeOptions);
   return { date, time };
-}
-
-function documentDueDate(createdAt: string) {
-  return createdAt.includes("Due") ? createdAt : "-";
 }
 
 function failJob(job: PrintJob, reason: string) {

@@ -20,10 +20,19 @@ export function encodeEscPos(content, profile) {
     return [...result, line];
   });
   const buffers = [Buffer.from([ESC, 0x40, ESC, 0x61, 0])];
-  if (profile.emphasis) buffers.push(Buffer.from([ESC, 0x45, 1]));
-  buffers.push(Buffer.from(lines[0] + "\n", "ascii"));
-  if (profile.emphasis) buffers.push(Buffer.from([ESC, 0x45, 0]));
-  buffers.push(Buffer.from(lines.slice(1).join("\n") + "\n", "ascii"));
+  for (const [index, line] of lines.entries()) {
+    // Emphasis is chosen from sanitized text, never from embedded control codes.
+    const strong =
+      profile.emphasis &&
+      (index === 0 ||
+        /^(BILL|RECEIPT|TAX INVOICE|PAID|DUPLICATE COPY)$/.test(line.trim()) ||
+        /^(KITCHEN ORDER|BAR ORDER|KDS ORDER|KOT #|BAR #)/.test(line.trim()) ||
+        /^\|\s*TOTAL\s*\|/.test(line) ||
+        /SPECIAL REQUEST|ALLERG(?:Y|EN|IC)|REPRINT/.test(line.toUpperCase()));
+    if (strong) buffers.push(Buffer.from([ESC, 0x45, 1]));
+    buffers.push(Buffer.from(line + "\n", "ascii"));
+    if (strong) buffers.push(Buffer.from([ESC, 0x45, 0]));
+  }
   buffers.push(Buffer.from([ESC, 0x64, 3]));
   if (profile.cutter === "partial") buffers.push(Buffer.from([GS, 0x56, 1]));
   else if (profile.cutter === "full") buffers.push(Buffer.from([GS, 0x56, 0]));
