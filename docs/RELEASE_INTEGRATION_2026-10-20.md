@@ -28,6 +28,25 @@ both directives around globs and still reject focused/TODO tests.
 
 ## Merge constraints
 
+PR #129 merged as `eb758bca209b645cdf125dc3b41068bfcdd14b2a`; PR #124 merged
+as `522ff343fa8f7e511d83de4de913901a2ca9da2a`. Post-merge main CI passed in
+[run 39464300368](https://github.com/Xmanuel01/seramet-connect/actions/runs/39464300368).
+Main was merged back into the integration branch without rewriting either history.
+The package manifests and lockfile needed no manual changes. The three conflicts
+retained branch-specific menu items and station settings, canonical rider branch
+identity plus input validation, and the complete disposable API error diagnostic.
+
+The restored cash-shift test needed the current invoice display label and explicit
+drawer/day-close confirmation. Its old requests correctly failed closed with 409;
+the server safeguards were not changed. Ten other affected browser scenarios passed;
+the corrected full cash-shift scenario then passed independently. Seven affected
+rider/payroll tests, typecheck, scoped lint, formatting and the source contract pass.
+These focused integration results do not replace fresh CI on the final merge commit.
+
+The preceding integration head `8e28ff4133e8934fd70357daa36ef4507ee7acf6` passed
+all nine applicable CI checks, 1,095 local unit tests and 35 standard CI browser cases.
+Those counts are evidence for that revision, not a claim about a later commit.
+
 Do not merge a known-failing or unresolved-critical candidate just because GitHub reports
 it mergeable. Older overlapping and stacked PRs must not be merged independently into
 main after their consolidated integration. Temporary work marked DO NOT MERGE is not a

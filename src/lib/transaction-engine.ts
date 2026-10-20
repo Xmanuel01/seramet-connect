@@ -1690,13 +1690,13 @@ export const TransactionEngine = {
       !/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/.test(input.shift.trim())
     )
       throw new Error("Enter a valid rider shift as HH:MM-HH:MM");
-    const scope = resolveScope(input.branch.trim(), next.tenantId);
+    const scope = resolveScope(input.branch.trim(), next.tenantId ?? LOCAL_PILOT_TENANT_ID);
     if (
       next.employees.some(
         (employee) =>
           employee.active &&
           employee.name.toLowerCase() === name.toLowerCase() &&
-          (employee.branchId === scope.branchId || employee.branch === scope.branch),
+          employee.branchId === scope.branchId,
       )
     ) {
       return next;
@@ -1708,7 +1708,6 @@ export const TransactionEngine = {
       name,
       role: "Rider",
       department: "Delivery",
-      branch: scope.branch,
       shift,
       netMonthlyPay: money(input.netMonthlyPay ?? 0),
       monthlyWorkDays: 26,
