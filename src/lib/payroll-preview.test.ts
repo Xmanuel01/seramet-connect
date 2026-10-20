@@ -12,6 +12,48 @@ import {
 
 afterEach(() => setConfigurationRepositoryForTests(undefined));
 
+test("new riders carry authoritative tenant and branch scope before the mutation returns", () => {
+  setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+  const state = createEmptyTransactionState(DEMO_TENANT_ID);
+  const next = TransactionEngine.addRider(
+    state,
+    {
+      name: "Scoped rider",
+      branch: DEMO_WESTLANDS_BRANCH_ID,
+    },
+    "Manager",
+  );
+  expect(next.employees).toHaveLength(1);
+  expect(next.employees[0]).toMatchObject({
+    tenantId: DEMO_TENANT_ID,
+    branchId: DEMO_WESTLANDS_BRANCH_ID,
+    branch: "Westlands",
+    name: "Scoped rider",
+  });
+  expect(state.employees).toEqual([]);
+  expect(
+    TransactionEngine.addRider(
+      next,
+      {
+        name: "Scoped rider",
+        branch: DEMO_WESTLANDS_BRANCH_ID,
+      },
+      "Manager",
+    ).employees,
+  ).toHaveLength(1);
+  expect(() =>
+    TransactionEngine.addRider(
+      state,
+      {
+        name: "Rejected rider",
+        branch: "unconfigured-branch",
+      },
+      "Manager",
+    ),
+  ).toThrow("No active branch");
+  expect(state.employees).toEqual([]);
+});
+
 test("payroll renders an empty initial snapshot before tenant configuration arrives", () => {
   expect(
     TransactionEngine.getPayrollPreview(createEmptyTransactionState(""), "pending-branch"),

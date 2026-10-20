@@ -1628,12 +1628,13 @@ export const TransactionEngine = {
     const next = clone(normalizeTransactionState(state));
     const name = input.name.trim();
     if (!name || !input.branch.trim()) return next;
+    const scope = resolveScope(input.branch, next.tenantId ?? LOCAL_PILOT_TENANT_ID);
     if (
       next.employees.some(
         (employee) =>
           employee.active &&
           employee.name.toLowerCase() === name.toLowerCase() &&
-          employee.branch === input.branch,
+          employee.branchId === scope.branchId,
       )
     ) {
       return next;
@@ -1641,10 +1642,10 @@ export const TransactionEngine = {
     const shift = input.shift?.trim() || "10:00-21:30";
     const employee: EmployeeRecord = {
       id: id("EMP", next, "employees"),
+      ...scope,
       name,
       role: "Rider",
       department: "Delivery",
-      branch: input.branch.trim(),
       shift,
       netMonthlyPay: money(input.netMonthlyPay ?? 0),
       monthlyWorkDays: 26,
