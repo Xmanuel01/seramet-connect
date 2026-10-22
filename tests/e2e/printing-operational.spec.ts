@@ -1111,7 +1111,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await expect(
       manager
         .getByRole("region", { name: "Daily closing", exact: true })
-        .getByLabel("Business date", { exact: true }),
+        .getByLabel("Closing business date", { exact: true }),
     ).toHaveValue(day.businessDate);
     await expect(
       manager.getByRole("button", { name: "Close Business Day", exact: true }),
