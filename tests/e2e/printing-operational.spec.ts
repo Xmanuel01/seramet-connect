@@ -201,6 +201,15 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         JSON.stringify({ type: "BRANCH", branchId: f.firstBranchId }),
       );
     }, fixture);
+    await manager.goto("/payment-control");
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await manager.getByText("Branch closing settings", { exact: true }).click();
+    await manager
+      .getByRole("combobox", { name: /^Closing mode/ })
+      .selectOption("MULTI_CASHIER_SHIFTS");
+    await manager.getByRole("button", { name: "Save closing settings", exact: true }).click();
+    await expect(manager.getByRole("status")).toContainText("Closing settings saved.");
+    events.push("UI selected cashier-shift closing before opening any drawer");
     await manager.goto("/seramet-printers");
     // Exercise the real administration form for the primary kitchen printer.
     await manager.getByRole("button", { name: "Add printer", exact: true }).click();
@@ -1040,12 +1049,6 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     );
     await manager.goto("/payment-control");
     await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
-    await manager.getByText("Branch closing settings", { exact: true }).click();
-    await manager
-      .getByRole("combobox", { name: /^Closing mode/ })
-      .selectOption("MULTI_CASHIER_SHIFTS");
-    await manager.getByRole("button", { name: "Save closing settings", exact: true }).click();
-    await expect(manager.getByRole("status")).toContainText("Closing settings saved.");
     const drawer = (await snapshot()).state.paymentOperations.drawerSessions.find(
       (row: { employeeId: string; status: string }) =>
         row.employeeId === employee.id && row.status === "OPEN",
@@ -1058,6 +1061,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .fill(bill.total.toFixed(2));
     await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
     await closingDialog.getByRole("button", { name: "Confirm & End Shift", exact: true }).click();
+    await expect(closingDialog).not.toBeVisible();
     await expect(manager.getByRole("status")).toContainText("Cashier shift closed.");
     state = (await snapshot()).state;
     expect(
@@ -1075,9 +1079,17 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.getByRole("button", { name: "Close Business Day", exact: true }).click();
     closingDialog = manager.getByRole("dialog", { name: "Close Business Day", exact: true });
     await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
+    const closeResponse = manager.waitForResponse(
+      (response) =>
+        response.url().endsWith("/transactions/mutate") &&
+        response.request().postDataJSON()?.action === "closeBusinessDay",
+    );
     await closingDialog
       .getByRole("button", { name: "Confirm & Close Business Day", exact: true })
       .click();
+    const closeResult = await closeResponse;
+    expect(closeResult.ok(), await closeResult.text()).toBe(true);
+    await expect(closingDialog).not.toBeVisible();
     await expect(manager.getByRole("status")).toContainText("Business day closed.");
     state = (await snapshot()).state;
     const day = state.paymentOperations.dayCloses.find(
@@ -1096,6 +1108,11 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     expect((await PDFDocument.load(await readFile(closingPath))).getPageCount()).toBe(3);
     await manager.reload();
     await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await expect(
+      manager
+        .getByRole("region", { name: "Daily closing", exact: true })
+        .getByLabel("Business date", { exact: true }),
+    ).toHaveValue(day.businessDate);
     await expect(
       manager.getByRole("button", { name: "Close Business Day", exact: true }),
     ).toBeDisabled();
@@ -1138,6 +1155,13 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       ),
     );
   } finally {
+    await writeFile(
+      join(evidence, "last-manager-screen.private.txt"),
+      await manager
+        .locator("body")
+        .innerText()
+        .catch(() => "Unavailable"),
+    );
     await writeFile(join(evidence, "phases.json"), JSON.stringify({ events }, null, 2));
     await writeFile(
       join(evidence, "last-screen.private.txt"),
