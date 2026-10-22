@@ -61,15 +61,23 @@ test("failed startup exits the splash and retry recovers without bypassing regis
     else await route.fulfill({ json: { ok: true, state: "UNREGISTERED" } });
   });
   await page.goto("/pos-login");
-  await expect(page.getByRole("heading", { name: "Sign in unavailable" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
+  await expect(page.getByText("We couldn't connect to Seramet. Please try again.")).toBeVisible();
+  await expect(page.getByLabel("Email or employee code")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();
   await expect(page.getByRole("link", { name: "Use administrator account" })).toHaveAttribute(
     "href",
     "/login?account=1",
   );
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByRole("heading", { name: "Device activation required" })).toBeVisible();
-  await expect(page.getByLabel("Email or employee code")).toHaveCount(0);
+  await expect(
+    page.getByText("This browser is not registered as a Seramet POS device."),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
+  await expect(page.getByLabel("Email or employee code")).toBeDisabled();
   expect(attempts).toBe(2);
+  await expect(page.getByText("Online", { exact: true })).toBeVisible();
 });
 
 test("a stalled device request times out instead of leaving the brand screen forever", async ({
@@ -80,11 +88,19 @@ test("a stalled device request times out instead of leaving the brand screen for
   });
   await page.goto("/pos-login");
   await expect(page.getByRole("heading", { name: "Seramet", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sign in unavailable" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
+  await expect(page.getByText("We couldn't connect to Seramet. Please try again.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 });
 
-test("revoked devices cannot reach employee PIN entry", async ({ page }) => {
+test("revoked devices keep the keypad visible without permitting employee PIN entry", async ({
+  page,
+}) => {
+  let loginRequests = 0;
+  await page.route("**/api/seramet/public/employee/login", (route) => {
+    loginRequests++;
+    return route.fulfill({ status: 401, json: { ok: false } });
+  });
   await page.route(startupUrl, (route) =>
     route.fulfill({ json: { ...activeDevice, state: "REVOKED" } }),
   );
@@ -92,8 +108,61 @@ test("revoked devices cannot reach employee PIN entry", async ({ page }) => {
   await expect(
     page.getByText("This device has been revoked and cannot sign in employees."),
   ).toBeVisible();
-  await expect(page.getByLabel("Email or employee code")).toHaveCount(0);
+  await expect(page.getByLabel("Email or employee code")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();
+  await page.keyboard.type("123456");
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("PIN entry").locator("span.bg-primary")).toHaveCount(0);
+  await expect(page.getByLabel("PIN entry").locator("span.bg-transparent")).toHaveCount(6);
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
+  expect(loginRequests).toBe(0);
 });
+
+for (const viewport of [
+  { width: 1366, height: 900 },
+  { width: 320, height: 740 },
+]) {
+  test(`unified login retains its layout during connection failure and retry at ${viewport.width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    let attempts = 0;
+    let release!: () => void;
+    const retryPending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route(startupUrl, async (route) => {
+      attempts++;
+      if (attempts === 2) await retryPending;
+      await route.fulfill({ status: 503, json: { ok: false } });
+    });
+    await page.goto("/pos-login");
+    const heading = page.getByRole("heading", { name: "Employee sign in" });
+    await expect(heading).toBeVisible();
+    await expect(page.getByRole("link", { name: "Use administrator account" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "My attendance", exact: false })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Create a restaurant" })).toBeVisible();
+    const identity = await page.getByLabel("Email or employee code").boundingBox();
+    const keypad = await page.getByRole("button", { name: "1", exact: true }).boundingBox();
+    if (viewport.width > 768) expect(identity!.x + identity!.width).toBeLessThan(keypad!.x);
+    else expect(identity!.y).toBeLessThan(keypad!.y);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath(`unified-login-${viewport.width}.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(heading).toBeVisible();
+    await expect(page.getByRole("status", { name: "Opening Seramet" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Connecting", exact: true })).toBeDisabled();
+    release();
+    await expect(page.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(attempts).toBe(2);
+  });
+}
 
 test("a rejected saved session with a stalled fallback exits startup securely", async ({
   page,
