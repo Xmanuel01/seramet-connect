@@ -215,7 +215,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.getByRole("combobox", { name: "Paper", exact: true }).selectOption("80mm");
     await manager.getByRole("combobox", { name: "Cutter", exact: true }).selectOption("partial");
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(manager.getByRole("status")).toContainText("Printer configuration saved");
+    await expect(
+      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
+    ).toBeVisible();
     const saved = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
@@ -608,7 +610,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       manager.getByRole("checkbox", { name: "Main Kitchen", exact: true }),
     ).toBeChecked();
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(manager.getByRole("status")).toContainText("Printer configuration saved");
+    await expect(
+      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
+    ).toBeVisible();
     devices[0].printer = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
