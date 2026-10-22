@@ -20,6 +20,7 @@ export const Route = createFileRoute("/pos-login")({
 function PosLoginPage() {
   const [startup, setStartup] = useState<DeviceStartup>();
   const [startupPending, setStartupPending] = useState(true);
+  const [startupSettled, setStartupSettled] = useState(false);
   const startupRequest = useRef<AbortController | null>(null);
   const [identifier, setIdentifier] = useState("");
   const [pin, setPin] = useState("");
@@ -33,6 +34,8 @@ function PosLoginPage() {
   const deviceContextRef = useRef("");
   const submittingRef = useRef(false);
   const requiredLength = startup?.policy?.pinLength ?? 6;
+  const deviceReady = startup?.state === "ACTIVE" && Boolean(startup.device) && !startupPending;
+  const entryDisabled = busy || !deviceReady;
 
   const load = useCallback(async () => {
     if (startupRequest.current) return;
@@ -40,6 +43,10 @@ function PosLoginPage() {
     startupRequest.current = controller;
     setStartupPending(true);
     setStartup(undefined);
+    setPin("");
+    setMustChangePin(false);
+    setReplacementPin("");
+    setConfirmation("");
     setMessage("");
     try {
       const result = await deviceStartup(controller.signal);
@@ -60,21 +67,25 @@ function PosLoginPage() {
     } finally {
       if (startupRequest.current === controller) {
         startupRequest.current = null;
-        if (!controller.signal.aborted) setStartupPending(false);
+        if (!controller.signal.aborted) {
+          setStartupPending(false);
+          setStartupSettled(true);
+        }
       }
     }
   }, []);
 
   const appendDigit = useCallback(
     (digit: string) => {
+      if (!deviceReady) return;
       setMessage("");
       setPin((current) => (current.length < requiredLength ? `${current}${digit}` : current));
     },
-    [requiredLength],
+    [deviceReady, requiredLength],
   );
 
   const submit = useCallback(async () => {
-    if (submittingRef.current) return;
+    if (submittingRef.current || !deviceReady) return;
     if (!identifier.trim()) {
       setMessage("Enter your email or employee code.");
       identifierRef.current?.focus();
@@ -109,7 +120,7 @@ function PosLoginPage() {
       submittingRef.current = false;
       setBusy(false);
     }
-  }, [identifier, online, pin, requiredLength]);
+  }, [deviceReady, identifier, online, pin, requiredLength]);
 
   useEffect(() => {
     void load();
@@ -127,7 +138,7 @@ function PosLoginPage() {
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (busy || mustChangePin || startup?.state !== "ACTIVE") return;
+      if (busy || mustChangePin || !deviceReady) return;
       if (!shouldCapturePinKeyboardEvent(event.target)) return;
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
@@ -136,7 +147,7 @@ function PosLoginPage() {
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [appendDigit, busy, mustChangePin, pin.length, requiredLength, startup?.state, submit]);
+  }, [appendDigit, busy, deviceReady, mustChangePin, pin.length, requiredLength, submit]);
 
   const maskedPin = useMemo(
     () => Array.from({ length: requiredLength }, (_, index) => index < pin.length),
@@ -149,34 +160,7 @@ function PosLoginPage() {
     Boolean(tenantName) &&
     tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
 
-  if (startupPending) return <StartupScreen />;
-
-  if (!startup || startup.state !== "ACTIVE" || !startup.device) {
-    return (
-      <ScreenMessage
-        title={startup ? "Device activation required" : "Sign in unavailable"}
-        detail={message || (startup ? deviceMessage(startup.state) : "Please try again.")}
-      >
-        <div className="mt-5 grid gap-2 sm:grid-cols-2">
-          <a
-            className="min-h-11 rounded-md bg-primary px-4 py-3 text-center text-sm font-semibold text-primary-foreground"
-            href="/login?account=1"
-          >
-            Use administrator account
-          </a>
-          <a href="/staff-login" className="mt-3 block text-sm font-semibold text-primary">
-            My attendance — linked account sign in
-          </a>
-          <button
-            className="h-11 rounded-md border border-border bg-card px-4 text-sm font-semibold"
-            onClick={() => void load()}
-          >
-            <RefreshCcw className="mr-2 inline h-4 w-4" /> {startup ? "Check again" : "Try again"}
-          </button>
-        </div>
-      </ScreenMessage>
-    );
-  }
+  if (!startupSettled) return <StartupScreen />;
 
   if (mustChangePin)
     return (
@@ -292,13 +276,19 @@ function PosLoginPage() {
   return (
     <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:py-10">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col">
-        <header className="flex items-center justify-between gap-4">
+        <header className="flex flex-wrap items-center justify-between gap-4">
           <Logo />
           <div
-            className={`flex items-center gap-2 text-xs font-semibold ${online ? "text-success" : "text-danger"}`}
+            className={`flex items-center gap-2 text-xs font-semibold ${online && deviceReady ? "text-success" : "text-muted-foreground"}`}
           >
-            {online ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-            {online ? "Online" : "Offline"}
+            {online && deviceReady ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+            {startupPending
+              ? "Connecting"
+              : !online
+                ? "Offline"
+                : deviceReady
+                  ? "Online"
+                  : "Connection unavailable"}
           </div>
         </header>
         <div className="grid flex-1 place-items-center py-8">
@@ -309,6 +299,33 @@ function PosLoginPage() {
                 <span className="text-xl font-bold text-foreground">SERAMET</span>
               </div>
               <h1 className="mt-7 text-3xl font-bold">Employee sign in</h1>
+              {!deviceReady && (
+                <div
+                  role="status"
+                  className="mt-4 border-l-2 border-border pl-3 text-sm leading-6 text-muted-foreground"
+                >
+                  <p>
+                    {startupPending
+                      ? "Connecting to Seramet..."
+                      : message ||
+                        (startup
+                          ? deviceMessage(startup.state)
+                          : "Sign in is temporarily unavailable.")}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={startupPending || busy}
+                    onClick={() => void load()}
+                    className="mt-2 inline-flex min-h-9 items-center gap-2 font-semibold text-primary disabled:opacity-50"
+                  >
+                    <RefreshCcw
+                      className={`h-4 w-4 ${startupPending ? "motion-safe:animate-spin" : ""}`}
+                      aria-hidden="true"
+                    />
+                    {startupPending ? "Connecting" : "Try again"}
+                  </button>
+                </div>
+              )}
               <p className="mt-4 leading-6">
                 <strong className="block text-base text-foreground">{branchName}</strong>
                 {showTenantName ? (
@@ -320,7 +337,7 @@ function PosLoginPage() {
                 <input
                   ref={identifierRef}
                   value={identifier}
-                  disabled={busy}
+                  disabled={entryDisabled}
                   onChange={(event) => {
                     const nextIdentifier = event.target.value;
                     setPin((current) =>
@@ -333,7 +350,7 @@ function PosLoginPage() {
                   className="mt-2 h-11 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </label>
-              {startup.employees?.length ? (
+              {deviceReady && startup?.employees?.length ? (
                 <div
                   className="mt-4 flex flex-wrap gap-2"
                   aria-label="Employees available on this device"
@@ -342,6 +359,7 @@ function PosLoginPage() {
                     <button
                       key={employee.employeeCode}
                       type="button"
+                      disabled={entryDisabled}
                       className="rounded-md border border-border bg-card px-3 py-2 text-left text-xs font-semibold hover:border-primary"
                       onClick={() => {
                         setPin((current) =>
@@ -364,6 +382,9 @@ function PosLoginPage() {
               <a href="/staff-login" className="mt-3 block text-sm font-semibold text-primary">
                 My attendance — linked account sign in
               </a>
+              <a href="/register" className="mt-3 block text-sm font-semibold text-primary">
+                Create a restaurant
+              </a>
             </div>
             <div className="p-6 sm:p-8">
               <div className="flex justify-center gap-3" aria-label="PIN entry">
@@ -379,20 +400,25 @@ function PosLoginPage() {
                   <Key
                     key={digit}
                     label={digit}
-                    disabled={busy}
+                    disabled={entryDisabled}
                     onClick={() => appendDigit(digit)}
                   />
                 ))}
-                <Key label="Clear" secondary disabled={busy || !pin} onClick={() => setPin("")} />
-                <Key label="0" disabled={busy} onClick={() => appendDigit("0")} />
+                <Key
+                  label="Clear"
+                  secondary
+                  disabled={entryDisabled || !pin}
+                  onClick={() => setPin("")}
+                />
+                <Key label="0" disabled={entryDisabled} onClick={() => appendDigit("0")} />
                 <Key
                   label="Delete"
                   icon={<Delete className="h-5 w-5" />}
-                  disabled={busy || !pin}
+                  disabled={entryDisabled || !pin}
                   onClick={() => setPin((current) => current.slice(0, -1))}
                 />
               </div>
-              {message ? (
+              {message && deviceReady ? (
                 <p
                   role="alert"
                   className="mt-5 rounded-md bg-danger-soft px-3 py-2 text-center text-sm text-danger"
@@ -403,7 +429,7 @@ function PosLoginPage() {
               <button
                 type="button"
                 onClick={() => void submit()}
-                disabled={busy || pin.length !== requiredLength}
+                disabled={entryDisabled || pin.length !== requiredLength}
                 className="mt-5 h-11 w-full rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? "Signing in..." : "Sign in"}
