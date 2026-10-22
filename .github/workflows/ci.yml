@@ -26,6 +26,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs
+      - run: node --test scripts/verify-production-health.test.mjs
       - run: node --test scripts/verify-staging-release-gate.test.mjs
       - run: node --test scripts/inspect-staging-backlog.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs

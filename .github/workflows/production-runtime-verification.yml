@@ -1,0 +1,35 @@
+name: Production runtime verification (read only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_build_id:
+        description: Exact reviewed deployed commit SHA (not a branch name)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seramet-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Read-only runtime checks (not full operational acceptance)
+        env:
+          SERAMET_PUBLIC_ORIGIN: ${{ vars.SERAMET_PUBLIC_ORIGIN }}
+          SERAMET_EXPECTED_BUILD_ID: ${{ inputs.expected_build_id }}
+        run: node scripts/verify-production-health.mjs

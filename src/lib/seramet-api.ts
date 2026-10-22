@@ -39,6 +39,7 @@ import { assertDatabaseAvailable } from "@/server/database/d1";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import {
   assertProductionOperationalReady,
+  isLocalDevelopmentRequest,
   resolveRuntimeConfiguration,
   validateRuntimeConfiguration,
 } from "@/server/environment";
@@ -99,7 +100,14 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     const runtime = resolveRuntimeConfiguration(env);
     if (url.pathname === "/api/seramet/health/operational" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
-      if (env.SERAMET_DB) {
+      const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
+      if (publicDevelopment) {
+        issues.push({
+          code: "PUBLIC_DEVELOPMENT_RUNTIME",
+          message: "Public deployment requires an explicit staging or production environment",
+        });
+      }
+      if (env.SERAMET_DB && !publicDevelopment) {
         try {
           await assertDatabaseAvailable(env.SERAMET_DB);
           if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB);
@@ -115,6 +123,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
         {
           ok: issues.length === 0,
           environment: runtime.environment,
+          buildId: runtime.buildId,
           database: env.SERAMET_DB ? "authoritative" : "unavailable",
           queue: runtime.durableQueue ? "available" : "unavailable",
           // Binding availability is not consumer execution. Prove a sentinel separately.
@@ -128,7 +137,14 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     if (url.pathname === "/api/seramet/health/ready" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
-      if (env.SERAMET_DB) {
+      const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
+      if (publicDevelopment) {
+        issues.push({
+          code: "PUBLIC_DEVELOPMENT_RUNTIME",
+          message: "Public deployment requires an explicit staging or production environment",
+        });
+      }
+      if (env.SERAMET_DB && !publicDevelopment) {
         try {
           await assertDatabaseAvailable(env.SERAMET_DB);
           if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB);
@@ -147,6 +163,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
         {
           ok: issues.length === 0,
           environment: runtime.environment,
+          buildId: runtime.buildId,
           database: env.SERAMET_DB ? "authoritative" : "unavailable",
           queue: runtime.durableQueue ? "available" : "unavailable",
           // Binding availability is not consumer execution. Prove a sentinel separately.

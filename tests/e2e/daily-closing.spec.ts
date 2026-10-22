@@ -88,43 +88,58 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
     fullPage: true,
   });
   await dialog.getByRole("button", { name: "Confirm & Close Business Day", exact: true }).click();
-  await expect(dialog).not.toBeVisible();
-  await expect(
-    page.getByText("Business day closed. The immutable report is available below."),
-  ).toBeVisible();
-  const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download PDF", exact: true }).click();
-  const report = await download;
-  expect(report.suggestedFilename()).toMatch(/daily-closing.*\.pdf/);
-  await report.saveAs(resolve(".seramet/daily-closing/disposable-report.pdf"));
-  await page.setViewportSize({ width: 390, height: 844 });
-  const region = page.getByRole("region", { name: "Daily closing" });
-  await expect(region).toBeVisible();
-  expect(await region.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-  await page.screenshot({
-    path: resolve(".seramet/daily-closing/closed-mobile.png"),
-    fullPage: true,
-  });
-  const stored = await page.evaluate(
-    async () => (await (await fetch("/api/seramet/transactions")).json()).state.paymentOperations,
-  );
-  expect(stored.drawerSessions.find((d: { id: string }) => d.id === opened).status).toBe("CLOSED");
-  expect(stored.dayCloses[0].snapshots).toHaveLength(1);
-  // Restore only the disposable fixture's trading state for other suites; no live data is used.
-  const reopened = await page.evaluate(async (dayCloseId) => {
-    const current = await (await fetch("/api/seramet/transactions")).json();
-    const idempotencyKey = crypto.randomUUID();
-    const response = await fetch("/api/seramet/transactions/mutate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify({
-        idempotencyKey,
-        expectedRevision: current.revision,
-        action: "reopenDay",
-        payload: { dayCloseId, reason: "Disposable browser fixture cleanup" },
-      }),
+  try {
+    await expect(dialog).not.toBeVisible();
+    await expect(
+      page.getByText("Business day closed. The immutable report is available below."),
+    ).toBeVisible();
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+    const report = await download;
+    expect(report.suggestedFilename()).toMatch(/daily-closing.*\.pdf/);
+    await report.saveAs(resolve(".seramet/daily-closing/disposable-report.pdf"));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const region = page.getByRole("region", { name: "Daily closing" });
+    await expect(region).toBeVisible();
+    expect(await region.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: resolve(".seramet/daily-closing/closed-mobile.png"),
+      fullPage: true,
     });
-    return response.status;
-  }, stored.dayCloses[0].id);
-  expect(reopened).toBe(200);
+    const stored = await page.evaluate(
+      async () => (await (await fetch("/api/seramet/transactions")).json()).state.paymentOperations,
+    );
+    expect(stored.drawerSessions.find((d: { id: string }) => d.id === opened).status).toBe(
+      "CLOSED",
+    );
+    const prior = before.find((day: { branchId: string }) => day.branchId === branchId);
+    const closed = stored.dayCloses.find((day: { branchId: string }) => day.branchId === branchId);
+    expect(closed.snapshots).toHaveLength((prior?.snapshots.length ?? 0) + 1);
+    expect(closed.snapshots.slice(0, -1)).toEqual(prior?.snapshots ?? []);
+  } finally {
+    // Restore only the disposable fixture's trading state for other suites; no live data is used.
+    const reopened = await page.evaluate(async (branchId) => {
+      const current = await (await fetch("/api/seramet/transactions")).json();
+      const day = current.state.paymentOperations.dayCloses.find(
+        (row: { branchId: string; status: string }) =>
+          row.branchId === branchId && row.status === "CLOSED",
+      );
+      if (!day) return 200;
+      const idempotencyKey = crypto.randomUUID();
+      const response = await fetch("/api/seramet/transactions/mutate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify({
+          idempotencyKey,
+          expectedRevision: current.revision,
+          action: "reopenDay",
+          payload: { dayCloseId: day.id, reason: "Disposable browser fixture cleanup" },
+        }),
+      });
+      return response.status;
+    }, branchId);
+    expect(reopened).toBe(200);
+  }
 });

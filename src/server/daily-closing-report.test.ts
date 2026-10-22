@@ -2,7 +2,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { closingReportSections, renderDailyClosingPdf } from "./daily-closing-report";
+import {
+  closingPdfLayout,
+  closingReportSections,
+  renderDailyClosingPdf,
+} from "./daily-closing-report";
 import { closeBusinessDay } from "@/payments/daily-closing";
 import { TransactionEngine, createEmptyTransactionState } from "@/lib/transaction-engine";
 import { allPermissionCodes } from "@/platform/permissions";
@@ -137,7 +141,7 @@ describe("immutable closing PDF", () => {
     expect(pdf.getPageCount()).toBeGreaterThan(0);
     expect(pdf.getCreationDate()).toEqual(new Date(snapshot.closedAt));
   });
-  it("paginates long entries and preserves unsupported character identities explicitly", async () => {
+  it("summarizes long detail lists within three pages without changing the saved record", async () => {
     const { snapshot } = fixture();
     snapshot.dailyReport!.restaurant =
       "Long Restaurant and Hospitality Group Name ".repeat(4) + "\u4e2d\u6587";
@@ -154,9 +158,228 @@ describe("immutable closing PDF", () => {
       sourceId: `invoice-${i}`,
       message: "Long obligation ".repeat(15),
     }));
+    snapshot.dailyReport!.timeZone = "America/Argentina/Buenos_Aires";
+    snapshot.dailyReport!.drawers = Array.from({ length: 20 }, (_, i) => ({
+      id: `drawer-${i}`,
+      tenantId: actor.tenantId,
+      branchId: actor.branchId,
+      employeeId: `cashier-${i}`,
+      baseCurrency: "KES",
+      status: "CLOSED" as const,
+      openedAt: snapshot.closedAt,
+      closedAt: snapshot.closedAt,
+      createdAt: snapshot.closedAt,
+      updatedAt: snapshot.closedAt,
+      openingFloatMinor: 0,
+      expectedCashMinor: 0,
+      countedCashMinor: 0,
+      varianceMinor: 0,
+      varianceReason: "Long recorded variance explanation ".repeat(8),
+      currencyBalances: {
+        KES: { openingFloatMinor: 0, expectedCashMinor: 0, countedCashMinor: 0, varianceMinor: 0 },
+        EUR: { openingFloatMinor: 0, expectedCashMinor: 0, countedCashMinor: 0, varianceMinor: 0 },
+      },
+    }));
+    snapshot.dailyReport!.cashMovements = ["PAID_OUT", "CASH_DROP", "PETTY_CASH"].map(
+      (type, i) => ({
+        id: `movement-${i}`,
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        drawerSessionId: "drawer-0",
+        type: type as "PAID_OUT" | "CASH_DROP" | "PETTY_CASH",
+        amountMinor: 0,
+        currency: "KES",
+        reason: "Layout stress fixture",
+        actor: actor.id,
+        timestamp: snapshot.closedAt,
+      }),
+    );
+    snapshot.tenders = Array.from({ length: 7 }, (_, i) => ({
+      method: `Method ${i}`,
+      amountMinor: 0,
+    }));
+    const original = JSON.stringify(snapshot);
     const bytes = await renderDailyClosingPdf(snapshot);
-    expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(5);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(3);
+    expect(pdf.getKeywords()).toContain(snapshot.dailyReport!.restaurant);
+    expect(JSON.stringify(snapshot)).toBe(original);
+    expect(
+      closingReportSections(snapshot).find((s) => s.title === "Reported nonblocking obligations")!
+        .rows,
+    ).toHaveLength(100);
+    expect(
+      closingReportSections(snapshot).find(
+        (s) => s.title === "Outstanding invoices (not silently settled)",
+      )!.rows,
+    ).toHaveLength(40);
     await evidence("complex-long-report", bytes);
+  });
+  it("uses portrait A4, normal margins, twelve-point body text and double spacing", async () => {
+    expect(closingPdfLayout).toMatchObject({ margin: 72, bodySize: 12, lineHeight: 24, pages: 3 });
+    const { snapshot } = fixture();
+    const report = snapshot.dailyReport!;
+    report.restaurant = "Mona Swahili Restaurant - SAMPLE";
+    report.branch = "Main Branch";
+    report.reference = "SAMPLE-EOD-20261015-001";
+    report.operatorNames = { [actor.id]: "Mary Njeri", cashier: "Grace Achieng" };
+    report.cutoffMinutes = 240;
+    let sample = createEmptyTransactionState(actor.tenantId);
+    const groups = [
+      {
+        gross: 78250,
+        discount: 3900,
+        net: 74350,
+        tax: 11896,
+        total: 86246,
+        lines: [
+          { id: "biryani", name: "Chicken Biryani", quantity: 50, unitPrice: 850 },
+          { id: "pilau", name: "Beef Pilau", quantity: 55, unitPrice: 650 },
+        ],
+      },
+      {
+        gross: 34900,
+        discount: 1740,
+        net: 33160,
+        tax: 5305.6,
+        total: 38465.6,
+        lines: [
+          { id: "beans", name: "Maharagwe", quantity: 80, unitPrice: 180 },
+          { id: "chapati", name: "Chapati", quantity: 140, unitPrice: 50 },
+          { id: "juice", name: "Fresh Mango Juice", quantity: 90, unitPrice: 150 },
+        ],
+      },
+      {
+        gross: 35500,
+        discount: 1780,
+        net: 33720,
+        tax: 5395.2,
+        total: 39115.2,
+        lines: [
+          { id: "breakfast", name: "Swahili Breakfast Combo", quantity: 90, unitPrice: 350 },
+          { id: "coffee", name: "Swahili Coffee", quantity: 40, unitPrice: 100 },
+        ],
+      },
+    ];
+    for (const group of groups) {
+      sample = TransactionEngine.createOrder(
+        sample,
+        {
+          tenantId: actor.tenantId,
+          branchId: actor.branchId,
+          branch: actor.branchId,
+          channel: "Dine In",
+          customer: "Sample customer",
+          cashier: "Grace Achieng",
+          lines: group.lines.map((line) => ({ ...line, productId: line.id, category: "Food" })),
+          financialOverride: {
+            subtotal: group.net,
+            tax: group.tax,
+            total: group.total,
+            financialComponents: {
+              version: 1,
+              currency: "KES",
+              grossSalesMinor: Math.round(group.gross * 100),
+              discountsMinor: Math.round(group.discount * 100),
+              netSalesMinor: Math.round(group.net * 100),
+              serviceChargeMinor: 0,
+              taxMinor: Math.round(group.tax * 100),
+              totalMinor: Math.round(group.total * 100),
+            },
+          },
+        },
+        "SERVED",
+      );
+      const order = sample.orders[0]!;
+      sample = TransactionEngine.createOpenBill(sample, order.id);
+    }
+    report.invoices = sample.bills.map((bill) => ({
+      ...bill,
+      paymentStatus: "PAID",
+      status: "PAID",
+      paid: bill.total,
+    }));
+    expect(report.invoices).toHaveLength(3);
+    expect(
+      report.invoices.reduce((total, bill) => total + bill.financialComponents!.grossSalesMinor, 0),
+    ).toBe(14865000);
+    expect(
+      report.invoices.reduce((total, bill) => total + bill.financialComponents!.totalMinor, 0),
+    ).toBe(16382680);
+    report.outstandingInvoices = [];
+    snapshot.orderedMinor =
+      snapshot.invoicedMinor =
+      snapshot.settledMinor =
+      snapshot.collectedMinor =
+        16382680;
+    snapshot.netRevenueMinor = 14123000;
+    snapshot.taxMinor = 2259680;
+    snapshot.refundsMinor = 180000;
+    snapshot.cashVarianceMinor = -35000;
+    snapshot.invoiceCount =
+      snapshot.receiptCount =
+      snapshot.orderCount =
+      snapshot.settledInvoiceCount =
+        3;
+    snapshot.tenders = [
+      { method: "Cash", amountMinor: 4560000 },
+      { method: "M-Pesa", amountMinor: 9000000 },
+      { method: "Card", amountMinor: 2822680 },
+    ];
+    report.drawers = [
+      {
+        id: "DRAWER-000014",
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        employeeId: "cashier",
+        baseCurrency: "KES",
+        businessDate: snapshot.businessDate,
+        openedAt: "2026-10-15T04:00:00Z",
+        closedAt: snapshot.closedAt,
+        openingFloatMinor: 500000,
+        expectedCashMinor: 4185000,
+        countedCashMinor: 4150000,
+        varianceMinor: -35000,
+        status: "CLOSED",
+        closedBy: actor.id,
+        varianceReason: "Cash short by KES 350. Supervisor review required.",
+        currencyBalances: {
+          KES: {
+            openingFloatMinor: 500000,
+            expectedCashMinor: 4185000,
+            countedCashMinor: 4150000,
+            varianceMinor: -35000,
+          },
+        },
+        createdAt: "2026-10-15T04:00:00Z",
+        updatedAt: snapshot.closedAt,
+      },
+    ];
+    report.cashMovements = [
+      {
+        id: "PAYOUT-SAMPLE",
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        drawerSessionId: "DRAWER-000014",
+        type: "PAID_OUT",
+        amountMinor: 875000,
+        currency: "KES",
+        reason: "Approved produce and kitchen supplies",
+        actor: actor.id,
+        timestamp: snapshot.closedAt,
+      },
+    ];
+    const original = JSON.stringify(snapshot);
+    const bytes = await renderDailyClosingPdf(snapshot);
+    const pdf = await PDFDocument.load(bytes);
+    expect(pdf.getPageCount()).toBe(3);
+    for (const page of pdf.getPages()) {
+      expect(page.getWidth()).toBeCloseTo(595.28);
+      expect(page.getHeight()).toBeCloseTo(841.89);
+    }
+    expect(JSON.stringify(snapshot)).toBe(original);
+    expect(await renderDailyClosingPdf(snapshot)).toEqual(bytes);
+    await evidence("sample-three-page", bytes);
   });
   it("serves only authenticated authorized snapshot revisions with private cache controls", async () => {
     const { repository, day } = fixture();

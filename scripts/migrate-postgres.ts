@@ -6,13 +6,18 @@ import {
   postgresCompatibilityPrelude,
 } from "../src/server/database/postgres-migration-compiler";
 import { migrationFiles } from "../src/server/database/sqlite-test-adapter";
+import { migrationConnectionConfig } from "../src/server/database/migration-connection";
 
 const connectionString = process.env["SERAMET_POSTGRES_URL"];
 if (!connectionString?.startsWith("postgres")) {
   throw new Error("SERAMET_POSTGRES_URL is required for deployment migrations");
 }
 
-const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000 });
+const pool = new Pool({
+  ...migrationConnectionConfig(connectionString),
+  max: 1,
+  connectionTimeoutMillis: 10_000,
+});
 const client = await pool.connect();
 try {
   await client.query("BEGIN");
