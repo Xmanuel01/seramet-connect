@@ -13,6 +13,7 @@ import { createBridge } from "../../local-print-bridge/server.mjs";
 import { parseMajorAmount } from "../../src/payments/money";
 import { printBridgeConfigStorageKey } from "../../src/lib/print-bridge-client-config";
 import { invoiceDisplayName } from "../../src/lib/invoice-split";
+import { PDFDocument } from "pdf-lib";
 
 type EmulatorState = {
   setPaperWidth: (width: number) => void;
@@ -432,6 +433,14 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     );
     await manager.goto("/invoices");
     const invoiceRow = manager.getByRole("row").filter({ hasText: invoiceDisplayName(bill.id) });
+    const invoiceDownload = manager.waitForEvent("download");
+    await invoiceRow.getByRole("button", { name: "Download A4 PDF", exact: true }).click();
+    const invoiceFile = await invoiceDownload;
+    expect(invoiceFile.suggestedFilename()).toBe(`${bill.id}.pdf`);
+    const invoicePath = join(evidence, "invoice.pdf");
+    await invoiceFile.saveAs(invoicePath);
+    expect((await PDFDocument.load(await readFile(invoicePath))).getPageCount()).toBeGreaterThan(0);
+    events.push("UI invoice PDF download saved and parsed successfully");
     await invoiceRow.getByRole("checkbox").check();
     await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
     const verifyPreviewFit = async (page: typeof manager, title: string) => {
@@ -1028,6 +1037,70 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     ).toHaveLength(rasterCommands);
     events.push(
       "Authenticated authoritative cash receipt -> explicit audited raster copy -> actual cashier TCP GS v 0 bands; 12 duplicate submissions produced no additional bands",
+    );
+    await manager.goto("/payment-control");
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await manager.getByText("Branch closing settings", { exact: true }).click();
+    await manager.getByLabel("Closing mode", { exact: true }).selectOption("MULTI_CASHIER_SHIFTS");
+    await manager.getByRole("button", { name: "Save closing settings", exact: true }).click();
+    await expect(manager.getByRole("status")).toContainText("Closing settings saved.");
+    const drawer = (await snapshot()).state.paymentOperations.drawerSessions.find(
+      (row: { employeeId: string; status: string }) =>
+        row.employeeId === employee.id && row.status === "OPEN",
+    );
+    expect(drawer).toBeTruthy();
+    await manager.getByRole("button", { name: "End Shift", exact: true }).click();
+    let closingDialog = manager.getByRole("dialog", { name: "End cashier shift", exact: true });
+    await closingDialog
+      .getByLabel(`Counted KES ${drawer.id}`, { exact: true })
+      .fill(bill.total.toFixed(2));
+    await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
+    await closingDialog.getByRole("button", { name: "Confirm & End Shift", exact: true }).click();
+    await expect(manager.getByRole("status")).toContainText("Cashier shift closed.");
+    state = (await snapshot()).state;
+    expect(
+      state.paymentOperations.drawerSessions.find((row: { id: string }) => row.id === drawer.id)
+        .status,
+    ).toBe("CLOSED");
+    expect(
+      state.paymentOperations.dayCloses.filter(
+        (day: { status: string }) => day.status === "CLOSED",
+      ),
+    ).toHaveLength(0);
+    events.push(
+      "UI counted exact cash and ended cashier shift; drawer closed while business day stayed open",
+    );
+    await manager.getByRole("button", { name: "Close Business Day", exact: true }).click();
+    closingDialog = manager.getByRole("dialog", { name: "Close Business Day", exact: true });
+    await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
+    await closingDialog
+      .getByRole("button", { name: "Confirm & Close Business Day", exact: true })
+      .click();
+    await expect(manager.getByRole("status")).toContainText("Business day closed.");
+    state = (await snapshot()).state;
+    const day = state.paymentOperations.dayCloses.find(
+      (row: { branchId: string; status: string }) =>
+        row.branchId === fixture.firstBranchId && row.status === "CLOSED",
+    );
+    expect(day).toBeTruthy();
+    expect(day.snapshots).toHaveLength(1);
+    expect(day.snapshot.invoicedMinor).toBe(parseMajorAmount(bill.total.toFixed(2), "KES"));
+    expect(day.snapshot.settledMinor).toBe(parseMajorAmount(receipt.total.toFixed(2), "KES"));
+    const closingDownload = manager.waitForEvent("download");
+    await manager.getByRole("button", { name: "Download PDF", exact: true }).click();
+    const closingFile = await closingDownload;
+    const closingPath = join(evidence, "daily-closing.pdf");
+    await closingFile.saveAs(closingPath);
+    expect((await PDFDocument.load(await readFile(closingPath))).getPageCount()).toBe(3);
+    await manager.reload();
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await expect(
+      manager.getByRole("button", { name: "Close Business Day", exact: true }),
+    ).toBeDisabled();
+    await expect(manager.getByRole("button", { name: "Download PDF", exact: true })).toBeVisible();
+    await manager.screenshot({ path: join(evidence, "daily-closing.png"), fullPage: true });
+    events.push(
+      "UI business-day close persisted one balanced immutable snapshot; three-page closing PDF saved and closure survived reload",
     );
     await writeFile(
       join(evidence, "result.json"),
