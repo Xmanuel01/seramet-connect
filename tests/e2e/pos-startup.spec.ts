@@ -19,6 +19,7 @@ test("startup shows only the brand then enters login as soon as the device is ve
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => Object.defineProperty(AbortSignal, "any", { value: undefined }));
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;

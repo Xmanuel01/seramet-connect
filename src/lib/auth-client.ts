@@ -18,16 +18,27 @@ export type DeviceStartup = {
 };
 
 export async function deviceStartup(signal?: AbortSignal): Promise<DeviceStartup> {
-  const response = await fetch("/api/seramet/public/device/startup", {
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { accept: "application/json" },
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-      : AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error("Device status is temporarily unavailable");
-  return response.json() as Promise<DeviceStartup>;
+  const request = new AbortController();
+  const cancel = () => request.abort(signal?.reason);
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+  const timeout = setTimeout(
+    () => request.abort(new DOMException("Device check timed out", "TimeoutError")),
+    10_000,
+  );
+  try {
+    const response = await fetch("/api/seramet/public/device/startup", {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: request.signal,
+    });
+    if (!response.ok) throw new Error("Device status is temporarily unavailable");
+    return (await response.json()) as DeviceStartup;
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", cancel);
+  }
 }
 
 export async function employeePinLogin(identifier: string, pin: string) {
