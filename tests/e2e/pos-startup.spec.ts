@@ -77,6 +77,7 @@ test("failed startup exits the splash and retry recovers without bypassing regis
   await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
   await expect(page.getByLabel("Email or employee code")).toBeDisabled();
   expect(attempts).toBe(2);
+  await expect(page.getByText("Online", { exact: true })).toBeVisible();
 });
 
 test("a stalled device request times out instead of leaving the brand screen forever", async ({
@@ -112,6 +113,8 @@ test("revoked devices keep the keypad visible without permitting employee PIN en
   await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();
   await page.keyboard.type("123456");
   await page.keyboard.press("Enter");
+  await expect(page.getByLabel("PIN entry").locator("span.bg-primary")).toHaveCount(0);
+  await expect(page.getByLabel("PIN entry").locator("span.bg-transparent")).toHaveCount(6);
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
   expect(loginRequests).toBe(0);
 });

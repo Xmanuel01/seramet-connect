@@ -36,6 +36,7 @@ function PosLoginPage() {
   const requiredLength = startup?.policy?.pinLength ?? 6;
   const deviceReady = startup?.state === "ACTIVE" && Boolean(startup.device) && !startupPending;
   const entryDisabled = busy || !deviceReady;
+  const connectionVerified = online && Boolean(startup);
 
   const load = useCallback(async () => {
     if (startupRequest.current) return;
@@ -279,14 +280,14 @@ function PosLoginPage() {
         <header className="flex flex-wrap items-center justify-between gap-4">
           <Logo />
           <div
-            className={`flex items-center gap-2 text-xs font-semibold ${online && deviceReady ? "text-success" : "text-muted-foreground"}`}
+            className={`flex items-center gap-2 text-xs font-semibold ${connectionVerified ? "text-success" : "text-muted-foreground"}`}
           >
-            {online && deviceReady ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+            {connectionVerified ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
             {startupPending
               ? "Connecting"
               : !online
                 ? "Offline"
-                : deviceReady
+                : connectionVerified
                   ? "Online"
                   : "Connection unavailable"}
           </div>
