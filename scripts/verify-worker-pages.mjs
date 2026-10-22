@@ -46,18 +46,35 @@ try {
     await delay(1000);
   }
   assert.ok(ready, "Local Worker must become ready");
-  for (const path of ["/", "/login", "/pos-login", "/staff-login", "/register"]) {
-    const response = await fetch(`http://127.0.0.1:9898${path}`, {
+  for (const [path, heading] of [
+    ["/", "Connecting securely"],
+    ["/login?account=1", "Administrator sign in"],
+    ["/pos-login", "Checking this POS"],
+    ["/staff-login", "Staff account sign in"],
+    ["/register", "Checking your account"],
+  ]) {
+    const requestedUrl = `http://127.0.0.1:9898${path}`;
+    const response = await fetch(requestedUrl, {
       signal: AbortSignal.timeout(20000),
     });
     const html = await response.text();
     assert.equal(response.status, 200, `${path} must render in workerd`);
+    assert.equal(response.redirected, false, `${path} must not redirect`);
+    assert.equal(response.url, requestedUrl, `${path} must remain on its route`);
+    assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+    assert.match(html, new RegExp(`<h1[^>]*>${heading}</h1>`), `${path} must render its heading`);
     assert.ok(
       !html.includes("This page didn&#x27;t load") && !html.includes("This page didn't load"),
       `${path} must not render the error boundary`,
     );
     console.info(`WORKER_PAGE_PASS ${path}`);
   }
+  const defaultLogin = await fetch("http://127.0.0.1:9898/login", { redirect: "manual" });
+  assert.ok([301, 302, 303, 307, 308].includes(defaultLogin.status));
+  assert.equal(
+    new URL(defaultLogin.headers.get("location"), "http://127.0.0.1:9898").pathname,
+    "/pos-login",
+  );
   assert.ok(
     !logs.includes("Disallowed operation called within global scope"),
     "No module-scope runtime operations",
