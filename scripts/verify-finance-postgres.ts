@@ -281,6 +281,57 @@ try {
         (bill) => bill.id === "ci-invoice-approval-race",
       ),
     );
+    await financeConnection
+      .prepare(
+        "UPDATE setup_account_mappings SET finance_signoff_status='APPROVED' WHERE tenant_id=? AND mapping_key='SALES_REVENUE'",
+      )
+      .bind(tenantId)
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,'POS_INVOICE:ci-invoice-approval-race',?,'POS_INVOICE','ci-invoice-approval-race',?,'DRAFT','Disposable orphan','fixture','{}',?)",
+      )
+      .bind(tenantId, branchId, businessDate, stamp)
+      .run();
+    revoked = false;
+    await assert.rejects(
+      repository.saveState(racingState, actor, "Reject orphan draft during revoked approval"),
+    );
+    assert.equal(revoked, true);
+    assert.equal(await repository.revision(tenantId), revisionBeforeRace);
+    assert.equal(
+      Number(
+        (
+          await db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM invoices WHERE tenant_id=? AND id='ci-invoice-approval-race'",
+            )
+            .bind(tenantId)
+            .first<{ count: number }>()
+        )?.count,
+      ),
+      0,
+    );
+    const orphan = await db
+      .prepare(
+        "SELECT status FROM journal_entries WHERE tenant_id=? AND id='POS_INVOICE:ci-invoice-approval-race'",
+      )
+      .bind(tenantId)
+      .first<{ status: string }>();
+    assert.equal(orphan?.status, "DRAFT");
+    assert.equal(
+      Number(
+        (
+          await db
+            .prepare(
+              "SELECT COUNT(*) AS count FROM journal_lines WHERE tenant_id=? AND journal_entry_id='POS_INVOICE:ci-invoice-approval-race'",
+            )
+            .bind(tenantId)
+            .first<{ count: number }>()
+        )?.count,
+      ),
+      0,
+    );
   } finally {
     db.batch = batch;
     await financeConnection.close();
@@ -288,6 +339,7 @@ try {
   console.log(
     "Real PostgreSQL separate-connection finance approval withdrawal and atomic rollback: PASS",
   );
+  console.log("Real PostgreSQL orphan draft cannot bypass withdrawn finance approval: PASS");
 } finally {
   await db.close();
 }

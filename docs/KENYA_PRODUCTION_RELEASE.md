@@ -199,9 +199,9 @@ it does not introduce another ledger or change invoice amounts.
 - Release review reproduced an approval race: withdrawing account approval after
   the initial read but before the batch still allowed issuance. Journal creation
   now revalidates approved mappings, account status/currency/type and branch
-  override precedence inside the atomic write. Missing authorization produces no
-  parent journal, so the existing child-line foreign key fails and rolls back the
-  entire invoice/state/revision transaction. Existing unpaid reversals retain
+  override precedence inside the atomic write. Missing authorization fails the
+  journal's mandatory tenant constraint and rolls back the entire invoice/state/revision
+  transaction, even if a malformed orphan draft journal already exists. Existing unpaid reversals retain
   their original recorded accounts. Focused cases cover approval withdrawal,
   account deactivation and a newly pending branch override; PostgreSQL certification
   also withdraws approval using a separate connection before the write.

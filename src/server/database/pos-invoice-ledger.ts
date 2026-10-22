@@ -68,7 +68,7 @@ function approvedPostingGuard(input: InvoiceInput, accounts: Accounts) {
         )))
     )`;
   });
-  return { sql: ` WHERE ${clauses.join(" AND ")}`, values };
+  return { sql: clauses.join(" AND "), values };
 }
 
 function reject(message: string): never {
@@ -258,9 +258,9 @@ export class PosInvoiceLedger {
     if ((post || reverse) && current.totalMinor > 0) {
       const sourceType = reverse ? "POS_INVOICE_REVERSAL" : "POS_INVOICE";
       const journalId = `${sourceType}:${input.invoiceId}`;
-      // Revalidate at the write boundary. If approval changed after the initial
-      // read, no journal is inserted and the child-line FK rolls the batch back.
-      const guard = reverse ? { sql: "", values: [] } : approvedPostingGuard(input, accounts);
+      // A failed write-boundary check violates the mandatory tenant constraint,
+      // aborting the whole batch even if an orphan draft journal already exists.
+      const guard = reverse ? { sql: "1=1", values: [] } : approvedPostingGuard(input, accounts);
       const lines = [
         { accountId: accounts.CUSTOMER_RECEIVABLE, signed: current.totalMinor },
         { accountId: accounts.SALES_REVENUE, signed: -current.netSalesMinor },
@@ -273,9 +273,10 @@ export class PosInvoiceLedger {
             `INSERT INTO journal_entries
          (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,
           correlation_id,payload_json,created_at,posted_at)
-         SELECT ?,?,?,?,?,?,'DRAFT',?,?,?,?,NULL${guard.sql}`,
+         SELECT CASE WHEN (${guard.sql}) THEN ? ELSE NULL END,?,?,?,?,?,'DRAFT',?,?,?,?,NULL`,
           )
           .bind(
+            ...guard.values,
             input.tenantId,
             journalId,
             input.branchId,
@@ -286,7 +287,6 @@ export class PosInvoiceLedger {
             input.correlationId,
             JSON.stringify({ invoiceId: input.invoiceId, actorId: input.actorId, ...snapshot }),
             input.stamp,
-            ...guard.values,
           ),
       );
       lines.forEach((line, index) => {

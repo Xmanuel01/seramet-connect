@@ -310,6 +310,39 @@ describe("authoritative invoice recognition", () => {
     },
   );
 
+  it("cannot reuse an orphan draft journal when posting approval is withdrawn", async () => {
+    const bill = invoice();
+    await db
+      .prepare(
+        "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,'POS_INVOICE:invoice-1',?,'POS_INVOICE','invoice-1',?,'DRAFT','Disposable orphan','fixture','{}',?)",
+      )
+      .bind(tenantId, branchId, bill.businessDate!, bill.issuedAt)
+      .run();
+    const batch = db.batch.bind(db);
+    vi.spyOn(db, "batch").mockImplementationOnce(async (statements) => {
+      await db
+        .prepare(
+          "UPDATE setup_account_mappings SET finance_signoff_status='REJECTED' WHERE tenant_id=? AND mapping_key='SALES_REVENUE'",
+        )
+        .bind(tenantId)
+        .run();
+      return batch(statements);
+    });
+    const state = createEmptyTransactionState(tenantId);
+    state.bills.push(bill);
+    await expect(
+      repo.saveState(state, actor, "Do not trust orphan posting state"),
+    ).rejects.toThrow();
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM invoices").first("count")).toBe(0);
+    expect(
+      await db
+        .prepare("SELECT status FROM journal_entries WHERE id='POS_INVOICE:invoice-1'")
+        .first("status"),
+    ).toBe("DRAFT");
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM journal_lines").first("count")).toBe(0);
+    expect(await repo.revision(tenantId)).toBe(0);
+  });
+
   it.each(["PENDING", "REJECTED"])(
     "requires approved mappings, not %s signoff",
     async (signoff) => {
