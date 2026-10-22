@@ -47,7 +47,7 @@ payment or financial permissions. The verified role permissions determine the
 post-login destination. Inactive roles no longer contribute permissions; expired
 employment and revoked/expired sessions are denied during server revalidation.
 
-Unregistered phones offer a separate **My attendance - linked account sign in**
+Unregistered phones offer a separate **Staff sign in**
 link to the existing verified account login. It can serve an employee whose
 external account is **already explicitly linked** to that authoritative employee
 identity and whose role permits attendance. It does not enroll the phone as a POS
