@@ -188,7 +188,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     }
 
     if (runtime.productionLike) assertProductionOperationalReady(env);
-    const repo = createTransactionRepository(env.SERAMET_DB);
+    const repo = createTransactionRepository(env.SERAMET_DB, env);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);

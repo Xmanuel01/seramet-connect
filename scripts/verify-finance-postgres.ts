@@ -4,6 +4,11 @@ import { PostgresD1Database } from "../src/server/database/postgres-database";
 import { FinancialLedgerService } from "../src/finance/financial-ledger-service";
 import { allPermissionCodes, permissions } from "../src/platform/permissions";
 import type { ServerActor } from "../src/lib/seramet-auth";
+import { D1AuthoritativeTransactionRepository } from "../src/server/database/authoritative-transaction-repository";
+import { hydrateAuthoritativeConfiguration } from "../src/server/database/authoritative-configuration";
+import { createEmptyTransactionState, type BillingRecord } from "../src/lib/transaction-engine";
+import { businessDateForTimestamp } from "../src/lib/business-date";
+import { PaymentOrchestrator } from "../src/payments/payment-orchestrator";
 
 const url = process.env.SERAMET_POSTGRES_URL;
 const parsed = url ? new URL(url) : null;
@@ -117,6 +122,121 @@ try {
     /IMMUTABLE/i,
   );
   console.log("Real PostgreSQL finance isolation, journal balance and immutability: PASS");
+
+  await db
+    .prepare(
+      "INSERT INTO users (tenant_id,id,name,active,payload_json,created_at,updated_at) VALUES (?,?,'Disposable reviewer',1,'{}',?,?)",
+    )
+    .bind(tenantId, actor.id, stamp, stamp)
+    .run();
+  for (const [id, type] of [
+    ["receivable", "ASSET"],
+    ["service", "REVENUE"],
+    ["cash", "CASH"],
+  ]) {
+    await db
+      .prepare(
+        "INSERT INTO accounts (tenant_id,id,code,name,account_type,currency,active,payload_json) VALUES (?,?,?,?,?,'KES',1,'{}')",
+      )
+      .bind(tenantId, id, id, id, type)
+      .run();
+  }
+  for (const [key, account] of [
+    ["CUSTOMER_RECEIVABLE", "receivable"],
+    ["SALES_REVENUE", "revenue"],
+    ["TAX_PAYABLE", "tax"],
+    ["SERVICE_CHARGE", "service"],
+  ]) {
+    await db
+      .prepare(
+        "INSERT INTO setup_account_mappings (tenant_id,id,scope_key,mapping_key,requirement,account_id,status,finance_signoff_status,updated_by,updated_at) VALUES (?,?,'TENANT',?,'REQUIRED',?,'CONFIGURED','APPROVED',?,?)",
+      )
+      .bind(tenantId, key, key, account, actor.id, stamp)
+      .run();
+  }
+  await db
+    .prepare(
+      "INSERT INTO payment_methods (tenant_id,id,code,category,receivable_account_id,cash_account_id,settlement_account_id,active,payload_json) VALUES (?,'cash-method','CASH','CASH','receivable','cash','cash',1,'{}')",
+    )
+    .bind(tenantId)
+    .run();
+  await hydrateAuthoritativeConfiguration(db, {}, true);
+  const repository = new D1AuthoritativeTransactionRepository(db, { requireInvoiceLedger: true });
+  const businessDate = businessDateForTimestamp(stamp, "Africa/Nairobi", 240);
+  const invoice: BillingRecord = {
+    id: "ci-invoice",
+    tenantId,
+    branchId,
+    branch: branchId,
+    orderIds: [],
+    customer: "Disposable customer",
+    status: "OPEN",
+    paymentStatus: "UNPAID",
+    issuedAt: stamp,
+    dueAt: stamp,
+    businessDate,
+    lines: [],
+    subtotal: 11,
+    tax: 2.5,
+    total: 13.5,
+    paid: 0,
+    financialComponents: {
+      version: 1,
+      currency: "KES",
+      grossSalesMinor: 1000,
+      discountsMinor: 0,
+      netSalesMinor: 1000,
+      serviceChargeMinor: 100,
+      taxMinor: 250,
+      totalMinor: 1350,
+    },
+  };
+  let state = createEmptyTransactionState(tenantId);
+  state.bills.push(invoice);
+  await repository.saveState(state, actor, "Disposable PostgreSQL invoice issuance");
+  const orchestrator = new PaymentOrchestrator();
+  state = orchestrator.openDrawer(await repository.loadState(tenantId), {
+    tenantId,
+    branchId,
+    employeeId: actor.id,
+    openingFloatMinor: 0,
+    currency: "KES",
+    actor: actor.name,
+  });
+  await repository.saveState(state, actor, "Disposable PostgreSQL drawer");
+  state = orchestrator.recordCash(state, {
+    tenantId,
+    branchId,
+    drawerSessionId: state.paymentOperations!.drawerSessions[0]!.id,
+    paymentMethodId: "cash-method",
+    invoiceId: invoice.id,
+    amountMinor: 1350,
+    cashTenderedMinor: 1350,
+    currency: "KES",
+    actor: actor.name,
+  });
+  await repository.saveState(state, actor, "Disposable PostgreSQL cash collection");
+  await repository.saveState(state, actor, "Repeated state must not duplicate recognition");
+  const recognition = await db
+    .prepare(
+      "SELECT COUNT(*) AS count FROM journal_entries WHERE tenant_id=? AND source_type='POS_INVOICE' AND source_id=? AND status='POSTED'",
+    )
+    .bind(tenantId, invoice.id)
+    .first<{ count: number }>();
+  assert.equal(Number(recognition?.count), 1);
+  const receivable = await db
+    .prepare(
+      "SELECT SUM(debit_minor)-SUM(credit_minor) AS balance FROM journal_lines WHERE tenant_id=? AND account_id='receivable'",
+    )
+    .bind(tenantId)
+    .first<{ balance: number }>();
+  assert.equal(Number(receivable?.balance), 0);
+  const updated = await service.statement({ branchId, from: businessDate, to: businessDate });
+  assert.ok(!updated.issues.some((issue) => issue.code === "SETTLED_SALES_NOT_IN_GL"));
+  assert.equal(updated.trial.periodDebitMinor, updated.trial.periodCreditMinor);
+  console.log(
+    "Real PostgreSQL source-linked invoice, cash collection and no duplicate revenue: PASS",
+  );
 } finally {
   await db.close();
 }

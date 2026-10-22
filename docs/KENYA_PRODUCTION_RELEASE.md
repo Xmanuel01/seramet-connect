@@ -37,6 +37,14 @@ remain separate from production acceptance.
 - Supabase CLI project discovery works. `seramet-staging` is active; the separate
   project named `Seramet` is inactive. Other existing projects are not release
   targets and will not be modified.
+- The owner-authorized **new** `seramet-production` project is now active in
+  SafariX, whose subscription was verified as `free` through the official
+  organization API using the existing CLI sign-in. No subscription upgrade or
+  paid add-on was requested. The generated bootstrap password is retained in
+  Windows Credential Manager, not a plaintext dump, repository file or log.
+  The dedicated read-only Management API reports PostgreSQL **17.11** and **zero
+  public tables**. No application migrations or records have been copied/applied.
+  This read does not certify the Worker's eventual PostgreSQL/TLS path.
 - The directive authorizes a fresh production database, **not** deleting,
   overwriting, restoring into or reusing either existing project.
 - Repository-required schema version is **30**, with migrations 0001 through 0030.
@@ -50,30 +58,30 @@ remain separate from production acceptance.
 The classification is for production-hosted acceptance. BLOCKED does not mean the
 local implementation is absent. Do not convert inherited CI passes into live passes.
 
-| Area                       | State    | Evidence / Missing Acceptance                                                                                      |
-| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
-| Frontend/routing           | FIX      | Public dashboard loads; site runs development configuration.                                                       |
-| Backend/Workers            | FIX      | Public readiness incorrectly reports success without production resources.                                         |
-| Database/migrations        | BLOCKED  | Fresh production target and its cost must be verified; schema 30 required.                                         |
-| Auth/authorization         | BLOCKED  | Supabase implementation exists; dedicated production Auth is not configured.                                       |
-| Tenant/branch isolation    | BLOCKED  | Engineering tests exist; production negative-role tests not executed.                                              |
-| Staff/PIN/device security  | BLOCKED  | Production membership, activation and revocation acceptance outstanding.                                           |
-| Sales/accounting           | FIX      | Release notes record missing invoice-to-ledger posting; it is not resolved or re-certified by this patch.          |
-| Menu/import/publication    | BLOCKED  | Existing staged pipeline; genuine production scanner not certified. Keep imports fail-closed.                      |
-| Inventory/procurement      | BLOCKED  | Requires production schema, account mappings and authorized synthetic workflow.                                    |
-| Closing/reconciliation/PDF | BLOCKED  | Immutable report implementation and local layout work retained; production reconciliation not executed.            |
-| Payment providers          | BLOCKED  | No specific approval for real charges; verify each provider separately.                                            |
-| Uber Eats                  | BLOCKED  | Test-app token/scopes succeeded; store list returned no stores; production access not granted.                     |
-| Glovo/Bolt Food            | BLOCKED  | Partner approval, credentials and real contract acceptance still required.                                         |
-| TendePay                   | DEFERRED | Owner has not completed registration; keep inactive.                                                               |
-| Queues/Cron/import jobs    | BLOCKED  | No production bindings or executing consumer/sentinel verified.                                                    |
-| Secrets/environment        | FIX      | Explicit production bindings and separate credentials required. Never copy staging secrets.                        |
-| CI/CD                      | MISSING  | Existing CI and staging deployment are present; reviewed production release/migration workflow is not established. |
-| Monitoring/recovery        | BLOCKED  | Production alerts, durable recovery point and isolated restore evidence unavailable.                               |
-| Physical printing          | BLOCKED  | Only Microsoft Print to PDF was detected; real thermal output/recovery not certified.                              |
-| Brevo reports/email        | BLOCKED  | Supabase SMTP does not provide Worker API configuration; live report delivery unverified.                          |
-| Public privacy notice      | MISSING  | No public `/privacy` route found; operator identity and retention policy require confirmation.                     |
-| Merchant OAuth             | MISSING  | Existing gateway has signed callbacks; Uber merchant authorization/state/code-exchange flow not found.             |
+| Area                       | State    | Evidence / Missing Acceptance                                                                                       |
+| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| Frontend/routing           | FIX      | Public dashboard loads; site runs development configuration.                                                        |
+| Backend/Workers            | FIX      | Public readiness incorrectly reports success without production resources.                                          |
+| Database/migrations        | BLOCKED  | Fresh Free-plan target exists and is empty; schema 30 is not yet applied or certified on PostgreSQL 17.11.          |
+| Auth/authorization         | BLOCKED  | Supabase implementation exists; dedicated production Auth is not configured.                                        |
+| Tenant/branch isolation    | BLOCKED  | Engineering tests exist; production negative-role tests not executed.                                               |
+| Staff/PIN/device security  | BLOCKED  | Production membership, activation and revocation acceptance outstanding.                                            |
+| Sales/accounting           | FIX      | Source-linked invoice recognition implemented and focused-tested; combined PostgreSQL/lifecycle acceptance pending. |
+| Menu/import/publication    | BLOCKED  | Existing staged pipeline; genuine production scanner not certified. Keep imports fail-closed.                       |
+| Inventory/procurement      | BLOCKED  | Requires production schema, account mappings and authorized synthetic workflow.                                     |
+| Closing/reconciliation/PDF | BLOCKED  | Immutable report implementation and local layout work retained; production reconciliation not executed.             |
+| Payment providers          | BLOCKED  | No specific approval for real charges; verify each provider separately.                                             |
+| Uber Eats                  | BLOCKED  | Test-app token/scopes succeeded; store list returned no stores; production access not granted.                      |
+| Glovo/Bolt Food            | BLOCKED  | Partner approval, credentials and real contract acceptance still required.                                          |
+| TendePay                   | DEFERRED | Owner has not completed registration; keep inactive.                                                                |
+| Queues/Cron/import jobs    | BLOCKED  | No production bindings or executing consumer/sentinel verified.                                                     |
+| Secrets/environment        | FIX      | Explicit production bindings and separate credentials required. Never copy staging secrets.                         |
+| CI/CD                      | MISSING  | Existing CI and staging deployment are present; reviewed production release/migration workflow is not established.  |
+| Monitoring/recovery        | BLOCKED  | Production alerts, durable recovery point and isolated restore evidence unavailable.                                |
+| Physical printing          | BLOCKED  | Only Microsoft Print to PDF was detected; real thermal output/recovery not certified.                               |
+| Brevo reports/email        | BLOCKED  | Supabase SMTP does not provide Worker API configuration; live report delivery unverified.                           |
+| Public privacy notice      | MISSING  | No public `/privacy` route found; operator identity and retention policy require confirmation.                      |
+| Merchant OAuth             | MISSING  | Existing gateway has signed callbacks; Uber merchant authorization/state/code-exchange flow not found.              |
 
 ## Corrections In This Branch
 
@@ -112,21 +120,62 @@ local implementation is absent. Do not convert inherited CI passes into live pas
 ## Resource Authorization And Access
 
 The owner approved proceeding with production setup and new resource costs during
-the voice conversation. An actual project quote or subscription plan still could
-not be retrieved: the connected Supabase tool returns a missing connection-link
-error, the available CLI lists projects but not the organization subscription,
-and browser automation was unavailable. No priced project was created without
-its actual charge being established. This is an access/quotation blocker, not a
-request to authorize another sandbox. Existing Supabase projects remain unchanged.
+the voice conversation. The connector and browser were unavailable, but the
+official Management API was accessed using only the existing CLI credential in
+memory. The organization is on the Free plan and had one active project before
+creation; the provider accepted the second Free project. No plan change or paid
+add-on was used. Existing projects remain unchanged. Free-plan availability is
+not a production SLA or evidence of backup retention; recovery must be certified
+separately before trading. See [Supabase's billing policy](https://supabase.com/docs/guides/platform/billing-on-supabase).
+
+The native production backup API currently reports **zero backups** and **PITR
+disabled**. No recoverability claim is made. The staging-only backup/migration
+guards are unchanged and must not be bypassed or pointed at production.
+
+## Invoice-To-Ledger Correction
+
+The existing payment journal debits the collection account and credits a
+receivable. Ordinary invoices were missing the other half: a source-linked
+`POS_INVOICE` journal establishing that receivable against sales, tax and service.
+The correction adds this projection to the existing atomic repository batch;
+it does not introduce another ledger or change invoice amounts.
+
+- Staging/production API and integration repository factories require posting.
+  Disposable legacy-domain tests can retain their previous repository mode;
+  explicit strict-mode regression tests exercise the production behavior.
+- Account mappings are tenant/branch scoped, approved by finance, active, correctly
+  classified and currency-matched. A pending branch override never falls through
+  to a tenant approval. `CUSTOMER_RECEIVABLE` is now a required onboarding mapping.
+- An invoice records its approved account mapping and verified financial
+  components in the normalized persisted snapshot. Historical invoices without
+  such evidence require explicit reconciliation; there is no automatic backfill.
+- For KSh 124 comprising KSh 100 net sales, KSh 10 service and KSh 14 tax,
+  issuance debits receivables by 12,400 minor units and credits the three component
+  accounts by 10,000, 1,000 and 1,400. Cash collection debits cash by 12,400 and
+  credits the same receivable by 12,400: zero remaining receivable, no duplicate revenue.
+- Payment allocation must use the same receivable, branch and currency as the
+  invoice. Existing house-account credit-control records do not post a second
+  revenue journal once issuance owns recognition.
+- Unpaid split/merge/void reverses the source invoice once. Paid invoices cannot
+  be silently voided; posted amounts cannot be overwritten. Closed-period and
+  immutable-journal protections remain enforced.
+- Invoice projection, journal lines, posting, authoritative state, mutation
+  identity and revision commit together; a posting failure rolls the batch back.
+- The disposable financial PostgreSQL job now covers both versions 16 and 17,
+  including actual invoice issuance and orchestrated cash collection. New results,
+  not older finance passes, are required for acceptance.
+
+This correction is not certification of every refund, foreign-currency,
+marketplace settlement or credit-note path. Those and the complete closing
+lifecycle remain release gates; partial focused success is not a live-sales GO.
 
 ## Minimum Safe Execution Sequence
 
-1. Confirm the organization's subscription and any charges for a **new** production
-   project. Free quota is not an assumption; do not create a paid resource without
-   owner approval. UI billing access was unavailable in this session.
-2. Provision the authorized fresh database with a generated secret stored through
-   protected channels. Verify project identity and emptiness before running SQL.
-   Do not restore staging data, accounts or queued jobs.
+1. **Complete:** verified the Free subscription and created the dedicated project
+   without changing the plan. Any future paid upgrade/add-on requires its own quote.
+2. **Complete:** generated and securely retained a new database bootstrap secret;
+   verified the target identity and absence of application tables through a read-only
+   query. Do not restore staging data, accounts or queued jobs.
 3. Validate current database/driver compatibility, verified TLS and pooling.
    Use `scripts/migrate-postgres.ts` for the complete authoritative migration
    sequence; do not manufacture migration history or use staging-only guards on
@@ -169,7 +218,8 @@ No production schema was modified or reset.
 
 ## External Actions Still Required
 
-- Confirm free eligibility or approve the actual new-database cost before creation.
+- Establish durable production backups and isolated recovery; the Free project
+  must not be described as recoverable merely because it exists.
 - Provide final business/operator privacy details through approved configuration.
 - Complete Uber test-store provisioning and obtain separate production approval
   before live merchant/order activation. Rotate the exposed test secret securely.
