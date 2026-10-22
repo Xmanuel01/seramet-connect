@@ -1,0 +1,128 @@
+name: Deploy approved production update
+
+on:
+  workflow_run:
+    workflows: [Seramet CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: seramet-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.SERAMET_PRODUCTION_AUTO_DEPLOY == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 30
+    env:
+      SERAMET_PRODUCTION_AUTO_DEPLOY: ${{ vars.SERAMET_PRODUCTION_AUTO_DEPLOY }}
+      SERAMET_PRODUCTION_APPROVED_SHA: ${{ vars.SERAMET_PRODUCTION_APPROVED_SHA }}
+      SERAMET_PRODUCTION_PROJECT_REF: ${{ vars.SERAMET_PRODUCTION_PROJECT_REF }}
+      SERAMET_SUPABASE_URL: ${{ vars.SERAMET_SUPABASE_URL }}
+      SERAMET_PUBLIC_ORIGIN: ${{ vars.SERAMET_PUBLIC_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Never execute code from the upstream event's branch or artifacts.
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Require approved main CI, fresh recovery and configured production
+        id: gate
+        run: node scripts/production-deployment-gate.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Require dedicated deployment credentials and bindings
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SERAMET_CLOUDFLARE_HYPERDRIVE_ID: ${{ vars.SERAMET_CLOUDFLARE_HYPERDRIVE_ID }}
+          SERAMET_CLOUDFLARE_R2_BUCKET: ${{ vars.SERAMET_CLOUDFLARE_R2_BUCKET }}
+          SERAMET_CLOUDFLARE_QUEUE: ${{ vars.SERAMET_CLOUDFLARE_QUEUE }}
+          SERAMET_CLOUDFLARE_DLQ: ${{ vars.SERAMET_CLOUDFLARE_DLQ }}
+          SERAMET_CLOUDFLARE_SCAN_QUEUE: ${{ vars.SERAMET_CLOUDFLARE_SCAN_QUEUE }}
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID SERAMET_CLOUDFLARE_HYPERDRIVE_ID SERAMET_CLOUDFLARE_R2_BUCKET SERAMET_CLOUDFLARE_QUEUE SERAMET_CLOUDFLARE_DLQ SERAMET_CLOUDFLARE_SCAN_QUEUE; do
+            test -n "${!name}" || { echo "Missing production setting: $name"; exit 1; }
+          done
+      - name: Retrieve the actual recovery verification artifact
+        run: >-
+          gh run download "$RECOVERY_RUN" --repo "$GITHUB_REPOSITORY"
+          --name "production-recovery-verification-${CANDIDATE}-${RECOVERY_RUN}"
+          --dir "$RUNNER_TEMP/production-recovery-proof"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.gate.outputs.candidate }}
+          RECOVERY_RUN: ${{ steps.gate.outputs.recovery_run }}
+      - run: npm ci
+      - run: node --test scripts/production-deployment-gate.test.mjs
+      - run: npm run build
+      - run: npm run audit:bundle
+      - run: node scripts/verify-cloudflare-events.mjs
+      - name: Generate production configuration without replacing runtime secrets
+        run: node scripts/render-cloudflare-config.mjs production
+        env:
+          SERAMET_REUSE_EXISTING_VARS: "true"
+          SERAMET_CLOUDFLARE_WORKER_NAME: seramet-connect
+          SERAMET_CLOUDFLARE_HYPERDRIVE_ID: ${{ vars.SERAMET_CLOUDFLARE_HYPERDRIVE_ID }}
+          SERAMET_CLOUDFLARE_R2_BUCKET: ${{ vars.SERAMET_CLOUDFLARE_R2_BUCKET }}
+          SERAMET_CLOUDFLARE_QUEUE: ${{ vars.SERAMET_CLOUDFLARE_QUEUE }}
+          SERAMET_CLOUDFLARE_DLQ: ${{ vars.SERAMET_CLOUDFLARE_DLQ }}
+          SERAMET_CLOUDFLARE_SCAN_QUEUE: ${{ vars.SERAMET_CLOUDFLARE_SCAN_QUEUE }}
+          SERAMET_BUILD_ID: ${{ steps.gate.outputs.candidate }}
+      - name: Recheck release immediately before deployment
+        run: |
+          node scripts/production-deployment-gate.mjs
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { verifyRecoveryEvidence } from './scripts/production-deployment-gate.mjs';
+          const proof = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/production-recovery-proof/verification.json`, 'utf8'));
+          verifyRecoveryEvidence(proof, process.env.CANDIDATE, process.env.SERAMET_PRODUCTION_PROJECT_REF);
+          NODE
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ steps.gate.outputs.candidate }}
+      - name: Deploy approved update
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { verifyProductionBindings } from './scripts/production-deployment-gate.mjs';
+          const config = JSON.parse(readFileSync('.seramet/wrangler.generated.json', 'utf8'));
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          if (!/^[a-f0-9]{32}$/.test(account ?? '')) throw new Error('PRODUCTION_ACCOUNT_INVALID');
+          const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/seramet-connect/settings`, {
+            headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` },
+            redirect: 'error', signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok) throw new Error('PRODUCTION_SETTINGS_UNAVAILABLE');
+          verifyProductionBindings(await response.json(), {
+            ...process.env,
+            SERAMET_CLOUDFLARE_HYPERDRIVE_ID: config.hyperdrive[0].id,
+            SERAMET_CLOUDFLARE_R2_BUCKET: config.r2_buckets[0].bucket_name,
+            SERAMET_CLOUDFLARE_QUEUE: config.queues.producers[0].queue,
+            SERAMET_CLOUDFLARE_SCAN_QUEUE: config.queues.producers[1].queue,
+          });
+          NODE
+          npx --yes wrangler@4.86.0 deploy --config .seramet/wrangler.generated.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify public runtime and exact deployed revision
+        run: node scripts/verify-production-health.mjs
+        env:
+          SERAMET_EXPECTED_BUILD_ID: ${{ steps.gate.outputs.candidate }}
