@@ -248,6 +248,29 @@ describe("authoritative invoice recognition", () => {
     expect(await movements()).toEqual(before);
   });
 
+  it("requires actual posted journal evidence, not only a persisted posting flag", async () => {
+    const state = createEmptyTransactionState(tenantId);
+    state.bills.push({ ...invoice(), status: "DRAFT_BILL" });
+    await repo.saveState(state, actor, "Create disposable draft");
+    const row = await db
+      .prepare("SELECT payload_json FROM invoices WHERE tenant_id=? AND id=?")
+      .bind(tenantId, "invoice-1")
+      .first<{ payload_json: string }>();
+    const payload = JSON.parse(row!.payload_json);
+    payload.invoiceLedger.posted = true;
+    await db
+      .prepare("UPDATE invoices SET payload_json=? WHERE tenant_id=? AND id=?")
+      .bind(JSON.stringify(payload), tenantId, "invoice-1")
+      .run();
+    state.bills[0]!.status = "OPEN";
+    await expect(
+      repo.saveState(state, actor, "Cannot trust incomplete posting evidence"),
+    ).rejects.toThrow(/Persisted invoice posting is missing/);
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM journal_entries").first("count")).toBe(
+      0,
+    );
+  });
+
   it.each(["PENDING", "REJECTED"])(
     "requires approved mappings, not %s signoff",
     async (signoff) => {
@@ -280,6 +303,27 @@ describe("authoritative invoice recognition", () => {
       );
     },
   );
+
+  it("revalidates account approval when an unposted draft becomes an invoice", async () => {
+    const state = createEmptyTransactionState(tenantId);
+    state.bills.push({ ...invoice(), status: "DRAFT_BILL" });
+    await repo.saveState(state, actor, "Unposted invoice draft");
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM journal_entries").first("count")).toBe(
+      0,
+    );
+    await db
+      .prepare(
+        "UPDATE setup_account_mappings SET finance_signoff_status='REJECTED' WHERE mapping_key='SALES_REVENUE'",
+      )
+      .run();
+    state.bills[0]!.status = "OPEN";
+    await expect(
+      repo.saveState(state, actor, "Approval withdrawn before issuance"),
+    ).rejects.toThrow(/approved, active SALES_REVENUE/);
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM journal_entries").first("count")).toBe(
+      0,
+    );
+  });
 
   it("does not use another branch's account or fall back past a pending branch override", async () => {
     await db

@@ -116,6 +116,36 @@ local implementation is absent. Do not convert inherited CI passes into live pas
    This is a compatible patch, not a major upgrade or advisory suppression.
    `npm audit --omit=dev --audit-level=high` now reports zero known vulnerabilities.
    A clean audit does not certify that the deployed application is secure.
+8. A separate owner-only production recovery workflow captures a consistent
+   read-only application snapshot, retains authenticated encrypted artifacts and
+   verifies restoration only in an isolated PostgreSQL 17 target. It is not a
+   production restore or migration workflow. See [Production Recovery](PRODUCTION_RECOVERY.md)
+   for required separate credentials, coverage limits and the remaining live gate.
+
+## Current Certification Evidence
+
+- Commit `e136c89a13e08bc4114e69ccac6e5f172142a180` passed GitHub validation
+  (unit/typecheck/lint/build/bundle/security), financial PostgreSQL 16 and 17,
+  menu PostgreSQL, CRM PostgreSQL, source policy and the two-terminal browser
+  workflow. These results do not certify subsequent recovery changes; the final
+  combined commit must receive new checks.
+- The bounded local full-suite run completed with 1,141 passes and three failures:
+  two five-second timeouts and the draft-account-approval regression during an
+  in-progress edit. The corrected code passed all 35 tests in the affected three
+  files serially, without longer timeouts or weaker assertions. This focused
+  rerun does not turn the failed aggregate run into a pass.
+- New recovery unit tests cover actor/rerun authorization before secret access,
+  approved identity, dedicated read-only login, TLS overrides, isolated restore
+  target, evidence freshness/integrity, authenticated encryption and safe errors.
+  Ordinary CI includes an actual PostgreSQL 17 encrypted restore fixture. This
+  fixture contains synthetic local records, not a production recovery point.
+- Native production recovery inspection found zero backups and PITR disabled.
+  The manual production workflow has not been dispatched and its separate backup
+  credential, trust root, encryption key and approved main revision are not yet
+  configured. Production migration and live recovery remain **BLOCKED**.
+- Cloudflare's automatic PR build completed, but its deployment inventory still
+  points to the pre-existing October 20 version. Build success is not deployment
+  evidence and did not change the live site.
 
 ## Resource Authorization And Access
 

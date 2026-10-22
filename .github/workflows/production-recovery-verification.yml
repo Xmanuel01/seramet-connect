@@ -1,0 +1,104 @@
+name: Production encrypted recovery verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: seramet-production
+  cancel-in-progress: false
+
+jobs:
+  verify-recovery:
+    if: github.ref == 'refs/heads/main' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: seramet_production_restore
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable_restore_only
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d seramet_production_restore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SERAMET_PRODUCTION_OPERATION: verify-recovery
+      SERAMET_PRODUCTION_APPROVED_SHA: ${{ vars.SERAMET_PRODUCTION_APPROVED_SHA }}
+      SERAMET_PRODUCTION_PROJECT_REF: ${{ vars.SERAMET_PRODUCTION_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate approved production identity before receiving credentials
+        run: node --input-type=module -e "import { requireProductionRecoveryAuthorization } from './scripts/production-recovery-core.mjs'; requireProductionRecoveryAuthorization(process.env)"
+      - run: npm ci
+      - name: Prepare independently pinned production trust root
+        env:
+          SERAMET_PRODUCTION_POSTGRES_CA_PEM: ${{ secrets.SERAMET_PRODUCTION_POSTGRES_CA_PEM }}
+          SERAMET_PRODUCTION_POSTGRES_CA_SHA256: ${{ secrets.SERAMET_PRODUCTION_POSTGRES_CA_SHA256 }}
+        run: node scripts/prepare-production-recovery-ca.mjs
+      - name: Install matching PostgreSQL client
+        shell: bash
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+      - name: Capture one consistent read-only production snapshot
+        env:
+          SERAMET_PRODUCTION_BACKUP_POSTGRES_URL: ${{ secrets.SERAMET_PRODUCTION_BACKUP_POSTGRES_URL }}
+          SERAMET_PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
+        run: node scripts/production-recovery.mjs capture
+      - name: Encrypt snapshot and manifest
+        env:
+          SERAMET_PRODUCTION_BACKUP_KEY: ${{ secrets.SERAMET_PRODUCTION_BACKUP_KEY }}
+        run: node scripts/production-recovery.mjs seal
+      - name: Retain encrypted recovery point
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/seramet-production-recovery/encrypted/*.enc
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retrieve retained artifact independently
+        uses: actions/download-artifact@v4
+        with:
+          name: production-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/seramet-production-recovery/downloaded
+      - name: Authenticate and decrypt retrieved files
+        env:
+          SERAMET_PRODUCTION_BACKUP_KEY: ${{ secrets.SERAMET_PRODUCTION_BACKUP_KEY }}
+        run: node scripts/production-recovery.mjs open
+      - name: Verify isolated restoration
+        env:
+          SERAMET_PRODUCTION_RESTORE_POSTGRES_URL: postgresql://postgres:disposable_restore_only@127.0.0.1:54329/seramet_production_restore
+          SERAMET_PG_RESTORE_BIN: /usr/lib/postgresql/17/bin/pg_restore
+        run: node scripts/production-recovery.mjs verify
+      - name: Retain sanitized successful verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-recovery-verification-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/seramet-production-recovery/verification.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary recovery files
+        if: always()
+        shell: bash
+        run: |
+          test -n "$RUNNER_TEMP" && test "$RUNNER_TEMP" != /
+          rm -rf -- "$RUNNER_TEMP/seramet-production-recovery"
+          rm -f -- "$RUNNER_TEMP/seramet-production-postgres-root.crt"

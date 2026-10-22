@@ -93,9 +93,18 @@ function sameComponents(
   left: InvoiceComponents,
   right: Record<string, unknown> | InvoiceComponents,
 ) {
-  return (Object.keys(left) as (keyof InvoiceComponents)[]).every(
-    (key) => left[key] === right[key],
-  );
+  return (
+    [
+      "version",
+      "currency",
+      "grossSalesMinor",
+      "discountsMinor",
+      "netSalesMinor",
+      "serviceChargeMinor",
+      "taxMinor",
+      "totalMinor",
+    ] as const
+  ).every((key) => left[key] === right[key]);
 }
 
 /** Normalized journals are the financial authority; these statements join the existing atomic mutation. */
@@ -160,6 +169,22 @@ export class PosInvoiceLedger {
       .bind(input.tenantId, input.invoiceId)
       .first<{ payload_json: string }>();
     const previous = prior ? readSnapshot(JSON.parse(prior.payload_json)) : undefined;
+    if (previous?.posted && previous.components.totalMinor > 0) {
+      for (const sourceType of previous.reversed
+        ? ["POS_INVOICE", "POS_INVOICE_REVERSAL"]
+        : ["POS_INVOICE"]) {
+        const journal = await this.db
+          .prepare(
+            "SELECT id FROM journal_entries WHERE tenant_id=? AND branch_id=? AND source_type=? AND source_id=? AND status='POSTED'",
+          )
+          .bind(input.tenantId, input.branchId, sourceType, input.invoiceId)
+          .first();
+        if (!journal)
+          reject(
+            "Persisted invoice posting is missing; explicit accounting reconciliation is required",
+          );
+      }
+    }
     const current = components(input.payload, input.currency);
     const status = input.payload.status;
     const payable = ["OPEN", "PARTIAL", "PENDING", "PAID", "PROVIDER_RECEIVABLE"].includes(
@@ -182,7 +207,7 @@ export class PosInvoiceLedger {
       reject("A reversed invoice cannot be reopened for collection");
     if (cancelled && input.payload.paid !== 0)
       reject("A paid invoice requires an authorized refund or credit adjustment");
-    const accounts = previous?.accounts ?? (await this.accounts(input));
+    const accounts = previous?.posted ? previous.accounts : await this.accounts(input);
     const post = payable && !previous?.posted;
     const reverse = cancelled && Boolean(previous?.posted) && !previous?.reversed;
     const snapshot: LedgerSnapshot = {
