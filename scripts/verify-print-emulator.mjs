@@ -254,7 +254,12 @@ try {
         format: "iife",
         platform: "browser",
         jsx: "automatic",
-        alias: { "@shared": join(source, "src/shared") },
+        // Linked emulator checkouts must share the renderer's React instance.
+        alias: {
+          "@shared": join(source, "src/shared"),
+          react: resolve("node_modules/react"),
+          "react-dom": resolve("node_modules/react-dom"),
+        },
       });
       const css = await (
         await import("node:fs/promises")

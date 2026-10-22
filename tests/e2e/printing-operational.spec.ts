@@ -12,6 +12,7 @@ import { randomUUID, randomInt, randomBytes, createHash } from "node:crypto";
 import { createBridge } from "../../local-print-bridge/server.mjs";
 import { parseMajorAmount } from "../../src/payments/money";
 import { printBridgeConfigStorageKey } from "../../src/lib/print-bridge-client-config";
+import { invoiceDisplayName } from "../../src/lib/invoice-split";
 
 type EmulatorState = {
   setPaperWidth: (width: number) => void;
@@ -430,7 +431,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.goto("/invoices");
     const invoiceRow = manager
       .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` });
+      .filter({ hasText: invoiceDisplayName(bill.id) });
     await invoiceRow.getByRole("checkbox").check();
     await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
     const verifyPreviewFit = async (page: typeof manager, title: string) => {
@@ -517,7 +518,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await emailDialog.getByRole("button", { name: "Close", exact: true }).first().click();
     await manager
       .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
+      .filter({ hasText: invoiceDisplayName(bill.id) })
       .getByRole("button", { name: "Preview bill", exact: true })
       .click();
     await manager.getByRole("dialog").getByRole("button", { name: "Print", exact: true }).click();
@@ -546,7 +547,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await cashier.reload();
     await cashier
       .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
+      .filter({ hasText: invoiceDisplayName(bill.id) })
       .getByRole("button", { name: "Settle", exact: true })
       .click();
     await cashier.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
