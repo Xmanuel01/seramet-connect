@@ -8,7 +8,6 @@ import type { DurableQueueBatch } from "./server/environment";
 import { resolveRuntimeConfiguration } from "./server/environment";
 import { cloudflareBindings } from "./server/cloudflare-bindings";
 import { resolveEnvironmentFromBindings } from "./server/runtime-env-resolver";
-import { handleScannerInternalApi } from "./server/scanner-internal-api";
 import {
   handleWorkerQueue,
   scheduleDurableWork,
@@ -75,9 +74,6 @@ export default {
   async fetch(request: Request, fallbackBindings?: unknown) {
     try {
       const resolvedEnvironment = await resolveServerEnvironment(request, fallbackBindings);
-
-      const scannerResponse = await handleScannerInternalApi(request, resolvedEnvironment);
-      if (scannerResponse) return secureResponse(scannerResponse, resolvedEnvironment, true);
 
       if (new URL(request.url).pathname.startsWith("/api/seramet")) {
         if (!isAllowedBrowserOrigin(request, resolvedEnvironment)) {

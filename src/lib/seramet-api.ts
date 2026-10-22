@@ -75,6 +75,7 @@ import { handleObjectStorageApi } from "@/server/object-storage-api";
 import { handleRealtimeApi } from "@/server/realtime-api";
 import { findOverdueDurableWork } from "@/server/worker-health";
 import { handlePrintingApi } from "@/server/printing-api";
+import { handleScannerInternalApi } from "@/server/scanner-internal-api";
 
 type MutationRequest = {
   action?: string;
@@ -98,9 +99,9 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     }
 
     const runtime = resolveRuntimeConfiguration(env);
+    const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
     if (url.pathname === "/api/seramet/health/operational" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
-      const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
       if (publicDevelopment) {
         issues.push({
           code: "PUBLIC_DEVELOPMENT_RUNTIME",
@@ -137,7 +138,6 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     if (url.pathname === "/api/seramet/health/ready" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
-      const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
       if (publicDevelopment) {
         issues.push({
           code: "PUBLIC_DEVELOPMENT_RUNTIME",
@@ -174,6 +174,21 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
         issues.length === 0 ? 200 : 503,
       );
     }
+
+    // Reject before auth handlers, request-body parsing or repository initialization.
+    if (publicDevelopment) {
+      return json(
+        {
+          ok: false,
+          code: "PUBLIC_DEVELOPMENT_RUNTIME",
+          message: "Public API operations require a configured staging or production environment",
+        },
+        503,
+      );
+    }
+
+    const scannerResponse = await handleScannerInternalApi(request, env);
+    if (scannerResponse) return scannerResponse;
 
     const identityResponse = await handleSupabaseAuthApi(request, env);
     if (identityResponse) return identityResponse;

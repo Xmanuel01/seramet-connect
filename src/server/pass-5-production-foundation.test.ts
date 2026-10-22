@@ -615,7 +615,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const read = (branch: string, bearer = token) =>
       handleSerametApiRequest(
         new Request(
-          `https://seramet.test/api/seramet/transactions?branchId=${branch}&knownRevision=0`,
+          `http://localhost/api/seramet/transactions?branchId=${branch}&knownRevision=0`,
           { headers: { authorization: `Bearer ${bearer}`, "x-seramet-branch-id": branchA } },
         ),
         env,
