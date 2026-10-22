@@ -1041,7 +1041,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.goto("/payment-control");
     await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
     await manager.getByText("Branch closing settings", { exact: true }).click();
-    await manager.getByLabel("Closing mode", { exact: true }).selectOption("MULTI_CASHIER_SHIFTS");
+    await manager
+      .getByRole("combobox", { name: /^Closing mode/ })
+      .selectOption("MULTI_CASHIER_SHIFTS");
     await manager.getByRole("button", { name: "Save closing settings", exact: true }).click();
     await expect(manager.getByRole("status")).toContainText("Closing settings saved.");
     const drawer = (await snapshot()).state.paymentOperations.drawerSessions.find(
