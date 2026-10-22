@@ -21,6 +21,7 @@ import { parseMajorAmount } from "@/payments/money";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
+import { PosInvoiceLedger } from "@/server/database/pos-invoice-ledger";
 
 const ROOT_ENTITY = "state:root";
 const IDEMPOTENCY_ENTITY = "system:api-idempotency";
@@ -110,7 +111,10 @@ type PersistedEntity = {
 export class D1AuthoritativeTransactionRepository implements TransactionRepository {
   readonly authoritative = true;
 
-  constructor(private readonly db: D1Database) {}
+  constructor(
+    private readonly db: D1Database,
+    private readonly options: { requireInvoiceLedger?: boolean } = {},
+  ) {}
 
   async migrate() {
     let row: { version: number | null } | null;
@@ -523,6 +527,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       const current = currentByKey.get(`${entity.entityType}:${entity.entityId}`);
       return current?.payload_json !== entity.payloadJson;
     });
+    const invoiceLedger = this.options.requireInvoiceLedger
+      ? new PosInvoiceLedger(this.db)
+      : undefined;
     const businessDate = (
       entity: PersistedEntity,
       payload: Record<string, unknown>,
@@ -602,12 +609,26 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         tenant.default_currency,
       );
       const taxMinor = parseMajorAmount(numberValue(payload["tax"]) ?? 0, tenant.default_currency);
+      const posting = invoiceLedger
+        ? await invoiceLedger.prepare({
+            tenantId,
+            invoiceId: entity.entityId,
+            branchId: scope.branch.id,
+            businessDate: scope.date,
+            currency: tenant.default_currency,
+            payload,
+            correlationId: input.correlationId,
+            actorId: input.actor.id,
+            stamp,
+          })
+        : undefined;
       const normalizedPayload = JSON.stringify({
         ...payload,
         totalMinor,
         paidMinor,
         subtotalMinor,
         taxMinor,
+        ...(posting ? { invoiceLedger: posting.snapshot } : {}),
       });
       statements.push(
         this.db
@@ -636,6 +657,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
             entity.updatedAt,
           ),
       );
+      if (posting) statements.push(...posting.statements);
     }
     for (const entity of changed.filter((item) => item.entityType === "payments:transactions")) {
       const payload = parseObject(entity.payloadJson);
@@ -692,6 +714,24 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     }
     for (const entity of changed.filter((item) => item.entityType === "payments:allocations")) {
       const payload = parseObject(entity.payloadJson);
+      if (invoiceLedger) {
+        const transaction = nextEntities.find(
+          (item) =>
+            item.entityType === "payments:transactions" &&
+            item.entityId === stringValue(payload["paymentTransactionId"]),
+        );
+        const payment = transaction ? parseObject(transaction.payloadJson) : undefined;
+        const method = getConfigurationRepository()
+          .listPaymentMethods(tenantId, false)
+          .find((candidate) => candidate.id === stringValue(payment?.["paymentMethodId"]));
+        await invoiceLedger.assertCollectionAccount(
+          tenantId,
+          String(payload["invoiceId"]),
+          String(payload["branchId"]),
+          String(payload["currency"]),
+          method?.receivableAccountId,
+        );
+      }
       statements.push(
         this.db
           .prepare(
@@ -932,6 +972,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     for (const entity of changed.filter((item) => item.entityType === "payments:journals")) {
       const payload = parseObject(entity.payloadJson);
       const sourceType = stringValue(payload["sourceType"]) ?? "PAYMENT_RECONCILIATION";
+      // Invoice issuance owns revenue. House-account entries only track customer credit;
+      // projecting their legacy revenue journal would book the same sale a second time.
+      if (invoiceLedger && sourceType === "HOUSE_ACCOUNT") continue;
       if (
         ["GIFT_CARD_REDEMPTION", "VOUCHER_REDEMPTION", "LOYALTY_REDEMPTION"].includes(sourceType)
       ) {

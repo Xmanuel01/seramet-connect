@@ -5,6 +5,7 @@ on:
     paths:
       - "src/finance/**"
       - "src/server/finance-api.ts"
+      - "src/server/database/**"
       - "src/lib/seramet-api.ts"
       - "scripts/verify-finance-postgres.ts"
       - ".github/workflows/finance-postgres.yml"
@@ -19,9 +20,13 @@ jobs:
   real-postgres-finance:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: [16, 17]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}-alpine
         env:
           POSTGRES_DB: seramet_finance_ci
           POSTGRES_USER: finance_ci

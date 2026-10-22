@@ -26,6 +26,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs
+      - run: node --test scripts/verify-production-health.test.mjs
+      - run: node --test scripts/production-recovery.test.mjs
       - run: node --test scripts/verify-staging-release-gate.test.mjs
       - run: node --test scripts/inspect-staging-backlog.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
@@ -73,3 +75,46 @@ jobs:
         run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
       - name: Validate public schema lockdown on disposable PostgreSQL
         run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+
+  postgres-recovery-fixture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: seramet_production_restore
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable_restore_only
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d seramet_production_restore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SERAMET_POSTGRES_URL: postgresql://postgres:disposable_restore_only@127.0.0.1:54329/seramet_production_restore
+      SERAMET_PRODUCTION_RESTORE_POSTGRES_URL: postgresql://postgres:disposable_restore_only@127.0.0.1:54329/seramet_production_restore
+      SERAMET_PG_DUMP_BIN: /usr/lib/postgresql/17/bin/pg_dump
+      SERAMET_PG_RESTORE_BIN: /usr/lib/postgresql/17/bin/pg_restore
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install matching disposable database client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+      - name: Apply complete schema to disposable recovery fixture only
+        run: npm run migrate:postgres
+      - name: Encrypt, retrieve, restore and compare actual persisted fixture records
+        run: node scripts/verify-production-recovery-fixture.mjs

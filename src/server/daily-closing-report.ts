@@ -1,6 +1,12 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { DayClose } from "@/payments/types";
-import { formatMinor, parseMajorAmount, sumMinor } from "@/payments/money";
+import {
+  formatMinor,
+  majorFromMinor,
+  minorDigits,
+  parseMajorAmount,
+  sumMinor,
+} from "@/payments/money";
 import { summarizeInvoiceComponents } from "@/payments/invoice-components";
 import { QUANTITY_SCALE } from "@/inventory/quantity";
 
@@ -190,6 +196,15 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
   return sections;
 }
 
+export const closingPdfLayout = Object.freeze({
+  width: 595.28,
+  height: 841.89,
+  margin: 72,
+  bodySize: 12,
+  lineHeight: 24,
+  pages: 3,
+});
+
 export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<Uint8Array> {
   const report = snapshot.dailyReport;
   if (!report) throw new Error("Unified closing snapshot is required");
@@ -198,10 +213,19 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
   pdf.setSubject(report.reference);
   pdf.setCreationDate(new Date(snapshot.closedAt));
   pdf.setModificationDate(new Date(snapshot.closedAt));
+  pdf.setKeywords(["Seramet", report.restaurant, report.branch, report.reference]);
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  let page = pdf.addPage([595.28, 841.89]);
-  let y = 800;
+  const { width, height, margin, bodySize, lineHeight } = closingPdfLayout;
+  const usable = width - margin * 2;
+  const green = rgb(0.06, 0.3, 0.27);
+  const attention = rgb(0.68, 0.12, 0.15);
+  const ink = rgb(0.09, 0.14, 0.18);
+  const muted = rgb(0.32, 0.38, 0.4);
+  const rule = rgb(0.8, 0.85, 0.84);
+  const tint = rgb(0.94, 0.97, 0.96);
+  let page = pdf.addPage([width, height]);
+  let y = 620;
   const safe = (value: string) =>
     [...value.replace(/[\r\n\t]/g, " ")]
       .map((c) => {
@@ -213,11 +237,11 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
         }
       })
       .join("");
-  const wrap = (value: string, width: number, size = 10, font = regular) => {
+  const wrap = (value: string, available: number, size: number = bodySize, font = regular) => {
     const lines: string[] = [];
     let line = "";
     for (const char of safe(value)) {
-      if (font.widthOfTextAtSize(line + char, size) > width && line) {
+      if (font.widthOfTextAtSize(line + char, size) > available && line) {
         const boundary = line.lastIndexOf(" ");
         if (boundary > 0) {
           lines.push(line.slice(0, boundary));
@@ -232,53 +256,289 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
     lines.push(line);
     return lines;
   };
-  function space(height: number) {
-    if (y - height < 55) {
-      page = pdf.addPage([595.28, 841.89]);
-      y = 800;
-    }
-  }
-  function heading(text: string, size: number) {
-    for (const line of wrap(text, 507, size, bold)) {
-      space(size + 12);
-      page.drawText(line, { x: 44, y, size, font: bold, color: rgb(0.06, 0.3, 0.27) });
-      y -= size + 8;
-    }
-  }
-  heading(report.restaurant, 21);
-  heading(report.branch, 13);
-  heading("DAILY CLOSING REPORT", 16);
-  for (const section of closingReportSections(snapshot)) {
-    space(60);
-    y -= 12;
-    heading(section.title, 11);
-    const rows = section.rows.length ? section.rows : [["None recorded", ""]];
-    for (const [label, value] of rows) {
-      const left = wrap(label!, 180),
-        right = wrap(value!, 307);
-      const lines = Math.max(left.length, right.length);
-      for (let i = 0; i < lines; i++) {
-        space(19);
-        if (left[i]) page.drawText(left[i]!, { x: 44, y, size: 10, font: regular });
-        if (right[i]) page.drawText(right[i]!, { x: 236, y, size: 10, font: regular });
-        y -= 15;
-      }
-      page.drawLine({
-        start: { x: 44, y: y + 8 },
-        end: { x: 551, y: y + 8 },
-        thickness: 0.3,
-        color: rgb(0.8, 0.83, 0.83),
-      });
-      y -= 6;
-    }
-  }
-  const pages = pdf.getPages();
-  for (const [index, printed] of pages.entries())
-    printed.drawText(`SERAMET | ${safe(report.reference)} | ${index + 1}/${pages.length}`, {
-      x: 44,
-      y: 25,
-      size: 8,
-      font: regular,
+  const fit = (value: string, available: number, size: number = bodySize, font = regular) => {
+    const text = safe(value);
+    if (font.widthOfTextAtSize(text, size) <= available) return text;
+    let end = text.length;
+    while (end > 0 && font.widthOfTextAtSize(`${text.slice(0, end)}...`, size) > available) end--;
+    return `${text.slice(0, end).trimEnd()}...`;
+  };
+  const text = (
+    value: string,
+    x: number,
+    baseline: number,
+    strong = false,
+    size: number = bodySize,
+    tone?: ReturnType<typeof rgb>,
+  ) =>
+    page.drawText(safe(value), {
+      x,
+      y: baseline,
+      size,
+      font: strong ? bold : regular,
+      color: tone ?? (strong ? green : ink),
     });
+  const date = (value: string) =>
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: report.timeZone,
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  const header = (title: string) => {
+    text("SERAMET", margin, height - margin, true, 18);
+    page.drawRectangle({
+      x: width - margin - 102,
+      y: height - margin - 4,
+      width: 102,
+      height: 24,
+      color: tint,
+    });
+    text("Confidential", width - margin - 91, height - margin + 3);
+    text(title, margin, 734, true, 20);
+    text(fit(report.restaurant, usable, bodySize, bold), margin, 706, true);
+    text(fit(report.branch, usable), margin, 682);
+    text(`Business date: ${snapshot.businessDate}`, margin, 658);
+    const closed = date(snapshot.closedAt);
+    text(closed, width - margin - regular.widthOfTextAtSize(closed, bodySize), 658);
+    page.drawLine({
+      start: { x: margin, y: 644 },
+      end: { x: width - margin, y: 644 },
+      thickness: 0.6,
+      color: rule,
+    });
+    y = 620;
+  };
+  function heading(title: string) {
+    text(fit(title, usable, 14, bold), margin, y, true, 14);
+    y -= 28;
+  }
+  function row(label: string, value: string, strong = false) {
+    // Financial values wrap at the requested font size; they are never ellipsized.
+    const values = wrap(value, 161);
+    if (y - values.length * lineHeight < margin - 12)
+      throw new Error("Closing summary exceeds the three-page layout");
+    text(fit(label, usable - 177, bodySize, strong ? bold : regular), margin, y, strong);
+    for (const [index, line] of values.entries())
+      text(
+        line,
+        width - margin - 161,
+        y - index * lineHeight,
+        strong,
+        bodySize,
+        label === "Cash variance" && snapshot.cashVarianceMinor !== 0 ? attention : undefined,
+      );
+    y -= values.length * lineHeight;
+    page.drawLine({
+      start: { x: margin, y: y + 12 },
+      end: { x: width - margin, y: y + 12 },
+      thickness: 0.35,
+      color: rule,
+    });
+  }
+  function note(value: string) {
+    text(fit(value, usable), margin, y);
+    y -= lineHeight;
+  }
+  function selectedRows(rows: Array<[string, string]>, limit: number) {
+    if (!rows.length) return note("None recorded");
+    for (const [label, value] of rows.slice(0, limit)) row(label, value);
+    if (rows.length > limit)
+      note(`${rows.length - limit} more entries in the saved closing record.`);
+  }
+  function metric(label: string, value: string, x: number) {
+    const cardWidth = (usable - 12) / 2;
+    page.drawRectangle({
+      x,
+      y: y - 64,
+      width: cardWidth,
+      height: 64,
+      color: tint,
+      borderColor: rule,
+      borderWidth: 0.5,
+    });
+    text(label, x + 12, y - 20);
+    text(value, x + 12, y - 44, true);
+  }
+  const sections = closingReportSections(snapshot);
+  const section = (title: string) => sections.find((entry) => entry.title === title)!.rows;
+  const money = (amount: number) => formatMinor(amount, snapshot.currency);
+  const components = summarizeInvoiceComponents(report.invoices, snapshot.currency);
+
+  header("Daily End of Day Report");
+  heading("Management summary");
+  metric(
+    "Invoice gross sales",
+    components.status === "COMPLETE" ? money(components.totals.grossSalesMinor) : "Not recorded",
+    margin,
+  );
+  metric(
+    "Invoice net sales",
+    components.status === "COMPLETE" ? money(components.totals.netSalesMinor) : "Not recorded",
+    margin + (usable + 12) / 2,
+  );
+  y -= 84;
+  heading("Sales summary");
+  for (const [label, value] of section("Authoritative financial summary").slice(0, 8))
+    row(label, value, label === "Invoiced (including tax)");
+  row(
+    "Invoices / receipts / voids",
+    `${snapshot.invoiceCount} / ${snapshot.receiptCount} / ${report.voidedInvoiceIds.length}`,
+  );
+  row(
+    "Invoice discounts",
+    components.status === "COMPLETE" ? money(components.totals.discountsMinor) : "Not recorded",
+  );
+  row(
+    "Invoice service charges",
+    components.status === "COMPLETE" ? money(components.totals.serviceChargeMinor) : "Not recorded",
+  );
+  heading("Payment breakdown");
+  const tenders = snapshot.tenders;
+  const paymentRows: Array<[string, string]> = tenders
+    .slice(0, tenders.length > 4 ? 3 : 4)
+    .map((t) => [t.method, money(t.amountMinor)]);
+  if (tenders.length > 4)
+    paymentRows.push([
+      `Other methods (${tenders.length - 3})`,
+      money(sumMinor(tenders.slice(3).map((t) => t.amountMinor))),
+    ]);
+  selectedRows(paymentRows, 4);
+
+  page = pdf.addPage([width, height]);
+  header("Cash Reconciliation & Exceptions");
+  heading(`Cash reconciliation (${snapshot.currency})`);
+  const balances = report.drawers.flatMap((drawer) =>
+    drawer.currencyBalances[snapshot.currency] ? [drawer.currencyBalances[snapshot.currency]!] : [],
+  );
+  if (balances.length) {
+    row("Opening float", money(sumMinor(balances.map((b) => b.openingFloatMinor))));
+    row("Expected closing cash", money(sumMinor(balances.map((b) => b.expectedCashMinor))));
+    row(
+      "Counted closing cash",
+      balances.some((b) => b.countedCashMinor === undefined)
+        ? "Not recorded for all drawers"
+        : money(sumMinor(balances.map((b) => b.countedCashMinor!))),
+    );
+    row("Cash variance", money(snapshot.cashVarianceMinor), true);
+  } else note("No drawer recorded for this currency.");
+  const otherCurrencies = new Set(
+    report.drawers
+      .flatMap((drawer) => Object.keys(drawer.currencyBalances))
+      .filter((currency) => currency !== snapshot.currency),
+  );
+  if (otherCurrencies.size)
+    note(`${otherCurrencies.size} other currencies recorded; no conversion applied.`);
+  heading(`Cashier reconciliations (${snapshot.currency})`);
+  const decimal = (amount: number | undefined) =>
+    amount === undefined
+      ? "Not recorded"
+      : new Intl.NumberFormat("en", {
+          minimumFractionDigits: minorDigits(snapshot.currency),
+          maximumFractionDigits: minorDigits(snapshot.currency),
+        }).format(majorFromMinor(amount, snapshot.currency));
+  text("Cashier", margin, y, true);
+  text("Counted", margin + 184, y, true);
+  text("Variance", margin + 320, y, true);
+  y -= lineHeight;
+  for (const drawer of report.drawers.slice(0, 2)) {
+    text(fit(report.operatorNames?.[drawer.employeeId] ?? drawer.employeeId, 174), margin, y);
+    const balance = drawer.currencyBalances[snapshot.currency];
+    text(decimal(balance?.countedCashMinor), margin + 184, y);
+    text(
+      decimal(balance?.varianceMinor),
+      margin + 320,
+      y,
+      false,
+      bodySize,
+      balance?.varianceMinor ? attention : undefined,
+    );
+    y -= lineHeight;
+  }
+  if (!report.drawers.length) note("None recorded");
+  if (report.drawers.length > 2)
+    note(`${report.drawers.length - 2} more reconciliations in the closing record.`);
+  heading("Variance explanations");
+  const reasons = report.drawers.filter((drawer) => drawer.varianceReason);
+  if (!reasons.length) note("None recorded");
+  else {
+    note(
+      `${report.operatorNames?.[reasons[0]!.employeeId] ?? reasons[0]!.employeeId}: ${reasons[0]!.varianceReason}`,
+    );
+    if (reasons.length > 1) note(`${reasons.length - 1} more explanations in the closing record.`);
+  }
+  heading("Cash refunds, payouts & adjustments");
+  const movements = new Map<string, number[]>();
+  for (const movement of report.cashMovements.filter(
+    (m) => !["SALE", "OPENING_FLOAT"].includes(m.type),
+  )) {
+    const key = `${movement.type} / ${movement.currency}`;
+    movements.set(key, [...(movements.get(key) ?? []), movement.amountMinor]);
+  }
+  selectedRows(
+    [...movements].map(([key, amounts]): [string, string] => {
+      const [type, currency] = key.split(" / ") as [string, string];
+      const label = type.charAt(0) + type.slice(1).toLowerCase().replaceAll("_", " ");
+      return [`${label} / ${currency}`, formatMinor(sumMinor(amounts), currency)];
+    }),
+    1,
+  );
+  heading("Outstanding obligations");
+  row(
+    `Unpaid invoices (${report.outstandingInvoices.length})`,
+    money(sumMinor(report.outstandingInvoices.map((i) => i.balanceMinor))),
+  );
+  row("Other reported exceptions", String(report.nonblocking.length));
+  const cutoff = section("Closing details").find(([label]) => label === "Timezone / cutoff")![1];
+  note(`Timezone / cutoff: ${cutoff}`);
+  note(
+    `Closing mode: ${report.mode === "SUPERVISOR_DAILY_CLOSE" ? "Supervisor daily close" : "Multiple cashier shifts"}`,
+  );
+
+  page = pdf.addPage([width, height]);
+  header("Product Performance & Sign-off");
+  heading("Top-selling items (invoiced units)");
+  selectedRows(section("Highest-volume invoiced products (units)"), 5);
+  heading("Lowest-volume sold items (units)");
+  selectedRows(section("Lowest-volume sold products (units; not profit ranking)"), 5);
+  for (const [label, value] of section("Invoiced sales before tax")) row(label, value);
+  heading("Manager notes");
+  note(snapshot.overrideReason ?? "No additional closing note recorded.");
+  if (components.status !== "COMPLETE")
+    note(`${components.missing} invoices lack gross/discount/service detail.`);
+  heading("Review sign-off");
+  row("Prepared by", fit(report.operatorNames?.[report.supervisorId] ?? report.supervisorId, 161));
+  row("Branch manager", "____________________");
+  row("Finance review", "____________________");
+
+  const pages = pdf.getPages();
+  for (const [index, printed] of pages.entries()) {
+    printed.drawLine({
+      start: { x: margin, y: 64 },
+      end: { x: width - margin, y: 64 },
+      thickness: 0.5,
+      color: rule,
+    });
+    printed.drawText(fit(report.reference, usable - 80), {
+      x: margin,
+      y: 44,
+      size: bodySize,
+      font: regular,
+      color: muted,
+    });
+    printed.drawText(`${index + 1} / ${pages.length}`, {
+      x: width - margin - 32,
+      y: 44,
+      size: bodySize,
+      font: regular,
+      color: muted,
+    });
+    printed.drawText("Summary only. Full details and labels remain in the saved closing record.", {
+      x: margin,
+      y: 20,
+      size: bodySize,
+      font: regular,
+      color: muted,
+    });
+  }
   return pdf.save();
 }

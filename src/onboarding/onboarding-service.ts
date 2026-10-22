@@ -228,6 +228,7 @@ const requiredAccountMappings = [
   "INVENTORY",
   "COGS",
   "SALES_REVENUE",
+  "CUSTOMER_RECEIVABLE",
   "TAX_PAYABLE",
   "SERVICE_CHARGE",
   "DISCOUNTS",

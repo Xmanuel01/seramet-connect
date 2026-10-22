@@ -65,7 +65,7 @@ export function createIntegrationRuntime(env: SerametEnv = {}, overrides: Runtim
     );
   const credentials = overrides.credentials ?? createServerCredentialResolver(env, configuration);
   const repository = overrides.repository ?? createIntegrationRepository(env.SERAMET_DB);
-  const transactions = overrides.transactions ?? createTransactionRepository(env.SERAMET_DB);
+  const transactions = overrides.transactions ?? createTransactionRepository(env.SERAMET_DB, env);
   const retry = overrides.retry ?? new RetryService();
   const queue = env.SERAMET_WORK_QUEUE
     ? new DurableIntegrationQueue(env.SERAMET_WORK_QUEUE)

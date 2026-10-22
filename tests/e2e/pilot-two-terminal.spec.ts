@@ -411,7 +411,17 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   expect(finalDay).toEqual(
     firstClosed.state.paymentOperations!.dayCloses.find((item) => item.id === day.id),
   );
-  expect(finalDay.snapshot?.settledMinor).toBe(Math.round(invoice.total * 100));
+  const earlierSettledMinor = before.state.bills
+    .filter(
+      (bill) =>
+        bill.branchId === scope.branchId &&
+        bill.businessDate === drawer.businessDate &&
+        bill.paymentStatus === "PAID",
+    )
+    .reduce((total, bill) => total + Math.round(bill.total * 100), 0);
+  expect(finalDay.snapshot?.settledMinor).toBe(
+    earlierSettledMinor + Math.round(invoice.total * 100),
+  );
   expect(
     closed.state.paymentOperations!.drawerSessions.find((item) => item.id === drawer.id),
   ).toMatchObject({

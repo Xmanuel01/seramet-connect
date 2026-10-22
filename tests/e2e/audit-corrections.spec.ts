@@ -271,19 +271,27 @@ test("actual POS Hold carries known components through invoice, payment, immutab
     (row: { branchId: string; status: string }) =>
       row.branchId === branchId && row.status === "CLOSED",
   );
-  expect(day.snapshot.invoiceComponents.status).toBe("COMPLETE");
-  expect(
-    day.snapshot.dailyReport.invoices.find((row: { id: string }) => row.id === invoice.id)
-      .financialComponents,
-  ).toEqual(order.financialComponents);
-  const path = `/api/seramet/daily-closing/reports/${day.id}/${day.snapshot.revision}.pdf`;
-  const pdf = await context.request.get(path, { headers });
-  expect(pdf.ok()).toBe(true);
-  const bytes = await pdf.body();
-  expect((await PDFDocument.load(bytes)).getPageCount()).toBeGreaterThan(0);
-  expect(Buffer.compare(bytes, await (await context.request.get(path, { headers })).body())).toBe(
-    0,
-  );
+  try {
+    expect(day.snapshot.invoiceComponents.status).toBe("COMPLETE");
+    expect(
+      day.snapshot.dailyReport.invoices.find((row: { id: string }) => row.id === invoice.id)
+        .financialComponents,
+    ).toEqual(order.financialComponents);
+    const path = `/api/seramet/daily-closing/reports/${day.id}/${day.snapshot.revision}.pdf`;
+    const pdf = await context.request.get(path, { headers });
+    expect(pdf.ok()).toBe(true);
+    const bytes = await pdf.body();
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(3);
+    expect(Buffer.compare(bytes, await (await context.request.get(path, { headers })).body())).toBe(
+      0,
+    );
+  } finally {
+    // Restore only this disposable fixture through the authorized correction path.
+    await command("reopenDay", {
+      dayCloseId: day.id,
+      reason: "Disposable sale-to-report browser fixture cleanup",
+    });
+  }
 });
 
 test("delivery links stay client-side and unavailable registers do not claim empty authoritative histories", async ({
