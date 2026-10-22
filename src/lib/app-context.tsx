@@ -1,4 +1,5 @@
 import { resolvePosTimeZone } from "@/lib/pos-workflow";
+import { StartupScreen } from "@/components/auth/StartupScreen";
 import {
   createContext,
   useContext,
@@ -251,9 +252,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [bootstrap.status, revalidate]);
 
   if (bootstrap.status === "LOADING") {
-    return (
-      <SessionGate title="Connecting securely" detail="Validating this device and session..." />
-    );
+    return <StartupScreen />;
   }
   if (bootstrap.status === "ERROR") {
     const serviceUnavailable = bootstrap.kind === "SERVICE_UNAVAILABLE";
@@ -535,7 +534,7 @@ function ConfiguredAppProvider({
   ]);
 
   if (activeTenant && formattedTenantId !== activeTenant.id) {
-    return <SessionGate title="Preparing restaurant" detail="Applying restaurant settings..." />;
+    return <StartupScreen />;
   }
 
   return (

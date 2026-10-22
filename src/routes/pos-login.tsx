@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createFileRoute } from "@tanstack/react-router";
 import { Delete, RefreshCcw, Wifi, WifiOff } from "lucide-react";
 import { Logo } from "@/components/app/Logo";
+import { StartupScreen } from "@/components/auth/StartupScreen";
 import {
   deviceStartup,
   employeePinLogin,
@@ -12,12 +13,14 @@ import {
 import { pinAfterIdentityChange, shouldCapturePinKeyboardEvent } from "@/lib/pos-login-input";
 
 export const Route = createFileRoute("/pos-login")({
-  head: () => ({ meta: [{ title: "Employee sign in - Seramet" }] }),
+  head: () => ({ meta: [{ title: "Seramet" }] }),
   component: PosLoginPage,
 });
 
 function PosLoginPage() {
   const [startup, setStartup] = useState<DeviceStartup>();
+  const [startupPending, setStartupPending] = useState(true);
+  const startupRequest = useRef<AbortController | null>(null);
   const [identifier, setIdentifier] = useState("");
   const [pin, setPin] = useState("");
   const [mustChangePin, setMustChangePin] = useState(false);
@@ -32,9 +35,15 @@ function PosLoginPage() {
   const requiredLength = startup?.policy?.pinLength ?? 6;
 
   const load = useCallback(async () => {
+    if (startupRequest.current) return;
+    const controller = new AbortController();
+    startupRequest.current = controller;
+    setStartupPending(true);
+    setStartup(undefined);
     setMessage("");
     try {
-      const result = await deviceStartup();
+      const result = await deviceStartup(controller.signal);
+      if (controller.signal.aborted || startupRequest.current !== controller) return;
       const nextDeviceContext = `${result.device?.id ?? result.state}:${result.policy?.pinLength ?? ""}`;
       if (deviceContextRef.current && deviceContextRef.current !== nextDeviceContext) {
         setPin("");
@@ -45,8 +54,14 @@ function PosLoginPage() {
       deviceContextRef.current = nextDeviceContext;
       setStartup(result);
       if (result.state !== "ACTIVE") setMessage(deviceMessage(result.state));
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Device status is unavailable");
+    } catch {
+      if (!controller.signal.aborted && startupRequest.current === controller)
+        setMessage("We couldn't connect to Seramet. Please try again.");
+    } finally {
+      if (startupRequest.current === controller) {
+        startupRequest.current = null;
+        if (!controller.signal.aborted) setStartupPending(false);
+      }
     }
   }, []);
 
@@ -103,6 +118,8 @@ function PosLoginPage() {
     window.addEventListener("online", connected);
     window.addEventListener("offline", disconnected);
     return () => {
+      startupRequest.current?.abort();
+      startupRequest.current = null;
       window.removeEventListener("online", connected);
       window.removeEventListener("offline", disconnected);
     };
@@ -132,15 +149,13 @@ function PosLoginPage() {
     Boolean(tenantName) &&
     tenantName.localeCompare(branchName, undefined, { sensitivity: "base" }) !== 0;
 
-  if (!startup) {
-    return <ScreenMessage title="Checking this POS" detail="Validating the registered device..." />;
-  }
+  if (startupPending) return <StartupScreen />;
 
-  if (startup.state !== "ACTIVE" || !startup.device) {
+  if (!startup || startup.state !== "ACTIVE" || !startup.device) {
     return (
       <ScreenMessage
-        title="Device activation required"
-        detail={message || deviceMessage(startup.state)}
+        title={startup ? "Device activation required" : "Sign in unavailable"}
+        detail={message || (startup ? deviceMessage(startup.state) : "Please try again.")}
       >
         <div className="mt-5 grid gap-2 sm:grid-cols-2">
           <a
@@ -156,7 +171,7 @@ function PosLoginPage() {
             className="h-11 rounded-md border border-border bg-card px-4 text-sm font-semibold"
             onClick={() => void load()}
           >
-            <RefreshCcw className="mr-2 inline h-4 w-4" /> Check again
+            <RefreshCcw className="mr-2 inline h-4 w-4" /> {startup ? "Check again" : "Try again"}
           </button>
         </div>
       </ScreenMessage>

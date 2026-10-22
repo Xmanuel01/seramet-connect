@@ -17,10 +17,14 @@ export type DeviceStartup = {
   employees?: Array<{ employeeCode: string; displayName: string }>;
 };
 
-export async function deviceStartup(): Promise<DeviceStartup> {
+export async function deviceStartup(signal?: AbortSignal): Promise<DeviceStartup> {
   const response = await fetch("/api/seramet/public/device/startup", {
     credentials: "same-origin",
+    cache: "no-store",
     headers: { accept: "application/json" },
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error("Device status is temporarily unavailable");
   return response.json() as Promise<DeviceStartup>;

@@ -47,9 +47,9 @@ try {
   }
   assert.ok(ready, "Local Worker must become ready");
   for (const [path, heading] of [
-    ["/", "Connecting securely"],
+    ["/", "Seramet"],
     ["/login?account=1", "Administrator sign in"],
-    ["/pos-login", "Checking this POS"],
+    ["/pos-login", "Seramet"],
     ["/staff-login", "Staff account sign in"],
     ["/register", "Checking your account"],
   ]) {
@@ -62,7 +62,11 @@ try {
     assert.equal(response.redirected, false, `${path} must not redirect`);
     assert.equal(response.url, requestedUrl, `${path} must remain on its route`);
     assert.match(response.headers.get("content-type") ?? "", /text\/html/);
-    assert.match(html, new RegExp(`<h1[^>]*>${heading}</h1>`), `${path} must render its heading`);
+    assert.match(
+      html,
+      new RegExp(`<h1[^>]*>\\s*${heading}\\s*</h1>`),
+      `${path} must render its heading`,
+    );
     assert.ok(
       !html.includes("This page didn&#x27;t load") && !html.includes("This page didn't load"),
       `${path} must not render the error boundary`,
