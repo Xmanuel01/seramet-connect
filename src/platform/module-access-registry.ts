@@ -27,9 +27,12 @@ export type ModuleKey =
   | "warehouses"
   | "transfers"
   | "procurement"
+  | "requisitions"
   | "crm"
   | "loyalty"
   | "staff"
+  | "attendance"
+  | "employees"
   | "finance"
   | "accounting"
   | "reports"
@@ -398,13 +401,30 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     policyCode: "MODULE_ACCESS.PROCUREMENT",
     routes: [
       "/procurement",
-      "/requisitions",
       "/purchase-orders",
       "/receiving",
       "/suppliers",
       "/supplier-bills",
       "/supplier-performance",
     ],
+  },
+  {
+    key: "requisitions",
+    label: "Stock Requests",
+    navigationPermission: anyOf(
+      permissions.procurementView,
+      permissions.procurementRequisitionCreate,
+    ),
+    routePermission: anyOf(permissions.procurementView, permissions.procurementRequisitionCreate),
+    actionPermissions: actions(
+      anyOf(permissions.procurementView, permissions.procurementRequisitionCreate),
+      permissions.procurementRequisitionCreate,
+      null,
+      permissions.procurementRequisitionApprove,
+    ),
+    supportedScopes: stockScopes,
+    policyCode: "MODULE_ACCESS.REQUISITIONS",
+    routes: ["/requisitions"],
   },
   {
     key: "crm",
@@ -469,16 +489,37 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.STAFF",
-    routes: [
-      "/people",
-      "/employees",
-      "/attendance",
-      "/schedule",
-      "/payroll",
-      "/leave",
-      "/performance",
-      "/recruitment",
-    ],
+    routes: ["/people", "/schedule", "/payroll", "/leave", "/performance", "/recruitment"],
+  },
+  {
+    key: "attendance",
+    label: "Employee Attendance",
+    navigationPermission: anyOf(permissions.attendanceUse, permissions.staffManage),
+    routePermission: anyOf(permissions.attendanceUse, permissions.staffManage),
+    actionPermissions: actions(
+      anyOf(permissions.attendanceUse, permissions.staffManage),
+      permissions.attendanceUse,
+      permissions.staffManage,
+    ),
+    supportedScopes: branchScopes,
+    policyCode: "MODULE_ACCESS.ATTENDANCE",
+    routes: ["/attendance"],
+  },
+  {
+    key: "employees",
+    label: "Employee Identities",
+    navigationPermission: permissions.usersView,
+    routePermission: permissions.usersView,
+    actionPermissions: actions(
+      permissions.usersView,
+      allOf(permissions.usersManage, permissions.employeeCredentialsManage),
+      permissions.usersManage,
+      null,
+      permissions.employeeCredentialsManage,
+    ),
+    supportedScopes: branchScopes,
+    policyCode: "MODULE_ACCESS.EMPLOYEES",
+    routes: ["/employees"],
   },
   {
     key: "finance",
@@ -826,7 +867,12 @@ export function evaluateModuleAccess(
     context.entitlements.includes(definition.entitlement);
   const featureAllowed =
     !definition.featureFlag || context.featureFlags?.[definition.featureFlag] !== false;
-  const policy = context.policies?.[definition.key] ?? "ALLOW";
+  const inheritedDeny =
+    ((definition.key === "attendance" || definition.key === "employees") &&
+      context.policies?.staff === "DENY") ||
+    (definition.key === "employees" && context.policies?.users === "DENY") ||
+    (definition.key === "requisitions" && context.policies?.procurement === "DENY");
+  const policy = inheritedDeny ? "DENY" : (context.policies?.[definition.key] ?? "ALLOW");
   const baseAllowed = scopeAllowed && entitlementAllowed && featureAllowed && policy === "ALLOW";
   const route = baseAllowed && hasPermission(context.permissions, definition.routePermission);
   const reasons: string[] = [];

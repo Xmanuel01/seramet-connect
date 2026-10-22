@@ -1,6 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { invoiceBusinessDate, resolvePosTimeZone, unbilledKitchenOrders } from "@/lib/pos-workflow";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
+import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
+import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
+import { invoiceDisplayName } from "@/lib/invoice-split";
+import { permissions } from "@/platform/permissions";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
@@ -16,7 +21,6 @@ import { billingDocumentToPrintOrder } from "@/lib/print-order-adapter";
 import {
   createDeliveryLog,
   createInvoicePdfBlob,
-  invoiceEmailLink,
   invoiceWhatsAppLink,
   type DeliveryLogEntry,
   type InvoiceDeliveryRecord,
@@ -137,6 +141,7 @@ function InvoiceDeliveryActions({
 function Invoices() {
   const [deliveryLog, setDeliveryLog] = useState<DeliveryLogEntry[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [splitInvoice, setSplitInvoice] = useState<BillingRecord | null>(null);
   const [settleInvoice, setSettleInvoice] = useState<BillingRecord | null>(null);
   const [settlementMethod, setSettlementMethod] = useState("");
   const [settlementReference, setSettlementReference] = useState("");
@@ -144,11 +149,19 @@ function Invoices() {
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [receiptPrompt, setReceiptPrompt] = useState<BillingRecord | null>(null);
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
+  const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
   const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
   const [periodDate, setPeriodDate] = useState("");
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, hasPermission } =
+    useAppContext();
+  const canSplit = hasPermission(permissions.invoicesManage);
+  const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const splitScope = useRef("");
+  const currency = getConfigurationRepository().getTenant(activeTenantId).defaultCurrency;
   const { state, mutate, syncFromBackend } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
   const settlementService = new SettlementService();
@@ -275,7 +288,7 @@ function Invoices() {
       const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
-        title: `${documentType === "INVOICE" ? "A4 tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
+        title: `${documentType === "INVOICE" ? "Tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
         documentType,
         template: job.template,
         content: job.content,
@@ -293,13 +306,7 @@ function Invoices() {
   };
 
   const openEmail = (invoice: BillingRecord) => {
-    if (!identity.email) {
-      setWarning(identityConfigurationError || "No document email is configured for this branch.");
-      return;
-    }
-    const record = invoiceDeliveryRecord(invoice, identity);
-    window.location.href = invoiceEmailLink(record);
-    logDelivery(createDeliveryLog(record, "Email", record.email ?? "No email"));
+    setEmailInvoice({ id: invoice.id, scope });
   };
 
   const openWhatsApp = (invoice: BillingRecord) => {
@@ -323,19 +330,23 @@ function Invoices() {
   };
 
   const splitFirstOpenBill = () => {
-    const bill = selectedBills[0];
-    if (!bill) {
+    if (selectedBills.length !== 1) {
       setWarning("Select one invoice before splitting.");
       return;
     }
-    void mutate("splitBill", {
-      billId: bill.id,
-      splits: [
-        { label: "Guest 1", amount: Math.floor(bill.total / 2) },
-        { label: "Guest 2", amount: bill.total - Math.floor(bill.total / 2) },
-      ],
-    });
-    setSelectedIds([]);
+    openSplit(selectedBills[0]!);
+  };
+  const openSplit = (invoice: BillingRecord) => {
+    if (!canSplit) {
+      setWarning("Invoice management permission is required to split invoices.");
+      return;
+    }
+    if (invoice.status !== "OPEN" || invoice.paymentStatus !== "UNPAID" || invoice.paid !== 0) {
+      setWarning("Only an open unpaid invoice can be split.");
+      return;
+    }
+    splitScope.current = scope;
+    setSplitInvoice(invoice);
   };
 
   const printSelectedInvoice = () => {
@@ -439,11 +450,13 @@ function Invoices() {
   return (
     <AppShell
       title="Invoices"
-      subtitle={`Customer billing, open bills and settlement - ${branchLabel}`}
+      subtitle={`Customer invoices and settlement - ${branchLabel}`}
       actions={
         <>
           <Btn onClick={mergeFirstOpenBills}>Merge selected</Btn>
-          <Btn onClick={splitFirstOpenBill}>Split selected</Btn>
+          <Btn disabled={!canSplit} onClick={splitFirstOpenBill}>
+            Split selected
+          </Btn>
           <Btn onClick={printSelectedInvoice}>Print invoice</Btn>
         </>
       }
@@ -494,7 +507,7 @@ function Invoices() {
       )}
       <Panel className="mt-4">
         <PanelHead
-          title="Bills and invoices"
+          title="Invoices"
           sub={`${activeRows.length} active billing records; merged/split source records retained`}
           right={<SearchInput placeholder="Search invoice or customer..." />}
         />
@@ -551,12 +564,21 @@ function Invoices() {
                 <TD>
                   <input
                     type="checkbox"
+                    aria-label={`Select ${invoiceDisplayName(row.id)}`}
                     checked={selectedIds.includes(row.id)}
                     onChange={() => toggleInvoice(row.id)}
                     className="h-4 w-4 accent-primary"
                   />
                 </TD>
-                <TD className="num font-semibold">{row.id}</TD>
+                <TD className="num font-semibold">
+                  <button
+                    type="button"
+                    className="text-left underline underline-offset-2"
+                    onClick={() => openSplit(row)}
+                  >
+                    {invoiceDisplayName(row.id)}
+                  </button>
+                </TD>
                 <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
                 <TD>{row.customer}</TD>
                 <TD className="num text-right">{ksh(row.total)}</TD>
@@ -591,20 +613,27 @@ function Invoices() {
           {activeRows.map((row) => (
             <article key={row.id} className="space-y-3 px-4 py-3">
               <div className="flex items-start justify-between gap-3">
-                <label className="flex min-w-0 items-start gap-2.5">
+                <div className="flex min-w-0 items-start gap-2.5">
                   <input
                     type="checkbox"
+                    aria-label={`Select ${invoiceDisplayName(row.id)}`}
                     checked={selectedIds.includes(row.id)}
                     onChange={() => toggleInvoice(row.id)}
                     className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
                   />
                   <span className="min-w-0">
-                    <span className="num block truncate text-[13px] font-bold">{row.id}</span>
+                    <button
+                      type="button"
+                      className="num block text-left text-[13px] font-bold underline underline-offset-2"
+                      onClick={() => openSplit(row)}
+                    >
+                      {invoiceDisplayName(row.id)}
+                    </button>
                     <span className="block truncate text-[12px] text-muted-foreground">
                       {row.customer}
                     </span>
                   </span>
-                </label>
+                </div>
                 <Status>{settlementLabel(row)}</Status>
               </div>
               <div className="grid grid-cols-2 gap-3 text-[12px]">
@@ -698,7 +727,7 @@ function Invoices() {
           <DialogHeader>
             <DialogTitle>Settle invoice</DialogTitle>
             <DialogDescription>
-              {settleInvoice?.id} - {settleInvoice?.customer}
+              {settleInvoice && invoiceDisplayName(settleInvoice.id)} - {settleInvoice?.customer}
             </DialogDescription>
           </DialogHeader>
           {settleInvoice && (
@@ -829,7 +858,7 @@ function Invoices() {
         </DialogContent>
       </Dialog>
       <Dialog open={!!printPreview} onOpenChange={(open) => !open && setPrintPreview(null)}>
-        <DialogContent className="max-h-[90vh] max-w-[760px] overflow-y-auto border-border bg-card">
+        <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-[760px] grid-cols-[minmax(0,1fr)] overflow-y-auto border-border bg-card">
           <DialogHeader>
             <DialogTitle>{printPreview?.title}</DialogTitle>
             <DialogDescription>
@@ -838,18 +867,8 @@ function Invoices() {
           </DialogHeader>
           {printPreview && (
             <div className="space-y-4">
-              <div className="grid place-items-center rounded-xl border border-border bg-secondary/40 p-4">
-                <pre
-                  className={
-                    printPreview.documentType === "INVOICE"
-                      ? "w-full max-w-[680px] overflow-auto rounded-sm border border-neutral-300 bg-white p-5 font-mono text-[11px] leading-relaxed text-black shadow-sm"
-                      : "w-[320px] overflow-auto rounded-sm border border-neutral-300 bg-white p-4 font-mono text-[11px] leading-relaxed text-black shadow-sm"
-                  }
-                >
-                  {printPreview.content}
-                </pre>
-              </div>
-              <div className="flex justify-end gap-2">
+              <DocumentTextPreview content={printPreview.content} />
+              <div className="flex flex-wrap justify-end gap-2">
                 <Btn onClick={() => setPrintPreview(null)}>Close</Btn>
                 <Btn
                   onClick={() => {
@@ -896,6 +915,43 @@ function Invoices() {
           )}
         </DialogContent>
       </Dialog>
+      {emailInvoice?.scope === scope && (
+        <DocumentEmailDialog
+          key={`${scope}:${emailInvoice.id}`}
+          title={`invoice ${emailInvoice.id}`}
+          documentType="INVOICE"
+          recordId={emailInvoice.id}
+          close={() => setEmailInvoice(null)}
+        />
+      )}
+      {splitInvoice && splitScope.current === scope && (
+        <InvoiceSplitDialog
+          key={`${scope}:${splitInvoice.id}`}
+          invoiceId={splitInvoice.id}
+          total={splitInvoice.total}
+          currency={currency}
+          close={() => {
+            if (scopeRef.current === scope)
+              setSplitInvoice((current) => (current?.id === splitInvoice.id ? null : current));
+          }}
+          confirm={async (splits) => {
+            const requestedScope = scope;
+            const result = await mutate("splitBill", { billId: splitInvoice.id, splits });
+            if (scopeRef.current !== requestedScope) return;
+            const confirmed = result?.state?.bills.filter(
+              (invoice) => invoice.splitFromBillId === splitInvoice.id,
+            );
+            if (
+              (result && "offline" in result && result.offline) ||
+              confirmed?.length !== splits.length
+            )
+              throw new Error(
+                "The server has not confirmed the split. Your amounts were retained.",
+              );
+            setSelectedIds([]);
+          }}
+        />
+      )}
       <Dialog open={!!warning} onOpenChange={(open) => !open && setWarning("")}>
         <DialogContent className="max-w-[420px] border-border bg-card">
           <DialogHeader>

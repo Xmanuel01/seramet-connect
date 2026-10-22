@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { OnboardingService } from "@/onboarding/onboarding-service";
+import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { createManualMenuCsv } from "@/onboarding/manual-menu-item";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
@@ -51,7 +53,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("applies schema version 9 and the commercial onboarding tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(27);
+    ).toBe(CURRENT_SCHEMA_VERSION);
     for (const table of [
       "tenant_onboarding_profiles",
       "branch_operating_profiles",
@@ -1072,13 +1074,24 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   });
 
   it("imports inventory with exact rational conversion and supplier data through server preview", async () => {
+    await new InventoryIntelligenceService(db, actor()).createInventoryCategory({
+      code: "OILS",
+      name: "Oils",
+    });
     const inventory = await previewCsv(
       service,
       "INVENTORY",
-      "code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator\nOIL,Oil,L,JERRICAN,VOLUME,20,1",
+      `code,name,baseUnit,purchaseUnit,dimension,factorNumerator,factorDenominator,categoryCode,warehouseId\nOIL,Oil,L,JERRICAN,VOLUME,20,1,OILS,${warehouseId}`,
       "inventory-import",
     );
+    expect(inventory.canCommit).toBe(true);
     await service.commitImport(inventory.id, inventory.commitKey);
+    await service.commitImport(inventory.id, inventory.commitKey, { worker: true });
+    // Staging must not create active stock masters before explicit publication.
+    expect(await rowCount(db, "inventory_items")).toBe(1);
+    const stagedInventory = await service.inspectImport(inventory.id);
+    await service.publishImport(inventory.id, stagedInventory.publishKey!);
+    await service.publishImport(inventory.id, stagedInventory.publishKey!, { worker: true });
     const supplier = await previewCsv(
       service,
       "SUPPLIER",
@@ -1557,7 +1570,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
   it("returns redacted diagnostics and never includes secrets or session material", async () => {
     const diagnostics = await service.diagnostics();
     expect(diagnostics).toMatchObject({
-      schema: { current: 27, required: 27, pending: 0 },
+      schema: { current: CURRENT_SCHEMA_VERSION, required: CURRENT_SCHEMA_VERSION, pending: 0 },
       redaction: { secrets: "EXCLUDED", tokens: "EXCLUDED", credentials: "EXCLUDED" },
     });
     expect(JSON.stringify(diagnostics)).not.toContain("sensitive-secret");

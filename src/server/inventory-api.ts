@@ -55,7 +55,13 @@ import {
   unitSchema,
   warehouseSchema,
 } from "@/inventory/schemas";
-import { SerametHttpError, authenticateSerametRequest, type SerametEnv } from "@/lib/seramet-auth";
+import {
+  SerametHttpError,
+  authenticateSerametRequest,
+  authorizeBranchRead,
+  type SerametEnv,
+} from "@/lib/seramet-auth";
+import { permissions } from "@/platform/permissions";
 import { authoritativeBusinessDate } from "@/server/business-date";
 import { DocumentNumberingService } from "@/server/database/document-numbering";
 import type { D1Database } from "@/server/database/d1";
@@ -162,6 +168,41 @@ export async function handleInventoryApi(
     );
   }
   const service = new InventoryIntelligenceService(env.SERAMET_DB, actor);
+  if (
+    url.pathname === "/api/seramet/procurement/requisition-workspace" &&
+    request.method === "GET"
+  ) {
+    if (!actor.permissions.includes(permissions.procurementRequisitionCreate))
+      throw new SerametHttpError(403, "Stock request permission is required");
+    const branchId = requiredQuery(url, "branchId");
+    authorizeBranchRead(actor, actor.tenantId, branchId);
+    const [warehouses, items, requests] = await Promise.all([
+      env.SERAMET_DB.prepare(
+        "SELECT id,name FROM warehouses WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY name",
+      )
+        .bind(actor.tenantId, branchId)
+        .all(),
+      env.SERAMET_DB.prepare(
+        "SELECT i.id,i.name,i.base_unit_id unitId,u.symbol unit FROM inventory_items i JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id WHERE i.tenant_id=? AND i.active=1 AND u.active=1 ORDER BY i.name LIMIT 5000",
+      )
+        .bind(actor.tenantId)
+        .all(),
+      env.SERAMET_DB.prepare(
+        "SELECT id,requisition_number reference,status,created_at createdAt FROM purchase_requisitions WHERE tenant_id=? AND branch_id=? AND requested_by=? ORDER BY created_at DESC LIMIT 100",
+      )
+        .bind(actor.tenantId, branchId, actor.id)
+        .all(),
+    ]);
+    return Response.json(
+      {
+        ok: true,
+        warehouses: warehouses.results ?? [],
+        items: items.results ?? [],
+        requests: requests.results ?? [],
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
 
   if (url.pathname === "/api/seramet/inventory/categories" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");

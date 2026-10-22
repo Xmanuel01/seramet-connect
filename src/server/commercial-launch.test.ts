@@ -125,7 +125,10 @@ describe.sequential("commercial launch foundation", () => {
       authEnv(),
     );
     expect(actor.tenantId).toBe(provisioned.tenantId);
-    expect(actor.permissions).toContain(permissions.posAccess);
+    // Verified account identity is not proof of an enrolled sales-terminal session.
+    expect(actor.salesTerminal).toBe(false);
+    expect(actor.permissions).not.toContain(permissions.posAccess);
+    expect(actor.permissions).toContain(permissions.settingsBranchManage);
     expect(actor.permissions).not.toContain(permissions.platformTenantsProvision);
     const session = await database
       .prepare("SELECT revoked_at FROM auth_sessions WHERE tenant_id=? AND id=?")
@@ -167,6 +170,41 @@ describe.sequential("commercial launch foundation", () => {
       .bind(provisioned.tenantId, identity().sessionId)
       .first<{ revoked_at: string | null }>();
     expect(session?.revoked_at).not.toBeNull();
+  });
+
+  it("returns owner email verification to explicit administrator sign in", async () => {
+    const provider = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json({ user: { id: "disposable-owner", email: "owner@example.test" } }),
+      );
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/signup", {
+        method: "POST",
+        headers: { origin: "https://app.seramet.test", "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Disposable owner",
+          email: "owner@example.test",
+          password: "disposable-fixture-password",
+        }),
+      }),
+      {
+        SERAMET_ENVIRONMENT: "staging",
+        SERAMET_IDENTITY_PROVIDER: "supabase",
+        SERAMET_DB: database,
+        SERAMET_PUBLIC_ORIGIN: "https://app.seramet.test",
+        SERAMET_SUPABASE_URL: "https://example.supabase.co",
+        SERAMET_SUPABASE_PUBLISHABLE_KEY: "disposable-publishable-fixture",
+      },
+    );
+    expect(response?.status).toBe(202);
+    expect(provider).toHaveBeenCalledTimes(1);
+    const callback = new URL(String(provider.mock.calls[0]![0])).searchParams.get("redirect_to");
+    expect(callback).toBe("https://app.seramet.test/login?account=1&verified=1");
+    await expect(response?.json()).resolves.toMatchObject({
+      verificationRequired: true,
+      authenticated: false,
+    });
   });
 
   it("allows public auth login before unrelated production bindings are present", async () => {

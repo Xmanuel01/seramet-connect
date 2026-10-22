@@ -52,9 +52,7 @@ function Finance() {
         role="note"
         className="mb-3 rounded-lg border border-warning/40 bg-warning-soft p-3 text-[12px]"
       >
-        <strong>Management flash estimates are not posted accounting statements.</strong> Refresh
-        fetches existing read models; it does not run pending recalculation jobs. For actual posted
-        vouchers and accounting completeness, review{" "}
+        <strong>Estimated figures, not posted accounts.</strong> See{" "}
         <Link to="/accounting" className="font-semibold underline">
           Accounting
         </Link>{" "}

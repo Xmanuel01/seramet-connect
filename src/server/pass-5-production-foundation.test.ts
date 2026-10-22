@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { authenticateSerametRequest, type SerametEnv, type ServerActor } from "@/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
@@ -17,6 +18,7 @@ import {
   setConfigurationRepositoryForTests,
 } from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
+import { handleSerametApiRequest } from "@/lib/seramet-api";
 
 const tenantA = "tenant-a";
 const tenantB = "tenant-b";
@@ -47,7 +49,7 @@ describe.sequential("Pass 5 production foundation", () => {
     const version = await database
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(27);
+    expect(version?.version).toBe(CURRENT_SCHEMA_VERSION);
     await expect(
       new D1AuthoritativeTransactionRepository(database).migrate(),
     ).resolves.toBeUndefined();
@@ -119,7 +121,12 @@ describe.sequential("Pass 5 production foundation", () => {
       ).rejects.toThrow();
       expect(await repository.loadState(tenantA)).toEqual(before);
     }
-    const payload = { drawerId: "count-drawer", physicalCount: "100.09" };
+    const payload = {
+      drawerId: "count-drawer",
+      physicalCount: "100.09",
+      confirmed: true,
+      varianceReason: "Verified one-cent cash shortage",
+    };
     await expect(
       repository.commitMutation({
         actor: actor(),
@@ -132,14 +139,25 @@ describe.sequential("Pass 5 production foundation", () => {
       }),
     ).rejects.toMatchObject({ status: 409 });
     expect(await repository.loadState(tenantA)).toEqual(before);
-    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    const closingCommand = {
+      actor: {
+        ...actor(),
+        permissions: [...actor().permissions, "cash.close", "reconciliation.approve"],
+      },
+      action: "closeCashDrawer",
+      payload,
+      idempotencyKey: "valid-count",
+      requestHash: "valid-count",
+      correlationId: "valid-count",
+    };
+    await repository.commitMutation(closingCommand);
     const stored = await repository.loadState(tenantA);
     expect(stored.cashDrawers[0]).toMatchObject({
       physicalCount: 100.09,
       variance: -0.01,
-      status: "VARIANCE_REVIEW",
+      status: "APPROVED",
     });
-    await mutation(repository, "valid-count", "valid-count", "closeCashDrawer", payload);
+    await repository.commitMutation(closingCommand);
     expect(await repository.loadState(tenantA)).toEqual(stored);
   });
 
@@ -585,6 +603,32 @@ describe.sequential("Pass 5 production foundation", () => {
     await expect(authenticateSerametRequest(request, testEnv())).rejects.toThrow(
       /Device is not active/,
     );
+  });
+
+  it("skips unchanged transaction snapshots only after authenticating and authorizing the branch", async () => {
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const env = {
+      ...testEnv(),
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_IDENTITY_PROVIDER: "internal",
+    };
+    const read = (branch: string, bearer = token) =>
+      handleSerametApiRequest(
+        new Request(
+          `https://seramet.test/api/seramet/transactions?branchId=${branch}&knownRevision=0`,
+          { headers: { authorization: `Bearer ${bearer}`, "x-seramet-branch-id": branchA } },
+        ),
+        env,
+      );
+    const response = await read(branchA);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, unchanged: true, revision: 0 });
+    expect((await read("branch-b")).status).toBe(403);
+    await database
+      .prepare("UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND id=?")
+      .bind(new Date().toISOString(), tenantA, sessionA)
+      .run();
+    expect((await read(branchA)).status).toBe(401);
   });
 
   it("rejects development headers in production", async () => {
@@ -1077,8 +1121,8 @@ async function seedTenant(
     .run();
   await db
     .prepare(
-      `INSERT INTO hardware_devices (tenant_id,id,branch_id,device_type,name,trust_status,registered_at,payload_json)
-     VALUES (?,?,?,'POS_TERMINAL',?,'ACTIVE',?,'{}')`,
+      `INSERT INTO hardware_devices (tenant_id,id,branch_id,device_type,name,trust_status,lifecycle_state,registered_at,payload_json)
+     VALUES (?,?,?,'POS_TERMINAL',?,'ACTIVE','ACTIVE',?,'{}')`,
     )
     .bind(tenantId, tenantId === tenantA ? deviceA : `device-${tenantId}`, branchId, "POS", stamp)
     .run();

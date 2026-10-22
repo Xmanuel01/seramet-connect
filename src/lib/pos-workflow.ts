@@ -1,5 +1,9 @@
 import { businessDateForTimestamp } from "@/lib/business-date";
-import type { TransactionOrder, BillingRecord } from "@/lib/transaction-engine";
+import type {
+  TransactionOrder,
+  BillingRecord,
+  KitchenPrintObligation,
+} from "@/lib/transaction-engine";
 import { currentDateKey } from "@/lib/currency";
 
 /**
@@ -29,6 +33,49 @@ export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "s
   );
 }
 
+/** Server acknowledgement survives terminal changes; local queue presence does not. */
+export function acknowledgedKitchenDispatch(
+  order: TransactionOrder,
+  obligations: readonly KitchenPrintObligation[],
+  tenantId: string,
+  branchId: string,
+) {
+  if (
+    order.tenantId !== tenantId ||
+    order.branchId !== branchId ||
+    !["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED", "BILL_REQUESTED"].includes(order.status)
+  )
+    return false;
+  const lines = order.lines.filter(
+    (line) =>
+      line.sentAt && line.productionStatus !== "CANCELLED" && line.productionStation !== "NONE",
+  );
+  const tickets = obligations.filter(
+    (ticket) =>
+      ticket.tenantId === tenantId &&
+      ticket.branchId === branchId &&
+      ticket.orderId === order.id &&
+      ticket.kind !== "REPRINT",
+  );
+  if (
+    !lines.length ||
+    !tickets.length ||
+    tickets.some((ticket) => ticket.status !== "BRIDGE_ACCEPTED")
+  )
+    return false;
+  return lines.every(
+    (line) =>
+      tickets.reduce(
+        (quantity, ticket) =>
+          quantity +
+          ticket.lines
+            .filter((sent) => sent.id === line.id)
+            .reduce((sum, sent) => sum + sent.quantity, 0),
+        0,
+      ) >= line.quantity,
+  );
+}
+
 function validTimeZone(value: string | undefined): value is string {
   if (!value) return false;
   try {
@@ -37,6 +84,10 @@ function validTimeZone(value: string | undefined): value is string {
   } catch {
     return false;
   }
+}
+
+function utcTimeZone(value: string) {
+  return new Intl.DateTimeFormat("en", { timeZone: value }).resolvedOptions().timeZone === "UTC";
 }
 
 /**
@@ -54,8 +105,8 @@ export function resolvePosTimeZone(
     tenantCountryCode?.toUpperCase() === "KE" ||
     (!tenantCountryCode && tenantCurrency?.toUpperCase() === "KES");
   if (isKenyan) {
-    if (validTimeZone(branchTimezone) && branchTimezone !== "UTC") return branchTimezone;
-    if (validTimeZone(tenantTimezone) && tenantTimezone !== "UTC") return tenantTimezone;
+    if (validTimeZone(branchTimezone) && !utcTimeZone(branchTimezone)) return branchTimezone;
+    if (validTimeZone(tenantTimezone) && !utcTimeZone(tenantTimezone)) return tenantTimezone;
     return "Africa/Nairobi";
   }
   if (validTimeZone(branchTimezone)) return branchTimezone;

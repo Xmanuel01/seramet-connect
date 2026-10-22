@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - "local-print-bridge/**"
+      - "printing-core/**"
+      - "scripts/raster-wire-parser.mjs"
       - ".github/workflows/verify-printing.yml"
 permissions:
   contents: read
@@ -15,4 +17,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - run: node --test local-print-bridge/printing.test.mjs
+      - run: npm ci
+      - run: node --test local-print-bridge/printing.test.mjs local-print-bridge/raster.test.mjs
+      - run: npx vitest run src/server/printing-api.test.ts src/lib/thermal-print-layout.test.ts src/printing/printer-routing.test.ts --maxWorkers=2

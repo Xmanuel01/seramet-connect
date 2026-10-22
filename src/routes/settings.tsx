@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
+import { StaffRolePreset } from "@/components/app/StaffRolePreset";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { cn } from "@/lib/utils";
 import {
@@ -573,6 +574,13 @@ function Settings() {
                       </select>
                     </label>
                   </div>
+                  {selectedAccessRole && (
+                    <StaffRolePreset
+                      key={selectedAccessRole.id}
+                      roleId={selectedAccessRole.id}
+                      disabled={!canManageRoleAccess || accessSaving}
+                    />
+                  )}
                   <div className="overflow-x-auto rounded-lg border border-border">
                     <table className="w-full min-w-[1240px]">
                       <thead>

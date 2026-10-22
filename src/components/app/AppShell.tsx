@@ -1,5 +1,7 @@
 import { clearInteractiveSignIn, revokeAllBrowserSessions } from "@/lib/auth-client";
 import { emptyRecords } from "@/lib/empty-records";
+import { pilotUnavailable } from "@/lib/pilot-unavailable";
+import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -29,7 +31,7 @@ import {
   Users,
   WalletCards,
 } from "lucide-react";
-import { getVisibleNavGroups, roleCanAccessPath } from "./nav";
+import { getVisibleNavGroups, navItemMatchesPath, roleCanAccessPath } from "./nav";
 import { Logo } from "./Logo";
 import { CommandPalette } from "./CommandPalette";
 import { cn } from "@/lib/utils";
@@ -217,11 +219,23 @@ export function AppShell({
     moduleAccess,
   );
   const path = useRouterState().location.pathname;
+  const unavailable = pilotUnavailable[path];
+  const pageContent = unavailable ? (
+    <section role="status" className="rounded-md border border-border bg-card p-6">
+      <h2 className="text-base font-semibold">{unavailable} is not available in the pilot</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        This register is not connected to an authoritative workflow. No complete or empty record
+        history can be confirmed here.
+      </p>
+    </section>
+  ) : (
+    children
+  );
   const navigate = useNavigate();
 
   useEffect(() => {
     const activeGroup = visibleNavGroups.find(
-      (group) => group.group && group.items.some((item) => item.to === path),
+      (group) => group.group && group.items.some((item) => navItemMatchesPath(item, path)),
     )?.group;
     if (!activeGroup) return;
     setOpenNavGroups((current) => {
@@ -233,7 +247,8 @@ export function AppShell({
   const visibleNotifications = notifications.filter(
     (item) => !mutedCategories.includes(item.category),
   );
-  const unreadCount = visibleNotifications.filter((item) => !item.read).length;
+  const delayFeed = useAttendanceDelays();
+  const unreadCount = visibleNotifications.filter((item) => !item.read).length + delayFeed.unread;
   const availableQuickCreate = useMemo(
     () =>
       quickCreateOptions.filter(
@@ -453,7 +468,7 @@ export function AppShell({
   const navContent = (isCollapsed = false, onNavigate?: () => void) => (
     <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Main navigation">
       {visibleNavGroups.map((g) => {
-        const hasActiveItem = g.items.some((item) => item.to === path);
+        const hasActiveItem = g.items.some((item) => navItemMatchesPath(item, path));
         const isOpen = !g.group || isCollapsed || openNavGroups.has(g.group);
         const GroupIcon = g.items.find((item) => item.icon)?.icon;
         const groupId = `nav-group-${g.group.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
@@ -504,7 +519,7 @@ export function AppShell({
             >
               {g.items.map((item, idx, items) => {
                 const active =
-                  item.to === path &&
+                  navItemMatchesPath(item, path) &&
                   items.findIndex((candidate) => candidate.to === item.to) === idx;
                 const Icon = item.icon;
                 const content = (
@@ -526,6 +541,7 @@ export function AppShell({
                     key={item.label + item.to}
                     to={item.to}
                     title={item.label}
+                    aria-current={active ? "page" : undefined}
                     onClick={onNavigate}
                   >
                     {content}
@@ -545,7 +561,7 @@ export function AppShell({
 
   return (
     <div className="flex min-h-screen w-full bg-background">
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
       <Sheet open={quickCreateOpen} onOpenChange={setQuickCreateOpen}>
         <SheetContent className="w-full overflow-y-auto border-border bg-card p-0 sm:max-w-[420px]">
           <SheetHeader className="border-b border-border px-4 py-4 text-left">
@@ -896,18 +912,27 @@ export function AppShell({
               <DropdownMenuContent align="end" className="w-[320px]">
                 <div className="flex items-center justify-between px-2 py-1.5">
                   <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
-                  <button
-                    onClick={() =>
-                      setNotifications((current) =>
-                        current.map((item) => ({ ...item, read: true })),
-                      )
-                    }
-                    className="text-[11px] font-semibold text-primary hover:underline"
-                  >
-                    Mark all read
-                  </button>
+                  {visibleNotifications.length > 0 && (
+                    <button
+                      onClick={() =>
+                        setNotifications((current) =>
+                          current.map((item) => ({ ...item, read: true })),
+                        )
+                      }
+                      className="text-[11px] font-semibold text-primary hover:underline"
+                    >
+                      Mark general alerts read
+                    </button>
+                  )}
                 </div>
                 <DropdownMenuSeparator />
+                {delayFeed.canManage && delayFeed.unread > 0 && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/attendance">
+                      {delayFeed.unread} unread arrival request(s) · Review
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 {visibleNotifications.map((item) => {
                   const Icon = item.icon;
                   return (
@@ -956,7 +981,7 @@ export function AppShell({
                     </DropdownMenuItem>
                   );
                 })}
-                {visibleNotifications.length === 0 && (
+                {visibleNotifications.length === 0 && delayFeed.unread === 0 && (
                   <DropdownMenuItem disabled>No active notifications</DropdownMenuItem>
                 )}
                 {mutedCategories.length > 0 && (
@@ -1021,7 +1046,7 @@ export function AppShell({
         </Dialog>
 
         {bare ? (
-          <main className="min-w-0 flex-1 overflow-x-hidden">{children}</main>
+          <main className="min-w-0 flex-1 overflow-x-hidden">{pageContent}</main>
         ) : (
           <main className="min-w-0 flex-1 overflow-x-hidden px-4 py-5 md:px-6">
             {title && (
@@ -1032,14 +1057,14 @@ export function AppShell({
                     <div className="mt-0.5 text-[13px] text-muted-foreground">{subtitle}</div>
                   )}
                 </div>
-                {actions && (
+                {actions && !unavailable && (
                   <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
                     {actions}
                   </div>
                 )}
               </div>
             )}
-            {children}
+            {pageContent}
           </main>
         )}
       </div>

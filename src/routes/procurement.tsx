@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { InventoryActionLink } from "@/inventory/inventory-action-link";
 import { useState, type ReactNode } from "react";
 import { ClipboardCheck, PackageCheck, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -102,16 +103,12 @@ function Procurement() {
       subtitle={`${branchLabel} purchase-to-pay control  -  ${openOrders.length} open purchase orders`}
       actions={
         <>
-          <Link to="/receiving">
-            <Btn>
-              <PackageCheck className="h-4 w-4" /> Receiving
-            </Btn>
-          </Link>
-          <Link to="/purchase-orders">
-            <Btn variant="primary">
-              <Plus className="h-4 w-4" /> Purchase orders
-            </Btn>
-          </Link>
+          <InventoryActionLink to="/receiving">
+            <PackageCheck className="h-4 w-4" /> Receiving
+          </InventoryActionLink>
+          <InventoryActionLink to="/purchase-orders" primary>
+            <Plus className="h-4 w-4" /> Purchase orders
+          </InventoryActionLink>
         </>
       }
     >

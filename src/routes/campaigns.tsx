@@ -218,9 +218,31 @@ function Campaigns() {
       subtitle={"Consent-gated, auditable campaign delivery - " + branchLabel}
       actions={
         canManage && canViewSegments ? (
-          <Btn variant="primary" onClick={() => setCreating((value) => !value)}>
-            {creating ? "Cancel draft" : "New email campaign"}
-          </Btn>
+          <>
+            {!availableProviders.length && (
+              <Btn
+                disabled={!!busy}
+                onClick={() => {
+                  setBusy("connect");
+                  setError("");
+                  void command("/api/seramet/crm/campaigns/providers/email", {})
+                    .then(() => {
+                      setNotice(
+                        "Email connection configured. Provider acceptance is not confirmed inbox delivery.",
+                      );
+                      providers.refresh();
+                    })
+                    .catch((cause) => setError(crmErrorMessage(cause)))
+                    .finally(() => setBusy(null));
+                }}
+              >
+                Connect email
+              </Btn>
+            )}
+            <Btn variant="primary" onClick={() => setCreating((value) => !value)}>
+              {creating ? "Cancel draft" : "New email campaign"}
+            </Btn>
+          </>
         ) : undefined
       }
     >
@@ -350,7 +372,7 @@ function Campaigns() {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Metric label="Campaigns in current scope" value={campaignRows.length} />
             <Metric
-              label="Recorded sent/delivered"
+              label="Provider accepted"
               value={campaignRows.reduce((sum, row) => sum + row.sent, 0)}
             />
             <Metric
@@ -396,7 +418,7 @@ function Campaigns() {
                       {" · "}Scheduled: {shortDate(row.schedule_at)}
                     </p>
                     <p className="text-[12px]">
-                      Eligible: {row.eligible} · Recorded sent: {row.sent} · Delivered:{" "}
+                      Eligible: {row.eligible} · Provider accepted: {row.sent} · Delivered:{" "}
                       {row.delivered}
                       {row.unknown > 0 ? " · Unconfirmed outcomes: " + row.unknown : ""}
                     </p>

@@ -1,6 +1,6 @@
-import { BellRing, CalendarDays, Clock3, DoorOpen, RefreshCcw, Users } from "lucide-react";
+import { BellRing, CalendarDays, Clock3, DoorOpen, RefreshCcw, Users, Table2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { DataTable } from "@/components/app/Tabs";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
@@ -8,6 +8,7 @@ import { useCrmApi, useCrmQuery } from "@/crm/use-crm";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
 import { cn } from "@/lib/utils";
+import { TableManagement } from "@/guest/table-management";
 
 type ReservationRow = {
   id: string;
@@ -52,6 +53,7 @@ type HostResponse = {
 };
 
 const views = [
+  { to: "/tables", label: "Tables", icon: Table2, permission: permissions.tableManage },
   {
     to: "/reservations",
     label: "Reservations",
@@ -59,7 +61,7 @@ const views = [
     permission: permissions.reservationView,
   },
   { to: "/host", label: "Seating", icon: DoorOpen, permission: permissions.tableManage },
-  { to: "/waitlist", label: "Waitlist", icon: Clock3, permission: permissions.waitlistView },
+  { to: "/waitlist", label: "Waiting List", icon: Clock3, permission: permissions.waitlistView },
   {
     to: "/guest-service",
     label: "Guest requests",
@@ -69,9 +71,8 @@ const views = [
 ] as const;
 
 /** The legacy URLs remain valid bookmarks, but share a single backend-backed workspace. */
-export function HostStation() {
+export function HostStation({ view: pathname }: { view: (typeof views)[number]["to"] }) {
   const { branchId, branchLabel, hasPermission } = useAppContext();
-  const { pathname } = useLocation();
   const { command } = useCrmApi();
   const [businessDate, setBusinessDate] = useState("");
   const path = `/api/seramet/guest-admin/host?branchId=${encodeURIComponent(branchId)}${businessDate ? `&businessDate=${encodeURIComponent(businessDate)}` : ""}`;
@@ -190,7 +191,7 @@ export function HostStation() {
   return (
     <AppShell
       title="Front of House"
-      subtitle={`Reservations, arrivals, seating, waitlist and guest requests - ${branchLabel}`}
+      subtitle={`Tables, reservations, seating, waiting list and guest requests - ${branchLabel}`}
       actions={
         <Btn onClick={() => void query.refresh()} disabled={query.status === "loading"}>
           <RefreshCcw className="h-4 w-4" /> Refresh
@@ -216,22 +217,22 @@ export function HostStation() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Metric
           label="Bookings"
-          value={canViewReservations ? (data?.reservations.length ?? 0) : "—"}
+          value={canViewReservations && data ? data.reservations.length : "—"}
           note={data?.businessDate ?? "Loading"}
         />
         <Metric
           label="Reserved covers"
-          value={canViewReservations ? covers : "—"}
+          value={canViewReservations && data ? covers : "—"}
           note="Reservation party sizes"
         />
         <Metric
           label="Waiting parties"
-          value={canViewWaitlist ? (data?.waitlist.length ?? 0) : "—"}
+          value={canViewWaitlist && data ? data.waitlist.length : "—"}
           note="Waitlist"
         />
         <Metric
           label="Open requests"
-          value={canManageRequests ? pendingRequests.length : "—"}
+          value={canManageRequests && data ? pendingRequests.length : "—"}
           note="Guest service"
         />
       </div>
@@ -265,6 +266,14 @@ export function HostStation() {
         <p className="mt-4 rounded-md border border-border bg-card p-6 text-sm text-muted-foreground">
           You do not have permission to view any Front of House sections.
         </p>
+      )}
+
+      {currentView?.to === "/tables" && (
+        <TableManagement
+          key={branchId}
+          statuses={data?.tables}
+          onChanged={() => void query.refresh()}
+        />
       )}
 
       {currentView?.to === "/reservations" && (
@@ -325,7 +334,7 @@ export function HostStation() {
               </tr>
             ))}
           </DataTable>
-          {!data?.reservations.length && query.status !== "loading" && (
+          {!data?.reservations.length && query.status === "ready" && (
             <p className="p-8 text-center text-sm text-muted-foreground">
               No reservations for this business date.
             </p>
@@ -361,7 +370,7 @@ export function HostStation() {
                   )}
                 </div>
               ))}
-              {!data?.tables.length && query.status !== "loading" && (
+              {!data?.tables.length && query.status === "ready" && (
                 <p className="col-span-full p-5 text-center text-sm text-muted-foreground">
                   No tables are configured for this branch.
                 </p>
@@ -489,7 +498,7 @@ export function HostStation() {
                 </div>
               </div>
             ))}
-            {!data?.waitlist.length && query.status !== "loading" && (
+            {!data?.waitlist.length && query.status === "ready" && (
               <p className="p-8 text-center text-sm text-muted-foreground">Waitlist is clear.</p>
             )}
           </div>
@@ -533,7 +542,7 @@ export function HostStation() {
                 </div>
               </div>
             ))}
-            {!data?.serviceRequests.length && query.status !== "loading" && (
+            {!data?.serviceRequests.length && query.status === "ready" && (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 No guest requests need attention.
               </p>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
+import { requireInventoryResponse } from "./inventory-response";
 import type { InventorySummary } from "@/inventory/types";
 
 export type InventoryListRow = {
@@ -320,15 +321,15 @@ export function useInventoryControlCentre(enabled: boolean) {
             fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
             fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
           ]);
-          for (const response of [
-            summaryResponse,
-            categoriesResponse,
-            warehousesResponse,
-            unitsResponse,
-            procurementResponse,
-            controlResponse,
-          ]) {
-            if (!response.ok) throw new Error(`Inventory server query failed (${response.status})`);
+          for (const [response, resource] of [
+            [summaryResponse, "Inventory summary"],
+            [categoriesResponse, "Inventory categories"],
+            [warehousesResponse, "Inventory locations"],
+            [unitsResponse, "Inventory units"],
+            [procurementResponse, "Procurement overview"],
+            [controlResponse, "Inventory cost control"],
+          ] as const) {
+            await requireInventoryResponse(response, resource);
           }
           const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
           const categoriesBody = (await categoriesResponse.json()) as {
@@ -415,9 +416,7 @@ async function fetchInventoryItems(headers: Record<string, string>, branchId: st
     const params = new URLSearchParams({ branchId, limit: "200" });
     if (cursor) params.set("cursor", cursor);
     const response = await fetch(`/api/seramet/inventory/items?${params.toString()}`, { headers });
-    if (!response.ok) {
-      throw new Error(`Inventory item query failed (${response.status})`);
-    }
+    await requireInventoryResponse(response, "Inventory items");
     const body = (await response.json()) as {
       items: InventoryListRow[];
       nextCursor: string | null;

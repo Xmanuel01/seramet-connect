@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth-client";
 
 export const Route = createFileRoute("/login")({
+  head: () => ({ meta: [{ title: "Administrator sign in - Seramet" }] }),
   beforeLoad: ({ location }) => {
     if (new URLSearchParams(location.searchStr).get("account") !== "1") {
       throw redirect({ to: "/pos-login", replace: true });
@@ -39,7 +40,12 @@ function LoginPage() {
       }
       if (status.restaurants.length === 1) {
         markInteractiveSignIn();
-        enterRestaurant(status.restaurants[0]!.tenantId);
+        void enterRestaurant(
+          status.restaurants[0]!.tenantId,
+          new URLSearchParams(window.location.search).get("next") === "attendance"
+            ? "/attendance"
+            : undefined,
+        );
         return;
       }
       setRestaurants(status.restaurants);
@@ -52,13 +58,18 @@ function LoginPage() {
 
   return (
     <AuthShell
-      title="Sign in"
+      title="Administrator sign in"
       subtitle="Use your verified account to access the restaurants and branches assigned to you."
       footer={
         <>
-          New to Seramet?{" "}
-          <Link to="/register" className="font-semibold text-primary">
-            Create a restaurant
+          <div>
+            New to Seramet?{" "}
+            <Link to="/register" className="font-semibold text-primary">
+              Create a restaurant
+            </Link>
+          </div>
+          <Link to="/pos-login" className="mt-3 inline-block font-semibold text-primary">
+            Back to employee sign in
           </Link>
         </>
       }
@@ -72,7 +83,12 @@ function LoginPage() {
               type="button"
               onClick={() => {
                 markInteractiveSignIn();
-                enterRestaurant(restaurant.tenantId);
+                void enterRestaurant(
+                  restaurant.tenantId,
+                  new URLSearchParams(window.location.search).get("next") === "attendance"
+                    ? "/attendance"
+                    : undefined,
+                );
               }}
               className="flex w-full items-center justify-between rounded-md border border-border px-3 py-3 text-left text-sm transition hover:border-primary hover:bg-accent/50"
             >

@@ -25,6 +25,28 @@ describe("authoritative cookbook", () => {
   });
 
   afterEach(() => db.close());
+  it("does not expose unpublished methods or draft history to cookbook readers", async () => {
+    const input = {
+      recipeId,
+      recipeVersionId: firstVersionId,
+      prepMinutes: 15,
+      cookMinutes: 20,
+      method: [{ step: 1, instruction: "Approved cooking method" }],
+      changeSummary: "Disposable initial method",
+    };
+    const draft = await service.saveDraft(input);
+    const reader = new CookbookService(db, { ...actor(), permissions: ["cookbook.view"] });
+    let library = await reader.library(branchId);
+    expect(library.recipes).toEqual([]);
+    expect(await reader.history(firstVersionId)).toEqual([]);
+    await service.publish({ contentVersionId: draft.id });
+    await service.saveDraft({ ...input, chefNotes: "Private unapproved test method" });
+    library = await reader.library(branchId);
+    expect(JSON.stringify(library)).not.toContain("Private unapproved test method");
+    expect((await reader.history(firstVersionId)).every((row) => row.status === "PUBLISHED")).toBe(
+      true,
+    );
+  });
 
   it("creates immutable drafts and publishes a copied revision", async () => {
     const draft = await service.saveDraft({

@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createHmac, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { allPermissionCodes, permissions } from "../src/platform/permissions";
+import { staffRolePresets } from "../src/platform/staff-role-presets";
 import { createLocalDevelopmentDatabase } from "../src/server/database/local-development-database";
 
 if (process.env.SERAMET_E2E === "true" && process.env.CI !== "true") {
@@ -19,6 +20,7 @@ const restrictedUserId = `e2e-restricted-${suffix}`;
 const roleId = `e2e-role-${suffix}`;
 const restrictedRoleId = `e2e-restricted-role-${suffix}`;
 const stationId = `e2e-station-${suffix}`;
+const barStationId = `e2e-station-bar-${suffix}`;
 const secondStationId = `e2e-station-b-${suffix}`;
 const menuItemId = `e2e-menu-${suffix}`;
 const secondMenuItemId = `e2e-menu-b-${suffix}`;
@@ -31,6 +33,8 @@ const jwtIssuer = requiredEnvironment("SERAMET_JWT_ISSUER");
 const jwtAudience = requiredEnvironment("SERAMET_JWT_AUDIENCE");
 const managerSessionId = `e2e-session-${suffix}`;
 const restrictedSessionId = `e2e-restricted-session-${suffix}`;
+const trustedDeviceId = `e2e-device-${suffix}`;
+const secondDeviceId = `e2e-device-b-${suffix}`;
 
 try {
   await db
@@ -96,6 +100,12 @@ try {
     .run();
   await db
     .prepare(
+      "INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json) VALUES (?,?,?,?,?,'BAR',1,'{}')",
+    )
+    .bind(tenantId, barStationId, firstBranchId, "BAR", "Bar")
+    .run();
+  await db
+    .prepare(
       "INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json) VALUES (?,?,?,?,?,'KITCHEN',1,'{}')",
     )
     .bind(tenantId, secondStationId, secondBranchId, "MAIN", "Main Kitchen")
@@ -106,6 +116,16 @@ try {
       .bind(code, code)
       .run();
   }
+  await db
+    .prepare(
+      "INSERT INTO roles(tenant_id,id,code,name,active,payload_json) VALUES(?,?,'ATTENDANCE_STAFF','Attendance employee',1,'{}')",
+    )
+    .bind(tenantId, `attendance-role-${suffix}`)
+    .run();
+  await db
+    .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+    .bind(tenantId, `attendance-role-${suffix}`, permissions.attendanceUse)
+    .run();
   await db
     .prepare(
       "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,?,1,'{}')",
@@ -284,10 +304,82 @@ try {
       .run();
     await db
       .prepare(
-        "INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,updated_at) VALUES (?,?,?,100000,1,'{}',?)",
+        "INSERT INTO menu_item_branch_settings (tenant_id,branch_id,menu_item_id,selling_price_minor,available,channel_availability_json,station_id,updated_at) VALUES (?,?,?,100000,1,'{}',?,?)",
       )
-      .bind(tenantId, branchId, itemId, stamp)
+      .bind(tenantId, branchId, itemId, itemStationId, stamp)
       .run();
+  }
+  await db
+    .prepare(
+      "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,registered_at,payload_json) VALUES (?,?,?,'POS_TERMINAL','Disposable replay terminal','ACTIVE',?,'{}')",
+    )
+    .bind(tenantId, trustedDeviceId, firstBranchId, stamp)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,lifecycle_state,registered_at,payload_json) VALUES (?,?,?,'POS_TERMINAL','Disposable branch B terminal','ACTIVE','ACTIVE',?,'{}')",
+    )
+    .bind(tenantId, secondDeviceId, secondBranchId, stamp)
+    .run();
+  await db
+    .prepare("UPDATE hardware_devices SET lifecycle_state='ACTIVE' WHERE tenant_id=? AND id=?")
+    .bind(tenantId, trustedDeviceId)
+    .run();
+  const staff: Record<string, { id: string; token: string }> = {};
+  for (const [key, preset] of Object.entries(staffRolePresets)) {
+    const id = `e2e-staff-${key}-${suffix}`,
+      sessionId = `e2e-staff-session-${key}-${suffix}`,
+      roleId = `e2e-staff-role-${key}-${suffix}`;
+    await db
+      .prepare(
+        "INSERT INTO roles(tenant_id,id,code,name,active,payload_json) VALUES(?,?,?,?,1,'{}')",
+      )
+      .bind(tenantId, roleId, `PILOT_${key.toUpperCase()}`, preset.label)
+      .run();
+    for (const permission of preset.permissions)
+      await db
+        .prepare("INSERT INTO role_permissions VALUES(?,?,?)")
+        .bind(tenantId, roleId, permission)
+        .run();
+    await db
+      .prepare(
+        "INSERT INTO users(tenant_id,id,name,email,password_version,employment_status,active,created_at,updated_at,payload_json) VALUES(?,?,?,?,1,'ACTIVE',1,?,?,'{}')",
+      )
+      .bind(tenantId, id, `Disposable ${preset.label}`, `${id}@example.invalid`, stamp, stamp)
+      .run();
+    await db.prepare("INSERT INTO user_roles VALUES(?,?,?)").bind(tenantId, id, roleId).run();
+    await db
+      .prepare("INSERT INTO user_branches VALUES(?,?,?)")
+      .bind(tenantId, id, firstBranchId)
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO user_primary_branches(tenant_id,user_id,branch_id,assigned_at) VALUES(?,?,?,?)",
+      )
+      .bind(tenantId, id, firstBranchId, stamp)
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO auth_sessions(tenant_id,id,user_id,issued_at,expires_at,last_seen_at,token_version,metadata_json) VALUES(?,?,?,?,?,?,1,'{}')",
+      )
+      .bind(tenantId, sessionId, id, stamp, new Date(Date.now() + 3600000).toISOString(), stamp)
+      .run();
+    const assignedStations =
+      key === "bartender"
+        ? [barStationId]
+        : key === "chef"
+          ? [stationId]
+          : ["headChef", "supervisor"].includes(key)
+            ? [stationId, barStationId]
+            : [];
+    if (assignedStations.length)
+      await db
+        .prepare(
+          "INSERT INTO employee_station_access(tenant_id,user_id,branch_id,station_ids_json,version,updated_by,updated_at) VALUES(?,?,?,?,1,?,?)",
+        )
+        .bind(tenantId, id, firstBranchId, JSON.stringify(assignedStations), userId, stamp)
+        .run();
+    staff[key] = { id, token: signToken(id, sessionId) };
   }
   mkdirSync(resolve(process.cwd(), ".seramet"), { recursive: true });
   writeFileSync(
@@ -297,7 +389,11 @@ try {
         tenantId,
         userId,
         restrictedUserId,
-        managerAccessToken: signToken(userId, managerSessionId),
+        staff,
+        managerAccessToken: signToken(userId, managerSessionId, trustedDeviceId),
+        secondBranchAccessToken: signToken(userId, managerSessionId, secondDeviceId),
+        phoneAccessToken: signToken(userId, managerSessionId),
+        trustedAccessToken: signToken(userId, managerSessionId, trustedDeviceId),
         restrictedAccessToken: signToken(restrictedUserId, restrictedSessionId),
         firstBranchId,
         secondBranchId,
@@ -312,13 +408,14 @@ try {
   db.close();
 }
 
-function signToken(subject: string, sessionId: string) {
+function signToken(subject: string, sessionId: string, deviceId?: string) {
   const now = Math.floor(Date.now() / 1_000);
   const header = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({
     sub: subject,
     tid: tenantId,
     sid: sessionId,
+    ...(deviceId ? { deviceId } : {}),
     iss: jwtIssuer,
     aud: jwtAudience,
     iat: now,

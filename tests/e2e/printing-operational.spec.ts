@@ -146,7 +146,13 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       platform: "browser",
       format: "iife",
       jsx: "automatic",
-      alias: { "@shared": join(source, "src/shared") },
+      // A pinned emulator shared through a worktree link must use the same
+      // React instance as createRoot, rather than its physical parent's runtime.
+      alias: {
+        "@shared": join(source, "src/shared"),
+        react: resolve("node_modules/react"),
+        "react-dom": resolve("node_modules/react-dom"),
+      },
     });
     const css = await readFile(join(source, "src/renderer/styles.css"), "utf8");
     await viewer.setContent(
@@ -422,9 +428,96 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       expectedSubtotalMinor + parseMajorAmount(bill.tax.toFixed(2), "KES"),
     );
     await manager.goto("/invoices");
+    const invoiceRow = manager
+      .getByRole("row")
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` });
+    await invoiceRow.getByRole("checkbox").check();
+    await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
+    const verifyPreviewFit = async (page: typeof manager, title: string) => {
+      const preview = page.getByTestId("document-preview");
+      await expect(preview).toContainText(title);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect
+          .poll(() =>
+            preview.evaluate((element) => {
+              const paper = element.querySelector("pre")!.getBoundingClientRect();
+              const box = element.getBoundingClientRect();
+              return (
+                paper.left >= box.left - 1 &&
+                paper.right <= box.right + 1 &&
+                box.left >= 0 &&
+                box.right <= innerWidth
+              );
+            }),
+          )
+          .toBe(true);
+        await page.screenshot({
+          path: join(evidence, `${title.toLowerCase().replaceAll(" ", "-")}-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1280, height: 900 });
+    };
+    await verifyPreviewFit(manager, "TAX INVOICE");
+    await manager
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+    await invoiceRow.getByRole("button", { name: "Email invoice", exact: true }).click();
+    let emailDialog = manager.getByRole("dialog");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("");
+    await emailDialog.getByLabel("Recipient name").fill("Disposable invoice recipient");
+    await emailDialog.getByLabel("Recipient email").fill("invoice@example.com");
+    const emailJobId = randomUUID();
+    const emailRequests: Array<{ key: string; body: Record<string, unknown> }> = [];
+    // UI delivery boundary only: actual authenticated API/worker/PDF behavior has separate DB-backed tests.
+    await manager.route("**/api/seramet/document-emails", async (route) => {
+      emailRequests.push({
+        key: route.request().headers()["idempotency-key"]!,
+        body: route.request().postDataJSON(),
+      });
+      await route.fulfill({
+        status: emailRequests.length === 1 ? 503 : 202,
+        contentType: "application/json",
+        body: JSON.stringify(
+          emailRequests.length === 1
+            ? { message: "Disposable queue interruption" }
+            : { jobId: emailJobId, status: "QUEUED" },
+        ),
+      });
+    });
+    await manager.route(`**/api/seramet/document-emails/${emailJobId}`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ jobId: emailJobId, status: "PROVIDER_ACCEPTED" }),
+      }),
+    );
+    await emailDialog.getByRole("button", { name: "Send PDF email", exact: true }).click();
+    await expect(emailDialog.getByRole("alert")).toContainText("Disposable queue interruption");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("invoice@example.com");
+    await emailDialog
+      .getByRole("button", { name: "Send PDF email", exact: true })
+      .evaluate((button: HTMLButtonElement) => {
+        button.click();
+        button.click();
+      });
+    await expect(emailDialog).toContainText(
+      "Brevo accepted the email and PDF. Inbox delivery is not yet confirmed.",
+    );
+    expect(emailRequests).toHaveLength(2);
+    expect(emailRequests[0]!.key).toBe(emailRequests[1]!.key);
+    expect(emailRequests[1]!.body).toEqual({
+      documentType: "INVOICE",
+      recordId: bill.id,
+      recipient: { name: "Disposable invoice recipient", email: "invoice@example.com" },
+    });
+    await emailDialog.getByRole("button", { name: "Close", exact: true }).first().click();
     await manager
       .getByRole("row")
-      .filter({ hasText: bill.id })
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
       .getByRole("button", { name: "Preview bill", exact: true })
       .click();
     await manager.getByRole("dialog").getByRole("button", { name: "Print", exact: true }).click();
@@ -453,7 +546,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await cashier.reload();
     await cashier
       .getByRole("row")
-      .filter({ hasText: bill.id })
+      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
       .getByRole("button", { name: "Settle", exact: true })
       .click();
     await cashier.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
@@ -483,6 +576,25 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .toBe(6);
     const receiptText = await capture("receipt-80mm", devices[3], "80mm");
     expect(receiptText).toContain(receipt.id);
+    await verifyPreviewFit(cashier, "RECEIPT");
+    await manager.goto("/receipts");
+    // A business date can differ from the browser date during overnight operations.
+    await manager.getByRole("button", { name: "Clear all", exact: true }).click();
+    const receiptRow = manager.getByRole("row").filter({ hasText: receipt.id });
+    await receiptRow.getByRole("button", { name: "Preview", exact: true }).click();
+    await verifyPreviewFit(manager, "RECEIPT");
+    await manager
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+    await receiptRow.getByRole("button", { name: "Email", exact: true }).click();
+    emailDialog = manager.getByRole("dialog");
+    await expect(emailDialog.getByLabel("Recipient name")).toHaveValue("");
+    await expect(emailDialog.getByLabel("Recipient email")).toHaveValue("");
+    await emailDialog.getByLabel("Recipient name").fill("Disposable receipt recipient");
+    await emailDialog.getByLabel("Recipient email").fill("receipt@example.com");
+    await emailDialog.getByRole("button", { name: "Cancel", exact: true }).click();
     events.push(
       "UI invoice creation for exact dispatched order; manager UI bill printing; employee UI invoice cash settlement and actual receipt printing -> cashier TCP",
     );
@@ -863,6 +975,56 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     expect(disabled.status()).toBe(403);
     events.push(
       "Manager UI inspected failed queue, edited paper/station configuration, sent real diagnostic, disabled bar printer; new authorization denied",
+    );
+    devices[3].printer = (
+      await api("printing/printers", {
+        ...devices[3].printer,
+        paperWidth: "80mm",
+        renderingMode: "RASTER_ESC_POS",
+        raster: {
+          command: "GS_V_0",
+          printableWidthDots: 576,
+          dpi: 203,
+          maxBandHeight: 128,
+          maxHeightDots: 8192,
+          maxBytes: 524288,
+        },
+      })
+    ).printer;
+    devices[3].state.clearHistory();
+    devices[3].state.clearPrinterBuffer();
+    const graphical = await api("printing/authorize", {
+      printerId: devices[3].printer!.id,
+      documentType: "RECEIPT",
+      recordId: receipt.id,
+      reprintId: randomUUID(),
+      reprintReason: "Disposable raster acceptance copy reviewed by manager",
+    });
+    const graphicalJob = JSON.parse(
+      Buffer.from(graphical.authorization.payload, "base64url").toString(),
+    );
+    expect(graphicalJob.profile.renderingMode).toBe("RASTER_ESC_POS");
+    expect(graphicalJob.document.version).toBe(1);
+    expect(graphicalJob.content.replace(/\s/g, "")).toContain(receipt.id);
+    expect(graphicalJob.content).toContain(receipt.total.toFixed(2));
+    expect((await transmit(graphical)).stage).toBe("BYTES_SUBMITTED");
+    await expect
+      .poll(() => devices[3].state.snapshot().history.some((h) => h.command.type === "CutPaper"))
+      .toBe(true);
+    const rasterCommands = devices[3].state
+      .snapshot()
+      .history.filter((h) => h.command.type === "PrintRasterImage").length;
+    expect(rasterCommands).toBeGreaterThan(0);
+    expect(devices[3].state.snapshot().history.some((h) => h.command.type === "Unknown")).toBe(
+      false,
+    );
+    await Promise.all(Array.from({ length: 12 }, () => post(graphical)));
+    await new Promise((done) => setTimeout(done, 100));
+    expect(
+      devices[3].state.snapshot().history.filter((h) => h.command.type === "PrintRasterImage"),
+    ).toHaveLength(rasterCommands);
+    events.push(
+      "Authenticated authoritative cash receipt -> explicit audited raster copy -> actual cashier TCP GS v 0 bands; 12 duplicate submissions produced no additional bands",
     );
     await writeFile(
       join(evidence, "result.json"),

@@ -49,6 +49,7 @@ export class PrintJobStore {
           printer: job.target,
           documentType: job.documentType,
           content: job.content,
+          document: job.document,
           profile: job.profile,
           fallbackTarget: job.fallbackTarget,
           fallbackProfile: job.fallbackProfile,

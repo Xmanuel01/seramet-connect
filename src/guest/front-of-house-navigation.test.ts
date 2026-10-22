@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { navGroups } from "@/components/app/nav";
+import { navGroups, navItemMatchesPath } from "@/components/app/nav";
 import { moduleDefinitionsForPath } from "@/platform/module-access-registry";
 
 describe("Front of House navigation", () => {
   it("shows only one guest-operations destination in the sidebar", () => {
     const destinations = navGroups.flatMap((group) => group.items);
-    const frontOfHouse = destinations.filter((item) => item.to === "/host");
+    const frontOfHouse = destinations.filter((item) => item.label === "Front of House");
     expect(frontOfHouse).toHaveLength(1);
     expect(frontOfHouse[0]?.label).toBe("Front of House");
+    expect(frontOfHouse[0]?.to).toBe("/tables");
+    for (const path of ["/tables", "/host", "/reservations", "/waitlist", "/guest-service"])
+      expect(navItemMatchesPath(frontOfHouse[0]!, path)).toBe(true);
+    expect(navItemMatchesPath(frontOfHouse[0]!, "/orders")).toBe(false);
+    expect(destinations.some((item) => item.label === "Tables")).toBe(false);
     expect(destinations.some((item) => item.to === "/reservations")).toBe(false);
     expect(destinations.some((item) => item.to === "/waitlist")).toBe(false);
     expect(destinations.some((item) => item.to === "/guest-service")).toBe(false);
   });
 
   it("keeps legacy deep links registered for each dedicated workspace view", () => {
-    for (const path of ["/host", "/reservations", "/waitlist", "/guest-service"]) {
+    for (const path of ["/tables", "/host", "/reservations", "/waitlist", "/guest-service"]) {
       expect(
         moduleDefinitionsForPath(path).some((module) => module.key === "guest-operations"),
       ).toBe(true);

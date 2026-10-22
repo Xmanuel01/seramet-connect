@@ -65,12 +65,19 @@ export type ProductionRuntimeEnv = {
   SERAMET_WORK_QUEUE?: DurableQueue;
   SERAMET_SCAN_QUEUE?: DurableQueue<FileScanQueueMessage>;
   SERAMET_OBJECTS?: ObjectStoreBinding;
+  SERAMET_CLOSING_EMAIL_API_KEY?: string;
+  SERAMET_CLOSING_EMAIL_FROM?: string;
+  // Protected server secret: tenant-id -> { apiKey, from }. Never exposed to clients.
+  SERAMET_TRANSACTIONAL_EMAIL_CONFIG?: string;
+  // Protected server secret: tenant-id -> { apiKey, from, unsubscribeSecret }.
+  SERAMET_CAMPAIGN_EMAIL_CONFIG?: string;
   SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;
   SERAMET_SCANNER_EVIDENCE_SECRET?: string;
   SERAMET_DATABASE_PROVIDER?: string;
   SERAMET_IDENTITY_PROVIDER?: string;
   SERAMET_SUPABASE_URL?: string;
   SERAMET_SUPABASE_PUBLISHABLE_KEY?: string;
+  SERAMET_SUPABASE_INVITATION_SECRET?: string;
   SERAMET_IDENTITY_VERIFIER?: ExternalIdentityVerifier;
   SERAMET_PUBLIC_ORIGIN?: string;
   SERAMET_ALLOWED_ORIGINS?: string;

@@ -196,16 +196,22 @@ export class PosIdentityService {
     requirePermission(actor, permissions.usersManage);
     requirePermission(actor, permissions.employeeCredentialsManage);
     validateEmployeeInput(input);
+    if (
+      actor.branchScope.type !== "ALL" &&
+      input.assignedBranchIds.some((id) => !actor.assignedBranchIds.includes(id))
+    ) {
+      throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
+    }
     const replay = await this.db
       .prepare(
-        `SELECT response_json,request_hash FROM employee_creation_attempts
+        `SELECT response_json,request_hash,created_by FROM employee_creation_attempts
          WHERE tenant_id=? AND idempotency_key=?`,
       )
       .bind(actor.tenantId, input.idempotencyKey)
-      .first<{ response_json: string; request_hash: string }>();
+      .first<{ response_json: string; request_hash: string; created_by: string }>();
     const requestHash = await sha256(stableJson(input));
     if (replay) {
-      if (replay.request_hash !== requestHash) {
+      if (replay.request_hash !== requestHash || replay.created_by !== actor.id) {
         throw operation("CONFLICT", 409, "Idempotency key was reused with different employee data");
       }
       return JSON.parse(replay.response_json) as { id: string; employeeCode: string };
@@ -238,7 +244,7 @@ export class PosIdentityService {
       .prepare(
         `SELECT rp.permission_code FROM roles r JOIN role_permissions rp
            ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
-         WHERE r.tenant_id=? AND r.id=? AND r.active=1`,
+         WHERE r.tenant_id=? AND r.id=? AND r.active=1 AND r.code<>'ACCOUNT_OWNER'`,
       )
       .bind(actor.tenantId, input.roleId)
       .all<{ permission_code: string }>();
@@ -347,7 +353,29 @@ export class PosIdentityService {
         temporaryPin: Boolean(input.temporaryPin),
       }),
     );
-    await this.db.batch(statements);
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      const duplicate =
+        (error as { code?: string } | null)?.code === "23505" ||
+        (error instanceof Error && /UNIQUE constraint failed/.test(error.message));
+      if (!duplicate) throw error;
+      const completed = await this.db
+        .prepare(
+          "SELECT request_hash,response_json,created_by FROM employee_creation_attempts WHERE tenant_id=? AND idempotency_key=?",
+        )
+        .bind(actor.tenantId, input.idempotencyKey)
+        .first<{ request_hash: string; response_json: string; created_by: string }>();
+      if (completed?.request_hash === requestHash && completed.created_by === actor.id)
+        return JSON.parse(completed.response_json) as { id: string; employeeCode: string };
+      throw operation(
+        "CONFLICT",
+        409,
+        completed
+          ? "Idempotency key was reused with different employee data"
+          : "Employee identity was created concurrently; refresh the employee register",
+      );
+    }
     return response;
   }
 
@@ -674,7 +702,12 @@ export class PosIdentityService {
       token: sessionSecret,
       expiresAt,
       mustChangePin: Boolean(employee["must_change"]),
-      employee: { id: userId, name: String(employee["name"]), branchId: device.branchId },
+      employee: {
+        id: userId,
+        name: String(employee["name"]),
+        branchId: device.branchId,
+        tenantId: device.tenantId,
+      },
     };
   }
 
@@ -684,7 +717,7 @@ export class PosIdentityService {
       .prepare(
         `SELECT s.tenant_id,s.id,s.user_id,s.device_id,s.branch_id,s.expires_at,
                 s.inactivity_expires_at,s.revoked_at,s.credential_version,u.name,
-                u.active,u.employment_status,d.lifecycle_state,c.version AS current_credential_version,
+                u.active,u.employment_status,u.effective_from,u.effective_until,d.lifecycle_state,c.must_change,c.version AS current_credential_version,
                 b.name AS branch_name
          FROM pos_sessions s
          JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id
@@ -700,7 +733,9 @@ export class PosIdentityService {
       !session ||
       session["revoked_at"] ||
       session["active"] !== 1 ||
-      session["employment_status"] !== "ACTIVE"
+      session["employment_status"] !== "ACTIVE" ||
+      (session["effective_from"] && Date.parse(String(session["effective_from"])) > Date.now()) ||
+      (session["effective_until"] && Date.parse(String(session["effective_until"])) <= Date.now())
     ) {
       throw operation("SESSION_REVOKED", 401, "POS session is invalid or revoked");
     }
@@ -728,6 +763,7 @@ export class PosIdentityService {
         .prepare(
           `SELECT DISTINCT rp.permission_code FROM user_roles ur JOIN role_permissions rp
              ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id
+           JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
            WHERE ur.tenant_id=? AND ur.user_id=?`,
         )
         .bind(String(session["tenant_id"]), String(session["user_id"]))
@@ -764,7 +800,99 @@ export class PosIdentityService {
       branch: String(session["branch_name"]),
       role: roles.results?.[0]?.name ?? "Employee",
       authLevel: "POS_PIN",
+      credentialChangeRequired: Boolean(session["must_change"]),
     };
+  }
+
+  async completeTemporaryPin(
+    token: string,
+    deviceCredential: string | undefined,
+    input: { currentPin: string; pin: string; pinConfirmation: string },
+  ) {
+    const actor = await this.authenticatePosSession(token);
+    const device = deviceCredential
+      ? await this.resolveDeviceCredential(deviceCredential)
+      : undefined;
+    if (
+      !device ||
+      device.lifecycleState !== "ACTIVE" ||
+      device.tenantId !== actor.tenantId ||
+      device.deviceId !== actor.deviceId
+    )
+      throw operation("PERMISSION_DENIED", 403, "The authorized POS device is required");
+    if (!actor.credentialChangeRequired)
+      throw operation(
+        "CONFLICT",
+        409,
+        "Sign in again; the temporary credential is no longer pending",
+      );
+    validatePin(input.pin, input.pinConfirmation, device.pinLength);
+    const current = await this.db
+      .prepare(
+        "SELECT version,algorithm,iterations,salt_base64,hash_base64 FROM employee_pin_credentials WHERE tenant_id=? AND user_id=? AND must_change=1",
+      )
+      .bind(actor.tenantId, actor.id)
+      .first<{
+        version: number;
+        algorithm: string;
+        iterations: number;
+        salt_base64: string;
+        hash_base64: string;
+      }>();
+    if (!current || !(await verifyPin(input.currentPin, current)))
+      throw operation("PERMISSION_DENIED", 403, "Current PIN could not be verified");
+    if (input.currentPin === input.pin)
+      throw operation("VALIDATION_FAILED", 400, "New PIN must differ from the temporary PIN");
+    const credential = await derivePin(input.pin);
+    const stamp = now();
+    try {
+      // The existing history primary key serializes this change against an
+      // administrator reset using the same prior credential version.
+      await this.db.batch([
+        this.db
+          .prepare(
+            "INSERT INTO employee_pin_history(tenant_id,user_id,version,algorithm,iterations,salt_base64,hash_base64,replaced_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .bind(
+            actor.tenantId,
+            actor.id,
+            current.version,
+            current.algorithm,
+            current.iterations,
+            current.salt_base64,
+            current.hash_base64,
+            stamp,
+          ),
+        this.db
+          .prepare(
+            "UPDATE employee_pin_credentials SET iterations=?,salt_base64=?,hash_base64=?,pin_length=?,temporary=0,must_change=0,failed_attempts=0,locked_until=NULL,changed_at=?,changed_by=?,version=version+1 WHERE tenant_id=? AND user_id=? AND version=?",
+          )
+          .bind(
+            credential.iterations,
+            credential.salt,
+            credential.hash,
+            input.pin.length,
+            stamp,
+            actor.id,
+            actor.tenantId,
+            actor.id,
+            current.version,
+          ),
+        this.db
+          .prepare(
+            "UPDATE pos_sessions SET revoked_at=?,revoke_reason='EMPLOYEE_PIN_CHANGED' WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL",
+          )
+          .bind(stamp, actor.tenantId, actor.id),
+        audit(this.db, actor, "EMPLOYEE_PIN_CHANGED", "USER", actor.id, { temporary: false }),
+      ]);
+    } catch (error) {
+      if (
+        (error as { code?: string })?.code === "23505" ||
+        (error instanceof Error && /UNIQUE constraint failed/.test(error.message))
+      )
+        throw operation("CONFLICT", 409, "Credential changed concurrently; sign in again");
+      throw error;
+    }
   }
 
   async logoutPosSession(token: string) {

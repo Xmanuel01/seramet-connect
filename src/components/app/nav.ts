@@ -52,6 +52,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AppRole } from "@/lib/app-context";
+import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
@@ -68,7 +69,12 @@ export type NavItem = {
   to?: string;
   icon?: LucideIcon;
   permission?: PermissionCode;
+  activePaths?: readonly string[];
 };
+
+export function navItemMatchesPath(item: NavItem, path: string) {
+  return item.to === path || Boolean(item.activePaths?.includes(path));
+}
 
 export type NavGroup = {
   group: string;
@@ -100,7 +106,6 @@ export const navGroups: NavGroup[] = [
         icon: Globe2,
         permission: permissions.integrationsView,
       },
-      { label: "Tables", to: "/tables", icon: ShoppingCart, permission: permissions.tableManage },
       { label: "Invoices", to: "/invoices", icon: FileText, permission: permissions.invoicesView },
       { label: "Pending", to: "/pending", icon: ReceiptText, permission: permissions.invoicesView },
       {
@@ -109,10 +114,11 @@ export const navGroups: NavGroup[] = [
         icon: ReceiptText,
         permission: permissions.receiptsView,
       },
-      // Reservations, Waitlist and Guest Requests remain direct URLs/tabs, not duplicate sidebar pages.
+      // Guest operations share one workspace; existing tab URLs remain valid.
       {
         label: "Front of House",
-        to: "/host",
+        to: "/tables",
+        activePaths: ["/host", "/reservations", "/waitlist", "/guest-service"],
         icon: Users,
         permission: permissions.reservationView,
       },
@@ -159,6 +165,12 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Recipes", to: "/recipes", icon: ChefHat, permission: permissions.productionView },
       { label: "Cookbook", to: "/cookbook", icon: BookOpen, permission: permissions.cookbookView },
+      {
+        label: "Stock Requests",
+        to: "/requisitions",
+        icon: ClipboardList,
+        permission: permissions.procurementRequisitionCreate,
+      },
       { label: "Prep", to: "/prep", icon: ChefHat, permission: permissions.productionView },
       { label: "Kitchen Analytics", to: "/kitchen-analytics", icon: ChefHat },
     ],
@@ -418,6 +430,7 @@ export function getVisibleNavGroups(
     .map((group) => ({
       ...group,
       items: group.items.filter((item) => {
+        if (item.to && pilotUnavailable[item.to]) return false;
         const registered = item.to ? moduleDefinitionsForPath(item.to).length > 0 : false;
         if (item.to && registered && !canNavigateToPath(access, item.to)) return false;
         if (!registered) {

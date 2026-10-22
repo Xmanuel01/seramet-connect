@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Btn, Panel, Status } from "@/components/app/ui";
 import { formatMinor as formatCurrencyMinor } from "@/payments/money";
 import type { FinancialIssue } from "@/finance/use-finance-report";
+import { financeIssueGuidance } from "@/finance/finance-issue-guidance";
 
 export function reportMoney(minor: number, currency: string) {
   return formatCurrencyMinor(minor, currency, "en-KE");
@@ -101,13 +102,19 @@ export function FinanceQuality({
         </p>
       ) : (
         <div className="mt-3 space-y-2">
-          {issues.map((issue) => (
-            <p key={issue.code} className="rounded border border-warning/50 p-3 text-[12px]">
-              <strong>{issue.code.replaceAll("_", " ")}</strong>
-              {" (" + issue.count + "): "}
-              {issue.detail}
-            </p>
-          ))}
+          {issues.map((issue) => {
+            const guidance = financeIssueGuidance(issue.code);
+            return (
+              <div key={issue.code} className="rounded border border-warning/50 p-3 text-[12px]">
+                <strong>{guidance.title}</strong>
+                <p className="mt-1">{issue.detail}</p>
+                {guidance.nextStep && <p className="mt-2">{guidance.nextStep}</p>}
+                <p className="mt-2 text-[11px] text-muted-foreground break-words">
+                  Reference: {issue.code} ({issue.count})
+                </p>
+              </div>
+            );
+          })}
         </div>
       )}
       <p className="mt-2 text-[11px] text-muted-foreground">
@@ -118,6 +125,17 @@ export function FinanceQuality({
         </Link>
         .
       </p>
+      {issues.some((issue) =>
+        ["CHART_OF_ACCOUNTS_MISSING", "CASH_ACCOUNT_CLASSIFICATION_MISSING"].includes(issue.code),
+      ) && (
+        <Link
+          className="mt-3 inline-block text-[12px] underline"
+          to="/seramet-setup"
+          search={{ section: "ACCOUNTING" }}
+        >
+          Review accounting mappings in Setup Centre
+        </Link>
+      )}
     </Panel>
   );
 }

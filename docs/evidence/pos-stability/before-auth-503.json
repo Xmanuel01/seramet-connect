@@ -1,0 +1,9 @@
+{
+  "baseline": "753117fa5ef31d981b420955cfe0afaaf3c169a8",
+  "scenario": "AUTH_SESSION_503_ON_FOCUS",
+  "failedAuthChecks": 1,
+  "navigations": 0,
+  "originalInputConnected": false,
+  "visibleDraftInputs": 0,
+  "fullScreenSessionGate": true
+}

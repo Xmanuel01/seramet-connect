@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import type { SerametEnv, ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
@@ -52,7 +53,7 @@ describe.sequential("Pass 9 Seramet Intelligence and Restaurant Copilot", () => 
   it("applies schema version 10 and all tenant-scoped intelligence tables", async () => {
     expect(
       await db.prepare("SELECT MAX(version) version FROM schema_migrations").first("version"),
-    ).toBe(27);
+    ).toBe(CURRENT_SCHEMA_VERSION);
     for (const table of [
       "intelligence_provider_configs",
       "intelligence_sessions",

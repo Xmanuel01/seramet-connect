@@ -118,7 +118,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { rel: "icon", href: "/favicon.ico", sizes: "any" },
       { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png", sizes: "180x180" },
-      { rel: "manifest", href: "/manifest.webmanifest" },
     ],
   }),
   shellComponent: RootShell,
@@ -128,9 +127,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: ReactNode }) {
+  const isGuestRoute = useRouterState({
+    select: (state) => state.location.pathname.startsWith("/guest/"),
+  });
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <link rel="manifest" href={isGuestRoute ? "/manifest.webmanifest" : "/pos.webmanifest"} />
         <HeadContent />
         <script src="/theme-init.js" />
       </head>
@@ -151,6 +154,7 @@ function RootComponent() {
   const isPublicAuthRoute = useRouterState({
     select: (state: { location: { pathname: string } }) =>
       state.location.pathname === "/login" ||
+      state.location.pathname === "/staff-login" ||
       state.location.pathname === "/register" ||
       state.location.pathname === "/pos-login",
   });

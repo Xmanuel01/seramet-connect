@@ -99,6 +99,7 @@ import { Route as SegmentsRouteImport } from './routes/segments'
 import { Route as SerametPrintersRouteImport } from './routes/seramet-printers'
 import { Route as SerametSetupRouteImport } from './routes/seramet-setup'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as StaffLoginRouteImport } from './routes/staff-login'
 import { Route as StockCountRouteImport } from './routes/stock-count'
 import { Route as StockDetailRouteImport } from './routes/stock-detail'
 import { Route as SupplierBillsRouteImport } from './routes/supplier-bills'
@@ -573,6 +574,11 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StaffLoginRoute = StaffLoginRouteImport.update({
+  id: '/staff-login',
+  path: '/staff-login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StockCountRoute = StockCountRouteImport.update({
   id: '/stock-count',
   path: '/stock-count',
@@ -782,6 +788,7 @@ export interface FileRoutesByFullPath {
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
+  '/staff-login': typeof StaffLoginRoute
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/supplier-bills': typeof SupplierBillsRoute
@@ -897,6 +904,7 @@ export interface FileRoutesByTo {
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
+  '/staff-login': typeof StaffLoginRoute
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/supplier-bills': typeof SupplierBillsRoute
@@ -1012,6 +1020,7 @@ export interface FileRoutesById {
   '/seramet-printers': typeof SerametPrintersRoute
   '/seramet-setup': typeof SerametSetupRoute
   '/settings': typeof SettingsRoute
+  '/staff-login': typeof StaffLoginRoute
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/supplier-bills': typeof SupplierBillsRoute
@@ -1129,6 +1138,7 @@ export interface FileRouteTypes {
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
+    | '/staff-login'
     | '/stock-count'
     | '/stock-detail'
     | '/supplier-bills'
@@ -1244,6 +1254,7 @@ export interface FileRouteTypes {
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
+    | '/staff-login'
     | '/stock-count'
     | '/stock-detail'
     | '/supplier-bills'
@@ -1358,6 +1369,7 @@ export interface FileRouteTypes {
     | '/seramet-printers'
     | '/seramet-setup'
     | '/settings'
+    | '/staff-login'
     | '/stock-count'
     | '/stock-detail'
     | '/supplier-bills'
@@ -1474,6 +1486,7 @@ export interface RootRouteChildren {
   SerametPrintersRoute: typeof SerametPrintersRoute
   SerametSetupRoute: typeof SerametSetupRoute
   SettingsRoute: typeof SettingsRoute
+  StaffLoginRoute: typeof StaffLoginRoute
   StockCountRoute: typeof StockCountRoute
   StockDetailRoute: typeof StockDetailRoute
   SupplierBillsRoute: typeof SupplierBillsRoute
@@ -2125,6 +2138,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/staff-login': {
+      id: '/staff-login'
+      path: '/staff-login'
+      fullPath: '/staff-login'
+      preLoaderRoute: typeof StaffLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/stock-count': {
       id: '/stock-count'
       path: '/stock-count'
@@ -2402,6 +2422,7 @@ const rootRouteChildren: RootRouteChildren = {
   SerametPrintersRoute: SerametPrintersRoute,
   SerametSetupRoute: SerametSetupRoute,
   SettingsRoute: SettingsRoute,
+  StaffLoginRoute: StaffLoginRoute,
   StockCountRoute: StockCountRoute,
   StockDetailRoute: StockDetailRoute,
   SupplierBillsRoute: SupplierBillsRoute,

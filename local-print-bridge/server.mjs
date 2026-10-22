@@ -9,10 +9,14 @@ import { timingSafeEqual, createHash } from "node:crypto";
 import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
-import { encodeEscPos } from "./escpos-encoder.mjs";
+import { encodePrintDocument } from "./raster-renderer.mjs";
 import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
+import { createPrinterDiscovery } from "./printer-discovery.mjs";
 
-export async function createBridge(config, { deliver, localTest = false, consume } = {}) {
+export async function createBridge(
+  config,
+  { deliver, localTest = false, consume, discoverPrinters = createPrinterDiscovery() } = {},
+) {
   if (config.host && config.host !== "127.0.0.1") throw new Error("LOOPBACK_BIND_REQUIRED");
   if (
     !config.token ||
@@ -62,14 +66,14 @@ export async function createBridge(config, { deliver, localTest = false, consume
   const runner = new PrintJobRunner(
     store,
     async (job) => {
-      verifyPrintAuthorization(job.authorization, config);
+      const verified = verifyPrintAuthorization(job.authorization, config);
       await consume(job.authorization);
       return (
         deliver ??
         ((job) =>
           deliverWithFallback(job, async (target, profile) => {
             if (target.transport === "TCP") {
-              return sendTcp(encodeEscPos(job.content, profile), target, {
+              return sendTcp(encodePrintDocument(job, profile), target, {
                 localTest: localTest && job.localTest === true,
               });
             }
@@ -81,7 +85,7 @@ export async function createBridge(config, { deliver, localTest = false, consume
               await unlink(file).catch(() => undefined);
             }
           }))
-      )(job);
+      )({ ...verified, authorization: job.authorization });
     },
     config.concurrency ?? 2,
   );
@@ -106,7 +110,10 @@ export async function createBridge(config, { deliver, localTest = false, consume
     if (request.url === "/health" && request.method === "GET")
       return reply(200, {
         ok: true,
-        version: "2.0.0",
+        version: "3.0.0",
+        authorizationVersions: [1, 2],
+        renderingModes: ["TEXT_ESC_POS", "RASTER_ESC_POS"],
+        rasterCommands: ["GS_V_0"],
         dryRun: false,
         platform: process.platform,
         bridgeId: config.bridgeId,
@@ -119,8 +126,19 @@ export async function createBridge(config, { deliver, localTest = false, consume
     try {
       if (request.method === "GET" && request.url === "/jobs")
         return reply(200, { jobs: store.list() });
-      if (request.method === "GET" && request.url === "/printers")
-        return reply(200, { printers: [] });
+      if (request.method === "GET" && request.url === "/printers") {
+        try {
+          const printers = await discoverPrinters();
+          return reply(200, {
+            bridgeId: config.bridgeId,
+            tenantId: config.tenantId,
+            branchId: config.branchId,
+            printers,
+          });
+        } catch {
+          return reply(503, { code: "PRINTER_DISCOVERY_UNAVAILABLE" });
+        }
+      }
       if (request.method !== "POST" || request.url !== "/jobs")
         return reply(404, { code: "NOT_FOUND" });
       const chunks = [];

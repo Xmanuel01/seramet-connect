@@ -42,6 +42,21 @@ printer ports/drivers, printer defaults or security-policy changes are needed.
 
 ## Network and Model Contract
 
+### Finding a Windows/USB printer
+
+Install the manufacturer's Windows driver and confirm the printer appears in
+Windows Settings under Printers & scanners. After updating/restarting the existing
+bridge, save and enable its enrolled local connection in Seramet Printers.
+Authorized hardware administrators then see installed printer names automatically,
+or can select Detect installed printers. Choose Configure printer, review its
+roles, stations, paper width and bridge identity, then explicitly save. Detection
+does not enroll hardware, change Windows defaults, create routes or print a job.
+The browser cannot enumerate OS printers without this local bridge. A missing
+bridge, wrong branch enrollment or unsupported OS fails closed. An installed
+printer may still be unplugged, offline or out of paper. TCP-only printers must
+still be configured using the existing authorized TCP transport; this inventory
+does not scan the LAN.
+
 The bridge stays on 127.0.0.1. Its Windows account must reach the configured
 printer LAN and port (default 9100). Private IPv4 destinations are validated;
 all hostname answers must be permitted, then the checked numeric address is
@@ -65,8 +80,11 @@ HTTP/XML is a different protocol, not implemented here.
 
 - Public `GET /health`: bridge process availability, not printer readiness.
 - Authenticated `GET /jobs`: recent redacted job stages, never document content.
-- Authenticated `GET /printers`: protocol compatibility response; not hardware
-  discovery or paper-status certification. Configure exact OS names in admin.
+- Authenticated `GET /printers`: bounded, read-only Windows spooler inventory for
+  the bridge's Windows account, with enrolled tenant/branch/bridge identity.
+  Allowed-origin and bearer authorization are required. Requests share an
+  in-flight enumeration and five-second cache; PowerShell is hidden and has a
+  five-second timeout. This is not physical delivery or paper-status certification.
 - Authenticated `POST /jobs`: requires short-lived scoped server evidence.
   Duplicate submissions return the existing durable outcome. Polling does not
   create another physical attempt. Altered identity reuse is rejected.
@@ -143,6 +161,12 @@ ledger with the service stopped before moving hardware; do not restore an old
 ledger as if it establishes non-delivery. Preserve uncertainty after disk loss.
 
 ## Local Acceptance
+
+Native solid-border RAW TCP rendering is opt-in and requires bridge 3.0.0 plus
+explicit supported capabilities. See [Native Raster ESC/POS](../docs/RASTER_ESC_POS.md)
+for signed-envelope compatibility, bounds, test evidence and safe fallback rules.
+Distribute the sibling `printing-core` folder with the bridge; keep existing
+enrollment and ledgers. Windows spooler output remains text-only.
 
 ```powershell
 node --test local-print-bridge/printing.test.mjs

@@ -49,13 +49,28 @@ const testFiles = [
   ...collect("src", (file) => /\.test\.[cm]?[jt]sx?$/.test(file)),
   ...collect("tests/e2e", (file) => /\.spec\.[cm]?[jt]sx?$/.test(file)),
 ];
+// Only standalone block comments may be removed here. A glob such as
+// "**/api/**" contains comment-like tokens but must not swallow intervening tests.
+const stripComments = (source) =>
+  source.replace(/^[\t ]*\/\*[\s\S]*?\*\//gm, "").replace(/(^|\s)\/\/[^\n]*/g, "$1");
+assert.equal(
+  [
+    ...stripComments(
+      'route("**/api/**");\ntest.skip(true);\nroute("**/next/**");\ntest.skip(false);',
+    ).matchAll(/\btest\.skip\(/g),
+  ].length,
+  2,
+  "Route glob strings must not hide conditional test directives",
+);
+assert.doesNotMatch(
+  stripComments('/* test.only() */\n// test.todo()\ntest("real", () => {});'),
+  /test\.(only|todo)\(/,
+);
 const seen = {};
 for (const file of testFiles) {
   // Limit directive scanning to tests; strip comments so documented examples
   // cannot hide a focused, skipped or TODO test.
-  const source = readFileSync(file, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|\s)\/\/[^\n]*/g, "$1");
+  const source = stripComments(readFileSync(file, "utf8"));
   const directives = [
     ...source.matchAll(/\b(?:test|it|describe)\s*\.\s*(only|skip|todo|fixme)\s*\(/g),
   ];

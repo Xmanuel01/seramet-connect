@@ -212,7 +212,7 @@ export class CrmService extends CrmServiceBase {
     if (branchId) this.branch(branchId);
     const limit = Math.min(Math.max(input.limit ?? 30, 1), 100);
     const query = input.query?.trim() ?? "";
-    const like = `%${query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+    const like = `%${escapeSearch(query)}%`;
     const normalizedEmail = query.includes("@") ? query.toLowerCase() : "";
     let normalizedPhone = "";
     if (/\d{6}/.test(query)) {
@@ -250,12 +250,12 @@ export class CrmService extends CrmServiceBase {
            AND (?='' OR c.preferred_branch_id=? OR EXISTS (
              SELECT 1 FROM customer_transaction_links bl
              WHERE bl.tenant_id=c.tenant_id AND bl.customer_id=c.id AND bl.branch_id=?))
-           AND (?='' OR c.display_name LIKE ? ESCAPE '\\' COLLATE NOCASE
-             OR c.customer_code LIKE ? ESCAPE '\\' COLLATE NOCASE
+           AND (?='' OR LOWER(c.display_name) LIKE LOWER(?) ESCAPE '!'
+             OR LOWER(c.customer_code) LIKE LOWER(?) ESCAPE '!'
              OR EXISTS (SELECT 1 FROM customer_identifiers i WHERE i.tenant_id=c.tenant_id
                AND i.customer_id=c.id AND i.status='ACTIVE'
-               AND ((?<>'' AND i.identifier_type='EMAIL' AND i.normalized_value LIKE ?)
-                 OR (?<>'' AND i.identifier_type='PHONE' AND i.normalized_value LIKE ?))))
+               AND ((?<>'' AND i.identifier_type='EMAIL' AND i.normalized_value LIKE ? ESCAPE '!')
+                 OR (?<>'' AND i.identifier_type='PHONE' AND i.normalized_value LIKE ? ESCAPE '!'))))
          ORDER BY c.id LIMIT ?`,
       )
       .bind(
@@ -274,9 +274,9 @@ export class CrmService extends CrmServiceBase {
         like,
         like,
         normalizedEmail,
-        `%${normalizedEmail}%`,
+        `%${escapeSearch(normalizedEmail)}%`,
         normalizedPhone,
-        `%${normalizedPhone.replace(/^\+/, "")}%`,
+        `%${escapeSearch(normalizedPhone.replace(/^\+/, ""))}%`,
         limit + 1,
       )
       .all<{
@@ -417,7 +417,8 @@ export class CrmService extends CrmServiceBase {
              FROM gift_cards g JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
              WHERE g.tenant_id=? AND (g.purchaser_customer_id IN (${params})
                OR g.recipient_customer_id IN (${params}))
-             GROUP BY g.id,g.token_last_four,g.currency HAVING balance_minor>0 ORDER BY g.issued_at DESC`,
+             GROUP BY g.id,g.token_last_four,g.currency,g.issued_at
+             HAVING COALESCE(SUM(l.amount_minor),0)>0 ORDER BY g.issued_at DESC`,
           )
           .bind(this.actor.tenantId, ...customerIds, ...customerIds)
           .all<{ id: string; token_last_four: string; currency: string; balance_minor: number }>()
@@ -1208,6 +1209,7 @@ export class CrmService extends CrmServiceBase {
     branchId: string;
     customerId?: string;
     orderId?: string;
+    invoiceReference?: string;
     categoryId: string;
     surveyType: "GENERAL" | "NPS" | "CSAT";
     rating: number;
@@ -1220,6 +1222,59 @@ export class CrmService extends CrmServiceBase {
       ? await this.resolveCanonicalId(input.customerId)
       : undefined;
     if (customerId) await this.assertCustomerVisible(customerId);
+    let orderId = input.orderId;
+    let invoiceId: string | undefined;
+    if (input.invoiceReference) {
+      const invoice = await this.db
+        .prepare(
+          `SELECT id FROM invoices WHERE tenant_id=? AND branch_id=? AND (id=? OR invoice_number=?)`,
+        )
+        .bind(this.actor.tenantId, input.branchId, input.invoiceReference, input.invoiceReference)
+        .all<{ id: string }>();
+      if (invoice.results?.length !== 1)
+        throw new CrmDomainError(
+          "VALIDATION_FAILED",
+          "Select an unambiguous invoice in this branch",
+        );
+      invoiceId = invoice.results[0].id;
+      const orders = await this.db
+        .prepare(
+          "SELECT DISTINCT order_id FROM invoice_lines WHERE tenant_id=? AND invoice_id=? AND order_id IS NOT NULL",
+        )
+        .bind(this.actor.tenantId, invoiceId)
+        .all<{ order_id: string }>();
+      if (!orderId && orders.results?.length === 1) orderId = orders.results[0].order_id;
+      if (!orderId || !orders.results?.some((row) => row.order_id === orderId))
+        throw new CrmDomainError("VALIDATION_FAILED", "Select an order belonging to this invoice");
+    }
+    if (orderId) {
+      const order = await this.db
+        .prepare("SELECT id FROM orders WHERE tenant_id=? AND branch_id=? AND id=?")
+        .bind(this.actor.tenantId, input.branchId, orderId)
+        .first<{ id: string }>();
+      if (!order)
+        throw new CrmDomainError("VALIDATION_FAILED", "Order was not found in this branch");
+      if (customerId) {
+        const family = await this.customerFamilyIds(customerId);
+        const linked = await this.db
+          .prepare(
+            `SELECT id FROM customer_transaction_links WHERE tenant_id=? AND branch_id=?
+           AND source_type='ORDER' AND source_id=? AND customer_id IN (${placeholders(family.length)})`,
+          )
+          .bind(this.actor.tenantId, input.branchId, orderId, ...family)
+          .first();
+        if (!linked)
+          throw new CrmDomainError("VALIDATION_FAILED", "Customer is not linked to this order");
+      }
+    }
+    const category = await this.db
+      .prepare(
+        "SELECT id FROM customer_feedback_categories WHERE tenant_id=? AND id=? AND active=1",
+      )
+      .bind(this.actor.tenantId, input.categoryId)
+      .first();
+    if (!category)
+      throw new CrmDomainError("VALIDATION_FAILED", "Select an active feedback category");
     const id = crypto.randomUUID();
     const stamp = new Date().toISOString();
     await this.db.batch([
@@ -1235,7 +1290,7 @@ export class CrmService extends CrmServiceBase {
           id,
           input.branchId,
           customerId ?? null,
-          input.orderId ?? null,
+          orderId ?? null,
           input.categoryId,
           input.surveyType,
           input.rating,
@@ -1249,9 +1304,16 @@ export class CrmService extends CrmServiceBase {
         .prepare(
           `INSERT INTO customer_feedback_events
             (tenant_id,id,feedback_id,event_type,actor_id,payload_json,created_at)
-           VALUES (?,?,?,'SUBMITTED',?,'{}',?)`,
+           VALUES (?,?,?,'SUBMITTED',?,?,?)`,
         )
-        .bind(this.actor.tenantId, crypto.randomUUID(), id, this.actor.id, stamp),
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          id,
+          this.actor.id,
+          JSON.stringify({ orderId: orderId ?? null, invoiceId: invoiceId ?? null }),
+          stamp,
+        ),
       ...(customerId
         ? [
             this.db
@@ -1286,7 +1348,7 @@ export class CrmService extends CrmServiceBase {
          WHERE tenant_id=? ORDER BY active DESC,name`,
       )
       .bind(this.actor.tenantId)
-      .all();
+      .all<{ id: string; code: string; name: string; active: number }>();
     return rows.results ?? [];
   }
 
@@ -1302,15 +1364,34 @@ export class CrmService extends CrmServiceBase {
     }
     const rows = await this.db
       .prepare(
-        `SELECT f.id,f.customer_id,c.display_name,f.order_id,fc.name AS category,f.survey_type,
+        `SELECT f.id,f.customer_id,c.display_name,f.order_id,i.id AS invoice_id,
+                i.invoice_number,fc.name AS category,f.survey_type,
                 f.rating,f.comment,f.status,f.owner_id,f.submitted_at
          FROM customer_feedback f JOIN customer_feedback_categories fc
            ON fc.tenant_id=f.tenant_id AND fc.id=f.category_id
          LEFT JOIN customers c ON c.tenant_id=f.tenant_id AND c.id=f.customer_id
+         LEFT JOIN customer_feedback_events e ON e.tenant_id=f.tenant_id AND e.feedback_id=f.id
+           AND e.event_type='SUBMITTED'
+         LEFT JOIN invoices i ON i.tenant_id=f.tenant_id AND i.branch_id=f.branch_id AND i.id=
+           ${this.db.provider === "postgres" ? "(e.payload_json::jsonb ->> 'invoiceId')" : "json_extract(e.payload_json,'$.invoiceId')"}
          WHERE f.tenant_id=? AND f.branch_id=? ORDER BY f.submitted_at DESC LIMIT ?`,
       )
       .bind(this.actor.tenantId, scopedBranch, limit)
-      .all();
+      .all<{
+        id: string;
+        customer_id: string | null;
+        display_name: string | null;
+        order_id: string | null;
+        invoice_id: string | null;
+        invoice_number: string | null;
+        category: string;
+        survey_type: "GENERAL" | "NPS" | "CSAT";
+        rating: number;
+        comment: string | null;
+        status: string;
+        owner_id: string | null;
+        submitted_at: string;
+      }>();
     return rows.results ?? [];
   }
 
@@ -1846,4 +1927,8 @@ function combineMetrics(rows: MetricRow[]) {
 
 function marketingChannel(channel: ConsentChannel) {
   return channel.replace("_MARKETING", "") as "EMAIL" | "SMS" | "WHATSAPP" | "PUSH" | "PHONE";
+}
+
+function escapeSearch(value: string) {
+  return value.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_");
 }

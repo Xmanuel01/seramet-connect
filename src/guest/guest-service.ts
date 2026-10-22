@@ -228,6 +228,10 @@ export class GuestExperienceService {
     fingerprint?: string | undefined;
   }) {
     const profile = await this.profile(input.restaurantSlug, input.branchSlug);
+    const channelCode = this.channelCode(
+      profile.tenantId,
+      input.qrToken ? "QR" : input.sessionType,
+    );
     let tableSessionId: string | null = null;
     let sourceQrId: string | null = null;
     let qrMode: string | undefined;
@@ -269,7 +273,6 @@ export class GuestExperienceService {
     const expiresAt = new Date(
       Date.now() + (sessionType === "QR" ? 12 : 4) * 3_600_000,
     ).toISOString();
-    const channelCode = this.channelCode(profile.tenantId, sessionType);
     await this.db
       .prepare(
         `INSERT INTO guest_sessions
@@ -1794,19 +1797,7 @@ export class GuestExperienceService {
       });
 
     const reservationsPromise = canViewReservations
-      ? this.db
-          .prepare(
-            `SELECT r.id,r.guest_name,r.party_size,r.starts_at,r.ends_at,r.status,r.confirmation_state,
-                  GROUP_CONCAT(t.code, ' + ') AS table_codes
-           FROM reservations r
-           LEFT JOIN reservation_table_assignments a ON a.tenant_id=r.tenant_id AND a.reservation_id=r.id AND a.released_at IS NULL
-           LEFT JOIN restaurant_tables t ON t.tenant_id=a.tenant_id AND t.id=a.table_id
-           WHERE r.tenant_id=? AND r.branch_id=? AND r.business_date=?
-           GROUP BY r.id ORDER BY r.starts_at LIMIT 500`,
-          )
-          .bind(actor.tenantId, branchId, date)
-          .all<Row>()
-          .then((result) => result.results ?? [])
+      ? this.hostReservations(actor.tenantId, branchId, date)
       : Promise.resolve([] as Row[]);
     const waitlistPromise = canViewWaitlist
       ? this.db
@@ -2396,6 +2387,19 @@ export class GuestExperienceService {
     };
   }
 
+  async listQrTables(actor: ServerActor, branchId: string) {
+    assertStaffBranch(actor, branchId, permissions.qrManage);
+    const rows = await this.db
+      .prepare(
+        `SELECT t.id,t.code,t.seats,a.name AS area FROM restaurant_tables t
+       LEFT JOIN service_areas a ON a.tenant_id=t.tenant_id AND a.id=t.service_area_id
+       WHERE t.tenant_id=? AND t.branch_id=? AND t.active=1 ORDER BY a.name,t.code`,
+      )
+      .bind(actor.tenantId, branchId)
+      .all<Row>();
+    return rows.results ?? [];
+  }
+
   async listQrTokens(actor: ServerActor, branchId: string) {
     assertStaffBranch(actor, branchId, permissions.qrManage);
     const rows = await this.db
@@ -2427,6 +2431,9 @@ export class GuestExperienceService {
       .bind(actor.tenantId, input.branchId, input.tableId)
       .first<{ id: string }>();
     if (!table) throw new GuestDomainError("NOT_FOUND", 404, "Table was not found");
+    // Validate the destination before rotating any existing capability.
+    const profile = await this.profileByScope(actor.tenantId, input.branchId);
+    this.channelCode(actor.tenantId, "QR");
     const active = await this.db
       .prepare(
         "SELECT id,version FROM table_qr_tokens WHERE tenant_id=? AND branch_id=? AND table_id=? AND status='ACTIVE'",
@@ -2494,7 +2501,6 @@ export class GuestExperienceService {
       ),
     );
     await this.db.batch(statements);
-    const profile = await this.profileByScope(actor.tenantId, input.branchId);
     return {
       id,
       token,
@@ -3483,6 +3489,38 @@ export class GuestExperienceService {
         )
         .bind(tenantId, stamp),
     ]);
+  }
+
+  private async hostReservations(tenantId: string, branchId: string, businessDate: string) {
+    const { results = [] } = await this.db
+      .prepare(
+        `SELECT id,guest_name,party_size,starts_at,ends_at,status,confirmation_state
+       FROM reservations WHERE tenant_id=? AND branch_id=? AND business_date=?
+       ORDER BY starts_at,id LIMIT 500`,
+      )
+      .bind(tenantId, branchId, businessDate)
+      .all<Row>();
+    if (!results.length) return [];
+    // Keep aggregation portable across SQLite/D1 and PostgreSQL without N+1 queries.
+    const assignments = await this.db
+      .prepare(
+        `SELECT a.reservation_id,t.code FROM reservation_table_assignments a
+       JOIN restaurant_tables t ON t.tenant_id=a.tenant_id AND t.branch_id=a.branch_id AND t.id=a.table_id
+       WHERE a.tenant_id=? AND a.branch_id=? AND a.released_at IS NULL
+       AND a.reservation_id IN (${results.map(() => "?").join(",")}) ORDER BY t.code`,
+      )
+      .bind(tenantId, branchId, ...results.map((row) => row.id))
+      .all<{ reservation_id: string; code: string }>();
+    const codes = new Map<string, string[]>();
+    for (const assignment of assignments.results ?? []) {
+      const current = codes.get(assignment.reservation_id) ?? [];
+      current.push(assignment.code);
+      codes.set(assignment.reservation_id, current);
+    }
+    return results.map((row) => ({
+      ...row,
+      table_codes: codes.get(String(row.id))?.join(" + ") ?? null,
+    }));
   }
 
   private async tableStatus(tenantId: string, branchId: string) {

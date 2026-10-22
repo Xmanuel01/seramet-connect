@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import {
   calculateFoodCostBridge,
   buildPurchaseRecommendation,
@@ -43,7 +44,7 @@ describe("Pass 6 inventory, procurement and food-cost intelligence", () => {
     const version = await db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
       .first<{ version: number }>();
-    expect(version?.version).toBe(27);
+    expect(version?.version).toBe(CURRENT_SCHEMA_VERSION);
     for (const table of [
       "unit_definitions",
       "item_unit_conversions",

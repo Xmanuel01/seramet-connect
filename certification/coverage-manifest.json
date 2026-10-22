@@ -170,6 +170,9 @@
     "src/routes/login.tsx": {
       "directBrowser": "LOCAL_FIXTURE"
     },
+    "src/routes/staff-login.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
     "src/routes/loyalty.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },
@@ -358,6 +361,10 @@
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "CRM"
     },
+    "src/server/daily-closing-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
     "src/server/enterprise-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
@@ -433,6 +440,18 @@
     "src/server/table-management-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/attendance-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/document-email-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/attendance-delay-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
     }
   },
   "expectedLoadSuites": [
@@ -445,6 +464,7 @@
     "src/server/pass-5-load.test.ts"
   ],
   "permittedConditionalSkips": {
+    "tests/e2e/site-lifecycle-audit.spec.ts": 2,
     "tests/e2e/staging-auth.spec.ts": 3
   }
 }

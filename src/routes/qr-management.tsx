@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Download, Printer, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
@@ -6,6 +6,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { useCrmApi, useCrmQuery } from "@/crm/use-crm";
 import { useAppContext } from "@/lib/app-context";
+import { permissions } from "@/platform/permissions";
 
 type QrRow = {
   id: string;
@@ -34,13 +35,21 @@ type IssuedQr = {
 export const Route = createFileRoute("/qr-management")({ component: QrManagement });
 
 function QrManagement() {
-  const { branchId, branchLabel } = useAppContext();
+  const { activeTenantId, branchId } = useAppContext();
+  return <QrWorkspace key={`${activeTenantId}:${branchId}`} />;
+}
+
+function QrWorkspace() {
+  const { branchId, branchLabel, isAllBranches, hasPermission } = useAppContext();
+  const enabled = !isAllBranches && hasPermission(permissions.qrManage);
   const { command } = useCrmApi();
   const query = useCrmQuery<{ tokens: QrRow[] }>(
     `/api/seramet/guest-admin/qr?branchId=${encodeURIComponent(branchId)}`,
+    enabled,
   );
   const host = useCrmQuery<HostResponse>(
-    `/api/seramet/guest-admin/host?branchId=${encodeURIComponent(branchId)}`,
+    `/api/seramet/guest-admin/qr/tables?branchId=${encodeURIComponent(branchId)}`,
+    enabled,
   );
   const [tableId, setTableId] = useState("");
   const [mode, setMode] = useState("ORDERING_ENABLED");
@@ -54,7 +63,7 @@ function QrManagement() {
 
   const rotate = async () => {
     const table = host.data?.tables.find((candidate) => candidate.id === tableId);
-    if (!table) return;
+    if (!table || !enabled || busy || host.status !== "ready") return;
     setBusy(true);
     setNotice("");
     try {
@@ -109,6 +118,34 @@ function QrManagement() {
       title="QR management"
       subtitle={`Secure table menu and ordering codes - ${branchLabel}`}
     >
+      {!enabled && (
+        <p role="alert" className="mb-4">
+          Select one branch with QR management permission.
+        </p>
+      )}
+      {(host.error || query.error) && (
+        <div role="alert" className="mb-4 rounded-md border border-danger p-3">
+          <p>Table QR data could not be loaded: {host.error || query.error}</p>
+          <Btn
+            onClick={() => {
+              void host.refresh();
+              void query.refresh();
+            }}
+          >
+            Retry
+          </Btn>
+        </div>
+      )}
+      {enabled && host.status === "ready" && !host.data?.tables.length && (
+        <p role="status" className="mb-4">
+          No active tables are configured for this branch.{" "}
+          {hasPermission(permissions.tableManage) && (
+            <Link to="/tables" className="underline">
+              Add tables in Front of House
+            </Link>
+          )}
+        </p>
+      )}
       {notice && (
         <div
           role="status"
@@ -124,6 +161,7 @@ function QrManagement() {
             <label className="text-[12px] font-semibold">
               Table
               <select
+                disabled={!enabled || host.status !== "ready" || busy}
                 value={tableId}
                 onChange={(event) => setTableId(event.target.value)}
                 className="mt-1 h-10 w-full rounded-md border border-border bg-card px-3"
@@ -149,7 +187,11 @@ function QrManagement() {
                 <option value="CALL_WAITER_ONLY">Call waiter only</option>
               </select>
             </label>
-            <Btn variant="primary" onClick={rotate} disabled={busy || !tableId}>
+            <Btn
+              variant="primary"
+              onClick={rotate}
+              disabled={!enabled || busy || host.status !== "ready" || !tableId}
+            >
               <RefreshCw className="h-4 w-4" />
               {busy ? "Issuing" : "Generate or rotate"}
             </Btn>

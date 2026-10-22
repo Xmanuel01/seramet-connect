@@ -6,6 +6,8 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { LOCAL_PILOT_TENANT_ID, LOCAL_PILOT_USER_ID } from "@/platform/pilot-defaults";
@@ -17,6 +19,8 @@ import {
 import { getSerametAccessToken } from "@/lib/access-token";
 import { clearInteractiveSignIn, hasInteractiveSignIn } from "@/lib/auth-client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { posConnectivity } from "@/lib/pos-connectivity";
+import { tracePos } from "@/lib/pos-lifecycle-trace";
 import {
   buildModuleAccessProfile,
   moduleDecision,
@@ -43,6 +47,7 @@ export type CurrentUser = CurrentUserSession & {
   role: AppRole;
   branch: string;
   branchId: BranchId;
+  deviceId?: string;
 };
 
 const defaultTheme: AppTheme = "light";
@@ -81,6 +86,10 @@ const readBranchScope = (allowedBranchIds: BranchId[], canSeeAllBranches: boolea
 };
 
 type AppContextValue = {
+  authenticationLevel: "FULL" | "POS_PIN" | "DEVELOPMENT" | undefined;
+  sessionId: string | undefined;
+  deviceId: string | undefined;
+  salesTerminal: boolean;
   activeTenantId: TenantId;
   activeBrandId: string | undefined;
   branchScope: BranchScope;
@@ -125,6 +134,54 @@ export function AppProvider({ children }: { children: ReactNode }) {
     | { status: "AUTHENTICATED"; actor: AuthoritativeActor }
     | { status: "ERROR"; kind: BootstrapFailureKind; message: string }
   >({ status: "LOADING" });
+  const actorRef = useRef<AuthoritativeActor | undefined>(undefined);
+  const configurationCheckedAt = useRef(Date.now());
+  const lifetime = useRef(crypto.randomUUID());
+  useEffect(() => {
+    const id = lifetime.current;
+    tracePos("APP_MOUNT", id);
+    const exiting = () => tracePos("PAGE_EXIT", id);
+    window.addEventListener("pagehide", exiting);
+    return () => {
+      tracePos("APP_UNMOUNT", id);
+      window.removeEventListener("pagehide", exiting);
+    };
+  }, []);
+  const revalidate = useCallback(
+    async (forceConfiguration = false) => {
+      try {
+        const refreshConfiguration =
+          forceConfiguration || Date.now() - configurationCheckedAt.current >= 5 * 60_000;
+        const result = await bootstrapAuthoritativeSession(
+          repository,
+          actorRef.current,
+          refreshConfiguration,
+        );
+        if (result.status !== "AUTHENTICATED")
+          throw new SerametBootstrapError(
+            "SERVICE_UNAVAILABLE",
+            "Secure authentication is unavailable",
+          );
+        actorRef.current = result.actor;
+        if (refreshConfiguration) configurationCheckedAt.current = Date.now();
+        setBootstrap((previous) =>
+          previous.status === "AUTHENTICATED" && previous.actor === result.actor
+            ? previous
+            : result,
+        );
+      } catch (error) {
+        const failure = bootstrapFailure(error);
+        if (failure.kind === "AUTHENTICATION") {
+          tracePos("AUTH_REJECTED", lifetime.current);
+          clearInteractiveSignIn();
+          setBootstrap({ status: "ERROR", ...failure });
+        }
+        // Recoverable failures retain the provider and safe in-memory forms.
+        throw error;
+      }
+    },
+    [repository],
+  );
 
   useEffect(() => {
     // An existing server cookie must not silently unlock a newly opened POS tab.
@@ -135,11 +192,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let active = true;
     void bootstrapAuthoritativeSession(repository)
       .then((result) => {
-        if (active) setBootstrap(result);
+        if (active) {
+          if (result.status === "AUTHENTICATED") {
+            actorRef.current = result.actor;
+            posConnectivity.verified();
+          }
+          setBootstrap(result);
+        }
       })
       .catch((error) => {
         if (!active) return;
         const failure = bootstrapFailure(error);
+        if (failure.kind !== "AUTHENTICATION") {
+          setBootstrap({ status: "ERROR", ...failure });
+          return;
+        }
         void fetch("/api/seramet/public/device/startup", { credentials: "same-origin" })
           .then(async (response) => {
             if (!response.ok) throw new Error(`Device startup failed: ${response.status}`);
@@ -161,42 +228,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (bootstrap.status !== "AUTHENTICATED") return;
-    let active = true;
-    let refreshing = false;
-    const refresh = async () => {
-      if (refreshing) return;
-      refreshing = true;
-      try {
-        const result = await bootstrapAuthoritativeSession(repository);
-        if (!active) return;
-        if (result.status !== "AUTHENTICATED") {
-          setBootstrap({
-            status: "ERROR",
-            kind: "SERVICE_UNAVAILABLE",
-            message: "Secure authentication is unavailable. Access has been paused.",
-          });
-        } else if (
-          result.actor.moduleAccess.accessRevision !== bootstrap.actor.moduleAccess.accessRevision
-        ) {
-          setBootstrap(result);
-        }
-      } catch (error) {
-        if (!active) return;
-        const failure = bootstrapFailure(error);
-        if (failure.kind === "AUTHENTICATION") clearInteractiveSignIn();
-        setBootstrap({ status: "ERROR", ...failure });
-      } finally {
-        refreshing = false;
-      }
+    const stop = posConnectivity.start(() => revalidate(), {
+      visible: () => document.visibilityState !== "hidden",
+      online: () => navigator.onLine,
+    });
+    const refresh = () => void posConnectivity.requestVerification();
+    const offline = () => posConnectivity.failure(undefined, true);
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
     };
-    const timer = window.setInterval(() => void refresh(), 60_000);
     window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", offline);
+    document.addEventListener("visibilitychange", visible);
     return () => {
-      active = false;
-      window.clearInterval(timer);
+      stop();
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", offline);
+      document.removeEventListener("visibilitychange", visible);
     };
-  }, [bootstrap, repository]);
+  }, [bootstrap.status, revalidate]);
 
   if (bootstrap.status === "LOADING") {
     return (
@@ -212,15 +264,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
         detail={bootstrap.message}
         action={serviceUnavailable ? "RETRY" : "AUTH"}
+        onRetry={() => {
+          setBootstrap({ status: "LOADING" });
+          void bootstrapAuthoritativeSession(repository)
+            .then((result) => {
+              if (result.status === "AUTHENTICATED") {
+                actorRef.current = result.actor;
+                posConnectivity.verified();
+              }
+              setBootstrap(result);
+            })
+            .catch((error) => setBootstrap({ status: "ERROR", ...bootstrapFailure(error) }));
+        }}
       />
     );
   }
   return (
     <ConfiguredAppProvider
       repository={repository}
-      refreshAccess={async () => {
-        setBootstrap(await bootstrapAuthoritativeSession(repository));
-      }}
+      refreshAccess={() => revalidate(true)}
+      key={
+        bootstrap.status === "AUTHENTICATED"
+          ? `${bootstrap.actor.tenantId}:${bootstrap.actor.id}:${bootstrap.actor.deviceId ?? "account"}`
+          : "development"
+      }
       {...(bootstrap.status === "AUTHENTICATED" ? { actor: bootstrap.actor } : {})}
     >
       {children}
@@ -353,6 +420,7 @@ function ConfiguredAppProvider({
       role,
       branch: fallbackBranch.name,
       branchId: fallbackBranch.id,
+      ...(actor?.deviceId ? { deviceId: actor.deviceId } : {}),
     };
     const moduleAccess =
       actor?.moduleAccess ??
@@ -389,6 +457,10 @@ function ConfiguredAppProvider({
 
     return {
       activeTenantId,
+      authenticationLevel: actor?.authLevel,
+      sessionId: actor?.sessionId,
+      deviceId: actor?.deviceId,
+      salesTerminal: actor?.authLevel === "DEVELOPMENT" || actor?.salesTerminal === true,
       activeBrandId: platformState.brands.find((brand) => brand.tenantId === activeTenantId)?.id,
       branchScope,
       branchId: fallbackBranch.id,
@@ -444,6 +516,10 @@ function ConfiguredAppProvider({
     activeTenant?.timezone,
     displayTimeZone,
     actor?.moduleAccess,
+    actor?.authLevel,
+    actor?.salesTerminal,
+    actor?.deviceId,
+    actor?.sessionId,
     assignedBranchIds,
     branchRecords,
     branchScope,
@@ -526,7 +602,6 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       streamHealthy = false;
     };
     const focus = () => requestRefresh("focus");
-    const online = () => requestRefresh("online");
     const visible = () => {
       if (document.visibilityState === "visible") requestRefresh("visible");
     };
@@ -538,12 +613,10 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }
     }, 30_000);
     window.addEventListener("focus", focus);
-    window.addEventListener("online", online);
     document.addEventListener("visibilitychange", visible);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", focus);
-      window.removeEventListener("online", online);
       document.removeEventListener("visibilitychange", visible);
       stream.close();
     };
@@ -561,6 +634,9 @@ class SerametBootstrapError extends Error {
     super(message);
     this.name = "SerametBootstrapError";
   }
+  get httpStatus() {
+    return this.kind === "AUTHENTICATION" ? 401 : 503;
+  }
 }
 
 function bootstrapFailure(error: unknown): { kind: BootstrapFailureKind; message: string } {
@@ -574,6 +650,7 @@ function bootstrapFailure(error: unknown): { kind: BootstrapFailureKind; message
 }
 
 type AuthoritativeActor = {
+  authLevel?: "FULL" | "POS_PIN" | "DEVELOPMENT";
   id: string;
   name: string;
   tenantId: string;
@@ -586,27 +663,35 @@ type AuthoritativeActor = {
   sessionId?: string;
   deviceId?: string;
   moduleAccess: ModuleAccessProfile;
+  salesTerminal?: boolean;
 };
 
 async function bootstrapAuthoritativeSession(
   repository: ConfigurationRepository,
+  previousActor?: AuthoritativeActor,
+  refreshConfiguration = false,
 ): Promise<{ status: "DEVELOPMENT" } | { status: "AUTHENTICATED"; actor: AuthoritativeActor }> {
-  const healthResponse = await fetch("/api/seramet/health/operational", { cache: "no-store" });
-  if (!healthResponse.ok) {
-    throw new SerametBootstrapError(
-      "SERVICE_UNAVAILABLE",
-      await readinessFailureMessage(healthResponse.status),
-    );
-  }
-  const health = (await healthResponse.json()) as { database?: string; environment?: string };
-  if (health.database !== "authoritative") {
-    if (import.meta.env.DEV && health.environment === "development") {
-      return { status: "DEVELOPMENT" };
+  if (!previousActor) {
+    const healthResponse = await fetch("/api/seramet/health/operational", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!healthResponse.ok) {
+      throw new SerametBootstrapError(
+        "SERVICE_UNAVAILABLE",
+        await readinessFailureMessage(healthResponse.status),
+      );
     }
-    throw new SerametBootstrapError(
-      "SERVICE_UNAVAILABLE",
-      "Secure database is unavailable. Access is blocked until the service recovers.",
-    );
+    const health = (await healthResponse.json()) as { database?: string; environment?: string };
+    if (health.database !== "authoritative") {
+      if (import.meta.env.DEV && health.environment === "development") {
+        return { status: "DEVELOPMENT" };
+      }
+      throw new SerametBootstrapError(
+        "SERVICE_UNAVAILABLE",
+        "Secure database is unavailable. Access is blocked until the service recovers.",
+      );
+    }
   }
   const token = getSerametAccessToken();
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
@@ -615,7 +700,10 @@ async function bootstrapAuthoritativeSession(
       ? undefined
       : window.localStorage.getItem(sessionTenantStorageKey)?.trim();
   if (selectedTenant) headers["x-seramet-tenant-id"] = selectedTenant;
-  const sessionResponse = await authenticatedFetch("/api/seramet/auth/session", { headers });
+  const sessionResponse = await authenticatedFetch("/api/seramet/auth/session", {
+    headers,
+    signal: AbortSignal.timeout(12_000),
+  });
   if (!sessionResponse.ok) {
     if (sessionResponse.status === 401 || sessionResponse.status === 403) {
       throw new SerametBootstrapError(
@@ -635,7 +723,19 @@ async function bootstrapAuthoritativeSession(
       "Authenticated session did not resolve an actor",
     );
   }
-  const configurationResponse = await authenticatedFetch("/api/seramet/configuration", { headers });
+  if (
+    previousActor &&
+    !refreshConfiguration &&
+    previousActor.id === session.actor.id &&
+    previousActor.tenantId === session.actor.tenantId &&
+    previousActor.deviceId === session.actor.deviceId &&
+    JSON.stringify(previousActor) === JSON.stringify(session.actor)
+  )
+    return { status: "AUTHENTICATED", actor: previousActor };
+  const configurationResponse = await authenticatedFetch("/api/seramet/configuration", {
+    headers,
+    signal: AbortSignal.timeout(12_000),
+  });
   if (!configurationResponse.ok) {
     if (configurationResponse.status === 401 || configurationResponse.status === 403) {
       throw new SerametBootstrapError(
@@ -707,10 +807,12 @@ function SessionGate({
   title,
   detail,
   action = "NONE",
+  onRetry,
 }: {
   title: string;
   detail: string;
   action?: "NONE" | "AUTH" | "RETRY";
+  onRetry?: () => void;
 }) {
   return (
     <main className="grid min-h-screen place-items-center bg-background p-6 text-foreground">
@@ -737,7 +839,7 @@ function SessionGate({
           <button
             type="button"
             className="mt-4 inline-flex h-10 w-full items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-            onClick={() => window.location.reload()}
+            onClick={onRetry}
           >
             Retry connection
           </button>

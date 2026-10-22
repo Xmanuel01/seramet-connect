@@ -602,10 +602,15 @@ export class CampaignService extends CrmServiceBase {
       await this.db
         .prepare(
           `UPDATE campaign_deliveries SET status='FAILED',last_error_code='PROVIDER_NOT_REGISTERED',
-             next_attempt_at=datetime('now','+5 minutes'),updated_at=?
+             next_attempt_at=?,updated_at=?
            WHERE tenant_id=? AND campaign_id=? AND status IN ('QUEUED','FAILED')`,
         )
-        .bind(new Date().toISOString(), this.actor.tenantId, campaignId)
+        .bind(
+          new Date(Date.now() + 300_000).toISOString(),
+          new Date().toISOString(),
+          this.actor.tenantId,
+          campaignId,
+        )
         .run();
       return { sent: 0, failed: 0, providerStatus: "UNKNOWN" as const };
     }
@@ -613,9 +618,9 @@ export class CampaignService extends CrmServiceBase {
     const sentLastMinute = await this.db
       .prepare(
         `SELECT COUNT(*) AS count FROM campaign_deliveries WHERE tenant_id=?
-         AND provider_config_id=? AND sent_at>=datetime('now','-1 minute')`,
+         AND provider_config_id=? AND sent_at>=?`,
       )
-      .bind(this.actor.tenantId, config.id)
+      .bind(this.actor.tenantId, config.id, new Date(Date.now() - 60_000).toISOString())
       .first<{ count: number }>();
     const allowance = Math.max(
       0,
@@ -629,7 +634,8 @@ export class CampaignService extends CrmServiceBase {
            ON a.tenant_id=d.tenant_id AND a.id=d.audience_id
          JOIN customers c ON c.tenant_id=a.tenant_id AND c.id=a.customer_id
          WHERE d.tenant_id=? AND d.campaign_id=?
-           AND d.status IN ('QUEUED','FAILED') AND (d.next_attempt_at IS NULL OR d.next_attempt_at<=?)
+           AND d.status IN ('QUEUED','FAILED') AND d.attempt_count<d.max_attempts
+           AND (d.next_attempt_at IS NULL OR d.next_attempt_at<=?)
          ORDER BY d.queued_at LIMIT ?`,
       )
       .bind(this.actor.tenantId, campaignId, new Date().toISOString(), allowance)
@@ -674,7 +680,7 @@ export class CampaignService extends CrmServiceBase {
       const claimed = await this.db
         .prepare(
           `UPDATE campaign_deliveries SET status='SENDING',attempt_count=attempt_count+1,updated_at=?
-           WHERE tenant_id=? AND id=? AND status IN ('QUEUED','FAILED')`,
+           WHERE tenant_id=? AND id=? AND status IN ('QUEUED','FAILED') AND attempt_count<max_attempts`,
         )
         .bind(new Date().toISOString(), this.actor.tenantId, delivery.id)
         .run();
@@ -697,6 +703,7 @@ export class CampaignService extends CrmServiceBase {
       try {
         result = await adapter.send({
           tenantId: this.actor.tenantId,
+          customerId: delivery.customer_id,
           deliveryId: delivery.id,
           channel: delivery.channel,
           destination: confirmed.contact,
@@ -767,6 +774,7 @@ export class CampaignService extends CrmServiceBase {
           result.errorCode ?? "PROVIDER_FAILED",
           delivery.attempt_count + 1,
           delivery.max_attempts,
+          result.retryable !== false,
         );
         failed += 1;
       }
@@ -950,16 +958,33 @@ export class CampaignService extends CrmServiceBase {
     };
   }
 
-  private async failDelivery(id: string, code: string, attempts: number, maxAttempts: number) {
-    const dead = attempts >= maxAttempts;
+  private async failDelivery(
+    id: string,
+    code: string,
+    attempts: number,
+    maxAttempts: number,
+    retryable = true,
+  ) {
+    const dead = !retryable || attempts >= maxAttempts;
     const stamp = new Date().toISOString();
     await this.db
       .prepare(
         `UPDATE campaign_deliveries SET status=?,last_error_code=?,
-           next_attempt_at=CASE WHEN ?=1 THEN NULL ELSE datetime('now','+5 minutes') END,updated_at=?
+           next_attempt_at=?,updated_at=?
          WHERE tenant_id=? AND id=? AND status IN ('SENDING','QUEUED','FAILED')`,
       )
-      .bind(dead ? "DEAD_LETTER" : "FAILED", code, Number(dead), stamp, this.actor.tenantId, id)
+      .bind(
+        dead ? "DEAD_LETTER" : "FAILED",
+        code,
+        dead
+          ? null
+          : new Date(
+              Date.now() + Math.min(3_600_000, 30_000 * 2 ** Math.min(attempts, 7)),
+            ).toISOString(),
+        stamp,
+        this.actor.tenantId,
+        id,
+      )
       .run();
   }
 

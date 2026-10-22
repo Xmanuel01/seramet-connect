@@ -92,6 +92,58 @@ const configuration = () =>
     roles: ["BILL", "RECEIPT"],
   });
 
+it("binds explicit raster capabilities and canonical layout; text diagnostics cannot alter an existing identity", async () => {
+  const raster = {
+    command: "GS_V_0",
+    printableWidthDots: 576,
+    dpi: 203,
+    maxBandHeight: 128,
+    maxHeightDots: 8192,
+    maxBytes: 524288,
+  };
+  const config = { ...configuration(), renderingMode: "RASTER_ESC_POS", raster };
+  const printer = (
+    await (await handlePrintingApi(request("printers", config), env(), repository))!.json()
+  ).printer;
+  const input = { printerId: printer.id, documentType: "TEST", recordId: crypto.randomUUID() };
+  const issue = async (data: unknown) =>
+    await (await handlePrintingApi(request("authorize", data), env(), repository))!.json();
+  const first = await issue(input);
+  const decoded = JSON.parse(Buffer.from(first.authorization.payload, "base64url").toString());
+  expect(decoded.profile.renderingMode).toBe("RASTER_ESC_POS");
+  expect(decoded.v).toBe(2);
+  expect(decoded.profile.raster).toEqual(raster);
+  expect(decoded.document.version).toBe(1);
+  expect(decoded.document.rows.some((r: { kind: string }) => r.kind === "table")).toBe(true);
+  await expect(issue({ ...input, testRenderingMode: "TEXT_ESC_POS" })).rejects.toMatchObject({
+    status: 409,
+  });
+  const text = await issue({
+    ...input,
+    recordId: crypto.randomUUID(),
+    testRenderingMode: "TEXT_ESC_POS",
+  });
+  const textJob = JSON.parse(Buffer.from(text.authorization.payload, "base64url").toString());
+  expect(textJob.profile.renderingMode).toBe("TEXT_ESC_POS");
+  expect(textJob.v).toBe(1);
+  expect(textJob.document).toBeUndefined();
+  const changed = await signPrintJob(
+    { ...decoded, profile: { ...decoded.profile, raster: { ...raster, printableWidthDots: 640 } } },
+    await deriveBridgeSigningKey(signingKey, actor.tenantId, branchId, printer.bridgeId),
+  );
+  await expect(
+    handlePrintingApi(request("consume", { authorization: changed }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  expect(
+    printerConfigurationSchema.safeParse({ ...config, transport: "WINDOWS", osPrinterName: "test" })
+      .success,
+  ).toBe(false);
+  expect(
+    printerConfigurationSchema.safeParse({ ...config, raster: { ...raster, command: "UNKNOWN" } })
+      .success,
+  ).toBe(false);
+});
+
 it("consumes one global attempt across terminals, old evidence, ledger loss and bounded recovery", async () => {
   const printer = (
     await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()

@@ -19,6 +19,7 @@ import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate } from "@/lib/date-filters";
+import { PhoneOrders } from "@/components/app/PhoneOrders";
 
 export const Route = createFileRoute("/orders")({
   head: () => ({
@@ -35,8 +36,12 @@ export const Route = createFileRoute("/orders")({
       },
     ],
   }),
-  component: Orders,
+  component: OrderEntry,
 });
+function OrderEntry() {
+  const { salesTerminal } = useAppContext();
+  return salesTerminal ? <Orders /> : <PhoneOrders />;
+}
 
 function Orders() {
   const { branchId, branchLabel, branchRecords, matchesBranch, currentUser, timeZone, currency } =

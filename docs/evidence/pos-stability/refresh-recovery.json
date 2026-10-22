@@ -1,0 +1,36 @@
+{
+  "entries": [
+    {
+      "at": 1792169315354,
+      "correlationId": "c4759c18-16e4-4923-b4c4-9ab7d4180535",
+      "kind": "APP_MOUNT"
+    },
+    {
+      "at": 1792169315451,
+      "correlationId": "23d1cbfb-6896-4c7e-a25c-1ddcf0f14ee1",
+      "kind": "CONNECTIVITY",
+      "value": "ONLINE"
+    },
+    {
+      "at": 1792169315840,
+      "correlationId": "92917eb5-6560-4c5d-a847-7c12dd8ae005",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169315845,
+      "correlationId": "92917eb5-6560-4c5d-a847-7c12dd8ae005",
+      "kind": "POS_UNMOUNT"
+    },
+    {
+      "at": 1792169315849,
+      "correlationId": "92917eb5-6560-4c5d-a847-7c12dd8ae005",
+      "kind": "POS_MOUNT"
+    },
+    {
+      "at": 1792169317188,
+      "correlationId": "23d1cbfb-6896-4c7e-a25c-1ddcf0f14ee1",
+      "kind": "SNAPSHOT_READ",
+      "value": 2
+    }
+  ]
+}

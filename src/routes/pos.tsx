@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -23,11 +23,20 @@ import {
 } from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
 import { activeLocale, ksh } from "@/lib/currency";
-import { formatPosClock, pendingPosOrders, resolvePosTimeZone } from "@/lib/pos-workflow";
+import {
+  acknowledgedKitchenDispatch,
+  formatPosClock,
+  pendingPosOrders,
+  resolvePosTimeZone,
+} from "@/lib/pos-workflow";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { permissions } from "@/platform/permissions";
 import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
 import { shouldHydratePosOrder } from "@/lib/transaction-refresh-coordinator";
+import { posDraftKey, readPosDraft, writePosDraft } from "@/lib/pos-draft";
+import { tracePos } from "@/lib/pos-lifecycle-trace";
+import { useCrmApi } from "@/crm/use-crm";
+import type { CustomerProfile } from "@/crm/types";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
 import {
   INITIAL_POS_MENU_ITEMS,
@@ -42,14 +51,17 @@ import {
   nextTransactionRecordId,
   TransactionEngine,
   type OrderDraft,
+  type TransactionOrder,
 } from "@/lib/transaction-engine";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
+import { posInvoicePricing } from "@/payments/pos-invoice-components";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
+import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -71,7 +83,7 @@ export const Route = createFileRoute("/pos")({
       { property: "og:description", content: "Touch-optimised point of sale built for speed." },
     ],
   }),
-  component: POS,
+  component: ScopedPOS,
 });
 
 const productFallbackTones = [
@@ -122,11 +134,47 @@ function configuredChargeMinor(
   return Number((numerator + denominator / 2n) / denominator);
 }
 
+async function digestOrder(order: TransactionOrder) {
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(order))),
+    ),
+  )
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function ScopedPOS() {
+  const { activeTenantId, branchId, currentUser } = useAppContext();
+  return (
+    <POS
+      key={`${activeTenantId}:${branchId}:${currentUser.id}:${currentUser.deviceId ?? "account"}`}
+    />
+  );
+}
+
 function POS() {
   const navigate = useNavigate();
   const { activeTenantId, branch, branchId, currentUser, platformState, role, hasPermission } =
     useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
+  const lifetime = useRef(crypto.randomUUID());
+  const draftKey = posDraftKey(
+    activeTenantId,
+    branchId,
+    currentUser.id,
+    currentUser.deviceId ?? "account",
+  );
+  const [recoveredDraft] = useState(() => readPosDraft(draftKey));
+  const orderBaseline = useRef(recoveredDraft?.orderBaseline);
+  const [baselineEpoch, setBaselineEpoch] = useState(0);
+  const [recoverCustomerId, setRecoverCustomerId] = useState(recoveredDraft?.customerId ?? null);
+  const { request: customerRequest } = useCrmApi();
+  useEffect(() => {
+    const id = lifetime.current;
+    tracePos("POS_MOUNT", id);
+    return () => tracePos("POS_UNMOUNT", id);
+  }, []);
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
   const orderChannels = useMemo(
     () =>
@@ -159,7 +207,7 @@ function POS() {
       : "",
   );
   const [orderSource, setOrderSource] = useState(
-    () => preferredChannelId || orderChannels[0]?.id || "",
+    () => recoveredDraft?.orderSource || preferredChannelId || orderChannels[0]?.id || "",
   );
   const hydratedOrderIdRef = useRef<string | null>(null);
   const orderActionRef = useRef(false);
@@ -167,7 +215,7 @@ function POS() {
   // sequentially; failure leaves an inspectable CLAIMED obligation on the server.
   const kotAcknowledgeRef = useRef<Promise<void>>(Promise.resolve());
   const [orderActionBusy, setOrderActionBusy] = useState(false);
-  const [lines, setLines] = useState<Record<string, number>>({});
+  const [lines, setLines] = useState<Record<string, number>>(recoveredDraft?.lines ?? {});
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(() => paymentMethods[0]?.id ?? "");
   const [paymentMode, setPaymentMode] = useState<"full" | "split" | "partial">("full");
@@ -203,27 +251,93 @@ function POS() {
     Email: false,
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [printNotice, setPrintNotice] = useState("Print routing is running in the background.");
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
-  const [kitchenNote, setKitchenNote] = useState("");
-  const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
-  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
+  const [kitchenNote, setKitchenNote] = useState(recoveredDraft?.kitchenNote ?? "");
+  const [itemNotes, setItemNotes] = useState<Record<string, string>>(
+    recoveredDraft?.itemNotes ?? {},
+  );
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(
+    recoveredDraft?.activeOrderId ?? null,
+  );
   const [customerSelection, setCustomerSelection] = useState<PosCustomerSelection | null>(null);
   const [activeOrdersOpen, setActiveOrdersOpen] = useState(false);
   const [tablePickerOpen, setTablePickerOpen] = useState(false);
-  const [selectedTableNo, setSelectedTableNo] = useState<string | null>(null);
+  const [selectedTableNo, setSelectedTableNo] = useState<string | null>(
+    recoveredDraft?.selectedTableNo ?? null,
+  );
+  useEffect(() => {
+    if (recoveredDraft?.activeOrderId)
+      hydratedOrderIdRef.current = `${activeTenantId}:${branchId}:${recoveredDraft.activeOrderId}`;
+  }, [activeTenantId, branchId, recoveredDraft]);
+  useEffect(() => {
+    writePosDraft(draftKey, {
+      lines,
+      itemNotes,
+      kitchenNote,
+      activeOrderId,
+      selectedTableNo,
+      orderSource,
+      customerId: customerSelection?.customer?.id ?? recoverCustomerId,
+      savedAt: Date.now(),
+      ...(orderBaseline.current ? { orderBaseline: orderBaseline.current } : {}),
+    });
+  }, [
+    draftKey,
+    lines,
+    itemNotes,
+    kitchenNote,
+    activeOrderId,
+    selectedTableNo,
+    orderSource,
+    customerSelection,
+    recoverCustomerId,
+    baselineEpoch,
+  ]);
+  useEffect(() => {
+    if (!recoverCustomerId) return;
+    const controller = new AbortController();
+    void customerRequest<{ customer: CustomerProfile }>(
+      `/api/seramet/crm/customers/${encodeURIComponent(recoverCustomerId)}`,
+      { signal: controller.signal },
+    )
+      .then(({ customer }) => {
+        if (controller.signal.aborted) return;
+        setCustomerSelection({
+          tenantId: activeTenantId,
+          branchId,
+          orderId: recoveredDraft?.activeOrderId ?? null,
+          customer: {
+            id: customer.id,
+            customerCode: customer.customerCode,
+            displayName: customer.displayName,
+          },
+        });
+        setRecoverCustomerId(null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setPrintNotice("Select the customer again before saving this recovered order.");
+          setPrintNoticeType("warning");
+        }
+      });
+    return () => controller.abort();
+  }, [recoverCustomerId, customerRequest, activeTenantId, branchId, recoveredDraft]);
   const [trackedPrint, setTrackedPrint] = useState<{
     jobIds: string[];
     label: string;
   } | null>(null);
   const {
     state: transactionState,
-    mutate: mutateTransaction,
+    mutate: mutateBackendTransaction,
+    revision: transactionRevision,
     syncFromBackend,
     backendStatus,
     pendingSyncCount,
     activeMutationCount,
     offlineReplayInProgress,
+    offlineStorageAvailable,
   } = useTransactionEngine();
   const {
     profile,
@@ -243,12 +357,13 @@ function POS() {
   const selectedPaymentMethod =
     paymentMethods.find((method) => method.id === paymentMethod) ?? paymentMethods[0];
   const connectivity = connectionPresentation(backendStatus);
-  const syncActivity = syncActivityLabel(
-    backendStatus,
-    activeMutationCount,
-    pendingSyncCount,
-    offlineReplayInProgress,
-  );
+  const syncActivity =
+    syncActivityLabel(
+      backendStatus,
+      activeMutationCount,
+      pendingSyncCount,
+      offlineReplayInProgress,
+    ) ?? (offlineStorageAvailable ? null : "Offline storage unavailable");
   const openCashDrawer = transactionState.paymentOperations?.drawerSessions.find(
     (drawer) =>
       drawer.tenantId === activeTenantId &&
@@ -369,6 +484,47 @@ function POS() {
     [branchOrders],
   );
   const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
+  const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
+  const mutateTransaction: typeof mutateBackendTransaction = async (
+    action,
+    payload,
+    optimistic,
+    effects,
+  ) => {
+    const editsDraft = [
+      "upsertOrderDraft",
+      "upsertAndSendKitchen",
+      "requestBillWithDraft",
+    ].includes(action);
+    let expectedRevision: number | undefined;
+    if (editsDraft && activeOrder) {
+      const baseline = orderBaseline.current;
+      if (!baseline)
+        throw new Error("Wait for the selected order to finish loading before saving.");
+      expectedRevision =
+        (await digestOrder(activeOrder)) === baseline.digest
+          ? transactionRevision
+          : baseline.revision;
+    }
+    const result = await mutateBackendTransaction(
+      action,
+      payload,
+      optimistic,
+      effects,
+      expectedRevision,
+    );
+    if (editsDraft && activeOrder && result && !("offline" in result)) {
+      const saved = result.state.orders.find((order) => order.id === activeOrder.id);
+      if (saved) {
+        orderBaseline.current = {
+          revision: result.revision ?? transactionRevision,
+          digest: await digestOrder(saved),
+        };
+        setBaselineEpoch((value) => value + 1);
+      }
+    }
+    return result;
+  };
   const linkedCustomer = resolvePosCustomer(
     { tenantId: activeTenantId, branchId },
     activeOrder,
@@ -468,12 +624,12 @@ function POS() {
     const stored = window.sessionStorage.getItem(channelPreferenceKey);
     if (stored && orderChannels.some((channel) => channel.id === stored)) {
       setPreferredChannelId(stored);
-      if (!activeOrderId) setOrderSource(stored);
+      if (!activeOrderId && !recoveredDraft?.orderSource) setOrderSource(stored);
     } else if (!activeOrderId && !orderChannels.some((channel) => channel.id === orderSource)) {
       setPreferredChannelId("");
       setOrderSource(orderChannels[0]?.id ?? "");
     }
-  }, [activeOrderId, channelPreferenceKey, orderChannels, orderSource]);
+  }, [activeOrderId, channelPreferenceKey, orderChannels, orderSource, recoveredDraft]);
 
   const chooseChannel = (id: string) => {
     if (channelLocked) return;
@@ -484,6 +640,18 @@ function POS() {
 
   const runOrderAction = async (action: () => Promise<void>) => {
     if (orderActionRef.current) return;
+    if (selectedOrderUnavailable) {
+      setPrintNotice(
+        "The selected order has not loaded. Wait for reconnection or verify it in Orders before continuing.",
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
+    if (recoverCustomerId) {
+      setPrintNotice("Verify the recovered customer selection before saving.");
+      setPrintNoticeType("warning");
+      return;
+    }
     orderActionRef.current = true;
     setOrderActionBusy(true);
     try {
@@ -591,6 +759,13 @@ function POS() {
       return;
     }
     hydratedOrderIdRef.current = `${activeTenantId}:${branchId}:${activeOrderId}`;
+    const selected = activeOrderId;
+    void digestOrder(activeOrder).then((digest) => {
+      if (hydratedOrderIdRef.current === `${activeTenantId}:${branchId}:${selected}`) {
+        orderBaseline.current = { revision: transactionRevision, digest };
+        setBaselineEpoch((value) => value + 1);
+      }
+    });
     const channel = orderChannels.find(
       (item) =>
         item.id === activeOrder.channel ||
@@ -616,7 +791,7 @@ function POS() {
     );
     setPrintNotice(`${activeOrder.id} loaded. Print routing is running in the background.`);
     setPrintNoticeType("idle");
-  }, [activeOrder, activeOrderId, activeTenantId, branchId, orderChannels]);
+  }, [activeOrder, activeOrderId, activeTenantId, branchId, orderChannels, transactionRevision]);
 
   const sentQuantities = useMemo(
     () =>
@@ -699,7 +874,17 @@ function POS() {
       },
       { reported: 0, added: 0 },
     );
-  const subtotal = majorFromMinor(subtotalMinor, tenant.defaultCurrency);
+  const invoicePricing = posInvoicePricing({
+    currency: tenant.defaultCurrency,
+    itemsMinor: subtotalMinor,
+    taxMinor: taxTotals.reported,
+    serviceMinor: serviceTotals.reported,
+    exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
+  });
+  const subtotal = majorFromMinor(
+    invoicePricing.financialComponents.netSalesMinor,
+    tenant.defaultCurrency,
+  );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
   const total = majorFromMinor(
     subtotalMinor + taxTotals.added + serviceTotals.added,
@@ -761,8 +946,8 @@ function POS() {
       productionStation: line.p.productionStation ?? "NONE",
       ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
     })),
-    subtotal,
-    tax,
+    subtotal: invoicePricing.subtotal,
+    tax: invoicePricing.tax,
     total,
     paid,
     change,
@@ -855,7 +1040,10 @@ function POS() {
       cashier: currentUser.name,
       waiter: currentUser.name,
       ...(kitchenNote.trim() ? { kitchenNote: kitchenNote.trim() } : {}),
-      financialOverride: { subtotal, tax, total },
+      financialOverride:
+        activeOrder && !activeOrder.financialComponents
+          ? { subtotal: invoicePricing.subtotal, tax: invoicePricing.tax, total }
+          : invoicePricing,
       lines: draftLines,
     };
   };
@@ -872,10 +1060,12 @@ function POS() {
   ) => {
     setActiveOrderId(null);
     hydratedOrderIdRef.current = null;
+    orderBaseline.current = undefined;
     if (preferredChannelId && orderChannels.some((channel) => channel.id === preferredChannelId)) {
       setOrderSource(preferredChannelId);
     }
     setCustomerSelection(null);
+    setRecoverCustomerId(null);
     setLines({});
     setKitchenNote("");
     setItemNotes({});
@@ -1199,12 +1389,6 @@ function POS() {
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Select a table before sending a dine-in order to kitchen.");
     }
-    if (!profile) {
-      throw new Error(
-        `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
-      );
-    }
-
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const sentLineIds = new Set(
       activeOrder?.lines.filter((line) => line.sentAt).map((line) => line.id) ?? [],
@@ -1234,6 +1418,11 @@ function POS() {
         state: transactionState,
         printResult: null,
       };
+    }
+    if (!profile) {
+      throw new Error(
+        `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
+      );
     }
     if (profile) {
       const preflight = SerametPrintService.createProductionTicketJobs(
@@ -1443,13 +1632,11 @@ function POS() {
     Boolean(
       result.printResult?.jobs.length ||
       (result.printResult === null &&
-        printJobs.some(
-          (job) =>
-            job.orderId === result.order.id &&
-            ["FOOD_KOT", "BAR_TICKET", "KDS_TICKET"].includes(job.documentType) &&
-            ["Queued", "Sending", "Retrying", "Printed", "Displayed", "Fallback Printed"].includes(
-              job.status,
-            ),
+        acknowledgedKitchenDispatch(
+          result.order,
+          result.state.kitchenPrintObligations ?? [],
+          activeTenantId,
+          branchId,
         )),
     );
 
@@ -1802,6 +1989,19 @@ function POS() {
         setPrintNoticeType("success");
       }
 
+      if (
+        receiptOptions["Email"] &&
+        completedInvoice &&
+        !hasPendingVerification &&
+        backendStatus === "synced"
+      ) {
+        const receipt = nextState?.receipts.find((candidate) => candidate.invoiceId === bill.id);
+        if (receipt)
+          setEmailReceipt({
+            id: receipt.id,
+            scope: `${activeTenantId}:${branchId}:${currentUser.id}`,
+          });
+      }
       setPaymentConfirmed(
         Boolean(
           (completedInvoice || (paymentMode === "partial" && partialInvoice)) &&
@@ -1878,6 +2078,8 @@ function POS() {
   };
 
   const closePaidOrder = () => {
+    orderBaseline.current = undefined;
+    setRecoverCustomerId(null);
     setActiveOrderId(null);
     setCustomerSelection(null);
     setLines({});
@@ -2150,14 +2352,15 @@ function POS() {
                 paymentOpen ||
                 Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
               }
-              onSelect={(customer) =>
+              onSelect={(customer) => {
+                setRecoverCustomerId(null);
                 setCustomerSelection({
                   tenantId: activeTenantId,
                   branchId,
                   orderId: activeOrder?.id ?? null,
                   customer,
-                })
-              }
+                });
+              }}
             />
           </div>
           {isOnlineSource && (
@@ -2401,16 +2604,27 @@ function POS() {
             <div className="mt-3 grid grid-cols-3 gap-2">
               <Btn
                 onClick={holdOrder}
-                disabled={orderActionBusy || !items.length || activeOrderHasSentLines}
+                disabled={
+                  orderActionBusy ||
+                  selectedOrderUnavailable ||
+                  !items.length ||
+                  activeOrderHasSentLines
+                }
               >
                 Hold
               </Btn>
               {canPrintBill ? (
                 <>
-                  <Btn onClick={() => void moveOrderToInvoice(true)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(true)}
+                    disabled={orderActionBusy || selectedOrderUnavailable}
+                  >
                     Print bill
                   </Btn>
-                  <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
+                  <Btn
+                    onClick={() => void moveOrderToInvoice(false)}
+                    disabled={orderActionBusy || selectedOrderUnavailable}
+                  >
                     <FileText className="h-4 w-4" />
                     Invoice
                   </Btn>
@@ -2420,14 +2634,23 @@ function POS() {
               )}
             </div>
             <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
-              <Btn onClick={queueKitchenTickets} disabled={orderActionBusy || !items.length}>
+              <Btn
+                onClick={queueKitchenTickets}
+                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
+              >
                 {orderActionBusy ? "Working..." : "Send kitchen"}
               </Btn>
               <Btn
                 variant="primary"
                 className="h-11 text-[15px]"
                 onClick={() => void openPayment()}
-                disabled={orderActionBusy || paymentBusy || !items.length || !dineInPaymentReady}
+                disabled={
+                  orderActionBusy ||
+                  selectedOrderUnavailable ||
+                  paymentBusy ||
+                  !items.length ||
+                  !dineInPaymentReady
+                }
                 title={
                   !dineInPaymentReady && selectedChannel?.requiresTable
                     ? "Select a table and send all items to kitchen first"
@@ -2445,7 +2668,7 @@ function POS() {
               <Btn
                 className="w-full"
                 onClick={sendKitchenAndBill}
-                disabled={orderActionBusy || !items.length}
+                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
               >
                 {orderActionBusy ? "Working..." : "Send kitchen & bill"}
               </Btn>
@@ -2492,6 +2715,20 @@ function POS() {
                       ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
                       : "Operational feedback and printing state appear here."}
                   </div>
+                  {configurationError && (
+                    <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+                      <Link to="/seramet-printers" className="underline">
+                        Check printers and kitchen routes
+                      </Link>
+                      <Link
+                        to="/seramet-setup"
+                        search={{ section: "DOCUMENTS" }}
+                        className="underline"
+                      >
+                        Review document settings
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2974,6 +3211,15 @@ function POS() {
           </div>
         </DialogContent>
       </Dialog>
+      {emailReceipt?.scope === `${activeTenantId}:${branchId}:${currentUser.id}` && (
+        <DocumentEmailDialog
+          key={`${emailReceipt.scope}:${emailReceipt.id}`}
+          title={`receipt ${emailReceipt.id}`}
+          documentType="RECEIPT"
+          recordId={emailReceipt.id}
+          close={() => setEmailReceipt(null)}
+        />
+      )}
     </AppShell>
   );
 }
@@ -2992,7 +3238,7 @@ function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
     };
   }, []);
   return (
-    <span aria-label="POS clock" title={timeZone} suppressHydrationWarning>
+    <span aria-label="POS clock" title={`Restaurant time (${timeZone})`} suppressHydrationWarning>
       {formatPosClock(now, locale, timeZone)}
     </span>
   );

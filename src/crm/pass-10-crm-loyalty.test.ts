@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { CampaignProviderRegistry, TestCampaignProvider } from "@/crm/campaign-provider-registry";
 import { CampaignService, renderTemplate, validateTemplate } from "@/crm/campaign-service";
 import { calculateRfm, CrmAnalyticsService, evaluateSegment } from "@/crm/crm-analytics";
@@ -61,7 +62,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     expect(
       db.sqlite.prepare("SELECT MAX(version) AS version FROM schema_migrations").get(),
     ).toMatchObject({
-      version: 27,
+      version: CURRENT_SCHEMA_VERSION,
     });
     const tables = db.sqlite
       .prepare(

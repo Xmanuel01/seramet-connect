@@ -16,9 +16,16 @@ export function acknowledgedSyncStatus(status: string | undefined): OfflineComma
 }
 
 export class OfflineStore {
-  async cacheState(tenantId: string, branchId: string, state: TransactionState, revision: number) {
+  async cacheState(
+    tenantId: string,
+    branchId: string,
+    state: TransactionState,
+    revision: number,
+    actorDeviceScope?: string,
+  ) {
     await this.put("read-cache", {
-      id: transactionCacheKey(tenantId, branchId),
+      id:
+        transactionCacheKey(tenantId, branchId) + (actorDeviceScope ? `:${actorDeviceScope}` : ""),
       tenantId,
       branchId,
       revision,
@@ -27,12 +34,15 @@ export class OfflineStore {
     });
   }
 
-  async readCachedState(tenantId: string, branchId: string) {
+  async readCachedState(tenantId: string, branchId: string, actorDeviceScope?: string) {
     const record = await this.get<{
       state: TransactionState;
       revision: number;
       cachedAt: string;
-    }>("read-cache", transactionCacheKey(tenantId, branchId));
+    }>(
+      "read-cache",
+      transactionCacheKey(tenantId, branchId) + (actorDeviceScope ? `:${actorDeviceScope}` : ""),
+    );
     return record ?? null;
   }
 
@@ -59,7 +69,7 @@ export class OfflineStore {
   async replayable(tenantId: string, deviceId: string) {
     const unresolved = await this.pending(tenantId, deviceId);
     // Conflicts require review; an automatic retry would repeatedly replay stale writes.
-    return unresolved.filter((command) => command.syncStatus !== "CONFLICT");
+    return unresolved.filter((command) => ["PENDING", "SYNCING"].includes(command.syncStatus));
   }
 
   async nextSequence(deviceId: string) {
@@ -81,10 +91,14 @@ export class OfflineStore {
 
   private async put(storeName: StoreName, value: unknown) {
     const db = await openDatabase();
-    await transactionPromise(
-      db.transaction(storeName, "readwrite").objectStore(storeName).put(value),
-    );
-    db.close();
+    try {
+      const transaction = db.transaction(storeName, "readwrite");
+      const completed = transactionPromise(transaction);
+      transaction.objectStore(storeName).put(value);
+      await completed;
+    } finally {
+      db.close();
+    }
   }
 
   private async get<T>(storeName: StoreName, key: IDBValidKey): Promise<T | undefined> {
@@ -112,6 +126,16 @@ function openDatabase() {
   if (typeof indexedDB === "undefined") return Promise.reject(new Error("IndexedDB unavailable"));
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName, databaseVersion);
+    let expired = false;
+    const timeout = setTimeout(() => {
+      expired = true;
+      reject(new Error("IndexedDB open timed out"));
+    }, 3000);
+    const failed = () => {
+      clearTimeout(timeout);
+      expired = true;
+      reject(new Error("IndexedDB unavailable"));
+    };
     request.onupgradeneeded = () => {
       const db = request.result;
       for (const name of [
@@ -123,8 +147,13 @@ function openDatabase() {
         if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: "id" });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
+    request.onsuccess = () => {
+      clearTimeout(timeout);
+      if (expired) request.result.close();
+      else resolve(request.result);
+    };
+    request.onerror = failed;
+    request.onblocked = failed;
   });
 }
 
@@ -135,8 +164,12 @@ function requestPromise<T>(request: IDBRequest<T>) {
   });
 }
 
-function transactionPromise(request: IDBRequest<IDBValidKey>) {
-  return requestPromise(request).then(() => undefined);
+function transactionPromise(transaction: IDBTransaction) {
+  return new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(new Error("Offline storage transaction aborted"));
+    transaction.onerror = () => reject(new Error("Offline storage transaction failed"));
+  });
 }
 
 export const offlineStore = new OfflineStore();

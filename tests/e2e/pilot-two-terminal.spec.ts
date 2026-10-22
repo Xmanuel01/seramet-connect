@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { invoiceDisplayName } from "../../src/lib/invoice-split";
 import type { TransactionState } from "../../src/lib/transaction-engine";
 
 type Fixture = {
@@ -177,7 +178,7 @@ test("POS clock ticks each second in branch time and catches up when refocused",
   await page.goto("/pos");
   const clock = page.getByLabel("POS clock", { exact: true });
   await expect(clock).toBeVisible();
-  await expect(clock).toHaveAttribute("title", "Africa/Nairobi");
+  await expect(clock).toHaveAttribute("title", "Restaurant time (Africa/Nairobi)");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(clock).toHaveText("23:59:59");
   await page.clock.runFor(1000);
@@ -332,7 +333,7 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
 
   await page.goto("/invoices");
   await page.getByRole("button", { name: "Clear all", exact: true }).click();
-  const row = page.getByRole("row").filter({ hasText: invoice.id });
+  const row = page.getByRole("row").filter({ hasText: invoiceDisplayName(invoice.id) });
   await row.getByRole("button", { name: "Settle", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Settle invoice", exact: true });
   await dialog.getByRole("button", { name: "Cash", exact: true }).click();
@@ -371,12 +372,15 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   const day = pending.state.paymentOperations!.dayCloses.find(
     (item) => item.branchId === scope.branchId,
   )!;
+  const priorDay = before.state.paymentOperations?.dayCloses.find((item) => item.id === day.id);
+  const priorSnapshots = priorDay?.snapshots ?? (priorDay?.snapshot ? [priorDay.snapshot] : []);
   expect(day.readiness?.some((issue) => issue.code === "OPEN_CASH_DRAWER")).toBe(true);
   await mutate("closePaymentDrawer", {
     input: {
       tenantId: scope.tenantId,
       drawerSessionId: drawer.id,
       countedCashMinor: drawer.expectedCashMinor,
+      confirmed: true,
       actor: "Pilot manager",
     },
   });
@@ -384,15 +388,29 @@ test("disposable cash shift persists hold, kitchen, invoice, receipt, drawer and
   expect(
     ready.state.paymentOperations!.dayCloses.find((item) => item.id === day.id)?.readiness,
   ).toEqual([]);
-  await mutate("closeDay", {
-    input: { tenantId: scope.tenantId, dayCloseId: day.id, actor: "Pilot manager" },
+  const firstClosed = await mutate("closeDay", {
+    input: {
+      tenantId: scope.tenantId,
+      dayCloseId: day.id,
+      actor: "Pilot manager",
+      confirmed: true,
+    },
   });
   const closed = await mutate("closeDay", {
-    input: { tenantId: scope.tenantId, dayCloseId: day.id, actor: "Pilot manager" },
+    input: {
+      tenantId: scope.tenantId,
+      dayCloseId: day.id,
+      actor: "Pilot manager",
+      confirmed: true,
+    },
   });
   const finalDay = closed.state.paymentOperations!.dayCloses.find((item) => item.id === day.id)!;
   expect(finalDay.status).toBe("CLOSED");
-  expect(finalDay.snapshots).toHaveLength(1);
+  expect(finalDay.snapshots).toHaveLength(priorSnapshots.length + 1);
+  expect(finalDay.snapshots!.slice(0, priorSnapshots.length)).toEqual(priorSnapshots);
+  expect(finalDay).toEqual(
+    firstClosed.state.paymentOperations!.dayCloses.find((item) => item.id === day.id),
+  );
   expect(finalDay.snapshot?.settledMinor).toBe(Math.round(invoice.total * 100));
   expect(
     closed.state.paymentOperations!.drawerSessions.find((item) => item.id === drawer.id),

@@ -16,7 +16,7 @@ describe("POS connectivity and synchronization display", () => {
   });
 
   it("never mislabels a server failure or conflict as an internet outage", () => {
-    expect(connectionPresentation("error").label).toBe("Server issue");
+    expect(connectionPresentation("error").label).toBe("Connection unstable");
     expect(connectionPresentation("conflict").label).toBe("Sync conflict");
     expect(connectionPresentation("offline").label).toBe("Offline");
     expect(connectionPresentation("loading").label).toBe("Connecting");

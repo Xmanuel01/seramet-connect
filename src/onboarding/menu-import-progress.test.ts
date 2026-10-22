@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateImportEtaSeconds,
+  importPresentationStage,
   summarizeImportProgress,
 } from "@/onboarding/menu-import-progress";
 
 describe("authoritative import progress", () => {
+  it("keeps polling a verified commit until publication is authoritatively confirmed", () => {
+    const committed = { status: "COMMITTED", verification: { status: "VERIFIED" } };
+    expect(importPresentationStage({ ...committed, publishStatus: "READY" })).toBe("STAGED");
+    expect(importPresentationStage({ ...committed, publishStatus: "PUBLISHING" })).toBe(
+      "PUBLISHING",
+    );
+    expect(importPresentationStage({ ...committed, publishStatus: "PUBLISHED" })).toBe("PUBLISHED");
+    expect(importPresentationStage({ ...committed, publishStatus: "FAILED" })).toBe("FAILED");
+    expect(importPresentationStage(committed)).toBe("PROCESSING");
+  });
   it("does not fabricate percentage or ETA for a stalled 343-item job", () => {
     const progress = summarizeImportProgress({
       total: 343,

@@ -309,6 +309,7 @@ export const feedbackSchema = z
     branchId: id,
     customerId: optionalId,
     orderId: optionalId,
+    invoiceReference: optionalId,
     categoryId: id,
     surveyType: z.enum(["GENERAL", "NPS", "CSAT"]).default("GENERAL"),
     rating: z.number().int().min(0).max(10),

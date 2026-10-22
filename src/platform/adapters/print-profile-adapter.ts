@@ -62,7 +62,7 @@ export function getConfiguredBranchHardwareProfile(
   if (configuredDevices.some((device) => device.printing)) {
     return buildEnrolledProfile(resolved.tenantId, branch.id);
   }
-  const identity = repository.getDocumentIdentity(resolved.tenantId, branch.id);
+  const identity = branchDocumentIdentity(resolved.tenantId, branch.id);
   const devices = repository.listDevices(resolved.tenantId, branch.id);
   const routes = repository.listPrintRoutes(resolved.tenantId, branch.id);
   const templates = repository.listDocumentTemplates(resolved.tenantId, branch.id);
@@ -135,6 +135,33 @@ export function getConfiguredBranchHardwareProfile(
   };
 }
 
+function branchDocumentIdentity(tenantId: string, branchId: string): BusinessDocumentIdentity {
+  const repository = getConfigurationRepository();
+  const tenant = repository.getTenant(tenantId);
+  const branch = repository.getBranch(tenantId, branchId);
+  const snapshot = repository.snapshot();
+  const existingIdentity =
+    snapshot.documentIdentities.find(
+      (item) => item.tenantId === tenantId && item.branchId === branchId,
+    ) ?? snapshot.documentIdentities.find((item) => item.tenantId === tenantId && !item.branchId);
+  return (
+    existingIdentity ?? {
+      id: `printer-identity:${branchId}`,
+      tenantId,
+      branchId,
+      businessName: tenant.tradingName || tenant.legalName,
+      address: branch.address,
+      phone: branch.phone,
+      email: branch.email,
+      taxNumber: "",
+      currency: tenant.defaultCurrency,
+      footerMessage: "",
+      paymentInstructions: [],
+      metadata: {},
+    }
+  );
+}
+
 function buildEnrolledProfile(tenantId: string, branchId: string): BranchHardwareProfile {
   const repository = getConfigurationRepository();
   const tenant = repository.getTenant(tenantId);
@@ -142,24 +169,7 @@ function buildEnrolledProfile(tenantId: string, branchId: string): BranchHardwar
   const devices = repository.listDevices(tenantId, branchId);
   const routes = repository.listPrintRoutes(tenantId, branchId);
   const snapshot = repository.snapshot();
-  const existingIdentity =
-    snapshot.documentIdentities.find(
-      (item) => item.tenantId === tenantId && item.branchId === branchId,
-    ) ?? snapshot.documentIdentities.find((item) => item.tenantId === tenantId && !item.branchId);
-  const identity: BusinessDocumentIdentity = existingIdentity ?? {
-    id: `printer-identity:${branchId}`,
-    tenantId,
-    branchId,
-    businessName: tenant.tradingName || tenant.legalName,
-    address: branch.address,
-    phone: branch.phone,
-    email: branch.email,
-    taxNumber: "",
-    currency: tenant.defaultCurrency,
-    footerMessage: "",
-    paymentInstructions: [],
-    metadata: {},
-  };
+  const identity = branchDocumentIdentity(tenantId, branchId);
   const templates = repository.listDocumentTemplates(tenantId, branchId);
   const templateSettings = Object.fromEntries(
     customerDocumentTypes.map((documentType) => {

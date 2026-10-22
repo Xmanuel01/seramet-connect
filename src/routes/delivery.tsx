@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { EnterpriseTable, type EnterpriseColumn } from "@/components/app/EnterpriseTable";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
@@ -119,6 +119,7 @@ function deliveryEta(order: TransactionOrder) {
 }
 
 function Delivery() {
+  const navigate = useNavigate();
   const { activeTenantId, branch, branchLabel, matchesBranch, hasPermission } = useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
   const [selectedRiders, setSelectedRiders] = useState<Record<string, string>>({});
@@ -374,7 +375,7 @@ function Delivery() {
       subtitle={`Restaurant-rider and platform delivery operations  -  ${branchLabel}`}
       actions={
         <>
-          <Btn onClick={() => (window.location.href = "/riders")}>Rider accountability</Btn>
+          <Btn onClick={() => void navigate({ to: "/riders" })}>Rider accountability</Btn>
           <Btn
             variant="primary"
             disabled={unassigned.length === 0 || availableRiders.length === 0}

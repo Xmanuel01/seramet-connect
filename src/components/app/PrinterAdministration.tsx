@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { discoverInstalledPrinters, type DiscoveredPrinter } from "@/lib/printer-discovery-client";
 import { Plus, Save, Pencil, RefreshCw, Printer, Download } from "lucide-react";
 import { useAppContext } from "@/lib/app-context";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
@@ -54,6 +55,65 @@ export function PrinterAdministration() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [bridge, setBridge] = useState(loadInstalledPrintBridgeConfig);
+  const [installedBridge, setInstalledBridge] = useState(loadInstalledPrintBridgeConfig);
+  useEffect(() => {
+    const changed = () => setInstalledBridge(loadInstalledPrintBridgeConfig());
+    window.addEventListener("seramet:print-bridge-config-change", changed);
+    return () => window.removeEventListener("seramet:print-bridge-config-change", changed);
+  }, []);
+  const [inventory, setInventory] = useState<{
+    scope: string;
+    bridgeId: string;
+    printers: DiscoveredPrinter[];
+  } | null>(null);
+  const [discoveryNotice, setDiscoveryNotice] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+  const inventoryScope = `${activeTenantId}:${branchId}:${installedBridge.endpoint}:${installedBridge.token}:${installedBridge.enabled}`;
+  const inventoryScopeRef = useRef(inventoryScope);
+  inventoryScopeRef.current = inventoryScope;
+  const discover = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestedScope = inventoryScope;
+      if (!mayManage) return;
+      setDiscovering(true);
+      setDiscoveryNotice("");
+      try {
+        const result = await discoverInstalledPrinters(
+          installedBridge,
+          activeTenantId,
+          branchId,
+          signal,
+        );
+        if (inventoryScopeRef.current !== requestedScope || signal?.aborted) return;
+        setInventory({ ...result, scope: requestedScope });
+        setDiscoveryNotice(
+          result.printers.length
+            ? "Installed Windows printers detected. Physical availability has not been verified."
+            : "Windows has no installed printers for the bridge's user account.",
+        );
+      } catch (error) {
+        if (inventoryScopeRef.current === requestedScope && !signal?.aborted) {
+          setInventory(null);
+          setDiscoveryNotice(
+            error instanceof Error ? error.message : "Printer discovery unavailable.",
+          );
+        }
+      } finally {
+        if (inventoryScopeRef.current === requestedScope && !signal?.aborted) setDiscovering(false);
+      }
+    },
+    [activeTenantId, branchId, installedBridge, inventoryScope, mayManage],
+  );
+  useEffect(() => {
+    if (!mayManage || !installedBridge.enabled || installedBridge.token.length < 32) {
+      setDiscovering(false);
+      return;
+    }
+    const controller = new AbortController();
+    void discover(controller.signal);
+    return () => controller.abort();
+  }, [discover, mayManage, installedBridge.enabled, installedBridge.token]);
+  const detected = inventory?.scope === inventoryScope ? inventory : null;
   const [attempts, setAttempts] = useState<
     Array<{ id: string; stage: string; outcome: string; updated_at: string }>
   >([]);
@@ -171,6 +231,7 @@ export function PrinterAdministration() {
   const testPrinter = async (
     printer: SavedPrinter,
     documentType: "BILL" | "RECEIPT" | "FOOD_KOT",
+    renderingMode?: "TEXT_ESC_POS" | "RASTER_ESC_POS",
   ) => {
     setBusy(true);
     try {
@@ -190,6 +251,7 @@ export function PrinterAdministration() {
         retryCount: 0,
         template: printer.paperWidth,
         content: "Server-generated diagnostic",
+        ...(renderingMode ? { diagnosticRenderingMode: renderingMode } : {}),
         duplicateKey: crypto.randomUUID(),
       };
       const result = await SerametLocalPrintBridge.submitToInstalledBridge(
@@ -232,6 +294,53 @@ export function PrinterAdministration() {
         }
       />
       <div className="space-y-4 p-4">
+        {mayManage && (
+          <div className="space-y-3 border-b border-border pb-4">
+            <Btn
+              disabled={
+                discovering || !installedBridge.enabled || installedBridge.token.length < 32
+              }
+              onClick={() => void discover()}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {discovering ? "Detecting..." : "Detect installed printers"}
+            </Btn>
+            {!installedBridge.enabled && (
+              <p className="text-sm text-muted-foreground">Local print bridge is not connected.</p>
+            )}
+            {discoveryNotice && (
+              <p role="status" className="text-sm">
+                {discoveryNotice}
+              </p>
+            )}
+            {detected?.printers.map((printer) => (
+              <div
+                key={printer.name}
+                className="flex flex-wrap items-center justify-between gap-2 border-t border-border py-2 text-sm"
+              >
+                <div className="min-w-0 break-words">
+                  <strong>{printer.name}</strong>
+                  <p className="text-xs text-muted-foreground">{printer.driver}</p>
+                </div>
+                <Btn
+                  disabled={busy}
+                  onClick={() => {
+                    setDraft({
+                      ...blank(branchId),
+                      name: printer.name,
+                      osPrinterName: printer.name,
+                      bridgeId: detected.bridgeId,
+                    });
+                    setOpen(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                  Configure printer
+                </Btn>
+              </div>
+            ))}
+          </div>
+        )}
         {notice && (
           <div role="status" className="text-sm">
             {notice}
@@ -320,6 +429,22 @@ export function PrinterAdministration() {
                               Test {kind === "FOOD_KOT" ? "KOT" : kind.toLowerCase()}
                             </Btn>
                           ))}
+                          <Btn
+                            disabled={busy || !printer.enabled}
+                            onClick={() => void testPrinter(printer, "BILL", "TEXT_ESC_POS")}
+                          >
+                            <Printer className="h-4 w-4" />
+                            Test text
+                          </Btn>
+                          {printer.transport === "TCP" && printer.raster && (
+                            <Btn
+                              disabled={busy || !printer.enabled}
+                              onClick={() => void testPrinter(printer, "BILL", "RASTER_ESC_POS")}
+                            >
+                              <Printer className="h-4 w-4" />
+                              Test raster
+                            </Btn>
+                          )}
                         </>
                       )}
                     </div>
@@ -435,6 +560,92 @@ export function PrinterAdministration() {
                 <option value="NO_DEDICATED_KITCHEN_SYSTEM">Assigned front printer</option>
               </select>
             </label>
+            <label>
+              Rendering mode
+              <select
+                className={inputClass}
+                value={draft.renderingMode ?? "TEXT_ESC_POS"}
+                onChange={(event) => {
+                  const renderingMode = event.target.value as "TEXT_ESC_POS" | "RASTER_ESC_POS";
+                  setDraft({
+                    ...draft,
+                    renderingMode,
+                    ...(renderingMode === "RASTER_ESC_POS" && !draft.raster
+                      ? {
+                          emphasis: true,
+                          raster: {
+                            command: "GS_V_0",
+                            printableWidthDots: draft.paperWidth === "58mm" ? 384 : 576,
+                            dpi: 203,
+                            maxBandHeight: 128,
+                            maxHeightDots: 8192,
+                            maxBytes: 524288,
+                          },
+                        }
+                      : {}),
+                  });
+                }}
+              >
+                <option value="TEXT_ESC_POS">Text ESC/POS</option>
+                <option value="RASTER_ESC_POS" disabled={draft.transport !== "TCP"}>
+                  Raster ESC/POS (RAW TCP)
+                </option>
+              </select>
+            </label>
+            {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
+              <details className="sm:col-span-2">
+                <summary>Raster capabilities</summary>
+                <div className="grid gap-3 py-3 sm:grid-cols-2">
+                  <label>
+                    Raster command
+                    <input readOnly className={inputClass} value="GS v 0" />
+                  </label>
+                  <label>
+                    Resolution (DPI)
+                    <select
+                      className={inputClass}
+                      value={draft.raster.dpi}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          raster: { ...draft.raster!, dpi: Number(e.target.value) as 203 | 300 },
+                        })
+                      }
+                    >
+                      <option value={203}>203</option>
+                      <option value={300}>300</option>
+                    </select>
+                  </label>
+                  {(
+                    [
+                      ["printableWidthDots", "Printable width (dots)", 256, 832, 8],
+                      ["maxBandHeight", "Maximum band height (dots)", 16, 256, 1],
+                      ["maxHeightDots", "Maximum document height (dots)", 256, 32768, 1],
+                      ["maxBytes", "Maximum encoded bytes", 4096, 1048576, 1],
+                    ] as const
+                  ).map(([key, label, min, max, step]) => (
+                    <label key={key}>
+                      {label}
+                      <input
+                        className={inputClass}
+                        type="number"
+                        min={min}
+                        max={max}
+                        step={step}
+                        required
+                        value={draft.raster![key]}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            raster: { ...draft.raster!, [key]: Number(e.target.value) },
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
+            )}
             <label>
               Cutter
               <select

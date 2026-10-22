@@ -7,6 +7,9 @@ on:
       - "src/lib/seramet-repository.ts"
       - "src/server/database/**"
       - "src/payments/**"
+      - "src/server/printing-api.ts"
+      - "src/printing/printer-configuration.ts"
+      - "printing-core/**"
       - "scripts/verify-pos-postgres.ts"
       - "scripts/verify-menu-import-postgres.ts"
       - "scripts/pilot-gate-contract.test.mjs"
@@ -51,5 +54,14 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run migrate:postgres
+      - name: Independent POS PostgreSQL certification
+        run: npm run test:pos-postgres
       - name: Run aggregate pilot engineering gate
         run: npm run test:pilot
+      - name: Retain browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-browser-failure-${{ github.sha }}
+          path: test-results/
+          retention-days: 7

@@ -4,6 +4,36 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("authentication recovery navigation", () => {
+  it.each([503, 429])("never redirects after a recoverable refresh %s", async (status) => {
+    const replace = vi.fn();
+    vi.stubGlobal("window", { location: { pathname: "/pos", replace } });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 401 }))
+        .mockResolvedValueOnce(new Response(null, { status })),
+    );
+    await expect(authenticatedFetch("/api/seramet/auth/session")).rejects.toMatchObject({
+      httpStatus: 503,
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+  it("never redirects after a transport failure during refresh", async () => {
+    const replace = vi.fn();
+    vi.stubGlobal("window", { location: { pathname: "/pos", replace } });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 401 }))
+        .mockRejectedValueOnce(new TypeError("fixture")),
+    );
+    await expect(authenticatedFetch("/api/seramet/auth/session")).rejects.toMatchObject({
+      httpStatus: 503,
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
   it("returns expired ordinary sessions to employee login", async () => {
     const replace = vi.fn();
     vi.stubGlobal("window", { location: { pathname: "/pos", replace } });

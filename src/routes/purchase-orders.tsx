@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { InventoryActionLink } from "@/inventory/inventory-action-link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ClipboardCheck, Download, PackageCheck, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -114,9 +115,7 @@ function PurchaseOrders() {
       subtitle={`Authoritative PO approvals, commitments and receiving progress - ${branchLabel}`}
       actions={
         <>
-          <Link to="/requisitions">
-            <Btn>Requisitions</Btn>
-          </Link>
+          <InventoryActionLink to="/requisitions">Requisitions</InventoryActionLink>
           <Btn disabled={!rows.length} onClick={exportCsv}>
             <Download className="h-4 w-4" /> Export
           </Btn>
@@ -297,11 +296,9 @@ function PurchaseOrders() {
                     Cancel PO
                   </Btn>
                   {["APPROVED", "PARTIALLY_RECEIVED"].includes(selected.status) && (
-                    <Link to="/receiving">
-                      <Btn>
-                        <PackageCheck className="h-4 w-4" /> Receive
-                      </Btn>
-                    </Link>
+                    <InventoryActionLink to="/receiving">
+                      <PackageCheck className="h-4 w-4" /> Receive
+                    </InventoryActionLink>
                   )}
                   <Btn
                     variant="primary"

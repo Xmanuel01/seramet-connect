@@ -15,7 +15,7 @@ export function connectionPresentation(status: BackendStatus) {
     case "conflict":
       return { label: "Sync conflict", health: "warning" as const };
     case "error":
-      return { label: "Server issue", health: "warning" as const };
+      return { label: "Connection unstable", health: "warning" as const };
   }
 }
 

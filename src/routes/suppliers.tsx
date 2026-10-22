@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { InventoryActionLink } from "@/inventory/inventory-action-link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link2, Pencil, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -133,9 +134,7 @@ function Suppliers() {
       subtitle={`Supplier master, purchasing terms and item relationships - ${branchLabel}`}
       actions={
         <>
-          <Link to="/supplier-performance">
-            <Btn>Supplier performance</Btn>
-          </Link>
+          <InventoryActionLink to="/supplier-performance">Supplier performance</InventoryActionLink>
           <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>

@@ -32,6 +32,7 @@ describe("enterprise module access registry", () => {
           file.endsWith(".tsx") &&
           file !== "__root.tsx" &&
           file !== "login.tsx" &&
+          file !== "staff-login.tsx" &&
           file !== "register.tsx" &&
           !file.startsWith("guest.") &&
           file !== "guest.$restaurant.tsx",
@@ -59,6 +60,33 @@ describe("enterprise module access registry", () => {
       expect(module.supportedScopes.length).toBeGreaterThan(0);
       expect(module.policyCode).toMatch(/^MODULE_ACCESS\./);
     }
+  });
+
+  it("allows attendance-only employees without exposing the People category or management pages", () => {
+    const profile = branchProfile([permissions.attendanceUse]);
+    expect(canAccessPath(profile, "/attendance")).toBe(true);
+    for (const path of ["/people", "/employees", "/schedule", "/payroll", "/finance", "/pos"])
+      expect(canAccessPath(profile, path)).toBe(false);
+    const denied = buildModuleAccessProfile({
+      permissions: [permissions.attendanceUse],
+      organizationalScopes: ["BRANCH"],
+      entitlements: [],
+      entitlementsEnforced: false,
+      policies: { staff: "DENY", attendance: "ALLOW" },
+    });
+    expect(canAccessPath(denied, "/attendance")).toBe(false);
+    expect(canAccessPath(branchProfile([permissions.usersView]), "/employees")).toBe(true);
+    for (const policies of [{ staff: "DENY" as const }, { users: "DENY" as const }]) {
+      const restricted = buildModuleAccessProfile({
+        permissions: [permissions.usersView],
+        organizationalScopes: ["BRANCH"],
+        entitlements: [],
+        entitlementsEnforced: false,
+        policies,
+      });
+      expect(canAccessPath(restricted, "/employees")).toBe(false);
+    }
+    expect(canAccessPath(branchProfile([permissions.staffManage]), "/attendance")).toBe(true);
   });
 
   it("keeps view, create, edit, approval and sensitive invoice authority separate", () => {

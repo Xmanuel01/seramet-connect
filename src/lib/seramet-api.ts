@@ -15,7 +15,11 @@ import {
   type TransactionRepository,
 } from "@/lib/seramet-repository";
 import { createTransactionRepository } from "@/server/database/create-transaction-repository";
-import { TransactionEngine, type TransactionState } from "@/lib/transaction-engine";
+import {
+  TransactionEngine,
+  createEmptyTransactionState,
+  type TransactionState,
+} from "@/lib/transaction-engine";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
@@ -48,6 +52,13 @@ import { handleKitchenAnalyticsApi } from "@/server/kitchen-analytics-api";
 import { handlePrepApi } from "@/server/prep-api";
 import { handleManagementApi } from "@/server/management-api";
 import { handleFinanceApi } from "@/server/finance-api";
+import { handleDailyClosingApi } from "@/server/daily-closing-api";
+import { handleDocumentEmailApi } from "@/server/document-email-api";
+import {
+  closingMutationActions,
+  closingStateForReader,
+  DailyClosingError,
+} from "@/payments/daily-closing";
 import { enqueueManagementRecalculation } from "@/server/workers";
 import { handleOnboardingApi } from "@/server/onboarding-api";
 import { handleTableManagementApi } from "@/server/table-management-api";
@@ -164,6 +175,10 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
     if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+    const closingReportResponse = await handleDailyClosingApi(request, env, repo);
+    if (closingReportResponse) return closingReportResponse;
+    const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
+    if (documentEmailResponse) return documentEmailResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
 
@@ -626,7 +641,12 @@ async function requireAnyPermission(
 }
 
 async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
-  const actor = await requirePermission(request, env, permissions.ordersCreate);
+  const actor = await authenticateSerametRequest(request, env);
+  if (
+    !actor.permissions.includes(permissions.ordersCreate) &&
+    !actor.permissions.includes(permissions.kitchenView)
+  )
+    throw new SerametHttpError(403, "Sales entry or kitchen view permission is required");
   if (!env.SERAMET_DB) {
     throw new SerametHttpError(503, "Authoritative menu database unavailable");
   }
@@ -648,7 +668,15 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
      ORDER BY m.category_code,m.name LIMIT 5000`,
   )
     .bind(branchId, branchId, actor.tenantId)
-    .all();
+    .all<Record<string, unknown>>();
+  if (!actor.permissions.includes(permissions.ordersCreate)) {
+    return json({
+      ok: true,
+      branchId,
+      items: (rows.results ?? []).map((row) => ({ ...row, effective_price_minor: 0 })),
+      pricingRules: [],
+    });
+  }
   const rules = await env.SERAMET_DB.prepare(
     `SELECT id,code,rule_type,rate_bps,calculation_mode
      FROM tax_service_rules
@@ -663,9 +691,19 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
 
 async function getTransactions(request: Request, env: SerametEnv, repo: TransactionRepository) {
   const actor = await authenticateSerametRequest(request, env);
-  const state = await repo.loadState(actor.tenantId);
   const branchId = new URL(request.url).searchParams.get("branchId") ?? actor.branchId;
   authorizeBranchRead(actor, actor.tenantId, branchId);
+  const revision = await repo.revision(actor.tenantId);
+  const known = new URL(request.url).searchParams.get("knownRevision");
+  if (
+    actor.salesTerminal !== false &&
+    actor.permissions.includes(permissions.ordersView) &&
+    known !== null &&
+    /^\d+$/.test(known) &&
+    Number(known) === revision
+  )
+    return json({ ok: true, unchanged: true, revision });
+  const state = await repo.loadState(actor.tenantId);
   return json({
     ok: true,
     state: filterStateForActor(state, actor),
@@ -717,11 +755,35 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
   if (!Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
     throw new SerametHttpError(400, "Production mutations require a non-negative expectedRevision");
   }
-  if (["requestRefund", "approveRefund"].includes(body.action)) {
+  if (["requestRefund", "approveRefund", "rejectRefund"].includes(body.action)) {
     await consumeRateLimit(env, `${actor.tenantId}:${actor.id}`, sensitiveRateLimits.refund);
   }
   const current = await repo.loadState(actor.tenantId);
   const branches = branchesForAction(current, body.action, body.payload);
+  if (
+    ["setProductionStationStatus", "recallProductionStation"].includes(body.action) &&
+    actor.kitchenStationIds !== undefined
+  ) {
+    const payload = body.payload as { station?: string; orderId?: string };
+    const order = current.orders.find((order) => order.id === payload.orderId);
+    const candidates = await env
+      .SERAMET_DB!.prepare(
+        "SELECT id FROM stations WHERE tenant_id=? AND branch_id=? AND active=1 AND (id=? OR code=?)",
+      )
+      .bind(actor.tenantId, actor.branchId, payload.station ?? "", payload.station ?? "")
+      .all<{ id: string }>();
+    if (
+      !order ||
+      order.branchId !== actor.branchId ||
+      !candidates.results?.length ||
+      candidates.results.some((station) => !actor.kitchenStationIds!.includes(station.id))
+    ) {
+      throw new SerametHttpError(
+        403,
+        "This preparation station is not assigned to your active branch access",
+      );
+    }
+  }
   branches.forEach((branchId) =>
     authorizeSerametMutation(actor, body.action!, actor.tenantId, branchId),
   );
@@ -742,6 +804,8 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
       ...(actor.deviceId ? { deviceId: actor.deviceId } : {}),
     });
   } catch (error) {
+    if (error instanceof DailyClosingError)
+      throw new ServerOperationError(error.code, error.status, error.message);
     if (
       (error instanceof ServerOperationError || error instanceof TransactionConflictError) &&
       error.code === "CONFLICT"
@@ -764,7 +828,10 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     throw error;
   }
   assertBranchSafeSnapshotReplace(current, result.state, actor);
-  if (!result.duplicate) {
+  // Closing already commits its report/email jobs with the financial state. A later
+  // optional management refresh must not turn a successful close into a failed acknowledgement.
+  const closingCommand = closingMutationActions.has(body.action);
+  if (!result.duplicate && !closingCommand) {
     await createIntegrationRuntime(env).captureTransactionDomainEvents(current, result.state);
     if (env.SERAMET_DB && env.SERAMET_WORK_QUEUE) {
       await Promise.all(
@@ -1004,9 +1071,14 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   if (!input) return [];
   const draft = input["draft"] as { branch?: string } | undefined;
   const nestedInput = input["input"] as
-    { branch?: string; invoiceId?: string; orderId?: string } | undefined;
+    { branch?: string; invoiceId?: string; orderId?: string; receiptId?: string } | undefined;
   if (draft?.branch) branches.add(draft.branch);
   if (nestedInput?.branch) branches.add(nestedInput.branch);
+  if (nestedInput?.receiptId)
+    addBranch(
+      branches,
+      state.receipts.find((receipt) => receipt.id === nestedInput.receiptId)?.branch,
+    );
   const invoiceId = String(input["invoiceId"] ?? "");
   const orderId = String(input["orderId"] ?? "");
   const billId = String(input["billId"] ?? "");
@@ -1029,7 +1101,11 @@ function branchesForAction(state: TransactionState, action: string, payload: unk
   if (invoiceId) addBranch(branches, state.bills.find((item) => item.id === invoiceId)?.branch);
   if (billId) addBranch(branches, state.bills.find((item) => item.id === billId)?.branch);
   if (orderId) addBranch(branches, state.orders.find((item) => item.id === orderId)?.branch);
-  if (refundId) addBranch(branches, state.refunds.find((item) => item.id === refundId)?.branch);
+  if (refundId) {
+    const refund = state.refunds.find((item) => item.id === refundId);
+    addBranch(branches, refund?.branch);
+    addBranch(branches, state.receipts.find((item) => item.id === refund?.receiptId)?.branch);
+  }
   if (drawerId) addBranch(branches, state.cashDrawers.find((item) => item.id === drawerId)?.branch);
   if (externalTransactionId)
     addBranch(
@@ -1257,6 +1333,7 @@ function filterPaymentOperations(
     disputes: keep(operations.disputes),
     journals: keep(operations.journals),
     dayCloses: keep(operations.dayCloses),
+    closingPolicies: keep(operations.closingPolicies ?? []),
     storedValueAccounts: operations.storedValueAccounts.filter(
       (account) => account.tenantId === actor.tenantId,
     ),
@@ -1312,6 +1389,7 @@ function mergePaymentOperations(
     disputes: merge(current.disputes, next.disputes),
     journals: merge(current.journals, next.journals),
     dayCloses: merge(current.dayCloses, next.dayCloses),
+    closingPolicies: merge(current.closingPolicies ?? [], next.closingPolicies ?? []),
     storedValueAccounts: next.storedValueAccounts,
     customerAccounts: next.customerAccounts,
     customerAccountEntries: merge(current.customerAccountEntries, next.customerAccountEntries),
@@ -1320,16 +1398,64 @@ function mergePaymentOperations(
   };
 }
 
-function filterStateForActor(state: TransactionState, actor: ServerActor): TransactionState {
+export function filterStateForActor(state: TransactionState, actor: ServerActor): TransactionState {
   if (state.tenantId !== actor.tenantId) {
     throw new SerametHttpError(403, "Cross-tenant read denied");
   }
-  if (
+  const scoped =
     actor.branchScope.type === "ALL" &&
     actor.permissions.includes(permissions.tenantScopeAllBranches)
-  )
-    return state;
-  return branchRestrictedSnapshot(state, actor, true);
+      ? state
+      : branchRestrictedSnapshot(state, actor, true);
+  if (
+    (actor.salesTerminal === false ||
+      (!actor.permissions.includes(permissions.ordersView) &&
+        actor.permissions.includes(permissions.kitchenView))) &&
+    !actor.permissions.includes(permissions.reconciliationView)
+  ) {
+    const canSeeOrders = actor.permissions.includes(permissions.ordersView);
+    const stationCodes = getConfigurationRepository()
+      .snapshot()
+      .stations.filter(
+        (station) =>
+          station.tenantId === actor.tenantId &&
+          station.branchId === actor.branchId &&
+          actor.kitchenStationIds?.includes(station.id),
+      )
+      .flatMap((station) => [station.id, station.code]);
+    const orders = scoped.orders
+      .filter(
+        (order) =>
+          canSeeOrders ||
+          (actor.permissions.includes(permissions.kitchenView) &&
+            order.lines.some((line) => stationCodes.includes(line.productionStation ?? ""))),
+      )
+      .map((order) => ({
+        id: order.id,
+        tenantId: order.tenantId,
+        branchId: order.branchId,
+        branch: order.branch,
+        table: order.table,
+        customer: canSeeOrders ? order.customer : "Guest",
+        channel: order.channel,
+        cashier: order.cashier,
+        waiter: order.waiter,
+        kitchenNote: order.kitchenNote,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        businessDate: order.businessDate,
+        lines: order.lines
+          .filter((line) => canSeeOrders || stationCodes.includes(line.productionStation ?? ""))
+          .map((line) => ({ ...line, unitPrice: canSeeOrders ? line.unitPrice : 0 })),
+        subtotal: canSeeOrders ? order.subtotal : 0,
+        tax: canSeeOrders ? order.tax : 0,
+        total: canSeeOrders ? order.total : 0,
+      }));
+    return { ...createEmptyTransactionState(actor.tenantId), orders };
+  }
+  return closingStateForReader(scoped, actor.permissions.includes(permissions.reconciliationView));
 }
 
 async function loadCachedIdempotency(

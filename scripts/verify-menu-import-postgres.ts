@@ -5,6 +5,7 @@ import type { SerametEnv, ServerActor } from "../src/lib/seramet-auth";
 import { OnboardingService } from "../src/onboarding/onboarding-service";
 import { allPermissionCodes, permissions } from "../src/platform/permissions";
 import { PostgresD1Database } from "../src/server/database/postgres-database";
+import { CURRENT_SCHEMA_VERSION } from "../src/server/database/schema-version";
 import type { DurableQueueMessage } from "../src/server/environment";
 import { handleWorkerQueue, type SerametWorkerMessage } from "../src/server/workers";
 
@@ -384,7 +385,10 @@ async function scalar<T extends string | number = number>(sql: string, ...values
 }
 
 async function assertMigration() {
-  assert.equal(await scalar("SELECT MAX(version) version FROM schema_migrations"), 27);
+  assert.equal(
+    await scalar("SELECT MAX(version) version FROM schema_migrations"),
+    CURRENT_SCHEMA_VERSION,
+  );
   for (const table of [
     "menu_import_staged_items",
     "menu_import_staged_branch_settings",

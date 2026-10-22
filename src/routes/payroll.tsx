@@ -26,22 +26,24 @@ export const Route = createFileRoute("/payroll")({
 });
 
 function Payroll() {
-  const { activeTenantId, branchId, branch, branchLabel, currentUser, hasPermission } =
-    useAppContext();
+  const { activeTenantId, branchId, isAllBranches, branchLabel, hasPermission } = useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
   const [notice, setNotice] = useState("");
   const [payDrafts, setPayDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const scopeKey = `${activeTenantId}:${branchId}`;
+  const scopeKey = `${activeTenantId}:${branchId}:${isAllBranches ? "ALL" : "BRANCH"}`;
   const scopeRef = useRef(scopeKey);
   scopeRef.current = scopeKey;
-  const canEditPay = hasPermission("payroll.manage");
+  const canEditPay = !isAllBranches && hasPermission("payroll.manage");
   useEffect(() => {
     setPayDrafts({});
     setNotice("");
   }, [scopeKey]);
-  const rows = TransactionEngine.getPayrollPreview(state, branch);
+  const rows =
+    isAllBranches || state.tenantId !== activeTenantId
+      ? []
+      : TransactionEngine.getPayrollPreview(state, branchId);
   const baseNet = rows.reduce((sum, row) => sum + row.employee.netMonthlyPay, 0);
   const lateDeductions = rows.reduce((sum, row) => sum + row.latenessDeduction, 0);
   const adjustedNet = rows.reduce((sum, row) => sum + row.adjustedNetPay, 0);
@@ -90,7 +92,7 @@ function Payroll() {
   return (
     <AppShell
       title="Payroll"
-      subtitle={`Attendance-linked monthly preview - ${branchLabel}`}
+      subtitle={`Historical payroll preview - ${branchLabel}`}
       actions={
         <>
           <Btn
@@ -106,6 +108,16 @@ function Payroll() {
         </>
       }
     >
+      {isAllBranches && (
+        <p role="status" className="mb-4 rounded-md border border-border p-3 text-sm">
+          Select a single branch to review payroll. Work schedules and payroll periods are
+          branch-specific.
+        </p>
+      )}
+      <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm">
+        Historical payroll records only. Verified attendance is recorded separately in Attendance;
+        no automatic deductions or overtime are applied from verified punches.
+      </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Metric label="Base net pay" value={Math.round(baseNet)} money />
         <Metric label="Employees" value={rows.length} />
