@@ -282,6 +282,12 @@ export function isLocalDevelopmentRequest(request: Request, env: ProductionRunti
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
+export function isPublicDevelopmentRequest(request: Request, env: ProductionRuntimeEnv) {
+  return (
+    !resolveRuntimeConfiguration(env).productionLike && !isLocalDevelopmentRequest(request, env)
+  );
+}
+
 export function trustedCallbackUrl(env: ProductionRuntimeEnv, path: string) {
   const config = resolveRuntimeConfiguration(env);
   if (!config.callbackBaseUrl) {

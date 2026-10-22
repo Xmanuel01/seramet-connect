@@ -5,7 +5,7 @@ import { renderErrorPage } from "./lib/error-page";
 import { handleSerametApiRequest } from "./lib/seramet-api";
 import type { SerametEnv } from "./lib/seramet-auth";
 import type { DurableQueueBatch } from "./server/environment";
-import { resolveRuntimeConfiguration } from "./server/environment";
+import { isPublicDevelopmentRequest, resolveRuntimeConfiguration } from "./server/environment";
 import { cloudflareBindings } from "./server/cloudflare-bindings";
 import { resolveEnvironmentFromBindings } from "./server/runtime-env-resolver";
 import {
@@ -76,7 +76,10 @@ export default {
       const resolvedEnvironment = await resolveServerEnvironment(request, fallbackBindings);
 
       if (new URL(request.url).pathname.startsWith("/api/seramet")) {
-        if (!isAllowedBrowserOrigin(request, resolvedEnvironment)) {
+        if (
+          !isPublicDevelopmentRequest(request, resolvedEnvironment) &&
+          !isAllowedBrowserOrigin(request, resolvedEnvironment)
+        ) {
           return secureResponse(
             Response.json(
               {

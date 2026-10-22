@@ -39,7 +39,7 @@ import { assertDatabaseAvailable } from "@/server/database/d1";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import {
   assertProductionOperationalReady,
-  isLocalDevelopmentRequest,
+  isPublicDevelopmentRequest,
   resolveRuntimeConfiguration,
   validateRuntimeConfiguration,
 } from "@/server/environment";
@@ -99,7 +99,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     }
 
     const runtime = resolveRuntimeConfiguration(env);
-    const publicDevelopment = !runtime.productionLike && !isLocalDevelopmentRequest(request, env);
+    const publicDevelopment = isPublicDevelopmentRequest(request, env);
     if (url.pathname === "/api/seramet/health/operational" && request.method === "GET") {
       const issues = validateRuntimeConfiguration(env);
       if (publicDevelopment) {

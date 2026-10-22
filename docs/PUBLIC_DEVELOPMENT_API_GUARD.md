@@ -18,6 +18,8 @@ configuration and publicly exposed test mode do not create exceptions.
 - Readiness/operational checks retain their existing diagnostic 503 responses.
 - All other Seramet API requests return 503 with `PUBLIC_DEVELOPMENT_RUNTIME`
   before authentication dispatch, body consumption or repository initialization.
+- The HTTP wrapper gives this rejection precedence over its cross-origin denial;
+  normal local/staging/production origin restrictions remain intact.
 - Internal scanner HTTP dispatch now goes through the same API entry guard, while
   retaining its signed-request authentication and existing handler behavior.
 - Responses are non-cacheable. Forwarded headers and a forged Host header cannot
@@ -43,3 +45,8 @@ The existing unchanged-snapshot authorization regression uses an explicit loopba
 URL because it intentionally tests development mode; its cross-branch denial and
 revoked-session assertions remain intact. No database migrations or live records
 are modified by this correction.
+
+CI also invokes the actual compiled Cloudflare fetch entry with public URLs,
+forged loopback headers, cross-origin mutations, scanner callbacks and malformed
+bodies. It checks response codes, non-cacheable headers, liveness, and zero
+database/provider calls rather than relying only on source markers.

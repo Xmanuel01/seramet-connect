@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
 import type { SerametEnv } from "@/lib/seramet-auth";
+import server from "@/server";
 
 describe("public deployment readiness", () => {
   it.each([
@@ -52,6 +53,42 @@ describe("public deployment readiness", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ code: "PUBLIC_DEVELOPMENT_RUNTIME" });
   });
+
+  it("applies the same non-cacheable runtime rejection before the HTTP origin gate", async () => {
+    const prepare = vi.fn(() => {
+      throw new Error("Database must not be touched");
+    });
+    const request = new Request("https://restaurant.example/api/seramet/transactions/mutate", {
+      method: "POST",
+      headers: { origin: "https://untrusted.example" },
+      body: "malformed JSON",
+    });
+    const response = await server.fetch(request, {
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_DB: { prepare },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "PUBLIC_DEVELOPMENT_RUNTIME" });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(request.bodyUsed).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(["production", "development"])(
+    "retains cross-origin mutation denial for normal %s requests",
+    async (environment) => {
+      const response = await server.fetch(
+        new Request("http://localhost/api/seramet/transactions/mutate", {
+          method: "POST",
+          headers: { origin: "https://untrusted.example" },
+          body: "malformed JSON",
+        }),
+        { SERAMET_ENVIRONMENT: environment },
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "PERMISSION_DENIED" });
+    },
+  );
 
   it.each(["ready", "operational"])(
     "rejects a public development runtime at %s",
@@ -128,10 +165,15 @@ describe("public deployment readiness", () => {
     async (environment) => {
       const response = await handleSerametApiRequest(
         new Request("https://restaurant.example/api/seramet/public/auth/config"),
-        { SERAMET_ENVIRONMENT: environment },
+        {
+          SERAMET_ENVIRONMENT: environment,
+          SERAMET_IDENTITY_PROVIDER: "supabase",
+          SERAMET_SUPABASE_URL: "https://identity.example",
+          SERAMET_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_disposable_test_fixture",
+        },
       );
       expect(response.status).toBe(200);
-      expect(await response.json()).not.toHaveProperty("code", "PUBLIC_DEVELOPMENT_RUNTIME");
+      expect(await response.json()).toEqual({ ok: true, provider: "supabase", enabled: true });
     },
   );
 
