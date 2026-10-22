@@ -12,6 +12,8 @@ import { randomUUID, randomInt, randomBytes, createHash } from "node:crypto";
 import { createBridge } from "../../local-print-bridge/server.mjs";
 import { parseMajorAmount } from "../../src/payments/money";
 import { printBridgeConfigStorageKey } from "../../src/lib/print-bridge-client-config";
+import { invoiceDisplayName } from "../../src/lib/invoice-split";
+import { PDFDocument } from "pdf-lib";
 
 type EmulatorState = {
   setPaperWidth: (width: number) => void;
@@ -199,6 +201,15 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         JSON.stringify({ type: "BRANCH", branchId: f.firstBranchId }),
       );
     }, fixture);
+    await manager.goto("/payment-control");
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await manager.getByText("Branch closing settings", { exact: true }).click();
+    await manager
+      .getByRole("combobox", { name: /^Closing mode/ })
+      .selectOption("MULTI_CASHIER_SHIFTS");
+    await manager.getByRole("button", { name: "Save closing settings", exact: true }).click();
+    await expect(manager.getByRole("status")).toContainText("Closing settings saved.");
+    events.push("UI selected cashier-shift closing before opening any drawer");
     await manager.goto("/seramet-printers");
     // Exercise the real administration form for the primary kitchen printer.
     await manager.getByRole("button", { name: "Add printer", exact: true }).click();
@@ -214,7 +225,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await manager.getByRole("combobox", { name: "Paper", exact: true }).selectOption("80mm");
     await manager.getByRole("combobox", { name: "Cutter", exact: true }).selectOption("partial");
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(manager.getByRole("status")).toContainText("Printer configuration saved");
+    await expect(
+      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
+    ).toBeVisible();
     const saved = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
@@ -428,9 +441,15 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       expectedSubtotalMinor + parseMajorAmount(bill.tax.toFixed(2), "KES"),
     );
     await manager.goto("/invoices");
-    const invoiceRow = manager
-      .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` });
+    const invoiceRow = manager.getByRole("row").filter({ hasText: invoiceDisplayName(bill.id) });
+    const invoiceDownload = manager.waitForEvent("download");
+    await invoiceRow.getByRole("button", { name: "Download A4 PDF", exact: true }).click();
+    const invoiceFile = await invoiceDownload;
+    expect(invoiceFile.suggestedFilename()).toBe(`${bill.id}.pdf`);
+    const invoicePath = join(evidence, "invoice.pdf");
+    await invoiceFile.saveAs(invoicePath);
+    expect((await PDFDocument.load(await readFile(invoicePath))).getPageCount()).toBeGreaterThan(0);
+    events.push("UI invoice PDF download saved and parsed successfully");
     await invoiceRow.getByRole("checkbox").check();
     await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
     const verifyPreviewFit = async (page: typeof manager, title: string) => {
@@ -517,7 +536,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await emailDialog.getByRole("button", { name: "Close", exact: true }).first().click();
     await manager
       .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
+      .filter({ hasText: invoiceDisplayName(bill.id) })
       .getByRole("button", { name: "Preview bill", exact: true })
       .click();
     await manager.getByRole("dialog").getByRole("button", { name: "Print", exact: true }).click();
@@ -546,7 +565,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     await cashier.reload();
     await cashier
       .getByRole("row")
-      .filter({ hasText: `Invoice ${bill.id.replace(/^(?:BILL|INV)-/, "")}` })
+      .filter({ hasText: invoiceDisplayName(bill.id) })
       .getByRole("button", { name: "Settle", exact: true })
       .click();
     await cashier.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
@@ -609,7 +628,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       manager.getByRole("checkbox", { name: "Main Kitchen", exact: true }),
     ).toBeChecked();
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(manager.getByRole("status")).toContainText("Printer configuration saved");
+    await expect(
+      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
+    ).toBeVisible();
     devices[0].printer = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
@@ -1026,6 +1047,80 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     events.push(
       "Authenticated authoritative cash receipt -> explicit audited raster copy -> actual cashier TCP GS v 0 bands; 12 duplicate submissions produced no additional bands",
     );
+    await manager.goto("/payment-control");
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    const drawer = (await snapshot()).state.paymentOperations.drawerSessions.find(
+      (row: { employeeId: string; status: string }) =>
+        row.employeeId === employee.id && row.status === "OPEN",
+    );
+    expect(drawer).toBeTruthy();
+    await manager.getByRole("button", { name: "End Shift", exact: true }).click();
+    let closingDialog = manager.getByRole("dialog", { name: "End cashier shift", exact: true });
+    await closingDialog
+      .getByLabel(`Counted KES ${drawer.id}`, { exact: true })
+      .fill(bill.total.toFixed(2));
+    await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
+    await closingDialog.getByRole("button", { name: "Confirm & End Shift", exact: true }).click();
+    await expect(closingDialog).not.toBeVisible();
+    await expect(manager.getByRole("status")).toContainText("Cashier shift closed.");
+    state = (await snapshot()).state;
+    expect(
+      state.paymentOperations.drawerSessions.find((row: { id: string }) => row.id === drawer.id)
+        .status,
+    ).toBe("CLOSED");
+    expect(
+      state.paymentOperations.dayCloses.filter(
+        (day: { status: string }) => day.status === "CLOSED",
+      ),
+    ).toHaveLength(0);
+    events.push(
+      "UI counted exact cash and ended cashier shift; drawer closed while business day stayed open",
+    );
+    await manager.getByRole("button", { name: "Close Business Day", exact: true }).click();
+    closingDialog = manager.getByRole("dialog", { name: "Close Business Day", exact: true });
+    await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
+    const closeResponse = manager.waitForResponse(
+      (response) =>
+        response.url().endsWith("/transactions/mutate") &&
+        response.request().postDataJSON()?.action === "closeBusinessDay",
+    );
+    await closingDialog
+      .getByRole("button", { name: "Confirm & Close Business Day", exact: true })
+      .click();
+    const closeResult = await closeResponse;
+    expect(closeResult.ok(), await closeResult.text()).toBe(true);
+    await expect(closingDialog).not.toBeVisible();
+    await expect(manager.getByRole("status")).toContainText("Business day closed.");
+    state = (await snapshot()).state;
+    const day = state.paymentOperations.dayCloses.find(
+      (row: { branchId: string; status: string }) =>
+        row.branchId === fixture.firstBranchId && row.status === "CLOSED",
+    );
+    expect(day).toBeTruthy();
+    expect(day.snapshots).toHaveLength(1);
+    expect(day.snapshot.invoicedMinor).toBe(parseMajorAmount(bill.total.toFixed(2), "KES"));
+    expect(day.snapshot.settledMinor).toBe(parseMajorAmount(receipt.total.toFixed(2), "KES"));
+    const closingDownload = manager.waitForEvent("download");
+    await manager.getByRole("button", { name: "Download PDF", exact: true }).click();
+    const closingFile = await closingDownload;
+    const closingPath = join(evidence, "daily-closing.pdf");
+    await closingFile.saveAs(closingPath);
+    expect((await PDFDocument.load(await readFile(closingPath))).getPageCount()).toBe(3);
+    await manager.reload();
+    await manager.getByRole("button", { name: "Daily closing", exact: true }).click();
+    await expect(
+      manager
+        .getByRole("region", { name: "Daily closing", exact: true })
+        .getByLabel("Closing business date", { exact: true }),
+    ).toHaveValue(day.businessDate);
+    await expect(
+      manager.getByRole("button", { name: "Close Business Day", exact: true }),
+    ).toBeDisabled();
+    await expect(manager.getByRole("button", { name: "Download PDF", exact: true })).toBeVisible();
+    await manager.screenshot({ path: join(evidence, "daily-closing.png"), fullPage: true });
+    events.push(
+      "UI business-day close persisted one balanced immutable snapshot; three-page closing PDF saved and closure survived reload",
+    );
     await writeFile(
       join(evidence, "result.json"),
       JSON.stringify(
@@ -1060,6 +1155,13 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       ),
     );
   } finally {
+    await writeFile(
+      join(evidence, "last-manager-screen.private.txt"),
+      await manager
+        .locator("body")
+        .innerText()
+        .catch(() => "Unavailable"),
+    );
     await writeFile(join(evidence, "phases.json"), JSON.stringify({ events }, null, 2));
     await writeFile(
       join(evidence, "last-screen.private.txt"),
