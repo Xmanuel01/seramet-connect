@@ -2,10 +2,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PosConnectivity } from "./pos-connectivity";
 import { serializeOfflineReplay } from "@/offline/replay-coordinator";
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 describe("central POS connectivity", () => {
+  it("imports and constructs without request-only randomness during Worker startup", async () => {
+    vi.resetModules();
+    const randomUUID = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+      throw new Error("Randomness is unavailable during Worker module evaluation");
+    });
+    const module = await import("./pos-connectivity");
+    const state = new module.PosConnectivity();
+    expect(state.getSnapshot().state).toBe("RECONNECTING");
+    expect(module.posConnectivity.getSnapshot().generation).toBe(0);
+    expect(randomUUID).not.toHaveBeenCalled();
+    randomUUID.mockRestore();
+    const id = state.id;
+    expect(state.id).toBe(id);
+    expect(module.posConnectivity.id).not.toBe(id);
+  });
   it("a minimum-jitter reconnect cannot strand its verification timer", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-16T10:00:00Z"));
