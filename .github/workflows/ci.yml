@@ -36,6 +36,8 @@ jobs:
       - run: node --test scripts/assert-staging-api-posture.test.mjs
       - run: node --test scripts/prepare-staging-postgres-ca.test.mjs scripts/staging-postgres-tls.test.mjs scripts/staging-connectivity-diagnostic.test.mjs
       - run: npm run build
+      - name: Render public pages in the actual Cloudflare runtime
+        run: npx --yes --package=wrangler@4.86.0 -c "node scripts/verify-worker-pages.mjs"
       - name: Exercise public runtime rejection through compiled Cloudflare fetch
         run: node scripts/verify-compiled-public-runtime.mjs
       - name: Verify compiled Cloudflare Queue and Cron handlers

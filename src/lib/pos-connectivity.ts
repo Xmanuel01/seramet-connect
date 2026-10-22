@@ -10,7 +10,11 @@ export class PosConnectivity {
   private transportFailures = 0;
   private recoverySuccesses = 0;
   private verify: (() => Promise<void>) | undefined;
-  readonly id = crypto.randomUUID();
+  private correlationId: string | undefined;
+  // Worker module evaluation cannot use randomness; allocate only during activity.
+  get id() {
+    return (this.correlationId ??= crypto.randomUUID());
+  }
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
