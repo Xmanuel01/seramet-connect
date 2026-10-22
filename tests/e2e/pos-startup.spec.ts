@@ -141,8 +141,16 @@ for (const viewport of [
     const heading = page.getByRole("heading", { name: "Employee sign in" });
     await expect(heading).toBeVisible();
     await expect(page.getByRole("link", { name: "Use administrator account" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "My attendance", exact: false })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Create a restaurant" })).toBeVisible();
+    const staffLink = page.getByRole("link", { name: "Staff sign in", exact: true });
+    const registrationLink = page.getByRole("link", { name: "Create account", exact: true });
+    await expect(staffLink).toHaveAttribute("href", "/staff-login");
+    await expect(registrationLink).toHaveAttribute("href", "/register");
+    await expect(staffLink).toBeVisible();
+    await expect(registrationLink).toBeVisible();
+    const staffBox = await staffLink.boundingBox();
+    const registrationBox = await registrationLink.boundingBox();
+    expect(staffBox!.y).toBe(registrationBox!.y);
+    expect(staffBox!.x + staffBox!.width).toBeLessThan(registrationBox!.x);
     const identity = await page.getByLabel("Email or employee code").boundingBox();
     const keypad = await page.getByRole("button", { name: "1", exact: true }).boundingBox();
     if (viewport.width > 768) expect(identity!.x + identity!.width).toBeLessThan(keypad!.x);
