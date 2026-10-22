@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyTransactionState, type BillingRecord } from "@/lib/transaction-engine";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes } from "@/platform/permissions";
@@ -270,6 +270,45 @@ describe("authoritative invoice recognition", () => {
       0,
     );
   });
+
+  it.each(["withdraws approval", "disables account", "adds pending branch override"])(
+    "rolls back issuance when finance %s after validation but before commit",
+    async (action) => {
+      const batch = db.batch.bind(db);
+      vi.spyOn(db, "batch").mockImplementationOnce(async (statements) => {
+        if (action === "withdraws approval")
+          await db
+            .prepare(
+              "UPDATE setup_account_mappings SET finance_signoff_status='REJECTED' WHERE tenant_id=? AND mapping_key='SALES_REVENUE'",
+            )
+            .bind(tenantId)
+            .run();
+        if (action === "disables account")
+          await db
+            .prepare("UPDATE accounts SET active=0 WHERE tenant_id=? AND id='revenue'")
+            .bind(tenantId)
+            .run();
+        if (action === "adds pending branch override")
+          await db
+            .prepare(
+              "INSERT INTO setup_account_mappings (tenant_id,id,branch_id,scope_key,mapping_key,requirement,account_id,status,finance_signoff_status,updated_by,updated_at) VALUES (?,'racing-override',?,?,'SALES_REVENUE','REQUIRED','revenue','CONFIGURED','PENDING',?,?)",
+            )
+            .bind(tenantId, branchId, `BRANCH:${branchId}`, actor.id, new Date().toISOString())
+            .run();
+        return batch(statements);
+      });
+      const state = createEmptyTransactionState(tenantId);
+      state.bills.push(invoice());
+      await expect(
+        repo.saveState(state, actor, "Approval revoked at commit boundary"),
+      ).rejects.toThrow();
+      expect(await db.prepare("SELECT COUNT(*) AS count FROM invoices").first("count")).toBe(0);
+      expect(await db.prepare("SELECT COUNT(*) AS count FROM journal_entries").first("count")).toBe(
+        0,
+      );
+      expect(await repo.revision(tenantId)).toBe(0);
+    },
+  );
 
   it.each(["PENDING", "REJECTED"])(
     "requires approved mappings, not %s signoff",

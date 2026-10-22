@@ -38,6 +38,39 @@ type InvoiceInput = {
   stamp: string;
 };
 
+function approvedPostingGuard(input: InvoiceInput, accounts: Accounts) {
+  const values: string[] = [];
+  const clauses = keys.map((key) => {
+    const types =
+      key === "CUSTOMER_RECEIVABLE"
+        ? "'ASSET','CUSTOMER_RECEIVABLE'"
+        : key === "TAX_PAYABLE"
+          ? "'LIABILITY'"
+          : "'INCOME','REVENUE'";
+    values.push(
+      input.tenantId,
+      key,
+      accounts[key],
+      input.currency,
+      input.branchId,
+      input.branchId,
+      input.branchId,
+    );
+    return `EXISTS (
+      SELECT 1 FROM setup_account_mappings m JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id
+      WHERE m.tenant_id=? AND m.mapping_key=? AND m.account_id=?
+        AND m.status='CONFIGURED' AND m.finance_signoff_status='APPROVED'
+        AND a.active=1 AND a.currency=? AND a.account_type IN (${types})
+        AND (a.branch_id IS NULL OR a.branch_id=?)
+        AND (m.branch_id=? OR (m.branch_id IS NULL AND NOT EXISTS (
+          SELECT 1 FROM setup_account_mappings branch_override
+          WHERE branch_override.tenant_id=m.tenant_id AND branch_override.mapping_key=m.mapping_key AND branch_override.branch_id=?
+        )))
+    )`;
+  });
+  return { sql: ` WHERE ${clauses.join(" AND ")}`, values };
+}
+
 function reject(message: string): never {
   throw new ServerOperationError("VALIDATION_FAILED", 422, message);
 }
@@ -225,6 +258,9 @@ export class PosInvoiceLedger {
     if ((post || reverse) && current.totalMinor > 0) {
       const sourceType = reverse ? "POS_INVOICE_REVERSAL" : "POS_INVOICE";
       const journalId = `${sourceType}:${input.invoiceId}`;
+      // Revalidate at the write boundary. If approval changed after the initial
+      // read, no journal is inserted and the child-line FK rolls the batch back.
+      const guard = reverse ? { sql: "", values: [] } : approvedPostingGuard(input, accounts);
       const lines = [
         { accountId: accounts.CUSTOMER_RECEIVABLE, signed: current.totalMinor },
         { accountId: accounts.SALES_REVENUE, signed: -current.netSalesMinor },
@@ -237,7 +273,7 @@ export class PosInvoiceLedger {
             `INSERT INTO journal_entries
          (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,
           correlation_id,payload_json,created_at,posted_at)
-         VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,?,NULL)`,
+         SELECT ?,?,?,?,?,?,'DRAFT',?,?,?,?,NULL${guard.sql}`,
           )
           .bind(
             input.tenantId,
@@ -250,6 +286,7 @@ export class PosInvoiceLedger {
             input.correlationId,
             JSON.stringify({ invoiceId: input.invoiceId, actorId: input.actorId, ...snapshot }),
             input.stamp,
+            ...guard.values,
           ),
       );
       lines.forEach((line, index) => {

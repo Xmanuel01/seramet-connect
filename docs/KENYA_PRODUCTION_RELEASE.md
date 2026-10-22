@@ -45,6 +45,11 @@ remain separate from production acceptance.
   The dedicated read-only Management API reports PostgreSQL **17.11** and **zero
   public tables**. No application migrations or records have been copied/applied.
   This read does not certify the Worker's eventual PostgreSQL/TLS path.
+- Subsequent setup inspection found database SSL enforcement disabled by default.
+  Enabled it only on the new empty production project through the official CLI;
+  an independent Management API read confirms enforcement and successful application.
+  This does not replace client certificate/hostname verification. No staging or
+  existing application database configuration was changed.
 - The directive authorizes a fresh production database, **not** deleting,
   overwriting, restoring into or reusing either existing project.
 - Repository-required schema version is **30**, with migrations 0001 through 0030.
@@ -191,6 +196,15 @@ it does not introduce another ledger or change invoice amounts.
   immutable-journal protections remain enforced.
 - Invoice projection, journal lines, posting, authoritative state, mutation
   identity and revision commit together; a posting failure rolls the batch back.
+- Release review reproduced an approval race: withdrawing account approval after
+  the initial read but before the batch still allowed issuance. Journal creation
+  now revalidates approved mappings, account status/currency/type and branch
+  override precedence inside the atomic write. Missing authorization produces no
+  parent journal, so the existing child-line foreign key fails and rolls back the
+  entire invoice/state/revision transaction. Existing unpaid reversals retain
+  their original recorded accounts. Focused cases cover approval withdrawal,
+  account deactivation and a newly pending branch override; PostgreSQL certification
+  also withdraws approval using a separate connection before the write.
 - The disposable financial PostgreSQL job now covers both versions 16 and 17,
   including actual invoice issuance and orchestrated cash collection. New results,
   not older finance passes, are required for acceptance.

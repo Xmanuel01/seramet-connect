@@ -237,6 +237,57 @@ try {
   console.log(
     "Real PostgreSQL source-linked invoice, cash collection and no duplicate revenue: PASS",
   );
+
+  const revisionBeforeRace = await repository.revision(tenantId);
+  const racingState = await repository.loadState(tenantId);
+  racingState.bills.push({ ...invoice, id: "ci-invoice-approval-race" });
+  const batch = db.batch.bind(db);
+  const financeConnection = PostgresD1Database.fromHyperdrive({ connectionString: url! });
+  let revoked = false;
+  db.batch = async (statements) => {
+    if (!revoked) {
+      revoked = true;
+      await financeConnection
+        .prepare(
+          "UPDATE setup_account_mappings SET finance_signoff_status='REJECTED' WHERE tenant_id=? AND mapping_key='SALES_REVENUE'",
+        )
+        .bind(tenantId)
+        .run();
+    }
+    return batch(statements);
+  };
+  try {
+    await assert.rejects(
+      repository.saveState(racingState, actor, "Disposable concurrent finance revocation"),
+    );
+    assert.equal(revoked, true);
+    assert.equal(await repository.revision(tenantId), revisionBeforeRace);
+    const remaining = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM invoices WHERE tenant_id=? AND id='ci-invoice-approval-race'",
+      )
+      .bind(tenantId)
+      .first<{ count: number }>();
+    assert.equal(Number(remaining?.count), 0);
+    const journal = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM journal_entries WHERE tenant_id=? AND source_id='ci-invoice-approval-race'",
+      )
+      .bind(tenantId)
+      .first<{ count: number }>();
+    assert.equal(Number(journal?.count), 0);
+    assert.ok(
+      !(await repository.loadState(tenantId)).bills.some(
+        (bill) => bill.id === "ci-invoice-approval-race",
+      ),
+    );
+  } finally {
+    db.batch = batch;
+    await financeConnection.close();
+  }
+  console.log(
+    "Real PostgreSQL separate-connection finance approval withdrawal and atomic rollback: PASS",
+  );
 } finally {
   await db.close();
 }
