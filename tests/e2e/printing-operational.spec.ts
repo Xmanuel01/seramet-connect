@@ -429,9 +429,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       expectedSubtotalMinor + parseMajorAmount(bill.tax.toFixed(2), "KES"),
     );
     await manager.goto("/invoices");
-    const invoiceRow = manager
-      .getByRole("row")
-      .filter({ hasText: invoiceDisplayName(bill.id) });
+    const invoiceRow = manager.getByRole("row").filter({ hasText: invoiceDisplayName(bill.id) });
     await invoiceRow.getByRole("checkbox").check();
     await manager.getByRole("button", { name: "Print invoice", exact: true }).click();
     const verifyPreviewFit = async (page: typeof manager, title: string) => {
