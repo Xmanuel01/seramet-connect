@@ -137,12 +137,12 @@ export async function productionSchemaEvidence(client) {
   // OIDs, owners and grants deliberately do not form part of logical recovery identity.
   const result = await client.query(`
     SELECT evidence FROM (
-      SELECT 'relation:' || c.relname || ':' || c.relkind || ':' || c.relrowsecurity || ':' || c.relforcerowsecurity AS evidence
+      SELECT 'relation:' || c.relname || ':' || c.relkind::text || ':' || c.relrowsecurity || ':' || c.relforcerowsecurity AS evidence
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S')
       UNION ALL
       SELECT 'column:' || c.relname || ':' || a.attnum || ':' || a.attname || ':' ||
-        pg_catalog.format_type(a.atttypid,a.atttypmod) || ':' || a.attnotnull || ':' || a.attidentity || ':' || a.attgenerated || ':' ||
+        pg_catalog.format_type(a.atttypid,a.atttypmod) || ':' || a.attnotnull || ':' || a.attidentity::text || ':' || a.attgenerated::text || ':' ||
         COALESCE(pg_catalog.pg_get_expr(d.adbin,d.adrelid),'')
         FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
