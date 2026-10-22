@@ -36,6 +36,8 @@ jobs:
       - run: node --test scripts/assert-staging-api-posture.test.mjs
       - run: node --test scripts/prepare-staging-postgres-ca.test.mjs scripts/staging-postgres-tls.test.mjs scripts/staging-connectivity-diagnostic.test.mjs
       - run: npm run build
+      - name: Exercise public runtime rejection through compiled Cloudflare fetch
+        run: node scripts/verify-compiled-public-runtime.mjs
       - name: Verify compiled Cloudflare Queue and Cron handlers
         run: node scripts/verify-cloudflare-events.mjs
       - name: Verify production bundle has no source secrets

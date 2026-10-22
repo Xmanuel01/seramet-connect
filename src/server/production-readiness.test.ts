@@ -1,8 +1,95 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
 import type { SerametEnv } from "@/lib/seramet-auth";
+import server from "@/server";
 
 describe("public deployment readiness", () => {
+  it.each([
+    ["GET", "/api/seramet/public/auth/config"],
+    ["POST", "/api/seramet/public/auth/login"],
+    ["POST", "/api/seramet/public/auth/signup"],
+    ["GET", "/api/seramet/public/device/startup"],
+    ["GET", "/api/seramet/health"],
+    ["GET", "/api/seramet/transactions"],
+    ["PUT", "/api/seramet/transactions"],
+    ["POST", "/api/seramet/transactions/mutate"],
+    ["POST", "/api/seramet/offline/sync"],
+    ["POST", "/api/seramet/printing/jobs"],
+    ["POST", "/api/seramet/internal/file-scanner/claim"],
+    ["POST", "/api/seramet/internal/file-scanner/verdict"],
+    ["POST", "/api/seramet/payments/mpesa/stk"],
+    ["OPTIONS", "/api/seramet/transactions"],
+  ])("rejects public development %s %s before side effects", async (method, path) => {
+    const prepare = vi.fn(() => {
+      throw new Error("Database must not be touched");
+    });
+    const request = new Request(`https://restaurant.example${path}`, {
+      method,
+      ...(method === "POST" || method === "PUT" ? { body: "malformed JSON" } : {}),
+      headers: {
+        host: "localhost",
+        "x-forwarded-host": "localhost",
+        "x-forwarded-for": "127.0.0.1",
+        authorization: "Bearer unrelated-token",
+      },
+    });
+    const response = await handleSerametApiRequest(request, {
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_ENABLE_DEV_AUTH: "true",
+      SERAMET_DB: { prepare },
+    } as unknown as SerametEnv);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ ok: false, code: "PUBLIC_DEVELOPMENT_RUNTIME" });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it("blocks ordinary public requests when runtime configuration is missing", async () => {
+    const response = await handleSerametApiRequest(
+      new Request("https://restaurant.example/api/seramet/public/auth/config"),
+      {},
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "PUBLIC_DEVELOPMENT_RUNTIME" });
+  });
+
+  it("applies the same non-cacheable runtime rejection before the HTTP origin gate", async () => {
+    const prepare = vi.fn(() => {
+      throw new Error("Database must not be touched");
+    });
+    const request = new Request("https://restaurant.example/api/seramet/transactions/mutate", {
+      method: "POST",
+      headers: { origin: "https://untrusted.example" },
+      body: "malformed JSON",
+    });
+    const response = await server.fetch(request, {
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_DB: { prepare },
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "PUBLIC_DEVELOPMENT_RUNTIME" });
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(request.bodyUsed).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it.each(["production", "development"])(
+    "retains cross-origin mutation denial for normal %s requests",
+    async (environment) => {
+      const response = await server.fetch(
+        new Request("http://localhost/api/seramet/transactions/mutate", {
+          method: "POST",
+          headers: { origin: "https://untrusted.example" },
+          body: "malformed JSON",
+        }),
+        { SERAMET_ENVIRONMENT: environment },
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "PERMISSION_DENIED" });
+    },
+  );
+
   it.each(["ready", "operational"])(
     "rejects a public development runtime at %s",
     async (endpoint) => {
@@ -38,13 +125,57 @@ describe("public deployment readiness", () => {
     expect(response.status).toBe(503);
   });
 
-  it.each(["localhost", "127.0.0.1"])("preserves loopback development on %s", async (host) => {
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "preserves loopback development on %s",
+    async (host) => {
+      const response = await handleSerametApiRequest(
+        new Request(`http://${host}/api/seramet/health/ready`),
+        { SERAMET_ENVIRONMENT: "development" },
+      );
+      expect(response.status).toBe(200);
+      const auth = await handleSerametApiRequest(
+        new Request(`http://${host}/api/seramet/public/auth/config`),
+        { SERAMET_ENVIRONMENT: "development" },
+      );
+      expect(auth.status).toBe(200);
+    },
+  );
+
+  it.each(["localhost.example", "127.0.0.1.example", "restaurant.example"])(
+    "does not treat %s as loopback",
+    async (host) => {
+      const response = await handleSerametApiRequest(
+        new Request(`https://${host}/api/seramet/public/auth/config`),
+        { SERAMET_ENVIRONMENT: "development" },
+      );
+      expect(response.status).toBe(503);
+    },
+  );
+
+  it("does not expose public test-mode operations either", async () => {
     const response = await handleSerametApiRequest(
-      new Request(`http://${host}/api/seramet/health/ready`),
-      { SERAMET_ENVIRONMENT: "development" },
+      new Request("https://restaurant.example/api/seramet/public/auth/config"),
+      { SERAMET_ENVIRONMENT: "test" },
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
   });
+
+  it.each(["staging", "production"])(
+    "preserves existing public auth bootstrap handling in %s",
+    async (environment) => {
+      const response = await handleSerametApiRequest(
+        new Request("https://restaurant.example/api/seramet/public/auth/config"),
+        {
+          SERAMET_ENVIRONMENT: environment,
+          SERAMET_IDENTITY_PROVIDER: "supabase",
+          SERAMET_SUPABASE_URL: "https://identity.example",
+          SERAMET_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_disposable_test_fixture",
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, provider: "supabase", enabled: true });
+    },
+  );
 
   it("retains cheap liveness without claiming operational readiness", async () => {
     const response = await handleSerametApiRequest(

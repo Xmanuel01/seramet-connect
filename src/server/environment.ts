@@ -279,7 +279,13 @@ export function isLocalDevelopmentRequest(request: Request, env: ProductionRunti
   const config = resolveRuntimeConfiguration(env);
   if (config.environment !== "development") return false;
   const hostname = new URL(request.url).hostname;
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
+export function isPublicDevelopmentRequest(request: Request, env: ProductionRuntimeEnv) {
+  return (
+    !resolveRuntimeConfiguration(env).productionLike && !isLocalDevelopmentRequest(request, env)
+  );
 }
 
 export function trustedCallbackUrl(env: ProductionRuntimeEnv, path: string) {
