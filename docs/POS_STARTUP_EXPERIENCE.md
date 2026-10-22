@@ -13,8 +13,10 @@ administrator access and staff account access. Failure never grants employee
 access or restores a previously verified device as current authorization.
 
 Browser regressions cover the branded phone layout, verified-device transition,
-503 recovery, retry, real request timeout and revoked-device denial. Client
-regressions assert bounded, uncached verification and cancellation propagation.
+503 recovery, retry, real request timeout, revoked-device denial and timeout of
+the expired-session fallback. The verified-device transition has a two-second
+upper bound after its response is released. Client regressions assert bounded,
+uncached verification, cancellation and actual timeout propagation to fetch.
 
 Production backend bindings remain a separate prerequisite. This UI correction
 must not be reported as successful production sign-in, sales or EOD acceptance.

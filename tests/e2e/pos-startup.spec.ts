@@ -40,8 +40,12 @@ test("startup shows only the brand then enters login as soon as the device is ve
   expect(brand).not.toBeNull();
   expect(logo!.y + logo!.height).toBeLessThan(brand!.y);
   await page.screenshot({ path: test.info().outputPath("startup-phone.png") });
+  const verifiedAt = Date.now();
   release();
-  await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible({
+    timeout: 2000,
+  });
+  expect(Date.now() - verifiedAt).toBeLessThan(2000);
   await expect(page.getByLabel("Email or employee code")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
 });
@@ -88,4 +92,25 @@ test("revoked devices cannot reach employee PIN entry", async ({ page }) => {
     page.getByText("This device has been revoked and cannot sign in employees."),
   ).toBeVisible();
   await expect(page.getByLabel("Email or employee code")).toHaveCount(0);
+});
+
+test("a rejected saved session with a stalled fallback exits startup securely", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    sessionStorage.setItem("seramet.session.interactive-sign-in", "1"),
+  );
+  await page.route("**/api/seramet/health/operational", (route) =>
+    route.fulfill({ json: { database: "authoritative", environment: "production" } }),
+  );
+  await page.route("**/api/seramet/auth/session", (route) =>
+    route.fulfill({ status: 403, json: { ok: false } }),
+  );
+  await page.route(startupUrl, () => {
+    // Exercise the authenticated-entry fallback's bounded request, not the POS route.
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Opening Seramet" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Sign in", exact: true })).toBeVisible();
 });
