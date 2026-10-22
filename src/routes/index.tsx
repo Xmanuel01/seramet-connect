@@ -26,7 +26,7 @@ import { buildDashboardFinancials } from "@/lib/dashboard-financials";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Seramet - Home Dashboard" },
+      { title: "Seramet" },
       {
         name: "description",
         content:

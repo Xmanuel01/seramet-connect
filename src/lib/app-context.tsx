@@ -1,4 +1,5 @@
 import { resolvePosTimeZone } from "@/lib/pos-workflow";
+import { StartupScreen } from "@/components/auth/StartupScreen";
 import {
   createContext,
   useContext,
@@ -17,7 +18,7 @@ import {
   type ConfigurationRepository,
 } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
-import { clearInteractiveSignIn, hasInteractiveSignIn } from "@/lib/auth-client";
+import { clearInteractiveSignIn, deviceStartup, hasInteractiveSignIn } from "@/lib/auth-client";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { posConnectivity } from "@/lib/pos-connectivity";
 import { tracePos } from "@/lib/pos-lifecycle-trace";
@@ -190,6 +191,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     let active = true;
+    const startupController = new AbortController();
     void bootstrapAuthoritativeSession(repository)
       .then((result) => {
         if (active) {
@@ -207,22 +209,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setBootstrap({ status: "ERROR", ...failure });
           return;
         }
-        void fetch("/api/seramet/public/device/startup", { credentials: "same-origin" })
-          .then(async (response) => {
-            if (!response.ok) throw new Error(`Device startup failed: ${response.status}`);
-            return response.json() as Promise<{ state?: string }>;
-          })
+        void deviceStartup(startupController.signal)
           .then((device) => {
+            if (!active) return;
             if (device.state === "ACTIVE") {
               window.location.assign("/pos-login");
               return;
             }
             setBootstrap({ status: "ERROR", ...failure });
           })
-          .catch(() => setBootstrap({ status: "ERROR", ...failure }));
+          .catch(() => {
+            if (active) setBootstrap({ status: "ERROR", ...failure });
+          });
       });
     return () => {
       active = false;
+      startupController.abort();
     };
   }, [repository]);
 
@@ -251,9 +253,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [bootstrap.status, revalidate]);
 
   if (bootstrap.status === "LOADING") {
-    return (
-      <SessionGate title="Connecting securely" detail="Validating this device and session..." />
-    );
+    return <StartupScreen />;
   }
   if (bootstrap.status === "ERROR") {
     const serviceUnavailable = bootstrap.kind === "SERVICE_UNAVAILABLE";
@@ -535,7 +535,7 @@ function ConfiguredAppProvider({
   ]);
 
   if (activeTenant && formattedTenantId !== activeTenant.id) {
-    return <SessionGate title="Preparing restaurant" detail="Applying restaurant settings..." />;
+    return <StartupScreen />;
   }
 
   return (
