@@ -380,10 +380,6 @@ function PosLoginPage() {
               >
                 Use administrator account
               </a>
-              <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm font-semibold text-primary">
-                <a href="/staff-login">Staff sign in</a>
-                <a href="/register">Create account</a>
-              </div>
             </div>
             <div className="p-6 sm:p-8">
               <div className="flex justify-center gap-3" aria-label="PIN entry">

@@ -195,6 +195,10 @@ try {
     .bind(tenantId, userId, roleId)
     .run();
   await db
+    .prepare("INSERT INTO pos_security_policies(tenant_id,updated_by,updated_at) VALUES (?,?,?)")
+    .bind(tenantId, userId, stamp)
+    .run();
+  await db
     .prepare("INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)")
     .bind(tenantId, restrictedUserId, restrictedRoleId)
     .run();
