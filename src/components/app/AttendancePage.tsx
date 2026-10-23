@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MapPin, RefreshCcw, Clock3, ShieldCheck, LocateFixed } from "lucide-react";
+import { MapPin, RefreshCcw, ShieldCheck } from "lucide-react";
+import { AttendanceClock } from "@/components/app/AttendanceClock";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
@@ -531,7 +532,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   return (
     <AppShell
       title={scheduling ? "Schedule" : "Attendance"}
-      subtitle={"Location-verified timekeeping · " + branchLabel}
+      subtitle={branchLabel}
       actions={
         <Btn onClick={() => void refresh()} disabled={busy}>
           <RefreshCcw className="h-4 w-4" />
@@ -539,96 +540,51 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         </Btn>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Recorded today" value={data?.summary?.recorded ?? (current ? 1 : 0)} />
-        <Metric
-          label="Currently working"
-          value={data?.summary?.working ?? (current && !current.clockOutAt ? 1 : 0)}
-        />
-        <Metric
-          label="Late"
-          value={data?.summary?.late ?? ((current?.minutesLate ?? 0) > 0 ? 1 : 0)}
-        />
-        <Metric label="Not recorded" value={data?.summary?.not_recorded ?? 0} />
-      </div>
+      {data?.canManage && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Metric label="Recorded today" value={data?.summary?.recorded ?? (current ? 1 : 0)} />
+          <Metric
+            label="Currently working"
+            value={data?.summary?.working ?? (current && !current.clockOutAt ? 1 : 0)}
+          />
+          <Metric
+            label="Late"
+            value={data?.summary?.late ?? ((current?.minutesLate ?? 0) > 0 ? 1 : 0)}
+          />
+          <Metric label="Not recorded" value={data?.summary?.not_recorded ?? 0} />
+        </div>
+      )}
       {message && (
         <p role="status" className="mt-3 rounded-md border border-border bg-card px-4 py-3 text-sm">
           {message}
         </p>
       )}
-      <Panel className="mt-4">
-        <PanelHead
-          title="My attendance"
-          sub={"Authenticated employee · " + (data?.businessDate ?? "Today")}
-          right={<Clock3 className="h-5 w-5 text-primary" />}
-        />
-        <div className="grid gap-4 p-4 md:grid-cols-[1fr_auto] md:items-center">
-          <div>
-            <div className="text-sm font-semibold">
-              {!data
-                ? "Loading…"
-                : current?.clockOutAt
-                  ? "Shift completed"
-                  : current
-                    ? "Clocked in"
-                    : "Not clocked in"}
-            </div>
-            <div className="mt-2 text-sm text-muted-foreground">
-              In: {readableTime(current?.clockInAt, data?.branchTimezone)} · Out:{" "}
-              {readableTime(current?.clockOutAt, data?.branchTimezone)}
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Schedule:{" "}
-              {data?.mySchedule?.rest_day
-                ? "OFF"
-                : data?.mySchedule?.scheduled_start
-                  ? `${data.mySchedule.scheduled_start} — ${data.mySchedule.scheduled_end ?? "end not assigned"}`
-                  : "Not assigned"}{" "}
-              · Late:{" "}
-              {current?.minutesLate == null ? "Not determined" : `${current.minutesLate} min`} ·
-              Worked:{" "}
-              {current?.workedMinutes == null
-                ? "In progress / not recorded"
-                : `${current.workedMinutes} min`}
-            </p>
-            {unknown && (
-              <p role="status" className="mt-2 text-sm font-semibold">
-                Previous request not confirmed. Retry checks the server before submitting again.
-              </p>
-            )}
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <MapPin className="h-4 w-4" />
-              {data?.geofence.enabled
-                ? "Within " +
-                  data.geofence.radiusMeters +
-                  " m of your assigned branch · precise location required"
-                : "Geofenced punches are disabled until a manager configures the workplace"}
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {data?.openElsewhere &&
-                "You have an open session at another branch. Select that branch and clock out before starting here. "}
-              Your location is requested only when you punch. Poor GPS accuracy may require
-              supervisor assistance.
-            </p>
-          </div>
-          <Btn
-            variant="primary"
-            disabled={!data || busy || data.openElsewhere || (!data.geofence.enabled && !unknown)}
-            onClick={() =>
-              ownPunch(punchKey.current?.action ?? (current && !current.clockOutAt ? "OUT" : "IN"))
-            }
-          >
-            <LocateFixed className="h-4 w-4" />
-            {busy
-              ? "Verifying…"
-              : unknown
-                ? "Check / retry request"
-                : current && !current.clockOutAt
-                  ? "Clock out"
-                  : "Clock in"}
-          </Btn>
-        </div>
-      </Panel>
+      <AttendanceClock
+        name={currentUser.name}
+        branch={branchLabel}
+        businessDate={data?.businessDate}
+        loaded={Boolean(data)}
+        working={Boolean(current && !current.clockOutAt)}
+        completed={Boolean(current?.clockOutAt)}
+        clockIn={readableTime(current?.clockInAt, data?.branchTimezone)}
+        clockOut={readableTime(current?.clockOutAt, data?.branchTimezone)}
+        schedule={
+          data?.mySchedule?.rest_day
+            ? "Day off"
+            : data?.mySchedule?.scheduled_start
+              ? `${data.mySchedule.scheduled_start} - ${data.mySchedule.scheduled_end ?? "Not assigned"}`
+              : "Not assigned"
+        }
+        minutesLate={current?.minutesLate}
+        workedMinutes={current?.workedMinutes}
+        locationEnabled={Boolean(data?.geofence.enabled)}
+        openElsewhere={Boolean(data?.openElsewhere)}
+        unknown={unknown}
+        busy={busy}
+        onPunch={() =>
+          ownPunch(punchKey.current?.action ?? (current && !current.clockOutAt ? "OUT" : "IN"))
+        }
+      />
       {!scheduling && <AttendanceDelays open={delayOpen} setOpen={setDelayOpen} />}
       <Dialog
         open={!!punchError}

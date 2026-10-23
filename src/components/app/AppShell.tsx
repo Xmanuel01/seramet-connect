@@ -831,33 +831,32 @@ export function AppShell({
               </>
             )}
 
-            <DropdownMenu>
-              <DropdownMenuTrigger className="flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-semibold text-primary-foreground hover:opacity-90">
-                <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Create</span>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>{role} actions</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {availableQuickCreate.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <DropdownMenuItem
-                      key={item.id}
-                      onClick={() => {
-                        setQuickCreateId(item.id);
-                        setQuickCreateOpen(true);
-                      }}
-                    >
-                      <Icon className="mr-2 h-4 w-4" />
-                      {item.label}
-                    </DropdownMenuItem>
-                  );
-                })}
-                {availableQuickCreate.length === 0 && (
-                  <DropdownMenuItem disabled>No actions for this role</DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {availableQuickCreate.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-semibold text-primary-foreground hover:opacity-90">
+                  <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Create</span>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>{role} actions</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {availableQuickCreate.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <DropdownMenuItem
+                        key={item.id}
+                        onClick={() => {
+                          setQuickCreateId(item.id);
+                          setQuickCreateOpen(true);
+                        }}
+                      >
+                        <Icon className="mr-2 h-4 w-4" />
+                        {item.label}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
 
             <button
               onClick={() => setAiOpen(true)}
