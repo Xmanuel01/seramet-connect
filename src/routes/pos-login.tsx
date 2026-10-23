@@ -31,11 +31,13 @@ function PosLoginPage() {
   const [message, setMessage] = useState("");
   const [online, setOnline] = useState(() => navigator.onLine);
   const identifierRef = useRef<HTMLInputElement>(null);
+  const administratorLinkRef = useRef<HTMLAnchorElement>(null);
   const deviceContextRef = useRef("");
   const submittingRef = useRef(false);
   const requiredLength = startup?.policy?.pinLength ?? 6;
   const deviceReady = startup?.state === "ACTIVE" && Boolean(startup.device) && !startupPending;
-  const entryDisabled = busy || !deviceReady;
+  const entryDisabled =
+    busy || startupPending || (!deviceReady && startup?.state !== "UNREGISTERED");
   const connectionVerified = online && Boolean(startup);
 
   const load = useCallback(async () => {
@@ -78,15 +80,21 @@ function PosLoginPage() {
 
   const appendDigit = useCallback(
     (digit: string) => {
-      if (!deviceReady) return;
+      if (entryDisabled) return;
       setMessage("");
       setPin((current) => (current.length < requiredLength ? `${current}${digit}` : current));
     },
-    [deviceReady, requiredLength],
+    [entryDisabled, requiredLength],
   );
 
   const submit = useCallback(async () => {
-    if (submittingRef.current || !deviceReady) return;
+    if (submittingRef.current || entryDisabled) return;
+    if (!deviceReady) {
+      setPin("");
+      setMessage("Use administrator account to activate this device.");
+      administratorLinkRef.current?.focus();
+      return;
+    }
     if (!identifier.trim()) {
       setMessage("Enter your email or employee code.");
       identifierRef.current?.focus();
@@ -121,7 +129,7 @@ function PosLoginPage() {
       submittingRef.current = false;
       setBusy(false);
     }
-  }, [deviceReady, identifier, online, pin, requiredLength]);
+  }, [deviceReady, entryDisabled, identifier, online, pin, requiredLength]);
 
   useEffect(() => {
     void load();
@@ -139,7 +147,7 @@ function PosLoginPage() {
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (busy || mustChangePin || !deviceReady) return;
+      if (entryDisabled || mustChangePin) return;
       if (!shouldCapturePinKeyboardEvent(event.target)) return;
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
@@ -148,7 +156,7 @@ function PosLoginPage() {
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [appendDigit, busy, deviceReady, mustChangePin, pin.length, requiredLength, submit]);
+  }, [appendDigit, entryDisabled, mustChangePin, pin.length, requiredLength, submit]);
 
   const maskedPin = useMemo(
     () => Array.from({ length: requiredLength }, (_, index) => index < pin.length),
@@ -375,6 +383,7 @@ function PosLoginPage() {
                 </div>
               ) : null}
               <a
+                ref={administratorLinkRef}
                 href="/login?account=1"
                 className="mt-6 inline-block text-sm font-semibold text-primary"
               >

@@ -75,10 +75,64 @@ test("failed startup exits the splash and retry recovers without bypassing regis
     page.getByText("This browser is not registered as a Seramet POS device."),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
-  await expect(page.getByLabel("Email or employee code")).toBeDisabled();
+  await expect(page.getByLabel("Email or employee code")).toBeEnabled();
   expect(attempts).toBe(2);
   await expect(page.getByText("Online", { exact: true })).toBeVisible();
 });
+
+for (const width of [1366, 390]) {
+  test(`unregistered browser accepts PIN input without authenticating at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    let active = false;
+    let loginRequests = 0;
+    await page.route(startupUrl, (route) =>
+      route.fulfill({
+        json: active ? activeDevice : { ok: true, state: "UNREGISTERED" },
+      }),
+    );
+    await page.route("**/api/seramet/public/employee/login", (route) => {
+      loginRequests++;
+      return route.fulfill({ status: 403, json: { ok: false } });
+    });
+    await page.goto("/pos-login");
+    const identity = page.getByLabel("Email or employee code");
+    await expect(identity).toBeEnabled();
+    await identity.fill("DEMO-CHEF");
+    const entered = page.getByLabel("PIN entry").locator("span.bg-primary");
+    for (const digit of "123") await page.getByRole("button", { name: digit, exact: true }).click();
+    await expect(entered).toHaveCount(3);
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(entered).toHaveCount(2);
+    await page.getByRole("button", { name: "Clear", exact: true }).click();
+    await expect(entered).toHaveCount(0);
+    await page.getByRole("button", { name: "1", exact: true }).click();
+    await page.keyboard.type("23456");
+    await expect(entered).toHaveCount(6);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(
+      page.getByText("Use administrator account to activate this device.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Use administrator account", exact: true }),
+    ).toBeFocused();
+    await expect(entered).toHaveCount(0);
+    expect(loginRequests).toBe(0);
+    await expect(page).toHaveURL(/\/pos-login$/);
+    await expect(page.getByRole("link")).toHaveCount(1);
+    await page.getByRole("button", { name: "4", exact: true }).click();
+    await expect(entered).toHaveCount(1);
+    active = true;
+    await page.getByRole("button", { name: "Try again", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Try again", exact: true })).toHaveCount(0);
+    await expect(entered).toHaveCount(0);
+    await expect(identity).toBeEnabled();
+    await page.getByRole("button", { name: "5", exact: true }).click();
+    await expect(entered).toHaveCount(1);
+    expect(loginRequests).toBe(0);
+  });
+}
 
 test("a stalled device request times out instead of leaving the brand screen forever", async ({
   page,
