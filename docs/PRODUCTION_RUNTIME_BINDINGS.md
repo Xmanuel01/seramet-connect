@@ -8,6 +8,15 @@ startup correctly rejected by `PUBLIC_DEVELOPMENT_RUNTIME`.
 `cloudflareBuildConfig`. Only a Cloudflare main-branch build with a full commit
 identifier receives production bindings. Other builds explicitly remain in
 development mode with no production database, queue or object-store bindings.
+Local disconnected builds target `seramet-connect-preview`, so a normal local
+deploy cannot overwrite the production Worker. Cloudflare Workers Builds can
+override that configured name for native branch-version uploads to its connected
+Worker; this change does not provision a separate native preview project. The
+existing non-main pipeline must remain a preview/version upload, never a deploy
+that promotes disconnected settings to the live Worker. Interactive native
+previews need a separately configured project or environment. Verify the live
+build identity remains unchanged after branch builds, not just the returned
+configuration object's name.
 Production version-preview URLs are disabled. Secrets remain in Cloudflare,
 never in source or browser build variables.
 
