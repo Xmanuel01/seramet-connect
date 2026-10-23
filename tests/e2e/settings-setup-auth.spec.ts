@@ -37,7 +37,7 @@ test("employee entry is default and administrator access is explicit on any devi
     await expect(
       page.getByText("This browser is not registered as a Seramet POS device."),
     ).toBeVisible();
-    await expect(page.getByLabel("Email or employee code")).toBeDisabled();
+    await expect(page.getByLabel("Email or employee code")).toBeEnabled();
     await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
     await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
