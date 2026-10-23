@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { randomUUID, createHmac } from "node:crypto";
+import { randomUUID, randomInt, createHmac } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
@@ -94,6 +94,128 @@ async function establishSession(page: Page, employeeId = fixture.userId) {
     { tenantId: fixture.tenantId, userId: employeeId, branchId: fixture.firstBranchId },
   );
 }
+
+test("chef uses the shared POS PIN login and clocks in without administrator access", async ({
+  browser,
+  context,
+}) => {
+  if (
+    process.env.SERAMET_E2E !== "true" ||
+    process.env.SERAMET_E2E_BASE_URL ||
+    !fixture.tenantId.startsWith("e2e-")
+  )
+    throw new Error("Disposable local PIN attendance verification required");
+  const headers = {
+    authorization: `Bearer ${fixture.managerAccessToken}`,
+    "x-seramet-tenant-id": fixture.tenantId,
+    "x-seramet-branch-id": fixture.firstBranchId,
+    origin: "http://127.0.0.1:4173",
+  };
+  const configuration = await context.request.get("/api/seramet/configuration", { headers });
+  expect(configuration.ok()).toBe(true);
+  const roles = (await configuration.json()).configuration.roles as Array<{
+    id: string;
+    code: string;
+  }>;
+  const chef = roles.find((role) => role.code === "PILOT_CHEF");
+  expect(chef).toBeTruthy();
+  const employeeCode = `CHEF-${randomUUID().slice(0, 8)}`;
+  const pin = String(randomInt(234567, 876543));
+  const employeeResponse = await context.request.post("/api/seramet/employees", {
+    headers,
+    data: {
+      idempotencyKey: randomUUID(),
+      fullName: "Disposable PIN chef",
+      employeeCode,
+      jobTitle: "Chef",
+      roleId: chef!.id,
+      assignedBranchIds: [fixture.firstBranchId],
+      primaryBranchId: fixture.firstBranchId,
+      pin,
+      pinConfirmation: pin,
+      temporaryPin: false,
+      effectiveFrom: new Date(Date.now() - 60000).toISOString(),
+    },
+  });
+  expect(employeeResponse.status()).toBe(201);
+  const registered = await context.request.post("/api/seramet/devices/register", {
+    headers,
+    data: {
+      branchId: fixture.firstBranchId,
+      deviceType: "POS_TERMINAL",
+      name: "Disposable chef terminal",
+    },
+  });
+  expect(registered.ok()).toBe(true);
+  const { device } = await registered.json();
+  expect(
+    (
+      await context.request.post(`/api/seramet/devices/${device.id}/activate`, {
+        headers,
+        data: {},
+      })
+    ).ok(),
+  ).toBe(true);
+  const worksite = await context.request.put("/api/seramet/attendance/geofence", {
+    headers,
+    data: {
+      branchId: fixture.firstBranchId,
+      enabled: true,
+      latitude: -1.264,
+      longitude: 36.806,
+      radiusMeters: 10,
+      maxAccuracyMeters: 8,
+      maxFixAgeSeconds: 30,
+      graceMinutes: 0,
+      expectedVersion: 0,
+    },
+  });
+  expect(worksite.status()).toBe(200);
+  const staff = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    permissions: ["geolocation"],
+    geolocation: { latitude: -1.264, longitude: 36.806, accuracy: 2 },
+  });
+  try {
+    await staff.addCookies(
+      (await context.cookies()).filter((cookie) => cookie.name === "seramet_device"),
+    );
+    expect(
+      (await staff.cookies()).filter((cookie) => cookie.name === "seramet_device"),
+    ).toHaveLength(1);
+    const startup = await staff.request.get("/api/seramet/public/device/startup");
+    expect((await startup.json()).state).toBe("ACTIVE");
+    const page = await staff.newPage();
+    await page.goto("/pos-login");
+    await expect(page.getByRole("link")).toHaveCount(1);
+    await expect(page.getByRole("link", { name: "Use administrator account" })).toBeVisible();
+    await page.getByLabel("Email or employee code").fill(employeeCode);
+    for (const digit of pin) await page.getByRole("button", { name: digit, exact: true }).click();
+    const login = page.waitForResponse((response) =>
+      response.url().endsWith("/public/employee/login"),
+    );
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    const loginResponse = await login;
+    expect(loginResponse.ok()).toBe(true);
+    await expect(page).toHaveURL(/\/attendance$/);
+    await expect(page.getByText("My attendance", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clock in", exact: true })).toBeEnabled();
+    await staff.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
+    const punch = page.waitForResponse((response) => response.url().endsWith("/attendance/punch"));
+    await page.getByRole("button", { name: "Clock in", exact: true }).click();
+    expect((await punch).status()).toBe(200);
+    await expect(page.getByText("Clocked in", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByText("Clocked in", { exact: true })).toBeVisible();
+    expect((await staff.request.get("/api/seramet/employees")).status()).toBe(403);
+    await page.screenshot({
+      path: test.info().outputPath("chef-pin-attendance.png"),
+      fullPage: true,
+    });
+  } finally {
+    await staff.close();
+  }
+});
 
 test("employee clock-in enforces GPS, supervisor config and immutable server time", async ({
   browser,

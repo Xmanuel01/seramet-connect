@@ -47,11 +47,14 @@ payment or financial permissions. The verified role permissions determine the
 post-login destination. Inactive roles no longer contribute permissions; expired
 employment and revoked/expired sessions are denied during server revalidation.
 
-Unregistered phones offer a separate **Staff sign in**
-link to the existing verified account login. It can serve an employee whose
+The POS login is the shared employee entry, including attendance-only staff.
+The only alternate link there is **Use administrator account**, leading to
+`/login?account=1` for administrator sign-in or restaurant registration.
+
+The existing invitation-linked account route is retained for an employee whose
 external account is **already explicitly linked** to that authoritative employee
 identity and whose role permits attendance. It does not enroll the phone as a POS
-terminal. The administrator link remains `/login?account=1`.
+terminal and is not advertised as a second login on the POS entry page.
 
 **Bounded BYOD limitation:** Add Employee creates a PIN identity, not a Supabase
 account/invitation or an external-identity link. Entering an email does not prove
