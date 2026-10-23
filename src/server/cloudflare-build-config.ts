@@ -27,7 +27,7 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
     });
   }
   return {
-    name: "seramet-connect",
+    name: production ? "seramet-connect" : "seramet-connect-preview",
     keep_vars: production,
     preview_urls: false,
     vars,

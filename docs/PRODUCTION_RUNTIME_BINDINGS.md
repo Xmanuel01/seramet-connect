@@ -7,7 +7,8 @@ startup correctly rejected by `PUBLIC_DEVELOPMENT_RUNTIME`.
 `vite.config.ts` now supplies Nitro's generated Wrangler configuration through
 `cloudflareBuildConfig`. Only a Cloudflare main-branch build with a full commit
 identifier receives production bindings. Other builds explicitly remain in
-development mode with no production database, queue or object-store bindings.
+development mode with no production database, queue or object-store bindings,
+and target the separate `seramet-connect-preview` Worker rather than production.
 Production version-preview URLs are disabled. Secrets remain in Cloudflare,
 never in source or browser build variables.
 

@@ -10,6 +10,7 @@ describe("native Cloudflare production configuration", () => {
       WORKERS_CI_COMMIT_SHA: commit,
     });
     expect(config.vars.SERAMET_ENVIRONMENT).toBe("production");
+    expect(config.name).toBe("seramet-connect");
     expect(config.vars.SERAMET_BUILD_ID).toBe(commit);
     expect(config.vars.SERAMET_SUPABASE_URL).toBe("https://qnhqylslyhxjcksuhgyq.supabase.co");
     expect(config.hyperdrive).toEqual([
@@ -28,6 +29,7 @@ describe("native Cloudflare production configuration", () => {
   ])("keeps local and preview builds disconnected from production: %j", (env) => {
     const config = cloudflareBuildConfig(env);
     expect(config.vars.SERAMET_ENVIRONMENT).toBe("development");
+    expect(config.name).toBe("seramet-connect-preview");
     expect(config.keep_vars).toBe(false);
     expect(config.hyperdrive).toEqual([]);
     expect(config.r2_buckets).toEqual([]);
