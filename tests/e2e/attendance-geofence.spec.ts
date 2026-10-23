@@ -200,6 +200,27 @@ test("chef uses the shared POS PIN login and clocks in without administrator acc
     await expect(page).toHaveURL(/\/attendance$/);
     await expect(page.getByText("My attendance", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Clock in", exact: true })).toBeEnabled();
+    const attendance = page.getByRole("region", { name: "My attendance", exact: true });
+    await expect(page.getByText("Recorded today", { exact: true })).toHaveCount(0);
+    await expect(attendance.getByText("Not clocked in", { exact: true })).toBeVisible();
+    for (const [device, width, height] of [
+      ["android", 360, 800],
+      ["iphone", 390, 844],
+      ["desktop", 1440, 900],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await expect(
+        attendance.getByRole("button", { name: "Clock in", exact: true }),
+      ).toBeInViewport();
+      await page.screenshot({
+        path: test.info().outputPath(`attendance-${device}.png`),
+        fullPage: true,
+      });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     await staff.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
     const punch = page.waitForResponse((response) => response.url().endsWith("/attendance/punch"));
     await page.getByRole("button", { name: "Clock in", exact: true }).click();
@@ -210,6 +231,20 @@ test("chef uses the shared POS PIN login and clocks in without administrator acc
     expect((await staff.request.get("/api/seramet/employees")).status()).toBe(403);
     await page.screenshot({
       path: test.info().outputPath("chef-pin-attendance.png"),
+      fullPage: true,
+    });
+    await attendance.getByText("Shift details", { exact: true }).click();
+    await expect(attendance.getByText("Schedule", { exact: true })).toBeVisible();
+    const clockOut = page.waitForResponse((response) =>
+      response.url().endsWith("/attendance/punch"),
+    );
+    await attendance.getByRole("button", { name: "Clock out", exact: true }).click();
+    expect((await clockOut).status()).toBe(200);
+    await expect(attendance.getByText("Shift completed", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(attendance.getByText("Shift completed", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath("attendance-completed-iphone.png"),
       fullPage: true,
     });
   } finally {
