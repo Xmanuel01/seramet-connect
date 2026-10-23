@@ -28,7 +28,7 @@ describe("native Cloudflare production configuration", () => {
   ])("keeps local and preview builds disconnected from production: %j", (env) => {
     const config = cloudflareBuildConfig(env);
     expect(config.vars.SERAMET_ENVIRONMENT).toBe("development");
-      expect(config.keep_vars).toBe(false);
+    expect(config.keep_vars).toBe(false);
     expect(config.hyperdrive).toEqual([]);
     expect(config.r2_buckets).toEqual([]);
     expect(config.queues).toEqual({ producers: [], consumers: [] });
