@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
+import { cloudflareBuildConfig } from "./src/server/cloudflare-build-config.ts";
 
 export default defineConfig(({ command }) => ({
   cacheDir: ".vite-cache",
@@ -56,6 +57,7 @@ export default defineConfig(({ command }) => ({
       ? [
           nitro({
             defaultPreset: "cloudflare-module",
+            cloudflare: { wrangler: cloudflareBuildConfig(process.env) },
             plugins: ["./src/server/nitro-cloudflare-events.ts"],
           }),
         ]
