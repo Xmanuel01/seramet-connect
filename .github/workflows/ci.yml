@@ -20,8 +20,12 @@ jobs:
           cache: npm
       - name: Reject accidental Lovable source integration
         run: node --test scripts/assert-no-lovable-source.test.mjs && node scripts/assert-no-lovable-source.mjs
+      - name: Verify required release-input policy
+        run: node --test scripts/main-branch-protection.test.mjs
       - run: npm ci
+      - run: npm ls --all
       - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --include=dev --audit-level=moderate
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { assessStagingReleaseApproval } from "./verify-staging-release-gate.mjs";
 
 const sha = "a".repeat(40);
@@ -45,5 +46,30 @@ test("an approval never excuses a missing backup or unreviewed pending jobs", ()
       SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: "false",
     }),
     ["STAGING_BACKUP_RESTORE_NOT_VERIFIED", "PENDING_WORK_NOT_REVIEWED"],
+  );
+});
+
+test("staging approval runs before dependency installation and every infrastructure write", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  const gate = workflow.indexOf("run: node scripts/verify-staging-release-gate.mjs");
+  assert.ok(gate >= 0, "Release approval must remain mandatory");
+  for (const command of [
+    "run: npm ci",
+    "queues create",
+    "run: npm run migrate:postgres",
+    "hyperdrive update",
+    "deploy --config",
+  ]) {
+    const position = workflow.indexOf(command);
+    assert.ok(position > gate, `${command} must not precede release approval`);
+  }
+  const gateStep = workflow.slice(workflow.lastIndexOf("      - name:", gate), gate);
+  assert.doesNotMatch(
+    gateStep,
+    /continue-on-error:|\bif:/,
+    "Approval cannot be skipped or ignored",
   );
 });
