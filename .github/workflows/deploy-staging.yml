@@ -25,6 +25,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Require release-specific backup and pending-work approval
+        env:
+          SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
+          SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
+          SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
+          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
+        run: node scripts/verify-staging-release-gate.mjs
       - run: npm ci
       - run: npm run validate
       - name: Resolve existing Cloudflare staging bindings
@@ -117,14 +124,6 @@ jobs:
           }
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_QUEUE"
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_DLQ"
-
-      - name: Require release-specific backup and pending-work approval
-        env:
-          SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
-          SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
-          SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
-          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
-        run: node scripts/verify-staging-release-gate.mjs
 
       - name: Inspect pending staging work and block overlapping menu commits
         env:
