@@ -121,6 +121,20 @@ for (const width of [1366, 390]) {
     expect(loginRequests).toBe(0);
     await expect(page).toHaveURL(/\/pos-login$/);
     await expect(page.getByRole("link")).toHaveCount(1);
+    for (const digit of "654321")
+      await page.getByRole("button", { name: digit, exact: true }).click();
+    await page.keyboard.press("Enter");
+    await expect(entered).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "Use administrator account", exact: true }),
+    ).toBeFocused();
+    await page.context().setOffline(true);
+    await expect(page.getByText("Offline", { exact: true })).toBeVisible();
+    await expect(identity).toBeDisabled();
+    await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();
+    await page.context().setOffline(false);
+    await expect(page.getByText("Online", { exact: true })).toBeVisible();
+    await expect(identity).toBeEnabled();
     await page.getByRole("button", { name: "4", exact: true }).click();
     await expect(entered).toHaveCount(1);
     active = true;

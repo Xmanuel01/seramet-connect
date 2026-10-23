@@ -37,7 +37,7 @@ function PosLoginPage() {
   const requiredLength = startup?.policy?.pinLength ?? 6;
   const deviceReady = startup?.state === "ACTIVE" && Boolean(startup.device) && !startupPending;
   const entryDisabled =
-    busy || startupPending || (!deviceReady && startup?.state !== "UNREGISTERED");
+    busy || startupPending || (!deviceReady && (!online || startup?.state !== "UNREGISTERED"));
   const connectionVerified = online && Boolean(startup);
 
   const load = useCallback(async () => {
@@ -152,7 +152,10 @@ function PosLoginPage() {
       if (/^\d$/.test(event.key)) appendDigit(event.key);
       if (event.key === "Backspace") setPin((current) => current.slice(0, -1));
       if (event.key === "Escape") setPin("");
-      if (event.key === "Enter" && pin.length === requiredLength) void submit();
+      if (event.key === "Enter" && pin.length === requiredLength) {
+        event.preventDefault();
+        void submit();
+      }
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
