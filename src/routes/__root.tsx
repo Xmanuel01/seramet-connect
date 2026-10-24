@@ -78,15 +78,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Seramet" },
+      { name: "robots", content: "noindex, nofollow" },
       {
         name: "description",
-        content:
-          "Seramet is an all-in-one ERP, POS, inventory, finance and people platform for multi-branch businesses.",
+        content: "Seramet POS for restaurant sales, kitchen, inventory and staff management.",
       },
-      { property: "og:title", content: "Seramet - Business Operating System" },
+      { property: "og:title", content: "Seramet POS" },
       {
         property: "og:description",
-        content: "ERP, POS, inventory, finance and people management in one connected system.",
+        content: "Restaurant sales, kitchen, inventory and staff management.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

@@ -59,7 +59,7 @@ function LoginPage() {
   return (
     <AuthShell
       title="Administrator sign in"
-      subtitle="Use your verified account to access the restaurants and branches assigned to you."
+      subtitle="Sign in to your restaurant."
       footer={
         <>
           <div>

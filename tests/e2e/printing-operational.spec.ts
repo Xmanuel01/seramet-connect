@@ -1132,6 +1132,8 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
               "src/lib/transaction-engine.ts",
               "src/lib/print-order-adapter.ts",
               "src/routes/invoices.tsx",
+              "src/components/app/DailyClosingPanel.tsx",
+              "src/routes/pos-login.tsx",
               "scripts/run-pilot-e2e.mjs",
               "scripts/seed-printing-operational.ts",
               "tests/e2e/printing-operational.spec.ts",

@@ -1,0 +1,50 @@
+name: Verify Operational POS Demo
+
+on:
+  pull_request:
+    paths:
+      - "src/components/app/DailyClosingPanel.tsx"
+      - "src/routes/pos-login.tsx"
+      - "tests/e2e/printing-operational.spec.ts"
+      - "scripts/run-pilot-e2e.mjs"
+      - ".github/workflows/verify-operational-demo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  operational-demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Fetch the certified printer emulator revision
+        uses: actions/checkout@v4
+        with:
+          repository: maseylan/escpos-virtual-printer
+          ref: 1b1d31f71bf6ea87ac87ead979b78a4b5b48e63d
+          path: .seramet/escpos-emulator
+          persist-credentials: false
+      - name: Install isolated emulator tooling
+        run: npm install --prefix .seramet/escpos-emulator-runtime --no-save --package-lock=false --ignore-scripts esbuild@0.25.12 pino@9.5.0
+      - name: Exercise employee order through printed receipt and business-day close
+        run: node scripts/run-pilot-e2e.mjs tests/e2e/printing-operational.spec.ts
+      - name: Retain disposable screenshots, PDFs and sanitized workflow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-demo-evidence
+          path: |
+            .seramet/printing-operational/result.json
+            .seramet/printing-operational/phases.json
+            .seramet/printing-operational/*.png
+            .seramet/printing-operational/*.pdf
+          if-no-files-found: ignore
+          retention-days: 14
