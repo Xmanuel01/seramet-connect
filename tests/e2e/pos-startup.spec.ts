@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectFitsViewport } from "./layout-helpers";
 
 const startupUrl = "**/api/seramet/public/device/startup";
 const activeDevice = {
@@ -216,9 +217,7 @@ for (const viewport of [
     const keypad = await page.getByRole("button", { name: "1", exact: true }).boundingBox();
     if (viewport.width > 768) expect(identity!.x + identity!.width).toBeLessThan(keypad!.x);
     else expect(identity!.y).toBeLessThan(keypad!.y);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
-    ).toBe(true);
+    await expectFitsViewport(page);
     await page.screenshot({
       path: test.info().outputPath(`unified-login-${viewport.width}.png`),
       fullPage: true,

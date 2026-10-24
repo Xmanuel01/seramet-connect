@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test, type Browser, type BrowserContext } from "@playwright/test";
 import { fixture } from "./pos-stability-helpers";
+import { expectFitsViewport } from "./layout-helpers";
 import { invoiceDisplayName } from "../../src/lib/invoice-split";
 import type { TransactionState } from "../../src/lib/transaction-engine";
 
@@ -163,9 +164,7 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
           [1024, 768],
         ]) {
           await page.setViewportSize({ width, height });
-          expect(
-            await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
-          ).toBe(true);
+          await expectFitsViewport(page);
           await mkdir(".seramet/cashier-channels", { recursive: true });
           await page.screenshot({
             path: `.seramet/cashier-channels/delivery-${width}.png`,

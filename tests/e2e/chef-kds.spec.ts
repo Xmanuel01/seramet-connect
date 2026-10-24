@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import type { TransactionState } from "../../src/lib/transaction-engine";
+import { expectFitsViewport } from "./layout-helpers";
 
 const fixture = JSON.parse(
   readFileSync(resolve(process.cwd(), ".seramet", "e2e-fixture.json"), "utf8"),
@@ -189,9 +190,7 @@ test("chef PIN session operates KDS Start, Ready and Served with persisted state
       ["phone", 390, 844],
     ] as const) {
       await page.setViewportSize({ width, height });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-        true,
-      );
+      await expectFitsViewport(page);
       await ticket.getByRole("button", { name: "Start", exact: true }).scrollIntoViewIfNeeded();
       await expect(ticket.getByRole("button", { name: "Start", exact: true })).toBeInViewport();
       await page.screenshot({

@@ -693,7 +693,7 @@ export function AppShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-border bg-card/95 px-3 py-2 backdrop-blur md:gap-3 md:px-6">
+        <header className="sticky top-0 z-30 flex min-h-16 flex-wrap items-center gap-2 border-b border-border bg-card/95 px-3 py-2 backdrop-blur sm:flex-nowrap md:gap-3 md:px-6">
           <div className="flex items-center gap-2 lg:hidden">
             <button
               onClick={() => setMobileNavOpen(true)}
@@ -715,7 +715,7 @@ export function AppShell({
             </kbd>
           </button>
 
-          <div className="ml-auto flex min-w-0 items-center gap-1.5">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap">
             {lockedContext ? (
               <div className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-left">
                 <UserCog className="hidden h-4 w-4 text-muted-foreground sm:block" />
