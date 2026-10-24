@@ -7,6 +7,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("central POS connectivity", () => {
+  it("releases the in-flight guard when verification begins while disconnected", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T10:00:00Z"));
+    const state = new PosConnectivity();
+    state.verified();
+    let online = false;
+    const verify = vi.fn(async () => undefined);
+    const stop = state.start(verify, {
+      visible: () => true,
+      online: () => online,
+      random: () => 0.5,
+    });
+    await state.requestVerification();
+    expect(verify).not.toHaveBeenCalled();
+    online = true;
+    await vi.advanceTimersByTimeAsync(5000);
+    await state.requestVerification();
+    expect(verify).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(state.getSnapshot().state).toBe("ONLINE");
+    stop();
+  });
+  it("queues a rapid reconnect check at the existing cooldown boundary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-16T10:00:00Z"));
+    const state = new PosConnectivity();
+    state.verified();
+    const verify = vi.fn(async () => undefined);
+    const stop = state.start(verify, {
+      visible: () => true,
+      online: () => true,
+      random: () => 0.5,
+    });
+    await state.requestVerification();
+    await vi.advanceTimersByTimeAsync(1000);
+    state.failure(undefined, true);
+    await state.requestVerification();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(state.getSnapshot().state).toBe("RECONNECTING");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(state.getSnapshot().state).toBe("ONLINE");
+    stop();
+  });
   it("imports and constructs without request-only randomness during Worker startup", async () => {
     vi.resetModules();
     const randomUUID = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {

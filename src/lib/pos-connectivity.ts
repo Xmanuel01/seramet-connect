@@ -57,10 +57,18 @@ export class PosConnectivity {
     let timer: ReturnType<typeof setTimeout>;
     const run = () => {
       if (running) return running;
-      if (stopped || Date.now() - lastStarted < 5000) return Promise.resolve();
+      if (stopped) return Promise.resolve();
+      const remaining = 5000 - (Date.now() - lastStarted);
+      if (remaining > 0) {
+        if (["OFFLINE", "RECONNECTING"].includes(this.snapshot.state) && options.online()) {
+          clearTimeout(timer);
+          timer = setTimeout(() => void run(), remaining);
+        }
+        return Promise.resolve();
+      }
       clearTimeout(timer);
       lastStarted = Date.now();
-      running = (async () => {
+      running = Promise.resolve().then(async () => {
         try {
           if (!options.online()) {
             this.failure(undefined, true);
@@ -93,7 +101,7 @@ export class PosConnectivity {
             );
           }
         }
-      })();
+      });
       return running;
     };
     this.verify = run;

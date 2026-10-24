@@ -1534,6 +1534,8 @@ export class IntegrationRuntime {
         },
         delivery: {
           status: "UNASSIGNED",
+          recipientName: order.customer.name ?? "External customer",
+          ...(order.delivery.address ? { address: order.delivery.address } : {}),
           ...(fulfilmentType === "PROVIDER_DELIVERY" && order.delivery.rider?.name
             ? { rider: order.delivery.rider.name }
             : {}),

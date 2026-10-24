@@ -158,7 +158,17 @@ describe("staff role/device HTTP boundaries", () => {
       db,
     );
     const state = createEmptyTransactionState(tenant);
-    state.orders = [order, { ...order, id: "another-order", branchId: "another-branch" }];
+    state.orders = [
+      {
+        ...order,
+        delivery: {
+          status: "UNASSIGNED",
+          recipientName: "Private recipient",
+          address: "Private destination",
+        },
+      },
+      { ...order, id: "another-order", branchId: "another-branch" },
+    ];
     state.employees = [
       {
         id: "private-employee",
@@ -194,6 +204,7 @@ describe("staff role/device HTTP boundaries", () => {
     ];
     const projected = filterStateForActor(state, actor);
     expect(projected.orders.map((row) => row.id)).toEqual([order.id]);
+    expect(projected.orders[0]?.delivery).toBeUndefined();
     for (const key of ["bills", "payments", "journalEntries", "employees", "cashDrawers"] as const)
       expect(projected[key]).toEqual([]);
     expect(actor.permissions).not.toContain(permissions.posAccess);

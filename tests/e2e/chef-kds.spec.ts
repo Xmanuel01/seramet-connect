@@ -209,13 +209,36 @@ test("chef PIN session operates KDS Start, Ready and Served with persisted state
         button === "Ready" ? { width: 390, height: 844 } : { width: 1024, height: 768 },
       );
       await expect(ticket.getByRole("button", { name: button, exact: true })).toBeEnabled();
-      const update = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/transactions/mutate") && response.request().method() === "POST",
-      );
-      await ticket.getByRole("button", { name: button, exact: true }).click();
-      const response = await update;
-      expect(response.status(), await response.text()).toBe(200);
+      if (button === "Ready") {
+        let replays = 0;
+        page.on("request", (request) => {
+          if (new URL(request.url()).pathname === "/api/seramet/offline/sync") replays++;
+        });
+        await staff.setOffline(true);
+        await ticket.getByRole("button", { name: button, exact: true }).click();
+        await expect(ticket.getByRole("button", { name: "Served", exact: true })).toBeVisible();
+        expect(
+          (await snapshot()).state.orders.find((item) => item.id === order!.id)?.lines[0]
+            ?.productionStatus,
+        ).toBe("PREPARING");
+        expect(replays).toBe(0);
+        const replay = page.waitForResponse(
+          (response) => new URL(response.url()).pathname === "/api/seramet/offline/sync",
+        );
+        await staff.setOffline(false);
+        await page.evaluate(() => window.dispatchEvent(new Event("online")));
+        expect((await replay).ok()).toBe(true);
+        expect(replays).toBe(1);
+      } else {
+        const update = page.waitForResponse(
+          (response) =>
+            response.url().endsWith("/transactions/mutate") &&
+            response.request().method() === "POST",
+        );
+        await ticket.getByRole("button", { name: button, exact: true }).click();
+        const response = await update;
+        expect(response.status(), await response.text()).toBe(200);
+      }
       await expect
         .poll(
           async () =>

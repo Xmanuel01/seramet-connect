@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
+import { orderChannelDispatchError } from "@/orders/order-channel-service";
 import {
   linkedOrderCustomer,
   resolvePosCustomer,
@@ -245,6 +246,9 @@ function POS() {
   >([]);
   const [paymentReference, setPaymentReference] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [receiptOptions, setReceiptOptions] = useState<Record<string, boolean>>({
     Print: true,
     WhatsApp: false,
@@ -484,6 +488,19 @@ function POS() {
     [branchOrders],
   );
   const activeOrder = branchOrders.find((order) => order.id === activeOrderId) ?? null;
+  useEffect(() => {
+    if (!activeOrderId) {
+      deliveryHydratedOrderRef.current = null;
+      return;
+    }
+    if (activeOrder?.id !== activeOrderId) return;
+    const key = `${activeTenantId}:${branchId}:${activeOrderId}`;
+    if (deliveryHydratedOrderRef.current === key) return;
+    // Contact details come from the saved order, not the browser draft allowlist.
+    deliveryHydratedOrderRef.current = key;
+    setRecipientName(activeOrder.delivery?.recipientName ?? "");
+    setDeliveryAddress(activeOrder.delivery?.address ?? "");
+  }, [activeOrder, activeOrderId, activeTenantId, branchId]);
   const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
   const mutateTransaction: typeof mutateBackendTransaction = async (
     action,
@@ -1033,6 +1050,16 @@ function POS() {
                 ? `Table ${tableNo}`
                 : "Unassigned table",
       ),
+      ...(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress
+        ? {
+            delivery: {
+              ...(activeOrder?.delivery ?? { status: "UNASSIGNED" as const }),
+              recipientName: recipientName.trim(),
+              address: deliveryAddress.trim(),
+            },
+            ...(!linkedCustomer && recipientName.trim() ? { customer: recipientName.trim() } : {}),
+          }
+        : {}),
       channel:
         channelLocked && activeOrder
           ? activeOrder.channel
@@ -1072,6 +1099,8 @@ function POS() {
     setPaymentReference("");
     setCustomerPhone("");
     setSelectedTableNo(null);
+    setRecipientName("");
+    setDeliveryAddress("");
     setPayments([]);
     setPreviouslyPaid(0);
     setPaymentInvoiceId(null);
@@ -1395,6 +1424,8 @@ function POS() {
     );
     const amendmentType = sentLineIds.size > 0 ? "ADDITION" : "NEW";
     const draft = buildTransactionDraft(tableNo);
+    const channelError = orderChannelDispatchError(selectedChannel, draft);
+    if (channelError) throw new Error(channelError);
     const previewLines = items.flatMap((line) => {
       const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
       if (unsentQuantity <= 0) return [];
@@ -2082,6 +2113,8 @@ function POS() {
     setRecoverCustomerId(null);
     setActiveOrderId(null);
     setCustomerSelection(null);
+    setRecipientName("");
+    setDeliveryAddress("");
     setLines({});
     setKitchenNote("");
     setItemNotes({});
@@ -2367,6 +2400,36 @@ function POS() {
             <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
               {selectedChannel?.displayName} selected: menu cards now use online prices and
               settlement defaults to partner credit where required.
+            </div>
+          )}
+          {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
+            <div className="mb-3 grid gap-2 sm:grid-cols-2">
+              {selectedChannel.requiresCustomer && !linkedCustomer && (
+                <label className="grid gap-1 text-xs font-semibold">
+                  Customer name
+                  <input
+                    value={recipientName}
+                    onChange={(event) => setRecipientName(event.target.value)}
+                    maxLength={120}
+                    disabled={channelLocked}
+                    autoComplete="off"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+              )}
+              {selectedChannel.requiresAddress && (
+                <label className="grid gap-1 text-xs font-semibold">
+                  Delivery address
+                  <input
+                    value={deliveryAddress}
+                    onChange={(event) => setDeliveryAddress(event.target.value)}
+                    maxLength={500}
+                    disabled={channelLocked}
+                    autoComplete="off"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+              )}
             </div>
           )}
           {operationalMenu.status === "error" && (

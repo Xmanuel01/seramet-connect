@@ -135,7 +135,7 @@ async function prepare(browser: Browser, admin: BrowserContext, channelType: str
   }
 }
 
-for (const channelType of ["TAKEAWAY", "DINE_IN"]) {
+for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
   test(`cashier PIN-to-cash-sale persists for configured ${channelType}`, async ({
     browser,
     context,
@@ -148,6 +148,53 @@ for (const channelType of ["TAKEAWAY", "DINE_IN"]) {
     try {
       const before = await snapshot();
       const send = page.getByRole("button", { name: "Send kitchen", exact: true });
+      if (channelType === "OWN_DELIVERY") {
+        await page.getByLabel("Customer name", { exact: true }).fill("Disposable recipient");
+        await send.click();
+        await expect(
+          page.getByText("Delivery address is required (5-500 characters).", { exact: true }),
+        ).toBeVisible();
+        expect((await snapshot()).state.orders).toHaveLength(before.state.orders.length);
+        await page
+          .getByLabel("Delivery address", { exact: true })
+          .fill("Westlands test destination 10");
+        for (const [width, height] of [
+          [390, 844],
+          [1024, 768],
+        ]) {
+          await page.setViewportSize({ width, height });
+          expect(
+            await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+          ).toBe(true);
+          await mkdir(".seramet/cashier-channels", { recursive: true });
+          await page.screenshot({
+            path: `.seramet/cashier-channels/delivery-${width}.png`,
+            fullPage: true,
+          });
+        }
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.getByRole("button", { name: "Hold", exact: true }).click();
+        await expect(page.getByText("Order held in active orders.", { exact: true })).toBeVisible();
+        const held = (await snapshot()).state.orders.find((row) => row.channel === channel.code)!;
+        expect(held.delivery?.address).toBe("Westlands test destination 10");
+        await page.getByRole("button", { name: /^Orders\s+\d/ }).click();
+        await page.getByRole("button", { name: new RegExp(held.id) }).click();
+        await expect(page.getByLabel("Delivery address", { exact: true })).toHaveValue(
+          "Westlands test destination 10",
+        );
+        await page.reload();
+        await expect(page.getByLabel("Delivery address", { exact: true })).toHaveValue(
+          "Westlands test destination 10",
+        );
+        expect(
+          await page.evaluate(() =>
+            Object.entries(sessionStorage).some(
+              ([key, value]) =>
+                key.startsWith("seramet.pos.draft") && value.includes("Westlands test destination"),
+            ),
+          ),
+        ).toBe(false);
+      }
       if (channelType === "DINE_IN") {
         expect(channel.requiresTable).toBe(true);
         await expect(
@@ -172,12 +219,23 @@ for (const channelType of ["TAKEAWAY", "DINE_IN"]) {
       expect(saved.lines).toHaveLength(1);
       expect(saved.total).toBe(1000);
       if (tableCode) expect(saved.table).toBe(tableCode);
+      if (channelType === "OWN_DELIVERY") {
+        expect(saved.customer).toBe("Disposable recipient");
+        expect(saved.delivery).toMatchObject({
+          recipientName: "Disposable recipient",
+          address: "Westlands test destination 10",
+        });
+      }
       expect(
         (await snapshot()).state.kitchenPrintObligations?.some((row) => row.orderId === saved.id),
       ).toBe(true);
       await page.goto("/invoices");
       await expect(page.getByText(saved.id, { exact: false }).first()).toBeVisible();
-      await page.getByRole("button", { name: "Create / open invoice", exact: true }).click();
+      await page
+        .getByText(new RegExp(`^${saved.id} ·`))
+        .locator("../..")
+        .getByRole("button", { name: "Create / open invoice", exact: true })
+        .click();
       await expect
         .poll(
           async () =>
@@ -193,11 +251,57 @@ for (const channelType of ["TAKEAWAY", "DINE_IN"]) {
         .click();
       await page.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
       await page.getByLabel("Amount", { exact: true }).fill(bill.total.toFixed(2));
-      await page
+      const settle = page
         .getByRole("dialog")
-        .getByRole("button", { name: "Settle invoice", exact: true })
-        .click();
-      await expect(page.getByText("Settlement recorded", { exact: true })).toBeVisible();
+        .getByRole("button", { name: "Settle invoice", exact: true });
+      let lostCommand: Record<string, unknown> | undefined;
+      if (channelType === "DINE_IN") {
+        await page.route("**/api/seramet/transactions/mutate", async (route) => {
+          const command = route.request().postDataJSON();
+          if (command.action === "settleInvoice" && !lostCommand) {
+            const committed = await route.fetch();
+            expect(committed.ok()).toBe(true);
+            lostCommand = command;
+            await route.abort("failed");
+          } else await route.continue();
+        });
+      }
+      if (channelType === "TAKEAWAY") {
+        await staff.setOffline(true);
+        await settle.click();
+        await expect(
+          page.getByText("settleInvoice is unavailable while the POS is offline", { exact: true }),
+        ).toBeVisible();
+        expect(
+          (await snapshot()).state.receipts.filter((row) => row.invoiceId === bill.id),
+        ).toHaveLength(0);
+        await page
+          .getByRole("dialog", { name: "Selection required", exact: true })
+          .getByRole("button", { name: "OK", exact: true })
+          .click();
+        await staff.setOffline(false);
+        await page.reload();
+        await page
+          .getByRole("row")
+          .filter({ hasText: invoiceDisplayName(bill.id) })
+          .getByRole("button", { name: "Settle", exact: true })
+          .click();
+        await page.getByRole("dialog").getByRole("button", { name: "Cash", exact: true }).click();
+        await settle.dblclick();
+      } else await settle.click();
+      await expect
+        .poll(async () => (await snapshot()).state.bills.find((row) => row.id === bill.id)?.status)
+        .toBe("PAID");
+      if (channelType === "DINE_IN") {
+        expect(lostCommand).toBeDefined();
+        const retry = await staff.request.post("/api/seramet/transactions/mutate", {
+          data: lostCommand,
+          headers: { origin: "http://127.0.0.1:4173" },
+        });
+        expect(retry.ok()).toBe(true);
+        expect((await retry.json()).duplicate).toBe(true);
+        await page.unroute("**/api/seramet/transactions/mutate");
+      } else await expect(page.getByText("Settlement recorded", { exact: true })).toBeVisible();
       const reload = page.waitForResponse(
         (response) =>
           new URL(response.url()).pathname === "/api/seramet/transactions" &&
@@ -226,6 +330,9 @@ for (const channelType of ["TAKEAWAY", "DINE_IN"]) {
           receiptId: receipts[0]!.id,
           total: bill.total,
           persistedAfterReload: true,
+          offlineSettlementRefused: channelType === "TAKEAWAY",
+          duplicateClickPreservedSingleReceipt: channelType === "TAKEAWAY",
+          committedResponseLossReplayedOnce: channelType === "DINE_IN",
         }),
       );
       await page.screenshot({
@@ -271,6 +378,57 @@ test("own delivery rejects dispatch without the configured required customer and
       .toBe(true);
     expect((await snapshot()).state.orders).toHaveLength(before.state.orders.length);
     expect(mutations.filter((row) => row.status === 200)).toHaveLength(0);
+    const draft = {
+      tenantId: fixture.tenantId,
+      branchId: fixture.firstBranchId,
+      branch: fixture.firstBranchId,
+      channel: channel.code,
+      cashier: "Cashier",
+      customer: "Unassigned table",
+      lines: [
+        {
+          id: randomUUID(),
+          productId: fixture.menuItemId,
+          name: "Pilot meal",
+          category: "MAIN_MEALS",
+          quantity: 1,
+          unitPrice: 1000,
+          productionStation: "MAIN",
+        },
+      ],
+    };
+    for (const delivery of [
+      undefined,
+      { status: "UNASSIGNED", recipientName: "Recipient" },
+      { status: "UNASSIGNED", recipientName: "Recipient", address: "x".repeat(501) },
+    ]) {
+      const rejected = await staff.request.post("/api/seramet/transactions/mutate", {
+        data: {
+          action: "upsertAndSendKitchen",
+          payload: { draft: { ...draft, ...(delivery ? { delivery } : {}) } },
+          idempotencyKey: randomUUID(),
+          expectedRevision: (await snapshot()).revision,
+        },
+      });
+      expect(rejected.status()).toBe(400);
+      expect((await snapshot()).state.orders).toHaveLength(before.state.orders.length);
+    }
+    const foreignCustomer = await staff.request.post("/api/seramet/transactions/mutate", {
+      data: {
+        action: "upsertAndSendKitchen",
+        payload: {
+          draft: {
+            ...draft,
+            customerId: randomUUID(),
+            delivery: { status: "UNASSIGNED", address: "Westlands test destination 10" },
+          },
+        },
+        idempotencyKey: randomUUID(),
+        expectedRevision: (await snapshot()).revision,
+      },
+    });
+    expect(foreignCustomer.status()).toBe(400);
+    expect((await snapshot()).state.orders).toHaveLength(before.state.orders.length);
   } finally {
     const orders = (await snapshot()).state.orders.filter(
       (row) => !before.state.orders.some((old) => old.id === row.id),

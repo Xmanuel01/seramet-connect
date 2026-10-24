@@ -2477,6 +2477,21 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       cutoffMinutes: branch.business_day_cutoff_minutes,
     });
     const sourceOrder = state.orders.find((order) => order.id === payload["orderId"]);
+    if (["upsertAndSendKitchen", "sendToKitchen", "amendKitchenOrder"].includes(input.action)) {
+      const customerId = stringValue(draft?.["customerId"]) ?? sourceOrder?.customerId;
+      if (customerId) {
+        const customer = await this.db
+          .prepare("SELECT status FROM customers WHERE tenant_id=? AND id=?")
+          .bind(input.actor.tenantId, customerId)
+          .first<{ status: string }>();
+        if (!customer || customer.status === "BLOCKED")
+          throw new ServerOperationError(
+            "VALIDATION_FAILED",
+            400,
+            "Selected customer is unavailable.",
+          );
+      }
+    }
     if (
       sourceOrder &&
       [

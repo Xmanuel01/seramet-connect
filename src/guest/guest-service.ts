@@ -2698,7 +2698,13 @@ export class GuestExperienceService {
         acceptancePolicy: guestOrderAcceptancePolicy(input.profile),
       },
       ...(input.quote.service_mode === "DIRECT_DELIVERY"
-        ? { delivery: { status: "UNASSIGNED" as const } }
+        ? {
+            delivery: {
+              status: "UNASSIGNED" as const,
+              recipientName: sanitizeGuestText(input.input.customerName, 120) ?? "Guest",
+              address: sanitizeGuestText(input.input.deliveryAddress, 500),
+            },
+          }
         : {}),
     };
     const actor = guestCommandActor(input.profile, input.session);
