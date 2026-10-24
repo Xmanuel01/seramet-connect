@@ -1078,6 +1078,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     );
     await manager.getByRole("button", { name: "Close Business Day", exact: true }).click();
     closingDialog = manager.getByRole("dialog", { name: "Close Business Day", exact: true });
+    await expect(closingDialog.getByLabel(`Counted KES ${drawer.id}`, { exact: true })).toHaveCount(
+      0,
+    );
     await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
     const closeResponse = manager.waitForResponse(
       (response) =>
@@ -1133,6 +1136,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
               "src/lib/print-order-adapter.ts",
               "src/routes/invoices.tsx",
               "src/components/app/DailyClosingPanel.tsx",
+              "src/hooks/use-transaction-engine.ts",
               "src/routes/pos-login.tsx",
               "scripts/run-pilot-e2e.mjs",
               "scripts/seed-printing-operational.ts",

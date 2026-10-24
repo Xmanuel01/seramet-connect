@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/components/app/DailyClosingPanel.tsx"
+      - "src/hooks/use-transaction-engine.ts"
       - "src/routes/pos-login.tsx"
       - "tests/e2e/printing-operational.spec.ts"
       - "scripts/run-pilot-e2e.mjs"
