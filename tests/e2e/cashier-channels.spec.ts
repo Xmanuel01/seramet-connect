@@ -450,7 +450,10 @@ test("own delivery rejects dispatch without the configured required customer and
         })),
       }),
     );
-    await page.screenshot({ path: ".seramet/cashier-channels/OWN_DELIVERY-rejections.png", fullPage: true });
+    await page.screenshot({
+      path: ".seramet/cashier-channels/OWN_DELIVERY-rejections.png",
+      fullPage: true,
+    });
     await staff.close();
   }
 });
