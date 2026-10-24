@@ -33,6 +33,7 @@ test("startup shows only the brand then enters login as soon as the device is ve
   await requestStarted;
   await expect(page.getByRole("heading", { name: "Seramet", exact: true })).toBeVisible();
   await expect(page).toHaveTitle("Seramet");
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
   await expect(page.getByText("Validating the registered device...")).toHaveCount(0);
   await expect(page.getByText("Checking this POS")).toHaveCount(0);
   const logo = await page.locator('img[src="/brand/seramet-mark-light.png"]').boundingBox();
@@ -62,7 +63,7 @@ test("failed startup exits the splash and retry recovers without bypassing regis
   });
   await page.goto("/pos-login");
   await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
-  await expect(page.getByText("We couldn't connect to Seramet. Please try again.")).toBeVisible();
+  await expect(page.getByText("Cannot connect. Try again.")).toBeVisible();
   await expect(page.getByLabel("Email or employee code")).toBeDisabled();
   await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();
@@ -71,9 +72,7 @@ test("failed startup exits the splash and retry recovers without bypassing regis
     "/login?account=1",
   );
   await page.getByRole("button", { name: "Try again" }).click();
-  await expect(
-    page.getByText("This browser is not registered as a Seramet POS device."),
-  ).toBeVisible();
+  await expect(page.getByText("Device not activated.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
   await expect(page.getByLabel("Email or employee code")).toBeEnabled();
   expect(attempts).toBe(2);
@@ -112,7 +111,7 @@ for (const width of [1366, 390]) {
     await expect(entered).toHaveCount(6);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(
-      page.getByText("Use administrator account to activate this device.", { exact: true }),
+      page.getByText("Activate this device with an administrator account.", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Use administrator account", exact: true }),
@@ -157,7 +156,7 @@ test("a stalled device request times out instead of leaving the brand screen for
   await page.goto("/pos-login");
   await expect(page.getByRole("heading", { name: "Seramet", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
-  await expect(page.getByText("We couldn't connect to Seramet. Please try again.")).toBeVisible();
+  await expect(page.getByText("Cannot connect. Try again.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
 });
 
@@ -173,9 +172,7 @@ test("revoked devices keep the keypad visible without permitting employee PIN en
     route.fulfill({ json: { ...activeDevice, state: "REVOKED" } }),
   );
   await page.goto("/pos-login");
-  await expect(
-    page.getByText("This device has been revoked and cannot sign in employees."),
-  ).toBeVisible();
+  await expect(page.getByText("Device access revoked.")).toBeVisible();
   await expect(page.getByLabel("Email or employee code")).toBeDisabled();
   await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "1", exact: true })).toBeDisabled();

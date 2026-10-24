@@ -448,7 +448,7 @@ export function useTransactionEngine() {
       expectedRevision?: number,
     ) => {
       const idempotencyKey = `command:${crypto.randomUUID()}`;
-      const mutationScope = `${activeTenantId}:${branchId}`;
+      const mutationScope = scopeKey;
       localMutationGenerationRef.current += 1;
       const applyOptimistic = () => {
         const next = optimistic

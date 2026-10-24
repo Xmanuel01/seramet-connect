@@ -40,6 +40,7 @@ if (
       suite !== audit &&
       suite !== auditCorrections &&
       suite !== categoryAcceptance &&
+      suite !== "tests/e2e/chef-kds.spec.ts" &&
       suite !== operational &&
       suite !== "tests/e2e/pos-session-soak.spec.ts",
   )
