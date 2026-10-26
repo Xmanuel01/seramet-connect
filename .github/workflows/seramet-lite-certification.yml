@@ -81,6 +81,7 @@ jobs:
           node --test scripts/verify-staging-health.test.mjs
           node --test scripts/verify-staging-release-gate.test.mjs
           node --test scripts/inspect-staging-backlog.test.mjs
+          node --test scripts/verify-certification-schema-postgres.test.mjs
           node --test scripts/staging-menu-reconciliation-plan.test.mjs
           node --test scripts/staging-management-backlog-plan.test.mjs
           node --test scripts/staging-recovery-cli-args.test.mjs
@@ -195,7 +196,7 @@ jobs:
         run: |
           npm run migrate:postgres
           node scripts/verify-certification-schema-postgres.mjs
-          echo schema-27-rls >> cert-evidence/postgres-probes.txt
+          echo schema-current-rls >> cert-evidence/postgres-probes.txt
           ./node_modules/.bin/vite-node scripts/verify-menu-postgres.ts
           echo menu-catalog >> cert-evidence/postgres-probes.txt
           npm run test:menu-import-postgres

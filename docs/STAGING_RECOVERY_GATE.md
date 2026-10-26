@@ -41,6 +41,10 @@ other site; do not rename or mutate existing linked branch rows blindly.
    `SERAMET_POSTGRES_URL` and `SERAMET_ENVIRONMENT=staging` inside an
    authorized secure runner. The script uses `BEGIN READ ONLY`, emits aggregate
    counts only, and blocks overlapping committing menu-file groups.
+   It also blocks CLAIMED/RUNNING work with expired or missing leases; missing
+   lease evidence fails closed. This inspection never recovers or replays a job.
+   Classify abandoned obligations and verify idempotency under the reviewed
+   backup/restore recovery plan before clearing the release gate.
 4. Obtain a verified staging backup **and rehearse restore to an isolated database**.
    Preserve immutable import and event audit rows. Record backup time,
    coverage and the independent restore evidence in a restricted operations log.

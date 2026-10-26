@@ -98,7 +98,7 @@ function record() {
       "crm-runtime",
       "finance",
       "lockdown",
-      "schema-27-rls",
+      "schema-current-rls",
     ];
     if (
       new Set(probes).size !== required.length ||
