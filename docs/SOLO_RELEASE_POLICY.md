@@ -47,3 +47,11 @@ the owner, rerun by the owner, and matching the protected staging approved-SHA
 variable. The existing backup encryption, trust-root, isolated restore and
 no-replay controls remain mandatory. No passing CI or approval erases unresolved
 financial, queue, recovery or acceptance defects.
+
+For this incident, the existing staging deployment workflow has an explicit
+`maintenance_only` option. It requires the exact staging owner-comment approval
+and every backup, backlog, Data API and health gate. It updates only the existing
+primary Worker. Scanner/container creation, provider-secret writes, origin
+credential changes and database migrations do not run in that mode. Existing
+secrets and resource identities are retained, and unscanned imports stay denied.
+This is not approval to activate delivery providers or a paid scanning service.

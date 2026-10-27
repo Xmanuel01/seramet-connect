@@ -73,3 +73,33 @@ test("staging approval runs before dependency installation and every infrastruct
     "Approval cannot be skipped or ignored",
   );
 });
+
+test("primary-only maintenance retains gates and cannot create scanners or rewrite credentials", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  for (const name of [
+    "Ensure isolated scanner queues exist",
+    "Apply PostgreSQL migrations",
+    "Synchronize Hyperdrive origin credentials",
+    "Deploy isolated scanner Worker and ClamAV container",
+    "Configure scanner authentication secret",
+    "Configure primary Worker scanner authentication secret",
+    "Configure Uber Eats sandbox secrets",
+  ]) {
+    assert.ok(
+      workflow.includes(`- name: ${name}\n        if: \${{ !inputs.maintenance_only }}`),
+      `${name} must not run during primary-only maintenance`,
+    );
+  }
+  assert.ok(workflow.includes("run: node scripts/solo-release-approval.mjs --pr 156"));
+  assert.ok(workflow.includes('--sha "$GITHUB_SHA" --scope staging'));
+  for (const step of [
+    "Inspect pending staging work and block overlapping menu commits",
+    "Independently verify PostgreSQL public RLS and client grants",
+    "Verify full staging readiness",
+  ]) {
+    assert.ok(workflow.includes(`- name: ${step}\n        `), `${step} must remain present`);
+  }
+});

@@ -6,6 +6,19 @@ export const SOLO_APPROVAL_MARKER = "SERAMET_SOLO_RELEASE_APPROVAL_V1";
 export const SOLO_PRODUCTION_CHECK = "owner-approved-production-candidate";
 export const requiredCoreChecks = ["validate", "postgres-crm", "postgres-recovery-fixture"];
 
+export function approvalOperator(env, viewer) {
+  if (env.GITHUB_ACTIONS === "true") {
+    if (
+      env.GITHUB_REPOSITORY !== "Xmanuel01/seramet-connect" ||
+      env.GITHUB_ACTOR !== "Xmanuel01" ||
+      env.GITHUB_TRIGGERING_ACTOR !== "Xmanuel01"
+    )
+      throw new Error("SOLO_RELEASE_REFUSED: DISPATCH_AND_RERUN_MUST_BE_OWNER");
+    return "Xmanuel01";
+  }
+  return viewer;
+}
+
 export function verifySoloApproval({ comment, pull, checks, owner, sha, scope, now = Date.now() }) {
   const refuse = (reason) => {
     throw new Error("SOLO_RELEASE_REFUSED: " + reason);
@@ -112,7 +125,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     !/^[a-f0-9]{40}$/.test(sha ?? "")
   )
     throw new Error("Explicit PR, comment ID, commit SHA and scope are required");
-  const owner = api("/user").login;
+  const owner = approvalOperator(
+    process.env,
+    process.env.GITHUB_ACTIONS === "true" ? null : api("/user").login,
+  );
   const base = "/repos/Xmanuel01/seramet-connect";
   const pull = api(`${base}/pulls/${number}`);
   const comment = api(`${base}/issues/comments/${commentId}`);

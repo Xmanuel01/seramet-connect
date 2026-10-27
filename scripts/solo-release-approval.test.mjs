@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  approvalOperator,
   SOLO_APPROVAL_MARKER,
   requiredCoreChecks,
   verifySoloApproval,
 } from "./solo-release-approval.mjs";
+
+test("the staging operator must own both dispatch and rerun", () => {
+  const env = {
+    GITHUB_ACTIONS: "true",
+    GITHUB_REPOSITORY: "Xmanuel01/seramet-connect",
+    GITHUB_ACTOR: "Xmanuel01",
+    GITHUB_TRIGGERING_ACTOR: "Xmanuel01",
+  };
+  assert.equal(approvalOperator(env, null), "Xmanuel01");
+  for (const change of [
+    { GITHUB_ACTOR: "other" },
+    { GITHUB_TRIGGERING_ACTOR: "other" },
+    { GITHUB_REPOSITORY: "other/repo" },
+  ])
+    assert.throws(() => approvalOperator({ ...env, ...change }, null));
+});
 
 function fixture(scope = "staging") {
   const sha = "a".repeat(40),
