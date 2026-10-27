@@ -518,9 +518,11 @@ for (const width of [1366, 390]) {
       gate = undefined;
     }
     expect(navigations).toBe(0);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-      true,
-    );
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
     await page.screenshot({
       path: testInfo.outputPath(`registration-${width}.png`),
       fullPage: true,
