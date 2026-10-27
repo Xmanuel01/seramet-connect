@@ -135,7 +135,7 @@ export const loyaltyProgramSchema = z
     expiryDate: z.string().datetime().optional(),
     eligibleBranchIds: z.array(id).default([]),
     eligibleChannels: z.array(z.string().trim().min(1).max(40)).default([]),
-    redemptionRules: z.record(z.unknown()).default({}),
+    redemptionRules: z.record(z.string(), z.unknown()).default({}),
     receiptMessage: z.string().trim().max(240).optional(),
   })
   .strict();

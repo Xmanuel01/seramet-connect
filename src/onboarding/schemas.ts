@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { setupSections } from "@/onboarding/types";
 
-const optionalRecord = z.record(z.unknown()).optional();
-const optionalStringRecord = z.record(z.string()).optional();
+const optionalRecord = z.record(z.string(), z.unknown()).optional();
+const optionalStringRecord = z.record(z.string(), z.string()).optional();
 
 export const businessProfileSchema = z
   .object({
@@ -33,7 +33,7 @@ export const onboardingStepSchema = z
   .object({
     step: z.number().int().min(5).max(20),
     action: z.enum(["SAVE", "BACK", "COMPLETE"]),
-    response: z.record(z.unknown()),
+    response: z.record(z.string(), z.unknown()),
   })
   .strict();
 
@@ -158,9 +158,9 @@ export const importPreviewRequestSchema = z
     base64: z.string().min(1),
     duplicateStrategy: z.enum(["CREATE", "UPDATE", "SKIP", "ERROR"]),
     idempotencyKey: z.string().trim().min(8).max(200),
-    columnMap: z.record(z.string()).optional(),
+    columnMap: z.record(z.string(), z.string()).optional(),
     referenceMap: z
-      .object({ stations: z.record(z.string().trim().min(1)).optional() })
+      .object({ stations: z.record(z.string(), z.string().trim().min(1)).optional() })
       .strict()
       .optional(),
   })
@@ -303,7 +303,7 @@ export const providerSetupSchema = z
     providerId: z.string().trim().min(1).max(120),
     environment: z.enum(["SANDBOX", "PRODUCTION"]),
     configuration: optionalRecord,
-    credentials: z.record(z.string().min(1)).optional(),
+    credentials: z.record(z.string(), z.string().min(1)).optional(),
     secretReference: z.string().trim().min(1).max(240).optional(),
     enabled: z.boolean().optional(),
   })

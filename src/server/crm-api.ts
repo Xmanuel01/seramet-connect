@@ -51,7 +51,7 @@ const tierSchema = z
     multiplierDenominator: z.number().int().positive().optional(),
     downgradePolicy: z.enum(["RECALCULATE", "GRACE_PERIOD", "NO_DOWNGRADE"]).optional(),
     gracePeriodDays: z.number().int().positive().optional(),
-    benefits: z.record(z.unknown()).optional(),
+    benefits: z.record(z.string(), z.unknown()).optional(),
     effectiveFrom: z.string().datetime(),
     effectiveTo: z.string().datetime().optional(),
   })
@@ -76,7 +76,7 @@ const rewardSchema = z
     itemId: id.optional(),
     categoryCode: z.string().trim().max(80).optional(),
     minimumTierId: id.optional(),
-    eligibility: z.record(z.unknown()).optional(),
+    eligibility: z.record(z.string(), z.unknown()).optional(),
     validFrom: z.string().datetime(),
     validTo: z.string().datetime().optional(),
   })
@@ -92,7 +92,7 @@ const providerConfigSchema = z
     perMinuteLimit: z.number().int().positive().max(100_000).optional(),
     batchSize: z.number().int().positive().max(1000).optional(),
     maxAttempts: z.number().int().positive().max(20).optional(),
-    configuration: z.record(z.unknown()).optional(),
+    configuration: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 const loyaltyAdjustmentRequestSchema = loyaltyAdjustmentSchema.omit({ businessDate: true });
