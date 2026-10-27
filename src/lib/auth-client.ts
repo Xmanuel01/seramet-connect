@@ -1,6 +1,11 @@
 import { permissions } from "@/platform/permissions";
 import { clearPosDrafts } from "@/lib/pos-draft";
-export type AuthRestaurant = { tenantId: string; slug: string; name: string };
+export type AuthRestaurant = {
+  tenantId: string;
+  slug: string;
+  name: string;
+  onboardingStatus?: "IN_PROGRESS" | "COMPLETED";
+};
 
 export type AuthStatus = {
   ok: true;
@@ -88,7 +93,8 @@ export async function authMutation(
   return payload;
 }
 
-export async function enterRestaurant(tenantId: string, path?: string) {
+export async function enterRestaurant(restaurant: string | AuthRestaurant, path?: string) {
+  const tenantId = typeof restaurant === "string" ? restaurant : restaurant.tenantId;
   window.localStorage.setItem("seramet.session.tenant-id", tenantId);
   if (path) {
     window.location.assign(path);
@@ -103,6 +109,14 @@ export async function enterRestaurant(tenantId: string, path?: string) {
     if (!response.ok) throw new Error("Session access could not be verified");
     const result = (await response.json()) as { actor: { permissions: string[] } };
     const allowed = result.actor.permissions;
+    if (
+      typeof restaurant !== "string" &&
+      restaurant.onboardingStatus === "IN_PROGRESS" &&
+      allowed.includes(permissions.setupView)
+    ) {
+      window.location.assign("/seramet-setup");
+      return;
+    }
     window.location.assign(
       !allowed.includes(permissions.dashboardView) &&
         (allowed.includes(permissions.attendanceUse) || allowed.includes(permissions.staffManage))

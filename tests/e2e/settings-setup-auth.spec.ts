@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test, type BrowserContext, type Page, type Response } from "@playwright/test";
+import { createDefaultDemoPlatformState } from "../../src/platform/demo/default-demo-data";
+import { buildModuleAccessProfile } from "../../src/platform/module-access-registry";
 
 type Fixture = {
   tenantId: string;
@@ -721,3 +723,218 @@ test("registration ignores stale session checks and duplicate submission while s
     releaseStatus();
   }
 });
+
+async function mockOwnerOnboarding(page: Page) {
+  const configuration = createDefaultDemoPlatformState();
+  const tenant = configuration.tenants[0]!;
+  const branch = configuration.branches[0]!;
+  const owner = configuration.users[0]!;
+  const roles = configuration.roles.filter((role) => owner.roleIds.includes(role.id));
+  const permissions = [...new Set(roles.flatMap((role) => role.permissions))];
+  const responses: Record<string, unknown> = {
+    "/health/operational": { database: "authoritative", environment: "staging" },
+    "/auth/session": {
+      actor: {
+        id: owner.id,
+        name: registrationDraft.name,
+        tenantId: tenant.id,
+        branchId: branch.id,
+        branch: branch.name,
+        primaryBranchId: branch.id,
+        assignedBranches: [{ id: branch.id, name: branch.name, isPrimary: true }],
+        roles: owner.roleIds,
+        permissions,
+        authLevel: "FULL",
+        salesTerminal: false,
+        moduleAccess: buildModuleAccessProfile({
+          permissions,
+          organizationalScopes: ["BRANCH"],
+          entitlements: [],
+          entitlementsEnforced: false,
+        }),
+      },
+    },
+    "/configuration": { configuration },
+    "/setup/centre": { setup: { organisationName: tenant.tradingName, stages: [], results: [] } },
+    "/setup/organisation-structure": {
+      brands: configuration.brands,
+      branches: configuration.branches,
+    },
+    "/setup/options": {
+      options: {
+        accounts: [],
+        roles: [],
+        warehouses: [],
+        stations: [],
+        documentTemplates: [],
+        inventoryItems: [],
+        units: [],
+      },
+    },
+    "/setup/onboarding": {
+      onboarding: {
+        currentStep: 5,
+        status: "IN_PROGRESS",
+        completedSteps: [1, 2, 3, 4],
+        responses: {},
+        version: 1,
+        location: null,
+        suggestedCurrency: null,
+        acceptedCurrencies: [],
+        canChangeBaseCurrency: true,
+        baseCurrencyLockReason: null,
+      },
+    },
+    "/setup/reference/location-currency": {
+      countries: [
+        {
+          code: "KE",
+          name: "Kenya",
+          administrativeLevel1Label: "County",
+          defaultCurrencyCode: "KES",
+          callingCode: "+254",
+          defaultTimezone: "Africa/Nairobi",
+          defaultLocale: "en-KE",
+        },
+      ],
+      currencies: [{ code: "KES", name: "Kenyan Shilling", symbol: "KES", minorDigits: 2 }],
+    },
+  };
+  await page.route("**/api/seramet/**", (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api/seramet", "");
+    const json = responses[path];
+    return route.fulfill(
+      json ? { json } : { status: 503, json: { message: "Outside onboarding navigation fixture" } },
+    );
+  });
+  return tenant;
+}
+
+test("new owner completes verified sign-in and enters onboarding instead of employee login", async ({
+  page,
+  context,
+}) => {
+  const tenant = await mockOwnerOnboarding(page);
+  let authenticated = false;
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        authenticated,
+        restaurants: [],
+        identity: authenticated ? { displayName: registrationDraft.name } : undefined,
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/signup", (route) =>
+    route.fulfill({ status: 202, json: { authenticated: false, verificationRequired: true } }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) => {
+    authenticated = true;
+    return route.fulfill({ json: { ok: true, authenticated: true } });
+  });
+  await page.route("**/api/seramet/public/register", (route) =>
+    route.fulfill({
+      status: 201,
+      json: { ok: true, organisation: { tenantId: tenant.id, nextPath: "/seramet-setup" } },
+    }),
+  );
+  const destinations: string[] = [];
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) destinations.push(new URL(frame.url()).pathname);
+  });
+  await page.goto("/register");
+  await autofillRegistration(page);
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  await page.getByRole("button", { name: "I've verified my email" }).click();
+  await expect(page).toHaveURL(/\/login\?account=1$/);
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
+  await page.getByLabel("Restaurant name", { exact: true }).fill("Onboarding navigation fixture");
+  await page.getByRole("button", { name: "Continue to location" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/seramet-setup$/);
+  const country = page.getByRole("combobox", { name: "Country", exact: true });
+  await expect(country).toBeVisible();
+  await country.selectOption("KE");
+  await expect(country).toHaveValue("KE");
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+  ).toBe("1");
+  expect(destinations).not.toContain("/pos-login");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+
+  const freshTab = await context.newPage();
+  await freshTab.goto("/seramet-setup");
+  await expect(freshTab).toHaveURL(/\/pos-login$/);
+  await freshTab.close();
+});
+
+test("an existing owner resumes unfinished onboarding without recreating the restaurant", async ({
+  page,
+}) => {
+  const tenant = await mockOwnerOnboarding(page);
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        authenticated: true,
+        restaurants: [
+          {
+            tenantId: tenant.id,
+            slug: tenant.slug,
+            name: tenant.tradingName,
+            onboardingStatus: "IN_PROGRESS",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  let registrationRequests = 0;
+  await page.route("**/api/seramet/public/register", (route) => {
+    registrationRequests += 1;
+    return route.fulfill({ status: 500, json: { message: "Registration must not repeat" } });
+  });
+  await page.goto("/login?account=1");
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/seramet-setup$/);
+  expect(registrationRequests).toBe(0);
+});
+
+for (const status of [200, 503]) {
+  test(`administrator sign-in requires a confirmed server session after login (status ${status})`, async ({
+    page,
+  }) => {
+    await page.route("**/api/seramet/public/auth/login", (route) =>
+      route.fulfill({ json: { authenticated: true } }),
+    );
+    await page.route("**/api/seramet/public/auth/status", (route) =>
+      route.fulfill({ status, json: anonymousRegistrationSession }),
+    );
+    await page.goto("/login?account=1");
+    await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+    await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?account=1$/);
+    expect(
+      await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+    ).toBeNull();
+  });
+}

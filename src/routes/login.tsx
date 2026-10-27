@@ -34,14 +34,18 @@ function LoginPage() {
     try {
       await authMutation("login", { email, password });
       const status = await authStatus();
+      if (!status.authenticated) {
+        throw new Error("We could not confirm your sign-in. Please try again.");
+      }
       if (!status.restaurants.length) {
+        markInteractiveSignIn();
         window.location.assign("/register");
         return;
       }
       if (status.restaurants.length === 1) {
         markInteractiveSignIn();
         void enterRestaurant(
-          status.restaurants[0]!.tenantId,
+          status.restaurants[0]!,
           new URLSearchParams(window.location.search).get("next") === "attendance"
             ? "/attendance"
             : undefined,
@@ -84,7 +88,7 @@ function LoginPage() {
               onClick={() => {
                 markInteractiveSignIn();
                 void enterRestaurant(
-                  restaurant.tenantId,
+                  restaurant,
                   new URLSearchParams(window.location.search).get("next") === "attendance"
                     ? "/attendance"
                     : undefined,

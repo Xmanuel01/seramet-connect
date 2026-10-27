@@ -251,6 +251,37 @@ describe.sequential("commercial launch foundation", () => {
     expect(verify).not.toHaveBeenCalled();
   });
 
+  it("returns only the signed-in account's persisted onboarding progress", async () => {
+    const service = new RestaurantRegistrationService(database);
+    const tenant = await service.register(identity(), registration());
+    await service.register(
+      { ...identity(), subject: "other-owner" },
+      {
+        ...registration(),
+        idempotencyKey: "other-owner-registration-0002",
+        slug: "other-owner-restaurant",
+      },
+    );
+    const status = async () => {
+      const response = await handleSupabaseAuthApi(
+        new Request("https://app.seramet.test/api/seramet/public/auth/status", {
+          headers: { cookie: "seramet_access=verified-token" },
+        }),
+        authEnv(),
+      );
+      return response!.json();
+    };
+    const expected = { tenantId: tenant.tenantId, slug: "launch-kitchen", name: "Launch Kitchen" };
+    expect((await status()).restaurants).toEqual([
+      { ...expected, onboardingStatus: "IN_PROGRESS" },
+    ]);
+    await database
+      .prepare("UPDATE onboarding_wizard_progress SET status='COMPLETED' WHERE tenant_id=?")
+      .bind(tenant.tenantId)
+      .run();
+    expect((await status()).restaurants).toEqual([{ ...expected, onboardingStatus: "COMPLETED" }]);
+  });
+
   it("allows public auth login before unrelated production bindings are present", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

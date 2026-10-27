@@ -58,7 +58,7 @@ function RegisterPage() {
           window.location.assign("/login?account=1");
           return;
         }
-        enterRestaurant(destination.tenantId);
+        enterRestaurant(status.restaurants[0]!);
         return;
       }
       if (destination.kind === "VERIFY") {
@@ -256,7 +256,7 @@ function RegisterPage() {
               key={restaurant.tenantId}
               type="button"
               className="w-full rounded-md border border-border px-3 py-3 text-left text-sm font-semibold hover:bg-accent/50"
-              onClick={() => enterRestaurant(restaurant.tenantId)}
+              onClick={() => enterRestaurant(restaurant)}
             >
               {restaurant.name}
             </button>
