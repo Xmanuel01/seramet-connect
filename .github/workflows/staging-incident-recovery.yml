@@ -60,6 +60,9 @@ jobs:
   recovery:
     if: >-
       github.ref == 'refs/heads/main' ||
+      (inputs.operation == 'verify-backup-restore' &&
+       github.ref == 'refs/heads/codex/validated-release-candidate' &&
+       github.actor == github.repository_owner && github.triggering_actor == github.repository_owner) ||
       ((inputs.operation == 'verify-backup-restore' || inputs.operation == 'inspect-uber') &&
        github.ref == 'refs/heads/codex/malware-scanner-staging')
     runs-on: ubuntu-latest
@@ -215,6 +218,11 @@ jobs:
           SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
           SERAMET_ISOLATED_RESTORE: "true"
         run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+      - name: Verify audited no-replay hold transactions on disposable jobs
+        if: inputs.operation == 'verify-backup-restore'
+        env:
+          SERAMET_POSTGRES_URL: postgresql://postgres:restore-only@127.0.0.1:54329/seramet_restore
+        run: node scripts/verify-staging-worker-hold-postgres.mjs
       - name: Remove temporary database backup
         if: always() && inputs.operation == 'verify-backup-restore'
         shell: bash

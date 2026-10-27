@@ -21,7 +21,7 @@ jobs:
       - name: Reject accidental Lovable source integration
         run: node --test scripts/assert-no-lovable-source.test.mjs && node scripts/assert-no-lovable-source.mjs
       - name: Verify required release-input policy
-        run: node --test scripts/main-branch-protection.test.mjs
+        run: node --test scripts/main-branch-protection.test.mjs scripts/solo-release-approval.test.mjs
       - run: npm ci
       - run: npm ls --all
       - run: npm audit --omit=dev --audit-level=high
@@ -34,6 +34,7 @@ jobs:
       - run: node --test scripts/production-recovery.test.mjs
       - run: node --test scripts/verify-staging-release-gate.test.mjs
       - run: node --test scripts/inspect-staging-backlog.test.mjs
+      - run: node --test scripts/staging-worker-hold-plan.test.mjs
       - run: node --test scripts/verify-certification-schema-postgres.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
@@ -89,6 +90,8 @@ jobs:
           node scripts/verify-staging-data-api-lockdown-postgres.mjs
           # The second run starts contained, as a post-containment backup does.
           node scripts/verify-staging-data-api-lockdown-postgres.mjs
+      - name: Verify audited no-replay holds on disposable jobs
+        run: node scripts/verify-staging-worker-hold-postgres.mjs
 
   postgres-recovery-fixture:
     runs-on: ubuntu-24.04
