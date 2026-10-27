@@ -45,7 +45,7 @@ export class PostgresD1Database implements D1Database {
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new PostgresPreparedStatement(this.pool, normalizePostgresSql(query), []);
+    return new PostgresPreparedStatement(this.pool, normalizePostgresSql(query), [], this);
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
@@ -98,10 +98,11 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     private readonly executor: QueryExecutor,
     private readonly query: string,
     private readonly values: unknown[],
+    private readonly database: PostgresD1Database,
   ) {}
 
   bind(...values: unknown[]) {
-    return new PostgresPreparedStatement(this.executor, this.query, values);
+    return new PostgresPreparedStatement(this.executor, this.query, values, this.database);
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
@@ -121,7 +122,9 @@ class PostgresPreparedStatement implements D1PreparedStatement {
   }
 
   async run<T = unknown>(): Promise<D1Result<T>> {
-    return this.runWith<T>(this.executor);
+    // Single writes and their balance-checking triggers must participate in the
+    // same serialization contract as batches, including expiry and reversals.
+    return (await this.database.batch<T>([this]))[0]!;
   }
 
   async runWith<T = unknown>(executor: QueryExecutor): Promise<D1Result<T>> {

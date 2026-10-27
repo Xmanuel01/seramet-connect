@@ -15,6 +15,37 @@ function fixture(failure?: Error & { code?: string }) {
 }
 
 describe("PostgreSQL serializable batch contract", () => {
+  it("serializes a standalone write through the same checked transaction", async () => {
+    const { db, query, release } = fixture();
+    const result = await db.prepare("SELECT 1 AS value").bind().run();
+    expect(result.success).toBe(true);
+    expect(query.mock.calls.map((c) => c[0])).toEqual([
+      "BEGIN ISOLATION LEVEL SERIALIZABLE",
+      "SELECT 1 AS value",
+      "COMMIT",
+    ]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back a standalone serialization failure without replaying stale amounts", async () => {
+    const { db, query, release } = fixture(
+      Object.assign(new Error("private SQL"), { code: "40001" }),
+    );
+    const error = await db
+      .prepare("SELECT 1 AS value")
+      .run()
+      .catch((e) => e);
+    expect(publicError(error, "standalone")).toMatchObject({
+      status: 409,
+      body: { code: "CONFLICT" },
+    });
+    expect(query.mock.calls.map((c) => c[0])).toEqual([
+      "BEGIN ISOLATION LEVEL SERIALIZABLE",
+      "SELECT 1 AS value",
+      "ROLLBACK",
+    ]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
   it("commits the complete batch at serializable isolation and releases its connection", async () => {
     const { db, query, release } = fixture();
     const result = await db.batch([db.prepare("SELECT 1 AS value")]);

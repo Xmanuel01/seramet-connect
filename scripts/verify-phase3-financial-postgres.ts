@@ -7,6 +7,7 @@ import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes } from "@/platform/permissions";
 import { PostgresD1Database } from "@/server/database/postgres-database";
+import { ServerOperationError } from "@/server/errors";
 
 const raw = process.env.SERAMET_POSTGRES_URL;
 const target = raw ? new URL(raw) : null;
@@ -337,13 +338,19 @@ async function verifyValue() {
   console.log(
     "PostgreSQL funded gift cards: issue/redeem/refund, liability reconciliation, replay, currency and forced double-spend race PASS",
   );
+  const overlapCustomer = await new CrmService(db, actor).createCustomer({
+    displayName: "Synthetic expiry contender",
+    preferredBranchId: branchId,
+    createdSource: "PHASE3_CI",
+  });
+  await service.joinProgram(overlapCustomer.id, program.id);
   await db
     .prepare(
       "INSERT INTO loyalty_ledger(tenant_id,id,customer_id,program_id,branch_id,entry_type,points,source_type,source_id,business_date,expires_at,reason,actor_id,correlation_id,idempotency_key,created_at) VALUES(?,'overlap-earn',?,?,?,'EARN',100,'CI','overlap-earn',?,?,'Synthetic expiry overlap',?,'overlap-earn','overlap-earn',?)",
     )
     .bind(
       tenantId,
-      customer.id,
+      overlapCustomer.id,
       program.id,
       branchId,
       businessDate,
@@ -354,11 +361,21 @@ async function verifyValue() {
     .run();
   await control.query("BEGIN");
   await control.query("LOCK TABLE public.audit_events IN SHARE MODE");
-  const inFlightRedemption = service.redeemPoints({ ...redeem("expiry-overlap"), points: 75 }).then(
-    () => "committed",
-    () => "rejected",
-  );
+  const inFlightRedemption = service
+    .redeemPoints({ ...redeem("expiry-overlap"), customerId: overlapCustomer.id, points: 75 })
+    .then(
+      () => "committed",
+      (error) => {
+        assert.ok(
+          error instanceof ServerOperationError &&
+            error.code === "CONFLICT" &&
+            error.status === 409,
+        );
+        return "rejected";
+      },
+    );
   let waiting = false;
+  let expiryRejected = false;
   try {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
@@ -373,15 +390,46 @@ async function verifyValue() {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.ok(waiting, "Redemption must have read and written its balance before expiry");
-    await competing.expirePoints(new Date());
+    try {
+      await competing.expirePoints(new Date());
+    } catch (error) {
+      assert.ok(
+        error instanceof ServerOperationError && error.code === "CONFLICT" && error.status === 409,
+      );
+      expiryRejected = true;
+    }
   } finally {
     await control.query("ROLLBACK");
   }
   const redemptionOutcome = await inFlightRedemption;
-  const overlapBalance = Number(await balance());
+  const overlapBalance = Number(
+    await db
+      .prepare(
+        "SELECT SUM(points) AS points FROM loyalty_ledger WHERE tenant_id=? AND customer_id=? AND program_id=?",
+      )
+      .bind(tenantId, overlapCustomer.id, program.id)
+      .first("points"),
+  );
   assert.ok(
     overlapBalance >= 0,
     `Expiry overlapping a redemption must not overdraw points: ${overlapBalance}; redemption ${redemptionOutcome}`,
+  );
+  assert.ok(
+    expiryRejected || redemptionOutcome === "rejected",
+    "One overlapping writer must roll back",
+  );
+  await service.expirePoints(new Date());
+  assert.equal(
+    Number(
+      await db
+        .prepare(
+          "SELECT SUM(points) AS points FROM loyalty_ledger WHERE tenant_id=? AND customer_id=? AND program_id=?",
+        )
+        .bind(tenantId, overlapCustomer.id, program.id)
+        .first("points"),
+    ),
+    0,
+    "Retry recomputes the remaining amount and expires it once",
   );
   console.log("PostgreSQL points expiry versus an in-flight redemption preserves the balance PASS");
 }
