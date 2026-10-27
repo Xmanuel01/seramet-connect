@@ -74,7 +74,7 @@ const templateSchema = z
 
 const templateVersionSchema = z
   .object({
-    configuration: z.record(z.unknown()),
+    configuration: z.record(z.string(), z.unknown()),
     publish: z.boolean().default(false),
   })
   .strict();
@@ -253,7 +253,7 @@ const franchiseRelationshipSchema = z
     effectiveFrom: z.string().datetime({ offset: true }),
     effectiveTo: z.string().datetime({ offset: true }).optional(),
     status: z.enum(["PROSPECT", "ONBOARDING", "ACTIVE", "SUSPENDED", "TERMINATED", "EXPIRED"]),
-    reportingScope: z.record(z.unknown()).default({}),
+    reportingScope: z.record(z.string(), z.unknown()).default({}),
   })
   .strict()
   .refine((value) => !value.effectiveTo || value.effectiveTo >= value.effectiveFrom, {
@@ -272,7 +272,7 @@ const franchiseFeeDefinitionSchema = z
     fixedAmountMinor: z.number().int().safe().nonnegative().optional(),
     currency: z.string().trim().length(3).optional(),
     exclusions: z.array(z.unknown()).max(100).default([]),
-    accountMapping: z.record(z.unknown()).default({}),
+    accountMapping: z.record(z.string(), z.unknown()).default({}),
     effectiveFrom: z.string().datetime({ offset: true }),
     effectiveTo: z.string().datetime({ offset: true }).optional(),
     active: z.boolean().default(true),

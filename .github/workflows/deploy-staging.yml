@@ -106,18 +106,40 @@ jobs:
             if npx --yes wrangler@4.149.0 queues create "$queue_name"; then
               return 0
             fi
-            npx --yes wrangler@4.149.0 queues list --json > /tmp/queues-after-create.json
+
+            curl --fail-with-body --silent --show-error \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/queues?per_page=100" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -o /tmp/queues-after-create.json
+
             QUEUE_NAME="$queue_name" node <<'NODE'
           const fs = require("fs");
-          const rows = JSON.parse(fs.readFileSync("/tmp/queues-after-create.json", "utf8"));
-          if (!rows.some((row) => (row.queue_name ?? row.name) === process.env.QUEUE_NAME)) {
-            throw new Error(`Queue ${process.env.QUEUE_NAME} could not be created or verified`);
+          const payload = JSON.parse(
+            fs.readFileSync("/tmp/queues-after-create.json", "utf8")
+          );
+          if (!payload.success) {
+            throw new Error("Could not verify existing Cloudflare queues");
           }
+          const rows = Array.isArray(payload.result)
+            ? payload.result
+            : payload.result?.queues;
+          if (!Array.isArray(rows)) {
+            throw new Error("Unexpected Cloudflare queue response");
+          }
+          if (!rows.some(
+            row => (row.queue_name ?? row.name) === process.env.QUEUE_NAME
+          )) {
+            throw new Error(
+              `Queue ${process.env.QUEUE_NAME} could not be created or verified`
+            );
+          }
+          console.log(`Verified existing queue: ${process.env.QUEUE_NAME}`);
           NODE
           }
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_QUEUE"
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_DLQ"
 
+          
       - name: Require release-specific backup and pending-work approval
         env:
           SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}

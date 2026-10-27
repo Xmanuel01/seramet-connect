@@ -28,7 +28,7 @@ export const nodeInputSchema = z
     effectiveTo: iso.optional(),
     timezone: z.string().trim().max(80).optional(),
     currency: z.string().trim().min(3).max(3).optional(),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
 
@@ -41,9 +41,9 @@ export const legalEntitySchema = z
     registrationReference: z.string().trim().max(120).optional(),
     countryCode: z.string().trim().min(2).max(3),
     baseCurrency: z.string().trim().length(3),
-    taxIdentifiers: z.record(z.string()).default({}),
-    fiscalConfiguration: z.record(z.unknown()).default({}),
-    accountingConfiguration: z.record(z.unknown()).default({}),
+    taxIdentifiers: z.record(z.string(), z.string()).default({}),
+    fiscalConfiguration: z.record(z.string(), z.unknown()).default({}),
+    accountingConfiguration: z.record(z.string(), z.unknown()).default({}),
     status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED", "CLOSED"]).default("ACTIVE"),
   })
   .strict();
@@ -54,7 +54,7 @@ export const policyDefinitionSchema = z
     code: z.string().trim().min(1).max(120),
     name: z.string().trim().min(1).max(160),
     category: z.string().trim().min(1).max(80),
-    valueSchema: z.record(z.unknown()).default({}),
+    valueSchema: z.record(z.string(), z.unknown()).default({}),
     sensitive: z.boolean().default(false),
   })
   .strict();
@@ -76,7 +76,7 @@ export const policyAssignmentSchema = z
     ]),
     minimumValueMinor: z.number().int().safe().optional(),
     maximumValueMinor: z.number().int().safe().optional(),
-    approvalPolicy: z.record(z.unknown()).default({}),
+    approvalPolicy: z.record(z.string(), z.unknown()).default({}),
     approvedExceptionId: id.optional(),
     effectiveFrom: iso.optional(),
     effectiveTo: iso.optional(),
