@@ -284,6 +284,7 @@ function RegisterPage() {
       }
     >
       <form
+        key={stage}
         ref={formRef}
         onSubmit={stage === "ACCOUNT" ? createAccount : createRestaurant}
         className="space-y-4"
@@ -291,7 +292,6 @@ function RegisterPage() {
         <label className="block text-sm font-medium">
           Your name
           <input
-            key={stage}
             name={stage === "ACCOUNT" ? "name" : "administratorName"}
             defaultValue={stage === "RESTAURANT" ? accountName : undefined}
             className={authInputClass}

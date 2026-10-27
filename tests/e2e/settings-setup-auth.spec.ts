@@ -619,6 +619,7 @@ for (const width of [1366, 390]) {
     });
     await page.goto("/register");
     await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await autofillRegistration(page);
     await page.getByLabel("Your name").fill("Unsubmitted account draft");
     authenticated = true;
     const signedIn = page.waitForResponse("**/api/seramet/public/auth/status");
@@ -626,6 +627,11 @@ for (const width of [1366, 390]) {
     await registrationCheckFinished(page, signedIn);
     await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
     await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Restaurant name", { exact: true })).toHaveValue("");
+    await expect(page.locator('[data-autofill-probe="original-input"]')).toHaveCount(0);
+    await expect(page.getByLabel("Legal business name")).toHaveValue("");
+    await expect(page.getByLabel("Public URL name")).toHaveValue("");
     await page.reload();
     await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
     await page.getByLabel("Restaurant name", { exact: true }).fill("Account name fixture");
