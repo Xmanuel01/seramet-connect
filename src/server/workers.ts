@@ -1499,13 +1499,16 @@ export async function queueInventoryAvailabilityChanges(
 
 async function refreshInventoryExpiryAlerts(env: SerametEnv, tenantId: string) {
   const stamp = new Date().toISOString();
+  const cutoff = new Date(stamp);
+  // SQLite date('now') uses UTC; keep that boundary without a dialect-specific function.
+  cutoff.setUTCDate(cutoff.getUTCDate() + 3);
   const lots = await env
     .SERAMET_DB!.prepare(
       `SELECT branch_id,id,inventory_item_id,expiry_date,quantity_remaining_minor
      FROM inventory_lots WHERE tenant_id=? AND status='AVAILABLE' AND expiry_date IS NOT NULL
-       AND expiry_date<=date('now','+3 day') LIMIT 500`,
+       AND expiry_date<=? LIMIT 500`,
     )
-    .bind(tenantId)
+    .bind(tenantId, cutoff.toISOString().slice(0, 10))
     .all<{
       branch_id: string;
       id: string;

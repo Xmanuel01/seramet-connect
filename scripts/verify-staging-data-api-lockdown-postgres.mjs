@@ -22,6 +22,9 @@ try {
   await db.query(
     "DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
   );
+  // A restored, already-contained schema has no exposed table. Create the
+  // negative fixture explicitly, only behind this script's loopback DB fence.
+  await db.query("CREATE TABLE seramet_lockdown_test_fixture (id integer PRIMARY KEY)");
   await db.query("GRANT USAGE ON SCHEMA public TO anon, authenticated");
   await db.query("GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated");
   const sql = await readFile("ops/sql/staging-public-schema-lockdown.sql", "utf8");
@@ -111,6 +114,7 @@ try {
   console.log(
     "DISPOSABLE POSTGRES: abandoned lease gate, active/terminal exclusions and read-only rollback PASSED",
   );
+  await db.query("DROP TABLE seramet_lockdown_test_fixture");
   console.log("DISPOSABLE POSTGRES: approval guard and public-schema grants/RLS lockdown PASSED");
 } finally {
   await db.end();

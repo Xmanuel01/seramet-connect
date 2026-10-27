@@ -85,7 +85,10 @@ jobs:
       - name: Execute authoritative CRM pipeline and campaign queries on PostgreSQL
         run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
       - name: Validate public schema lockdown on disposable PostgreSQL
-        run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+        run: |
+          node scripts/verify-staging-data-api-lockdown-postgres.mjs
+          # The second run starts contained, as a post-containment backup does.
+          node scripts/verify-staging-data-api-lockdown-postgres.mjs
 
   postgres-recovery-fixture:
     runs-on: ubuntu-24.04
