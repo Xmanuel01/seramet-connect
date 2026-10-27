@@ -917,6 +917,55 @@ test("an existing owner resumes unfinished onboarding without recreating the res
   expect(registrationRequests).toBe(0);
 });
 
+test("administrator sign-in preserves credentials entered before hydration", async ({ page }) => {
+  let releaseScripts!: () => void;
+  const scriptsReady = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  let credentials: unknown;
+  await page.route("**/*", async (route) => {
+    if (
+      route.request().resourceType() === "script" &&
+      new URL(route.request().url()).pathname !== "/theme-init.js"
+    ) {
+      await scriptsReady;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/seramet/public/auth/login", (route) => {
+    credentials = route.request().postDataJSON();
+    return route.fulfill({ json: { authenticated: true } });
+  });
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({ json: anonymousRegistrationSession }),
+  );
+  try {
+    await page.goto("/login?account=1", { waitUntil: "commit" });
+    await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+    await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+    const submit = page.getByRole("button", { name: "Sign in", exact: true });
+    await expect(submit).toBeDisabled();
+    releaseScripts();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByLabel("Email", { exact: true })).toHaveValue(registrationDraft.email);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+      registrationDraft.password,
+    );
+    await submit.click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    expect(credentials).toEqual({
+      email: registrationDraft.email,
+      password: registrationDraft.password,
+    });
+    await expect(page).toHaveURL(/\/login\?account=1$/);
+    expect(
+      await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+    ).toBeNull();
+  } finally {
+    releaseScripts();
+  }
+});
+
 for (const status of [200, 503]) {
   test(`administrator sign-in requires a confirmed server session after login (status ${status})`, async ({
     page,

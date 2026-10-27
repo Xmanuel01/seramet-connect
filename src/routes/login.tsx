@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { AuthShell, authButtonClass, authInputClass } from "@/components/auth/AuthShell";
@@ -21,18 +21,23 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
 
-  const submit = async (event: FormEvent) => {
+  useEffect(() => setReady(true), []);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
     setBusy(true);
     setMessage(undefined);
     try {
-      await authMutation("login", { email, password });
+      await authMutation("login", {
+        email: String(data.get("email")),
+        password: String(data.get("password")),
+      });
       const status = await authStatus();
       if (!status.authenticated) {
         throw new Error("We could not confirm your sign-in. Please try again.");
@@ -108,11 +113,10 @@ function LoginPage() {
             <input
               className={authInputClass}
               type="email"
+              name="email"
               autoComplete="email"
               required
               maxLength={254}
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
             />
           </label>
           <label className="block text-sm font-medium">
@@ -120,12 +124,11 @@ function LoginPage() {
             <input
               className={authInputClass}
               type="password"
+              name="password"
               autoComplete="current-password"
               required
               minLength={10}
               maxLength={200}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
             />
           </label>
           {message && (
@@ -133,7 +136,7 @@ function LoginPage() {
               {message}
             </p>
           )}
-          <button className={authButtonClass} type="submit" disabled={busy}>
+          <button className={authButtonClass} type="submit" disabled={busy || !ready}>
             {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Sign in
           </button>
