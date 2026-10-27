@@ -179,13 +179,13 @@ async function verifyStock() {
 async function assertStock(quantity: number, value: number) {
   const row = await db
     .prepare(
-      "SELECT quantity_minor,total_value_minor FROM inventory_balances WHERE tenant_id=? AND warehouse_id=? AND inventory_item_id='item'",
+      "SELECT quantity_minor,total_value_minor FROM inventory_balances WHERE tenant_id=? AND warehouse_id=? AND item_id='item'",
     )
     .bind(tenantId, warehouseId)
     .first<{ quantity_minor: number; total_value_minor: number }>();
   const ledger = await db
     .prepare(
-      "SELECT SUM(quantity_minor) AS quantity,SUM(total_cost_minor) AS value FROM inventory_movements WHERE tenant_id=? AND inventory_item_id='item'",
+      "SELECT SUM(quantity_minor) AS quantity,SUM(total_cost_minor) AS value FROM inventory_movements WHERE tenant_id=? AND item_id='item'",
     )
     .bind(tenantId)
     .first<{ quantity: number; value: number }>();

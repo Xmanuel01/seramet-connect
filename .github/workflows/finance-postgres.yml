@@ -52,10 +52,12 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run every existing migration in disposable PostgreSQL
+        id: migrations
         run: npm run migrate:postgres
       - name: Verify real journal accounting service, permissions and SQL
         run: ./node_modules/.bin/vite-node scripts/verify-finance-postgres.ts
       - name: Verify funded stock, loyalty and gift-card reconciliation under real contention
         run: ./node_modules/.bin/vite-node scripts/verify-phase3-financial-postgres.ts
       - name: Verify durable retry exhaustion and killed-process recovery
+        if: ${{ !cancelled() && steps.migrations.outcome == 'success' }}
         run: ./node_modules/.bin/vite-node scripts/verify-phase3-worker-postgres.ts
