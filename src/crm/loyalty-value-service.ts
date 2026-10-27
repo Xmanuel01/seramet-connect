@@ -1338,7 +1338,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         `SELECT g.id,g.token_last_four,g.status,g.currency,g.original_value_minor,g.issued_at,g.expires_at,
                 COALESCE(SUM(l.amount_minor),0) AS balance_minor
          FROM gift_cards g LEFT JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
-         WHERE g.tenant_id=? GROUP BY g.id ORDER BY g.issued_at DESC LIMIT 500`,
+         WHERE g.tenant_id=? GROUP BY g.tenant_id,g.id ORDER BY g.issued_at DESC LIMIT 500`,
       )
       .bind(this.actor.tenantId)
       .all<Record<string, unknown>>();
@@ -1482,7 +1482,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         `SELECT g.id,g.token_last_four,g.status,g.currency,g.expires_at,
                 COALESCE(SUM(l.amount_minor),0) AS balance_minor
          FROM gift_cards g LEFT JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
-         WHERE g.tenant_id=? AND g.token_hash=? GROUP BY g.id`,
+         WHERE g.tenant_id=? AND g.token_hash=? GROUP BY g.tenant_id,g.id`,
       )
       .bind(this.actor.tenantId, hash)
       .first<{

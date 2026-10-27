@@ -310,6 +310,22 @@ async function verifyValue() {
   await service.refundGiftCardValue(refund);
   assert.equal(Number((await service.giftCardBalance(card.token)).balance_minor), 50_000);
   assert.equal(-(await accountBalance("liability")), 50_000);
+  assert.ok((await service.listGiftCards()).some((entry) => entry.id === card.id));
+  const expiring = await service.issueGiftCard({
+    ...issue,
+    amountMinor: 2_000,
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    idempotencyKey: "gift-expiry-issue",
+  });
+  assert.ok(expiring.token);
+  const asOf = new Date(Date.now() + 31 * 86_400_000);
+  await service.expireStoredValue(asOf);
+  const expired = await service.giftCardBalance(expiring.token);
+  assert.equal(Number(expired.balance_minor), 0);
+  assert.equal(expired.status, "EXPIRED");
+  assert.equal((await service.expireStoredValue(asOf)).expiredGiftCards, 0);
+  // Expiry does not recognize breakage revenue without the tenant's finance policy.
+  assert.equal(-(await accountBalance("liability")), 52_000);
   await assert.rejects(
     service.redeemGiftCard({ ...giftRedeem("currency"), currency: "USD" }),
     /currency/i,
