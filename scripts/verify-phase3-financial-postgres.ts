@@ -356,6 +356,7 @@ async function blockedRace<T>(
   try {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
+      await control.query("SELECT pg_stat_clear_snapshot()");
       const observed = await control.query(
         "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='active' AND wait_event_type='Lock'",
       );
