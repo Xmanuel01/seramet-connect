@@ -13,9 +13,19 @@ on:
         type: boolean
         default: false
       owner_approval_comment_id:
-        description: "Maintenance requires unedited owner approval of this exact tested SHA, scope staging"
+        description: "Unedited owner approval of this exact tested SHA, scope staging"
         required: false
         type: string
+      scanner_only:
+        description: "Configure scanner/queues and existing app only; skip migrations, origin credentials and provider secrets"
+        required: true
+        type: boolean
+        default: false
+      release_pr:
+        description: "Main-targeted release PR containing the exact approved scanner candidate"
+        required: true
+        type: string
+        default: "156"
 
 concurrency:
   group: seramet-staging
@@ -29,9 +39,10 @@ permissions:
 jobs:
   deploy:
     if: >-
-      github.ref == 'refs/heads/main' ||
-      (inputs.maintenance_only && github.ref == 'refs/heads/codex/validated-release-candidate' &&
-       github.actor == github.repository_owner && github.triggering_actor == github.repository_owner)
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/codex/validated-release-candidate' ||
+       github.ref == 'refs/heads/codex/scanner-production-release')
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
@@ -54,6 +65,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER_COMMENT_ID: ${{ inputs.owner_approval_comment_id }}
         run: node scripts/solo-release-approval.mjs --pr 156 --comment-id "$OWNER_COMMENT_ID" --sha "$GITHUB_SHA" --scope staging
+      - name: Verify exact owner approval for the full staging scanner candidate
+        if: ${{ !inputs.maintenance_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_COMMENT_ID: ${{ inputs.owner_approval_comment_id }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+        run: node scripts/solo-release-approval.mjs --pr "$RELEASE_PR" --comment-id "$OWNER_COMMENT_ID" --sha "$GITHUB_SHA" --scope staging
       - run: npm ci
       - run: npm run validate
       - name: Resolve existing Cloudflare staging bindings
@@ -136,14 +154,11 @@ jobs:
             if npx --yes wrangler@4.149.0 queues create "$queue_name"; then
               return 0
             fi
-            npx --yes wrangler@4.149.0 queues list --json > /tmp/queues-after-create.json
-            QUEUE_NAME="$queue_name" node <<'NODE'
-          const fs = require("fs");
-          const rows = JSON.parse(fs.readFileSync("/tmp/queues-after-create.json", "utf8"));
-          if (!rows.some((row) => (row.queue_name ?? row.name) === process.env.QUEUE_NAME)) {
-            throw new Error(`Queue ${process.env.QUEUE_NAME} could not be created or verified`);
-          }
-          NODE
+            curl --fail-with-body --silent --show-error \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/queues?per_page=100" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -o /tmp/queues-after-create.json
+            node scripts/verify-cloudflare-queue-response.mjs "$queue_name" /tmp/queues-after-create.json
           }
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_QUEUE"
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_DLQ"
@@ -163,7 +178,7 @@ jobs:
       # Only after resource and release safety gates may any staging database
       # migrations or Cloudflare origin settings change.
       - name: Apply PostgreSQL migrations
-        if: ${{ !inputs.maintenance_only }}
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         run: npm run migrate:postgres
         env:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
@@ -175,7 +190,7 @@ jobs:
         run: node scripts/assert-staging-api-posture.mjs
 
       - name: Synchronize Hyperdrive origin credentials
-        if: ${{ !inputs.maintenance_only }}
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         run: |
           npx --yes wrangler@4.15.2 hyperdrive update "$SERAMET_CLOUDFLARE_HYPERDRIVE_ID" \
             --connection-string "$SERAMET_POSTGRES_URL"
@@ -229,7 +244,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Configure Uber Eats sandbox secrets
-        if: ${{ !inputs.maintenance_only }}
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         shell: bash
         run: |
           set -euo pipefail

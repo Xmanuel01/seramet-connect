@@ -1,9 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { assertPrimaryScannerResources } from "./scanner-deployment-resources.mjs";
 
 const target = process.argv[2] ?? "staging";
 if (!new Set(["staging", "production"]).has(target)) {
   throw new Error("Target must be staging or production");
 }
+assertPrimaryScannerResources(target, process.env);
 
 const reuseExistingVars = process.env.SERAMET_REUSE_EXISTING_VARS === "true";
 const required = [

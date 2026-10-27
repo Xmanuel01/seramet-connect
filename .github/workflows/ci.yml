@@ -33,6 +33,7 @@ jobs:
       - run: node --test scripts/verify-production-health.test.mjs
       - run: node --test scripts/production-recovery.test.mjs
       - run: node --test scripts/verify-staging-release-gate.test.mjs
+      - run: node --test scripts/scanner-deployment-resources.test.mjs scripts/verify-cloudflare-queue-response.test.mjs
       - run: node --test scripts/inspect-staging-backlog.test.mjs
       - run: node --test scripts/staging-worker-hold-plan.test.mjs
       - run: node --test scripts/verify-certification-schema-postgres.test.mjs

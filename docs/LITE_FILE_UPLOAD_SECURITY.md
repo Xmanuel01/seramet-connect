@@ -5,7 +5,7 @@ frontend and primary API Worker do not contain or run an antivirus engine.
 Imports remain unavailable unless every required binding and the shared scanner
 authentication secret are configured.
 
-## Staging architecture
+## Isolated architecture
 
 `authenticated upload -> private R2 quarantine -> scan queue -> dedicated scanner Worker -> on-demand ClamAV container -> authenticated verdict -> existing import worker`
 
@@ -32,6 +32,12 @@ only as a protected staging environment secret and as a secret on both Workers.
 It must not be committed, logged, returned to the browser or regenerated during
 an ordinary deployment. Rotate it as a coordinated scanner/primary-Worker
 maintenance operation while imports are disabled.
+
+Production uses a distinct production evidence key, scanner Worker, queues and
+private production bucket; it never binds staging resources. See
+[the guarded production release runbook](SCANNER_PRODUCTION_RELEASE.md) for
+resource identities, exact-commit approvals and certification prerequisites.
+Production support in the configuration generator is not deployed acceptance.
 
 ## Certification
 

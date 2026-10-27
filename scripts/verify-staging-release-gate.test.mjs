@@ -81,16 +81,25 @@ test("primary-only maintenance retains gates and cannot create scanners or rewri
   );
   for (const name of [
     "Ensure isolated scanner queues exist",
-    "Apply PostgreSQL migrations",
-    "Synchronize Hyperdrive origin credentials",
     "Deploy isolated scanner Worker and ClamAV container",
     "Configure scanner authentication secret",
     "Configure primary Worker scanner authentication secret",
-    "Configure Uber Eats sandbox secrets",
   ]) {
     assert.ok(
       workflow.includes(`- name: ${name}\n        if: \${{ !inputs.maintenance_only }}`),
       `${name} must not run during primary-only maintenance`,
+    );
+  }
+  for (const name of [
+    "Apply PostgreSQL migrations",
+    "Synchronize Hyperdrive origin credentials",
+    "Configure Uber Eats sandbox secrets",
+  ]) {
+    assert.ok(
+      workflow.includes(
+        `- name: ${name}\n        if: \${{ !inputs.maintenance_only && !inputs.scanner_only }}`,
+      ),
+      `${name} must not run during maintenance or scanner-only releases`,
     );
   }
   assert.ok(workflow.includes("run: node scripts/solo-release-approval.mjs --pr 156"));
@@ -102,4 +111,20 @@ test("primary-only maintenance retains gates and cannot create scanners or rewri
   ]) {
     assert.ok(workflow.includes(`- name: ${step}\n        `), `${step} must remain present`);
   }
+});
+
+test("full scanner release has an exact owner approval gate before infrastructure writes", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  const gate = workflow.indexOf('run: node scripts/solo-release-approval.mjs --pr "$RELEASE_PR"');
+  assert.ok(gate > 0);
+  assert.ok(gate < workflow.indexOf("queues create"));
+  assert.ok(
+    workflow.includes(
+      "github.actor == github.repository_owner && github.triggering_actor == github.repository_owner",
+    ),
+  );
+  assert.ok(workflow.includes('node scripts/verify-cloudflare-queue-response.mjs "$queue_name"'));
 });
