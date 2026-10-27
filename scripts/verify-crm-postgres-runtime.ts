@@ -10,8 +10,17 @@ import { handleAttendanceDelays } from "@/server/attendance-delay-api";
 import { staffStationAccess } from "@/server/staff-station-access";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import { handleWorkerQueue } from "@/server/workers";
+import { ServerOperationError } from "@/server/errors";
 
 const url = process.env.SERAMET_POSTGRES_URL;
+function assertAttendanceConflict(error: unknown) {
+  // Either the unique guard wins or SERIALIZABLE rejects the stale writer first.
+  assert.ok(
+    (error instanceof ServerOperationError && error.code === "CONFLICT" && error.status === 409) ||
+      (typeof error === "object" && error !== null && "code" in error && error.code === "23505"),
+    "Losing attendance operation must fail with a specific concurrency conflict",
+  );
+}
 const target = url ? new URL(url) : null;
 if (
   process.env.CI !== "true" ||
@@ -290,7 +299,8 @@ async function verifyAttendanceTransactions(tenantId: string, branchId: string) 
     ]);
     assert.equal(created.filter((outcome) => outcome.status === "fulfilled").length, 1);
     const createFailure = created.find((outcome) => outcome.status === "rejected");
-    assert.ok(createFailure?.status === "rejected" && createFailure.reason.code === "23505");
+    assert.ok(createFailure?.status === "rejected");
+    assertAttendanceConflict(createFailure.reason);
     const session = await db
       .prepare(
         "SELECT id,version FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=?",
@@ -325,9 +335,8 @@ async function verifyAttendanceTransactions(tenantId: string, branchId: string) 
     const corrected = await Promise.allSettled([correct(db), correct(second)]);
     assert.equal(corrected.filter((outcome) => outcome.status === "fulfilled").length, 1);
     const correctionFailure = corrected.find((outcome) => outcome.status === "rejected");
-    assert.ok(
-      correctionFailure?.status === "rejected" && correctionFailure.reason.code === "23505",
-    );
+    assert.ok(correctionFailure?.status === "rejected");
+    assertAttendanceConflict(correctionFailure.reason);
     const counts = await db
       .prepare(
         "SELECT COUNT(*) count FROM employee_attendance_events WHERE tenant_id=? AND actor_id=?",
