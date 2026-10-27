@@ -93,11 +93,12 @@ jobs:
       SERAMET_PHASE3_RECOVERY_APPROVED_SHA: ${{ inputs.approved_recovery_sha }}
       SERAMET_PHASE3_FULL_RECOVERY_ACK: ${{ inputs.acknowledge_full_recovery }}
       SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED }}
-      SERAMET_FULL_RECOVERY_DIRECTORY: ${{ runner.temp }}/phase3-full-recovery
     steps:
       - uses: actions/checkout@v4
       - name: Authorize exact owner-approved read-only recovery
-        run: node --input-type=module -e "import {authorizeFullRecovery} from './scripts/staging-full-recovery-core.mjs'; authorizeFullRecovery(process.env)"
+        run: |
+          node --input-type=module -e "import {authorizeFullRecovery} from './scripts/staging-full-recovery-core.mjs'; authorizeFullRecovery(process.env)"
+          echo "SERAMET_FULL_RECOVERY_DIRECTORY=$RUNNER_TEMP/phase3-full-recovery" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
