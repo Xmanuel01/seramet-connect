@@ -207,27 +207,44 @@ export async function handleSupabaseAuthApi(
       return Response.json({
         ok: true,
         authenticated: true,
-        identity: { email: identity.email ?? null, phone: identity.phone ?? null },
+        identity: {
+          email: identity.email ?? null,
+          phone: identity.phone ?? null,
+          displayName: identity.displayName ?? null,
+        },
         restaurants: [],
       });
     }
 
     const result = await database
       .prepare(
-        `SELECT i.tenant_id,t.slug,t.trading_name
+        `SELECT i.tenant_id,t.slug,t.trading_name,p.status AS onboarding_status
        FROM identity_accounts i JOIN tenants t ON t.id=i.tenant_id AND t.active=1
+       LEFT JOIN onboarding_wizard_progress p ON p.tenant_id=t.id
        WHERE i.provider=? AND i.subject=? ORDER BY t.trading_name,t.id LIMIT 50`,
       )
       .bind(identity.provider, identity.subject)
-      .all<{ tenant_id: string; slug: string; trading_name: string }>();
+      .all<{
+        tenant_id: string;
+        slug: string;
+        trading_name: string;
+        onboarding_status: string | null;
+      }>();
     return Response.json({
       ok: true,
       authenticated: true,
-      identity: { email: identity.email ?? null, phone: identity.phone ?? null },
+      identity: {
+        email: identity.email ?? null,
+        phone: identity.phone ?? null,
+        displayName: identity.displayName ?? null,
+      },
       restaurants: (result.results ?? []).map((row) => ({
         tenantId: row.tenant_id,
         slug: row.slug,
         name: row.trading_name,
+        ...(row.onboarding_status === "IN_PROGRESS" || row.onboarding_status === "COMPLETED"
+          ? { onboardingStatus: row.onboarding_status }
+          : {}),
       })),
     });
   }
