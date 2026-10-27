@@ -337,6 +337,53 @@ async function verifyValue() {
   console.log(
     "PostgreSQL funded gift cards: issue/redeem/refund, liability reconciliation, replay, currency and forced double-spend race PASS",
   );
+  await db
+    .prepare(
+      "INSERT INTO loyalty_ledger(tenant_id,id,customer_id,program_id,branch_id,entry_type,points,source_type,source_id,business_date,expires_at,reason,actor_id,correlation_id,idempotency_key,created_at) VALUES(?,'overlap-earn',?,?,?,'EARN',100,'CI','overlap-earn',?,?,'Synthetic expiry overlap',?,'overlap-earn','overlap-earn',?)",
+    )
+    .bind(
+      tenantId,
+      customer.id,
+      program.id,
+      branchId,
+      businessDate,
+      new Date(Date.now() - 86_400_000).toISOString(),
+      actor.id,
+      stamp,
+    )
+    .run();
+  await control.query("BEGIN");
+  await control.query("LOCK TABLE public.audit_events IN SHARE MODE");
+  const inFlightRedemption = service.redeemPoints({ ...redeem("expiry-overlap"), points: 75 }).then(
+    () => "committed",
+    () => "rejected",
+  );
+  let waiting = false;
+  try {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      await control.query("SELECT pg_stat_clear_snapshot()");
+      const pending = await control.query(
+        "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='active' AND wait_event_type='Lock'",
+      );
+      if (pending.rows[0].count >= 1) {
+        waiting = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(waiting, "Redemption must have read and written its balance before expiry");
+    await competing.expirePoints(new Date());
+  } finally {
+    await control.query("ROLLBACK");
+  }
+  const redemptionOutcome = await inFlightRedemption;
+  const overlapBalance = Number(await balance());
+  assert.ok(
+    overlapBalance >= 0,
+    `Expiry overlapping a redemption must not overdraw points: ${overlapBalance}; redemption ${redemptionOutcome}`,
+  );
+  console.log("PostgreSQL points expiry versus an in-flight redemption preserves the balance PASS");
 }
 
 async function count(table: "inventory_movements") {
