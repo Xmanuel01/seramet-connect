@@ -19,7 +19,16 @@ export function approvalOperator(env, viewer) {
   return viewer;
 }
 
-export function verifySoloApproval({ comment, pull, checks, owner, sha, scope, now = Date.now() }) {
+export function verifySoloApproval({
+  comment,
+  pull,
+  checks,
+  owner,
+  sha,
+  scope,
+  deploymentRun,
+  now = Date.now(),
+}) {
   const refuse = (reason) => {
     throw new Error("SOLO_RELEASE_REFUSED: " + reason);
   };
@@ -76,6 +85,17 @@ export function verifySoloApproval({ comment, pull, checks, owner, sha, scope, n
     )
       refuse("REQUIRED_CI_NOT_SUCCESSFUL");
   }
+  if (
+    deploymentRun &&
+    (scope !== "staging" ||
+      deploymentRun.event !== "workflow_dispatch" ||
+      deploymentRun.path !== ".github/workflows/deploy-staging.yml" ||
+      deploymentRun.head_sha !== sha ||
+      deploymentRun.actor?.login !== owner ||
+      deploymentRun.triggering_actor?.login !== owner ||
+      !Number.isSafeInteger(deploymentRun.id))
+  )
+    refuse("UNVERIFIED_DEPLOYMENT_RUN");
   const latestChecks = new Map();
   for (const check of checks.filter((entry) => entry.head_sha === sha)) {
     if (!latestChecks.has(check.name) || latestChecks.get(check.name).id < check.id)
@@ -84,8 +104,18 @@ export function verifySoloApproval({ comment, pull, checks, owner, sha, scope, n
   if (
     [...latestChecks.values()].some(
       (check) =>
-        check.status !== "completed" ||
-        !["success", "neutral", "skipped"].includes(check.conclusion),
+        !(
+          deploymentRun &&
+          check.name === "deploy" &&
+          check.app?.id === 15368 &&
+          check.status === "in_progress" &&
+          check.conclusion == null &&
+          check.details_url?.startsWith(
+            `https://github.com/Xmanuel01/seramet-connect/actions/runs/${deploymentRun.id}/job/`,
+          )
+        ) &&
+        (check.status !== "completed" ||
+          !["success", "neutral", "skipped"].includes(check.conclusion)),
     )
   )
     refuse("CANDIDATE_CHECKS_NOT_FINISHED_OR_FAILED");
@@ -135,6 +165,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const checks = api(`${base}/commits/${sha}/check-runs?per_page=100`);
   if (checks.total_count >= 100)
     throw new Error("Incomplete check inventory; review pagination before release");
+  const deploymentRun =
+    process.env.GITHUB_ACTIONS === "true" && process.env.GITHUB_WORKFLOW === "Deploy staging"
+      ? api(`${base}/actions/runs/${process.env.GITHUB_RUN_ID}`)
+      : undefined;
   const result = verifySoloApproval({
     comment,
     pull,
@@ -142,6 +176,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     owner,
     sha,
     scope,
+    deploymentRun,
   });
   if (args.includes("--publish-production-status")) {
     if (scope !== "production-promotion")

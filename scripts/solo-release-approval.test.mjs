@@ -68,6 +68,37 @@ test("owner approval is bound to this exact tested commit and action", () => {
   for (const scope of ["staging", "production-promotion"])
     assert.equal(verifySoloApproval(fixture(scope)).scope, scope);
 });
+
+test("a verified staging deployment can exclude only its own currently running job", () => {
+  const value = fixture();
+  value.deploymentRun = {
+    id: 123456,
+    event: "workflow_dispatch",
+    path: ".github/workflows/deploy-staging.yml",
+    head_sha: value.sha,
+    actor: { login: value.owner },
+    triggering_actor: { login: value.owner },
+  };
+  value.checks.push({
+    id: 200,
+    name: "deploy",
+    head_sha: value.sha,
+    app: { id: 15368 },
+    status: "in_progress",
+    conclusion: null,
+    details_url: "https://github.com/Xmanuel01/seramet-connect/actions/runs/123456/job/987",
+  });
+  assert.equal(verifySoloApproval(value).scope, "staging");
+  for (const change of [
+    { deploymentRun: { ...value.deploymentRun, id: 999999 } },
+    { deploymentRun: { ...value.deploymentRun, path: "other.yml" } },
+    { deploymentRun: { ...value.deploymentRun, triggering_actor: { login: "other" } } },
+    { scope: "production-promotion" },
+  ])
+    assert.throws(() => verifySoloApproval({ ...value, ...change }));
+  value.checks.at(-1).name = "validate";
+  assert.throws(() => verifySoloApproval(value), /CI|CHECKS/);
+});
 test("staging approval cannot be reused for production or after another push", () => {
   const value = fixture();
   assert.throws(
