@@ -25,6 +25,9 @@ try {
   // A restored, already-contained schema has no exposed table. Create the
   // negative fixture explicitly, only behind this script's loopback DB fence.
   await db.query("CREATE TABLE seramet_lockdown_test_fixture (id integer PRIMARY KEY)");
+  await db.query(
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO anon, authenticated",
+  );
   await db.query("GRANT USAGE ON SCHEMA public TO anon, authenticated");
   await db.query("GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated");
   const sql = await readFile("ops/sql/staging-public-schema-lockdown.sql", "utf8");
@@ -66,6 +69,13 @@ try {
     anon_usage: false,
     authenticated_usage: false,
   });
+  await db.query("CREATE TABLE seramet_lockdown_future_fixture (id integer PRIMARY KEY)");
+  const futureGrants = await db.query(
+    "SELECT has_table_privilege('anon','public.seramet_lockdown_future_fixture','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS anon_access, " +
+      "has_table_privilege('authenticated','public.seramet_lockdown_future_fixture','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS auth_access",
+  );
+  assert.deepEqual(futureGrants.rows[0], { anon_access: false, auth_access: false });
+  await db.query("ALTER TABLE seramet_lockdown_future_fixture ENABLE ROW LEVEL SECURITY");
 
   // The staging pooler uses the database owner. Prove the same authority can
   // still read and prepare a no-op write, then roll the transaction back.
@@ -114,7 +124,7 @@ try {
   console.log(
     "DISPOSABLE POSTGRES: abandoned lease gate, active/terminal exclusions and read-only rollback PASSED",
   );
-  await db.query("DROP TABLE seramet_lockdown_test_fixture");
+  await db.query("DROP TABLE seramet_lockdown_test_fixture,seramet_lockdown_future_fixture");
   console.log("DISPOSABLE POSTGRES: approval guard and public-schema grants/RLS lockdown PASSED");
 } finally {
   await db.end();

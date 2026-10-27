@@ -28,7 +28,7 @@ REVOKE USAGE ON SCHEMA public FROM PUBLIC, anon, authenticated;
 -- Fail closed for future tables created by THIS migration role. Repeat the
 -- default-privilege review for every distinct table-creating role.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLES FROM PUBLIC, anon, authenticated;
+  REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC, anon, authenticated;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   REVOKE USAGE, SELECT ON SEQUENCES FROM PUBLIC, anon, authenticated;
 
