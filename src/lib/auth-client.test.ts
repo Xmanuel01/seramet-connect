@@ -57,8 +57,13 @@ describe("restaurant entry", () => {
   it.each([
     {
       status: "IN_PROGRESS" as const,
-      allowed: [permissions.dashboardView, permissions.setupView],
+      allowed: [permissions.dashboardView, permissions.setupView, permissions.setupManage],
       path: "/seramet-setup",
+    },
+    {
+      status: "IN_PROGRESS" as const,
+      allowed: [permissions.dashboardView, permissions.setupView],
+      path: "/",
     },
     {
       status: "COMPLETED" as const,

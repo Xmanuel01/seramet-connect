@@ -112,7 +112,8 @@ export async function enterRestaurant(restaurant: string | AuthRestaurant, path?
     if (
       typeof restaurant !== "string" &&
       restaurant.onboardingStatus === "IN_PROGRESS" &&
-      allowed.includes(permissions.setupView)
+      allowed.includes(permissions.setupView) &&
+      allowed.includes(permissions.setupManage)
     ) {
       window.location.assign("/seramet-setup");
       return;
