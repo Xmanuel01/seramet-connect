@@ -5,7 +5,7 @@ export type AuthRestaurant = { tenantId: string; slug: string; name: string };
 export type AuthStatus = {
   ok: true;
   authenticated: boolean;
-  identity?: { email: string | null; phone: string | null };
+  identity?: { email: string | null; phone: string | null; displayName?: string | null };
   restaurants: AuthRestaurant[];
 };
 

@@ -207,7 +207,11 @@ export async function handleSupabaseAuthApi(
       return Response.json({
         ok: true,
         authenticated: true,
-        identity: { email: identity.email ?? null, phone: identity.phone ?? null },
+        identity: {
+          email: identity.email ?? null,
+          phone: identity.phone ?? null,
+          displayName: identity.displayName ?? null,
+        },
         restaurants: [],
       });
     }
@@ -223,7 +227,11 @@ export async function handleSupabaseAuthApi(
     return Response.json({
       ok: true,
       authenticated: true,
-      identity: { email: identity.email ?? null, phone: identity.phone ?? null },
+      identity: {
+        email: identity.email ?? null,
+        phone: identity.phone ?? null,
+        displayName: identity.displayName ?? null,
+      },
       restaurants: (result.results ?? []).map((row) => ({
         tenantId: row.tenant_id,
         slug: row.slug,

@@ -7,6 +7,8 @@ export type VerifiedExternalIdentity = {
   sessionId: string;
   email?: string;
   phone?: string;
+  /** Display-only profile metadata, never an authorization claim. */
+  displayName?: string;
   emailVerified: boolean;
   issuedAt: number;
   expiresAt: number;
@@ -22,6 +24,7 @@ type SupabaseUserResponse = {
   email?: string;
   phone?: string;
   email_confirmed_at?: string | null;
+  user_metadata?: { display_name?: unknown };
 };
 
 const jwksByIssuer = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -98,12 +101,15 @@ function mapIdentity(payload: JWTPayload, user?: SupabaseUserResponse): Verified
   if (!sessionId) throw new Error("Supabase access token has no stable session identifier");
   const email = user?.email ?? stringClaim(payload, "email");
   const phone = user?.phone ?? stringClaim(payload, "phone");
+  const savedName = user?.user_metadata?.display_name;
+  const displayName = typeof savedName === "string" ? savedName.trim() : undefined;
   return {
     provider: "supabase",
     subject: payload.sub,
     sessionId: `supabase:${sessionId}`,
     ...(email ? { email } : {}),
     ...(phone ? { phone } : {}),
+    ...(displayName && displayName.length >= 2 && displayName.length <= 100 ? { displayName } : {}),
     emailVerified: Boolean(user?.email_confirmed_at),
     issuedAt: payload.iat,
     expiresAt: payload.exp,

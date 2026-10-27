@@ -26,6 +26,7 @@ function RegisterPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
+  const [accountName, setAccountName] = useState<string>();
   const formRef = useRef<HTMLFormElement>(null);
   const submissionPending = useRef(false);
   const sessionCheck = useRef(0);
@@ -65,7 +66,10 @@ function RegisterPage() {
         setStage("VERIFY");
         return;
       }
-      if (status.authenticated) verificationPending.current = false;
+      if (status.authenticated) {
+        verificationPending.current = false;
+        setAccountName(status.identity?.displayName ?? undefined);
+      }
       if (destination.kind === "CHOOSE_RESTAURANT") {
         setRestaurants(status.restaurants);
       } else {
@@ -287,7 +291,9 @@ function RegisterPage() {
         <label className="block text-sm font-medium">
           Your name
           <input
+            key={stage}
             name={stage === "ACCOUNT" ? "name" : "administratorName"}
+            defaultValue={stage === "RESTAURANT" ? accountName : undefined}
             className={authInputClass}
             required
             minLength={2}

@@ -591,6 +591,64 @@ test("registration preserves restaurant details on returning to the tab", async 
   await expect(page.getByLabel("Public URL name")).toHaveValue("local-test-business");
 });
 
+for (const width of [1366, 390]) {
+  test(`restaurant setup prefills the account name at ${width}px without overwriting edits`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    let authenticated = false;
+    await page.route("**/api/seramet/public/auth/status", (route) =>
+      route.fulfill({
+        json: authenticated
+          ? {
+              ok: true,
+              authenticated: true,
+              identity: { displayName: registrationDraft.name, email: registrationDraft.email },
+              restaurants: [],
+            }
+          : anonymousRegistrationSession,
+      }),
+    );
+    let registration: { administratorName: string } | undefined;
+    await page.route("**/api/seramet/public/register", (route) => {
+      registration = route.request().postDataJSON();
+      return route.fulfill({
+        status: 400,
+        json: { message: "Fixture stopped before creating a restaurant." },
+      });
+    });
+    await page.goto("/register");
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await page.getByLabel("Your name").fill("Unsubmitted account draft");
+    authenticated = true;
+    const signedIn = page.waitForResponse("**/api/seramet/public/auth/status");
+    await registrationReturn(page, "focus");
+    await registrationCheckFinished(page, signedIn);
+    await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
+    await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+    await page.reload();
+    await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+    await page.getByLabel("Restaurant name", { exact: true }).fill("Account name fixture");
+    await page.screenshot({
+      path: testInfo.outputPath(`account-name-${width}.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Continue to location" }).click();
+    await expect(page.getByRole("alert")).toHaveText(
+      "Fixture stopped before creating a restaurant.",
+    );
+    expect(registration?.administratorName).toBe(registrationDraft.name);
+
+    for (const name of ["Edited account owner", ""]) {
+      await page.getByLabel("Your name").fill(name);
+      const response = page.waitForResponse("**/api/seramet/public/auth/status");
+      await registrationReturn(page, "focus");
+      await registrationCheckFinished(page, response);
+      await expect(page.getByLabel("Your name")).toHaveValue(name);
+    }
+  });
+}
+
 test("registration ignores stale session checks and duplicate submission while signup is pending", async ({
   page,
 }) => {
