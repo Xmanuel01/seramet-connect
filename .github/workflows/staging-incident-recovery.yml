@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - verify-backup-restore
+          - verify-full-backup-restore
           - inspect-uber
           - inspect-imports
           - quarantine-imports
@@ -19,6 +20,15 @@ on:
         description: "Required for writes: exact 64-character SHA-256 from the latest read-only plan"
         required: false
         type: string
+      approved_recovery_sha:
+        description: "Expanded read-only recovery only: exact tested commit; not deployment approval"
+        required: false
+        type: string
+      acknowledge_full_recovery:
+        description: "Owner approved encrypted Auth/public/Storage backup and isolated recovery only"
+        required: true
+        type: boolean
+        default: false
       approved_tenant_ref:
         description: "Required for import write: masked tenant ref from the plan"
         required: false
@@ -57,9 +67,92 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  full-recovery:
+    if: >-
+      inputs.operation == 'verify-full-backup-restore' &&
+      github.ref == 'refs/heads/codex/phase3-completion' &&
+      github.actor == 'Xmanuel01' && github.triggering_actor == 'Xmanuel01'
+    environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated-full-restore-only
+          POSTGRES_DB: seramet_full_restore
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SERAMET_PHASE3_RECOVERY_APPROVED_SHA: ${{ inputs.approved_recovery_sha }}
+      SERAMET_PHASE3_FULL_RECOVERY_ACK: ${{ inputs.acknowledge_full_recovery }}
+      SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED }}
+      SERAMET_FULL_RECOVERY_DIRECTORY: ${{ runner.temp }}/phase3-full-recovery
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authorize exact owner-approved read-only recovery
+        run: node --input-type=module -e "import {authorizeFullRecovery} from './scripts/staging-full-recovery-core.mjs'; authorizeFullRecovery(process.env)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test recovery fences and security evidence queries
+        run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs
+      - name: Prepare pinned staging PostgreSQL CA
+        env:
+          SERAMET_ENVIRONMENT: staging
+          SERAMET_STAGING_POSTGRES_CA_PEM: ${{ secrets.SERAMET_STAGING_POSTGRES_CA_PEM }}
+          SERAMET_STAGING_POSTGRES_CA_SHA256: ${{ vars.SERAMET_STAGING_POSTGRES_CA_SHA256 }}
+        run: node scripts/prepare-staging-postgres-ca.mjs
+      - name: Install PostgreSQL 17 backup client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl --fail --silent --show-error https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-17
+      - name: Create encrypted expanded staging backup (source read only)
+        env:
+          SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
+          SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+        run: node scripts/staging-full-recovery.mjs backup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase3-full-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase3-full-recovery/encrypted/*.enc
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/download-artifact@v4
+        with:
+          name: phase3-full-recovery-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase3-full-recovery/downloaded
+      - name: Restore downloaded encrypted backup to isolated PostgreSQL only
+        env:
+          SERAMET_RESTORE_POSTGRES_URL: postgresql://postgres:isolated-full-restore-only@127.0.0.1:54329/seramet_full_restore
+          SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+        run: node scripts/staging-full-recovery.mjs restore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-full-recovery-result-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/phase3-full-recovery/result.json
+            ${{ runner.temp }}/phase3-full-recovery/diagnostics/*.enc
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Remove decrypted temporary recovery material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/phase3-full-recovery"
   recovery:
     if: >-
-      github.ref == 'refs/heads/main' ||
+      (github.ref == 'refs/heads/main' && inputs.operation != 'verify-full-backup-restore') ||
       (inputs.operation == 'verify-backup-restore' &&
        github.ref == 'refs/heads/codex/validated-release-candidate' &&
        github.actor == github.repository_owner && github.triggering_actor == github.repository_owner) ||

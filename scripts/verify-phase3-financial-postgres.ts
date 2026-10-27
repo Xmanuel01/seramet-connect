@@ -318,12 +318,12 @@ async function verifyValue() {
     idempotencyKey: "gift-expiry-issue",
   });
   assert.ok(expiring.token);
-  const asOf = new Date(Date.now() + 31 * 86_400_000);
-  await service.expireStoredValue(asOf);
+  const giftExpiryAsOf = new Date(Date.now() + 31 * 86_400_000);
+  await service.expireStoredValue(giftExpiryAsOf);
   const expired = await service.giftCardBalance(expiring.token);
   assert.equal(Number(expired.balance_minor), 0);
   assert.equal(expired.status, "EXPIRED");
-  assert.equal((await service.expireStoredValue(asOf)).expiredGiftCards, 0);
+  assert.equal((await service.expireStoredValue(giftExpiryAsOf)).expiredGiftCards, 0);
   // Expiry does not recognize breakage revenue without the tenant's finance policy.
   assert.equal(-(await accountBalance("liability")), 52_000);
   await assert.rejects(
