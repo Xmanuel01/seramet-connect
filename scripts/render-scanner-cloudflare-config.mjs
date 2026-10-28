@@ -5,6 +5,17 @@ import { scannerDeploymentResources } from "./scanner-deployment-resources.mjs";
 
 export function buildScannerCloudflareConfig(target, env) {
   const selected = scannerDeploymentResources(target, env);
+  const image = env.SERAMET_SCANNER_IMAGE;
+  if (
+    image &&
+    !/^registry\.cloudflare\.com\/8ee23e839ee7d7c26ae144aeac841c88\/[a-z0-9._-]+@sha256:[a-f0-9]{64}$/.test(
+      image,
+    )
+  ) {
+    throw new Error(
+      "Scanner image must be digest-pinned in the existing account's private registry",
+    );
+  }
   return {
     $schema: "../node_modules/wrangler/config-schema.json",
     name: selected.scanner,
@@ -39,19 +50,25 @@ export function buildScannerCloudflareConfig(target, env) {
       ],
     },
     durable_objects: {
-      bindings: [{ name: "CLAMAV", class_name: "ClamAvContainer" }],
+      bindings: [
+        { name: "CLAMAV", class_name: "DurableClamAvScanner" },
+        { name: "CLAMAV_LEGACY", class_name: "ClamAvContainer" },
+      ],
     },
     exports: {
       ClamAvContainer: { type: "durable-object", storage: "sqlite" },
+      DurableClamAvScanner: { type: "durable-object", storage: "sqlite" },
     },
     containers: [
       {
-        class_name: "ClamAvContainer",
-        scheduling_policy: "default",
-        image: "../scanner-worker/Dockerfile",
-        image_build_context: "../scanner-worker",
-        instance_type: "standard-1",
-        max_instances: 1,
+        class_name: "DurableClamAvScanner",
+        name: `${selected.scanner}-engine-v2`,
+        scheduling_policy: "durable_object",
+        images: {
+          clamav: image
+            ? { image }
+            : { dockerfile: "../scanner-worker/Dockerfile", build_context: "../scanner-worker" },
+        },
       },
     ],
     observability: { enabled: true },

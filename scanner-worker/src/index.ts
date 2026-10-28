@@ -1,6 +1,8 @@
-import { Container, getContainer } from "@cloudflare/containers";
+import { Container } from "@cloudflare/containers";
+import { DurableObject } from "cloudflare:workers";
 import type { FileScanQueueMessage } from "../../src/server/environment";
 import { scannerAuthRequestHeaders, signScannerRequest } from "../../src/server/scanner-auth";
+import { ScannerContainerRuntime } from "../../src/server/scanner-container-runtime";
 import { persistScannerFailure } from "./failure-delivery";
 
 type QueueMessage<T> = {
@@ -25,7 +27,7 @@ type ScannerEnv = {
   SERAMET_OBJECTS: { get(key: string): Promise<R2Object | null> };
   SERAMET_SCANNER_EVIDENCE_SECRET: string;
   SERAMET_SCANNER_ID?: string;
-  CLAMAV: DurableObjectNamespace<ClamAvContainer>;
+  CLAMAV: DurableObjectNamespace<DurableClamAvScanner>;
 };
 
 type ClaimedJob = {
@@ -60,9 +62,24 @@ const maxUploadBytes = 10 * 1024 * 1024;
 const maxAttempts = 3;
 
 export class ClamAvContainer extends Container {
-  defaultPort = 8080;
-  requiredPorts = [8080];
-  sleepAfter = "2m";
+  override defaultPort = 8080;
+  override requiredPorts = [8080];
+  override sleepAfter = "2m";
+}
+
+export class DurableClamAvScanner extends DurableObject<ScannerEnv> {
+  private readonly runtime = new ScannerContainerRuntime(
+    this.ctx,
+    this.ctx.id.toString() === this.env.CLAMAV.idFromName("scanner").toString(),
+  );
+
+  override fetch(request: Request) {
+    return this.runtime.fetch(request);
+  }
+
+  override alarm() {
+    return this.runtime.alarm();
+  }
 }
 
 export default {
@@ -166,7 +183,7 @@ async function readAndVerifyObject(env: ScannerEnv, job: ClaimedJob) {
 }
 
 async function scanWithClamAv(env: ScannerEnv, bytes: ArrayBuffer, contentType: string) {
-  const container = getContainer(env.CLAMAV, "scanner");
+  const container = env.CLAMAV.get(env.CLAMAV.idFromName("scanner"));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 90_000);
   try {

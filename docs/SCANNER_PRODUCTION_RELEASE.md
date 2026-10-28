@@ -15,14 +15,28 @@ An uploaded Cloudflare preview is not an active production deployment.
 
 ## Environment separation
 
-| Resource | Staging | Production |
-| --- | --- | --- |
-| Primary Worker | seramet-staging | seramet-connect |
-| Scanner Worker | seramet-file-scanner-staging | seramet-file-scanner-production |
-| Private R2 bucket | seramet-staging-objects | seramet-production-objects |
-| Scan queue | seramet-staging-file-scan | seramet-production-file-scan |
-| Scan DLQ | seramet-staging-file-scan-dlq | seramet-production-file-scan-dlq |
-| Scanner ID | seramet-clamav-staging | seramet-clamav-production |
+Use `durable_object` scheduling with the private `DurableClamAvScanner` singleton.
+This account rejects `default` scheduling. The old `ClamAvContainer` namespace is
+retained unused for rollback, not reused for the replacement application. The
+native runtime chooses the immutable named image and `standard-1` size, verifies
+engine readiness and enforces a persistent two-minute idle shutdown. It refuses
+all non-singleton identities so arbitrary object names cannot allocate capacity.
+
+An already-built image can be promoted without a local Docker installation by
+setting `SERAMET_SCANNER_IMAGE` to its exact `registry.cloudflare.com` digest in
+the existing account. Verify Dockerfile/gateway source identity and certification
+for that digest first. An immutable image artifact may be shared between releases;
+production service bindings, storage, queues, secrets and runtime remain separate.
+Never substitute a mutable tag or image from another account.
+
+| Resource          | Staging                       | Production                       |
+| ----------------- | ----------------------------- | -------------------------------- |
+| Primary Worker    | seramet-staging               | seramet-connect                  |
+| Scanner Worker    | seramet-file-scanner-staging  | seramet-file-scanner-production  |
+| Private R2 bucket | seramet-staging-objects       | seramet-production-objects       |
+| Scan queue        | seramet-staging-file-scan     | seramet-production-file-scan     |
+| Scan DLQ          | seramet-staging-file-scan-dlq | seramet-production-file-scan-dlq |
+| Scanner ID        | seramet-clamav-staging        | seramet-clamav-production        |
 
 Quarantine objects retain the existing tenant-scoped private object keys and
 PENDING_SCAN/QUARANTINED status. Neither bucket may have enabled r2.dev access
@@ -85,12 +99,12 @@ Every approval, backup/backlog and database security gate remains mandatory.
 4. In a dedicated identifiable staging test tenant, exercise the real deployed
    scanner, not fabricated signed verdicts:
 
-| Case | Required evidence |
-| --- | --- |
-| Clean menu CSV | Matching object version/SHA, actual ClamAV engine/signature versions, authenticated CLEAN verdict, one parser execution and valid preview |
-| Standard EICAR test CSV | Actual INFECTED verdict, quarantined object, zero preview/parser/publication and no menu/inventory mutation |
-| Engine unavailable/timeout | Bounded retry and terminal ERROR/DLQ evidence, retained quarantine, zero parser/publication |
-| Tampered object/evidence and duplicate delivery | Rejection of wrong hash/version, expired/replayed evidence and no duplicate import |
+| Case                                            | Required evidence                                                                                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Clean menu CSV                                  | Matching object version/SHA, actual ClamAV engine/signature versions, authenticated CLEAN verdict, one parser execution and valid preview |
+| Standard EICAR test CSV                         | Actual INFECTED verdict, quarantined object, zero preview/parser/publication and no menu/inventory mutation                               |
+| Engine unavailable/timeout                      | Bounded retry and terminal ERROR/DLQ evidence, retained quarantine, zero parser/publication                                               |
+| Tampered object/evidence and duplicate delivery | Rejection of wrong hash/version, expired/replayed evidence and no duplicate import                                                        |
 
 Record job/correlation IDs, expected/actual results, timestamps, retries and scan
 duration. Do not replay old jobs. Never send EICAR to production or a real tenant.

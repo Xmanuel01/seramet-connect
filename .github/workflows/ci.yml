@@ -27,6 +27,16 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: npm audit --include=dev --audit-level=moderate
       - run: npm run typecheck
+      - name: Typecheck scanner against the actual Cloudflare runtime API
+        env:
+          SERAMET_CLOUDFLARE_WORKER_NAME: seramet-staging
+          SERAMET_CLOUDFLARE_R2_BUCKET: seramet-staging-objects
+          SERAMET_CLOUDFLARE_SCAN_QUEUE: seramet-staging-file-scan
+          SERAMET_CLOUDFLARE_SCAN_DLQ: seramet-staging-file-scan-dlq
+        run: |
+          node scripts/render-scanner-cloudflare-config.mjs staging
+          npx --yes wrangler@4.149.0 types .seramet/scanner-runtime.generated.d.ts --config .seramet/scanner.wrangler.generated.json
+          npx tsc --noEmit --project scanner-worker/tsconfig.json
       - run: npm run lint
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs

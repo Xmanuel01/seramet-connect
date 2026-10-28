@@ -1,0 +1,4 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["src/**/*.ts", "../.seramet/scanner-runtime.generated.d.ts"]
+}

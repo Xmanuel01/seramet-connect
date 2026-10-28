@@ -45,7 +45,19 @@ for (const target of ["staging", "production"]) {
         dead_letter_queue: `seramet-${target}-file-scan-dlq`,
       },
     ]);
-    assert.equal(config.containers[0].max_instances, 1);
+    assert.equal(config.containers[0].scheduling_policy, "durable_object");
+    assert.equal(config.containers[0].class_name, "DurableClamAvScanner");
+    assert.equal(config.containers[0].name, `seramet-file-scanner-${target}-engine-v2`);
+    assert.deepEqual(config.containers[0].images.clamav, {
+      dockerfile: "../scanner-worker/Dockerfile",
+      build_context: "../scanner-worker",
+    });
+    assert.equal(Object.hasOwn(config.containers[0], "max_instances"), false);
+    assert.equal(Object.hasOwn(config.containers[0], "instance_type"), false);
+    assert.deepEqual(config.durable_objects.bindings, [
+      { name: "CLAMAV", class_name: "DurableClamAvScanner" },
+      { name: "CLAMAV_LEGACY", class_name: "ClamAvContainer" },
+    ]);
     assert.equal(JSON.stringify(config).includes("EVIDENCE_SECRET"), false);
   });
   const other = target === "production" ? "staging" : "production";
@@ -72,6 +84,29 @@ for (const target of ["staging", "production"]) {
     );
   });
 }
+
+test("scanner image promotion accepts only an immutable image in the existing account", () => {
+  const image = `registry.cloudflare.com/8ee23e839ee7d7c26ae144aeac841c88/scanner@sha256:${"a".repeat(64)}`;
+  const config = buildScannerCloudflareConfig("production", {
+    ...environments.production,
+    SERAMET_SCANNER_IMAGE: image,
+  });
+  assert.deepEqual(config.containers[0].images.clamav, { image });
+  for (const value of [
+    "clamav/clamav:latest",
+    image.replace("8ee23e839ee7d7c26ae144aeac841c88", "another-account"),
+    image.replace(/@sha256:.+$/, ":latest"),
+  ]) {
+    assert.throws(
+      () =>
+        buildScannerCloudflareConfig("production", {
+          ...environments.production,
+          SERAMET_SCANNER_IMAGE: value,
+        }),
+      /digest-pinned/,
+    );
+  }
+});
 
 test("unknown environments and incomplete scanner resources fail closed", () => {
   assert.throws(() => buildScannerCloudflareConfig("preview", environments.staging));
