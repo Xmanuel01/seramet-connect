@@ -29,6 +29,11 @@ on:
         required: true
         type: boolean
         default: false
+      acknowledge_referenced_object_backup:
+        description: "Owner approved encrypted referenced staging R2 file backup and isolated in-memory byte recovery; never remote restore"
+        required: true
+        type: boolean
+        default: false
       approved_tenant_ref:
         description: "Required for import write: masked tenant ref from the plan"
         required: false
@@ -70,7 +75,8 @@ jobs:
   full-recovery:
     if: >-
       inputs.operation == 'verify-full-backup-restore' &&
-      github.ref == 'refs/heads/codex/phase3-completion' &&
+      (github.ref == 'refs/heads/codex/phase3-completion' ||
+       github.ref == 'refs/heads/codex/scanner-production-release') &&
       github.actor == 'Xmanuel01' && github.triggering_actor == 'Xmanuel01'
     environment: staging
     runs-on: ubuntu-latest
@@ -93,6 +99,7 @@ jobs:
       SERAMET_PHASE3_RECOVERY_APPROVED_SHA: ${{ inputs.approved_recovery_sha }}
       SERAMET_PHASE3_FULL_RECOVERY_ACK: ${{ inputs.acknowledge_full_recovery }}
       SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_KEY_ESCROW_VERIFIED }}
+      SERAMET_STAGING_OBJECT_BACKUP_ACK: ${{ inputs.acknowledge_referenced_object_backup }}
     steps:
       - uses: actions/checkout@v4
       - name: Authorize exact owner-approved read-only recovery
@@ -105,7 +112,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Test recovery fences and security evidence queries
-        run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs
+        run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs scripts/staging-object-recovery.test.mjs
       - name: Prepare pinned staging PostgreSQL CA
         env:
           SERAMET_ENVIRONMENT: staging
@@ -123,6 +130,9 @@ jobs:
         env:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
           SERAMET_STAGING_BACKUP_KEY: ${{ secrets.SERAMET_STAGING_BACKUP_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SERAMET_STAGING_OBJECT_BACKUP_BUCKET: seramet-staging-objects
         run: node scripts/staging-full-recovery.mjs backup
       - uses: actions/upload-artifact@v4
         with:

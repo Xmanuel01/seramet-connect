@@ -50,7 +50,7 @@ jobs:
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
       - run: node --test scripts/staging-recovery-cli-args.test.mjs
-      - run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs
+      - run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs scripts/staging-object-recovery.test.mjs
       - run: node --test scripts/assert-staging-api-posture.test.mjs
       - run: node --test scripts/prepare-staging-postgres-ca.test.mjs scripts/staging-postgres-tls.test.mjs scripts/staging-connectivity-diagnostic.test.mjs
       - run: npm run build

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { stagingTlsConfig } from "./staging-postgres-tls.mjs";
+import { validateObjectFiles } from "./staging-object-recovery.mjs";
 
 export const fullRecoveryProject = "vnymbavsbxorwxpebkot";
 export const fullRecoverySchemas = ["auth", "public", "storage"];
@@ -16,7 +17,9 @@ export function authorizeFullRecovery(env) {
     env.GITHUB_REPOSITORY !== "Xmanuel01/seramet-connect" ||
     env.GITHUB_ACTOR !== "Xmanuel01" ||
     env.GITHUB_TRIGGERING_ACTOR !== "Xmanuel01" ||
-    env.GITHUB_REF !== "refs/heads/codex/phase3-completion" ||
+    !["refs/heads/codex/phase3-completion", "refs/heads/codex/scanner-production-release"].includes(
+      env.GITHUB_REF,
+    ) ||
     !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? "") ||
     env.SERAMET_PHASE3_RECOVERY_APPROVED_SHA !== env.GITHUB_SHA ||
     env.SERAMET_PHASE3_FULL_RECOVERY_ACK !== "true" ||
@@ -117,7 +120,7 @@ export async function fullSecurityEvidence(db) {
 export function validateFullManifest(manifest, sha, bytes, now = Date.now()) {
   const age = now - Date.parse(manifest?.createdAt);
   if (
-    manifest?.version !== 1 ||
+    ![1, 2].includes(manifest?.version) ||
     manifest.project !== fullRecoveryProject ||
     manifest.commit !== sha ||
     JSON.stringify(manifest.schemas) !== JSON.stringify(fullRecoverySchemas) ||
@@ -128,8 +131,14 @@ export function validateFullManifest(manifest, sha, bytes, now = Date.now()) {
     !Array.isArray(manifest.tables) ||
     !Array.isArray(manifest.roles) ||
     !fullRecoverySchemas.every((s) => manifest.tables.some((t) => t.schema === s)) ||
-    manifest.applicationObjectReferences !== 0 ||
+    (manifest.version === 1 && manifest.applicationObjectReferences !== 0) ||
     manifest.supabaseStorageObjects !== 0
   )
     throw new Error("FULL_RECOVERY_MANIFEST_INVALID_OR_OBJECT_BACKUP_REQUIRED");
+  if (manifest.version === 2) {
+    validateObjectFiles(manifest.objectReferences, manifest.objectFiles);
+    if (manifest.applicationObjectReferences !== manifest.objectFiles.length) {
+      throw new Error("FULL_RECOVERY_OBJECT_BACKUP_INCOMPLETE");
+    }
+  }
 }

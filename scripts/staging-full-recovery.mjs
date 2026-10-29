@@ -16,6 +16,7 @@ import {
   validateFullManifest,
 } from "./staging-full-recovery-core.mjs";
 import { recoveryKey, sealRecovery, openRecovery } from "./staging-recovery-envelope.mjs";
+import { backupObjectFiles, recoverObjectBytes } from "./staging-object-recovery.mjs";
 
 let phase = "authorization";
 function command(binary, args, env) {
@@ -53,17 +54,25 @@ async function backup(root) {
       "on",
     );
     const snapshot = (await source.query("SELECT pg_export_snapshot() AS id")).rows[0].id;
-    const references = Number(
-      (await source.query("SELECT count(*) FROM public.stored_objects")).rows[0].count,
-    );
+    const objectReferences = (
+      await source.query(
+        `SELECT tenant_id,id,object_key,object_version,content_type,size_bytes,checksum_sha256,status
+         FROM public.stored_objects WHERE status<>'DELETED' ORDER BY tenant_id,id`,
+      )
+    ).rows;
     const objects = Number(
       (await source.query("SELECT count(*) FROM storage.objects")).rows[0].count,
     );
-    assert.equal(
-      references + objects,
-      0,
-      "Referenced object files require a separate encrypted object backup",
-    );
+    assert.equal(objects, 0, "Supabase Storage files require a separate encrypted object backup");
+    const key = recoveryKey(process.env.SERAMET_STAGING_BACKUP_KEY);
+    await mkdir(join(root, "encrypted"), { recursive: true, mode: 0o700 });
+    phase = "read-only-referenced-object-backup";
+    const objectFiles = await backupObjectFiles({
+      rows: objectReferences,
+      root,
+      key,
+      env: process.env,
+    });
     const roles = (
       await source.query(
         "SELECT rolname,rolinherit,rolbypassrls,rolconfig FROM pg_roles WHERE rolname NOT LIKE 'pg_%' ORDER BY rolname",
@@ -100,7 +109,7 @@ async function backup(root) {
     const bytes = await readFile(dump);
     assert.ok(bytes.length <= 512 * 1024 * 1024);
     const manifest = {
-      version: 1,
+      version: 2,
       project: fullRecoveryProject,
       commit: process.env.GITHUB_SHA,
       createdAt: new Date().toISOString(),
@@ -111,12 +120,12 @@ async function backup(root) {
       roles,
       memberships,
       extensions,
-      applicationObjectReferences: references,
+      applicationObjectReferences: objectReferences.length,
       supabaseStorageObjects: objects,
+      objectReferences,
+      objectFiles,
     };
     validateFullManifest(manifest, process.env.GITHUB_SHA, bytes);
-    const key = recoveryKey(process.env.SERAMET_STAGING_BACKUP_KEY);
-    await mkdir(join(root, "encrypted"), { recursive: true, mode: 0o700 });
     await writeFile(join(root, "encrypted", "full.dump.enc"), sealRecovery(bytes, key), {
       mode: 0o600,
     });
@@ -132,6 +141,7 @@ async function backup(root) {
         tables: manifest.tables.length,
         dumpSha256: manifest.dumpSha256,
         bytes: bytes.length,
+        referencedObjectFiles: objectFiles.length,
       }),
     );
   } finally {
@@ -222,6 +232,19 @@ async function restore(root) {
         "Restored access settings or counters differ",
       );
     }
+    phase = "isolated-referenced-object-byte-recovery";
+    const objectReferences = (
+      await target.query(
+        `SELECT tenant_id,id,object_key,object_version,content_type,size_bytes,checksum_sha256,status
+         FROM public.stored_objects WHERE status<>'DELETED' ORDER BY tenant_id,id`,
+      )
+    ).rows;
+    const objectRecovery = await recoverObjectBytes({
+      rows: objectReferences,
+      files: manifest.objectFiles ?? [],
+      root,
+      key,
+    });
     phase = "client-and-cookbook-access";
     for (const role of ["anon", "authenticated"]) {
       const exposed = await target.query(
@@ -237,7 +260,7 @@ async function restore(root) {
       project: manifest.project,
       commit: manifest.commit,
       scope:
-        "Auth/public/Storage database rows, ownership, ACL, RLS policies, sequences; no global passwords, external service configuration or unreferenced object blobs",
+        "Auth/public/Storage database rows, ownership, ACL, RLS policies, sequences and referenced R2 file bytes recovered into isolated memory; no global passwords, remote object restore/version remapping, external service configuration or unreferenced blobs",
       tables: manifest.tables.length,
       rows: manifest.tables.reduce((sum, t) => sum + Number(t.rows), 0),
       authAccounts: Number(authUsers.rows),
@@ -249,7 +272,7 @@ async function restore(root) {
       snapshotCreatedAt: manifest.createdAt,
       sourceReadOnly: true,
       remoteRestore: false,
-      referencedObjectFiles: 0,
+      ...objectRecovery,
       globalPasswordsCloned: false,
     };
     await writeFile(join(root, "result.json"), JSON.stringify(evidence, null, 2));

@@ -48,6 +48,21 @@ variable. The existing backup encryption, trust-root, isolated restore and
 no-replay controls remain mandatory. No passing CI or approval erases unresolved
 financial, queue, recovery or acceptance defects.
 
+The following read-only expansion is proposed in the changed scanner candidate;
+it requires explicit owner acceptance of that exact commit and object-recovery
+scope before dispatch. Expanded recovery on `codex/scanner-production-release` may use the
+owner's exact `approved_recovery_sha` and explicit Auth/database consent before
+advancing the protected staging deployment SHA. It retains the owner-only
+dispatch/rerun, pinned TLS, escrowed encryption and fixed isolated-PostgreSQL
+restore fences. Referenced R2 files require additional explicit object-backup
+consent, the exact staging account/bucket, bounded hash-checked encrypted copies,
+and independent recovery into isolated memory. No remote object restore,
+object-version rewrite, file parsing or job replay is performed. A failed or
+incomplete object copy cannot certify recovery. This is not deployment approval:
+the exact staging owner comment and protected deployment-SHA match are still
+mandatory before infrastructure changes. Production release variables are not
+changed by this read-only drill.
+
 For this incident, the existing staging deployment workflow has an explicit
 `maintenance_only` option. It requires the exact staging owner-comment approval
 and every backup, backlog, Data API and health gate. It updates only the existing

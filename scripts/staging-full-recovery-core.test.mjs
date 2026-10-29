@@ -9,6 +9,7 @@ import {
   ident,
   fullRecoverySchemas,
 } from "./staging-full-recovery-core.mjs";
+import { objectReference } from "./staging-object-recovery.mjs";
 
 const sha = "a".repeat(40);
 const approved = {
@@ -44,6 +45,17 @@ test("source fences refuse production, transaction poolers, weak TLS and disguis
     good.replace("/postgres?", "/wrong?"),
   ])
     assert.throws(() => fullRecoverySource(raw));
+});
+test("the scanner release supports read-only recovery only for the exact owner-approved SHA", () => {
+  const release = {
+    ...approved,
+    GITHUB_REF: "refs/heads/codex/scanner-production-release",
+  };
+  assert.doesNotThrow(() => authorizeFullRecovery(release));
+  assert.throws(() => authorizeFullRecovery({ ...release, GITHUB_ACTOR: "another-user" }));
+  assert.throws(() =>
+    authorizeFullRecovery({ ...release, SERAMET_PHASE3_RECOVERY_APPROVED_SHA: "b".repeat(40) }),
+  );
 });
 test("restoration accepts only the fixed disposable loopback database", () => {
   const good = "postgresql://postgres:temporary@127.0.0.1:54329/seramet_full_restore";
@@ -90,4 +102,41 @@ test("full manifest requires Auth and Storage coverage, fresh identity and actua
 test("recovery identifiers are quoted and bounded", () => {
   assert.equal(ident('a"b'), '"a""b"');
   for (const name of ["", "a\0b", "a".repeat(64)]) assert.throws(() => ident(name));
+});
+test("nonempty object manifests require every exact referenced file, not a count-only waiver", () => {
+  const bytes = Buffer.from("disposable dump");
+  const reference = {
+    tenant_id: "tenant-qa",
+    id: "file-qa",
+    object_key: "tenant-qa/private/file-qa.csv",
+    object_version: "original-version",
+    content_type: "text/csv",
+    size_bytes: 3,
+    checksum_sha256: digest("abc"),
+    status: "QUARANTINED",
+  };
+  const manifest = {
+    version: 2,
+    project: "vnymbavsbxorwxpebkot",
+    commit: sha,
+    createdAt: new Date().toISOString(),
+    schemas: fullRecoverySchemas,
+    dumpSha256: digest(bytes),
+    tables: fullRecoverySchemas.map((schema) => ({ schema })),
+    roles: [],
+    applicationObjectReferences: 1,
+    supabaseStorageObjects: 0,
+    objectReferences: [reference],
+    objectFiles: [objectReference(reference)],
+  };
+  assert.doesNotThrow(() => validateFullManifest(manifest, sha, bytes));
+  for (const change of [
+    { objectFiles: [] },
+    { objectReferences: [] },
+    { applicationObjectReferences: 2 },
+    { objectFiles: [{ ...manifest.objectFiles[0], sha256: "a".repeat(64) }] },
+    { objectFiles: [{ ...manifest.objectFiles[0], encryptedFile: "../escape" }] },
+    { supabaseStorageObjects: 1 },
+  ])
+    assert.throws(() => validateFullManifest({ ...manifest, ...change }, sha, bytes));
 });
