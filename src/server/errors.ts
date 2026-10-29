@@ -24,6 +24,12 @@ export class ServerOperationError extends Error {
   }
 }
 
+export class DatabaseSerializationError extends ServerOperationError {
+  constructor() {
+    super("CONFLICT", 409, "The data changed during this operation. Reload and retry.");
+  }
+}
+
 export function publicError(error: unknown, correlationId: string) {
   if (error instanceof ServerOperationError) {
     return {

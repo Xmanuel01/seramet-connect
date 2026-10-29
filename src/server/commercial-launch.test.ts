@@ -23,6 +23,7 @@ import type { VerifiedExternalIdentity } from "@/server/identity/supabase-identi
 import { listRealtimeEvents, publishRealtimeEvent } from "@/server/realtime";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
 import { handleSupabaseAuthApi } from "@/server/supabase-auth-api";
+import { DatabaseSerializationError } from "@/server/errors";
 
 let database: SqliteD1TestDatabase;
 
@@ -135,6 +136,31 @@ describe.sequential("commercial launch foundation", () => {
       .bind(provisioned.tenantId, identity().sessionId)
       .first<{ revoked_at: string | null }>();
     expect(session?.revoked_at).toBeNull();
+  });
+
+  it("recovers authentication metadata contention without reviving a revoked session", async () => {
+    const provisioned = await new RestaurantRegistrationService(database).register(
+      identity(),
+      registration(),
+    );
+    const request = new Request("https://app.seramet.test/api/seramet/auth/session", {
+      headers: {
+        authorization: "Bearer verified-token",
+        "x-seramet-tenant-id": provisioned.tenantId,
+      },
+    });
+    const batch = vi
+      .spyOn(database, "batch")
+      .mockRejectedValueOnce(new DatabaseSerializationError());
+    const actor = await authenticateSerametRequest(request, authEnv());
+    expect(actor.tenantId).toBe(provisioned.tenantId);
+    expect(batch.mock.calls.length).toBeGreaterThanOrEqual(2);
+    await database
+      .prepare("UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND id=?")
+      .bind(new Date().toISOString(), provisioned.tenantId, identity().sessionId)
+      .run();
+    batch.mockRejectedValueOnce(new DatabaseSerializationError());
+    await expect(authenticateSerametRequest(request, authEnv())).rejects.toThrow(/revoked/);
   });
 
   it("revokes the authoritative session when secure cookie logout runs", async () => {

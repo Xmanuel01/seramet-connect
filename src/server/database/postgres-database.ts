@@ -1,6 +1,6 @@
 import { Pool, types as postgresTypes, type QueryResultRow } from "pg";
 import type { D1Database, D1PreparedStatement, D1Result } from "@/server/database/d1";
-import { ServerOperationError } from "@/server/errors";
+import { DatabaseSerializationError } from "@/server/errors";
 
 export type HyperdriveBinding = {
   connectionString: string;
@@ -71,11 +71,7 @@ export class PostgresD1Database implements D1Database {
         "code" in error &&
         (error.code === "40001" || error.code === "40P01")
       ) {
-        throw new ServerOperationError(
-          "CONFLICT",
-          409,
-          "The data changed during this operation. Reload and retry.",
-        );
+        throw new DatabaseSerializationError();
       }
       throw error;
     } finally {

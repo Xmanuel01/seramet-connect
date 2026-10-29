@@ -5,6 +5,7 @@ import { mutationPermission, permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { BranchScope, PermissionCode } from "@/platform/types";
 import type { D1Database } from "@/server/database/d1";
+import { retryAuthMetadata } from "@/server/auth-metadata-retry";
 import {
   isLocalDevelopmentRequest,
   resolveRuntimeConfiguration,
@@ -236,33 +237,41 @@ async function authenticateBearer(
     }
     const membership = memberships[0]!;
     const stamp = new Date().toISOString();
-    await db.batch([
-      db
-        .prepare(
-          `INSERT INTO auth_sessions
+    await retryAuthMetadata(() =>
+      db.batch([
+        db
+          .prepare(
+            `INSERT INTO auth_sessions
             (tenant_id,id,user_id,device_id,issued_at,expires_at,revoked_at,last_seen_at,
              token_version,ip_hash,metadata_json)
            VALUES (?,?,?,?,?,?,NULL,?,?,NULL,?)
            ON CONFLICT(tenant_id,id) DO UPDATE SET expires_at=excluded.expires_at,last_seen_at=excluded.last_seen_at`,
-        )
-        .bind(
-          membership.tenant_id,
-          identity.sessionId,
-          membership.user_id,
-          null,
-          new Date(identity.issuedAt * 1000).toISOString(),
-          new Date(identity.expiresAt * 1000).toISOString(),
-          stamp,
-          membership.password_version,
-          JSON.stringify({ provider: identity.provider }),
-        ),
-      db
-        .prepare(
-          `UPDATE identity_accounts SET last_authenticated_at=?
+          )
+          .bind(
+            membership.tenant_id,
+            identity.sessionId,
+            membership.user_id,
+            null,
+            new Date(identity.issuedAt * 1000).toISOString(),
+            new Date(identity.expiresAt * 1000).toISOString(),
+            stamp,
+            membership.password_version,
+            JSON.stringify({ provider: identity.provider }),
+          ),
+        db
+          .prepare(
+            `UPDATE identity_accounts SET last_authenticated_at=?
            WHERE tenant_id=? AND user_id=? AND provider=? AND subject=?`,
-        )
-        .bind(stamp, membership.tenant_id, membership.user_id, identity.provider, identity.subject),
-    ]);
+          )
+          .bind(
+            stamp,
+            membership.tenant_id,
+            membership.user_id,
+            identity.provider,
+            identity.subject,
+          ),
+      ]),
+    );
     return authenticateStoredSession(request, db, {
       tenantId: membership.tenant_id,
       sessionId: identity.sessionId,
@@ -401,10 +410,12 @@ async function authenticateStoredSession(
   if (wantsAll && (!canUseAllScope || !canSwitchBranch)) {
     throw new SerametHttpError(403, "All-branch scope requires branch switching authority");
   }
-  await db
-    .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE tenant_id = ? AND id = ?")
-    .bind(new Date().toISOString(), session.tenant_id, session.session_id)
-    .run();
+  await retryAuthMetadata(() =>
+    db
+      .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE tenant_id = ? AND id = ?")
+      .bind(new Date().toISOString(), session.tenant_id, session.session_id)
+      .run(),
+  );
 
   return {
     id: session.user_id,
