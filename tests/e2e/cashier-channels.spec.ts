@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test, type Browser, type BrowserContext } from "@playwright/test";
 import { fixture } from "./pos-stability-helpers";
@@ -119,7 +119,8 @@ async function prepare(browser: Browser, admin: BrowserContext, channelType: str
     await expect(page).toHaveURL(/\/pos$/);
     const session = await staff.request.get("/api/seramet/auth/session");
     expect(session.ok()).toBe(true);
-    expect((await session.json()).actor.id).toBe(employee.id);
+    const { actor } = await session.json();
+    expect(actor.id).toBe(employee.id);
     expect((await staff.request.get("/api/seramet/employees")).status()).toBe(403);
     expect(
       (
@@ -129,7 +130,17 @@ async function prepare(browser: Browser, admin: BrowserContext, channelType: str
     await page.getByRole("button", { name: channel.displayName, exact: true }).click();
     await page.getByPlaceholder("Search dishes or scan barcode").fill("Pilot meal");
     await page.getByRole("button", { name: "Add Pilot meal to order", exact: true }).click();
-    return { staff, page, snapshot, channel, employee, tableCode };
+    return {
+      staff,
+      page,
+      snapshot,
+      channel,
+      employee,
+      tableCode,
+      api,
+      actor,
+      otherChannel: configuration.orderChannels[0],
+    };
   } catch (error) {
     await staff.close();
     throw error;
@@ -343,6 +354,118 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
     }
   });
 }
+
+test("legacy delivery orders can complete missing contact details without unlocking their channel", async ({
+  browser,
+  context,
+}) => {
+  const { staff, page, snapshot, channel, api, actor, otherChannel } = await prepare(
+    browser,
+    context,
+    "OWN_DELIVERY",
+  );
+  try {
+    const configureRequirements = async (required: boolean) => {
+      const { configuration } = await api("configuration");
+      configuration.users = [];
+      const legacyChannel = configuration.orderChannels.find(
+        (candidate: { id: string }) => candidate.id === channel.id,
+      );
+      expect(legacyChannel).toBeTruthy();
+      legacyChannel.requiresCustomer = required;
+      legacyChannel.requiresAddress = required;
+      await api("configuration/import", { mode: "APPLY", configuration });
+    };
+    await configureRequirements(false);
+    await page.reload();
+    const before = await snapshot();
+    await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await expect
+      .poll(async () => (await snapshot()).state.orders.length)
+      .toBe(before.state.orders.length + 1);
+    const sent = (await snapshot()).state.orders.find((order) => order.channel === channel.code)!;
+    expect(sent.lines[0]!.sentAt).toBeTruthy();
+    expect(sent.delivery?.recipientName).toBeFalsy();
+    expect(sent.delivery?.address).toBeFalsy();
+
+    await configureRequirements(true);
+    const restoreDraft = async () => {
+      const current = await snapshot();
+      const order = current.state.orders.find((candidate) => candidate.id === sent.id)!;
+      const key =
+        "seramet.pos.draft.v1:" +
+        [fixture.tenantId, fixture.firstBranchId, actor.id, actor.deviceId ?? "account"]
+          .map(encodeURIComponent)
+          .join(":");
+      // Exercise the existing saved-order recovery contract, not the held-order queue.
+      await page.evaluate(
+        ({ key, orderId, productId, channelId, quantity, revision, digest }) => {
+          sessionStorage.setItem(
+            key,
+            JSON.stringify({
+              lines: { [productId]: quantity },
+              itemNotes: {},
+              kitchenNote: "",
+              activeOrderId: orderId,
+              selectedTableNo: null,
+              customerId: null,
+              orderSource: channelId,
+              savedAt: Date.now(),
+              orderBaseline: { revision, digest },
+            }),
+          );
+        },
+        {
+          key,
+          orderId: sent.id,
+          productId: fixture.menuItemId,
+          channelId: channel.id,
+          quantity: order.lines.reduce((total, line) => total + line.quantity, 0),
+          revision: current.revision,
+          digest: createHash("sha256").update(JSON.stringify(order)).digest("hex"),
+        },
+      );
+      await page.reload();
+      await expect(
+        page.getByText(`${order.lines.length} sent / 0 unsent`, { exact: true }),
+      ).toBeVisible();
+    };
+    await restoreDraft();
+    const customer = page.getByLabel("Customer name", { exact: true });
+    const address = page.getByLabel("Delivery address", { exact: true });
+    await expect(customer).toBeEnabled();
+    await expect(address).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: otherChannel.displayName, exact: true }),
+    ).toBeDisabled();
+    await customer.fill("Legacy delivery recipient");
+    await address.fill("Westlands legacy delivery destination 10");
+    await page.getByRole("button", { name: "Add Pilot meal to order", exact: true }).click();
+    await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await expect
+      .poll(
+        async () =>
+          (await snapshot()).state.orders.find((order) => order.id === sent.id)?.lines.length,
+      )
+      .toBe(2);
+    const updated = (await snapshot()).state.orders.find((order) => order.id === sent.id)!;
+    expect(updated.channel).toBe(channel.code);
+    expect(updated.delivery).toMatchObject({
+      recipientName: "Legacy delivery recipient",
+      address: "Westlands legacy delivery destination 10",
+    });
+    expect(updated.lines.find((line) => line.id === sent.lines[0]!.id)?.sentAt).toBe(
+      sent.lines[0]!.sentAt,
+    );
+    await restoreDraft();
+    await expect(customer).toHaveValue("Legacy delivery recipient");
+    await expect(address).toHaveValue("Westlands legacy delivery destination 10");
+    await expect(customer).toBeDisabled();
+    await expect(address).toBeDisabled();
+  } finally {
+    await staff.close();
+  }
+});
 
 test("own delivery rejects dispatch without the configured required customer and address", async ({
   browser,

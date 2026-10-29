@@ -2411,7 +2411,9 @@ function POS() {
                     value={recipientName}
                     onChange={(event) => setRecipientName(event.target.value)}
                     maxLength={120}
-                    disabled={channelLocked}
+                    disabled={
+                      channelLocked && Boolean(activeOrder?.delivery?.recipientName?.trim())
+                    }
                     autoComplete="off"
                     className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
                   />
@@ -2424,7 +2426,7 @@ function POS() {
                     value={deliveryAddress}
                     onChange={(event) => setDeliveryAddress(event.target.value)}
                     maxLength={500}
-                    disabled={channelLocked}
+                    disabled={channelLocked && Boolean(activeOrder?.delivery?.address?.trim())}
                     autoComplete="off"
                     className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
                   />
