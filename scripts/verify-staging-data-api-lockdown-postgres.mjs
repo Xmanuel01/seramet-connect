@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import pg from "pg";
+import { assertStagingBacklogReady, inspectStagingBacklog } from "./inspect-staging-backlog.mjs";
 
 /** Disposable CI Postgres ONLY: prove lockdown fails closed and runs cleanly. */
 const connectionString = process.env.SERAMET_POSTGRES_URL;
@@ -20,6 +21,12 @@ try {
   );
   await db.query(
     "DO $$ BEGIN CREATE ROLE authenticated; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+  );
+  // A restored, already-contained schema has no exposed table. Create the
+  // negative fixture explicitly, only behind this script's loopback DB fence.
+  await db.query("CREATE TABLE seramet_lockdown_test_fixture (id integer PRIMARY KEY)");
+  await db.query(
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO anon, authenticated",
   );
   await db.query("GRANT USAGE ON SCHEMA public TO anon, authenticated");
   await db.query("GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated");
@@ -62,6 +69,13 @@ try {
     anon_usage: false,
     authenticated_usage: false,
   });
+  await db.query("CREATE TABLE seramet_lockdown_future_fixture (id integer PRIMARY KEY)");
+  const futureGrants = await db.query(
+    "SELECT has_table_privilege('anon','public.seramet_lockdown_future_fixture','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS anon_access, " +
+      "has_table_privilege('authenticated','public.seramet_lockdown_future_fixture','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS auth_access",
+  );
+  assert.deepEqual(futureGrants.rows[0], { anon_access: false, auth_access: false });
+  await db.query("ALTER TABLE seramet_lockdown_future_fixture ENABLE ROW LEVEL SECURITY");
 
   // The staging pooler uses the database owner. Prove the same authority can
   // still read and prepare a no-op write, then roll the transaction back.
@@ -69,6 +83,48 @@ try {
   await db.query("SELECT COUNT(*) FROM public.schema_migrations");
   await db.query("UPDATE public.worker_jobs SET updated_at=updated_at WHERE false");
   await db.query("ROLLBACK");
+  // Temporary tables shadow only this isolated verifier connection's job data.
+  await db.query(`CREATE TEMP TABLE setup_imports (
+    tenant_id text, file_checksum text, import_kind text, status text
+  )`);
+  await db.query(`CREATE TEMP TABLE worker_jobs (
+    job_type text, status text, lease_expires_at text
+  )`);
+  try {
+    await db.query(`INSERT INTO worker_jobs VALUES
+      ('fixture-expired','RUNNING',(CURRENT_TIMESTAMP - interval '1 minute')::text),
+      ('fixture-unleased','CLAIMED',NULL),
+      ('fixture-active','RUNNING',(CURRENT_TIMESTAMP + interval '1 hour')::text),
+      ('fixture-queued','PENDING',NULL),
+      ('fixture-terminal','SUCCEEDED',(CURRENT_TIMESTAMP - interval '1 day')::text),
+      ('fixture-quarantined','DEAD_LETTER',NULL)`);
+    const before = await db.query("SELECT * FROM pg_temp.worker_jobs ORDER BY job_type");
+    const backlog = await inspectStagingBacklog(db);
+    assert.equal(backlog.expiredWorkerLeases, 1);
+    assert.equal(backlog.missingWorkerLeases, 1);
+    assert.throws(() => assertStagingBacklogReady(backlog), /Abandoned worker leases/);
+    assert.deepEqual(
+      (await db.query("SELECT * FROM pg_temp.worker_jobs ORDER BY job_type")).rows,
+      before.rows,
+      "Read-only release preflight must not replay or change worker jobs",
+    );
+    await db.query(`DELETE FROM pg_temp.worker_jobs
+      WHERE job_type IN ('fixture-expired','fixture-unleased')`);
+    assertStagingBacklogReady(await inspectStagingBacklog(db));
+    await db.query(`UPDATE pg_temp.worker_jobs SET lease_expires_at='invalid'
+      WHERE job_type='fixture-active'`);
+    await assert.rejects(inspectStagingBacklog(db), /invalid input syntax/);
+    assert.equal(
+      (await db.query("SELECT 1 AS usable_after_rollback")).rows[0].usable_after_rollback,
+      1,
+    );
+  } finally {
+    await db.query("DROP TABLE pg_temp.worker_jobs, pg_temp.setup_imports");
+  }
+  console.log(
+    "DISPOSABLE POSTGRES: abandoned lease gate, active/terminal exclusions and read-only rollback PASSED",
+  );
+  await db.query("DROP TABLE seramet_lockdown_test_fixture,seramet_lockdown_future_fixture");
   console.log("DISPOSABLE POSTGRES: approval guard and public-schema grants/RLS lockdown PASSED");
 } finally {
   await db.end();

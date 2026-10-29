@@ -199,12 +199,87 @@ describe.sequential("commercial launch foundation", () => {
     );
     expect(response?.status).toBe(202);
     expect(provider).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(provider.mock.calls[0]![1]?.body))).toMatchObject({
+      data: { display_name: "Disposable owner" },
+    });
     const callback = new URL(String(provider.mock.calls[0]![0])).searchParams.get("redirect_to");
     expect(callback).toBe("https://app.seramet.test/login?account=1&verified=1");
     await expect(response?.json()).resolves.toMatchObject({
       verificationRequired: true,
       authenticated: false,
     });
+  });
+
+  it.each([true, false])(
+    "returns the saved account name for setup with a database binding: %s",
+    async (withDatabase) => {
+      const response = await handleSupabaseAuthApi(
+        new Request("https://app.seramet.test/api/seramet/public/auth/status", {
+          headers: { cookie: "seramet_access=verified-token" },
+        }),
+        {
+          ...authEnv(),
+          SERAMET_DB: withDatabase ? database : undefined,
+          SERAMET_IDENTITY_VERIFIER: {
+            verify: async () => ({ ...identity(), displayName: "Saved account owner" }),
+          },
+        },
+      );
+      await expect(response?.json()).resolves.toMatchObject({
+        authenticated: true,
+        identity: {
+          email: "owner@example.test",
+          phone: null,
+          displayName: "Saved account owner",
+        },
+        restaurants: [],
+      });
+    },
+  );
+
+  it("does not expose a profile name without an authenticated session", async () => {
+    const verify = vi.fn(async () => ({ ...identity(), displayName: "Saved account owner" }));
+    const response = await handleSupabaseAuthApi(
+      new Request("https://app.seramet.test/api/seramet/public/auth/status"),
+      { ...authEnv(), SERAMET_IDENTITY_VERIFIER: { verify } },
+    );
+    await expect(response?.json()).resolves.toEqual({
+      ok: true,
+      authenticated: false,
+      restaurants: [],
+    });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it("returns only the signed-in account's persisted onboarding progress", async () => {
+    const service = new RestaurantRegistrationService(database);
+    const tenant = await service.register(identity(), registration());
+    await service.register(
+      { ...identity(), subject: "other-owner" },
+      {
+        ...registration(),
+        idempotencyKey: "other-owner-registration-0002",
+        slug: "other-owner-restaurant",
+      },
+    );
+    const status = async () => {
+      const response = await handleSupabaseAuthApi(
+        new Request("https://app.seramet.test/api/seramet/public/auth/status", {
+          headers: { cookie: "seramet_access=verified-token" },
+        }),
+        authEnv(),
+      );
+      return response!.json();
+    };
+    const expected = { tenantId: tenant.tenantId, slug: "launch-kitchen", name: "Launch Kitchen" };
+    expect((await status()).restaurants).toEqual([
+      { ...expected, onboardingStatus: "IN_PROGRESS" },
+    ]);
+    await database
+      .prepare("UPDATE onboarding_wizard_progress SET status='COMPLETED' WHERE tenant_id=?")
+      .bind(tenant.tenantId)
+      .run();
+    expect((await status()).restaurants).toEqual([{ ...expected, onboardingStatus: "COMPLETED" }]);
   });
 
   it("allows public auth login before unrelated production bindings are present", async () => {

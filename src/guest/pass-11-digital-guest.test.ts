@@ -27,6 +27,9 @@ describe("Pass 11 digital guest experience", () => {
   let capturedEvents: number;
 
   beforeEach(async () => {
+    // General guest scenarios run during opening hours, regardless of the CI clock.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-21T12:00:00+03:00"));
     db = createDemoFixtureDatabase();
     db.sqlite
       .prepare(
@@ -51,7 +54,31 @@ describe("Pass 11 digital guest experience", () => {
     });
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    try {
+      db?.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { at: "2026-10-21T23:58:30+03:00", allowed: true },
+    { at: "2026-10-21T23:59:30+03:00", allowed: false },
+    { at: "2026-10-22T00:00:00+03:00", allowed: true },
+  ])("enforces configured hours at $at", async ({ at, allowed }) => {
+    vi.setSystemTime(new Date(at));
+    const session = await webSession();
+    const quote = service.createQuote(session.token, {
+      serviceMode: "PICKUP",
+      items: [{ itemId: "menu-demo-biryani", quantity: 1 }],
+    });
+    if (allowed) {
+      await expect(quote).resolves.toMatchObject({ totalMinor: 100_000 });
+    } else {
+      await expect(quote).rejects.toMatchObject({ code: "UNAVAILABLE", status: 409 });
+    }
+  });
 
   it("applies the current schema with tenant-scoped guest and reservation constraints", () => {
     expect(

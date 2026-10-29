@@ -66,7 +66,7 @@ function PosLoginPage() {
       if (result.state !== "ACTIVE") setMessage(deviceMessage(result.state));
     } catch {
       if (!controller.signal.aborted && startupRequest.current === controller)
-        setMessage("We couldn't connect to Seramet. Please try again.");
+        setMessage("Cannot connect. Try again.");
     } finally {
       if (startupRequest.current === controller) {
         startupRequest.current = null;
@@ -91,7 +91,7 @@ function PosLoginPage() {
     if (submittingRef.current || entryDisabled) return;
     if (!deviceReady) {
       setPin("");
-      setMessage("Use administrator account to activate this device.");
+      setMessage("Activate this device with an administrator account.");
       administratorLinkRef.current?.focus();
       return;
     }
@@ -176,10 +176,7 @@ function PosLoginPage() {
 
   if (mustChangePin)
     return (
-      <ScreenMessage
-        title="Replace temporary PIN"
-        detail="Choose your own PIN before accessing Seramet."
-      >
+      <ScreenMessage title="Replace temporary PIN" detail="Choose a new PIN.">
         <form
           className="mt-5 grid gap-4 text-left"
           onSubmit={(event) => {
@@ -442,7 +439,7 @@ function PosLoginPage() {
                 {busy ? "Signing in..." : "Sign in"}
               </button>
               <p className="mt-4 text-center text-xs text-muted-foreground">
-                Forgot PIN? Ask an authorized manager to issue a temporary reset.
+                Forgot PIN? Ask your manager.
               </p>
             </div>
           </section>
@@ -500,9 +497,9 @@ function ScreenMessage({
 }
 
 function deviceMessage(state: DeviceStartup["state"]) {
-  if (state === "LOCKED") return "This device is locked. An administrator must review it.";
-  if (state === "REVOKED") return "This device has been revoked and cannot sign in employees.";
-  if (state === "RETIRED") return "This device has been retired.";
-  if (state === "ACTIVATION_PENDING") return "Device activation is waiting for an administrator.";
-  return "This browser is not registered as a Seramet POS device.";
+  if (state === "LOCKED") return "Device locked. Contact your administrator.";
+  if (state === "REVOKED") return "Device access revoked.";
+  if (state === "RETIRED") return "Device retired.";
+  if (state === "ACTIVATION_PENDING") return "Waiting for device activation.";
+  return "Device not activated.";
 }

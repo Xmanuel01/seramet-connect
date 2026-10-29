@@ -20,19 +20,37 @@ jobs:
           cache: npm
       - name: Reject accidental Lovable source integration
         run: node --test scripts/assert-no-lovable-source.test.mjs && node scripts/assert-no-lovable-source.mjs
+      - name: Verify required release-input policy
+        run: node --test scripts/main-branch-protection.test.mjs scripts/solo-release-approval.test.mjs
       - run: npm ci
+      - run: npm ls --all
       - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --include=dev --audit-level=moderate
       - run: npm run typecheck
+      - name: Typecheck scanner against the actual Cloudflare runtime API
+        env:
+          SERAMET_CLOUDFLARE_WORKER_NAME: seramet-staging
+          SERAMET_CLOUDFLARE_R2_BUCKET: seramet-staging-objects
+          SERAMET_CLOUDFLARE_SCAN_QUEUE: seramet-staging-file-scan
+          SERAMET_CLOUDFLARE_SCAN_DLQ: seramet-staging-file-scan-dlq
+        run: |
+          node scripts/render-scanner-cloudflare-config.mjs staging
+          npx --yes wrangler@4.149.0 types .seramet/scanner-runtime.generated.d.ts --config .seramet/scanner.wrangler.generated.json
+          npx tsc --noEmit --project scanner-worker/tsconfig.json
       - run: npm run lint
       - run: npm test
       - run: node --test scripts/verify-staging-health.test.mjs
       - run: node --test scripts/verify-production-health.test.mjs
       - run: node --test scripts/production-recovery.test.mjs
       - run: node --test scripts/verify-staging-release-gate.test.mjs
+      - run: node --test scripts/scanner-deployment-resources.test.mjs scripts/verify-cloudflare-queue-response.test.mjs
       - run: node --test scripts/inspect-staging-backlog.test.mjs
+      - run: node --test scripts/staging-worker-hold-plan.test.mjs
+      - run: node --test scripts/verify-certification-schema-postgres.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
       - run: node --test scripts/staging-recovery-cli-args.test.mjs
+      - run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs scripts/staging-object-recovery.test.mjs
       - run: node --test scripts/assert-staging-api-posture.test.mjs
       - run: node --test scripts/prepare-staging-postgres-ca.test.mjs scripts/staging-postgres-tls.test.mjs scripts/staging-connectivity-diagnostic.test.mjs
       - run: npm run build
@@ -75,10 +93,17 @@ jobs:
         run: npm run migrate:postgres
       - name: Assert the CRM schema, JSON compatibility and immutable audit triggers
         run: node scripts/verify-crm-postgres.mjs
+      - name: Verify complete migration ledger and menu/workforce RLS
+        run: node scripts/verify-certification-schema-postgres.mjs
       - name: Execute authoritative CRM pipeline and campaign queries on PostgreSQL
         run: ./node_modules/.bin/vite-node scripts/verify-crm-postgres-runtime.ts
       - name: Validate public schema lockdown on disposable PostgreSQL
-        run: node scripts/verify-staging-data-api-lockdown-postgres.mjs
+        run: |
+          node scripts/verify-staging-data-api-lockdown-postgres.mjs
+          # The second run starts contained, as a post-containment backup does.
+          node scripts/verify-staging-data-api-lockdown-postgres.mjs
+      - name: Verify audited no-replay holds on disposable jobs
+        run: node scripts/verify-staging-worker-hold-postgres.mjs
 
   postgres-recovery-fixture:
     runs-on: ubuntu-24.04

@@ -18,6 +18,7 @@ const operational = "tests/e2e/printing-operational.spec.ts";
 const audit = "tests/e2e/site-lifecycle-audit.spec.ts";
 const auditCorrections = "tests/e2e/audit-corrections.spec.ts";
 const categoryAcceptance = "tests/e2e/category-workflows.spec.ts";
+const activatedStaff = ["tests/e2e/cashier-channels.spec.ts", "tests/e2e/chef-kds.spec.ts"];
 const allowed = new Set([
   "tests/e2e/front-of-house.spec.ts",
   "tests/e2e/invoice-split.spec.ts",
@@ -40,6 +41,7 @@ if (
       suite !== audit &&
       suite !== auditCorrections &&
       suite !== categoryAcceptance &&
+      !activatedStaff.includes(suite) &&
       suite !== operational &&
       suite !== "tests/e2e/pos-session-soak.spec.ts",
   )
@@ -56,7 +58,13 @@ if (
 }
 if (focused.includes(categoryAcceptance))
   run(["exec", "vite-node", "scripts/seed-category-acceptance.ts"], env);
-run(["exec", "playwright", "test", ...(focused.length ? focused : [...allowed])], env);
+if (focused.length) run(["exec", "playwright", "test", ...focused], env);
+else {
+  run(["exec", "playwright", "test", ...allowed], env);
+  // Activation changes branch-wide routing. Keep missing-route baseline tests isolated.
+  run(["exec", "vite-node", "scripts/seed-pilot-e2e.ts"], env);
+  run(["exec", "playwright", "test", ...activatedStaff], env);
+}
 
 function run(args, environment) {
   const result = spawnSync(npm, args, {

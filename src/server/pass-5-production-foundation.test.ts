@@ -864,6 +864,129 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(retried).toBe(false);
   });
 
+  it("acknowledges an audited no-replay hold without running or altering the original job", async () => {
+    const stamp = new Date().toISOString();
+    const hold = {
+      seramet_recovery_hold: {
+        version: 1,
+        disposition: "NO_REPLAY",
+        batch_id: "12345678-1234-4123-8123-123456789abc",
+        snapshot_sha256: "a".repeat(64),
+        original_status: "RUNNING",
+      },
+    };
+    await database
+      .prepare(
+        `INSERT INTO worker_jobs
+       (tenant_id,id,job_type,payload_json,idempotency_key,correlation_id,status,attempt_count,scheduled_at,created_at,updated_at,last_error,result_json)
+       VALUES (?,'held-job','MUST_NOT_EXECUTE','{}','held-key','held-correlation','FAILED',3,?,?,?,'Original diagnostic',?)`,
+      )
+      .bind(tenantA, stamp, stamp, stamp, JSON.stringify(hold))
+      .run();
+    const before = await database
+      .prepare("SELECT * FROM worker_jobs WHERE tenant_id=? AND id='held-job'")
+      .bind(tenantA)
+      .first();
+    let acknowledged = false,
+      retried = false;
+    await handleWorkerQueue(
+      {
+        queue: "disposable",
+        messages: [
+          {
+            id: "held-message",
+            timestamp: new Date(),
+            attempts: 1,
+            body: {
+              kind: "worker-job",
+              tenantId: tenantA,
+              jobId: "held-job",
+              correlationId: "held-correlation",
+            },
+            ack: () => {
+              acknowledged = true;
+            },
+            retry: () => {
+              retried = true;
+            },
+          },
+        ],
+      },
+      testEnv(),
+    );
+    expect(acknowledged).toBe(true);
+    expect(retried).toBe(false);
+    expect(
+      await database
+        .prepare("SELECT * FROM worker_jobs WHERE tenant_id=? AND id='held-job'")
+        .bind(tenantA)
+        .first(),
+    ).toEqual(before);
+    expect(
+      await database
+        .prepare(
+          "SELECT COUNT(*) count FROM realtime_events WHERE tenant_id=? AND entity_id='held-job'",
+        )
+        .bind(tenantA)
+        .first("count"),
+    ).toBe(0);
+  });
+
+  it.each([
+    "null",
+    "[]",
+    "not-json",
+    '{"seramet_recovery_hold":{"version":1,"disposition":"NO_REPLAY"}}',
+  ])(
+    "does not treat unaudited FAILED result %s as an approved terminal hold",
+    async (resultJson) => {
+      const stamp = new Date().toISOString();
+      await database
+        .prepare(
+          `INSERT INTO worker_jobs
+       (tenant_id,id,job_type,payload_json,idempotency_key,correlation_id,status,scheduled_at,created_at,updated_at,result_json)
+       VALUES (?,'invalid-hold','MUST_NOT_EXECUTE','{}','invalid-hold-key','invalid-correlation','FAILED',?,?,?,?)`,
+        )
+        .bind(tenantA, stamp, stamp, stamp, resultJson)
+        .run();
+      let acknowledged = false,
+        retried = false;
+      await handleWorkerQueue(
+        {
+          queue: "disposable",
+          messages: [
+            {
+              id: "invalid-message",
+              timestamp: new Date(),
+              attempts: 1,
+              body: {
+                kind: "worker-job",
+                tenantId: tenantA,
+                jobId: "invalid-hold",
+                correlationId: "invalid-correlation",
+              },
+              ack: () => {
+                acknowledged = true;
+              },
+              retry: () => {
+                retried = true;
+              },
+            },
+          ],
+        },
+        testEnv(),
+      );
+      expect(acknowledged).toBe(false);
+      expect(retried).toBe(true);
+      expect(
+        await database
+          .prepare("SELECT attempt_count FROM worker_jobs WHERE tenant_id=? AND id='invalid-hold'")
+          .bind(tenantA)
+          .first("attempt_count"),
+      ).toBe(0);
+    },
+  );
+
   it("commits worker completion and its management refresh event together", async () => {
     const stamp = new Date().toISOString();
     await database

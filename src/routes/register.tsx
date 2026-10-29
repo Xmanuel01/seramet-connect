@@ -18,26 +18,36 @@ import {
 export const Route = createFileRoute("/register")({ component: RegisterPage });
 
 type Stage = "CHECKING" | "ACCOUNT" | "VERIFY" | "RESTAURANT" | "CHOOSE_RESTAURANT" | "ERROR";
+const sessionCheckFailure =
+  "We could not confirm your session. Try again without creating another account.";
 
 function RegisterPage() {
   const [stage, setStage] = useState<Stage>("CHECKING");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [restaurants, setRestaurants] = useState<AuthRestaurant[]>([]);
+  const [accountName, setAccountName] = useState<string>();
+  const formRef = useRef<HTMLFormElement>(null);
+  const submissionPending = useRef(false);
   const sessionCheck = useRef(0);
   const verificationPending = useRef(false);
   const idempotencyKey = useRef<string | undefined>(undefined);
   idempotencyKey.current ??= crypto.randomUUID();
 
-  const checkSession = useCallback(async (phase?: RegistrationSessionPhase) => {
+  const checkSession = useCallback(async (phase?: RegistrationSessionPhase, background = false) => {
+    if (background && submissionPending.current) return;
     const requestId = ++sessionCheck.current;
     const effectivePhase =
       phase ?? (verificationPending.current ? "VERIFICATION_PENDING" : "INITIAL");
-    setStage("CHECKING");
-    setMessage(undefined);
+    // Keep native autofill and unfinished form values mounted on a return to the tab.
+    if (!background) {
+      setStage("CHECKING");
+      setMessage(undefined);
+    }
     try {
       const status = await authStatus();
       if (requestId !== sessionCheck.current) return;
+      setMessage((current) => (current === sessionCheckFailure ? undefined : current));
       const destination = registrationSessionDestination(status, effectivePhase);
       if (destination.kind === "SIGN_IN") {
         window.location.assign("/login?account=1");
@@ -48,7 +58,7 @@ function RegisterPage() {
           window.location.assign("/login?account=1");
           return;
         }
-        enterRestaurant(destination.tenantId);
+        enterRestaurant(status.restaurants[0]!);
         return;
       }
       if (destination.kind === "VERIFY") {
@@ -56,7 +66,10 @@ function RegisterPage() {
         setStage("VERIFY");
         return;
       }
-      if (status.authenticated) verificationPending.current = false;
+      if (status.authenticated) {
+        verificationPending.current = false;
+        setAccountName(status.identity?.displayName ?? undefined);
+      }
       if (destination.kind === "CHOOSE_RESTAURANT") {
         setRestaurants(status.restaurants);
       } else {
@@ -65,21 +78,21 @@ function RegisterPage() {
       setStage(destination.kind);
     } catch {
       if (requestId !== sessionCheck.current) return;
-      setStage("ERROR");
-      setMessage("We could not confirm your session. Try again without creating another account.");
+      if (!background || !formRef.current) setStage("ERROR");
+      setMessage(sessionCheckFailure);
     }
   }, []);
 
   useEffect(() => {
     void checkSession();
     const onFocus = () => {
-      if (document.visibilityState === "visible") void checkSession();
+      if (document.visibilityState === "visible") void checkSession(undefined, true);
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") void checkSession();
+      if (document.visibilityState === "visible") void checkSession(undefined, true);
     };
     const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) void checkSession();
+      if (event.persisted) void checkSession(undefined, true);
     };
     window.addEventListener("focus", onFocus);
     window.addEventListener("pageshow", onPageShow);
@@ -94,6 +107,9 @@ function RegisterPage() {
 
   const createAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submissionPending.current) return;
+    submissionPending.current = true;
+    sessionCheck.current += 1;
     setBusy(true);
     setMessage(undefined);
     const data = new FormData(event.currentTarget);
@@ -113,12 +129,16 @@ function RegisterPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Account creation failed");
     } finally {
+      submissionPending.current = false;
       setBusy(false);
     }
   };
 
   const createRestaurant = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submissionPending.current) return;
+    submissionPending.current = true;
+    sessionCheck.current += 1;
     setBusy(true);
     setMessage(undefined);
     const data = new FormData(event.currentTarget);
@@ -154,6 +174,7 @@ function RegisterPage() {
             : "Restaurant creation failed",
       );
     } finally {
+      submissionPending.current = false;
       setBusy(false);
     }
   };
@@ -235,7 +256,7 @@ function RegisterPage() {
               key={restaurant.tenantId}
               type="button"
               className="w-full rounded-md border border-border px-3 py-3 text-left text-sm font-semibold hover:bg-accent/50"
-              onClick={() => enterRestaurant(restaurant.tenantId)}
+              onClick={() => enterRestaurant(restaurant)}
             >
               {restaurant.name}
             </button>
@@ -262,11 +283,17 @@ function RegisterPage() {
         </>
       }
     >
-      <form onSubmit={stage === "ACCOUNT" ? createAccount : createRestaurant} className="space-y-4">
+      <form
+        key={stage}
+        ref={formRef}
+        onSubmit={stage === "ACCOUNT" ? createAccount : createRestaurant}
+        className="space-y-4"
+      >
         <label className="block text-sm font-medium">
           Your name
           <input
             name={stage === "ACCOUNT" ? "name" : "administratorName"}
+            defaultValue={stage === "RESTAURANT" ? accountName : undefined}
             className={authInputClass}
             required
             minLength={2}

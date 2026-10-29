@@ -1,9 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { assertPrimaryScannerResources } from "./scanner-deployment-resources.mjs";
 
 const target = process.argv[2] ?? "staging";
 if (!new Set(["staging", "production"]).has(target)) {
   throw new Error("Target must be staging or production");
 }
+assertPrimaryScannerResources(target, process.env);
 
 const reuseExistingVars = process.env.SERAMET_REUSE_EXISTING_VARS === "true";
 const required = [
@@ -39,6 +41,7 @@ const vars = {
   SERAMET_REQUIRE_BEARER: "true",
   SERAMET_SECRET_STORE: "cloudflare-worker-secrets",
   SERAMET_ALLOW_TEST_PROVIDERS: "false",
+  SERAMET_ALLOW_UNSCANNED_MENU_IMPORTS: "false",
   SERAMET_ENABLE_DEV_AUTH: "false",
   SERAMET_ENABLE_LOCAL_DATABASE: "false",
   SERAMET_APP_VERSION: process.env.SERAMET_APP_VERSION ?? "0.6.0",

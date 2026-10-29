@@ -8,8 +8,19 @@ import { permissions } from "@/platform/permissions";
 import { PostgresD1Database } from "@/server/database/postgres-database";
 import { handleAttendanceDelays } from "@/server/attendance-delay-api";
 import { staffStationAccess } from "@/server/staff-station-access";
+import { LoyaltyValueService } from "@/crm/loyalty-value-service";
+import { handleWorkerQueue } from "@/server/workers";
+import { ServerOperationError } from "@/server/errors";
 
 const url = process.env.SERAMET_POSTGRES_URL;
+function assertAttendanceConflict(error: unknown) {
+  // Either the unique guard wins or SERIALIZABLE rejects the stale writer first.
+  assert.ok(
+    (error instanceof ServerOperationError && error.code === "CONFLICT" && error.status === 409) ||
+      (typeof error === "object" && error !== null && "code" in error && error.code === "23505"),
+    "Losing attendance operation must fail with a specific concurrency conflict",
+  );
+}
 const target = url ? new URL(url) : null;
 if (
   process.env.CI !== "true" ||
@@ -71,6 +82,54 @@ try {
   console.log("Authoritative CRM pipeline read/write and scoped campaign SQL on PostgreSQL: PASS");
   await verifyAttendanceTransactions(seeded.tenant_id, seeded.id);
   await verifyStaffPilotTransactions(seeded.tenant_id, seeded.id);
+  const expiryService = new LoyaltyValueService(db, {
+    ...actor,
+    permissions: [permissions.loyaltyManage, permissions.giftCardManage, permissions.voucherManage],
+  });
+  assert.deepEqual(await expiryService.expirePoints(), { expiredEntries: 0 });
+  assert.deepEqual(await expiryService.expireStoredValue(), {
+    expiredGiftCards: 0,
+    expiredDefinitions: 0,
+    expiredIssues: 0,
+  });
+  const jobId = crypto.randomUUID();
+  const stamp = new Date().toISOString();
+  await db
+    .prepare(
+      `INSERT INTO worker_jobs
+     (tenant_id,id,job_type,payload_json,idempotency_key,correlation_id,status,scheduled_at,created_at,updated_at)
+     VALUES (?,?,'INVENTORY_EXPIRY_ALERTS','{}',?,?,'PENDING',?,?,?)`,
+    )
+    .bind(seeded.tenant_id, jobId, jobId, jobId, stamp, stamp, stamp)
+    .run();
+  let acknowledged = 0;
+  const message = {
+    id: jobId,
+    timestamp: new Date(stamp),
+    body: { kind: "worker-job" as const, tenantId: seeded.tenant_id, jobId, correlationId: jobId },
+    attempts: 1,
+    ack: () => {
+      acknowledged += 1;
+    },
+    retry: () => {
+      assert.fail("Inventory expiry SQL must not fail on PostgreSQL");
+    },
+  };
+  for (let delivery = 0; delivery < 2; delivery += 1) {
+    await handleWorkerQueue(
+      { queue: "disposable-expiry-query", messages: [message] },
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "test" },
+    );
+  }
+  assert.equal(acknowledged, 2);
+  assert.equal(
+    await db
+      .prepare("SELECT status FROM worker_jobs WHERE tenant_id=? AND id=?")
+      .bind(seeded.tenant_id, jobId)
+      .first("status"),
+    "SUCCEEDED",
+  );
+  console.log("PostgreSQL expiry queries and terminal worker redelivery: PASS (empty ledgers)");
 } finally {
   await db.close();
 }
@@ -240,7 +299,8 @@ async function verifyAttendanceTransactions(tenantId: string, branchId: string) 
     ]);
     assert.equal(created.filter((outcome) => outcome.status === "fulfilled").length, 1);
     const createFailure = created.find((outcome) => outcome.status === "rejected");
-    assert.ok(createFailure?.status === "rejected" && createFailure.reason.code === "23505");
+    assert.ok(createFailure?.status === "rejected");
+    assertAttendanceConflict(createFailure.reason);
     const session = await db
       .prepare(
         "SELECT id,version FROM employee_attendance_sessions WHERE tenant_id=? AND user_id=?",
@@ -275,9 +335,8 @@ async function verifyAttendanceTransactions(tenantId: string, branchId: string) 
     const corrected = await Promise.allSettled([correct(db), correct(second)]);
     assert.equal(corrected.filter((outcome) => outcome.status === "fulfilled").length, 1);
     const correctionFailure = corrected.find((outcome) => outcome.status === "rejected");
-    assert.ok(
-      correctionFailure?.status === "rejected" && correctionFailure.reason.code === "23505",
-    );
+    assert.ok(correctionFailure?.status === "rejected");
+    assertAttendanceConflict(correctionFailure.reason);
     const counts = await db
       .prepare(
         "SELECT COUNT(*) count FROM employee_attendance_events WHERE tenant_id=? AND actor_id=?",

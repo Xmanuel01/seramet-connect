@@ -5,7 +5,7 @@ frontend and primary API Worker do not contain or run an antivirus engine.
 Imports remain unavailable unless every required binding and the shared scanner
 authentication secret are configured.
 
-## Staging architecture
+## Isolated architecture
 
 `authenticated upload -> private R2 quarantine -> scan queue -> dedicated scanner Worker -> on-demand ClamAV container -> authenticated verdict -> existing import worker`
 
@@ -22,8 +22,18 @@ authentication secret are configured.
 
 The initial raw upload limit is 10 MiB. The scan queue uses one-message batches,
 one concurrent consumer, three bounded retries and a dead-letter queue. The
-ClamAV container is limited to one `standard-1` instance and sleeps after two
-idle minutes. Normal POS requests do not invoke or wait for the scanner.
+ClamAV container uses the account-supported `durable_object` scheduling policy.
+Only the fixed private `scanner` Durable Object identity may start an instance;
+other identities and non-scan routes are rejected without starting capacity.
+It selects the digest-pinned named image and `standard-1` size at startup, checks
+engine readiness, and shuts down after two idle minutes using a persistent alarm.
+An alarm persistence failure destroys the container rather than leaking capacity.
+Normal POS requests do not invoke or wait for the scanner.
+
+The unused legacy `ClamAvContainer` namespace is retained for rollback. The new
+`DurableClamAvScanner` class has a separate namespace and application; no existing
+Durable Object state or file data is transferred or deleted. The account rejected
+the previous `default` scheduling policy before creating any Container instance.
 
 ## Protected secrets
 
@@ -32,6 +42,12 @@ only as a protected staging environment secret and as a secret on both Workers.
 It must not be committed, logged, returned to the browser or regenerated during
 an ordinary deployment. Rotate it as a coordinated scanner/primary-Worker
 maintenance operation while imports are disabled.
+
+Production uses a distinct production evidence key, scanner Worker, queues and
+private production bucket; it never binds staging resources. See
+[the guarded production release runbook](SCANNER_PRODUCTION_RELEASE.md) for
+resource identities, exact-commit approvals and certification prerequisites.
+Production support in the configuration generator is not deployed acceptance.
 
 ## Certification
 

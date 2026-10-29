@@ -183,7 +183,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
     setBusy(true);
     setNotice("");
     try {
-      const entries = readCounts();
+      const entries = targetShift || policy.mode === "SUPERVISOR_DAILY_CLOSE" ? readCounts() : [];
       if (targetShift) await mutate("closeCashierShift", entries[0]);
       else
         await mutate("closeBusinessDay", {

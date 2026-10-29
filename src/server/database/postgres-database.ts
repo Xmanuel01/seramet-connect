@@ -1,5 +1,6 @@
 import { Pool, types as postgresTypes, type QueryResultRow } from "pg";
 import type { D1Database, D1PreparedStatement, D1Result } from "@/server/database/d1";
+import { ServerOperationError } from "@/server/errors";
 
 export type HyperdriveBinding = {
   connectionString: string;
@@ -44,13 +45,15 @@ export class PostgresD1Database implements D1Database {
   }
 
   prepare(query: string): D1PreparedStatement {
-    return new PostgresPreparedStatement(this.pool, normalizePostgresSql(query), []);
+    return new PostgresPreparedStatement(this.pool, normalizePostgresSql(query), [], this);
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      // Match D1's serialized writers: aggregate balance guards must not both
+      // commit after reading the same stock, points or stored-value balance.
+      await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
       const results: D1Result<T>[] = [];
       for (const statement of statements) {
         if (!(statement instanceof PostgresPreparedStatement)) {
@@ -62,6 +65,18 @@ export class PostgresD1Database implements D1Database {
       return results;
     } catch (error) {
       await client.query("ROLLBACK");
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "40001" || error.code === "40P01")
+      ) {
+        throw new ServerOperationError(
+          "CONFLICT",
+          409,
+          "The data changed during this operation. Reload and retry.",
+        );
+      }
       throw error;
     } finally {
       client.release();
@@ -83,10 +98,11 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     private readonly executor: QueryExecutor,
     private readonly query: string,
     private readonly values: unknown[],
+    private readonly database: PostgresD1Database,
   ) {}
 
   bind(...values: unknown[]) {
-    return new PostgresPreparedStatement(this.executor, this.query, values);
+    return new PostgresPreparedStatement(this.executor, this.query, values, this.database);
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
@@ -106,7 +122,9 @@ class PostgresPreparedStatement implements D1PreparedStatement {
   }
 
   async run<T = unknown>(): Promise<D1Result<T>> {
-    return this.runWith<T>(this.executor);
+    // Single writes and their balance-checking triggers must participate in the
+    // same serialization contract as batches, including expiry and reversals.
+    return (await this.database.batch<T>([this]))[0]!;
   }
 
   async runWith<T = unknown>(executor: QueryExecutor): Promise<D1Result<T>> {

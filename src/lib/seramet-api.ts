@@ -44,6 +44,7 @@ import {
   validateRuntimeConfiguration,
 } from "@/server/environment";
 import { ServerOperationError, publicError } from "@/server/errors";
+import { OrderChannelValidationError } from "@/orders/order-channel-service";
 import { handleOperationsApi } from "@/server/operations-api";
 import { handleOfflineSyncApi } from "@/server/offline-sync-api";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
@@ -580,6 +581,8 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
   } catch (error) {
     if (error instanceof SerametHttpError)
       return json({ ok: false, message: error.message }, error.status);
+    if (error instanceof OrderChannelValidationError)
+      return json({ ok: false, code: "VALIDATION_FAILED", message: error.message }, 400);
     if (error instanceof IntegrationError)
       return json(
         { ok: false, code: error.code, message: error.message, retryable: error.retryable },

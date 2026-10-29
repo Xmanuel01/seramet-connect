@@ -516,10 +516,29 @@ async function claimWorkerJob(
 ) {
   const db = env.SERAMET_DB!;
   const current = await db
-    .prepare("SELECT status FROM worker_jobs WHERE tenant_id = ? AND id = ?")
+    .prepare("SELECT status,result_json FROM worker_jobs WHERE tenant_id = ? AND id = ?")
     .bind(body.tenantId, body.jobId)
-    .first<{ status: string }>();
+    .first<{ status: string; result_json: string }>();
   if (!current || ["SUCCEEDED", "DEAD_LETTER"].includes(current.status)) return "done" as const;
+  if (current.status === "FAILED") {
+    const hold = parsePayload<{
+      seramet_recovery_hold?: {
+        version?: number;
+        disposition?: string;
+        batch_id?: string;
+        snapshot_sha256?: string;
+      };
+    }>(current.result_json)?.seramet_recovery_hold;
+    if (
+      hold?.version === 1 &&
+      hold.disposition === "NO_REPLAY" &&
+      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+        hold.batch_id ?? "",
+      ) &&
+      /^[a-f0-9]{64}$/.test(hold.snapshot_sha256 ?? "")
+    )
+      return "done" as const;
+  }
   const now = new Date();
   const claimed = await db
     .prepare(
@@ -1499,13 +1518,16 @@ export async function queueInventoryAvailabilityChanges(
 
 async function refreshInventoryExpiryAlerts(env: SerametEnv, tenantId: string) {
   const stamp = new Date().toISOString();
+  const cutoff = new Date(stamp);
+  // SQLite date('now') uses UTC; keep that boundary without a dialect-specific function.
+  cutoff.setUTCDate(cutoff.getUTCDate() + 3);
   const lots = await env
     .SERAMET_DB!.prepare(
       `SELECT branch_id,id,inventory_item_id,expiry_date,quantity_remaining_minor
      FROM inventory_lots WHERE tenant_id=? AND status='AVAILABLE' AND expiry_date IS NOT NULL
-       AND expiry_date<=date('now','+3 day') LIMIT 500`,
+       AND expiry_date<=? LIMIT 500`,
     )
-    .bind(tenantId)
+    .bind(tenantId, cutoff.toISOString().slice(0, 10))
     .all<{
       branch_id: string;
       id: string;

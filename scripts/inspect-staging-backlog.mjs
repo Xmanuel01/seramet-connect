@@ -6,13 +6,13 @@ const { Client } = pg;
 
 /**
  * Run using the staging connection only. A read-only transaction checks aggregates
- * and blocks overlapping committing menu files without outputting tenant IDs,
+ * and blocks overlapping committing menu files or abandoned worker leases without outputting tenant IDs,
  * restaurant data, file contents or provider secrets.
  */
 export async function inspectStagingBacklog(db) {
   await db.query("BEGIN READ ONLY");
   try {
-    const [imports, pendingJobs, duplicateGroups] = await Promise.all([
+    const [imports, pendingJobs, duplicateGroups, leases] = await Promise.all([
       db.query(
         `SELECT import_kind, status, COUNT(*)::integer AS count
          FROM setup_imports
@@ -36,15 +36,44 @@ export async function inspectStagingBacklog(db) {
            HAVING COUNT(*) > 1
          ) duplicate_file_groups`,
       ),
+      db.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE lease_expires_at::timestamptz<=CURRENT_TIMESTAMP)::integer AS expired_leases,
+           COUNT(*) FILTER (WHERE lease_expires_at IS NULL)::integer AS missing_leases
+         FROM worker_jobs WHERE status IN ('CLAIMED','RUNNING')`,
+      ),
     ]);
     return {
       importStatusCounts: imports.rows,
       pendingJobStatusCounts: pendingJobs.rows,
       overlappingCommittingMenuFiles: Number(duplicateGroups.rows[0]?.count ?? 0),
+      expiredWorkerLeases: Number(leases.rows[0]?.expired_leases ?? NaN),
+      missingWorkerLeases: Number(leases.rows[0]?.missing_leases ?? NaN),
     };
   } finally {
     // Even this inspection runs in an explicitly read-only transaction.
     await db.query("ROLLBACK");
+  }
+}
+
+export function assertStagingBacklogReady(summary) {
+  for (const key of [
+    "overlappingCommittingMenuFiles",
+    "expiredWorkerLeases",
+    "missingWorkerLeases",
+  ]) {
+    if (!Number.isSafeInteger(summary[key]) || summary[key] < 0)
+      throw new Error("Incomplete staging backlog evidence; refusing release.");
+  }
+  if (summary.overlappingCommittingMenuFiles > 0) {
+    throw new Error(
+      "Overlapping COMMITTING menu files remain. Backup, inspect and approve an audited duplicate-job quarantine before deployment.",
+    );
+  }
+  if (summary.expiredWorkerLeases > 0 || summary.missingWorkerLeases > 0) {
+    throw new Error(
+      "Abandoned worker leases remain. Require backup and reviewed recovery before deployment; do not bulk replay jobs.",
+    );
   }
 }
 
@@ -60,11 +89,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   try {
     const summary = await inspectStagingBacklog(db);
     console.log("Non-sensitive staging backlog counts:", JSON.stringify(summary));
-    if (summary.overlappingCommittingMenuFiles > 0) {
-      throw new Error(
-        "Overlapping COMMITTING menu files remain. Backup, inspect and approve an audited duplicate-job quarantine before deployment.",
-      );
-    }
+    assertStagingBacklogReady(summary);
   } finally {
     await db.end();
   }

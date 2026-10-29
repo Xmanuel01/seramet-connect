@@ -812,12 +812,12 @@ export class LoyaltyValueService extends CrmServiceBase {
     const stamp = asOf.toISOString();
     const rows = await this.db
       .prepare(
-        `SELECT customer_id,program_id,
+        `SELECT * FROM (SELECT customer_id,program_id,
                 SUM(CASE WHEN points>0 AND expires_at IS NOT NULL AND expires_at<=? THEN points ELSE 0 END) AS expired_earned,
                 ABS(SUM(CASE WHEN entry_type='EXPIRE' THEN points ELSE 0 END)) AS already_expired,
                 SUM(points) AS current_balance
          FROM loyalty_ledger WHERE tenant_id=? GROUP BY customer_id,program_id
-         HAVING expired_earned>already_expired AND current_balance>0`,
+         ) balances WHERE expired_earned>already_expired AND current_balance>0`,
       )
       .bind(stamp, this.actor.tenantId)
       .all<{
@@ -1338,7 +1338,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         `SELECT g.id,g.token_last_four,g.status,g.currency,g.original_value_minor,g.issued_at,g.expires_at,
                 COALESCE(SUM(l.amount_minor),0) AS balance_minor
          FROM gift_cards g LEFT JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
-         WHERE g.tenant_id=? GROUP BY g.id ORDER BY g.issued_at DESC LIMIT 500`,
+         WHERE g.tenant_id=? GROUP BY g.tenant_id,g.id ORDER BY g.issued_at DESC LIMIT 500`,
       )
       .bind(this.actor.tenantId)
       .all<Record<string, unknown>>();
@@ -1482,7 +1482,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         `SELECT g.id,g.token_last_four,g.status,g.currency,g.expires_at,
                 COALESCE(SUM(l.amount_minor),0) AS balance_minor
          FROM gift_cards g LEFT JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
-         WHERE g.tenant_id=? AND g.token_hash=? GROUP BY g.id`,
+         WHERE g.tenant_id=? AND g.token_hash=? GROUP BY g.tenant_id,g.id`,
       )
       .bind(this.actor.tenantId, hash)
       .first<{
@@ -1806,7 +1806,7 @@ export class LoyaltyValueService extends CrmServiceBase {
         `SELECT g.id,g.currency,COALESCE(SUM(l.amount_minor),0) AS balance_minor
          FROM gift_cards g JOIN gift_card_ledger l ON l.tenant_id=g.tenant_id AND l.gift_card_id=g.id
          WHERE g.tenant_id=? AND g.status='ACTIVE' AND g.expires_at IS NOT NULL AND g.expires_at<=?
-         GROUP BY g.id HAVING balance_minor>0`,
+         GROUP BY g.id,g.currency HAVING COALESCE(SUM(l.amount_minor),0)>0`,
       )
       .bind(this.actor.tenantId, stamp)
       .all<{ id: string; currency: string; balance_minor: number }>();

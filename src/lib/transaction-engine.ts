@@ -1,5 +1,9 @@
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import {
+  orderChannelDispatchError,
+  OrderChannelValidationError,
+} from "@/orders/order-channel-service";
+import {
   type ConfigurationRepository,
   getConfigurationRepository,
   PlatformConfigurationError,
@@ -113,6 +117,8 @@ export type TransactionOrder = {
   externalSource?: ExternalOrderSource;
   inventoryPostedAt?: string;
   delivery?: {
+    recipientName?: string;
+    address?: string;
     rider?: string;
     status: "UNASSIGNED" | "ASSIGNED" | "PICKED_UP" | "OUT_FOR_DELIVERY" | "DELIVERED";
     assignedAt?: string;
@@ -2145,6 +2151,11 @@ export const TransactionEngine = {
     const next = clone(state);
     const order = next.orders.find((item) => item.id === orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
+    const channel = configurationRepository
+      .listOrderChannels(order.tenantId ?? next.tenantId!, false)
+      .find((row) => [row.id, row.code, row.displayName].includes(order.channel));
+    const channelError = orderChannelDispatchError(channel, order);
+    if (channelError) throw new OrderChannelValidationError(channelError);
     if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
       throw new Error(`Order ${orderId} cannot be sent from ${order.status}`);
     }
@@ -2948,6 +2959,7 @@ export const TransactionEngine = {
     if (draft.customerCode) order.customerCode = draft.customerCode;
     else delete order.customerCode;
     order.channel = draft.channel;
+    if (draft.delivery) order.delivery = { ...order.delivery, ...draft.delivery };
     order.cashier = draft.cashier;
     if (draft.waiter) order.waiter = draft.waiter;
     else delete order.waiter;

@@ -6,6 +6,26 @@ name: Deploy staging
 # all data security/recovery gates for both deployments.
 on:
   workflow_dispatch:
+    inputs:
+      maintenance_only:
+        description: "Deploy only the existing primary Worker; no new scanner/container, migrations, credentials or provider changes"
+        required: true
+        type: boolean
+        default: false
+      owner_approval_comment_id:
+        description: "Unedited owner approval of this exact tested SHA, scope staging"
+        required: false
+        type: string
+      scanner_only:
+        description: "Configure scanner/queues and existing app only; skip migrations, origin credentials and provider secrets"
+        required: true
+        type: boolean
+        default: false
+      release_pr:
+        description: "Main-targeted release PR containing the exact approved scanner candidate"
+        required: true
+        type: string
+        default: "156"
 
 concurrency:
   group: seramet-staging
@@ -13,9 +33,16 @@ concurrency:
 
 permissions:
   contents: read
+  checks: read
+  pull-requests: read
 
 jobs:
   deploy:
+    if: >-
+      github.actor == github.repository_owner && github.triggering_actor == github.repository_owner &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/codex/validated-release-candidate' ||
+       github.ref == 'refs/heads/codex/scanner-production-release')
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 30
@@ -25,6 +52,26 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Require release-specific backup and pending-work approval
+        env:
+          SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
+          SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
+          SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
+          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
+        run: node scripts/verify-staging-release-gate.mjs
+      - name: Verify exact owner approval for primary-only staging maintenance
+        if: inputs.maintenance_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_COMMENT_ID: ${{ inputs.owner_approval_comment_id }}
+        run: node scripts/solo-release-approval.mjs --pr 156 --comment-id "$OWNER_COMMENT_ID" --sha "$GITHUB_SHA" --scope staging
+      - name: Verify exact owner approval for the full staging scanner candidate
+        if: ${{ !inputs.maintenance_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_COMMENT_ID: ${{ inputs.owner_approval_comment_id }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+        run: node scripts/solo-release-approval.mjs --pr "$RELEASE_PR" --comment-id "$OWNER_COMMENT_ID" --sha "$GITHUB_SHA" --scope staging
       - run: npm ci
       - run: npm run validate
       - name: Resolve existing Cloudflare staging bindings
@@ -95,6 +142,7 @@ jobs:
           NODE
 
       - name: Ensure isolated scanner queues exist
+        if: ${{ !inputs.maintenance_only }}
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -106,25 +154,14 @@ jobs:
             if npx --yes wrangler@4.149.0 queues create "$queue_name"; then
               return 0
             fi
-            npx --yes wrangler@4.149.0 queues list --json > /tmp/queues-after-create.json
-            QUEUE_NAME="$queue_name" node <<'NODE'
-          const fs = require("fs");
-          const rows = JSON.parse(fs.readFileSync("/tmp/queues-after-create.json", "utf8"));
-          if (!rows.some((row) => (row.queue_name ?? row.name) === process.env.QUEUE_NAME)) {
-            throw new Error(`Queue ${process.env.QUEUE_NAME} could not be created or verified`);
-          }
-          NODE
+            curl --fail-with-body --silent --show-error \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/queues?per_page=100" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -o /tmp/queues-after-create.json
+            node scripts/verify-cloudflare-queue-response.mjs "$queue_name" /tmp/queues-after-create.json
           }
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_QUEUE"
           ensure_queue "$SERAMET_CLOUDFLARE_SCAN_DLQ"
-
-      - name: Require release-specific backup and pending-work approval
-        env:
-          SERAMET_STAGING_APPROVED_SHA: ${{ vars.SERAMET_STAGING_APPROVED_SHA }}
-          SERAMET_STAGING_BACKUP_RESTORE_VERIFIED: ${{ vars.SERAMET_STAGING_BACKUP_RESTORE_VERIFIED }}
-          SERAMET_STAGING_BACKLOG_REVIEW_APPROVED: ${{ vars.SERAMET_STAGING_BACKLOG_REVIEW_APPROVED }}
-          SERAMET_DATA_API_EXPOSURE_CLEARED: ${{ vars.SERAMET_DATA_API_EXPOSURE_CLEARED }}
-        run: node scripts/verify-staging-release-gate.mjs
 
       - name: Inspect pending staging work and block overlapping menu commits
         env:
@@ -141,6 +178,7 @@ jobs:
       # Only after resource and release safety gates may any staging database
       # migrations or Cloudflare origin settings change.
       - name: Apply PostgreSQL migrations
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         run: npm run migrate:postgres
         env:
           SERAMET_POSTGRES_URL: ${{ secrets.SERAMET_POSTGRES_URL }}
@@ -152,6 +190,7 @@ jobs:
         run: node scripts/assert-staging-api-posture.mjs
 
       - name: Synchronize Hyperdrive origin credentials
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         run: |
           npx --yes wrangler@4.15.2 hyperdrive update "$SERAMET_CLOUDFLARE_HYPERDRIVE_ID" \
             --connection-string "$SERAMET_POSTGRES_URL"
@@ -165,20 +204,23 @@ jobs:
 
       - name: Generate Cloudflare binding configuration
         run: |
-          node scripts/render-scanner-cloudflare-config.mjs staging
+          if [ "$MAINTENANCE_ONLY" != "true" ]; then node scripts/render-scanner-cloudflare-config.mjs staging; fi
           node scripts/render-cloudflare-config.mjs staging
         env:
+          MAINTENANCE_ONLY: ${{ inputs.maintenance_only }}
           SERAMET_REUSE_EXISTING_VARS: "true"
           SERAMET_APP_VERSION: ${{ github.ref_name }}
           SERAMET_BUILD_ID: ${{ github.sha }}
 
       - name: Deploy isolated scanner Worker and ClamAV container
+        if: ${{ !inputs.maintenance_only }}
         run: npx --yes wrangler@4.149.0 deploy --config .seramet/scanner.wrangler.generated.json
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Configure scanner authentication secret
+        if: ${{ !inputs.maintenance_only }}
         shell: bash
         run: printf '%s' "$SERAMET_SCANNER_EVIDENCE_SECRET" | npx --yes wrangler@4.149.0 secret put SERAMET_SCANNER_EVIDENCE_SECRET --config .seramet/scanner.wrangler.generated.json
         env:
@@ -193,6 +235,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Configure primary Worker scanner authentication secret
+        if: ${{ !inputs.maintenance_only }}
         shell: bash
         run: printf '%s' "$SERAMET_SCANNER_EVIDENCE_SECRET" | npx --yes wrangler@4.149.0 secret put SERAMET_SCANNER_EVIDENCE_SECRET --config .seramet/wrangler.generated.json
         env:
@@ -201,6 +244,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Configure Uber Eats sandbox secrets
+        if: ${{ !inputs.maintenance_only && !inputs.scanner_only }}
         shell: bash
         run: |
           set -euo pipefail

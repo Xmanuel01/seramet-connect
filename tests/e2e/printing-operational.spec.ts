@@ -1078,6 +1078,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     );
     await manager.getByRole("button", { name: "Close Business Day", exact: true }).click();
     closingDialog = manager.getByRole("dialog", { name: "Close Business Day", exact: true });
+    await expect(closingDialog.getByLabel(`Counted KES ${drawer.id}`, { exact: true })).toHaveCount(
+      0,
+    );
     await closingDialog.getByRole("button", { name: "Review confirmation", exact: true }).click();
     const closeResponse = manager.waitForResponse(
       (response) =>
@@ -1090,7 +1093,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     const closeResult = await closeResponse;
     expect(closeResult.ok(), await closeResult.text()).toBe(true);
     await expect(closingDialog).not.toBeVisible();
-    await expect(manager.getByRole("status")).toContainText("Business day closed.");
+    await expect(
+      manager.getByRole("status").filter({ hasText: "Business day closed." }),
+    ).toBeVisible();
     state = (await snapshot()).state;
     const day = state.paymentOperations.dayCloses.find(
       (row: { branchId: string; status: string }) =>
@@ -1132,6 +1137,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
               "src/lib/transaction-engine.ts",
               "src/lib/print-order-adapter.ts",
               "src/routes/invoices.tsx",
+              "src/components/app/DailyClosingPanel.tsx",
+              "src/hooks/use-transaction-engine.ts",
+              "src/routes/pos-login.tsx",
               "scripts/run-pilot-e2e.mjs",
               "scripts/seed-printing-operational.ts",
               "tests/e2e/printing-operational.spec.ts",

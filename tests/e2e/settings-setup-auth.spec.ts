@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page, type Response } from "@playwright/test";
+import { createDefaultDemoPlatformState } from "../../src/platform/demo/default-demo-data";
+import { buildModuleAccessProfile } from "../../src/platform/module-access-registry";
 
 type Fixture = {
   tenantId: string;
@@ -34,9 +36,7 @@ test("employee entry is default and administrator access is explicit on any devi
     await page.goto(path);
     await expect(page).toHaveURL(/\/pos-login(?:\?|$)/);
     await expect(page.getByRole("heading", { name: "Employee sign in" })).toBeVisible();
-    await expect(
-      page.getByText("This browser is not registered as a Seramet POS device."),
-    ).toBeVisible();
+    await expect(page.getByText("Device not activated.")).toBeVisible();
     await expect(page.getByLabel("Email or employee code")).toBeEnabled();
     await expect(page.getByRole("button", { name: "1", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
@@ -421,3 +421,569 @@ test("a delayed Setup Centre response cannot replace the selected branch", async
   await expect(page.getByText(/Current branch B/)).toBeVisible();
   await context.close();
 });
+
+const registrationDraft = {
+  name: "Autofill browser test",
+  email: "autofill-browser@example.test",
+  password: "Local-only-autofill-56!",
+};
+const anonymousRegistrationSession = { ok: true, authenticated: false, restaurants: [] };
+
+async function autofillRegistration(page: Page) {
+  await page.getByLabel("Your name").fill(registrationDraft.name);
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  // Password managers can fill the DOM without firing React change events.
+  await page.getByLabel("Password", { exact: true }).evaluate((input, password) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(input, password);
+    input.setAttribute("data-autofill-probe", "original-input");
+  }, registrationDraft.password);
+}
+
+async function registrationReturn(page: Page, event: "focus" | "visibilitychange" | "pageshow") {
+  await page.evaluate((event) => {
+    if (event === "visibilitychange") document.dispatchEvent(new Event(event));
+    else if (event === "pageshow")
+      window.dispatchEvent(new PageTransitionEvent(event, { persisted: true }));
+    else window.dispatchEvent(new Event(event));
+  }, event);
+}
+
+async function registrationCheckFinished(page: Page, pending: Promise<Response>) {
+  await (await pending).finished();
+  // Allow the response consumer and React's rendering work to settle before checking retention.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
+
+for (const width of [1366, 390]) {
+  test(`registration retains autofilled fields at ${width}px during session rechecks`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    let gate: { started: () => void; pending: Promise<void> } | undefined;
+    await page.route("**/api/seramet/public/auth/status", async (route) => {
+      const current = gate;
+      current?.started();
+      await current?.pending;
+      await route.fulfill({ json: anonymousRegistrationSession });
+    });
+    let signup: unknown;
+    await page.route("**/api/seramet/public/auth/signup", async (route) => {
+      signup = route.request().postDataJSON();
+      await route.fulfill({
+        status: 202,
+        json: { authenticated: false, verificationRequired: true },
+      });
+    });
+    await page.goto("/register");
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await autofillRegistration(page);
+    let navigations = 0;
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) navigations += 1;
+    });
+    for (const event of ["focus", "visibilitychange", "pageshow"] as const) {
+      let release!: () => void;
+      let started!: () => void;
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      gate = {
+        started,
+        pending: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      };
+      const response = page.waitForResponse("**/api/seramet/public/auth/status");
+      try {
+        await registrationReturn(page, event);
+        await requested;
+        await expect(page.getByLabel("Your name")).toBeVisible({ timeout: 2000 });
+        await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+          registrationDraft.password,
+        );
+      } finally {
+        release();
+      }
+      await registrationCheckFinished(page, response);
+      await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+      await expect(page.getByLabel("Email", { exact: true })).toHaveValue(registrationDraft.email);
+      await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
+        "data-autofill-probe",
+        "original-input",
+      );
+      gate = undefined;
+    }
+    expect(navigations).toBe(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`registration-${width}.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Create account", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+    expect(signup).toEqual(registrationDraft);
+    await page.getByRole("button", { name: "I've verified my email" }).click();
+    await expect(page).toHaveURL(/\/login\?account=1$/);
+    await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  });
+}
+
+test("registration retains drafts on background errors and preserves signup errors on refocus", async ({
+  page,
+}) => {
+  let unavailable = false;
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({ status: unavailable ? 503 : 200, json: anonymousRegistrationSession }),
+  );
+  await page.route("**/api/seramet/public/auth/signup", (route) =>
+    route.fulfill({ status: 400, json: { message: "Use another test email address." } }),
+  );
+  await page.goto("/register");
+  await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+  await autofillRegistration(page);
+  unavailable = true;
+  await registrationReturn(page, "focus");
+  await expect(page.getByRole("alert")).toContainText("We could not confirm your session");
+  await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    registrationDraft.password,
+  );
+  unavailable = false;
+  await registrationReturn(page, "focus");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Use another test email address.");
+  const response = page.waitForResponse("**/api/seramet/public/auth/status");
+  await registrationReturn(page, "focus");
+  await registrationCheckFinished(page, response);
+  await expect(page.getByRole("alert")).toHaveText("Use another test email address.");
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    registrationDraft.password,
+  );
+});
+
+test("registration preserves restaurant details on returning to the tab", async ({ page }) => {
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({ json: { ok: true, authenticated: true, restaurants: [] } }),
+  );
+  await page.goto("/register");
+  await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
+  await page.getByLabel("Your name").fill("Test administrator");
+  await page.getByLabel("Restaurant name", { exact: true }).fill("Local test restaurant");
+  await page.getByLabel("Legal business name").fill("Local test business");
+  await page.getByLabel("Public URL name").fill("local-test-business");
+  const response = page.waitForResponse("**/api/seramet/public/auth/status");
+  await registrationReturn(page, "pageshow");
+  await registrationCheckFinished(page, response);
+  await expect(page.getByLabel("Your name")).toHaveValue("Test administrator");
+  await expect(page.getByLabel("Restaurant name", { exact: true })).toHaveValue(
+    "Local test restaurant",
+  );
+  await expect(page.getByLabel("Legal business name")).toHaveValue("Local test business");
+  await expect(page.getByLabel("Public URL name")).toHaveValue("local-test-business");
+});
+
+for (const width of [1366, 390]) {
+  test(`restaurant setup prefills the account name at ${width}px without overwriting edits`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    let authenticated = false;
+    await page.route("**/api/seramet/public/auth/status", (route) =>
+      route.fulfill({
+        json: authenticated
+          ? {
+              ok: true,
+              authenticated: true,
+              identity: { displayName: registrationDraft.name, email: registrationDraft.email },
+              restaurants: [],
+            }
+          : anonymousRegistrationSession,
+      }),
+    );
+    let registration: { administratorName: string } | undefined;
+    await page.route("**/api/seramet/public/register", (route) => {
+      registration = route.request().postDataJSON();
+      return route.fulfill({
+        status: 400,
+        json: { message: "Fixture stopped before creating a restaurant." },
+      });
+    });
+    await page.goto("/register");
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await autofillRegistration(page);
+    await page.getByLabel("Your name").fill("Unsubmitted account draft");
+    authenticated = true;
+    const signedIn = page.waitForResponse("**/api/seramet/public/auth/status");
+    await registrationReturn(page, "focus");
+    await registrationCheckFinished(page, signedIn);
+    await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
+    await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Restaurant name", { exact: true })).toHaveValue("");
+    await expect(page.locator('[data-autofill-probe="original-input"]')).toHaveCount(0);
+    await expect(page.getByLabel("Legal business name")).toHaveValue("");
+    await expect(page.getByLabel("Public URL name")).toHaveValue("");
+    await page.reload();
+    await expect(page.getByLabel("Your name")).toHaveValue(registrationDraft.name);
+    await page.getByLabel("Restaurant name", { exact: true }).fill("Account name fixture");
+    await page.screenshot({
+      path: testInfo.outputPath(`account-name-${width}.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Continue to location" }).click();
+    await expect(page.getByRole("alert")).toHaveText(
+      "Fixture stopped before creating a restaurant.",
+    );
+    expect(registration?.administratorName).toBe(registrationDraft.name);
+
+    for (const name of ["Edited account owner", ""]) {
+      await page.getByLabel("Your name").fill(name);
+      const response = page.waitForResponse("**/api/seramet/public/auth/status");
+      await registrationReturn(page, "focus");
+      await registrationCheckFinished(page, response);
+      await expect(page.getByLabel("Your name")).toHaveValue(name);
+    }
+  });
+}
+
+test("registration ignores stale session checks and duplicate submission while signup is pending", async ({
+  page,
+}) => {
+  let delayStatus = false;
+  let requests = 0;
+  let releaseStatus!: () => void;
+  let statusStarted!: () => void;
+  const statusRequested = new Promise<void>((resolve) => {
+    statusStarted = resolve;
+  });
+  const statusPending = new Promise<void>((resolve) => {
+    releaseStatus = resolve;
+  });
+  await page.route("**/api/seramet/public/auth/status", async (route) => {
+    requests += 1;
+    if (delayStatus) {
+      statusStarted();
+      await statusPending;
+    }
+    await route.fulfill({ json: anonymousRegistrationSession });
+  });
+  let signupCount = 0;
+  let releaseSignup!: () => void;
+  let signupStarted!: () => void;
+  const signupRequested = new Promise<void>((resolve) => {
+    signupStarted = resolve;
+  });
+  const signupPending = new Promise<void>((resolve) => {
+    releaseSignup = resolve;
+  });
+  await page.route("**/api/seramet/public/auth/signup", async (route) => {
+    signupCount += 1;
+    signupStarted();
+    await signupPending;
+    await route.fulfill({
+      status: 202,
+      json: { authenticated: false, verificationRequired: true },
+    });
+  });
+  try {
+    await page.goto("/register");
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    await autofillRegistration(page);
+    delayStatus = true;
+    await registrationReturn(page, "focus");
+    await statusRequested;
+    await page.getByRole("button", { name: "Create account", exact: true }).click();
+    await signupRequested;
+    const before = requests;
+    await registrationReturn(page, "focus");
+    await registrationReturn(page, "visibilitychange");
+    await page.locator("form").evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    expect(requests).toBe(before);
+    expect(signupCount).toBe(1);
+    releaseSignup();
+    await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+    const oldResponse = page.waitForResponse("**/api/seramet/public/auth/status");
+    releaseStatus();
+    await registrationCheckFinished(page, oldResponse);
+    await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Create your account" })).toHaveCount(0);
+  } finally {
+    releaseSignup();
+    releaseStatus();
+  }
+});
+
+async function mockOwnerOnboarding(page: Page) {
+  const configuration = createDefaultDemoPlatformState();
+  const tenant = configuration.tenants[0]!;
+  const branch = configuration.branches[0]!;
+  const owner = configuration.users[0]!;
+  const roles = configuration.roles.filter((role) => owner.roleIds.includes(role.id));
+  const permissions = [...new Set(roles.flatMap((role) => role.permissions))];
+  const responses: Record<string, unknown> = {
+    "/health/operational": { database: "authoritative", environment: "staging" },
+    "/auth/session": {
+      actor: {
+        id: owner.id,
+        name: registrationDraft.name,
+        tenantId: tenant.id,
+        branchId: branch.id,
+        branch: branch.name,
+        primaryBranchId: branch.id,
+        assignedBranches: [{ id: branch.id, name: branch.name, isPrimary: true }],
+        roles: owner.roleIds,
+        permissions,
+        authLevel: "FULL",
+        salesTerminal: false,
+        moduleAccess: buildModuleAccessProfile({
+          permissions,
+          organizationalScopes: ["BRANCH"],
+          entitlements: [],
+          entitlementsEnforced: false,
+        }),
+      },
+    },
+    "/configuration": { configuration },
+    "/setup/centre": { setup: { organisationName: tenant.tradingName, stages: [], results: [] } },
+    "/setup/organisation-structure": {
+      brands: configuration.brands,
+      branches: configuration.branches,
+    },
+    "/setup/options": {
+      options: {
+        accounts: [],
+        roles: [],
+        warehouses: [],
+        stations: [],
+        documentTemplates: [],
+        inventoryItems: [],
+        units: [],
+      },
+    },
+    "/setup/onboarding": {
+      onboarding: {
+        currentStep: 5,
+        status: "IN_PROGRESS",
+        completedSteps: [1, 2, 3, 4],
+        responses: {},
+        version: 1,
+        location: null,
+        suggestedCurrency: null,
+        acceptedCurrencies: [],
+        canChangeBaseCurrency: true,
+        baseCurrencyLockReason: null,
+      },
+    },
+    "/setup/reference/location-currency": {
+      countries: [
+        {
+          code: "KE",
+          name: "Kenya",
+          administrativeLevel1Label: "County",
+          defaultCurrencyCode: "KES",
+          callingCode: "+254",
+          defaultTimezone: "Africa/Nairobi",
+          defaultLocale: "en-KE",
+        },
+      ],
+      currencies: [{ code: "KES", name: "Kenyan Shilling", symbol: "KES", minorDigits: 2 }],
+    },
+  };
+  await page.route("**/api/seramet/**", (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api/seramet", "");
+    const json = responses[path];
+    return route.fulfill(
+      json ? { json } : { status: 503, json: { message: "Outside onboarding navigation fixture" } },
+    );
+  });
+  return tenant;
+}
+
+test("new owner completes verified sign-in and enters onboarding instead of employee login", async ({
+  page,
+  context,
+}) => {
+  const tenant = await mockOwnerOnboarding(page);
+  let authenticated = false;
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        authenticated,
+        restaurants: [],
+        identity: authenticated ? { displayName: registrationDraft.name } : undefined,
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/signup", (route) =>
+    route.fulfill({ status: 202, json: { authenticated: false, verificationRequired: true } }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) => {
+    authenticated = true;
+    return route.fulfill({ json: { ok: true, authenticated: true } });
+  });
+  await page.route("**/api/seramet/public/register", (route) =>
+    route.fulfill({
+      status: 201,
+      json: { ok: true, organisation: { tenantId: tenant.id, nextPath: "/seramet-setup" } },
+    }),
+  );
+  const destinations: string[] = [];
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) destinations.push(new URL(frame.url()).pathname);
+  });
+  await page.goto("/register");
+  await autofillRegistration(page);
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible();
+  await page.getByRole("button", { name: "I've verified my email" }).click();
+  await expect(page).toHaveURL(/\/login\?account=1$/);
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "What is your business name?" })).toBeVisible();
+  await page.getByLabel("Restaurant name", { exact: true }).fill("Onboarding navigation fixture");
+  await page.getByRole("button", { name: "Continue to location" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/seramet-setup$/);
+  const country = page.getByRole("combobox", { name: "Country", exact: true });
+  await expect(country).toBeVisible();
+  await country.selectOption("KE");
+  await expect(country).toHaveValue("KE");
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+  ).toBe("1");
+  expect(destinations).not.toContain("/pos-login");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+
+  const freshTab = await context.newPage();
+  await freshTab.goto("/seramet-setup");
+  await expect(freshTab).toHaveURL(/\/pos-login$/);
+  await freshTab.close();
+});
+
+test("an existing owner resumes unfinished onboarding without recreating the restaurant", async ({
+  page,
+}) => {
+  const tenant = await mockOwnerOnboarding(page);
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        authenticated: true,
+        restaurants: [
+          {
+            tenantId: tenant.id,
+            slug: tenant.slug,
+            name: tenant.tradingName,
+            onboardingStatus: "IN_PROGRESS",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  let registrationRequests = 0;
+  await page.route("**/api/seramet/public/register", (route) => {
+    registrationRequests += 1;
+    return route.fulfill({ status: 500, json: { message: "Registration must not repeat" } });
+  });
+  await page.goto("/login?account=1");
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Where is your business located?" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/seramet-setup$/);
+  expect(registrationRequests).toBe(0);
+});
+
+test("administrator sign-in preserves credentials entered before hydration", async ({ page }) => {
+  let releaseScripts!: () => void;
+  const scriptsReady = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  let credentials: unknown;
+  await page.route("**/*", async (route) => {
+    if (
+      route.request().resourceType() === "script" &&
+      new URL(route.request().url()).pathname !== "/theme-init.js"
+    ) {
+      await scriptsReady;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/seramet/public/auth/login", (route) => {
+    credentials = route.request().postDataJSON();
+    return route.fulfill({ json: { authenticated: true } });
+  });
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({ json: anonymousRegistrationSession }),
+  );
+  try {
+    await page.goto("/login?account=1", { waitUntil: "commit" });
+    await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+    await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+    const submit = page.getByRole("button", { name: "Sign in", exact: true });
+    await expect(submit).toBeDisabled();
+    releaseScripts();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByLabel("Email", { exact: true })).toHaveValue(registrationDraft.email);
+    await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+      registrationDraft.password,
+    );
+    await submit.click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    expect(credentials).toEqual({
+      email: registrationDraft.email,
+      password: registrationDraft.password,
+    });
+    await expect(page).toHaveURL(/\/login\?account=1$/);
+    expect(
+      await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+    ).toBeNull();
+  } finally {
+    releaseScripts();
+  }
+});
+
+for (const status of [200, 503]) {
+  test(`administrator sign-in requires a confirmed server session after login (status ${status})`, async ({
+    page,
+  }) => {
+    await page.route("**/api/seramet/public/auth/login", (route) =>
+      route.fulfill({ json: { authenticated: true } }),
+    );
+    await page.route("**/api/seramet/public/auth/status", (route) =>
+      route.fulfill({ status, json: anonymousRegistrationSession }),
+    );
+    await page.goto("/login?account=1");
+    await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+    await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?account=1$/);
+    expect(
+      await page.evaluate(() => sessionStorage.getItem("seramet.session.interactive-sign-in")),
+    ).toBeNull();
+  });
+}

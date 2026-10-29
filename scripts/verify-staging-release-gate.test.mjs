@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { assessStagingReleaseApproval } from "./verify-staging-release-gate.mjs";
 
 const sha = "a".repeat(40);
@@ -46,4 +47,84 @@ test("an approval never excuses a missing backup or unreviewed pending jobs", ()
     }),
     ["STAGING_BACKUP_RESTORE_NOT_VERIFIED", "PENDING_WORK_NOT_REVIEWED"],
   );
+});
+
+test("staging approval runs before dependency installation and every infrastructure write", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  const gate = workflow.indexOf("run: node scripts/verify-staging-release-gate.mjs");
+  assert.ok(gate >= 0, "Release approval must remain mandatory");
+  for (const command of [
+    "run: npm ci",
+    "queues create",
+    "run: npm run migrate:postgres",
+    "hyperdrive update",
+    "deploy --config",
+  ]) {
+    const position = workflow.indexOf(command);
+    assert.ok(position > gate, `${command} must not precede release approval`);
+  }
+  const gateStep = workflow.slice(workflow.lastIndexOf("      - name:", gate), gate);
+  assert.doesNotMatch(
+    gateStep,
+    /continue-on-error:|\bif:/,
+    "Approval cannot be skipped or ignored",
+  );
+});
+
+test("primary-only maintenance retains gates and cannot create scanners or rewrite credentials", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  for (const name of [
+    "Ensure isolated scanner queues exist",
+    "Deploy isolated scanner Worker and ClamAV container",
+    "Configure scanner authentication secret",
+    "Configure primary Worker scanner authentication secret",
+  ]) {
+    assert.ok(
+      workflow.includes(`- name: ${name}\n        if: \${{ !inputs.maintenance_only }}`),
+      `${name} must not run during primary-only maintenance`,
+    );
+  }
+  for (const name of [
+    "Apply PostgreSQL migrations",
+    "Synchronize Hyperdrive origin credentials",
+    "Configure Uber Eats sandbox secrets",
+  ]) {
+    assert.ok(
+      workflow.includes(
+        `- name: ${name}\n        if: \${{ !inputs.maintenance_only && !inputs.scanner_only }}`,
+      ),
+      `${name} must not run during maintenance or scanner-only releases`,
+    );
+  }
+  assert.ok(workflow.includes("run: node scripts/solo-release-approval.mjs --pr 156"));
+  assert.ok(workflow.includes('--sha "$GITHUB_SHA" --scope staging'));
+  for (const step of [
+    "Inspect pending staging work and block overlapping menu commits",
+    "Independently verify PostgreSQL public RLS and client grants",
+    "Verify full staging readiness",
+  ]) {
+    assert.ok(workflow.includes(`- name: ${step}\n        `), `${step} must remain present`);
+  }
+});
+
+test("full scanner release has an exact owner approval gate before infrastructure writes", () => {
+  const workflow = readFileSync(
+    new URL("../.github/workflows/deploy-staging.yml", import.meta.url),
+    "utf8",
+  );
+  const gate = workflow.indexOf('run: node scripts/solo-release-approval.mjs --pr "$RELEASE_PR"');
+  assert.ok(gate > 0);
+  assert.ok(gate < workflow.indexOf("queues create"));
+  assert.ok(
+    workflow.includes(
+      "github.actor == github.repository_owner && github.triggering_actor == github.repository_owner",
+    ),
+  );
+  assert.ok(workflow.includes('node scripts/verify-cloudflare-queue-response.mjs "$queue_name"'));
 });
