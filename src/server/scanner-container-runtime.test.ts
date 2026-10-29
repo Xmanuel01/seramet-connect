@@ -5,6 +5,11 @@ const image = `registry.cloudflare.com/8ee23e839ee7d7c26ae144aeac841c88/clamav@s
 
 function fixture(singleton = true) {
   const stored = new Map<string, number>();
+  const background: Promise<unknown>[] = [];
+  let stopped!: () => void;
+  const lifetime = new Promise<void>((resolve) => {
+    stopped = resolve;
+  });
   const port = {
     fetch: vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
       new URL(String(input)).pathname === "/health"
@@ -18,9 +23,11 @@ function fixture(singleton = true) {
     start: vi.fn(() => {
       container.running = true;
     }),
+    monitor: vi.fn(() => lifetime),
     getTcpPort: vi.fn(() => port),
     destroy: vi.fn(async () => {
       container.running = false;
+      stopped();
     }),
   };
   const storage = {
@@ -32,11 +39,20 @@ function fixture(singleton = true) {
     }),
     setAlarm: vi.fn(async (_timestamp: number) => {}),
   };
+  const state = {
+    container,
+    storage,
+    waitUntil: vi.fn((pending: Promise<unknown>) => {
+      background.push(pending);
+    }),
+  };
   return {
-    runtime: new ScannerContainerRuntime({ container, storage }, singleton),
+    runtime: new ScannerContainerRuntime(state, singleton),
     container,
     storage,
     port,
+    state,
+    background,
   };
 }
 
@@ -55,6 +71,88 @@ afterEach(() => {
 });
 
 describe("private Durable Object scanner runtime", () => {
+  it("holds the container lifetime outside the request until the idle alarm stops it", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.runtime.fetch(request());
+    expect(f.container.monitor).toHaveBeenCalledTimes(1);
+    expect(f.state.waitUntil).toHaveBeenCalledTimes(1);
+    let settled = false;
+    void f.background[0]!.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_001);
+    await f.runtime.alarm();
+    await f.background[0];
+    expect(settled).toBe(true);
+  });
+
+  it("reattaches lifecycle monitoring to a running container after an object restart", async () => {
+    const f = fixture();
+    f.container.running = true;
+    await f.runtime.fetch(request());
+    await f.runtime.fetch(request());
+    expect(f.container.start).not.toHaveBeenCalled();
+    expect(f.container.monitor).toHaveBeenCalledTimes(1);
+    expect(f.state.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a process exit without leaking request data or an unhandled rejection", async () => {
+    vi.useFakeTimers();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = fixture();
+    f.container.monitor.mockRejectedValueOnce(
+      Object.assign(new Error("private runtime detail"), { exitCode: 2 }),
+    );
+    f.port.fetch.mockImplementation(async () => new Response(null, { status: 503 }));
+    const controller = new AbortController();
+    const pending = f.runtime.fetch(request(controller.signal));
+    setTimeout(() => controller.abort(), 1);
+    await vi.advanceTimersByTimeAsync(251);
+    expect((await pending).status).toBe(503);
+    await f.background[0];
+    expect(logged).toHaveBeenCalledExactlyOnceWith("SCANNER_CONTAINER_EXIT", { exitCode: 2 });
+    expect(
+      f.port.fetch.mock.calls.every(([url]) => new URL(String(url)).pathname === "/health"),
+    ).toBe(true);
+  });
+
+  it("keeps a slow cold engine for the next bounded retry without accepting it early", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-29T02:00:00Z"));
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("Timed out", "TimeoutError")),
+        milliseconds,
+      );
+      return controller.signal;
+    });
+    const began = Date.now();
+    const f = fixture();
+    f.port.fetch.mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      return path === "/health"
+        ? Response.json({ ok: f.container.running && Date.now() - began >= 96_000 })
+        : Response.json({ verdict: "CLEAN", engine: "ClamAV" });
+    });
+    const first = f.runtime.fetch(request());
+    await vi.advanceTimersByTimeAsync(85_001);
+    expect((await first).status).toBe(503);
+    expect(
+      f.port.fetch.mock.calls.every(([url]) => new URL(String(url)).pathname === "/health"),
+    ).toBe(true);
+    // Model request-only eviction: native monitoring must keep the boot alive.
+    if (!f.background.length) f.container.running = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect((await f.runtime.fetch(request())).status).toBe(200);
+    expect(f.container.start).toHaveBeenCalledTimes(1);
+    expect(f.container.monitor).toHaveBeenCalledTimes(1);
+    expect(f.state.waitUntil).toHaveBeenCalledTimes(1);
+  });
+
   it("selects the named immutable image and existing instance size before proxying", async () => {
     const f = fixture();
     const response = await f.runtime.fetch(request());

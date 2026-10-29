@@ -2,6 +2,7 @@ type ScannerContainer = {
   readonly running: boolean;
   readonly images: Record<string, string>;
   start(options: { image: string; instance: "standard-1"; enableInternet: boolean }): void;
+  monitor(): Promise<void>;
   getTcpPort(port: number): {
     fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   };
@@ -10,6 +11,7 @@ type ScannerContainer = {
 
 type ScannerContainerState = {
   readonly container?: ScannerContainer;
+  waitUntil(promise: Promise<unknown>): void;
   readonly storage: {
     get<T>(key: string): Promise<T | undefined>;
     put(key: string, value: number): Promise<void>;
@@ -24,6 +26,7 @@ const activityKey = "scanner-last-activity";
 export class ScannerContainerRuntime {
   private activeRequests = 0;
   private startup?: Promise<void>;
+  private monitoring?: Promise<void>;
 
   constructor(
     private readonly state: ScannerContainerState,
@@ -52,6 +55,7 @@ export class ScannerContainerRuntime {
               enableInternet: true,
             });
           }
+          this.observeLifetime(container);
           await this.waitForEngine(port, signal);
         })();
       }
@@ -95,6 +99,26 @@ export class ScannerContainerRuntime {
     const now = Date.now();
     await this.state.storage.put(activityKey, now);
     await this.state.storage.setAlarm(now + idleMilliseconds);
+  }
+
+  private observeLifetime(container: ScannerContainer) {
+    if (this.monitoring) return;
+    // Keep cold initialization alive across bounded queue retries. The durable
+    // idle alarm, not the end of an HTTP request, owns container shutdown.
+    const observation = container
+      .monitor()
+      .catch((error: unknown) => {
+        const exitCode =
+          error && typeof error === "object" && "exitCode" in error ? error.exitCode : undefined;
+        console.error("SCANNER_CONTAINER_EXIT", {
+          exitCode: typeof exitCode === "number" ? exitCode : null,
+        });
+      })
+      .finally(() => {
+        if (this.monitoring === observation) this.monitoring = undefined;
+      });
+    this.monitoring = observation;
+    this.state.waitUntil(observation);
   }
 
   private async waitForEngine(
