@@ -25,7 +25,7 @@ import { getConfigurationRepository } from "@/platform/repositories/configuratio
 export const Route = createFileRoute("/seramet-printers")({
   head: () => ({
     meta: [
-      { title: "Seramet Printers - Hardware and print routing" },
+      { title: "Printers & Devices - Hardware and print routing" },
       {
         name: "description",
         content: "Printer settings, health, routing, templates and reprint audit controls.",
@@ -397,7 +397,7 @@ function SerametPrinters() {
   if (!profile) {
     return (
       <AppShell
-        title="Seramet printers"
+        title="Printers & devices"
         subtitle="Hardware health, document templates, routing and audited reprints"
         actions={
           <select
@@ -442,7 +442,7 @@ function SerametPrinters() {
 
   return (
     <AppShell
-      title="Seramet printers"
+      title="Printers & devices"
       subtitle="Hardware health, document templates, routing and audited reprints"
       actions={
         <>
