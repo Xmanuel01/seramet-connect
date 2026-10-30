@@ -1279,8 +1279,12 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       branchId,
       providerId: "provider-daraja",
       environment: "SANDBOX",
-      configuration: { shortcode: "configured-shortcode" },
-      credentials: { consumerKey: "sensitive-key", consumerSecret: "sensitive-secret" },
+      configuration: { accountType: "PAYBILL", shortcode: "600100" },
+      credentials: {
+        consumerKey: "sensitive-key",
+        consumerSecret: "sensitive-secret",
+        passkey: "sensitive-passkey",
+      },
     });
     expect(result).toMatchObject({ status: "CONFIGURED", secretConfigured: true });
     expect(JSON.stringify(result)).not.toContain("sensitive");
@@ -1299,7 +1303,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       branchId,
       providerId: "provider-daraja",
       environment: "SANDBOX",
-      configuration: { shortcode: "updated-shortcode" },
+      configuration: { accountType: "PAYBILL", shortcode: "600200" },
     });
     expect(updated).toMatchObject({ status: "CONFIGURED", secretConfigured: true });
     const preserved = await db
@@ -1309,7 +1313,7 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
       .bind(tenantId, result.id)
       .first<{ secret_reference: string; payload_json: string }>();
     expect(preserved?.secret_reference).toBe(connection?.secret_reference);
-    expect(preserved?.payload_json).toContain("updated-shortcode");
+    expect(preserved?.payload_json).toContain("600200");
     expect(preserved?.payload_json).not.toContain("sensitive");
   });
 

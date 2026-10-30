@@ -261,6 +261,7 @@ export const mutationPermission: Record<string, PermissionCode> = {
   applyReservationDeposit: permissions.paymentsCollect,
   automaticPaymentMatching: permissions.paymentsMatch,
   manualPaymentMatch: permissions.paymentsMatch,
+  applyUnallocatedPayment: permissions.paymentsMatch,
   upsertReconciliationRule: permissions.reconciliationManage,
   setReconciliationRuleActive: permissions.reconciliationManage,
   recordRiderCollection: permissions.paymentsCollect,

@@ -266,17 +266,20 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   expect(document?.headers()["permissions-policy"]).toBe(
     "camera=(), microphone=(), geolocation=(self), payment=()",
   );
-  await expect(page.getByText("Worksite geofence")).toBeVisible();
+  await expect(page.getByText("Workplace location for clock-in")).toBeVisible();
+  await page.getByRole("button", { name: "Use my current location" }).click();
+  await expect(page.getByLabel("Latitude")).toHaveValue("-1.26");
+  await expect(page.getByLabel("Longitude")).toHaveValue("36.806");
   await page.getByLabel("Latitude").fill("-1.264");
   await page.getByLabel("Longitude").fill("36.806");
-  await page.getByLabel("Enable geofence").check();
+  await page.getByLabel("Require staff to be on site").check();
   const saved = page.waitForResponse(
     (response) =>
       response.url().endsWith("/attendance/geofence") && response.request().method() === "PUT",
   );
-  await page.getByRole("button", { name: "Save worksite policy" }).click();
+  await page.getByRole("button", { name: "Save location" }).click();
   expect((await saved).status()).toBe(200);
-  await expect(page.getByLabel("Enable geofence")).toBeChecked();
+  await expect(page.getByLabel("Require staff to be on site")).toBeChecked();
   await expect(page.getByRole("button", { name: "Clock in" })).toBeEnabled();
   // Chromium timestamps its emulated fix when configured, not when requested.
   // Refresh the sensor after cold-start hydration; keep the server age guard intact.
@@ -450,7 +453,9 @@ test("People provides an Add Employee path to the authorized employee register",
   await establishSession(staffPage, body.employee.id);
   await staffPage.goto("/attendance");
   await expect(staffPage.getByText("My attendance", { exact: true })).toBeVisible();
-  await expect(staffPage.getByText("Worksite geofence", { exact: true })).toHaveCount(0);
+  await expect(staffPage.getByText("Workplace location for clock-in", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(staffPage.getByText("Supervisor · Live attendance", { exact: true })).toHaveCount(0);
   await staff.setGeolocation({ latitude: -1.264, longitude: 36.806, accuracy: 2 });
   await staffPage.getByRole("button", { name: "Clock in", exact: true }).click();

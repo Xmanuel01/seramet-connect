@@ -387,7 +387,7 @@ function Campaigns() {
           <Panel className="mt-4">
             <PanelHead
               title="Campaign register"
-              sub="Provider outcomes and audiences are obtained from the authoritative database."
+              sub="Delivery results and audiences for each campaign"
               right={<Btn onClick={refresh}>Refresh</Btn>}
             />
             {rows.status === "loading" ||

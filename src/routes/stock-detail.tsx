@@ -162,10 +162,7 @@ function StockDetail() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Warehouse stock"
-          sub="One row per item and warehouse, derived from the authoritative inventory ledger"
-        />
+        <PanelHead title="Warehouse stock" sub="One row per item in each storage location" />
         <div className="flex flex-wrap gap-2 border-b border-border px-4 py-3">
           <div className="flex h-9 min-w-[230px] flex-1 items-center gap-2 rounded-md border border-border px-3">
             <Search className="h-4 w-4 text-muted-foreground" />

@@ -1470,7 +1470,7 @@ function POS() {
       ) {
         throw new Error(
           "Kitchen dispatch requires a configured printer/KDS route and an installed " +
-            "print bridge for physical jobs. Check Seramet Printers before dispatching.",
+            "print bridge for physical jobs. Check Printers & Devices before dispatching.",
         );
       }
     }
@@ -1567,7 +1567,7 @@ function POS() {
           .catch(() => {
             setPrintNotice(
               "Kitchen dispatch was recorded, but its print acknowledgement could not be " +
-                "saved. Review the durable KOT status in Seramet Printers.",
+                "saved. Review the durable KOT status in Printers & Devices.",
             );
             setPrintNoticeType("warning");
           });
@@ -2223,7 +2223,7 @@ function POS() {
           {hasPermission(permissions.settingsHardwareView) ? (
             <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Review tickets</Btn>
           ) : (
-            <span className="font-semibold">Notify a manager to review Seramet Printers.</span>
+            <span className="font-semibold">Notify a manager to review Printers & Devices.</span>
           )}
         </div>
       )}

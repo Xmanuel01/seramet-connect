@@ -22,6 +22,9 @@ import { cn } from "@/lib/utils";
 import { projectFinancialLifecycle } from "@/lib/financial-lifecycle";
 import { recordBusinessDate } from "@/lib/pos-workflow";
 import { DailyClosingPanel } from "@/components/app/DailyClosingPanel";
+import { MpesaPrompts, MpesaToMatch } from "@/components/app/MpesaToMatch";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { getSerametAccessToken } from "@/lib/access-token";
 import { closingPolicy } from "@/payments/daily-closing";
 
 export const Route = createFileRoute("/payment-control")({
@@ -39,6 +42,7 @@ export const Route = createFileRoute("/payment-control")({
 
 const tabs = [
   "Payments",
+  "M-Pesa",
   "Unmatched",
   "Settlements",
   "Cash Drawers",
@@ -51,7 +55,7 @@ type Tab = (typeof tabs)[number];
 
 function PaymentControlCentre() {
   const engine = useTransactionEngine();
-  const { state, mutate: mutateTransaction } = engine;
+  const { state, mutate: mutateTransaction, syncFromBackend } = engine;
   const {
     activeTenantId,
     branchId,
@@ -182,6 +186,35 @@ function PaymentControlCentre() {
       .catch((error) =>
         setNotice(error instanceof Error ? error.message : "Payment operation failed"),
       );
+  };
+
+  // Asks Safaricom about one unanswered prompt and reports the outcome in plain words.
+  const checkPrompt = async (intentId: string) => {
+    const token = getSerametAccessToken();
+    const response = await authenticatedFetch("/api/seramet/payments/prompts/check", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "x-seramet-tenant-id": activeTenantId,
+        "x-seramet-user-id": currentUser.id,
+        "x-seramet-branch-id": branchId,
+      },
+      body: JSON.stringify({ intentId }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      results?: Array<{ outcome: string; reason?: string }>;
+    };
+    if (!response.ok) throw new Error(payload.message ?? "Could not check the payment");
+    await syncFromBackend();
+    const result = payload.results?.[0];
+    if (!result) return "Nothing to check; the prompt already finished";
+    if (result.outcome === "FAILED") return result.reason ?? "The payment was not completed";
+    if (result.outcome === "PAID_AWAITING_RECEIPT")
+      return "Safaricom says paid; waiting for the receipt";
+    if (result.outcome === "WAITING") return "Still waiting for the customer";
+    return result.reason ?? "Safaricom did not answer; try again shortly";
   };
 
   const runAutomaticMatching = () => {
@@ -455,6 +488,33 @@ function PaymentControlCentre() {
           </div>
         )}
 
+        {tab === "M-Pesa" &&
+          (isAllBranches ? (
+            <p className="p-6 text-[13px] text-muted-foreground">
+              Choose a branch to match its M-Pesa payments.
+            </p>
+          ) : (
+            <>
+              <MpesaPrompts
+                state={state}
+                tenantId={activeTenantId}
+                branchId={branchId}
+                onCheck={checkPrompt}
+              />
+              <MpesaToMatch
+                state={state}
+                tenantId={activeTenantId}
+                branchId={branchId}
+                canMatch={hasPermission(permissions.paymentsMatch)}
+                onApply={(transactionId, invoiceId) =>
+                  runMutation("Payment applied to the bill.", "applyUnallocatedPayment", {
+                    transactionId,
+                    invoiceId,
+                  })
+                }
+              />
+            </>
+          ))}
         {tab === "Unmatched" && (
           <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div>

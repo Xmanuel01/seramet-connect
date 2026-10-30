@@ -201,10 +201,7 @@ function Loyalty() {
           )}
           {form !== "none" && (
             <Panel className="mb-4">
-              <PanelHead
-                title={readableStatus(form)}
-                sub="All changes are saved to the authoritative loyalty service."
-              />
+              <PanelHead title={readableStatus(form)} sub="Changes are saved straight away." />
               <form onSubmit={submit} className="grid gap-3 p-4 md:grid-cols-2">
                 {!["program"].includes(form) && (
                   <label className="grid gap-1 text-[12px]">
@@ -436,7 +433,7 @@ function Loyalty() {
                 <Panel>
                   <PanelHead
                     title="Tiers and rewards"
-                    sub="Reward redemption occurs only through authoritative POS checkout."
+                    sub="Guests redeem rewards at the POS checkout."
                   />
                   <div className="divide-y divide-border">
                     {tiers.data?.tiers.map((row) => (

@@ -222,10 +222,10 @@ export function AppShell({
   const unavailable = pilotUnavailable[path];
   const pageContent = unavailable ? (
     <section role="status" className="rounded-md border border-border bg-card p-6">
-      <h2 className="text-base font-semibold">{unavailable} is not available in the pilot</h2>
+      <h2 className="text-base font-semibold">{unavailable} isn't available yet</h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        This register is not connected to an authoritative workflow. No complete or empty record
-        history can be confirmed here.
+        This part of Seramet is still being built, so nothing is recorded here. Use the menu to
+        continue.
       </p>
     </section>
   ) : (

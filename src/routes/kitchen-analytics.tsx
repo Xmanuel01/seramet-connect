@@ -120,7 +120,7 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Prep execution"
-                sub="Authoritative prep recommendation lifecycle"
+                sub="Prep tasks from suggestion to completion"
                 right={<ClipboardCheck className="h-4 w-4 text-primary" />}
               />
               <div className="grid grid-cols-2 gap-3 p-4">
@@ -271,7 +271,7 @@ function KitchenAnalytics() {
             <Panel>
               <PanelHead
                 title="Today's prep blockers"
-                sub="Issues that prevent authoritative prep execution"
+                sub="Issues stopping prep from going ahead"
                 right={
                   overview.currentPrep.blockerCount > 0 ? (
                     <AlertTriangle className="h-4 w-4 text-warning" />

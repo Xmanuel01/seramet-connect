@@ -8,6 +8,7 @@ import {
   sumMinor,
 } from "@/payments/money";
 import { summarizeInvoiceComponents } from "@/payments/invoice-components";
+import { mpesaChannelLabels } from "@/payments/mpesa-day-summary";
 import { QUANTITY_SCALE } from "@/inventory/quantity";
 
 export type ClosingSnapshot = NonNullable<DayClose["snapshot"]>;
@@ -121,6 +122,45 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
         `${formatMinor(m.amountMinor, m.currency)} - ${m.reason}`,
       ]),
   });
+  if (report.mpesa) {
+    const mpesa = report.mpesa;
+    const mpesaMoney = (amount: number) => formatMinor(amount, mpesa.currency);
+    sections.push({
+      title: "M-Pesa",
+      rows: [
+        ["Received", `${mpesaMoney(mpesa.receivedMinor)} (${mpesa.count} payments)`],
+        ...mpesa.channels.map((row): [string, string] => [
+          mpesaChannelLabels[row.channel],
+          `${mpesaMoney(row.amountMinor)} (${row.count})`,
+        ]),
+        ["On bills", mpesaMoney(mpesa.onBillsMinor)],
+        [
+          "Not on a bill yet (all days)",
+          `${mpesaMoney(mpesa.stillToMatchMinor)} (${mpesa.stillToMatch.length})`,
+        ],
+        ...(report.mpesaCarryOverReason
+          ? [["Carried over because", report.mpesaCarryOverReason] as [string, string]]
+          : []),
+        ["Failed payment prompts", String(mpesa.failedPrompts.length)],
+      ],
+    });
+    sections.push({
+      title: "M-Pesa payments not on a bill yet",
+      rows: mpesa.stillToMatch.map((row) => [
+        [row.receipt ?? row.transactionId, row.payerName, row.businessDate]
+          .filter(Boolean)
+          .join(" / "),
+        mpesaMoney(row.unallocatedMinor),
+      ]),
+    });
+    sections.push({
+      title: "Failed M-Pesa prompts",
+      rows: mpesa.failedPrompts.map((row) => [
+        `${row.invoiceId ?? row.intentId} / ${mpesaMoney(row.amountMinor)}`,
+        row.reason,
+      ]),
+    });
+  }
   sections.push({
     title: "Outstanding invoices (not silently settled)",
     rows: report.outstandingInvoices.map((i) => [i.id, money(i.balanceMinor)]),
@@ -403,6 +443,14 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
       money(sumMinor(tenders.slice(3).map((t) => t.amountMinor))),
     ]);
   selectedRows(paymentRows, 4);
+  // The three-page summary has room for one line; the full M-Pesa breakdown, unmatched list and
+  // carry-over reason stay in the saved closing record and the emailed report.
+  if (report.mpesa)
+    row(
+      "M-Pesa not on a bill",
+      `${formatMinor(report.mpesa.stillToMatchMinor, report.mpesa.currency)} (${report.mpesa.stillToMatch.length})`,
+      report.mpesa.stillToMatch.length > 0,
+    );
 
   page = pdf.addPage([width, height]);
   header("Cash Reconciliation & Exceptions");

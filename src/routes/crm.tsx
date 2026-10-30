@@ -88,7 +88,7 @@ function CrmOverview() {
   return (
     <AppShell
       title="CRM overview"
-      subtitle={"Authoritative customer growth and service activity - " + branchLabel}
+      subtitle={"Customer growth and service activity - " + branchLabel}
       actions={
         <button
           type="button"
@@ -156,10 +156,7 @@ function CrmOverview() {
               </div>
             </Panel>
             <Panel>
-              <PanelHead
-                title="Loyalty and service"
-                sub="Activity from the authoritative CRM ledger"
-              />
+              <PanelHead title="Loyalty and service" sub="Recent customer activity" />
               <div className="space-y-3 p-4 text-[13px]">
                 <div className="flex items-center justify-between">
                   <span>Points issued</span>

@@ -1,3 +1,4 @@
+import { mpesaDaySummary, type MpesaDaySummary } from "@/payments/mpesa-day-summary";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { normalizeTransactionState, type TransactionState } from "@/lib/transaction-engine";
 import { businessDateForTimestamp } from "@/lib/business-date";
@@ -8,7 +9,13 @@ import {
 } from "@/lib/financial-lifecycle";
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { ReconciliationEngine } from "@/payments/reconciliation-engine";
-import { assertMinorAmount, majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
+import {
+  assertMinorAmount,
+  formatMinor,
+  majorFromMinor,
+  parseMajorAmount,
+  sumMinor,
+} from "@/payments/money";
 import type { CashDrawerSession, CashMovement, DayClose } from "@/payments/types";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { permissions } from "@/platform/permissions";
@@ -71,6 +78,9 @@ export type DailyClosingReport = {
   recipientUserIds: string[];
   invoices: TransactionState["bills"];
   voidedInvoiceIds: string[];
+  mpesa?: MpesaDaySummary;
+  // Why M-Pesa payments not yet on a bill were carried over to the next day.
+  mpesaCarryOverReason?: string;
 };
 
 export function closingPolicy(
@@ -338,6 +348,7 @@ export function closeBusinessDay(
     businessDate: string;
     drawerCounts: DrawerCount[];
     confirmed: boolean;
+    mpesaCarryOverReason?: string;
   },
 ) {
   if (state.tenantId !== actor.tenantId)
@@ -516,6 +527,21 @@ export function closeBusinessDay(
     )
   )
     throw new DailyClosingError("Payment evidence requires resolution");
+  // M-Pesa money not yet on a bill does not stop the close, but a supervisor must say why it is
+  // being carried over; it stays listed until matched.
+  const mpesa = mpesaDaySummary(next, {
+    tenantId: actor.tenantId,
+    branchId: actor.branchId,
+    businessDate: input.businessDate,
+    timeZone: accounting.timeZone,
+    businessDayCutoffMinutes: accounting.businessDayCutoffMinutes,
+    currency: accounting.tenant.defaultCurrency,
+  });
+  const carryOverReason = input.mpesaCarryOverReason?.trim();
+  if (mpesa?.stillToMatch.length && (carryOverReason?.length ?? 0) < 5)
+    throw new DailyClosingError(
+      `${mpesa.stillToMatch.length} M-Pesa payment(s) totalling ${formatMinor(mpesa.stillToMatchMinor, mpesa.currency)} are not on a bill yet. Match them in Payment Control > M-Pesa, or give a reason to carry them over`,
+    );
   const engine = new ReconciliationEngine();
   next = engine.prepareDayClose(next, {
     tenantId: actor.tenantId,
@@ -609,6 +635,10 @@ export function closeBusinessDay(
               )) === day.businessDate,
         )
         .map((b) => b.id),
+      ...(mpesa ? { mpesa } : {}),
+      ...(mpesa?.stillToMatch.length && carryOverReason
+        ? { mpesaCarryOverReason: carryOverReason }
+        : {}),
     },
   };
   day.status = "CLOSED";

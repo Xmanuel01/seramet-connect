@@ -71,13 +71,9 @@ function Branches() {
     >
       <Panel className="mb-4 p-4">
         <PanelHead
-          title="Authoritative branch configuration"
-          sub="Create and configure locations in Setup Centre, where lifecycle, duplicate review, hierarchy and audit controls are enforced"
+          title="Adding or changing a branch"
+          sub="Use Manage branches to open Setup Centre. This page shows how each branch is performing."
         />
-        <p className="mt-3 max-w-3xl text-[12px] leading-5 text-muted-foreground">
-          This page is an operational read model. Branch mutations are intentionally handled by the
-          server-backed setup workflow and cannot fall back to browser persistence.
-        </p>
       </Panel>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

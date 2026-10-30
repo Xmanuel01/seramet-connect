@@ -115,8 +115,8 @@ function Payroll() {
         </p>
       )}
       <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm">
-        Historical payroll records only. Verified attendance is recorded separately in Attendance;
-        no automatic deductions or overtime are applied from verified punches.
+        Payroll history. Clock-in records are kept in Attendance and do not add overtime
+        automatically.
       </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Metric label="Base net pay" value={Math.round(baseNet)} money />
@@ -131,10 +131,9 @@ function Payroll() {
         <Metric label="Adjusted net" value={Math.round(adjustedNet)} money />
       </div>
       <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-        Lateness is deducted from each employee's configured monthly net pay using their per-minute
-        rate: net pay ÷ monthly work days ÷ standard daily hours ÷ 60. Statutory payroll posting is
-        intentionally not marked complete until compliance configuration is connected. Backend:{" "}
-        {backendStatus}.{notice ? ` ${notice}` : ""}
+        Late minutes are deducted at each employee's per-minute rate (monthly net pay ÷ work days ÷
+        daily hours ÷ 60). Statutory deductions are not filed from here yet.
+        {notice ? ` ${notice}` : ""}
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">

@@ -66,7 +66,7 @@ function InventoryItems() {
   return (
     <AppShell
       title="Inventory items"
-      subtitle={`${branchLabel} - authoritative item master and stock position`}
+      subtitle={`${branchLabel} - your stock items and quantities on hand`}
       actions={
         <>
           {authoritative && <InventoryImport onPublished={() => void control.refresh()} />}

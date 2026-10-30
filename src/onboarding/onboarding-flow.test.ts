@@ -5,10 +5,12 @@ import { OnboardingService } from "@/onboarding/onboarding-service";
 import {
   ONBOARDING_FLOW_MARKER,
   ONBOARDING_STEP_COUNT,
+  onboardingResumeStep,
   onboardingStepNumber,
   translateLegacyProgress,
   weekDays,
 } from "@/onboarding/onboarding-steps";
+import { onboardingStepSchema } from "@/onboarding/schemas";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 import {
@@ -90,6 +92,39 @@ describe("legacy onboarding progress translation", () => {
         responses: { [ONBOARDING_FLOW_MARKER]: 2 },
       }),
     ).toMatchObject({ currentStep: ONBOARDING_STEP_COUNT, completedSteps: [1] });
+  });
+});
+
+describe("onboarding step input", () => {
+  it("accepts every step of the current flow and nothing outside it", () => {
+    const valid = (stepNumber: number) =>
+      onboardingStepSchema.safeParse({ step: stepNumber, action: "SAVE", response: {} }).success;
+    for (let stepNumber = 1; stepNumber <= ONBOARDING_STEP_COUNT; stepNumber += 1)
+      expect(valid(stepNumber), `step ${stepNumber}`).toBe(true);
+    expect(valid(0)).toBe(false);
+    expect(valid(ONBOARDING_STEP_COUNT + 1)).toBe(false);
+  });
+});
+
+describe("resuming a completed onboarding", () => {
+  const completedLegacy = translateLegacyProgress({
+    currentStep: 20,
+    status: "COMPLETED",
+    completedSteps: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20],
+    responses: { "8": { businessType: "RESTAURANT" } },
+  });
+
+  it("asks the stock-tracking question again for a business type saved by the old flow", () => {
+    expect(onboardingResumeStep(completedLegacy)).toBe(step("businessType"));
+  });
+
+  it("reopens at the first step never saved once business type is answered", () => {
+    expect(
+      onboardingResumeStep({
+        ...completedLegacy,
+        responses: { "3": { businessType: "RESTAURANT", trackStock: false } },
+      }),
+    ).toBe(step("tax"));
   });
 });
 
@@ -325,6 +360,125 @@ describe.sequential("guided onboarding flow against real records", () => {
     expect(row["current_step"]).toBe(2);
     expect(JSON.parse(String(row["completed_steps_json"]))).toEqual([1]);
     expect(JSON.parse(String(row["responses_json"]))[ONBOARDING_FLOW_MARKER]).toBe(2);
+  });
+
+  it("reopens a restaurant that finished the old onboarding and takes it past 80%", async () => {
+    const provisioned = await register("flow-resume", "Flow Resume Kitchen");
+    const owner = actor(provisioned);
+    const flow = new LocationCurrencyService(db, owner);
+    const setup = new OnboardingService(db, owner, {});
+    const save = (stepNumber: number, response: Record<string, unknown>) =>
+      flow.saveOnboardingStep({ step: stepNumber, action: "SAVE", response });
+    await save(step("location"), {
+      countryCode: "KE",
+      city: "Nairobi",
+      addressLine: "Configured address",
+      confirmed: true,
+    });
+    await save(step("currency"), { baseCurrency: "KES", secondaryCurrencies: [] });
+    // The old flow then marked everything done without tax, payments, stations or accounts.
+    db.sqlite
+      .prepare(
+        `UPDATE onboarding_wizard_progress SET status='COMPLETED',current_step=20,
+           completed_steps_json='[1,2,3,4,5,6,7,8,9,10,11,12,20]',
+           responses_json='{"5":{"countryCode":"KE"},"8":{"businessType":"RESTAURANT"}}'
+         WHERE tenant_id=?`,
+      )
+      .run(provisioned.tenantId);
+    const before = await setup.recalculateReadiness(provisioned.branchId, false);
+    expect(before.overallScoreBps).toBeLessThan(8_000);
+
+    await expect(flow.resumeOnboarding(8_000)).rejects.toThrow(/at least 80% ready/);
+    const resumed = await flow.resumeOnboarding(before.overallScoreBps);
+    expect(resumed).toMatchObject({
+      status: "IN_PROGRESS",
+      currentStep: step("businessType"),
+      completedSteps: [step("location"), step("currency")],
+    });
+    await expect(flow.resumeOnboarding(before.overallScoreBps)).rejects.toThrow(/already open/);
+    await expect(save(step("tax"), { noTax: true })).rejects.toThrow(/cannot be skipped/);
+
+    await save(step("businessType"), { businessType: "RESTAURANT", trackStock: false });
+    await save(step("branch"), {
+      branchId: provisioned.branchId,
+      name: "Main branch",
+      code: "MAIN",
+      useBusinessLocation: true,
+    });
+    await save(step("hours"), {
+      operatingHours: Object.fromEntries(
+        weekDays.map((day) => [day, { open: "08:00", close: "22:00", closed: false }]),
+      ),
+    });
+    insert(
+      "INSERT INTO order_channels (tenant_id,id,code,channel_type,active,payload_json) VALUES (?,?,?,?,1,'{}')",
+      provisioned.tenantId,
+      "channel-resume",
+      "DINE_IN",
+      "DINE_IN",
+    );
+    await save(step("serviceModes"), { serviceModes: ["DINE_IN"] });
+    await save(step("tax"), { noTax: true });
+    insert(
+      "INSERT INTO payment_methods (tenant_id,id,code,category,active,payload_json) VALUES (?,?,?,?,1,'{}')",
+      provisioned.tenantId,
+      "method-resume",
+      "CASH",
+      "CASH",
+    );
+    await save(step("payments"), {});
+    await setup.configureStation({
+      branchId: provisioned.branchId,
+      code: "KITCHEN",
+      name: "Kitchen",
+      stationType: "KITCHEN",
+    });
+    await save(step("stations"), {});
+    await save(step("menu"), { later: true });
+    await save(step("team"), {});
+    const done = await flow.saveOnboardingStep({
+      step: step("review"),
+      action: "COMPLETE",
+      response: { confirmed: true, standardAccounts: true },
+    });
+    expect(done.status).toBe("COMPLETED");
+    const after = await setup.recalculateReadiness(provisioned.branchId, false);
+    expect(after.overallScoreBps).toBeGreaterThanOrEqual(8_000);
+    const audit = db.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE tenant_id=? AND action=?")
+      .get(provisioned.tenantId, "ONBOARDING_RESUMED") as { n: number };
+    expect(audit.n).toBe(1);
+  });
+
+  it("finishing a resumed onboarding again creates no duplicate accounts or templates", async () => {
+    const { provisioned, setup } = await onboard("resume-twice", {
+      menu: true,
+      noTax: false,
+      trackStock: true,
+    });
+    const counts = () =>
+      ["accounts", "setup_account_mappings", "document_templates"].map(
+        (table) =>
+          (
+            db.sqlite
+              .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id=?`)
+              .get(provisioned.tenantId) as { n: number }
+          ).n,
+      );
+    const before = counts();
+    const flow = new LocationCurrencyService(db, actor(provisioned));
+    const readiness = await setup.recalculateReadiness(provisioned.branchId, false);
+    // Every step was saved in this flow, so only the review is asked again.
+    expect(await flow.resumeOnboarding(readiness.overallScoreBps)).toMatchObject({
+      status: "IN_PROGRESS",
+      currentStep: step("review"),
+    });
+    await flow.saveOnboardingStep({
+      step: step("review"),
+      action: "COMPLETE",
+      response: { confirmed: true, standardAccounts: true },
+    });
+    expect(counts()).toEqual(before);
   });
 
   it("creates and updates branch stations with audit, scoped to the actor", async () => {

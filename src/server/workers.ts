@@ -339,6 +339,8 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
     const jobs = [
       { type: "SCHEDULED_ORDER_RELEASE", interval: "minute" },
       { type: "INTEGRATION_OUTBOX_RECOVERY", interval: "minute" },
+      // Unanswered M-Pesa prompts: cancelled or timed out ones are marked failed with a reason.
+      { type: "PAYMENT_PROMPT_STATUS_CHECK", interval: "minute" },
       { type: "EOD_AGGREGATION", interval: at.getUTCMinutes() === 5 ? "hour" : null },
       {
         type: "INVENTORY_INTELLIGENCE_RECALCULATION",
@@ -582,6 +584,19 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
     case "SCHEDULED_ORDER_RELEASE":
       await runtime.releaseDueScheduledOrders(job.tenant_id);
       return;
+    case "PAYMENT_PROMPT_STATUS_CHECK": {
+      // Most minutes nothing is waiting; avoid loading the restaurant's state for nothing.
+      const waiting = await env
+        .SERAMET_DB!.prepare(
+          `SELECT 1 AS waiting FROM authoritative_records
+         WHERE tenant_id = ? AND entity_type = 'payments:intents'
+           AND status IN ('PENDING','AWAITING_CUSTOMER','PROCESSING') LIMIT 1`,
+        )
+        .bind(job.tenant_id)
+        .first<{ waiting: number }>();
+      if (waiting) await runtime.checkPendingPrompts(job.tenant_id);
+      return;
+    }
     case "INTEGRATION_OUTBOX_RECOVERY":
       await requeueDueOutbox(env, job.tenant_id);
       return;

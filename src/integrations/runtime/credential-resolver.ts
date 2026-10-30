@@ -1,4 +1,5 @@
 import type { ProviderCredentials } from "@/integrations/types";
+import type { SecretStore } from "@/server/secrets";
 
 export interface CredentialResolver {
   getSecret(reference: string): Promise<ProviderCredentials>;
@@ -46,6 +47,34 @@ export class StaticCredentialResolver implements CredentialResolver {
     if (!secret) throw new Error("Referenced provider credentials are unavailable");
     return { ...secret };
   }
+}
+
+/** Credentials a restaurant entered in Seramet, read from the server secret store. */
+export class ManagedCredentialResolver implements CredentialResolver {
+  constructor(private store: () => SecretStore | undefined) {}
+  async hasSecret(reference: string) {
+    if (!isManagedReference(reference)) return false;
+    try {
+      await this.getSecret(reference);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async getSecret(reference: string) {
+    const store = isManagedReference(reference) ? this.store() : undefined;
+    if (!store) throw new Error("Referenced provider credentials are unavailable");
+    const parsed = parseSecretValue((await store.resolve(reference)).value);
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  }
+}
+
+export function isManagedReference(reference: string) {
+  return reference.startsWith("managed://");
 }
 
 export class ChainedCredentialResolver implements CredentialResolver {

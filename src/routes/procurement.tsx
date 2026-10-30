@@ -254,7 +254,7 @@ function Procurement() {
         </Panel>
 
         <Panel className="self-start">
-          <PanelHead title="Supplier performance" sub="Authoritative order history" />
+          <PanelHead title="Supplier performance" sub="Order history" />
           <table className="w-full">
             <thead>
               <tr>

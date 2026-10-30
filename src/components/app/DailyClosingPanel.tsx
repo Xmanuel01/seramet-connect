@@ -23,6 +23,8 @@ import { getConfigurationRepository } from "@/platform/repositories/configuratio
 import { permissions } from "@/platform/permissions";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { ClosingDeliveryStatus } from "@/components/app/ClosingDeliveryStatus";
+import { MpesaDaySummaryView } from "@/components/app/MpesaDaySummaryView";
+import { mpesaDaySummary } from "@/payments/mpesa-day-summary";
 
 type Engine = ReturnType<typeof useTransactionEngine>;
 export function DailyClosingPanel({ engine }: { engine: Engine }) {
@@ -52,6 +54,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   const [confirmFingerprint, setConfirmFingerprint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [mpesaReason, setMpesaReason] = useState("");
   const [mode, setMode] = useState<ClosingMode>(policy.mode);
   const [threshold, setThreshold] = useState(
     String(majorFromMinor(policy.materialVarianceMinor, currency)),
@@ -115,6 +118,14 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
     timeZone: zone,
     businessDayCutoffMinutes: cutoff,
   });
+  const mpesa = mpesaDaySummary(state, {
+    tenantId: activeTenantId,
+    branchId,
+    businessDate: date,
+    timeZone: zone,
+    businessDayCutoffMinutes: cutoff,
+    currency,
+  });
   const pendingPayments =
     (state.paymentOperations?.intents ?? []).filter(
       (intent) =>
@@ -127,6 +138,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   const fingerprint = JSON.stringify({
     pendingPayments,
     date,
+    mpesa,
     projection: { ...projection, calculatedAt: undefined },
     drawers,
     readiness,
@@ -190,11 +202,13 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
           businessDate: date,
           drawerCounts: policy.mode === "SUPERVISOR_DAILY_CLOSE" ? entries : [],
           confirmed: true,
+          ...(mpesa?.stillToMatch.length ? { mpesaCarryOverReason: mpesaReason.trim() } : {}),
         });
       setOpen(false);
       setConfirmFingerprint(null);
       setCounts({});
       setReasons({});
+      setMpesaReason("");
       setNotice(
         targetShift
           ? "Cashier shift closed. Branch business day remains open."
@@ -322,6 +336,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
           </div>
         ))}
       </div>
+      {mpesa && <MpesaDaySummaryView summary={mpesa} />}
       {policy.mode === "MULTI_CASHIER_SHIFTS" &&
         drawers
           .filter(
@@ -359,6 +374,21 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                 <div>
                   {day.businessDate} / Revision {snapshot.revision} <Status>{day.status}</Status>
                 </div>
+                {snapshot.dailyReport?.mpesa && (
+                  <details className="w-full text-sm">
+                    <summary className="cursor-pointer text-muted-foreground">
+                      M-Pesa for this close
+                    </summary>
+                    <div className="mt-2">
+                      <MpesaDaySummaryView
+                        summary={snapshot.dailyReport.mpesa}
+                        {...(snapshot.dailyReport.mpesaCarryOverReason
+                          ? { carryOverReason: snapshot.dailyReport.mpesaCarryOverReason }
+                          : {})}
+                      />
+                    </div>
+                  </details>
+                )}
                 <Btn
                   disabled={!hasPermission(permissions.reconciliationView)}
                   onClick={() => void download(day.id, snapshot.revision)}
@@ -608,6 +638,24 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                   closing.
                 </p>
               )}
+              {!targetShift && mpesa && (
+                <>
+                  <MpesaDaySummaryView summary={mpesa} />
+                  {mpesa.stillToMatch.length > 0 && (
+                    <label className="block text-sm">
+                      Why can these M-Pesa payments not be matched today? They stay listed until
+                      matched in Payment Control &gt; M-Pesa.
+                      <textarea
+                        aria-label="M-Pesa carry-over reason"
+                        value={mpesaReason}
+                        onChange={(e) => setMpesaReason(e.target.value)}
+                        rows={2}
+                        className="mt-1 w-full rounded-md border p-2"
+                      />
+                    </label>
+                  )}
+                </>
+              )}
               <ul className="space-y-1 text-sm">
                 {readiness.map((issue) => (
                   <li key={issue.id}>
@@ -647,6 +695,12 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                   {reasons[drawer.id] && <p>Reason: {reasons[drawer.id]}</p>}
                 </div>
               ))}
+              {!targetShift && mpesa?.stillToMatch.length ? (
+                <p>
+                  M-Pesa not on a bill: {formatMinor(mpesa.stillToMatchMinor, mpesa.currency)} (
+                  {mpesa.stillToMatch.length}), carried over because: {mpesaReason.trim()}
+                </p>
+              ) : null}
               <p>
                 The closing financial snapshot will be immutable. Ordinary transactions cannot be
                 backdated into the closed period. A report or email failure will not undo the
@@ -686,6 +740,10 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
                 else {
                   try {
                     if (targetShift || policy.mode === "SUPERVISOR_DAILY_CLOSE") readCounts();
+                    if (!targetShift && mpesa?.stillToMatch.length && mpesaReason.trim().length < 5)
+                      throw new Error(
+                        "Say why the M-Pesa payments not on a bill are being carried over",
+                      );
                     setConfirmFingerprint(fingerprint);
                     setNotice("");
                   } catch (e) {

@@ -1,4 +1,5 @@
 import type { ProductionRuntimeEnv } from "@/server/environment";
+import { createEncryptedObjectSecretBinding } from "@/server/encrypted-object-secrets";
 import { ServerOperationError } from "@/server/errors";
 
 export type SecretValue = {
@@ -77,6 +78,15 @@ export class ManagedSecretStore implements SecretStore {
 export function createSecretStore(env: ProductionRuntimeEnv): SecretStore {
   if (isManagedStore(env.SERAMET_MANAGED_SECRET_STORE)) {
     return new ManagedSecretStore(env.SERAMET_MANAGED_SECRET_STORE);
+  }
+  // Restaurant-entered credentials, encrypted at rest in the deployment's object storage.
+  if (env.SERAMET_OBJECTS && env.SERAMET_CREDENTIAL_ENCRYPTION_KEY) {
+    return new ManagedSecretStore(
+      createEncryptedObjectSecretBinding(
+        env.SERAMET_OBJECTS,
+        env.SERAMET_CREDENTIAL_ENCRYPTION_KEY,
+      ),
+    );
   }
   if (env.SERAMET_SECRET_STORE === "environment") {
     return new EnvironmentSecretStore(env as Record<string, unknown>);

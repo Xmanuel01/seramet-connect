@@ -32,7 +32,7 @@ function CommandCentre() {
   return (
     <AppShell
       title="Command centre"
-      subtitle={`${branchLabel} - authoritative daily management view`}
+      subtitle={`${branchLabel} - today at a glance`}
       actions={
         <>
           <Btn onClick={() => void management.refresh()}>

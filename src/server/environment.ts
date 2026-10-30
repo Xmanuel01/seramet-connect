@@ -91,6 +91,8 @@ export type ProductionRuntimeEnv = {
   SERAMET_REQUIRE_BEARER?: string;
   SERAMET_SECRET_STORE?: string;
   SERAMET_MANAGED_SECRET_STORE?: unknown;
+  // Protected server secret: base64 32-byte key for restaurant-entered provider credentials.
+  SERAMET_CREDENTIAL_ENCRYPTION_KEY?: string;
   SERAMET_AI_GATEWAY?: unknown;
   SERAMET_ALLOW_TEST_PROVIDERS?: string;
   SERAMET_BUILD_ID?: string;

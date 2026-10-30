@@ -112,7 +112,7 @@ function PurchaseOrders() {
   return (
     <AppShell
       title="Purchase orders"
-      subtitle={`Authoritative PO approvals, commitments and receiving progress - ${branchLabel}`}
+      subtitle={`Purchase order approvals, commitments and deliveries - ${branchLabel}`}
       actions={
         <>
           <InventoryActionLink to="/requisitions">Requisitions</InventoryActionLink>

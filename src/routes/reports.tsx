@@ -83,10 +83,7 @@ function Reports() {
       )
     : 0;
   return (
-    <AppShell
-      title="Report centre"
-      subtitle={`Authoritative operational and financial reporting - ${branchLabel}`}
-    >
+    <AppShell title="Report centre" subtitle={`Operational and financial reports - ${branchLabel}`}>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric
           label="Ordered"
