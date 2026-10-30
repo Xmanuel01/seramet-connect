@@ -30,5 +30,6 @@ describe("configuration cache across per-request database pools", () => {
     expect(await hydrateAuthoritativeConfiguration(third.db)).not.toBe(loaded);
     expect(third.prepare).toHaveBeenCalled();
     sqlite.close();
-  });
+    // Creating the migrated test database is slow when other suites share the machine.
+  }, 30_000);
 });

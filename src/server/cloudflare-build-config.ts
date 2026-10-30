@@ -30,6 +30,10 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
     name: production ? "seramet-connect" : "seramet-connect-preview",
     keep_vars: production,
     preview_urls: false,
+    // Run requests next to the production database (Supabase eu-west-1, Ireland) instead of
+    // next to each visitor: a request makes many database round trips, and from Nairobi each
+    // one crossed to Europe and back.
+    ...(production ? { placement: { region: "aws:eu-west-1" } } : {}),
     vars,
     hyperdrive: production
       ? [{ binding: "SERAMET_HYPERDRIVE", id: "4538af733065451c94d47beb2028390e" }]
