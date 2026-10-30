@@ -38,7 +38,13 @@ export const darajaDefinition: ProviderDefinition = {
     "QUERY_TRANSACTION",
   ],
   configurationSchema: {
+    // PAYBILL collects to a Paybill number; TILL (Buy Goods) to a till under a store number.
+    accountType: { type: "string" },
+    // Paybill number, or the store (head office) number that owns the till.
     shortcode: { type: "string" },
+    tillNumber: { type: "string" },
+    // Shortcode registered for payment notifications, when it differs from `shortcode`.
+    c2bShortcode: { type: "string" },
     callbackUrl: { type: "string" },
     transactionType: { type: "string" },
     qrCpi: { type: "string" },
@@ -55,12 +61,14 @@ export function createDarajaAdapter(
   return {
     definition: darajaDefinition,
     healthCheck: async (connection, context) => {
+      const platform = sandboxFallback(connection, env);
       const configured = Boolean(
         connection.secretReference &&
-        (context?.credentials["consumerKey"] || env.SERAMET_MPESA_CONSUMER_KEY) &&
-        (context?.credentials["consumerSecret"] || env.SERAMET_MPESA_CONSUMER_SECRET) &&
-        (context?.credentials["passkey"] || env.SERAMET_MPESA_PASSKEY) &&
-        (connection.configuration["shortcode"] || env.SERAMET_MPESA_SHORTCODE),
+        (context?.credentials["consumerKey"] || platform.consumerKey) &&
+        (context?.credentials["consumerSecret"] || platform.consumerSecret) &&
+        (context?.credentials["passkey"] || platform.passkey) &&
+        (connection.configuration["shortcode"] || platform.shortcode) &&
+        (accountType(connection) === "PAYBILL" || connection.configuration["tillNumber"]),
       );
       return {
         status: configured ? "HEALTHY" : "CONFIG_REQUIRED",
@@ -103,11 +111,12 @@ export function createDarajaAdapter(
             TransactionType: config.transactionType,
             Amount: Math.round(details.amountMajor),
             PartyA: normalizePhone(request.customerPhone),
-            PartyB: config.shortcode,
+            // A till is paid directly; its store number authorises the request.
+            PartyB: config.partyB,
             PhoneNumber: normalizePhone(request.customerPhone),
             CallBackURL: config.callbackUrl,
-            AccountReference: details.merchantReference,
-            TransactionDesc: `Seramet ${details.merchantReference}`,
+            AccountReference: accountReference(details.merchantReference),
+            TransactionDesc: "Payment",
           },
         });
         if (!response.data.CheckoutRequestID || response.data.ResponseCode !== "0") {
@@ -122,7 +131,10 @@ export function createDarajaAdapter(
           ok: true,
           value: response.data,
           providerReference: response.data.CheckoutRequestID,
-          responseMetadata: { customerMessage: response.data.CustomerMessage },
+          responseMetadata: {
+            customerMessage: response.data.CustomerMessage,
+            accountReference: accountReference(details.merchantReference),
+          },
         };
       } catch (error) {
         return providerFailure(error);
@@ -137,7 +149,7 @@ export function createDarajaAdapter(
           (input as { intent: PaymentIntent | PaymentIntentRecord }).intent,
         );
         if (!config.qrCpi || !config.qrMerchantName) {
-          return failure("NOT_CONFIGURED", "Daraja QR CPI and merchant name are required");
+          return failure("NOT_CONFIGURED", "M-Pesa QR needs the business name shown to customers");
         }
         const response = await runtime.http.request<{
           QRCode?: string;
@@ -150,9 +162,10 @@ export function createDarajaAdapter(
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: {
             MerchantName: config.qrMerchantName,
-            RefNo: details.merchantReference,
+            RefNo: accountReference(details.merchantReference),
             Amount: Math.round(details.amountMajor),
-            TrxCode: "BG",
+            // BG pays a till (Buy Goods); PB pays a Paybill with RefNo as the account number.
+            TrxCode: config.accountType === "TILL" ? "BG" : "PB",
             CPI: config.qrCpi,
             Size: "300",
           },
@@ -164,6 +177,47 @@ export function createDarajaAdapter(
           );
         }
         return { ok: true, value: response.data, providerReference: details.intentId };
+      } catch (error) {
+        return providerFailure(error);
+      }
+    },
+    registerPaymentNotification: async (_input, context) => {
+      try {
+        const token = await darajaToken(context, runtime);
+        const config = darajaConfig(context.connection, context, env);
+        const response = await runtime.http.request<{
+          ResponseCode?: string;
+          ResponseDescription?: string;
+          errorMessage?: string;
+        }>({
+          ...requestBase(context, "c2b-register"),
+          baseUrls,
+          path: "/mpesa/c2b/v1/registerurl",
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: {
+            ShortCode: config.c2bShortcode,
+            // Completed: if Seramet cannot answer validation in time, M-Pesa still completes.
+            ResponseType: "Completed",
+            ConfirmationURL: config.callbackUrl,
+            ValidationURL: `${config.callbackUrl}/validate`,
+          },
+        });
+        const accepted =
+          response.data.ResponseCode === "0" ||
+          /success/i.test(response.data.ResponseDescription ?? "");
+        if (!accepted) {
+          return failure(
+            "PROVIDER_ERROR",
+            response.data.errorMessage ??
+              response.data.ResponseDescription ??
+              "M-Pesa did not accept the notification addresses",
+          );
+        }
+        return {
+          ok: true,
+          value: { shortcode: config.c2bShortcode, confirmationUrl: redactKey(config.callbackUrl) },
+        };
       } catch (error) {
         return providerFailure(error);
       }
@@ -255,7 +309,11 @@ function parseDarajaWebhook(
     Body?: { stkCallback?: Record<string, unknown> };
     TransID?: string;
     TransAmount?: string | number;
+    TransTime?: string;
     BillRefNumber?: string;
+    MSISDN?: string;
+    FirstName?: string;
+    LastName?: string;
   };
   const callback = root.Body?.stkCallback;
   if (callback) {
@@ -281,16 +339,25 @@ function parseDarajaWebhook(
     };
   }
   if (root.TransID && root.TransAmount) {
+    // Till, Paybill and QR payments: the customer paid without an STK prompt.
+    const billReference = root.BillRefNumber?.trim();
+    const payerName = [root.FirstName, root.LastName].filter(Boolean).join(" ").trim();
+    const occurredAt = darajaTime(root.TransTime);
     return {
       ok: true,
       value: {
         providerEventId: root.TransID,
         eventType: "PAYMENT_CONFIRMED",
-        externalResourceId: root.BillRefNumber ?? root.TransID,
+        externalResourceId: billReference || root.TransID,
         providerTransactionId: root.TransID,
-        ...(root.BillRefNumber ? { merchantReference: root.BillRefNumber } : {}),
+        ...(billReference ? { merchantReference: billReference } : {}),
         amountMinor: parseMajorAmount(String(root.TransAmount), "KES"),
         currency: "KES",
+        ...(occurredAt ? { occurredAt } : {}),
+        directPayment: {
+          ...(root.MSISDN ? { customerReference: String(root.MSISDN) } : {}),
+          ...(payerName ? { payerName } : {}),
+        },
         payload,
       },
     };
@@ -303,29 +370,87 @@ function darajaConfig(
   context: ProviderExecutionContext,
   env: SerametEnv,
 ) {
+  const platform = sandboxFallback(connection, env);
+  const type = accountType(connection);
   const shortcode = String(
     connection.configuration["shortcode"] ??
       context.credentials["shortcode"] ??
-      env.SERAMET_MPESA_SHORTCODE ??
+      platform.shortcode ??
       "",
-  );
-  const passkey = context.credentials["passkey"] ?? env.SERAMET_MPESA_PASSKEY ?? "";
-  const callbackUrl = String(
-    connection.configuration["callbackUrl"] ?? env.SERAMET_MPESA_CALLBACK_URL ?? "",
-  );
+  ).trim();
+  const tillNumber = String(connection.configuration["tillNumber"] ?? "").trim();
+  const passkey = context.credentials["passkey"] ?? platform.passkey ?? "";
+  const callbackUrl = darajaCallbackUrl(connection, context, env);
   if (!shortcode || !passkey || !callbackUrl) {
-    throw new Error("Daraja shortcode, passkey and callback URL are required");
+    throw new Error("M-Pesa shortcode, passkey and callback address are required");
   }
+  if (type === "TILL" && !tillNumber) throw new Error("M-Pesa till number is required");
   return {
+    accountType: type,
     shortcode,
+    partyB: type === "TILL" ? tillNumber : shortcode,
+    c2bShortcode: String(connection.configuration["c2bShortcode"] ?? "").trim() || shortcode,
     passkey,
     callbackUrl,
-    transactionType: String(connection.configuration["transactionType"] ?? "CustomerPayBillOnline"),
-    qrCpi: String(connection.configuration["qrCpi"] ?? env.SERAMET_MPESA_QR_CPI ?? ""),
+    transactionType: type === "TILL" ? "CustomerBuyGoodsOnline" : "CustomerPayBillOnline",
+    qrCpi: String(connection.configuration["qrCpi"] ?? (type === "TILL" ? tillNumber : shortcode)),
     qrMerchantName: String(
-      connection.configuration["qrMerchantName"] ?? env.SERAMET_MPESA_QR_MERCHANT_NAME ?? "",
+      connection.configuration["qrMerchantName"] ?? platform.qrMerchantName ?? "",
     ),
   };
+}
+
+function accountType(connection: IntegrationConnection): "PAYBILL" | "TILL" {
+  const configured = String(connection.configuration["accountType"] ?? "").toUpperCase();
+  if (configured === "TILL" || configured === "BUY_GOODS") return "TILL";
+  if (connection.configuration["transactionType"] === "CustomerBuyGoodsOnline") return "TILL";
+  return "PAYBILL";
+}
+
+/**
+ * Platform-wide M-Pesa settings exist for sandbox testing only. A production connection must use
+ * the restaurant's own credentials and numbers, or one restaurant could collect another's sales.
+ */
+function sandboxFallback(
+  connection: IntegrationConnection,
+  env: SerametEnv,
+): Partial<
+  Record<"consumerKey" | "consumerSecret" | "passkey" | "shortcode" | "qrMerchantName", string>
+> {
+  if (connection.environment !== "SANDBOX") return {};
+  return {
+    consumerKey: env.SERAMET_MPESA_CONSUMER_KEY,
+    consumerSecret: env.SERAMET_MPESA_CONSUMER_SECRET,
+    passkey: env.SERAMET_MPESA_PASSKEY,
+    shortcode: env.SERAMET_MPESA_SHORTCODE,
+    qrMerchantName: env.SERAMET_MPESA_QR_MERCHANT_NAME,
+  };
+}
+
+/**
+ * Safaricom cannot send custom headers, so the callback address carries the connection's random
+ * webhook key as its last path segment; the route turns it back into the verified header.
+ */
+export function darajaCallbackUrl(
+  connection: IntegrationConnection,
+  context: Pick<ProviderExecutionContext, "credentials">,
+  env: SerametEnv,
+) {
+  const explicit = connection.configuration["callbackUrl"];
+  if (typeof explicit === "string" && explicit) return explicit;
+  const base = env.SERAMET_CALLBACK_BASE_URL?.replace(/\/$/, "");
+  const key = context.credentials["webhookSecret"];
+  if (!base || !key) return "";
+  return `${base}/api/seramet/integrations/webhooks/DARAJA/${encodeURIComponent(connection.id)}/${encodeURIComponent(key)}`;
+}
+
+function redactKey(url: string) {
+  return url.replace(/\/[^/]+$/, "/…");
+}
+
+// Daraja accepts at most 12 characters; the full reference stays on the payment intent.
+export function accountReference(reference: string) {
+  return reference.replace(/[^A-Za-z0-9]/g, "").slice(-12) || "Seramet";
 }
 
 function intentDetails(intent: PaymentIntent | PaymentIntentRecord) {
@@ -404,10 +529,19 @@ function base64(value: string) {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
-function darajaTimestamp() {
-  const date = new Date();
+// M-Pesa reports TransTime as YYYYMMDDHHmmss in East Africa Time.
+function darajaTime(value: string | undefined) {
+  const match = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(value ?? "");
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute, second] = match.map(Number) as number[];
+  return new Date(Date.UTC(year!, month! - 1, day!, hour! - 3, minute!, second!)).toISOString();
+}
+
+// Daraja timestamps are East Africa Time (UTC+3, no daylight saving); servers run on UTC.
+export function darajaTimestamp(now = new Date()) {
+  const date = new Date(now.getTime() + 3 * 60 * 60 * 1000);
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
 }
 
 function normalizePhone(phone: string) {

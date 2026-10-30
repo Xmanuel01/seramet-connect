@@ -323,19 +323,28 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
       );
     }
 
+    // An optional last segment carries the connection's webhook key for providers, such as
+    // M-Pesa, that cannot send a signature header. `/validate` answers M-Pesa's pre-payment check.
     const integrationWebhookRoute =
-      /^\/api\/seramet\/integrations\/webhooks\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+      /^\/api\/seramet\/integrations\/webhooks\/([^/]+)\/([^/]+)(?:\/([^/]+))?(\/validate)?$/.exec(
+        url.pathname,
+      );
     if (integrationWebhookRoute && request.method === "POST") {
       await consumeRateLimit(
         env,
         `webhook:${integrationWebhookRoute[1]}:${integrationWebhookRoute[2]}`,
         sensitiveRateLimits.webhook,
       );
+      if (integrationWebhookRoute[4]) {
+        // Validation only asks whether to accept; the payment is recorded on confirmation.
+        return json({ ResultCode: 0, ResultDesc: "Accepted" });
+      }
       return await receiveIntegrationWebhook(
         request,
         env,
         decodeURIComponent(integrationWebhookRoute[1]!),
         decodeURIComponent(integrationWebhookRoute[2]!),
+        integrationWebhookRoute[3] ? decodeURIComponent(integrationWebhookRoute[3]) : undefined,
       );
     }
 
@@ -512,6 +521,19 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
       return json({ ok: true, health });
     }
 
+    const notificationRoute =
+      /^\/api\/seramet\/integrations\/connections\/([^/]+)\/payment-notifications$/.exec(
+        url.pathname,
+      );
+    if (notificationRoute && request.method === "POST") {
+      const actor = await requirePermission(request, env, permissions.settingsIntegrationManage);
+      const registration = await createIntegrationRuntime(env).registerPaymentNotifications(
+        actor.tenantId,
+        decodeURIComponent(notificationRoute[1]!),
+      );
+      return json({ ok: true, registration });
+    }
+
     const replayRoute = /^\/api\/seramet\/integrations\/events\/([^/]+)\/replay$/.exec(
       url.pathname,
     );
@@ -605,6 +627,7 @@ async function receiveIntegrationWebhook(
   env: SerametEnv,
   providerCode: string,
   connectionId: string,
+  pathKey?: string,
 ) {
   const configuration = getConfigurationRepository();
   const candidates = configuration.listTenants().flatMap((tenant) =>
@@ -627,7 +650,11 @@ async function receiveIntegrationWebhook(
     providerCode,
     connectionId,
     rawBody,
-    headers: Object.fromEntries(request.headers.entries()),
+    headers: {
+      ...Object.fromEntries(request.headers.entries()),
+      // The adapter compares this with the connection's stored key in constant time.
+      ...(pathKey ? { "x-seramet-webhook-secret": pathKey } : {}),
+    },
   });
   return integrationWebhookAcknowledgement(providerCode, result);
 }

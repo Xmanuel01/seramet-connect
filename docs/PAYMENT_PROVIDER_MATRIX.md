@@ -28,7 +28,9 @@ Status meanings:
 
 ## Daraja boundary
 
-Implemented paths are OAuth, M-Pesa Express request/query, dynamic QR request and STK/C2B callback normalization. Production remains unconfigured until credentials, shortcode, passkey, callback routing and merchant certification pass live verification. The adapter deliberately does not claim refunds, reversals, balances or payouts.
+Implemented paths are OAuth, M-Pesa Express request/query for Paybill and Till (Buy Goods, authorised by the store number), dynamic QR (BG for tills, PB for Paybills), C2B URL registration and STK/C2B callback normalization.
+
+Each restaurant connects its own till or Paybill in Setup Centre. Its Daraja keys are stored encrypted (AES-256-GCM, bound to the restaurant's credential reference) in object storage under `SERAMET_CREDENTIAL_ENCRYPTION_KEY`, never in the database. Platform-wide `SERAMET_MPESA_*` values apply to sandbox connections only. Safaricom cannot send a signature header, so each connection's callback address ends in a random key; a wrong or missing key is refused. Payments customers make straight to the till or Paybill are kept as confirmed, unallocated M-Pesa collections for reconciliation, or linked to a bill when the account reference and exact amount both match an open request. A receipt is recorded once even if it arrives as both an STK result and a C2B notification. Production remains unconfigured until credentials, shortcode, passkey, callback routing and merchant certification pass live verification. The adapter deliberately does not claim refunds, reversals, balances or payouts.
 
 ## Pesapal boundary
 

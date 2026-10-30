@@ -71,6 +71,9 @@ export type ParsedProviderEvent = {
   currency?: string;
   providerTransactionId?: string;
   merchantReference?: string;
+  // Money the customer sent without a Seramet request (e.g. typed a till number). It is kept as
+  // an unallocated collection for reconciliation instead of being rejected.
+  directPayment?: { customerReference?: string; payerName?: string };
 };
 
 export type NormalizedPaymentProviderStatus = {

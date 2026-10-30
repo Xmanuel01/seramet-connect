@@ -27,6 +27,7 @@ import type {
 import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
+import { MpesaConnect, MpesaNotificationsButton } from "@/components/app/MpesaConnect";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
 import { formatMinor, parseMajorAmount } from "@/payments/money";
 import { cn } from "@/lib/utils";
@@ -120,10 +121,6 @@ function SetupCentre() {
     effectiveFrom: "",
     accountId: "",
   });
-  const [providerId, setProviderId] = useState("");
-  const [providerBranchId, setProviderBranchId] = useState("");
-  const providerEnvironment = "SANDBOX";
-  const [providerConfiguration, setProviderConfiguration] = useState<Record<string, string>>({});
   const [mapping, setMapping] = useState({
     connectionId: "",
     resourceType: "STORE",
@@ -183,7 +180,6 @@ function SetupCentre() {
     if (search.section) setSection(search.section);
   }, [search.section]);
 
-  const provider = centre.providers.find((candidate) => candidate.id === providerId);
   const sectionStage = centre.setup?.stages.find((stage) => stage.section === section);
   const sectionResults = centre.setup?.results.filter((result) => result.section === section) ?? [];
   const blockers = centre.setup?.results.filter((result) => result.status === "BLOCKED") ?? [];
@@ -279,25 +275,6 @@ function SetupCentre() {
     } finally {
       setBusy(false);
     }
-  };
-  const saveProvider = (event: FormEvent) => {
-    event.preventDefault();
-    if (!provider) return;
-    const configuration = Object.fromEntries(
-      Object.entries(providerConfiguration).map(([key, value]) => [
-        key,
-        provider.configurationSchema[key]?.type === "boolean" ? value === "true" : value,
-      ]),
-    );
-    void run(async () => {
-      await centre.command("/api/seramet/setup/provider-connections", {
-        providerId: provider.id,
-        ...(providerBranchId ? { branchId: providerBranchId } : {}),
-        environment: providerEnvironment,
-        configuration,
-        enabled: true,
-      });
-    }, `${provider.displayName} configuration stored. Credential values were not returned.`);
   };
   const saveMapping = (event: FormEvent) => {
     event.preventDefault();
@@ -1035,18 +1012,6 @@ function SetupCentre() {
               <ProviderPanel
                 category={section === "PAYMENTS" ? "PAYMENT" : "DELIVERY"}
                 centre={centre}
-                providerId={providerId}
-                setProviderId={(value) => {
-                  setProviderId(value);
-                  setProviderConfiguration({});
-                }}
-                providerBranchId={providerBranchId}
-                setProviderBranchId={setProviderBranchId}
-                environment={providerEnvironment}
-                configuration={providerConfiguration}
-                setConfiguration={setProviderConfiguration}
-                onSubmit={saveProvider}
-                busy={busy}
               />
             </>
           )}
@@ -1542,37 +1507,10 @@ function ImportPanel({
 function ProviderPanel({
   category,
   centre,
-  providerId,
-  setProviderId,
-  providerBranchId,
-  setProviderBranchId,
-  environment,
-  configuration,
-  setConfiguration,
-  onSubmit,
-  busy,
 }: {
   category: string;
   centre: ReturnType<typeof useSetupCentre>;
-  providerId: string;
-  setProviderId: (value: string) => void;
-  providerBranchId: string;
-  setProviderBranchId: (value: string) => void;
-  environment: string;
-  configuration: Record<string, string>;
-  setConfiguration: (value: Record<string, string>) => void;
-  onSubmit: (event: FormEvent) => void;
-  busy: boolean;
 }) {
-  const providers = centre.providers.filter(
-    (item) => item.category === category && item.enabled && item.id === "provider-daraja",
-  );
-  const provider = providers.find((item) => item.id === providerId);
-  const restaurantConfigurationFields = provider
-    ? Object.entries(provider.configurationSchema).filter(([key]) =>
-        ["shortcode", "transactionType"].includes(key),
-      )
-    : [];
   const integrations = centre.integrations.filter(
     (item) => item.category === category && item.providerId === "provider-daraja",
   );
@@ -1591,127 +1529,50 @@ function ProviderPanel({
       </Panel>
     );
   }
+  const branchName = (id?: string) =>
+    id ? (centre.structure.branches.find((item) => item.id === id)?.name ?? id) : "All branches";
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
       <Panel>
-        <PanelHead
-          title={`${category === "PAYMENT" ? "Payment" : "Delivery"} connections`}
-          sub={`${integrations.length} configured`}
-        />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[620px]">
-            <thead>
-              <tr>
-                <TH>Provider</TH>
-                <TH>Environment</TH>
-                <TH>Status</TH>
-                <TH>Health</TH>
-                <TH className="text-right">Queue</TH>
-              </tr>
-            </thead>
-            <tbody>
-              {integrations.map((item) => (
-                <tr key={item.connectionId}>
-                  <TD className="font-semibold">{item.displayName}</TD>
-                  <TD>{item.environment}</TD>
-                  <TD>
-                    <Status>{item.status}</Status>
-                  </TD>
-                  <TD>
-                    <Status>{item.health}</Status>
-                  </TD>
-                  <TD className="num text-right">{item.pendingQueue}</TD>
+        <PanelHead title="M-Pesa connections" sub={`${integrations.length} connected`} />
+        {integrations.length === 0 ? (
+          <p className="p-4 text-[13px] text-muted-foreground">
+            No M-Pesa account connected yet. Use the form to connect your till or Paybill.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px]">
+              <thead>
+                <tr>
+                  <TH>Branch</TH>
+                  <TH>Mode</TH>
+                  <TH>Status</TH>
+                  <TH>Health</TH>
+                  <TH className="text-right">Payments made without a prompt</TH>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {integrations.map((item) => (
+                  <tr key={item.connectionId}>
+                    <TD className="font-semibold">{branchName(item.branchId)}</TD>
+                    <TD>{item.environment === "PRODUCTION" ? "Live" : "Sandbox"}</TD>
+                    <TD>
+                      <Status>{item.status}</Status>
+                    </TD>
+                    <TD>
+                      <Status>{item.health}</Status>
+                    </TD>
+                    <TD className="text-right">
+                      <MpesaNotificationsButton centre={centre} connectionId={item.connectionId} />
+                    </TD>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Panel>
-      <Panel>
-        <PanelHead
-          title="Configure M-Pesa sandbox"
-          sub="Restaurant identifiers only; platform credentials remain server-side"
-          right={<Link2 className="h-4 w-4 text-primary" />}
-        />
-        <form onSubmit={onSubmit} className="space-y-3 p-4">
-          <label className={labelClass}>
-            Provider
-            <select
-              required
-              value={providerId}
-              onChange={(event) => setProviderId(event.target.value)}
-              className={inputClass}
-            >
-              <option value="">Select registered provider</option>
-              {providers.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={labelClass}>
-            Branch scope
-            <select
-              value={providerBranchId}
-              onChange={(event) => setProviderBranchId(event.target.value)}
-              className={inputClass}
-            >
-              <option value="">Tenant scope</option>
-              {centre.structure.branches.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={labelClass}>
-            Environment
-            <input value={environment} className={inputClass} readOnly aria-readonly="true" />
-          </label>
-          {restaurantConfigurationFields.map(([key, schema]) => (
-            <label className={labelClass} key={key}>
-              {humanize(key)}
-              {schema.type === "boolean" ? (
-                <select
-                  value={configuration[key] ?? "false"}
-                  onChange={(event) =>
-                    setConfiguration({ ...configuration, [key]: event.target.value })
-                  }
-                  className={inputClass}
-                >
-                  <option value="false">Disabled</option>
-                  <option value="true">Enabled</option>
-                </select>
-              ) : (
-                <input
-                  value={configuration[key] ?? ""}
-                  onChange={(event) =>
-                    setConfiguration({ ...configuration, [key]: event.target.value })
-                  }
-                  className={inputClass}
-                />
-              )}
-            </label>
-          ))}
-          {provider && provider.credentialFields.length > 0 && (
-            <p className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] text-muted-foreground">
-              Platform credentials are configured by an authorized deployer in protected server
-              secrets. This form stores only restaurant-specific account settings.
-            </p>
-          )}
-          {provider && (
-            <div className="flex flex-wrap gap-1.5">
-              {provider.capabilities.slice(0, 8).map((item) => (
-                <Status key={item}>{item.replaceAll("_", " ")}</Status>
-              ))}
-            </div>
-          )}
-          <Btn type="submit" variant="primary" className="w-full" disabled={!provider || busy}>
-            Save connection
-          </Btn>
-        </form>
-      </Panel>
+      <MpesaConnect centre={centre} />
     </div>
   );
 }

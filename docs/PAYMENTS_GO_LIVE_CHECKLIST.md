@@ -13,6 +13,8 @@
 
 ## Daraja
 
+- [ ] Set the `SERAMET_CREDENTIAL_ENCRYPTION_KEY` worker secret (32 random bytes, base64) before any restaurant connects M-Pesa; back it up with the managed-secret recovery material. Losing it means every restaurant re-enters its keys.
+- [ ] In Setup Centre, connect the restaurant's till (till + store number) or Paybill and its Daraja keys, then "Turn on notifications" so direct till/Paybill payments reach Seramet.
 - [ ] Obtain approved production app, consumer key/secret, shortcode and passkey.
 - [ ] Confirm Till/Paybill ownership and branch/payment-account mappings.
 - [ ] Register public TLS callbacks and enforce gateway callback authentication controls.

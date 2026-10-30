@@ -410,6 +410,24 @@ export class IntegrationRuntime {
       : this.dependencies.outbox.enqueue(record);
   }
 
+  /** Tells the provider where to send payments customers make without a Seramet request. */
+  async registerPaymentNotifications(tenantId: string, connectionId: string) {
+    const connection = this.requireTenantConnection(tenantId, connectionId);
+    const adapter = this.dependencies.registry.resolve(connection);
+    if (!adapter.registerPaymentNotification)
+      throw new UnsupportedCapabilityError("Provider does not register payment notifications");
+    const result = await adapter.registerPaymentNotification(
+      {},
+      {
+        connection,
+        credentials: await this.resolveCredentials(connection),
+        correlationId: crypto.randomUUID(),
+      },
+    );
+    if (!result.ok) throw resultToError(result);
+    return result.value;
+  }
+
   async recoverActiveOrders(tenantId: string, connectionId: string) {
     const connection = this.requireTenantConnection(tenantId, connectionId);
     const adapter = this.dependencies.registry.resolve(connection, "RECOVER_ACTIVE_ORDERS");
@@ -1186,6 +1204,80 @@ export class IntegrationRuntime {
     return result;
   }
 
+  /**
+   * Keeps money a customer sent straight to the till or Paybill as a confirmed, unallocated
+   * collection. Reconciliation matches it to a bill later; nothing is applied to a bill by guess.
+   */
+  private async recordDirectPayment(
+    event: IntegrationEvent,
+    parsed: ParsedProviderEvent,
+    connection: IntegrationConnection,
+    state: TransactionState,
+    direct: NonNullable<ParsedProviderEvent["directPayment"]>,
+  ) {
+    if (parsed.eventType !== "PAYMENT_CONFIRMED")
+      return { status: "IGNORED", reason: "Direct payment was not completed" };
+    if (!parsed.providerTransactionId || parsed.amountMinor === undefined || !parsed.currency)
+      throw new IntegrationValidationError("Direct payment is missing its receipt or amount");
+    // Prefer the plain method over prompt- or QR-specific ones on the same connection.
+    const linked = this.dependencies.configuration
+      .listPaymentMethods(event.tenantId, true)
+      .filter((candidate) => candidate.providerConnectionId === connection.id);
+    const method =
+      linked.find((candidate) => !candidate.metadata["providerOperation"]) ?? linked[0];
+    if (!method) throw new MappingError("No payment method is linked to this payment connection");
+    const branchId =
+      connection.branchId ??
+      (() => {
+        const branches = this.dependencies.configuration.listBranches(event.tenantId);
+        return branches.length === 1 ? branches[0]!.id : undefined;
+      })();
+    if (!branchId)
+      throw new MappingError(
+        "Assign this payment connection to a branch to receive direct payments",
+      );
+    const branch = this.dependencies.configuration.getBranch(event.tenantId, branchId);
+    const existing = state.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id &&
+        item.providerTransactionId === parsed.providerTransactionId,
+    );
+    if (existing) return { paymentTransactionId: existing.id, status: "DUPLICATE" };
+    const next = new PaymentOrchestrator(this.dependencies.configuration).confirmProviderCollection(
+      state,
+      {
+        tenantId: event.tenantId,
+        branchId,
+        paymentMethodId: method.id,
+        providerConnectionId: connection.id,
+        providerTransactionId: parsed.providerTransactionId,
+        ...(direct.customerReference ? { customerReference: direct.customerReference } : {}),
+        merchantReference: parsed.merchantReference ?? parsed.providerTransactionId,
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        allocations: [],
+        actor: `${connection.displayName} notification`,
+        ...(parsed.occurredAt ? { occurredAt: parsed.occurredAt } : {}),
+        metadata: {
+          directPayment: true,
+          integrationEventId: event.id,
+          ...(direct.payerName ? { payerName: direct.payerName } : {}),
+        },
+      },
+    );
+    await this.dependencies.transactions.saveState(
+      next,
+      systemActor(event.tenantId, branch.id, branch.name),
+      `${connection.displayName} direct payment ${parsed.providerTransactionId}`,
+    );
+    const transaction = next.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id &&
+        item.providerTransactionId === parsed.providerTransactionId,
+    );
+    return { paymentTransactionId: transaction?.id, status: "UNALLOCATED" };
+  }
+
   private async processPaymentEvent(
     event: IntegrationEvent,
     parsed: ParsedProviderEvent,
@@ -1196,7 +1288,7 @@ export class IntegrationRuntime {
     if (!parsed.externalResourceId)
       throw new IntegrationValidationError("Payment callback is missing its intent reference");
     const state = await this.dependencies.transactions.loadState(event.tenantId);
-    const operationIntent = state.paymentOperations?.intents.find(
+    let operationIntent = state.paymentOperations?.intents.find(
       (item) =>
         item.tenantId === event.tenantId &&
         (item.id === parsed.externalResourceId ||
@@ -1208,6 +1300,11 @@ export class IntegrationRuntime {
         item.id === parsed.externalResourceId ||
         item.externalReference === parsed.externalResourceId,
     );
+    if (!operationIntent && !legacyIntent && parsed.directPayment) {
+      operationIntent = openIntentForReference(state, event.tenantId, connection.id, parsed);
+      if (!operationIntent)
+        return this.recordDirectPayment(event, parsed, connection, state, parsed.directPayment);
+    }
     if (!operationIntent && !legacyIntent) {
       throw new MappingError("Payment callback does not match a Seramet payment intent");
     }
@@ -1239,6 +1336,19 @@ export class IntegrationRuntime {
       merchantReference = queried.value.merchantReference;
     }
     const reference = providerReference;
+    // The same M-Pesa receipt can arrive as a prompt result and as a till notification; it is
+    // recorded once. A receipt already kept as a direct payment is left for reconciliation.
+    const recorded = state.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id && item.providerTransactionId === reference,
+    );
+    if (recorded && providerStatus === "CONFIRMED") {
+      return {
+        paymentIntentId: operationIntent?.id ?? legacyIntent!.id,
+        paymentTransactionId: recorded.id,
+        status: recorded.intentId ? "DUPLICATE" : "RECORDED_AS_DIRECT_PAYMENT",
+      };
+    }
     let next = state;
     if (operationIntent && providerStatus === "CONFIRMED") {
       if (amountMinor === undefined || !currency) {
@@ -2329,4 +2439,38 @@ function systemActor(tenantId: string, branchId: string, branch: string) {
     role: "Integration Runtime",
     branch,
   };
+}
+
+/**
+ * A Paybill account number or QR reference names the bill being paid. Link it to that bill's open
+ * request only when the reference and the exact amount both agree.
+ */
+function openIntentForReference(
+  state: TransactionState,
+  tenantId: string,
+  connectionId: string,
+  parsed: ParsedProviderEvent,
+) {
+  const typed = normalizedReference(parsed.merchantReference);
+  if (typed.length < 4 || parsed.amountMinor === undefined) return undefined;
+  const candidates = (state.paymentOperations?.intents ?? []).filter((intent) => {
+    if (intent.tenantId !== tenantId || intent.providerConnectionId !== connectionId) return false;
+    if (!["CREATED", "PENDING", "AWAITING_CUSTOMER", "PROCESSING"].includes(intent.status))
+      return false;
+    if (intent.amountRequestedMinor !== parsed.amountMinor) return false;
+    const merchantReference = intent.metadata["merchantReference"];
+    return [
+      typeof merchantReference === "string" ? merchantReference : "",
+      intent.invoiceIds[0] ?? "",
+      intent.id,
+    ].some((reference) => {
+      const known = normalizedReference(reference);
+      return known.length >= typed.length && known.endsWith(typed);
+    });
+  });
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function normalizedReference(value: string | undefined) {
+  return (value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
