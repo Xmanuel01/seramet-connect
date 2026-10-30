@@ -16,7 +16,13 @@ describe("native Cloudflare production configuration", () => {
     expect(config.hyperdrive).toEqual([
       { binding: "SERAMET_HYPERDRIVE", id: "4538af733065451c94d47beb2028390e" },
     ]);
-    expect(config.queues.producers[0].queue).toBe("seramet-production-live-work");
+    expect(config.queues.producers).toEqual([
+      { binding: "SERAMET_WORK_QUEUE", queue: "seramet-production-live-work" },
+      { binding: "SERAMET_SCAN_QUEUE", queue: "seramet-production-file-scan" },
+    ]);
+    expect(config.r2_buckets).toEqual([
+      { binding: "SERAMET_OBJECTS", bucket_name: "seramet-production-objects" },
+    ]);
     expect(config.queues.consumers[0].dead_letter_queue).toBe("seramet-production-live-dlq");
     expect(config.preview_urls).toBe(false);
     expect(config.keep_vars).toBe(true);

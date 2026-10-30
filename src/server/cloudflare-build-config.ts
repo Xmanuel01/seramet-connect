@@ -38,8 +38,13 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
       ? [{ binding: "SERAMET_OBJECTS", bucket_name: "seramet-production-objects" }]
       : [],
     queues: {
+      // Every automatic main deploy replaces the Worker's bindings, so the file-scan producer
+      // must be declared here too; without it all file imports are refused in production.
       producers: production
-        ? [{ binding: "SERAMET_WORK_QUEUE", queue: "seramet-production-live-work" }]
+        ? [
+            { binding: "SERAMET_WORK_QUEUE", queue: "seramet-production-live-work" },
+            { binding: "SERAMET_SCAN_QUEUE", queue: "seramet-production-file-scan" },
+          ]
         : [],
       consumers: production
         ? [
