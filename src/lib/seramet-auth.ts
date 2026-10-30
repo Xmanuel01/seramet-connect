@@ -238,16 +238,44 @@ async function authenticateBearer(
     }
     const membership = memberships[0]!;
     const stamp = new Date().toISOString();
+    const authenticatedCutoff = new Date(Date.now() - 60_000).toISOString();
     await retryAuthMetadata(async () => {
       const stored = await db
-        .prepare("SELECT user_id,expires_at FROM auth_sessions WHERE tenant_id=? AND id=?")
-        .bind(membership.tenant_id, identity.sessionId)
-        .first<{ user_id: string; expires_at: string }>();
+        .prepare(
+          `SELECT s.user_id,s.expires_at,
+                  (SELECT a.last_authenticated_at FROM identity_accounts a
+                   WHERE a.tenant_id=s.tenant_id AND a.user_id=s.user_id
+                     AND a.provider=? AND a.subject=?) AS last_authenticated_at
+           FROM auth_sessions s WHERE s.tenant_id=? AND s.id=?`,
+        )
+        .bind(identity.provider, identity.subject, membership.tenant_id, identity.sessionId)
+        .first<{ user_id: string; expires_at: string; last_authenticated_at: string | null }>();
       if (stored && stored.user_id !== membership.user_id)
         throw new SerametHttpError(401, "Session identity mismatch");
       // Persist only new sessions or verified token refreshes. Authorization below
       // still reads the current revocation, credential, role and branch state.
-      if (stored && Date.parse(stored.expires_at) >= identity.expiresAt * 1000) return;
+      if (stored && Date.parse(stored.expires_at) >= identity.expiresAt * 1000) {
+        // Keep the identity's authentication time current at minute resolution without
+        // turning every routine read into a write.
+        if (stored.last_authenticated_at && stored.last_authenticated_at >= authenticatedCutoff)
+          return;
+        await db
+          .prepare(
+            `UPDATE identity_accounts SET last_authenticated_at=?
+             WHERE tenant_id=? AND user_id=? AND provider=? AND subject=?
+               AND (last_authenticated_at IS NULL OR last_authenticated_at < ?)`,
+          )
+          .bind(
+            stamp,
+            membership.tenant_id,
+            membership.user_id,
+            identity.provider,
+            identity.subject,
+            authenticatedCutoff,
+          )
+          .run();
+        return;
+      }
       await db.batch([
         db
           .prepare(

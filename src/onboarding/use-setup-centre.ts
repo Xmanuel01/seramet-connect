@@ -144,6 +144,9 @@ export function useSetupCentre() {
   const readGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const catalogGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const onboardingGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
+  // Separate from step saves, so a quick Continue cannot abort the refresh a step started.
+  const profileRefreshGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
+  const structureRefreshGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
     return {
@@ -379,8 +382,17 @@ export function useSetupCentre() {
       readGuard.cancel();
       catalogGuard.cancel();
       onboardingGuard.cancel();
+      profileRefreshGuard.cancel();
+      structureRefreshGuard.cancel();
     };
-  }, [refresh, readGuard, catalogGuard, onboardingGuard]);
+  }, [
+    refresh,
+    readGuard,
+    catalogGuard,
+    onboardingGuard,
+    profileRefreshGuard,
+    structureRefreshGuard,
+  ]);
 
   const post = useCallback(
     async <T>(path: string, body: unknown) => {
@@ -430,31 +442,33 @@ export function useSetupCentre() {
       // The save already returns authoritative progress; unrelated setup reads must not gate Continue.
       setOnboarding(payload.onboarding);
       if (input.step === 7) {
+        const refreshRead = profileRefreshGuard.begin(scopeKey);
         void get<{ profile: SetupBusinessProfile }>(
           "/api/seramet/setup/business-profile",
-          read.signal,
+          refreshRead.signal,
         )
           .then((result) => {
-            if (read.isCurrent()) setProfile(result.profile);
+            if (refreshRead.isCurrent()) setProfile(result.profile);
           })
           .catch((reason) => {
-            if (!read.isCurrent()) return;
+            if (!refreshRead.isCurrent()) return;
             setUnavailableResources((current) => [...new Set([...current, "business profile"])]);
             setError(failureMessage(reason, "Business profile could not be refreshed"));
           });
       } else if (input.step === 9 || input.step === 10) {
-        void get<SetupStructure>("/api/seramet/setup/organisation-structure", read.signal)
+        const refreshRead = structureRefreshGuard.begin(scopeKey);
+        void get<SetupStructure>("/api/seramet/setup/organisation-structure", refreshRead.signal)
           .then((result) => {
-            if (read.isCurrent()) setStructure(result);
+            if (refreshRead.isCurrent()) setStructure(result);
           })
           .catch((reason) => {
-            if (!read.isCurrent()) return;
+            if (!refreshRead.isCurrent()) return;
             setUnavailableResources((current) => [...new Set([...current, "organisation"])]);
             setError(failureMessage(reason, "Organisation could not be refreshed"));
           });
       }
     },
-    [get, onboardingGuard, post, refresh, scopeKey],
+    [get, onboardingGuard, post, profileRefreshGuard, refresh, scopeKey, structureRefreshGuard],
   );
 
   const previewImport = useCallback(
