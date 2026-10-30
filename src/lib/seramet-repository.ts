@@ -197,7 +197,12 @@ export function applyServerMutation(
       return closeBusinessDay(
         state,
         actor,
-        input as { businessDate: string; drawerCounts: DrawerCount[]; confirmed: boolean },
+        input as {
+          businessDate: string;
+          drawerCounts: DrawerCount[];
+          confirmed: boolean;
+          mpesaCarryOverReason?: string;
+        },
       );
     case "replaceState":
       return input["state"] as TransactionState;
@@ -1306,6 +1311,9 @@ export function applyServerMutation(
         businessDate: day.businessDate,
         drawerCounts: requested.drawerCounts ?? [],
         confirmed: requested.confirmed === true,
+        ...(typeof input["mpesaCarryOverReason"] === "string"
+          ? { mpesaCarryOverReason: input["mpesaCarryOverReason"] }
+          : {}),
       });
     }
     case "reopenDay":
@@ -1320,6 +1328,9 @@ export function applyServerMutation(
         businessDate: String(input["businessDate"]),
         drawerCounts: (input["drawerCounts"] as DrawerCount[] | undefined) ?? [],
         confirmed: input["confirmed"] === true,
+        ...(typeof input["mpesaCarryOverReason"] === "string"
+          ? { mpesaCarryOverReason: input["mpesaCarryOverReason"] }
+          : {}),
       });
     }
     case "recordReceiptReprint": {

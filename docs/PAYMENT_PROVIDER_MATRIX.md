@@ -43,6 +43,10 @@ Everything else is listed in Payment Control > M-Pesa with open bills of exactly
 
 Unanswered prompts are checked every minute (and on demand) with the STK query. Cancelled, timed-out, wrong-PIN and insufficient-balance prompts are marked failed with a plain reason so the cashier can send again. A query saying "paid" carries no receipt, so it is noted but never counted as money; the receipt arrives by callback or notification.
 
+### M-Pesa in the end-of-day close
+
+The closing report records the day's M-Pesa money by how it arrived (prompt, QR, paid to till or Paybill, code typed by cashier), how much is on bills, every M-Pesa payment for the branch not yet on a bill (including earlier days), and failed prompts with reasons. Unmatched M-Pesa money does not block the close, but the supervisor must give a reason; it is saved in the report and the payments stay listed until matched. The three-page PDF carries one "M-Pesa not on a bill" line; the full breakdown is in the saved record and the closing panel.
+
 ## Pesapal boundary
 
 Only API 3.0 paths are used: RequestToken, RegisterIPN, SubmitOrderRequest, GetTransactionStatus and RefundRequest. An IPN causes authoritative status retrieval. Refund request acceptance maps to PROCESSING. Additional restricted operations remain configuration/certification dependent.
