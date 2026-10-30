@@ -21,6 +21,7 @@ is seeded by this implementation.
 | Bartender phone                   | Published food/cocktail cookbook, assigned bar tickets, stock requests                  | Sales, purchasing approval, other stations                                               |
 | Cashier phone                     | Read-only branch orders, attendance                                                     | Order writes, dispatch, invoices, payments, cash drawer writes, financial offline replay |
 | Enrolled active sales terminal    | Existing permissions and POS device policy                                              | Another branch's sales commands, ungranted operations                                    |
+| Active account owner, any browser | POS, sales and payments in the active branch, as on an enrolled terminal                | Another branch's sales commands; not extended to other administrators or managers        |
 | Supervisor                        | Branch attendance/delay inbox and decisions, configured management access               | Self-approval of a delay, implicit financial permissions                                 |
 | Authorized employee administrator | Existing Add Employee, explicit role presets, station assignments, invite/status/revoke | Automatic account linking by matching email, silent privilege escalation                 |
 

@@ -127,9 +127,10 @@ describe.sequential("commercial launch foundation", () => {
       authEnv(),
     );
     expect(actor.tenantId).toBe(provisioned.tenantId);
-    // Verified account identity is not proof of an enrolled sales-terminal session.
-    expect(actor.salesTerminal).toBe(false);
-    expect(actor.permissions).not.toContain(permissions.posAccess);
+    // The registering owner is the active account owner, who may sell from any signed-in
+    // browser; other verified accounts still need an enrolled sales terminal.
+    expect(actor.salesTerminal).toBe(true);
+    expect(actor.permissions).toContain(permissions.posAccess);
     expect(actor.permissions).toContain(permissions.settingsBranchManage);
     expect(actor.permissions).not.toContain(permissions.platformTenantsProvision);
     const session = await database

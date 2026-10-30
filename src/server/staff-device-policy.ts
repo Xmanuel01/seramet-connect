@@ -33,8 +33,20 @@ export async function applyStaffDevicePolicy(
         .bind(actor.tenantId, actor.deviceId)
         .first<{ id: string; branch_id: string; device_type: string }>()
     : null;
-  const salesTerminal =
+  const enrolledTerminal =
     !!device && device.branch_id === actor.branchId && device.device_type === "POS_TERMINAL";
+  // The active account owner may sell from any signed-in browser (owner decision, 30 Oct 2026).
+  // Ownership is read from the authoritative record, never from role names or permissions,
+  // so email-invited staff (e.g. cashier phones) still need an enrolled terminal.
+  const accountOwner = enrolledTerminal
+    ? false
+    : !!(await db
+        .prepare(
+          "SELECT 1 AS owner FROM account_owners WHERE tenant_id=? AND user_id=? AND status='ACTIVE'",
+        )
+        .bind(actor.tenantId, actor.id)
+        .first<{ owner: number }>());
+  const salesTerminal = enrolledTerminal || accountOwner;
   const policy = await db
     .prepare(
       "SELECT station_ids_json FROM employee_station_access WHERE tenant_id=? AND user_id=? AND branch_id=?",
