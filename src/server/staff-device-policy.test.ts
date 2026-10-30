@@ -85,13 +85,26 @@ describe("staff device and station policy", () => {
       /enrolled sales terminal/,
     );
 
-    // Owning a different restaurant grants nothing here.
-    const other = db.sqlite.prepare("SELECT id FROM tenants WHERE id<>? LIMIT 1").get(tenant) as
-      { id: string } | undefined;
-    if (other) {
-      owner("ACTIVE", other.id);
-      expect((await applyStaffDevicePolicy(actor, db)).salesTerminal).toBe(false);
-    }
+    // Owning a different restaurant (same user id there) grants nothing here.
+    const otherTenant = `tenant-${crypto.randomUUID()}`;
+    const created = new Date().toISOString();
+    db.sqlite
+      .prepare(
+        "INSERT INTO tenants (id,slug,legal_name,trading_name,default_currency,timezone,locale,active,payload_json,created_at,updated_at) VALUES (?,?,'Other Ltd','Other','KES','Africa/Nairobi','en-KE',1,'{}',?,?)",
+      )
+      .run(otherTenant, otherTenant, created, created);
+    db.sqlite
+      .prepare(
+        "INSERT INTO users (tenant_id,id,email,name,created_at,updated_at) VALUES (?,?,NULL,'Other owner',?,?)",
+      )
+      .run(otherTenant, actor.id, created, created);
+    owner("ACTIVE", otherTenant);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS total FROM account_owners WHERE tenant_id=? AND user_id=?")
+        .get(otherTenant, actor.id),
+    ).toMatchObject({ total: 1 });
+    expect((await applyStaffDevicePolicy(actor, db)).salesTerminal).toBe(false);
 
     owner("ACTIVE");
     const active = await applyStaffDevicePolicy(actor, db);
