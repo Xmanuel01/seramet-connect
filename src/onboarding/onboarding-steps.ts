@@ -43,7 +43,8 @@ export const onboardingSteps: readonly OnboardingStepDefinition[] = [
   {
     id: "businessType",
     title: "What kind of business is this?",
-    description: "Your answer pre-fills opening hours, service modes and kitchen stations.",
+    description:
+      "Your answer pre-fills opening hours, service modes and kitchen stations. Choose whether to track stock from day one.",
     required: true,
   },
   {
@@ -210,7 +211,8 @@ export const businessTypePresets: Record<string, BusinessTypePreset> = {
     detail: "Delivery only, no dining room",
     open: "10:00",
     close: "23:00",
-    serviceModes: ["DELIVERY", "MARKETPLACE"],
+    // Delivery apps need a provider integration first, so they are offered but not pre-selected.
+    serviceModes: ["DELIVERY", "TAKEAWAY"],
     stations: [kitchen, { code: "DISPATCH", name: "Dispatch", stationType: "DISPATCH" }],
   },
   OTHER: {

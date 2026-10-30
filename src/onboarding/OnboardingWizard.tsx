@@ -56,7 +56,8 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
   const branchStations = centre.options.stations.filter(
     (row) => text(row["branch_id"]) === onboardingBranchId && Number(row["active"]) === 1,
   );
-  const taxRules = centre.options.taxRules;
+  // Older servers and fixtures may omit the list; treat that as no rules yet.
+  const taxRules = centre.options.taxRules ?? [];
   const vatRule = taxRules.find((row) => text(row["rule_type"]) === "TAX");
   const serviceRule = taxRules.find((row) => text(row["rule_type"]) === "SERVICE_CHARGE");
 
@@ -84,6 +85,8 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
       .map((item) => item.code),
   );
   const [businessType, setBusinessType] = useState(text(saved(3)?.["businessType"]));
+  const [trackStock, setTrackStock] = useState(saved(3)?.["trackStock"] === true);
+  const [standardAccounts, setStandardAccounts] = useState(true);
   const preset: BusinessTypePreset =
     businessTypePresets[businessType] ?? businessTypePresets.OTHER!;
   const [branchName, setBranchName] = useState(initialBranch?.name ?? "");
@@ -161,6 +164,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
       ],
       ["Currency", baseCurrency || "Not set"],
       ["Business type", businessTypePresets[businessType]?.label ?? "Not set"],
+      ["Stock tracking", trackStock ? "From day one" : "Later, in Setup Centre"],
       ["Branch", initialBranch?.name || "Not set"],
       ["Opening hours", hoursSummary(savedHours(saved(5)?.["operatingHours"]) ?? hours)],
       [
@@ -257,7 +261,8 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
           })),
         };
       case "businessType":
-        return { businessType };
+        if (!businessType) throw new Error("Choose the type of business");
+        return { businessType, trackStock };
       case "branch":
         return {
           branchId: onboardingBranchId,
@@ -342,7 +347,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
       case "team":
         return {};
       default:
-        return { confirmed: true };
+        return { confirmed: true, standardAccounts };
     }
   }
 
@@ -661,16 +666,35 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
         );
       case "businessType":
         return (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {Object.entries(businessTypePresets).map(([key, value]) => (
-              <ChoiceButton
-                key={key}
-                selected={businessType === key}
-                label={value.label}
-                detail={value.detail}
-                onClick={() => setBusinessType(key)}
-              />
-            ))}
+          <div className="space-y-6">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {Object.entries(businessTypePresets).map(([key, value]) => (
+                <ChoiceButton
+                  key={key}
+                  selected={businessType === key}
+                  label={value.label}
+                  detail={value.detail}
+                  onClick={() => setBusinessType(key)}
+                />
+              ))}
+            </div>
+            <div>
+              <div className="text-sm font-semibold">Stock and recipe tracking</div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <ChoiceButton
+                  selected={!trackStock}
+                  label="Start selling first (recommended)"
+                  detail="Turn on stock, recipes and opening stock later in Setup Centre."
+                  onClick={() => setTrackStock(false)}
+                />
+                <ChoiceButton
+                  selected={trackStock}
+                  label="Track stock from day one"
+                  detail="Add inventory items, recipes and opening stock before going live."
+                  onClick={() => setTrackStock(true)}
+                />
+              </div>
+            </div>
           </div>
         );
       case "branch":
@@ -1087,6 +1111,22 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
                 </div>
               ))}
             </dl>
+            <label className="flex items-start gap-3 rounded-md border border-border px-4 py-3 text-sm font-semibold">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={standardAccounts}
+                onChange={(event) => setStandardAccounts(event.target.checked)}
+              />
+              <span>
+                Use Seramet&apos;s standard restaurant chart of accounts
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  Needed for bills to post to your books. Ticking this records your approval as the
+                  owner; your accountant can change accounts later in Setup Centre. Default kitchen
+                  ticket, bill, receipt and invoice layouts are also created.
+                </span>
+              </span>
+            </label>
             <div>
               <div className="text-sm font-semibold">Next up in Setup Centre</div>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1094,7 +1134,9 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
                   [
                     ["/seramet-setup", "Activate tills and kitchen screens"],
                     ["/seramet-printers", "Connect receipt and kitchen printers"],
-                    ["/inventory-items", "Add inventory and opening stock"],
+                    ...(trackStock
+                      ? ([["/inventory-items", "Add inventory and opening stock"]] as const)
+                      : []),
                     ["/menu-import", "Import the rest of your menu"],
                   ] as const
                 ).map(([to, label]) => (

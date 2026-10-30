@@ -26,6 +26,7 @@ import {
   translateLegacyProgress,
   weekDays,
 } from "@/onboarding/onboarding-steps";
+import { standardChartStatements, starterTemplateStatements } from "@/onboarding/starter-setup";
 
 type DbRow = Record<string, unknown>;
 
@@ -513,7 +514,7 @@ export class LocationCurrencyService {
       case "businessType":
         if (!Object.hasOwn(businessTypePresets, text(response["businessType"])))
           throw validation("Choose the type of business");
-        return [];
+        return this.stockTrackingStatements(response["trackStock"] === true);
       case "branch":
         return [
           ...(await this.branchStatements(response)),
@@ -550,10 +551,67 @@ export class LocationCurrencyService {
       case "review":
         if (response["confirmed"] !== true)
           throw validation("Review and confirm the onboarding summary");
-        return [];
+        return this.starterSetupStatements(response["standardAccounts"] === true);
       default:
         throw validation("Unknown onboarding step");
     }
+  }
+
+  /**
+   * Restaurants that start selling before tracking stock do not carry inventory, recipe or
+   * opening-stock tasks in readiness; they can turn tracking on later in Setup Centre.
+   */
+  private stockTrackingStatements(trackStock: boolean) {
+    const branchId = this.actor.branchId;
+    this.assertBranch(branchId);
+    const stamp = new Date().toISOString();
+    return [
+      this.db
+        .prepare(
+          `UPDATE branch_operating_profiles SET inventory_enabled=?,recipes_required=?,updated_by=?,updated_at=?
+           WHERE tenant_id=? AND branch_id=?`,
+        )
+        .bind(
+          trackStock ? 1 : 0,
+          trackStock ? 1 : 0,
+          this.actor.id,
+          stamp,
+          this.actor.tenantId,
+          branchId,
+        ),
+      this.db
+        .prepare(
+          "UPDATE tenant_onboarding_profiles SET accounting_mode=?,updated_by=?,updated_at=? WHERE tenant_id=?",
+        )
+        .bind(trackStock ? "PERPETUAL" : "PERIODIC", this.actor.id, stamp, this.actor.tenantId),
+    ];
+  }
+
+  /** Default document layouts, plus the standard chart of accounts when the owner approves it. */
+  private async starterSetupStatements(standardAccounts: boolean) {
+    const statements = await starterTemplateStatements(this.db, this.actor.tenantId);
+    if (!standardAccounts) return statements;
+    this.require(permissions.setupAccountingManage);
+    const tenant = await this.db
+      .prepare("SELECT default_currency FROM tenants WHERE id=?")
+      .bind(this.actor.tenantId)
+      .first<DbRow>();
+    const currency = text(tenant?.["default_currency"]);
+    if (!currency) throw validation("Choose the restaurant currency before setting up accounts");
+    const stamp = new Date().toISOString();
+    statements.push(
+      ...(await standardChartStatements(this.db, {
+        tenantId: this.actor.tenantId,
+        actorId: this.actor.id,
+        currency,
+        stamp,
+      })),
+      this.audit("STANDARD_CHART_APPROVED", "ACCOUNTING", "standard-restaurant-chart", {
+        currency,
+        approvedBy: this.actor.id,
+      }),
+    );
+    return statements;
   }
 
   /** Active rows of the tenant's own configuration; the onboarding steps check real records. */

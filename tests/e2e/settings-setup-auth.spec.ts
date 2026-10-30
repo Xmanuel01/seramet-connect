@@ -779,14 +779,15 @@ async function mockOwnerOnboarding(page: Page, overrides: Partial<OnboardingWiza
         documentTemplates: [],
         inventoryItems: [],
         units: [],
+        taxRules: [],
       },
     },
     "/setup/onboarding": {
       onboarding: {
-        currentStep: 5,
+        currentStep: 1,
         status: "IN_PROGRESS",
-        completedSteps: [1, 2, 3, 4],
-        responses: {},
+        completedSteps: [],
+        responses: { _flow: 2 },
         version: 1,
         location: null,
         suggestedCurrency: null,

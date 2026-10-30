@@ -203,6 +203,78 @@ describe.sequential("guided onboarding flow against real records", () => {
     expect(done.responses[ONBOARDING_FLOW_MARKER]).toBe(2);
   });
 
+  it.each([
+    { label: "menu items, VAT", menu: true, noTax: false, trackStock: false, minimum: 8_800 },
+    { label: "menu later, VAT", menu: false, noTax: false, trackStock: false, minimum: 8_000 },
+    { label: "menu items, no tax", menu: true, noTax: true, trackStock: false, minimum: 8_800 },
+  ])(
+    "leaves a restaurant at least 80% ready after onboarding ($label)",
+    async ({ menu, noTax, trackStock, minimum }) => {
+      const { setup, provisioned } = await onboard(`ready-${menu}-${noTax}`, {
+        menu,
+        noTax,
+        trackStock,
+      });
+      for (const scope of [provisioned.branchId, undefined]) {
+        const summary = await setup.recalculateReadiness(scope, false);
+        const open = summary.stages
+          .filter((stage) => stage.progressBps < 10_000)
+          .map((stage) => stage.section);
+        expect(summary.overallScoreBps, `still open: ${open.join(", ")}`).toBeGreaterThanOrEqual(
+          minimum,
+        );
+        // Only work that needs physical hardware or the platform remains.
+        expect(
+          open.filter((section) => !["PRINTERS_DEVICES", "TESTING", "READINESS"].includes(section)),
+        ).toEqual(menu ? [] : ["MENU"]);
+      }
+    },
+  );
+
+  it("keeps stock tasks open, and below 80%, when stock is tracked from day one", async () => {
+    const { setup } = await onboard("ready-stock", { menu: true, noTax: false, trackStock: true });
+    const summary = await setup.recalculateReadiness(undefined, false);
+    const open = summary.stages.filter((stage) => stage.progressBps < 10_000).map((s) => s.section);
+    expect(open).toEqual(expect.arrayContaining(["INVENTORY", "OPENING_STOCK", "SUPPLIERS"]));
+    expect(summary.overallScoreBps).toBeLessThan(8_000);
+  });
+
+  it("maps the standard chart with owner approval the POS invoice ledger accepts", async () => {
+    const { provisioned } = await onboard("ready-ledger", {
+      menu: false,
+      noTax: false,
+      trackStock: false,
+    });
+    const mappings = db.sqlite
+      .prepare(
+        `SELECT m.mapping_key,m.status,m.finance_signoff_status,a.account_type,a.currency
+         FROM setup_account_mappings m JOIN accounts a ON a.tenant_id=m.tenant_id AND a.id=m.account_id
+         WHERE m.tenant_id=? ORDER BY m.mapping_key`,
+      )
+      .all(provisioned.tenantId) as Array<Record<string, string>>;
+    expect(mappings).toHaveLength(18);
+    expect(
+      mappings.every(
+        (row) =>
+          row["status"] === "CONFIGURED" &&
+          row["finance_signoff_status"] === "APPROVED" &&
+          row["currency"] === "KES",
+      ),
+    ).toBe(true);
+    const typeOf = (key: string) =>
+      mappings.find((row) => row["mapping_key"] === key)?.["account_type"];
+    // The types the POS invoice ledger requires for these keys.
+    expect(typeOf("CUSTOMER_RECEIVABLE")).toBe("ASSET");
+    expect(typeOf("TAX_PAYABLE")).toBe("LIABILITY");
+    expect(typeOf("SALES_REVENUE")).toBe("REVENUE");
+    expect(typeOf("SERVICE_CHARGE")).toBe("REVENUE");
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS total FROM document_templates WHERE tenant_id=? AND active=1")
+        .get(provisioned.tenantId),
+    ).toEqual({ total: 4 });
+  });
+
   it("refuses to complete with required steps missing and cannot skip ahead", async () => {
     const provisioned = await register("flow-missing", "Flow Missing Kitchen");
     const flow = new LocationCurrencyService(db, actor(provisioned));
@@ -310,6 +382,93 @@ describe.sequential("guided onboarding flow against real records", () => {
 
   function insert(sql: string, ...values: string[]) {
     db.sqlite.prepare(sql).run(...values);
+  }
+
+  /** The path an owner takes through the wizard, through the same server commands it calls. */
+  async function onboard(
+    slug: string,
+    options: { menu: boolean; noTax: boolean; trackStock: boolean },
+  ) {
+    const provisioned = await register(slug, `Kitchen ${slug}`);
+    const owner = actor(provisioned);
+    const flow = new LocationCurrencyService(db, owner);
+    const setup = new OnboardingService(db, owner, {});
+    const save = (stepNumber: number, response: Record<string, unknown>) =>
+      flow.saveOnboardingStep({ step: stepNumber, action: "SAVE", response });
+    await save(step("location"), {
+      countryCode: "KE",
+      city: "Nairobi",
+      addressLine: "Configured address",
+      confirmed: true,
+    });
+    await save(step("currency"), { baseCurrency: "KES", secondaryCurrencies: [] });
+    await save(step("businessType"), {
+      businessType: "RESTAURANT",
+      trackStock: options.trackStock,
+    });
+    await save(step("branch"), {
+      branchId: provisioned.branchId,
+      name: "Main branch",
+      code: "MAIN",
+      useBusinessLocation: true,
+    });
+    await save(step("hours"), {
+      operatingHours: Object.fromEntries(
+        weekDays.map((day) => [day, { open: "08:00", close: "22:00", closed: false }]),
+      ),
+    });
+    insert(
+      "INSERT INTO order_channels (tenant_id,id,code,channel_type,active,payload_json) VALUES (?,?,?,?,1,'{}')",
+      provisioned.tenantId,
+      `channel-${slug}`,
+      "DINE_IN",
+      "DINE_IN",
+    );
+    await save(step("serviceModes"), { serviceModes: ["DINE_IN"] });
+    if (!options.noTax)
+      await setup.configureTaxServiceRule({
+        ruleType: "TAX",
+        code: "VAT",
+        name: "VAT",
+        rateBps: 1600,
+        calculationMode: "INCLUSIVE",
+        effectiveFrom: "2026-01-01",
+      });
+    await save(step("tax"), { noTax: options.noTax });
+    insert(
+      "INSERT INTO payment_methods (tenant_id,id,code,category,active,payload_json) VALUES (?,?,?,?,1,'{}')",
+      provisioned.tenantId,
+      `method-${slug}`,
+      "CASH",
+      "CASH",
+    );
+    await save(step("payments"), {});
+    await setup.configureStation({
+      branchId: provisioned.branchId,
+      code: "KITCHEN",
+      name: "Kitchen",
+      stationType: "KITCHEN",
+    });
+    await save(step("stations"), {});
+    if (options.menu)
+      await setup.createManualMenuItem({
+        branchId: provisioned.branchId,
+        requestKey: `menu-item-${slug}-0001`,
+        code: "CHIPS",
+        name: "Chips",
+        categoryCode: "SIDES",
+        basePrice: "250",
+        currency: "KES",
+        stationCode: "KITCHEN",
+      });
+    await save(step("menu"), { later: !options.menu });
+    await save(step("team"), {});
+    await flow.saveOnboardingStep({
+      step: step("review"),
+      action: "COMPLETE",
+      response: { confirmed: true, standardAccounts: true },
+    });
+    return { provisioned, setup };
   }
 
   async function register(slug: string, tradingName: string) {
