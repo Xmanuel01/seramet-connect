@@ -292,6 +292,22 @@ export function translateLegacyProgress(progress: LegacyAwareProgress): LegacyAw
   };
 }
 
+// A completed onboarding can be reopened while readiness is below the go-live threshold.
+export const ONBOARDING_RESUME_BELOW_BPS = 8000;
+
+/**
+ * Where a completed onboarding reopens: the first step not saved in this flow. A business type
+ * saved by the previous flow has no stock-tracking answer, so that step is asked again.
+ */
+export function onboardingResumeStep(progress: LegacyAwareProgress) {
+  const done = new Set(progress.completedSteps);
+  const businessTypeStep = onboardingStepNumber("businessType");
+  if (typeof record(progress.responses[String(businessTypeStep)])?.["trackStock"] !== "boolean")
+    done.delete(businessTypeStep);
+  for (let step = 1; step < ONBOARDING_REVIEW_STEP; step += 1) if (!done.has(step)) return step;
+  return ONBOARDING_REVIEW_STEP;
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

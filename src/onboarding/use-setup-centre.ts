@@ -21,6 +21,7 @@ import type {
 } from "@/onboarding/location-currency-types";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
 import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
+import { onboardingStep } from "@/onboarding/onboarding-steps";
 
 export type RecentMenuImport = {
   id: string;
@@ -454,7 +455,9 @@ export function useSetupCentre() {
       }
       // The save already returns authoritative progress; unrelated setup reads must not gate Continue.
       setOnboarding(payload.onboarding);
-      if (input.step === 7) {
+      const savedStep = onboardingStep(input.step)?.id;
+      // Currency and business type write the business profile; the branch step writes structure.
+      if (savedStep === "currency" || savedStep === "businessType") {
         const refreshRead = profileRefreshGuard.begin(scopeKey);
         void get<{ profile: SetupBusinessProfile }>(
           "/api/seramet/setup/business-profile",
@@ -468,7 +471,7 @@ export function useSetupCentre() {
             setUnavailableResources((current) => [...new Set([...current, "business profile"])]);
             setError(failureMessage(reason, "Business profile could not be refreshed"));
           });
-      } else if (input.step === 9 || input.step === 10) {
+      } else if (savedStep === "branch") {
         const refreshRead = structureRefreshGuard.begin(scopeKey);
         void get<SetupStructure>("/api/seramet/setup/organisation-structure", refreshRead.signal)
           .then((result) => {
@@ -483,6 +486,20 @@ export function useSetupCentre() {
     },
     [get, onboardingGuard, post, profileRefreshGuard, refresh, scopeKey, structureRefreshGuard],
   );
+
+  const resumeOnboarding = useCallback(async () => {
+    if (scopeRef.current !== scopeKey) throw new Error("Restaurant setup changed; try again");
+    const read = onboardingGuard.begin(scopeKey);
+    const payload = await post<{ onboarding: OnboardingWizardState }>(
+      "/api/seramet/setup/onboarding/resume",
+      {},
+    );
+    if (!read.isCurrent()) return;
+    if (payload.onboarding?.status !== "IN_PROGRESS") {
+      throw new Error("Guided setup could not be reopened");
+    }
+    setOnboarding(payload.onboarding);
+  }, [onboardingGuard, post, scopeKey]);
 
   const previewImport = useCallback(
     async (
@@ -772,6 +789,7 @@ export function useSetupCentre() {
     send,
     refreshOptions,
     saveOnboardingStep,
+    resumeOnboarding,
     previewImport,
     recentMenuImports,
     inspectImport,

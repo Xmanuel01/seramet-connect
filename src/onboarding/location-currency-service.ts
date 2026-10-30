@@ -19,8 +19,10 @@ import type {
 import {
   ONBOARDING_FLOW_MARKER,
   ONBOARDING_FLOW_VERSION,
+  ONBOARDING_RESUME_BELOW_BPS,
   ONBOARDING_REVIEW_STEP,
   businessTypePresets,
+  onboardingResumeStep,
   onboardingStep,
   requiredOnboardingStepNumbers,
   translateLegacyProgress,
@@ -205,6 +207,77 @@ export class LocationCurrencyService {
     const results = await this.db.batch(statements);
     const progressResult = results.at(-3);
     if (!progressResult?.meta?.changes) {
+      throw new ServerOperationError(
+        "CONFLICT",
+        409,
+        "Onboarding changed in another session; reload and try again",
+      );
+    }
+    return this.getOnboardingState();
+  }
+
+  /**
+   * Reopens a completed onboarding at the first step that was never saved in this flow, so a
+   * restaurant that finished the previous flow can create the records it skipped. Later steps
+   * are walked again, and finishing the review step runs the starter setup.
+   */
+  async resumeOnboarding(readinessBps: number) {
+    this.require(permissions.setupManage);
+    const current = await this.db
+      .prepare(
+        `SELECT current_step,status,completed_steps_json,responses_json,version
+         FROM onboarding_wizard_progress WHERE tenant_id=?`,
+      )
+      .bind(this.actor.tenantId)
+      .first<DbRow>();
+    if (!current) throw notFound("Onboarding progress was not initialized");
+    if (text(current["status"]) !== "COMPLETED")
+      throw invalidTransition("Guided setup is already open");
+    if (readinessBps >= ONBOARDING_RESUME_BELOW_BPS)
+      throw invalidTransition(
+        "This restaurant is at least 80% ready; finish the remaining tasks in Setup Centre",
+      );
+    const flow = storedProgress(current);
+    const step = onboardingResumeStep(flow);
+    const stamp = new Date().toISOString();
+    const results = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE onboarding_wizard_progress SET current_step=?,status='IN_PROGRESS',
+             completed_steps_json=?,responses_json=?,version=version+1,updated_by=?,updated_at=?,
+             completed_at=NULL
+           WHERE tenant_id=? AND version=?`,
+        )
+        .bind(
+          step,
+          JSON.stringify(flow.completedSteps.filter((saved) => saved < step)),
+          JSON.stringify({ ...flow.responses, [ONBOARDING_FLOW_MARKER]: ONBOARDING_FLOW_VERSION }),
+          this.actor.id,
+          stamp,
+          this.actor.tenantId,
+          integer(current["version"]),
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO onboarding_wizard_events
+            (tenant_id,id,step,action,response_json,actor_id,correlation_id,created_at)
+           VALUES (?,?,?,'INVALIDATED',?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          crypto.randomUUID(),
+          step,
+          JSON.stringify({ resumed: true, readinessBps }),
+          this.actor.id,
+          crypto.randomUUID(),
+          stamp,
+        ),
+      this.audit("ONBOARDING_RESUMED", "ONBOARDING_WIZARD", String(step), {
+        step,
+        readinessBps,
+      }),
+    ]);
+    if (!results[0]?.meta?.changes) {
       throw new ServerOperationError(
         "CONFLICT",
         409,

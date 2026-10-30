@@ -100,6 +100,14 @@ export async function handleOnboardingApi(
       ),
     });
   }
+  if (url.pathname === "/api/seramet/setup/onboarding/resume" && request.method === "POST") {
+    // Readiness is measured for the branch the guided setup configures, without persisting it.
+    const readiness = await service.recalculateReadiness(actor.branchId || undefined, false);
+    return json({
+      ok: true,
+      onboarding: await locationCurrency.resumeOnboarding(readiness.overallScoreBps),
+    });
+  }
   if (url.pathname === "/api/seramet/setup/fx-rates/manual" && request.method === "POST") {
     return json(
       {

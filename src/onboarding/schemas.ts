@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ONBOARDING_STEP_COUNT } from "@/onboarding/onboarding-steps";
 import { setupSections } from "@/onboarding/types";
 
 const optionalRecord = z.record(z.string(), z.unknown()).optional();
@@ -31,7 +32,7 @@ export const businessProfileSchema = z
 
 export const onboardingStepSchema = z
   .object({
-    step: z.number().int().min(5).max(20),
+    step: z.number().int().min(1).max(ONBOARDING_STEP_COUNT),
     action: z.enum(["SAVE", "BACK", "COMPLETE"]),
     response: z.record(z.string(), z.unknown()),
   })
