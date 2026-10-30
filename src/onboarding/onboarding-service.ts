@@ -56,6 +56,7 @@ import {
   type SetupSection,
   type SetupStage,
   type SetupSummary,
+  type StationSetupInput,
   type TaxServiceRuleInput,
   type TestRun,
 } from "@/onboarding/types";
@@ -557,7 +558,7 @@ export class OnboardingService {
   async setupOptions(branchId?: string) {
     this.require(permissions.setupView);
     if (branchId) await this.assertBranch(branchId);
-    const [accounts, roles, warehouses, stations, templates, inventoryItems, units] =
+    const [accounts, roles, warehouses, stations, templates, inventoryItems, units, taxRules] =
       await Promise.all([
         this.db
           .prepare(
@@ -601,6 +602,13 @@ export class OnboardingService {
           )
           .bind(this.actor.tenantId)
           .all(),
+        this.db
+          .prepare(
+            `SELECT id,branch_id,rule_type,code,name,rate_bps,calculation_mode,effective_from,active
+             FROM tax_service_rules WHERE tenant_id=? AND active=1 ORDER BY rule_type,code LIMIT 200`,
+          )
+          .bind(this.actor.tenantId)
+          .all(),
       ]);
     return {
       accounts: accounts.results ?? [],
@@ -617,6 +625,10 @@ export class OnboardingService {
       }),
       inventoryItems: inventoryItems.results ?? [],
       units: units.results ?? [],
+      taxRules: (taxRules.results ?? []).filter((row) => {
+        const target = string((row as Record<string, unknown>)["branch_id"]);
+        return !target || this.canReadBranch(target);
+      }),
     };
   }
 
@@ -3190,6 +3202,42 @@ export class OnboardingService {
       }),
     ]);
     return { id };
+  }
+
+  /** Create or update a branch preparation station; stations route orders to kitchen screens. */
+  async configureStation(input: StationSetupInput) {
+    this.require(permissions.setupManage);
+    await this.assertBranch(input.branchId);
+    const existing = await this.db
+      .prepare("SELECT id FROM stations WHERE tenant_id=? AND branch_id=? AND code=?")
+      .bind(this.actor.tenantId, input.branchId, input.code)
+      .first<{ id: string }>();
+    const id = existing?.id ?? stableId("station", `${input.branchId}:${input.code}`);
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json)
+           VALUES (?,?,?,?,?,?,?,'{}')
+           ON CONFLICT(tenant_id,id) DO UPDATE SET name=excluded.name,
+             station_type=excluded.station_type,active=excluded.active`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.code,
+          input.name,
+          input.stationType,
+          bool(input.active ?? true),
+        ),
+      this.audit(existing ? "STATION_UPDATED" : "STATION_CREATED", "STATION", id, {
+        branchId: input.branchId,
+        code: input.code,
+        stationType: input.stationType,
+        active: input.active ?? true,
+      }),
+    ]);
+    return { id, created: !existing };
   }
 
   async configureProviderConnection(input: ProviderSetupInput) {

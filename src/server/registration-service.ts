@@ -146,7 +146,7 @@ export class RestaurantRegistrationService {
           `INSERT INTO onboarding_wizard_progress
             (tenant_id,current_step,status,completed_steps_json,responses_json,version,created_by,
              created_at,updated_by,updated_at,completed_at)
-           VALUES (?,5,'IN_PROGRESS','[1,2,3,4]','{}',1,?,?,?,?,NULL)`,
+           VALUES (?,1,'IN_PROGRESS','[]','{"_flow":2}',1,?,?,?,?,NULL)`,
         )
         .bind(tenantId, userId, stamp, userId, stamp),
       this.db

@@ -31,25 +31,34 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
   it("persists page progress and derives country-specific currency suggestions", async () => {
     const kenya = await register("kenya-location", "Kenya Location Restaurant");
     const kenyaService = new LocationCurrencyService(db, actor(kenya));
+    expect(await kenyaService.getOnboardingState()).toMatchObject({
+      currentStep: 1,
+      completedSteps: [],
+    });
+    await expect(
+      kenyaService.saveOnboardingStep({
+        step: 1,
+        action: "SAVE",
+        response: {
+          countryCode: "KE",
+          city: "Nairobi",
+          addressLine: "Configured address",
+        },
+      }),
+    ).rejects.toThrow(/confirm/i);
     await kenyaService.saveOnboardingStep({
-      step: 5,
+      step: 1,
       action: "SAVE",
       response: {
         countryCode: "KE",
         administrativeLevel1: "Nairobi",
         city: "Nairobi",
         addressLine: "Configured address",
+        confirmed: true,
       },
     });
-    const draft = await kenyaService.getOnboardingState();
-    expect(draft).toMatchObject({ currentStep: 6, location: { status: "DRAFT" } });
-    await kenyaService.saveOnboardingStep({
-      step: 6,
-      action: "SAVE",
-      response: { confirmed: true },
-    });
     expect(await kenyaService.getOnboardingState()).toMatchObject({
-      currentStep: 7,
+      currentStep: 2,
       location: { countryCode: "KE", status: "CONFIRMED" },
       suggestedCurrency: { code: "KES" },
     });
@@ -57,19 +66,15 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const unitedStates = await register("us-location", "US Location Restaurant");
     const usService = new LocationCurrencyService(db, actor(unitedStates));
     await usService.saveOnboardingStep({
-      step: 5,
+      step: 1,
       action: "SAVE",
       response: {
         countryCode: "US",
         administrativeLevel1: "New York",
         city: "New York",
         addressLine: "Configured US address",
+        confirmed: true,
       },
-    });
-    await usService.saveOnboardingStep({
-      step: 6,
-      action: "SAVE",
-      response: { confirmed: true },
     });
     const references = await usService.listReferences();
     expect(references.countries.find((country) => country.code === "US")).toMatchObject({
@@ -242,7 +247,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
       .run(provisioned.tenantId, provisioned.branchId);
     await expect(
       service.saveOnboardingStep({
-        step: 7,
+        step: 2,
         action: "SAVE",
         response: { baseCurrency: "USD", secondaryCurrencies: [] },
       }),
@@ -629,18 +634,18 @@ function saveCurrentUsdRate(service: LocationCurrencyService, idempotencyKey: st
 
 async function configureKenyanCurrency(service: LocationCurrencyService) {
   await service.saveOnboardingStep({
-    step: 5,
+    step: 1,
     action: "SAVE",
     response: {
       countryCode: "KE",
       administrativeLevel1: "Nairobi",
       city: "Nairobi",
       addressLine: "Configured address",
+      confirmed: true,
     },
   });
-  await service.saveOnboardingStep({ step: 6, action: "SAVE", response: { confirmed: true } });
   await service.saveOnboardingStep({
-    step: 7,
+    step: 2,
     action: "SAVE",
     response: {
       baseCurrency: "KES",

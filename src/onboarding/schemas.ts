@@ -296,6 +296,32 @@ export const taxServiceRuleSchema = z
   })
   .strict();
 
+export const stationSetupSchema = z
+  .object({
+    branchId: z.string().trim().min(1).max(120),
+    code: z
+      .string()
+      .trim()
+      .min(2)
+      .max(40)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/)
+      .transform((value) => value.toUpperCase()),
+    name: z.string().trim().min(2).max(80),
+    stationType: z.enum([
+      "KITCHEN",
+      "GRILL",
+      "FRYER",
+      "BAR",
+      "COFFEE",
+      "DESSERT",
+      "PASS",
+      "DISPATCH",
+      "OTHER",
+    ]),
+    active: z.boolean().optional(),
+  })
+  .strict();
+
 export const providerSetupSchema = z
   .object({
     id: z.string().trim().min(1).optional(),

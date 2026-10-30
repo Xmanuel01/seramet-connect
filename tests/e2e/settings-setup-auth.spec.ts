@@ -999,12 +999,12 @@ for (const status of [200, 503]) {
   });
 }
 
-async function openOnboardingStep(page: Page, step = 6) {
+async function openOnboardingStep(page: Page, step = 1) {
   const onboarding: OnboardingWizardState = {
     currentStep: step,
     status: "IN_PROGRESS",
-    completedSteps: [1, 2, 3, 4, 5],
-    responses: {},
+    completedSteps: step > 1 ? Array.from({ length: step - 1 }, (_, index) => index + 1) : [],
+    responses: { _flow: 2 },
     version: 2,
     location: {
       countryCode: "KE",
@@ -1047,7 +1047,7 @@ async function openOnboardingStep(page: Page, step = 6) {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
     page.getByRole("heading", {
-      name: step === 20 ? "Review your restaurant" : "Confirm your location",
+      name: step === 12 ? "Review your restaurant" : "Where is your business located?",
       exact: true,
     }),
   ).toBeVisible();
@@ -1072,15 +1072,16 @@ test("onboarding advances from the saved response without waiting for unrelated 
   });
   const savedState = {
     ...onboarding,
-    currentStep: 7,
+    currentStep: 2,
     version: 3,
-    completedSteps: [...onboarding.completedSteps, 6],
+    completedSteps: [...onboarding.completedSteps, 1],
     location: { ...onboarding.location!, status: "CONFIRMED" },
   };
   await page.route("**/api/seramet/setup/onboarding/step", (route) =>
     route.fulfill({ json: { ok: true, onboarding: savedState } }),
   );
   try {
+    await page.getByLabel("This address is correct").check();
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Your currency", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
@@ -1114,15 +1115,16 @@ test("onboarding waits for save confirmation and recovers from a rejected save",
       return route.fulfill({ status: 503, json: { message: "Save could not be confirmed" } });
     }
     return route.fulfill({
-      json: { ok: true, onboarding: { ...onboarding, currentStep: 7, version: 3 } },
+      json: { ok: true, onboarding: { ...onboarding, currentStep: 2, version: 3 } },
     });
   });
   try {
+    await page.getByLabel("This address is correct").check();
     const posted = page.waitForRequest("**/api/seramet/setup/onboarding/step");
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await posted;
     await expect(
-      page.getByRole("heading", { name: "Confirm your location", exact: true }),
+      page.getByRole("heading", { name: "Where is your business located?", exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: /Continue|Saving/ })).toBeDisabled();
     for (const viewport of [
@@ -1161,18 +1163,19 @@ test("onboarding does not advance without confirmed progress in the save respons
   await page.route("**/api/seramet/setup/onboarding/step", (route) =>
     route.fulfill({ json: { ok: true } }),
   );
+  await page.getByLabel("This address is correct").check();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText(
     "Saved onboarding progress could not be confirmed",
   );
   await expect(
-    page.getByRole("heading", { name: "Confirm your location", exact: true }),
+    page.getByRole("heading", { name: "Where is your business located?", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
 });
 
 test("onboarding completion still refreshes authoritative setup data", async ({ page }) => {
-  const onboarding = await openOnboardingStep(page, 20);
+  const onboarding = await openOnboardingStep(page, 12);
   const completed = { ...onboarding, status: "COMPLETED", version: 3 };
   let reads = 0;
   await page.route("**/api/seramet/setup/**", async (route) => {
@@ -1185,7 +1188,7 @@ test("onboarding completion still refreshes authoritative setup data", async ({ 
   await page.route("**/api/seramet/setup/onboarding/step", (route) =>
     route.fulfill({ json: { ok: true, onboarding: completed } }),
   );
-  await page.getByRole("button", { name: "Continue to Setup Centre", exact: true }).click();
+  await page.getByRole("button", { name: "Finish and open Setup Centre", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Setup Centre", exact: true })).toBeVisible();
   expect(reads).toBeGreaterThan(0);
   await expect(
