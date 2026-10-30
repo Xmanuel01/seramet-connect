@@ -90,7 +90,7 @@ function InventoryOverview() {
   return (
     <AppShell
       title="Inventory overview"
-      subtitle={`${branchLabel} - authoritative stock health, valuation and exceptions`}
+      subtitle={`${branchLabel} - stock levels, value and items needing attention`}
       actions={
         <>
           <Btn onClick={() => void navigate({ to: "/inventory-items" })}>Items</Btn>

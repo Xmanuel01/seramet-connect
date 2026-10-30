@@ -322,10 +322,7 @@ function Customers() {
           )}
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
             <Panel className="min-w-0">
-              <PanelHead
-                title="Customer directory"
-                sub="Authoritative, permission-filtered customer records"
-              />
+              <PanelHead title="Customer directory" sub="Customers you have access to" />
               <form onSubmit={search} className="flex flex-wrap gap-2 border-b border-border p-4">
                 <label className="min-w-[200px] flex-1 text-[12px] font-medium">
                   <span className="sr-only">Search customer name, code, phone or email</span>

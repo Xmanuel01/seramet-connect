@@ -324,7 +324,7 @@ function StockCount() {
   return (
     <AppShell
       title="Stock count"
-      subtitle={`${branchLabel} - authoritative physical-count sessions and variance approval`}
+      subtitle={`${branchLabel} - stock counts and approving differences`}
       actions={
         <Btn
           variant="primary"

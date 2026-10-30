@@ -562,7 +562,7 @@ export class FinancialLedgerService {
       rows: (rows.results ?? []).slice(0, 200),
       truncated: (rows.results ?? []).length > 200,
       allocationVerified: false,
-      note: "A supplier payment-allocation ledger is not implemented. Invoice totals and statuses are real, but exact partially paid balances cannot yet be certified.",
+      note: "Invoice totals and statuses are accurate. Balances on partly paid supplier invoices are estimates until supplier payment matching is added.",
     };
   }
 }

@@ -28,17 +28,17 @@ export function ManagementReadModelState({
         <div>
           <div className="text-[14px] font-semibold">
             {loading
-              ? "Loading authoritative metrics"
+              ? "Loading figures"
               : status === "error"
                 ? "Management metrics unavailable"
-                : "No calculated metrics for this period"}
+                : "No figures for this period yet"}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">
             {status === "error"
               ? error
               : loading
-                ? "Reading server-side management models."
-                : "Run the durable recalculation after source transactions are available."}
+                ? "This takes a moment."
+                : "Figures appear here once there are sales and stock movements for this period."}
           </p>
         </div>
       </div>

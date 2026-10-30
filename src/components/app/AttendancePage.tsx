@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MapPin, RefreshCcw, ShieldCheck } from "lucide-react";
+import { LocateFixed, MapPin, RefreshCcw, ShieldCheck } from "lucide-react";
 import { AttendanceClock } from "@/components/app/AttendanceClock";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
@@ -510,10 +510,43 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         expectedVersion: selectedEmployee?.schedule_version ?? 0,
       });
     });
+  const [locating, setLocating] = useState(false);
+  // Fills the coordinates from this device, so a manager standing at the workplace needs no map.
+  const useCurrentLocation = () => {
+    if (!editFence) return;
+    if (!navigator.geolocation) {
+      setMessage("This device cannot share its location. Enter the coordinates instead.");
+      return;
+    }
+    setLocating(true);
+    setMessage("Finding your location…");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        setEditFence((current) =>
+          current
+            ? {
+                ...current,
+                latitude: Number(position.coords.latitude.toFixed(6)),
+                longitude: Number(position.coords.longitude.toFixed(6)),
+              }
+            : current,
+        );
+        setMessage(
+          `Location found to within ${Math.round(position.coords.accuracy)} m. Save to apply it.`,
+        );
+      },
+      () => {
+        setLocating(false);
+        setMessage("Location could not be read. Allow location access, or enter the coordinates.");
+      },
+      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+    );
+  };
   const saveFence = () =>
     void run(async () => {
       if (!editFence || editFence.latitude == null || editFence.longitude == null)
-        throw new Error("Set the worksite latitude and longitude");
+        throw new Error("Set the workplace location first");
       await api("/api/seramet/attendance/geofence", "PUT", {
         branchId,
         enabled: editFence.enabled,
@@ -578,6 +611,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         minutesLate={current?.minutesLate}
         workedMinutes={current?.workedMinutes}
         locationEnabled={Boolean(data?.geofence.enabled)}
+        canSetLocation={Boolean(data?.canConfigure && canConfigure)}
         openElsewhere={Boolean(data?.openElsewhere)}
         unknown={unknown}
         busy={busy}
@@ -618,7 +652,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           <Panel className="mt-4">
             <PanelHead
               title="Supervisor · Live attendance"
-              sub="Server-authoritative records; changes are audited"
+              sub="Every change is recorded in the audit log"
             />
             <div className="overflow-x-auto">
               <table className="w-full min-w-[700px]">
@@ -846,10 +880,19 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       {data?.canConfigure && canConfigure && editFence && (
         <Panel className="mt-4">
           <PanelHead
-            title="Worksite geofence"
-            sub="Requires full administrator authentication and branch settings permission"
+            title="Workplace location for clock-in"
+            sub="Staff can clock in and out only within this distance of the restaurant"
           />
           <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="col-span-full flex flex-wrap items-center gap-3">
+              <Btn disabled={busy || locating} onClick={useCurrentLocation}>
+                <LocateFixed aria-hidden="true" className="h-4 w-4" />
+                {locating ? "Finding location…" : "Use my current location"}
+              </Btn>
+              <span className="text-xs text-muted-foreground">
+                Stand inside the restaurant, then tap this.
+              </span>
+            </div>
             <label className="grid gap-1 text-xs font-semibold">
               Latitude
               <input
@@ -938,17 +981,17 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
                 checked={editFence.enabled}
                 onChange={(e) => setEditFence({ ...editFence, enabled: e.target.checked })}
               />
-              Enable geofence
+              Require staff to be on site
             </label>
             <Btn variant="primary" disabled={busy} onClick={saveFence}>
-              Save worksite policy
+              Save location
             </Btn>
             <p className="col-span-full text-xs text-muted-foreground">
               Policy revision {editFence.version} · Updated{" "}
               {editFence.updatedAt ?? "not yet configured"}{" "}
-              {editFence.updatedBy ? `by ${editFence.updatedBy}` : ""}. Set coordinates from a
-              trusted survey/map. A 10 m radius is extremely strict indoors; inaccurate readings
-              fail closed and need an audited supervisor exception.
+              {editFence.updatedBy ? `by ${editFence.updatedBy}` : ""}. Indoors, GPS can be off by
+              20–50 m, so a radius of 50–100 m works best. Staff outside it can report a delay for a
+              supervisor to approve.
             </p>
           </div>
         </Panel>

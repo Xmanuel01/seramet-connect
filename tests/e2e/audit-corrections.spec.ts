@@ -313,7 +313,7 @@ test("delivery links stay client-side and unavailable registers do not claim emp
   for (const [path, name] of Object.entries(pilotUnavailable)) {
     await page.goto(path);
     await expect(
-      page.getByRole("heading", { name: `${name} is not available in the pilot`, exact: true }),
+      page.getByRole("heading", { name: `${name} isn't available yet`, exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("table")).toHaveCount(0);
   }

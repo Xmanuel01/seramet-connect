@@ -311,7 +311,7 @@ function Home() {
           <Panel>
             <PanelHead
               title="Branch performance"
-              sub={`${period} - authoritative branch totals`}
+              sub={`${period} - branch totals`}
               right={<Btn>Compare</Btn>}
             />
             <div className="grid gap-3 p-3 md:hidden">

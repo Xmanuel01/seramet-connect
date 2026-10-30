@@ -433,7 +433,7 @@ function SetupCentre() {
 
   if (centre.status === "loading" && !centre.setup)
     return (
-      <AppShell title="Setup Centre" subtitle="Loading authoritative setup state">
+      <AppShell title="Setup Centre" subtitle="Loading your setup">
         <Panel className="flex min-h-64 items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </Panel>
@@ -442,7 +442,7 @@ function SetupCentre() {
 
   if (centre.status === "error" && !centre.setup)
     return (
-      <AppShell title="Setup Centre" subtitle="Authoritative setup state is unavailable">
+      <AppShell title="Setup Centre" subtitle="Your setup could not be loaded">
         <Panel className="p-5">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
@@ -810,7 +810,7 @@ function SetupCentre() {
             <Panel>
               <PanelHead
                 title="Menu import"
-                sub="Upload, validate, commit, verify and publish from one authoritative workspace"
+                sub="Upload a file, check it, then publish it to your menu"
               />
               <div className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <p className="text-sm text-muted-foreground">
@@ -1331,7 +1331,7 @@ function SetupCentre() {
             <Panel>
               <PanelHead
                 title="Go-live control"
-                sub="Authoritative state transitions with security and schema locks"
+                sub="Move your restaurant through setup to going live"
                 right={<ShieldCheck className="h-4 w-4 text-primary" />}
               />
               <div className="space-y-4 p-4">
