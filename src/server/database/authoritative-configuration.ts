@@ -27,28 +27,42 @@ import type { D1Database } from "@/server/database/d1";
 
 type Row = Record<string, unknown>;
 
-const cache = new WeakMap<object, { repository: ConfigurationRepository; loadedAt: number }>();
+type CachedConfiguration = { repository: ConfigurationRepository; loadedAt: number };
+const cache = new WeakMap<object, CachedConfiguration>();
+// Production opens a new database pool per request, so the configuration (plain data) is cached
+// by the database it came from; otherwise every request reloaded it with twenty queries.
+const sharedCache = new Map<string, CachedConfiguration>();
 const cacheLifetimeMs = 15_000;
+
+function cacheIdentity(db: D1Database) {
+  const identity = (db as { cacheIdentity?: unknown }).cacheIdentity;
+  return typeof identity === "string" ? identity : undefined;
+}
 
 export async function hydrateAuthoritativeConfiguration(
   db: D1Database,
   env: SerametEnv = {},
   force = false,
 ) {
-  const cached = cache.get(db as object);
+  const identity = cacheIdentity(db);
+  const cached = identity ? sharedCache.get(identity) : cache.get(db as object);
   if (!force && cached && Date.now() - cached.loadedAt < cacheLifetimeMs) {
     setConfigurationRepository(cached.repository);
     return cached.repository;
   }
   const state = await loadAuthoritativePlatformState(db, env);
   const repository = new ConfigurationRepository(state, { persistBrowser: false });
-  cache.set(db as object, { repository, loadedAt: Date.now() });
+  const entry = { repository, loadedAt: Date.now() };
+  if (identity) sharedCache.set(identity, entry);
+  else cache.set(db as object, entry);
   setConfigurationRepository(repository);
   return repository;
 }
 
 export function invalidateAuthoritativeConfiguration(db: D1Database) {
-  cache.delete(db as object);
+  const identity = cacheIdentity(db);
+  if (identity) sharedCache.delete(identity);
+  else cache.delete(db as object);
 }
 
 export async function loadAuthoritativePlatformState(

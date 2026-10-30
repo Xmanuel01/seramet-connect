@@ -255,6 +255,7 @@ export function translateLegacyProgress(progress: LegacyAwareProgress): LegacyAw
   if (isCurrentFlow(progress.responses))
     return {
       ...progress,
+      responses: withKnownServiceModes(progress.responses),
       currentStep: Math.min(Math.max(progress.currentStep, 1), ONBOARDING_REVIEW_STEP),
       completedSteps: progress.completedSteps.filter(
         (step) => step >= 1 && step <= ONBOARDING_REVIEW_STEP,
@@ -273,7 +274,7 @@ export function translateLegacyProgress(progress: LegacyAwareProgress): LegacyAw
   carry(3, old(8), done.has(8));
   carry(4, old(9) && { ...old(9), ...(old(10) ?? {}) }, done.has(9) && done.has(10));
   carry(5, old(11), done.has(11));
-  carry(6, old(12), done.has(12));
+  carry(6, old(12) && knownServiceModes(old(12)!), done.has(12));
   if (progress.status === "COMPLETED") {
     return {
       currentStep: ONBOARDING_REVIEW_STEP,
@@ -306,6 +307,30 @@ export function onboardingResumeStep(progress: LegacyAwareProgress) {
     done.delete(businessTypeStep);
   for (let step = 1; step < ONBOARDING_REVIEW_STEP; step += 1) if (!done.has(step)) return step;
   return ONBOARDING_REVIEW_STEP;
+}
+
+const serviceModeCodes = new Set(serviceModePresets.map((mode) => mode.code));
+
+/**
+ * The previous flow saved values such as "KITCHEN" as service modes. They are not order channels,
+ * so they are dropped from a saved answer instead of being sent back invisibly on the next save.
+ */
+function knownServiceModes(response: Record<string, unknown>) {
+  const modes = response["serviceModes"];
+  if (!Array.isArray(modes)) return response;
+  return {
+    ...response,
+    serviceModes: modes.filter(
+      (mode) => typeof mode === "string" && serviceModeCodes.has(mode.trim().toUpperCase()),
+    ),
+  };
+}
+
+function withKnownServiceModes(responses: Record<string, unknown>) {
+  const saved = record(responses[String(onboardingStepNumber("serviceModes"))]);
+  return saved
+    ? { ...responses, [String(onboardingStepNumber("serviceModes"))]: knownServiceModes(saved) }
+    : responses;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

@@ -83,6 +83,23 @@ describe("legacy onboarding progress translation", () => {
     ).toMatchObject({ status: "COMPLETED", currentStep: ONBOARDING_STEP_COUNT });
   });
 
+  it("drops saved service modes that are not order channels, from either flow", () => {
+    const current = translateLegacyProgress({
+      currentStep: 6,
+      status: "IN_PROGRESS",
+      completedSteps: [1, 2, 3, 4, 5],
+      responses: { [ONBOARDING_FLOW_MARKER]: 2, "6": { serviceModes: ["KITCHEN", "dine_in"] } },
+    });
+    expect(current.responses["6"]).toEqual({ serviceModes: ["dine_in"] });
+    const legacy = translateLegacyProgress({
+      currentStep: 13,
+      status: "IN_PROGRESS",
+      completedSteps: [5, 6, 7, 8, 9, 10, 11, 12],
+      responses: { "12": { serviceModes: ["KITCHEN", "TAKEAWAY"] } },
+    });
+    expect(legacy.responses["6"]).toEqual({ serviceModes: ["TAKEAWAY"] });
+  });
+
   it("clamps out-of-range steps stored in the current flow", () => {
     expect(
       translateLegacyProgress({
