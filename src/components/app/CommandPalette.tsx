@@ -56,10 +56,10 @@ const goto: { label: string; to: string }[] = [
   { label: "Open Audit Trail", to: "/audit-trail" },
   { label: "Ask Seramet AI", to: "/ai" },
   { label: "Go to Reports", to: "/reports" },
-  { label: "Open Seramet Printers", to: "/seramet-printers" },
-  { label: "Open Hardware Setup", to: "/seramet-setup" },
+  { label: "Open Printers & Devices", to: "/seramet-printers" },
+  { label: "Open Setup Centre", to: "/seramet-setup" },
   { label: "Go to Settings", to: "/settings" },
-  { label: "Open Design System", to: "/design-system" },
+  { label: "Open UI Kit", to: "/design-system" },
 ];
 
 export function CommandPalette({

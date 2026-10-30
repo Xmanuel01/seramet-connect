@@ -14,7 +14,6 @@ import {
   ChefHat,
   ClipboardCheck,
   ClipboardList,
-  Component,
   FileSpreadsheet,
   FileText,
   Gauge,
@@ -37,7 +36,6 @@ import {
   RotateCcw,
   Scale,
   Settings,
-  Settings2,
   ShoppingCart,
   Sparkles,
   Store,
@@ -372,23 +370,19 @@ export const navGroups: NavGroup[] = [
   },
   {
     group: "System",
+    // Restaurant-facing administration, most used first. The UI kit is reached from Settings.
     items: [
+      { label: "Settings", to: "/settings", icon: Settings, permission: permissions.settingsView },
       {
-        label: "Design System",
-        to: "/design-system",
-        icon: Component,
-        permission: permissions.settingsView,
+        label: "Setup Centre",
+        to: "/seramet-setup",
+        icon: ClipboardCheck,
+        permission: permissions.setupView,
       },
       {
-        label: "Seramet Printers",
+        label: "Printers & Devices",
         to: "/seramet-printers",
         icon: Printer,
-        permission: permissions.settingsHardwareView,
-      },
-      {
-        label: "Hardware Setup",
-        to: "/seramet-setup",
-        icon: Settings2,
         permission: permissions.settingsHardwareView,
       },
       {
@@ -403,7 +397,6 @@ export const navGroups: NavGroup[] = [
         icon: Activity,
         permission: permissions.auditView,
       },
-      { label: "Settings", to: "/settings", icon: Settings, permission: permissions.settingsView },
     ],
   },
 ];
