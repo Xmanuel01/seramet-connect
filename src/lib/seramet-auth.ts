@@ -72,6 +72,7 @@ type SessionIdentityRow = {
   user_name: string;
   session_device_id: string | null;
   expires_at: string;
+  last_seen_at: string | null;
   revoked_at: string | null;
   token_version: number;
   password_version: number;
@@ -237,15 +238,25 @@ async function authenticateBearer(
     }
     const membership = memberships[0]!;
     const stamp = new Date().toISOString();
-    await retryAuthMetadata(() =>
-      db.batch([
+    await retryAuthMetadata(async () => {
+      const stored = await db
+        .prepare("SELECT user_id,expires_at FROM auth_sessions WHERE tenant_id=? AND id=?")
+        .bind(membership.tenant_id, identity.sessionId)
+        .first<{ user_id: string; expires_at: string }>();
+      if (stored && stored.user_id !== membership.user_id)
+        throw new SerametHttpError(401, "Session identity mismatch");
+      // Persist only new sessions or verified token refreshes. Authorization below
+      // still reads the current revocation, credential, role and branch state.
+      if (stored && Date.parse(stored.expires_at) >= identity.expiresAt * 1000) return;
+      await db.batch([
         db
           .prepare(
             `INSERT INTO auth_sessions
             (tenant_id,id,user_id,device_id,issued_at,expires_at,revoked_at,last_seen_at,
              token_version,ip_hash,metadata_json)
            VALUES (?,?,?,?,?,?,NULL,?,?,NULL,?)
-           ON CONFLICT(tenant_id,id) DO UPDATE SET expires_at=excluded.expires_at,last_seen_at=excluded.last_seen_at`,
+           ON CONFLICT(tenant_id,id) DO UPDATE SET expires_at=excluded.expires_at,last_seen_at=excluded.last_seen_at
+           WHERE auth_sessions.expires_at < excluded.expires_at`,
           )
           .bind(
             membership.tenant_id,
@@ -270,8 +281,8 @@ async function authenticateBearer(
             identity.provider,
             identity.subject,
           ),
-      ]),
-    );
+      ]);
+    });
     return authenticateStoredSession(request, db, {
       tenantId: membership.tenant_id,
       sessionId: identity.sessionId,
@@ -308,7 +319,7 @@ async function authenticateStoredSession(
   const session = await db
     .prepare(
       `SELECT s.tenant_id, s.id AS session_id, s.user_id, u.name AS user_name,
-              s.device_id AS session_device_id, s.expires_at, s.revoked_at,
+              s.device_id AS session_device_id, s.expires_at, s.revoked_at, s.last_seen_at,
               s.token_version, u.password_version
        FROM auth_sessions s
        JOIN users u ON u.tenant_id = s.tenant_id AND u.id = s.user_id
@@ -410,12 +421,22 @@ async function authenticateStoredSession(
   if (wantsAll && (!canUseAllScope || !canSwitchBranch)) {
     throw new SerametHttpError(403, "All-branch scope requires branch switching authority");
   }
-  await retryAuthMetadata(() =>
-    db
-      .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE tenant_id = ? AND id = ?")
-      .bind(new Date().toISOString(), session.tenant_id, session.session_id)
-      .run(),
-  );
+  const seenCutoff = new Date(Date.now() - 60_000).toISOString();
+  if (!session.last_seen_at || session.last_seen_at < seenCutoff) {
+    await retryAuthMetadata(async () => {
+      const latest = await db
+        .prepare("SELECT last_seen_at FROM auth_sessions WHERE tenant_id=? AND id=?")
+        .bind(session.tenant_id, session.session_id)
+        .first<{ last_seen_at: string | null }>();
+      if (latest?.last_seen_at && latest.last_seen_at >= seenCutoff) return;
+      await db
+        .prepare(
+          "UPDATE auth_sessions SET last_seen_at=? WHERE tenant_id=? AND id=? AND (last_seen_at IS NULL OR last_seen_at < ?)",
+        )
+        .bind(new Date().toISOString(), session.tenant_id, session.session_id, seenCutoff)
+        .run();
+    });
+  }
 
   return {
     id: session.user_id,
