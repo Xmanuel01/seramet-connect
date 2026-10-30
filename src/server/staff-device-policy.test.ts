@@ -5,7 +5,8 @@ import { applyStaffDevicePolicy } from "@/server/staff-device-policy";
 import { staffStationAccess } from "@/server/staff-station-access";
 import { staffRolePresets } from "@/platform/staff-role-presets";
 import { permissions, allPermissionCodes } from "@/platform/permissions";
-import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
+import { authorizeSerametMutation, type ServerActor, type SerametEnv } from "@/lib/seramet-auth";
+import { roleCanAccessPath } from "@/components/app/nav";
 describe("staff device and station policy", () => {
   let db: SqliteD1TestDatabase, actor: ServerActor;
   const tenant = "tenant-demo-mona",
@@ -62,6 +63,80 @@ describe("staff device and station policy", () => {
     db.sqlite.prepare("UPDATE hardware_devices SET trust_status='REVOKED' WHERE id=?").run(id);
     phone = await applyStaffDevicePolicy({ ...actor, deviceId: id }, db);
     expect(phone.salesTerminal).toBe(false);
+  });
+  it("lets only the active account owner sell from an unenrolled browser", async () => {
+    const owner = (status: string, tenantId = tenant, userId = actor.id) =>
+      db.sqlite
+        .prepare(
+          `INSERT INTO account_owners (tenant_id,user_id,status,granted_by,granted_at,ended_at,reason,metadata_json)
+           VALUES (?,?,?,?,?,NULL,'test','{}')
+           ON CONFLICT DO UPDATE SET status=excluded.status`,
+        )
+        .run(tenantId, userId, status, actor.id, new Date().toISOString());
+    const canSeePos = (granted: ServerActor) =>
+      roleCanAccessPath(granted.role, "/pos", granted.branch, granted.permissions, tenant);
+
+    // Every permission, but not the owner: still needs an enrolled terminal.
+    const manager = await applyStaffDevicePolicy(actor, db);
+    expect(manager.salesTerminal).toBe(false);
+    expect(manager.permissions).not.toContain(permissions.posAccess);
+    expect(canSeePos(manager)).toBe(false);
+    expect(() => authorizeSerametMutation(manager, "createOrder", tenant, branch)).toThrow(
+      /enrolled sales terminal/,
+    );
+
+    // Owning a different restaurant (same user id there) grants nothing here.
+    const otherTenant = `tenant-${crypto.randomUUID()}`;
+    const created = new Date().toISOString();
+    db.sqlite
+      .prepare(
+        "INSERT INTO tenants (id,slug,legal_name,trading_name,default_currency,timezone,locale,active,payload_json,created_at,updated_at) VALUES (?,?,'Other Ltd','Other','KES','Africa/Nairobi','en-KE',1,'{}',?,?)",
+      )
+      .run(otherTenant, otherTenant, created, created);
+    db.sqlite
+      .prepare(
+        "INSERT INTO users (tenant_id,id,email,name,created_at,updated_at) VALUES (?,?,NULL,'Other owner',?,?)",
+      )
+      .run(otherTenant, actor.id, created, created);
+    owner("ACTIVE", otherTenant);
+    expect(
+      db.sqlite
+        .prepare("SELECT COUNT(*) AS total FROM account_owners WHERE tenant_id=? AND user_id=?")
+        .get(otherTenant, actor.id),
+    ).toMatchObject({ total: 1 });
+    expect((await applyStaffDevicePolicy(actor, db)).salesTerminal).toBe(false);
+
+    owner("ACTIVE");
+    const active = await applyStaffDevicePolicy(actor, db);
+    expect(active.salesTerminal).toBe(true);
+    expect(active.permissions).toEqual(actor.permissions);
+    expect(canSeePos(active)).toBe(true);
+    expect(() => authorizeSerametMutation(active, "createOrder", tenant, branch)).not.toThrow();
+    const otherBranch = db.sqlite
+      .prepare("SELECT id FROM branches WHERE tenant_id=? AND id<>? LIMIT 1")
+      .get(tenant, branch) as { id: string };
+    expect(() =>
+      authorizeSerametMutation(
+        { ...active, assignedBranchIds: [branch, otherBranch.id] },
+        "createOrder",
+        tenant,
+        otherBranch.id,
+      ),
+    ).toThrow(/active branch/);
+
+    // Ownership handed over: back to terminal-only selling.
+    const successor = crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    db.sqlite
+      .prepare(
+        "INSERT INTO users (tenant_id,id,email,name,created_at,updated_at) VALUES (?,?,NULL,'Successor',?,?)",
+      )
+      .run(tenant, successor, stamp, stamp);
+    owner("ACTIVE", tenant, successor);
+    owner("TRANSFERRED");
+    const former = await applyStaffDevicePolicy(actor, db);
+    expect(former.salesTerminal).toBe(false);
+    expect(canSeePos(former)).toBe(false);
   });
   it("assigns real branch stations with revision conflict and durable audit", async () => {
     const station = db.sqlite

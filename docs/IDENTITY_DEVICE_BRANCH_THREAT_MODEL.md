@@ -29,4 +29,5 @@ Protected assets include tenant configuration, employee identities, device crede
 - Shared POS terminals require physical controls and prompt manual locking.
 - Offline employee PIN verification is intentionally not implemented. Authentication fails closed when the server is unavailable.
 - Ownership transfer depends on external identity security. MFA and provider session policy should be enabled before pilot.
+- The active account owner may sell and take payments from any signed-in browser, not only an enrolled POS terminal (owner decision, 30 October 2026). Ownership is read from the authoritative `account_owners` record, so other administrators, managers and email-invited staff still need an enrolled terminal. A compromised owner login can therefore take payments from anywhere, so owner MFA should be treated as required before pilot.
 
