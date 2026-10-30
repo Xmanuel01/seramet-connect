@@ -46,7 +46,7 @@ export class PostgresD1Database implements D1Database {
         idleTimeoutMillis: 30_000,
         allowExitOnIdle: true,
       }),
-      "hyperdrive",
+      databaseIdentity(binding.connectionString),
     );
   }
 
@@ -196,4 +196,10 @@ export function replaceQuestionMarkParameters(sql: string) {
     output += character;
   }
   return output;
+}
+
+/** Host, port, user and database of a connection string, never its password. */
+function databaseIdentity(connectionString: string) {
+  const url = new URL(connectionString);
+  return `postgres://${decodeURIComponent(url.username)}@${url.host}${url.pathname}`;
 }

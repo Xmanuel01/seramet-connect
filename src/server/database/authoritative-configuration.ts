@@ -32,6 +32,9 @@ const cache = new WeakMap<object, CachedConfiguration>();
 // Production opens a new database pool per request, so the configuration (plain data) is cached
 // by the database it came from; otherwise every request reloaded it with twenty queries.
 const sharedCache = new Map<string, CachedConfiguration>();
+// Bumped on every refresh or invalidation, so a load that started earlier cannot replace newer
+// configuration when it finishes.
+const generations = new Map<string, number>();
 const cacheLifetimeMs = 15_000;
 
 function cacheIdentity(db: D1Database) {
@@ -50,19 +53,24 @@ export async function hydrateAuthoritativeConfiguration(
     setConfigurationRepository(cached.repository);
     return cached.repository;
   }
+  if (identity && force) generations.set(identity, (generations.get(identity) ?? 0) + 1);
+  const generation = identity ? (generations.get(identity) ?? 0) : 0;
   const state = await loadAuthoritativePlatformState(db, env);
   const repository = new ConfigurationRepository(state, { persistBrowser: false });
   const entry = { repository, loadedAt: Date.now() };
-  if (identity) sharedCache.set(identity, entry);
-  else cache.set(db as object, entry);
+  if (identity) {
+    if ((generations.get(identity) ?? 0) === generation) sharedCache.set(identity, entry);
+  } else cache.set(db as object, entry);
   setConfigurationRepository(repository);
   return repository;
 }
 
 export function invalidateAuthoritativeConfiguration(db: D1Database) {
   const identity = cacheIdentity(db);
-  if (identity) sharedCache.delete(identity);
-  else cache.delete(db as object);
+  if (identity) {
+    sharedCache.delete(identity);
+    generations.set(identity, (generations.get(identity) ?? 0) + 1);
+  } else cache.delete(db as object);
 }
 
 export async function loadAuthoritativePlatformState(

@@ -90,7 +90,7 @@ describe("legacy onboarding progress translation", () => {
       completedSteps: [1, 2, 3, 4, 5],
       responses: { [ONBOARDING_FLOW_MARKER]: 2, "6": { serviceModes: ["KITCHEN", "dine_in"] } },
     });
-    expect(current.responses["6"]).toEqual({ serviceModes: ["dine_in"] });
+    expect(current.responses["6"]).toEqual({ serviceModes: ["DINE_IN"] });
     const legacy = translateLegacyProgress({
       currentStep: 13,
       status: "IN_PROGRESS",
@@ -98,6 +98,24 @@ describe("legacy onboarding progress translation", () => {
       responses: { "12": { serviceModes: ["KITCHEN", "TAKEAWAY"] } },
     });
     expect(legacy.responses["6"]).toEqual({ serviceModes: ["TAKEAWAY"] });
+  });
+
+  it("asks again for service modes when none of the saved ones are real", () => {
+    const rewound = translateLegacyProgress({
+      currentStep: 9,
+      status: "IN_PROGRESS",
+      completedSteps: [1, 2, 3, 4, 5, 6, 7, 8],
+      responses: { [ONBOARDING_FLOW_MARKER]: 2, "6": { serviceModes: ["KITCHEN"] } },
+    });
+    expect(rewound).toMatchObject({ currentStep: 6, completedSteps: [1, 2, 3, 4, 5, 7, 8] });
+    const legacy = translateLegacyProgress({
+      currentStep: 13,
+      status: "IN_PROGRESS",
+      completedSteps: [5, 6, 7, 8, 9, 10, 11, 12],
+      responses: { "12": { serviceModes: ["KITCHEN"] } },
+    });
+    expect(legacy.completedSteps).not.toContain(6);
+    expect(legacy.currentStep).toBe(6);
   });
 
   it("clamps out-of-range steps stored in the current flow", () => {
@@ -136,10 +154,21 @@ describe("resuming a completed onboarding", () => {
   });
 
   it("reopens at the first step never saved once business type is answered", () => {
+    // The old flow recorded no real service mode here, so that step is asked again first.
     expect(
       onboardingResumeStep({
         ...completedLegacy,
         responses: { "3": { businessType: "RESTAURANT", trackStock: false } },
+      }),
+    ).toBe(step("serviceModes"));
+    expect(
+      onboardingResumeStep({
+        ...completedLegacy,
+        completedSteps: [...completedLegacy.completedSteps, step("serviceModes")],
+        responses: {
+          "3": { businessType: "RESTAURANT", trackStock: false },
+          "6": { serviceModes: ["DINE_IN"] },
+        },
       }),
     ).toBe(step("tax"));
   });

@@ -37,7 +37,10 @@ import {
 import { createIntegrationRuntime } from "@/integrations/runtime/create-runtime";
 import { IntegrationError } from "@/integrations/runtime/integration-errors";
 import { assertDatabaseAvailable } from "@/server/database/d1";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import {
+  hydrateAuthoritativeConfiguration,
+  invalidateAuthoritativeConfiguration,
+} from "@/server/database/authoritative-configuration";
 import {
   assertProductionOperationalReady,
   isPublicDevelopmentRequest,
@@ -91,7 +94,32 @@ type SnapshotReplaceRequest = {
   idempotencyKey?: string;
 };
 
+// Requests that change sales, payments or sign-in state do not touch restaurant configuration.
+const configurationNeutralPrefixes = [
+  "/api/seramet/transactions",
+  "/api/seramet/payments",
+  "/api/seramet/webhooks",
+  "/api/seramet/integrations/webhooks",
+  "/api/seramet/public/",
+  "/api/seramet/offline",
+];
+
 export async function handleSerametApiRequest(request: Request, env: SerametEnv) {
+  const response = await routeSerametApiRequest(request, env);
+  // Configuration is cached for a few seconds between requests; any successful change clears
+  // this server's copy so the next request reads it fresh.
+  const path = new URL(request.url).pathname;
+  if (
+    env?.SERAMET_DB &&
+    request.method !== "GET" &&
+    response.status < 400 &&
+    !configurationNeutralPrefixes.some((prefix) => path.startsWith(prefix))
+  )
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+  return response;
+}
+
+async function routeSerametApiRequest(request: Request, env: SerametEnv) {
   env = env ?? {};
   const url = new URL(request.url);
 

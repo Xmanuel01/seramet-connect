@@ -32,4 +32,48 @@ describe("configuration cache across per-request database pools", () => {
     sqlite.close();
     // Creating the migrated test database is slow when other suites share the machine.
   }, 30_000);
+
+  it("does not let a load that started before a change replace the newer configuration", async () => {
+    const sqlite = createMigratedTestDatabase();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const slow = {
+      ...sqlite,
+      cacheIdentity: "race-db",
+      batch: sqlite.batch.bind(sqlite),
+      prepare: (query: string) => {
+        const statement = sqlite.prepare(query);
+        const all = statement.all.bind(statement);
+        return Object.assign(statement, {
+          all: async (...args: unknown[]) => {
+            await held;
+            return (all as (...a: unknown[]) => unknown)(...args);
+          },
+          bind: (...values: unknown[]) => {
+            const bound = statement.bind(...values);
+            const boundAll = bound.all.bind(bound);
+            return Object.assign(bound, {
+              all: async () => {
+                await held;
+                return boundAll();
+              },
+            });
+          },
+        });
+      },
+    } as unknown as D1Database;
+    const fast = {
+      ...sqlite,
+      cacheIdentity: "race-db",
+      prepare: sqlite.prepare.bind(sqlite),
+      batch: sqlite.batch.bind(sqlite),
+    } as unknown as D1Database;
+    const stale = hydrateAuthoritativeConfiguration(slow, {}, true);
+    invalidateAuthoritativeConfiguration(fast);
+    const fresh = await hydrateAuthoritativeConfiguration(fast, {}, true);
+    release();
+    await stale;
+    expect(await hydrateAuthoritativeConfiguration(fast)).toBe(fresh);
+    sqlite.close();
+  }, 30_000);
 });
