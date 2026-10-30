@@ -215,6 +215,51 @@ describe("immutable closing PDF", () => {
     ).toHaveLength(40);
     await evidence("complex-long-report", bytes);
   });
+  it("fits the M-Pesa summary in the PDF and lists every unmatched payment in the record", async () => {
+    const { snapshot } = fixture();
+    snapshot.tenders = Array.from({ length: 7 }, (_, i) => ({
+      method: `Method ${i}`,
+      amountMinor: 0,
+    }));
+    snapshot.dailyReport!.mpesa = {
+      currency: "KES",
+      receivedMinor: 12_345_600,
+      count: 240,
+      channels: [
+        { channel: "PROMPT", count: 120, amountMinor: 6_000_000 },
+        { channel: "QR", count: 40, amountMinor: 2_000_000 },
+        { channel: "DIRECT", count: 60, amountMinor: 3_345_600 },
+        { channel: "CODE", count: 20, amountMinor: 1_000_000 },
+      ],
+      onBillsMinor: 11_000_000,
+      stillToMatch: Array.from({ length: 50 }, (_, i) => ({
+        transactionId: `PTX-${i}`,
+        receipt: `RK${String(i).padStart(8, "0")}`,
+        businessDate: "2026-10-15",
+        unallocatedMinor: 26_912,
+        payerName: "A Very Long Payer Name As Sent By M-Pesa",
+      })),
+      stillToMatchMinor: 1_345_600,
+      failedPrompts: Array.from({ length: 30 }, (_, i) => ({
+        intentId: `PI-${i}`,
+        amountMinor: 50_000,
+        reason: "The customer cancelled the payment prompt",
+      })),
+    };
+    snapshot.dailyReport!.mpesaCarryOverReason =
+      "Customers paid the till during the dinner rush; matching tomorrow morning. ".repeat(3);
+    const pdf = await PDFDocument.load(await renderDailyClosingPdf(snapshot));
+    expect(pdf.getPageCount()).toBe(3);
+    const sections = closingReportSections(snapshot);
+    expect(sections.find((s) => s.title === "M-Pesa")!.rows).toContainEqual([
+      "Paid to till or Paybill",
+      expect.stringContaining("(60)"),
+    ]);
+    expect(
+      sections.find((s) => s.title === "M-Pesa payments not on a bill yet")!.rows,
+    ).toHaveLength(50);
+    expect(sections.find((s) => s.title === "Failed M-Pesa prompts")!.rows).toHaveLength(30);
+  });
   it("uses portrait A4, normal margins, twelve-point body text and double spacing", async () => {
     expect(closingPdfLayout).toMatchObject({ margin: 72, bodySize: 12, lineHeight: 24, pages: 3 });
     const { snapshot } = fixture();

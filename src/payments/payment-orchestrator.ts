@@ -181,6 +181,7 @@ export class PaymentOrchestrator {
     );
     if (!intent || intent.status === "CONFIRMED") return next;
     intent.status = "FAILED";
+    intent.metadata = { ...intent.metadata, failureReason: input.reason };
     intent.updatedAt = new Date().toISOString();
     this.audit(
       operations,
@@ -319,6 +320,120 @@ export class PaymentOrchestrator {
         collectionPurpose: input.collectionPurpose ?? "RIDER_CUSTODY",
       },
     });
+  }
+
+  /**
+   * Applies money already received (for example a customer paying the till directly) to bills.
+   * The collection was booked when it arrived, so this only links it to the invoices and issues
+   * their receipts; it never posts the money twice.
+   */
+  applyUnallocatedCollection(
+    state: TransactionState,
+    input: {
+      tenantId: string;
+      transactionId: string;
+      allocations: AllocationRequest[];
+      actor: string;
+      matchedBy: "RECEIPT_CODE" | "ACCOUNT_REFERENCE" | "CASHIER_CONFIRMED";
+      deviceId?: string;
+    },
+  ) {
+    let next = normalizeTransactionState(state);
+    this.assertTenant(next, input.tenantId);
+    let operations = requiredOperations(next);
+    const transaction = operations.transactions.find(
+      (item) => item.id === input.transactionId && item.tenantId === input.tenantId,
+    );
+    if (!transaction) throw new Error("Payment not found");
+    if (transaction.status !== "CONFIRMED" || transaction.direction !== "COLLECTION")
+      throw new Error("Only a confirmed payment can be applied to a bill");
+    const requested = sumMinor(input.allocations.map((item) => item.amountMinor));
+    if (!input.allocations.length || requested <= 0)
+      throw new Error("Choose a bill and an amount to apply");
+    if (requested > transaction.unallocatedAmountMinor)
+      throw new Error("This payment has less left to apply than requested");
+    this.validateAllocations(
+      next,
+      input.tenantId,
+      transaction.branchId,
+      transaction.currency,
+      requested,
+      input.allocations,
+    );
+    const method = this.method(input.tenantId, transaction.paymentMethodId);
+    const legacy = this.applyLegacyAllocations(
+      next,
+      {
+        tenantId: transaction.tenantId,
+        branchId: transaction.branchId,
+        paymentMethodId: method.id,
+        ...(transaction.providerConnectionId
+          ? { providerConnectionId: transaction.providerConnectionId }
+          : {}),
+        ...(transaction.providerTransactionId
+          ? { providerTransactionId: transaction.providerTransactionId }
+          : {}),
+        merchantReference: transaction.merchantReference,
+        amountMinor: requested,
+        currency: transaction.currency,
+        allocations: input.allocations,
+        actor: input.actor,
+        ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+        occurredAt: transaction.occurredAt,
+        metadata: transaction.metadata,
+      },
+      method,
+      {
+        operationTransactionId: transaction.id,
+        isCustodyCollection: false,
+        collectionBusinessDate: this.branchBusinessDate(
+          transaction.tenantId,
+          transaction.branchId,
+          transaction.occurredAt,
+        ),
+      },
+    );
+    next = legacy.state;
+    operations = requiredOperations(next);
+    const existing = operations.allocations.filter(
+      (item) => item.paymentTransactionId === transaction.id,
+    ).length;
+    operations.allocations.unshift(
+      ...input.allocations.map((allocation, index) =>
+        Object.freeze({
+          id: `${transaction.id}-ALLOC-${existing + index + 1}`,
+          tenantId: transaction.tenantId,
+          branchId: transaction.branchId,
+          paymentTransactionId: transaction.id,
+          invoiceId: allocation.invoiceId,
+          amountMinor: allocation.amountMinor,
+          currency: transaction.currency,
+          createdAt: new Date().toISOString(),
+          createdBy: input.actor,
+        }),
+      ),
+    );
+    replaceTransaction(operations, transaction.id, {
+      ...transaction,
+      unallocatedAmountMinor: transaction.unallocatedAmountMinor - requested,
+      metadata: Object.freeze({
+        ...transaction.metadata,
+        matchedBy: input.matchedBy,
+        ...(legacy.lastLegacyPaymentId ? { legacyPaymentId: legacy.lastLegacyPaymentId } : {}),
+      }),
+    });
+    this.audit(
+      operations,
+      transaction.tenantId,
+      transaction.branchId,
+      input.actor,
+      "UNALLOCATED_PAYMENT_APPLIED",
+      "PaymentTransaction",
+      transaction.id,
+      `${input.matchedBy}: ${input.allocations.map((item) => item.invoiceId).join(", ")}`,
+      input.deviceId,
+    );
+    return next;
   }
 
   recordManualTerminalPayment(
@@ -1587,64 +1702,20 @@ export class PaymentOrchestrator {
     return next;
   }
 
-  private recordConfirmedCollection(state: TransactionState, input: ConfirmCollectionInput) {
-    assertMinorAmount(input.amountMinor);
-    if (input.amountMinor <= 0) throw new Error("Payment amount must be positive");
-    let next = normalizeTransactionState(state);
-    this.assertTenant(next, input.tenantId);
-    let operations = requiredOperations(next);
-    const method = this.method(input.tenantId, input.paymentMethodId);
+  /** Marks invoices paid and issues their receipts for each allocation of a collection. */
+  private applyLegacyAllocations(
+    state: TransactionState,
+    input: ConfirmCollectionInput,
+    method: PaymentMethodDefinition,
+    context: {
+      operationTransactionId: string;
+      isCustodyCollection: boolean;
+      collectionBusinessDate: string;
+    },
+  ) {
+    const { operationTransactionId, isCustodyCollection, collectionBusinessDate } = context;
     const providerConnectionId = input.providerConnectionId ?? method.providerConnectionId;
-    if (input.status === "CONFIRMED" && providerConnectionId && !input.providerTransactionId) {
-      throw new Error("Provider-confirmed payments require a provider transaction reference");
-    }
-    if (input.providerTransactionId) {
-      this.assertUniqueReference(operations, providerConnectionId, input.providerTransactionId);
-    }
-    this.validateAllocations(
-      next,
-      input.tenantId,
-      input.branchId,
-      input.currency,
-      input.amountMinor,
-      input.allocations,
-    );
-    if (input.intentId) {
-      const intent = operations.intents.find(
-        (candidate) => candidate.id === input.intentId && candidate.tenantId === input.tenantId,
-      );
-      if (!intent) throw new Error("Payment intent not found");
-      assertSameCurrency(intent.currency, input.currency);
-      if (intent.amountRequestedMinor !== input.amountMinor) {
-        intent.status = "FAILED";
-        intent.updatedAt = new Date().toISOString();
-        throw new Error("Provider payment amount does not match the payment intent");
-      }
-      if (intent.status === "CONFIRMED") return next;
-    }
-
-    const occurredAt = input.occurredAt ?? new Date().toISOString();
-    const operationTransactionId = nextId("PTX", operations.transactions);
-    const allocatedMinor = sumMinor(input.allocations.map((item) => item.amountMinor));
-    const collectionCreditAccountId =
-      typeof input.metadata?.["collectionCreditAccountId"] === "string" &&
-      input.metadata["collectionCreditAccountId"].trim()
-        ? input.metadata["collectionCreditAccountId"]
-        : receivableAccount(method);
-    const collectionDebitAccountId =
-      typeof input.metadata?.["collectionDebitAccountId"] === "string" &&
-      input.metadata["collectionDebitAccountId"].trim()
-        ? input.metadata["collectionDebitAccountId"]
-        : collectionAccount(method);
-    const collectionPurpose = input.metadata?.["collectionPurpose"];
-    const isCustodyCollection = collectionPurpose === "RIDER_CUSTODY";
-    const isReceivableCollection =
-      isCustodyCollection || collectionPurpose === "DIRECT_COMPANY_COLLECTION";
-    const collectionBusinessDate = this.branchBusinessDate(
-      input.tenantId,
-      input.branchId,
-      occurredAt,
-    );
+    let next = state;
     let lastLegacyPaymentId: string | undefined;
     for (const allocation of input.allocations) {
       const beforeIds = new Set(next.payments.map((payment) => payment.id));
@@ -1713,6 +1784,74 @@ export class PaymentOrchestrator {
         receipt.businessDate = collectionBusinessDate;
       }
     }
+    return { state: next, lastLegacyPaymentId };
+  }
+
+  private recordConfirmedCollection(state: TransactionState, input: ConfirmCollectionInput) {
+    assertMinorAmount(input.amountMinor);
+    if (input.amountMinor <= 0) throw new Error("Payment amount must be positive");
+    let next = normalizeTransactionState(state);
+    this.assertTenant(next, input.tenantId);
+    let operations = requiredOperations(next);
+    const method = this.method(input.tenantId, input.paymentMethodId);
+    const providerConnectionId = input.providerConnectionId ?? method.providerConnectionId;
+    if (input.status === "CONFIRMED" && providerConnectionId && !input.providerTransactionId) {
+      throw new Error("Provider-confirmed payments require a provider transaction reference");
+    }
+    if (input.providerTransactionId) {
+      this.assertUniqueReference(operations, providerConnectionId, input.providerTransactionId);
+    }
+    this.validateAllocations(
+      next,
+      input.tenantId,
+      input.branchId,
+      input.currency,
+      input.amountMinor,
+      input.allocations,
+    );
+    if (input.intentId) {
+      const intent = operations.intents.find(
+        (candidate) => candidate.id === input.intentId && candidate.tenantId === input.tenantId,
+      );
+      if (!intent) throw new Error("Payment intent not found");
+      assertSameCurrency(intent.currency, input.currency);
+      if (intent.amountRequestedMinor !== input.amountMinor) {
+        intent.status = "FAILED";
+        intent.updatedAt = new Date().toISOString();
+        throw new Error("Provider payment amount does not match the payment intent");
+      }
+      if (intent.status === "CONFIRMED") return next;
+    }
+
+    const occurredAt = input.occurredAt ?? new Date().toISOString();
+    const operationTransactionId = nextId("PTX", operations.transactions);
+    const allocatedMinor = sumMinor(input.allocations.map((item) => item.amountMinor));
+    const collectionCreditAccountId =
+      typeof input.metadata?.["collectionCreditAccountId"] === "string" &&
+      input.metadata["collectionCreditAccountId"].trim()
+        ? input.metadata["collectionCreditAccountId"]
+        : receivableAccount(method);
+    const collectionDebitAccountId =
+      typeof input.metadata?.["collectionDebitAccountId"] === "string" &&
+      input.metadata["collectionDebitAccountId"].trim()
+        ? input.metadata["collectionDebitAccountId"]
+        : collectionAccount(method);
+    const collectionPurpose = input.metadata?.["collectionPurpose"];
+    const isCustodyCollection = collectionPurpose === "RIDER_CUSTODY";
+    const isReceivableCollection =
+      isCustodyCollection || collectionPurpose === "DIRECT_COMPANY_COLLECTION";
+    const collectionBusinessDate = this.branchBusinessDate(
+      input.tenantId,
+      input.branchId,
+      occurredAt,
+    );
+    const legacy = this.applyLegacyAllocations(next, input, method, {
+      operationTransactionId,
+      isCustodyCollection,
+      collectionBusinessDate,
+    });
+    next = legacy.state;
+    const lastLegacyPaymentId = legacy.lastLegacyPaymentId;
     operations = requiredOperations(next);
     const transaction: PaymentTransaction = Object.freeze({
       id: operationTransactionId,

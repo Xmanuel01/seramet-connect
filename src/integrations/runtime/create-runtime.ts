@@ -5,6 +5,8 @@ import {
 import {
   ChainedCredentialResolver,
   EnvironmentCredentialResolver,
+  isManagedReference,
+  ManagedCredentialResolver,
   StaticCredentialResolver,
   type CredentialResolver,
   type SecretEnvironment,
@@ -25,6 +27,7 @@ import { RetryService } from "@/integrations/runtime/retry-service";
 import { ProviderHttpClient } from "@/integrations/runtime/provider-http-client";
 import { ProviderTokenService } from "@/integrations/runtime/token-service";
 import type { SerametEnv } from "@/lib/seramet-auth";
+import { createSecretStore } from "@/server/secrets";
 import type { TransactionRepository } from "@/lib/seramet-repository";
 import {
   createMenuCatalogReader,
@@ -89,7 +92,8 @@ function createServerCredentialResolver(env: SerametEnv, configuration: Configur
   const secrets: Record<string, Record<string, string>> = {};
   for (const tenant of configuration.listTenants()) {
     for (const connection of configuration.listConnections(tenant.id)) {
-      if (!connection.secretReference) continue;
+      // Restaurant-entered credentials never fall back to platform-wide provider settings.
+      if (!connection.secretReference || isManagedReference(connection.secretReference)) continue;
       const provider = configuration
         .listProviders()
         .find((item) => item.id === connection.providerId);
@@ -134,6 +138,13 @@ function createServerCredentialResolver(env: SerametEnv, configuration: Configur
     }
   }
   return new ChainedCredentialResolver([
+    new ManagedCredentialResolver(() => {
+      try {
+        return createSecretStore(env);
+      } catch {
+        return undefined;
+      }
+    }),
     new EnvironmentCredentialResolver(env as SecretEnvironment),
     new StaticCredentialResolver(secrets),
   ]);

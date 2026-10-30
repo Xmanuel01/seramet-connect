@@ -48,6 +48,7 @@ import { allPermissionCodes } from "@/platform/permissions";
 import type { IntegrationHealthService } from "@/integrations/runtime/health-service";
 import type { MenuCatalogReader } from "@/integrations/marketplace/menu-catalog-reader";
 import { invoiceBalanceMinor, PaymentOrchestrator } from "@/payments/payment-orchestrator";
+import { billNamedByReference, unverifiedByReceipt } from "@/payments/mpesa-matching";
 import { custodyLedger } from "@/payments/custody-ledger";
 import { parseMajorAmount } from "@/payments/money";
 
@@ -408,6 +409,103 @@ export class IntegrationRuntime {
     return input.coalescingKey
       ? this.dependencies.outbox.enqueueCoalesced({ ...record, coalescingKey: input.coalescingKey })
       : this.dependencies.outbox.enqueue(record);
+  }
+
+  /**
+   * Asks the provider about payment prompts that have had no answer, so a cancelled or timed-out
+   * prompt is marked failed with a reason the cashier can act on. A provider saying "paid" without
+   * a receipt is noted but not counted as money; the receipt arrives by callback or notification.
+   */
+  async checkPendingPrompts(
+    tenantId: string,
+    options: { intentId?: string; olderThanMs?: number; limit?: number } = {},
+  ) {
+    const olderThan = Date.now() - (options.olderThanMs ?? 45_000);
+    const newerThan = Date.now() - 24 * 60 * 60 * 1000;
+    let state = await this.dependencies.transactions.loadState(tenantId);
+    const candidates = (state.paymentOperations?.intents ?? [])
+      .filter(
+        (intent) =>
+          intent.tenantId === tenantId &&
+          intent.providerConnectionId &&
+          intent.providerReference &&
+          ["PENDING", "AWAITING_CUSTOMER", "PROCESSING"].includes(intent.status) &&
+          (options.intentId
+            ? intent.id === options.intentId
+            : Date.parse(intent.createdAt) <= olderThan &&
+              Date.parse(intent.createdAt) >= newerThan),
+      )
+      .slice(0, options.limit ?? 10);
+    const results: Array<{ intentId: string; outcome: string; reason?: string }> = [];
+    let changed = false;
+    for (const intent of candidates) {
+      const connection = this.dependencies.configuration
+        .listConnections(tenantId)
+        .find((item) => item.id === intent.providerConnectionId);
+      const adapter = connection
+        ? this.dependencies.registry.get(connection.providerId)
+        : undefined;
+      if (!connection || !adapter?.queryPayment) {
+        results.push({ intentId: intent.id, outcome: "UNSUPPORTED" });
+        continue;
+      }
+      const queried = await adapter.queryPayment(intent.providerReference!, {
+        connection,
+        credentials: await this.resolveCredentials(connection),
+        correlationId: crypto.randomUUID(),
+      });
+      if (!queried.ok) {
+        results.push({ intentId: intent.id, outcome: "UNKNOWN", reason: queried.message });
+        continue;
+      }
+      if (queried.value.status === "FAILED") {
+        const reason = queried.value.failureReason ?? "The payment was not completed";
+        state = new PaymentOrchestrator(this.dependencies.configuration).failIntent(state, {
+          tenantId,
+          intentId: intent.id,
+          actor: `${connection.displayName} status check`,
+          reason,
+        });
+        changed = true;
+        results.push({ intentId: intent.id, outcome: "FAILED", reason });
+      } else if (queried.value.status === "CONFIRMED") {
+        const record = state.paymentOperations?.intents.find((item) => item.id === intent.id);
+        if (record && record.metadata["providerReportsPaid"] !== true) {
+          record.metadata = { ...record.metadata, providerReportsPaid: true };
+          changed = true;
+        }
+        results.push({ intentId: intent.id, outcome: "PAID_AWAITING_RECEIPT" });
+      } else {
+        results.push({ intentId: intent.id, outcome: "WAITING" });
+      }
+    }
+    if (changed) {
+      const branch = this.dependencies.configuration.getBranch(tenantId, candidates[0]!.branchId);
+      await this.dependencies.transactions.saveState(
+        state,
+        systemActor(tenantId, branch.id, branch.name),
+        "Checked unanswered payment prompts",
+      );
+    }
+    return { checked: results.length, results };
+  }
+
+  /** Tells the provider where to send payments customers make without a Seramet request. */
+  async registerPaymentNotifications(tenantId: string, connectionId: string) {
+    const connection = this.requireTenantConnection(tenantId, connectionId);
+    const adapter = this.dependencies.registry.resolve(connection);
+    if (!adapter.registerPaymentNotification)
+      throw new UnsupportedCapabilityError("Provider does not register payment notifications");
+    const result = await adapter.registerPaymentNotification(
+      {},
+      {
+        connection,
+        credentials: await this.resolveCredentials(connection),
+        correlationId: crypto.randomUUID(),
+      },
+    );
+    if (!result.ok) throw resultToError(result);
+    return result.value;
   }
 
   async recoverActiveOrders(tenantId: string, connectionId: string) {
@@ -1186,6 +1284,127 @@ export class IntegrationRuntime {
     return result;
   }
 
+  /**
+   * Keeps money a customer sent straight to the till or Paybill as a confirmed, unallocated
+   * collection. Reconciliation matches it to a bill later; nothing is applied to a bill by guess.
+   */
+  private async recordDirectPayment(
+    event: IntegrationEvent,
+    parsed: ParsedProviderEvent,
+    connection: IntegrationConnection,
+    state: TransactionState,
+    direct: NonNullable<ParsedProviderEvent["directPayment"]>,
+  ) {
+    if (parsed.eventType !== "PAYMENT_CONFIRMED")
+      return { status: "IGNORED", reason: "Direct payment was not completed" };
+    if (!parsed.providerTransactionId || parsed.amountMinor === undefined || !parsed.currency)
+      throw new IntegrationValidationError("Direct payment is missing its receipt or amount");
+    // Prefer the plain method over prompt- or QR-specific ones on the same connection.
+    const linked = this.dependencies.configuration
+      .listPaymentMethods(event.tenantId, true)
+      .filter((candidate) => candidate.providerConnectionId === connection.id);
+    const method =
+      linked.find((candidate) => !candidate.metadata["providerOperation"]) ?? linked[0];
+    if (!method) throw new MappingError("No payment method is linked to this payment connection");
+    const branchId =
+      connection.branchId ??
+      (() => {
+        const branches = this.dependencies.configuration.listBranches(event.tenantId);
+        return branches.length === 1 ? branches[0]!.id : undefined;
+      })();
+    if (!branchId)
+      throw new MappingError(
+        "Assign this payment connection to a branch to receive direct payments",
+      );
+    const branch = this.dependencies.configuration.getBranch(event.tenantId, branchId);
+    const existing = state.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id &&
+        item.providerTransactionId === parsed.providerTransactionId,
+    );
+    if (existing) return { paymentTransactionId: existing.id, status: "DUPLICATE" };
+    const orchestrator = new PaymentOrchestrator(this.dependencies.configuration);
+    const actor = `${connection.displayName} notification`;
+    // A cashier already typed this receipt code for a bill: the notification verifies it.
+    const typed = unverifiedByReceipt(
+      state,
+      event.tenantId,
+      connection.id,
+      parsed.providerTransactionId,
+    );
+    if (typed) {
+      const verified = orchestrator.verifyPendingCollection(state, {
+        tenantId: event.tenantId,
+        transactionId: typed.id,
+        providerTransactionId: parsed.providerTransactionId,
+        amountMinor: parsed.amountMinor,
+        currency: parsed.currency,
+        actor,
+        verified: true,
+      });
+      await this.dependencies.transactions.saveState(
+        verified,
+        systemActor(event.tenantId, typed.branchId, branch.name),
+        `${connection.displayName} verified typed receipt ${parsed.providerTransactionId}`,
+      );
+      const outcome = verified.paymentOperations?.transactions.find(
+        (item) => item.providerTransactionId === parsed.providerTransactionId,
+      );
+      return {
+        paymentTransactionId: outcome?.id ?? typed.id,
+        status: outcome?.status === "CONFIRMED" ? "VERIFIED_TYPED_CODE" : "AMOUNT_MISMATCH",
+      };
+    }
+    let next = orchestrator.confirmProviderCollection(state, {
+      tenantId: event.tenantId,
+      branchId,
+      paymentMethodId: method.id,
+      providerConnectionId: connection.id,
+      providerTransactionId: parsed.providerTransactionId,
+      ...(direct.customerReference ? { customerReference: direct.customerReference } : {}),
+      merchantReference: parsed.merchantReference ?? parsed.providerTransactionId,
+      amountMinor: parsed.amountMinor,
+      currency: parsed.currency,
+      allocations: [],
+      actor,
+      ...(parsed.occurredAt ? { occurredAt: parsed.occurredAt } : {}),
+      metadata: {
+        directPayment: true,
+        integrationEventId: event.id,
+        ...(direct.payerName ? { payerName: direct.payerName } : {}),
+      },
+    });
+    let transaction = next.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id &&
+        item.providerTransactionId === parsed.providerTransactionId,
+    );
+    // A Paybill account number that names one open bill with exactly this balance is proof.
+    const named = transaction ? billNamedByReference(next, transaction) : undefined;
+    if (transaction && named) {
+      next = orchestrator.applyUnallocatedCollection(next, {
+        tenantId: event.tenantId,
+        transactionId: transaction.id,
+        allocations: [{ invoiceId: named.id, amountMinor: transaction.unallocatedAmountMinor }],
+        actor,
+        matchedBy: "ACCOUNT_REFERENCE",
+      });
+      transaction = next.paymentOperations?.transactions.find(
+        (item) => item.id === transaction!.id,
+      );
+    }
+    await this.dependencies.transactions.saveState(
+      next,
+      systemActor(event.tenantId, branch.id, branch.name),
+      `${connection.displayName} direct payment ${parsed.providerTransactionId}`,
+    );
+    return {
+      paymentTransactionId: transaction?.id,
+      status: named ? "APPLIED_BY_ACCOUNT_REFERENCE" : "UNALLOCATED",
+      ...(named ? { invoiceId: named.id } : {}),
+    };
+  }
+
   private async processPaymentEvent(
     event: IntegrationEvent,
     parsed: ParsedProviderEvent,
@@ -1196,7 +1415,7 @@ export class IntegrationRuntime {
     if (!parsed.externalResourceId)
       throw new IntegrationValidationError("Payment callback is missing its intent reference");
     const state = await this.dependencies.transactions.loadState(event.tenantId);
-    const operationIntent = state.paymentOperations?.intents.find(
+    let operationIntent = state.paymentOperations?.intents.find(
       (item) =>
         item.tenantId === event.tenantId &&
         (item.id === parsed.externalResourceId ||
@@ -1208,6 +1427,11 @@ export class IntegrationRuntime {
         item.id === parsed.externalResourceId ||
         item.externalReference === parsed.externalResourceId,
     );
+    if (!operationIntent && !legacyIntent && parsed.directPayment) {
+      operationIntent = openIntentForReference(state, event.tenantId, connection.id, parsed);
+      if (!operationIntent)
+        return this.recordDirectPayment(event, parsed, connection, state, parsed.directPayment);
+    }
     if (!operationIntent && !legacyIntent) {
       throw new MappingError("Payment callback does not match a Seramet payment intent");
     }
@@ -1239,6 +1463,19 @@ export class IntegrationRuntime {
       merchantReference = queried.value.merchantReference;
     }
     const reference = providerReference;
+    // The same M-Pesa receipt can arrive as a prompt result and as a till notification; it is
+    // recorded once. A receipt already kept as a direct payment is left for reconciliation.
+    const recorded = state.paymentOperations?.transactions.find(
+      (item) =>
+        item.providerConnectionId === connection.id && item.providerTransactionId === reference,
+    );
+    if (recorded && providerStatus === "CONFIRMED") {
+      return {
+        paymentIntentId: operationIntent?.id ?? legacyIntent!.id,
+        paymentTransactionId: recorded.id,
+        status: recorded.intentId ? "DUPLICATE" : "RECORDED_AS_DIRECT_PAYMENT",
+      };
+    }
     let next = state;
     if (operationIntent && providerStatus === "CONFIRMED") {
       if (amountMinor === undefined || !currency) {
@@ -1292,7 +1529,7 @@ export class IntegrationRuntime {
           tenantId: event.tenantId,
           intentId: operationIntent.id,
           actor: `${connection.displayName} callback`,
-          reason: `Provider status ${providerStatus}`,
+          reason: parsed.failureReason ?? `Provider status ${providerStatus}`,
         });
       }
       const failedIntent = legacyIntent
@@ -2329,4 +2566,38 @@ function systemActor(tenantId: string, branchId: string, branch: string) {
     role: "Integration Runtime",
     branch,
   };
+}
+
+/**
+ * A Paybill account number or QR reference names the bill being paid. Link it to that bill's open
+ * request only when the reference and the exact amount both agree.
+ */
+function openIntentForReference(
+  state: TransactionState,
+  tenantId: string,
+  connectionId: string,
+  parsed: ParsedProviderEvent,
+) {
+  const typed = normalizedReference(parsed.merchantReference);
+  if (typed.length < 4 || parsed.amountMinor === undefined) return undefined;
+  const candidates = (state.paymentOperations?.intents ?? []).filter((intent) => {
+    if (intent.tenantId !== tenantId || intent.providerConnectionId !== connectionId) return false;
+    if (!["CREATED", "PENDING", "AWAITING_CUSTOMER", "PROCESSING"].includes(intent.status))
+      return false;
+    if (intent.amountRequestedMinor !== parsed.amountMinor) return false;
+    const merchantReference = intent.metadata["merchantReference"];
+    return [
+      typeof merchantReference === "string" ? merchantReference : "",
+      intent.invoiceIds[0] ?? "",
+      intent.id,
+    ].some((reference) => {
+      const known = normalizedReference(reference);
+      return known.length >= typed.length && known.endsWith(typed);
+    });
+  });
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function normalizedReference(value: string | undefined) {
+  return (value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }

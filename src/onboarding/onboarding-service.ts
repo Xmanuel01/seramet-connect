@@ -3241,6 +3241,28 @@ export class OnboardingService {
     return { id, created: !existing };
   }
 
+  /** New values replace stored ones; blank fields keep what the restaurant saved before. */
+  private async mergedProviderCredentials(
+    reference: string | undefined,
+    submitted: Record<string, string>,
+    needsWebhookKey: boolean,
+  ) {
+    let current: Record<string, string> = {};
+    if (reference?.startsWith("managed://")) {
+      try {
+        const stored = JSON.parse((await createSecretStore(this.env).resolve(reference)).value);
+        if (stored && typeof stored === "object") current = stored as Record<string, string>;
+      } catch {
+        current = {};
+      }
+    }
+    const merged: Record<string, string> = { ...current };
+    for (const [key, value] of Object.entries(submitted))
+      if (value.trim()) merged[key] = value.trim();
+    if (needsWebhookKey && !merged["webhookSecret"]) merged["webhookSecret"] = randomToken();
+    return merged;
+  }
+
   async configureProviderConnection(input: ProviderSetupInput) {
     this.require(permissions.settingsIntegrationManage);
     if (input.branchId) await this.assertBranch(input.branchId);
@@ -3267,20 +3289,31 @@ export class OnboardingService {
     }
     let secretReference = input.secretReference ?? existing?.secret_reference ?? undefined;
     let secretVersion: string | undefined;
-    if (input.credentials) {
+    const isDaraja = provider.definition.code === "DARAJA";
+    if (isDaraja)
+      input = { ...input, configuration: darajaSetupConfiguration(input.configuration) };
+    // M-Pesa always needs a callback key, so its credentials are stored even when unchanged.
+    const credentials =
+      input.credentials || isDaraja
+        ? await this.mergedProviderCredentials(secretReference, input.credentials ?? {}, isDaraja)
+        : undefined;
+    if (credentials) {
       const store = createSecretStore(this.env);
       if (!store.store)
         throw validation(
           "Configured secret store is read-only; provision the secret outside Seramet and submit its reference",
         );
-      secretReference = secretReference ?? `managed://seramet/${this.actor.tenantId}/${id}`;
-      const stored = await store.store(secretReference, json(input.credentials));
+      secretReference =
+        secretReference && secretReference.startsWith("managed://")
+          ? secretReference
+          : `managed://seramet/${this.actor.tenantId}/${id}`;
+      const stored = await store.store(secretReference, json(credentials));
       secretVersion = stored.version;
     }
     const status =
       input.enabled === false
         ? "DISABLED"
-        : secretReference
+        : secretReference && (!isDaraja || darajaCredentialsComplete(credentials))
           ? "CONFIGURED"
           : "CREDENTIALS_REQUIRED";
     const stamp = now();
@@ -3313,7 +3346,7 @@ export class OnboardingService {
           stamp,
           stamp,
         ),
-      ...(secretReference && (input.credentials || input.secretReference)
+      ...(secretReference && (credentials || input.secretReference)
         ? [
             this.db
               .prepare(
@@ -7129,4 +7162,41 @@ function denied(message: string) {
 }
 function notFound(message: string) {
   return new ServerOperationError("VALIDATION_FAILED", 404, message);
+}
+
+/** Validates the restaurant's M-Pesa account numbers; a till needs its store number too. */
+function darajaSetupConfiguration(configuration: Record<string, unknown> | undefined) {
+  const config = { ...(configuration ?? {}) };
+  const type = String(config["accountType"] ?? "PAYBILL").toUpperCase();
+  if (type !== "PAYBILL" && type !== "TILL") throw validation("Choose Till or Paybill");
+  const shortcode = String(config["shortcode"] ?? "").trim();
+  if (!/^\d{5,7}$/.test(shortcode))
+    throw validation(
+      type === "TILL"
+        ? "Enter the store (head office) number for your till"
+        : "Enter your Paybill number",
+    );
+  const tillNumber = String(config["tillNumber"] ?? "").trim();
+  if (type === "TILL" && !/^\d{5,7}$/.test(tillNumber)) throw validation("Enter your till number");
+  for (const key of ["callbackUrl", "transactionType", "allowUnsignedSandboxCallbacks"])
+    delete config[key];
+  return {
+    ...config,
+    accountType: type,
+    shortcode,
+    ...(type === "TILL" ? { tillNumber } : { tillNumber: undefined }),
+  };
+}
+
+function darajaCredentialsComplete(credentials: Record<string, string> | undefined) {
+  return Boolean(
+    credentials?.["consumerKey"] && credentials["consumerSecret"] && credentials["passkey"],
+  );
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }

@@ -1,3 +1,4 @@
+import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
 import {
   TransactionEngine,
   createEmptyTransactionState,
@@ -19,7 +20,7 @@ import {
 } from "@/payments/daily-closing";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { parseMajorAmount } from "@/payments/money";
+import { formatMinor, parseMajorAmount } from "@/payments/money";
 
 export class TransactionConflictError extends Error {
   readonly code = "CONFLICT";
@@ -196,7 +197,12 @@ export function applyServerMutation(
       return closeBusinessDay(
         state,
         actor,
-        input as { businessDate: string; drawerCounts: DrawerCount[]; confirmed: boolean },
+        input as {
+          businessDate: string;
+          drawerCounts: DrawerCount[];
+          confirmed: boolean;
+          mpesaCarryOverReason?: string;
+        },
       );
     case "replaceState":
       return input["state"] as TransactionState;
@@ -741,6 +747,26 @@ export function applyServerMutation(
       }
       if (method.category === "DIGITAL_WALLET") {
         if (!reference) throw new Error(`${method.displayName} requires a transaction reference`);
+        // The customer may already have paid the till: its receipt is proof, so apply it now.
+        const received = method.providerConnectionId
+          ? directPaymentByReceipt(state, actor.tenantId, reference, method.providerConnectionId)
+          : undefined;
+        if (received) {
+          if (received.unallocatedAmountMinor === 0)
+            throw new Error(`M-Pesa receipt ${reference} has already been used`);
+          if (received.unallocatedAmountMinor < amountMinor)
+            throw new Error(
+              `M-Pesa receipt ${reference} has ${formatMinor(received.unallocatedAmountMinor, received.currency)} left; record the rest separately`,
+            );
+          return paymentOrchestrator.applyUnallocatedCollection(state, {
+            tenantId: actor.tenantId,
+            transactionId: received.id,
+            allocations: [{ invoiceId, amountMinor }],
+            actor: actor.name,
+            matchedBy: "RECEIPT_CODE",
+            deviceId: terminalId,
+          });
+        }
         return paymentOrchestrator.submitManualReference(state, {
           tenantId: actor.tenantId,
           branchId: actor.branchId,
@@ -1149,6 +1175,34 @@ export function applyServerMutation(
         state,
         input["input"] as Parameters<ReconciliationEngine["manuallyMatch"]>[1],
       );
+    case "applyUnallocatedPayment": {
+      // A person confirms which bill a payment that arrived without a prompt belongs to.
+      const transactionId = String(input["transactionId"] ?? "");
+      const invoiceId = String(input["invoiceId"] ?? "");
+      const normalized = normalizeTransactionState(state);
+      const payment = normalized.paymentOperations?.transactions.find(
+        (item) => item.id === transactionId && item.tenantId === actor.tenantId,
+      );
+      if (!payment) throw new Error("Payment was not found");
+      if (payment.branchId !== actor.branchId)
+        throw new Error("Switch to the payment's branch to apply it");
+      const bill = normalized.bills.find(
+        (item) => item.id === invoiceId && (item.tenantId ?? actor.tenantId) === actor.tenantId,
+      );
+      if (!bill) throw new Error("Bill was not found");
+      const requested = Number(input["amountMinor"] ?? 0);
+      const amountMinor =
+        requested > 0
+          ? requested
+          : Math.min(payment.unallocatedAmountMinor, openBalanceMinor(bill, payment.currency));
+      return paymentOrchestrator.applyUnallocatedCollection(normalized, {
+        tenantId: actor.tenantId,
+        transactionId,
+        allocations: [{ invoiceId, amountMinor }],
+        actor: actor.name,
+        matchedBy: "CASHIER_CONFIRMED",
+      });
+    }
     case "resolveReconciliationException":
       return reconciliationEngine.resolveException(
         state,
@@ -1257,6 +1311,9 @@ export function applyServerMutation(
         businessDate: day.businessDate,
         drawerCounts: requested.drawerCounts ?? [],
         confirmed: requested.confirmed === true,
+        ...(typeof input["mpesaCarryOverReason"] === "string"
+          ? { mpesaCarryOverReason: input["mpesaCarryOverReason"] }
+          : {}),
       });
     }
     case "reopenDay":
@@ -1271,6 +1328,9 @@ export function applyServerMutation(
         businessDate: String(input["businessDate"]),
         drawerCounts: (input["drawerCounts"] as DrawerCount[] | undefined) ?? [],
         confirmed: input["confirmed"] === true,
+        ...(typeof input["mpesaCarryOverReason"] === "string"
+          ? { mpesaCarryOverReason: input["mpesaCarryOverReason"] }
+          : {}),
       });
     }
     case "recordReceiptReprint": {
