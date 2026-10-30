@@ -1175,6 +1175,106 @@ test("onboarding does not advance without confirmed progress in the save respons
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
 });
 
+test("a restaurant below 80% ready resumes guided setup from Setup Centre", async ({ page }) => {
+  const finished: Partial<OnboardingWizardState> = {
+    currentStep: 12,
+    status: "COMPLETED",
+    completedSteps: [1, 2, 3, 4, 5, 6, 12],
+    responses: { _flow: 2, "3": { businessType: "RESTAURANT" } },
+  };
+  const tenant = await mockOwnerOnboarding(page, finished);
+  const setupCentre = (overallScoreBps: number) => ({
+    setup: {
+      organisationName: tenant.tradingName,
+      stages: [],
+      results: [],
+      goLiveState: "SETUP",
+      status: "BLOCKED",
+      overallScoreBps,
+      counts: { branches: 1, menuItems: 0 },
+    },
+  });
+  let score = 2_700;
+  await page.route("**/api/seramet/setup/centre*", (route) =>
+    route.fulfill({ json: setupCentre(score) }),
+  );
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        restaurants: [
+          {
+            tenantId: tenant.id,
+            slug: tenant.slug,
+            name: tenant.tradingName,
+            onboardingStatus: "COMPLETED",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  let resumeRequests = 0;
+  await page.route("**/api/seramet/setup/onboarding/resume", (route) => {
+    resumeRequests += 1;
+    return route.fulfill({
+      json: {
+        ok: true,
+        onboarding: {
+          ...finished,
+          currentStep: 3,
+          status: "IN_PROGRESS",
+          completedSteps: [1, 2],
+          version: 2,
+          location: null,
+          suggestedCurrency: null,
+          acceptedCurrencies: [],
+          canChangeBaseCurrency: true,
+          baseCurrencyLockReason: null,
+        },
+      },
+    });
+  });
+  await page.goto("/login?account=1");
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.goto("/seramet-setup");
+  await expect(page.getByRole("heading", { name: "Setup Centre", exact: true })).toBeVisible();
+  await expect(page.getByText("This restaurant is 27% ready.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Resume guided setup", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "What kind of business is this?", exact: true }),
+  ).toBeVisible();
+  expect(resumeRequests).toBe(1);
+
+  // At 80% or more the remaining work belongs in Setup Centre, so the button is not offered.
+  score = 8_500;
+  await page.unroute("**/api/seramet/setup/onboarding/resume");
+  await page.route("**/api/seramet/setup/onboarding", (route) =>
+    route.fulfill({
+      json: {
+        onboarding: {
+          ...finished,
+          version: 3,
+          location: null,
+          suggestedCurrency: null,
+          acceptedCurrencies: [],
+          canChangeBaseCurrency: true,
+          baseCurrencyLockReason: null,
+        },
+      },
+    }),
+  );
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Setup Centre", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resume guided setup", exact: true })).toHaveCount(
+    0,
+  );
+});
+
 test("onboarding completion still refreshes authoritative setup data", async ({ page }) => {
   const onboarding = await openOnboardingStep(page, 12);
   const completed = { ...onboarding, status: "COMPLETED", version: 3 };

@@ -28,6 +28,7 @@ import { setupSections } from "@/onboarding/types";
 import { SetupStageIcon, SetupStatus, SetupTab } from "@/onboarding/ui";
 import { useSetupCentre } from "@/onboarding/use-setup-centre";
 import { OnboardingWizard } from "@/onboarding/OnboardingWizard";
+import { ONBOARDING_RESUME_BELOW_BPS } from "@/onboarding/onboarding-steps";
 import { formatMinor, parseMajorAmount } from "@/payments/money";
 import { cn } from "@/lib/utils";
 
@@ -495,6 +496,30 @@ function SetupCentre() {
           invert={deviceHealthAvailable && offlineDevices > 0}
         />
       </div>
+      {centre.onboarding?.status === "COMPLETED" &&
+        centre.setup &&
+        centre.setup.overallScoreBps < ONBOARDING_RESUME_BELOW_BPS && (
+          <Panel className="mt-3 p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-bold">Resume guided setup</div>
+                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                  This restaurant is {score}% ready. Guided setup reopens at the first step it has
+                  not saved and walks through tax, payments, stations, menu and team, then creates
+                  the starter accounts and document layouts.
+                </p>
+              </div>
+              <Btn
+                variant="primary"
+                disabled={busy}
+                onClick={() => void run(centre.resumeOnboarding, "Guided setup reopened.")}
+              >
+                <Play className="h-4 w-4" />
+                Resume guided setup
+              </Btn>
+            </div>
+          </Panel>
+        )}
       {centre.error && (
         <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] font-semibold text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
