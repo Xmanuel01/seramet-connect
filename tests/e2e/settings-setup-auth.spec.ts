@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { expect, test, type BrowserContext, type Page, type Response } from "@playwright/test";
 import { createDefaultDemoPlatformState } from "../../src/platform/demo/default-demo-data";
 import { buildModuleAccessProfile } from "../../src/platform/module-access-registry";
+import type { OnboardingWizardState } from "../../src/onboarding/location-currency-types";
 
 type Fixture = {
   tenantId: string;
@@ -724,7 +725,7 @@ test("registration ignores stale session checks and duplicate submission while s
   }
 });
 
-async function mockOwnerOnboarding(page: Page) {
+async function mockOwnerOnboarding(page: Page, overrides: Partial<OnboardingWizardState> = {}) {
   const configuration = createDefaultDemoPlatformState();
   const tenant = configuration.tenants[0]!;
   const branch = configuration.branches[0]!;
@@ -755,7 +756,16 @@ async function mockOwnerOnboarding(page: Page) {
       },
     },
     "/configuration": { configuration },
-    "/setup/centre": { setup: { organisationName: tenant.tradingName, stages: [], results: [] } },
+    "/setup/centre": {
+      setup: {
+        organisationName: tenant.tradingName,
+        stages: [],
+        results: [],
+        goLiveState: "SETUP",
+        status: "BLOCKED",
+        counts: { branches: 1, menuItems: 0 },
+      },
+    },
     "/setup/organisation-structure": {
       brands: configuration.brands,
       branches: configuration.branches,
@@ -783,6 +793,7 @@ async function mockOwnerOnboarding(page: Page) {
         acceptedCurrencies: [],
         canChangeBaseCurrency: true,
         baseCurrencyLockReason: null,
+        ...overrides,
       },
     },
     "/setup/reference/location-currency": {
@@ -987,3 +998,197 @@ for (const status of [200, 503]) {
     ).toBeNull();
   });
 }
+
+async function openOnboardingStep(page: Page, step = 6) {
+  const onboarding: OnboardingWizardState = {
+    currentStep: step,
+    status: "IN_PROGRESS",
+    completedSteps: [1, 2, 3, 4, 5],
+    responses: {},
+    version: 2,
+    location: {
+      countryCode: "KE",
+      administrativeLevel1: "Nairobi",
+      administrativeLevel2: "",
+      city: "Westlands",
+      addressLine: "Disposable onboarding fixture",
+      postalCode: "",
+      latitudeMicrodegrees: null,
+      longitudeMicrodegrees: null,
+      status: "DRAFT",
+    },
+    suggestedCurrency: { code: "KES", name: "Kenyan Shilling", symbol: "KES", minorDigits: 2 },
+    acceptedCurrencies: [],
+    canChangeBaseCurrency: true,
+    baseCurrencyLockReason: null,
+  };
+  const tenant = await mockOwnerOnboarding(page, onboarding);
+  await page.route("**/api/seramet/public/auth/status", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        restaurants: [
+          {
+            tenantId: tenant.id,
+            slug: tenant.slug,
+            name: tenant.tradingName,
+            onboardingStatus: "IN_PROGRESS",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/seramet/public/auth/login", (route) =>
+    route.fulfill({ json: { authenticated: true } }),
+  );
+  await page.goto("/login?account=1");
+  await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
+  await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: step === 20 ? "Review your restaurant" : "Confirm your location",
+      exact: true,
+    }),
+  ).toBeVisible();
+  return onboarding;
+}
+
+test("onboarding advances from the saved response without waiting for unrelated setup reads", async ({
+  page,
+}) => {
+  const onboarding = await openOnboardingStep(page);
+  let releaseReads!: () => void;
+  const readsReady = new Promise<void>((resolve) => {
+    releaseReads = resolve;
+  });
+  let extraReads = 0;
+  await page.route("**/api/seramet/setup/**", async (route) => {
+    if (route.request().method() === "GET") {
+      extraReads += 1;
+      await readsReady;
+    }
+    await route.fallback();
+  });
+  const savedState = {
+    ...onboarding,
+    currentStep: 7,
+    version: 3,
+    completedSteps: [...onboarding.completedSteps, 6],
+    location: { ...onboarding.location!, status: "CONFIRMED" },
+  };
+  await page.route("**/api/seramet/setup/onboarding/step", (route) =>
+    route.fulfill({ json: { ok: true, onboarding: savedState } }),
+  );
+  try {
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your currency", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    expect(extraReads).toBe(0);
+    releaseReads();
+    await page.route("**/api/seramet/setup/onboarding", (route) =>
+      route.fulfill({
+        json: { onboarding: savedState },
+      }),
+    );
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Your currency", exact: true })).toBeVisible();
+  } finally {
+    releaseReads();
+  }
+});
+
+test("onboarding waits for save confirmation and recovers from a rejected save", async ({
+  page,
+}) => {
+  const onboarding = await openOnboardingStep(page);
+  let releaseSave!: () => void;
+  const saveReady = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  let attempts = 0;
+  await page.route("**/api/seramet/setup/onboarding/step", async (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await saveReady;
+      return route.fulfill({ status: 503, json: { message: "Save could not be confirmed" } });
+    }
+    return route.fulfill({
+      json: { ok: true, onboarding: { ...onboarding, currentStep: 7, version: 3 } },
+    });
+  });
+  try {
+    const posted = page.waitForRequest("**/api/seramet/setup/onboarding/step");
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await posted;
+    await expect(
+      page.getByRole("heading", { name: "Confirm your location", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /Continue|Saving/ })).toBeDisabled();
+    for (const viewport of [
+      { width: 1366, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ),
+        )
+        .toBe(true);
+      await page.screenshot({
+        path: test.info().outputPath(`saving-${viewport.width}.png`),
+        fullPage: true,
+      });
+    }
+    expect(attempts).toBe(1);
+    releaseSave();
+    await expect(page.getByRole("alert")).toHaveText("Save could not be confirmed");
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your currency", exact: true })).toBeVisible();
+    expect(attempts).toBe(2);
+  } finally {
+    releaseSave();
+  }
+});
+
+test("onboarding does not advance without confirmed progress in the save response", async ({
+  page,
+}) => {
+  await openOnboardingStep(page);
+  await page.route("**/api/seramet/setup/onboarding/step", (route) =>
+    route.fulfill({ json: { ok: true } }),
+  );
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Saved onboarding progress could not be confirmed",
+  );
+  await expect(
+    page.getByRole("heading", { name: "Confirm your location", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+});
+
+test("onboarding completion still refreshes authoritative setup data", async ({ page }) => {
+  const onboarding = await openOnboardingStep(page, 20);
+  const completed = { ...onboarding, status: "COMPLETED", version: 3 };
+  let reads = 0;
+  await page.route("**/api/seramet/setup/**", async (route) => {
+    if (route.request().method() === "GET") reads += 1;
+    await route.fallback();
+  });
+  await page.route("**/api/seramet/setup/onboarding", (route) =>
+    route.fulfill({ json: { onboarding: completed } }),
+  );
+  await page.route("**/api/seramet/setup/onboarding/step", (route) =>
+    route.fulfill({ json: { ok: true, onboarding: completed } }),
+  );
+  await page.getByRole("button", { name: "Continue to Setup Centre", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Setup Centre", exact: true })).toBeVisible();
+  expect(reads).toBeGreaterThan(0);
+  await expect(
+    page.getByRole("heading", { name: "Review your restaurant", exact: true }),
+  ).toHaveCount(0);
+});

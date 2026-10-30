@@ -33,6 +33,7 @@ describe.sequential("commercial launch foundation", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     database.close();
   });
@@ -149,6 +150,10 @@ describe.sequential("commercial launch foundation", () => {
         "x-seramet-tenant-id": provisioned.tenantId,
       },
     });
+    await database
+      .prepare("UPDATE auth_sessions SET expires_at=? WHERE tenant_id=? AND id=?")
+      .bind(new Date(Date.now() - 1000).toISOString(), provisioned.tenantId, identity().sessionId)
+      .run();
     const batch = vi
       .spyOn(database, "batch")
       .mockRejectedValueOnce(new DatabaseSerializationError());
@@ -159,8 +164,44 @@ describe.sequential("commercial launch foundation", () => {
       .prepare("UPDATE auth_sessions SET revoked_at=? WHERE tenant_id=? AND id=?")
       .bind(new Date().toISOString(), provisioned.tenantId, identity().sessionId)
       .run();
-    batch.mockRejectedValueOnce(new DatabaseSerializationError());
     await expect(authenticateSerametRequest(request, authEnv())).rejects.toThrow(/revoked/);
+  });
+
+  it("keeps repeated session reads read-only and still rejects credential changes", async () => {
+    // A verifier call crossing a second boundary would otherwise look like a token refresh.
+    vi.useFakeTimers({ now: Date.now(), toFake: ["Date"] });
+    const provisioned = await new RestaurantRegistrationService(database).register(
+      identity(),
+      registration(),
+    );
+    const request = new Request("https://app.seramet.test/api/seramet/auth/session", {
+      headers: {
+        authorization: "Bearer verified-token",
+        "x-seramet-tenant-id": provisioned.tenantId,
+      },
+    });
+    await authenticateSerametRequest(request, authEnv());
+    const batch = vi.spyOn(database, "batch");
+    const prepare = vi.spyOn(database, "prepare");
+    const actors = await Promise.all(
+      Array.from({ length: 20 }, () => authenticateSerametRequest(request, authEnv())),
+    );
+    expect(actors.every((actor) => actor.tenantId === provisioned.tenantId)).toBe(true);
+    expect(batch).not.toHaveBeenCalled();
+    const sessionWrites = prepare.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((sql) =>
+        /\b(INSERT|UPDATE|DELETE)\b[\s\S]*\b(auth_sessions|identity_accounts)\b/i.test(sql),
+      );
+    expect(sessionWrites).toEqual([]);
+    prepare.mockRestore();
+    await database
+      .prepare("UPDATE users SET password_version=password_version+1 WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, provisioned.userId)
+      .run();
+    await expect(authenticateSerametRequest(request, authEnv())).rejects.toThrow(
+      /credential change/,
+    );
   });
 
   it("revokes the authoritative session when secure cookie logout runs", async () => {
