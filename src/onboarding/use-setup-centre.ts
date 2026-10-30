@@ -16,6 +16,7 @@ import type {
 import type {
   CountryReference,
   CurrencyReference,
+  OnboardingStepInput,
   OnboardingWizardState,
 } from "@/onboarding/location-currency-types";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
@@ -142,6 +143,7 @@ export function useSetupCentre() {
   scopeRef.current = scopeKey;
   const readGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const catalogGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
+  const onboardingGuard = useMemo(() => createScopedReadGuard(() => scopeRef.current), []);
   const headers = useMemo(() => {
     const token = getSerametAccessToken();
     return {
@@ -376,10 +378,11 @@ export function useSetupCentre() {
     return () => {
       readGuard.cancel();
       catalogGuard.cancel();
+      onboardingGuard.cancel();
     };
-  }, [refresh, readGuard, catalogGuard]);
+  }, [refresh, readGuard, catalogGuard, onboardingGuard]);
 
-  const command = useCallback(
+  const post = useCallback(
     async <T>(path: string, body: unknown) => {
       const response = await authenticatedFetch(path, {
         method: "POST",
@@ -394,10 +397,64 @@ export function useSetupCentre() {
         throw new Error(
           payload.message ?? payload.error ?? `Setup command failed (${response.status})`,
         );
+      return payload;
+    },
+    [headers],
+  );
+
+  const command = useCallback(
+    async <T>(path: string, body: unknown) => {
+      const payload = await post<T>(path, body);
       await refresh();
       return payload;
     },
-    [headers, refresh],
+    [post, refresh],
+  );
+
+  const saveOnboardingStep = useCallback(
+    async (input: OnboardingStepInput) => {
+      if (scopeRef.current !== scopeKey) throw new Error("Restaurant setup changed; try again");
+      const read = onboardingGuard.begin(scopeKey);
+      const payload = await post<{ onboarding: OnboardingWizardState }>(
+        "/api/seramet/setup/onboarding/step",
+        input,
+      );
+      if (!read.isCurrent()) return;
+      if (!payload.onboarding || !Number.isInteger(payload.onboarding.currentStep)) {
+        throw new Error("Saved onboarding progress could not be confirmed");
+      }
+      if (payload.onboarding.status === "COMPLETED") {
+        await refresh();
+        return;
+      }
+      // The save already returns authoritative progress; unrelated setup reads must not gate Continue.
+      setOnboarding(payload.onboarding);
+      if (input.step === 7) {
+        void get<{ profile: SetupBusinessProfile }>(
+          "/api/seramet/setup/business-profile",
+          read.signal,
+        )
+          .then((result) => {
+            if (read.isCurrent()) setProfile(result.profile);
+          })
+          .catch((reason) => {
+            if (!read.isCurrent()) return;
+            setUnavailableResources((current) => [...new Set([...current, "business profile"])]);
+            setError(failureMessage(reason, "Business profile could not be refreshed"));
+          });
+      } else if (input.step === 9 || input.step === 10) {
+        void get<SetupStructure>("/api/seramet/setup/organisation-structure", read.signal)
+          .then((result) => {
+            if (read.isCurrent()) setStructure(result);
+          })
+          .catch((reason) => {
+            if (!read.isCurrent()) return;
+            setUnavailableResources((current) => [...new Set([...current, "organisation"])]);
+            setError(failureMessage(reason, "Organisation could not be refreshed"));
+          });
+      }
+    },
+    [get, onboardingGuard, post, refresh, scopeKey],
   );
 
   const previewImport = useCallback(
@@ -685,6 +742,7 @@ export function useSetupCentre() {
     unavailableResources,
     refresh,
     command,
+    saveOnboardingStep,
     previewImport,
     recentMenuImports,
     inspectImport,

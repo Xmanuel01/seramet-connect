@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Building2, Check, MapPin } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Check, Loader2, MapPin } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel } from "@/components/app/ui";
@@ -123,7 +123,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
     setMessage("");
     try {
       const action = step === 20 ? "COMPLETE" : "SAVE";
-      await centre.command("/api/seramet/setup/onboarding/step", {
+      await centre.saveOnboardingStep({
         step,
         action,
         response: responseForStep(),
@@ -140,7 +140,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
     setBusy(true);
     setMessage("");
     try {
-      await centre.command("/api/seramet/setup/onboarding/step", {
+      await centre.saveOnboardingStep({
         step,
         action: "BACK",
         response: {},
@@ -232,9 +232,13 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
             <Btn onClick={back} disabled={busy || step <= 5}>
               <ArrowLeft className="h-4 w-4" /> Back
             </Btn>
-            <Btn variant="primary" onClick={() => void submit()} disabled={busy}>
-              {step === 20 ? "Continue to Setup Centre" : "Continue"}
-              <ArrowRight className="h-4 w-4" />
+            <Btn variant="primary" onClick={() => void submit()} disabled={busy} aria-busy={busy}>
+              {busy ? "Saving..." : step === 20 ? "Continue to Setup Centre" : "Continue"}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowRight className="h-4 w-4" />
+              )}
             </Btn>
           </div>
         </Panel>
