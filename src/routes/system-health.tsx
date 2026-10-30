@@ -53,7 +53,7 @@ function SystemHealthPage() {
   return (
     <AppShell
       title="System Health"
-      subtitle="Authoritative services and background operations"
+      subtitle="Status of Seramet services and background jobs"
       actions={
         <Btn onClick={() => void load()} disabled={loading}>
           <RefreshCcw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />

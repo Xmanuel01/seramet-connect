@@ -64,7 +64,7 @@ test("accounting pages preserve configuration evidence and recover from invalid 
         main.getByText("No posted journals in this period", { exact: true }),
       ).toBeVisible();
       await expect(
-        main.getByRole("link", { name: "Review accounting mappings in Setup Centre" }),
+        main.getByRole("link", { name: "Set up accounts in Setup Centre" }),
       ).toHaveAttribute("href", "/seramet-setup?section=ACCOUNTING");
       if (path === "/daily-sales-journal") {
         await expect(

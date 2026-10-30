@@ -298,7 +298,7 @@ function OrganisationView({ nodes }: { nodes: EnterpriseNode[] }) {
     <Panel>
       <PanelHead
         title="Organization hierarchy"
-        sub="Effective-dated authoritative scope tree"
+        sub="Your organisation structure and when each change takes effect"
         right={
           <label className="relative block">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />

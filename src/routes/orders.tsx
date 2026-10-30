@@ -191,11 +191,8 @@ function Orders() {
         <Metric label="Cancelled orders" value={cancelled} invert />
       </div>
       <p className="mt-2 text-[12px] text-muted-foreground">
-        Open order value includes held and kitchen orders, not revenue. Outstanding balances,
-        provider receivables and paid sales use issued invoices, with void and replaced invoices
-        excluded. Paid sales are gross paid invoices issued in the selected period, before
-        separately displayed refunds; this is not payment-date cash flow or accounting revenue.
-        Refunds use their completion date. See Finance for recognized revenue.
+        Open order value counts held and kitchen orders that are not yet paid. Paid sales are before
+        refunds. For revenue in your books, see Finance.
       </p>
       {operationNotice && (
         <div className="mt-3 rounded-md border border-border bg-card px-3 py-2 text-[13px]">

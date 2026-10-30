@@ -14,6 +14,8 @@ type Props = {
   minutesLate?: number | null;
   workedMinutes?: number | null;
   locationEnabled: boolean;
+  // The viewer can set the workplace location on this page.
+  canSetLocation?: boolean;
   openElsewhere: boolean;
   unknown: boolean;
   busy: boolean;
@@ -103,7 +105,9 @@ export function AttendanceClock(props: Props) {
             ? "Clock out at your other branch first."
             : locationEnabled
               ? "Location checked when you clock in or out."
-              : "Ask your manager to set up workplace location."}
+              : props.canSetLocation
+                ? "Set your workplace location below to turn on clock-in."
+                : "Ask your manager to set up workplace location."}
         </p>
       )}
       <details className="mt-6 border-t border-border pt-4 text-sm">

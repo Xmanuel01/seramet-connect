@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { AlertTriangle } from "lucide-react";
 import { Btn, Panel, Status } from "@/components/app/ui";
 import { formatMinor as formatCurrencyMinor } from "@/payments/money";
 import type { FinancialIssue } from "@/finance/use-finance-report";
@@ -91,51 +92,57 @@ export function FinanceQuality({
   return (
     <Panel className="mt-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold">Ledger integrity and reporting coverage</h3>
-        <Status>{quality === "RECONCILED" ? "GL checks reconciled" : "Incomplete"}</Status>
+        <h3 className="font-semibold">Data checks</h3>
+        <Status>{quality === "RECONCILED" ? "All checks passed" : "Needs attention"}</Status>
       </div>
       {issues.length === 0 ? (
         <p className="mt-2 text-[12px] text-muted-foreground">
-          The available posted ledger passed the automated reporting integrity checks.
-          Reconciliation and completeness of external bank or supplier statements require separate
-          review.
+          Posted figures passed every automatic check. Bank and supplier statements still need your
+          own review.
         </p>
       ) : (
-        <div className="mt-3 space-y-2">
+        <ul className="mt-3 divide-y divide-border rounded-md border border-warning/40">
           {issues.map((issue) => {
             const guidance = financeIssueGuidance(issue.code);
             return (
-              <div key={issue.code} className="rounded border border-warning/50 p-3 text-[12px]">
-                <strong>{guidance.title}</strong>
-                <p className="mt-1">{issue.detail}</p>
-                {guidance.nextStep && <p className="mt-2">{guidance.nextStep}</p>}
-                <p className="mt-2 text-[11px] text-muted-foreground break-words">
-                  Reference: {issue.code} ({issue.count})
-                </p>
-              </div>
+              <li key={issue.code} className="text-[12px]">
+                <details className="group">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                    <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-warning" />
+                    <span className="min-w-0 flex-1">{guidance.title}</span>
+                    <span className="text-[11px] font-medium text-muted-foreground group-open:hidden">
+                      What to do
+                    </span>
+                  </summary>
+                  <div className="space-y-2 px-3 pb-3 pl-9 text-muted-foreground">
+                    <p>{issue.detail}</p>
+                    {guidance.nextStep && <p className="text-foreground">{guidance.nextStep}</p>}
+                    <p className="break-words text-[11px]">
+                      Reference: {issue.code} ({issue.count})
+                    </p>
+                  </div>
+                </details>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
-      <p className="mt-2 text-[11px] text-muted-foreground">
-        These are derived from posted journals only. Drafts and unreconciled source documents are
-        never counted as if they were posted. Review unmatched source records in{" "}
-        <Link className="underline" to="/reconciliation">
-          Reconciliation
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
+        <Link className="font-semibold text-primary hover:underline" to="/reconciliation">
+          Review unmatched records
         </Link>
-        .
-      </p>
-      {issues.some((issue) =>
-        ["CHART_OF_ACCOUNTS_MISSING", "CASH_ACCOUNT_CLASSIFICATION_MISSING"].includes(issue.code),
-      ) && (
-        <Link
-          className="mt-3 inline-block text-[12px] underline"
-          to="/seramet-setup"
-          search={{ section: "ACCOUNTING" }}
-        >
-          Review accounting mappings in Setup Centre
-        </Link>
-      )}
+        {issues.some((issue) =>
+          ["CHART_OF_ACCOUNTS_MISSING", "CASH_ACCOUNT_CLASSIFICATION_MISSING"].includes(issue.code),
+        ) && (
+          <Link
+            className="font-semibold text-primary hover:underline"
+            to="/seramet-setup"
+            search={{ section: "ACCOUNTING" }}
+          >
+            Set up accounts in Setup Centre
+          </Link>
+        )}
+      </div>
     </Panel>
   );
 }

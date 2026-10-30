@@ -149,7 +149,7 @@ function Feedback() {
           <Panel className="mt-4">
             <PanelHead
               title="Feedback queue"
-              sub="Compensation requires a separate authoritative reward or voucher workflow"
+              sub="To compensate a guest, issue a reward or voucher"
             />
             {!rows.length ? (
               <CrmEmpty

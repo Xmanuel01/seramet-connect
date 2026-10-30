@@ -225,7 +225,7 @@ function ItemDetail() {
                 <>
                   <PanelHead
                     title="Stock by warehouse"
-                    sub="Authoritative balance and PAR by storage location"
+                    sub="Quantity and PAR level in each storage location"
                   />
                   <DataTable
                     cols={[

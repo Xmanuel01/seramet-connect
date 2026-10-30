@@ -445,10 +445,7 @@ export function ReceivablesPage() {
   const result = useFinanceReport<ReceivableReport>("receivables", dates.from, dates.to);
   const data = result.report;
   return (
-    <AppShell
-      title="Accounts receivable"
-      subtitle={"Authoritative unpaid POS invoice register — " + branchLabel}
-    >
+    <AppShell title="Accounts receivable" subtitle={"Unpaid POS invoices — " + branchLabel}>
       <FinanceDates {...dates} refresh={result.refresh} />
       <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
       {data && (
@@ -537,13 +534,10 @@ export function PayablesPage() {
       {data && (
         <>
           <Panel className="mt-4 p-4 text-[12px] text-warning">
-            {data.note} Payment run, exact outstanding totals and ageing are intentionally
-            unavailable until supplier payment allocation is implemented and reconciled. The totals
-            below are original invoice amounts, not asserted debt.
+            {data.note} Amounts below are the original invoice totals.
             <Link to="/procurement" className="ml-1 underline">
-              Review source procurement records
+              Open procurement
             </Link>
-            .
           </Panel>
           {data.truncated && (
             <p className="mt-2 text-warning">

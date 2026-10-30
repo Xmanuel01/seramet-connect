@@ -18,7 +18,7 @@ function Approvals() {
   return (
     <AppShell
       title="Approval centre"
-      subtitle={`Authoritative approval and exception inbox - ${branchLabel}`}
+      subtitle={`Approvals and exceptions waiting for you - ${branchLabel}`}
       actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
       <ManagementReadModelState

@@ -264,7 +264,7 @@ function Employees() {
   return (
     <AppShell
       title="Employees"
-      subtitle="Authoritative employee identities, roles and branch access"
+      subtitle="Staff, their roles and the branches they work at"
       actions={
         <Btn
           variant="primary"

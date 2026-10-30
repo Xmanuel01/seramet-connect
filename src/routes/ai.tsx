@@ -554,7 +554,7 @@ function ProviderSettings({
     <Panel>
       <PanelHead
         title="Provider configuration"
-        sub="Server-authoritative binding; secret values are never returned"
+        sub="Connection details are stored securely and never shown"
       />
       <form onSubmit={submit} className="grid gap-4 p-4">
         <label className="flex items-center gap-2 text-[12px] font-semibold">

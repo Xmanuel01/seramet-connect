@@ -15,6 +15,7 @@ import {
   type PermissionRequirement,
 } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
+import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { settingsGroups } from "@/platform/settings-navigation";
 import type { OrderChannelType, PaymentMethodCategory } from "@/platform/types";
 
@@ -107,7 +108,9 @@ function Settings() {
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => item.kind === "inline" || canNavigateToPath(moduleAccess, item.to),
+        (item) =>
+          item.kind === "inline" ||
+          (!pilotUnavailable[item.to] && canNavigateToPath(moduleAccess, item.to)),
       ),
     }))
     .filter((group) => group.items.length > 0);
@@ -411,7 +414,7 @@ function Settings() {
       title="Settings"
       subtitle={`${tenant?.tradingName ?? "Business"} - ${branches.length} branches - ${platformState.users.filter((user) => user.tenantId === activeTenantId && user.active).length} users`}
       actions={
-        canNavigateToPath(moduleAccess, "/audit-trail") ? (
+        !pilotUnavailable["/audit-trail"] && canNavigateToPath(moduleAccess, "/audit-trail") ? (
           <Link
             to="/audit-trail"
             className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-semibold transition-colors hover:bg-secondary"
@@ -447,7 +450,7 @@ function Settings() {
           <Panel>
             <PanelHead
               title={current.label}
-              sub="Open the authoritative workspace or use the permission-controlled editor below"
+              sub="Open the full page, or make quick changes below"
             />
             <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
               {current.items.map((item) =>
