@@ -1,3 +1,4 @@
+import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { PaymentOperationsState } from "@/payments/types";
@@ -295,6 +296,26 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
 
     if (url.pathname === "/api/seramet/payments/mpesa/qr" && request.method === "POST") {
       return await createMpesaQr(request, env, repo);
+    }
+
+    if (url.pathname === "/api/seramet/payments/mpesa/unmatched" && request.method === "GET") {
+      const actor = await requirePermission(request, env, permissions.paymentsMatch);
+      const state = await repo.loadState(actor.tenantId);
+      return json({
+        ok: true,
+        payments: unmatchedDirectPayments(state, actor.tenantId, actor.branchId),
+      });
+    }
+
+    if (url.pathname === "/api/seramet/payments/prompts/check" && request.method === "POST") {
+      const actor = await requirePermission(request, env, permissions.paymentsCollect);
+      const input = await readJson<{ intentId?: string }>(request);
+      return json({
+        ok: true,
+        ...(await createIntegrationRuntime(env).checkPendingPrompts(actor.tenantId, {
+          ...(input.intentId ? { intentId: input.intentId, olderThanMs: 0 } : {}),
+        })),
+      });
     }
 
     const providerPaymentRoute = /^\/api\/seramet\/payments\/([^/]+)\/(prompt|qr)$/.exec(

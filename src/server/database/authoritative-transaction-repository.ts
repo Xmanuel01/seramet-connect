@@ -3732,6 +3732,7 @@ function dataQualityStatement(
 
 const financiallyLockedActions = new Set([
   "openPaymentDrawer",
+  "applyUnallocatedPayment",
   "collectCashPayment",
   "holdOrder",
   "createOrder",

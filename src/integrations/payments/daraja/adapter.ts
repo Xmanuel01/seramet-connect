@@ -246,8 +246,9 @@ export function createDarajaAdapter(
           },
         });
         const code = String(response.data.ResultCode ?? "");
+        // 4999: Safaricom is still processing the prompt.
         const status: NormalizedPaymentProviderStatus["status"] =
-          code === "0" ? "CONFIRMED" : code ? "FAILED" : "PENDING";
+          code === "0" ? "CONFIRMED" : !code || code === "4999" ? "PENDING" : "FAILED";
         return {
           ok: true,
           value: {
@@ -256,6 +257,9 @@ export function createDarajaAdapter(
             status,
             amountMinor: 0,
             currency: "KES",
+            ...(status === "FAILED"
+              ? { failureReason: promptFailureReason(code, response.data.ResultDesc) }
+              : {}),
             raw: response.data,
           },
         };
@@ -330,6 +334,14 @@ function parseDarajaWebhook(
       value: {
         providerEventId: `${checkoutId}:${resultCode}`,
         eventType: resultCode === 0 ? "PAYMENT_CONFIRMED" : "PAYMENT_FAILED",
+        ...(resultCode === 0
+          ? {}
+          : {
+              failureReason: promptFailureReason(
+                String(resultCode),
+                typeof callback["ResultDesc"] === "string" ? callback["ResultDesc"] : undefined,
+              ),
+            }),
         externalResourceId: checkoutId,
         providerTransactionId: receipt,
         ...(amount === undefined ? {} : { amountMinor: parseMajorAmount(String(amount), "KES") }),
@@ -527,6 +539,20 @@ function safeEqual(left: string, right: string) {
 function base64(value: string) {
   if (typeof btoa === "function") return btoa(value);
   return Buffer.from(value, "utf8").toString("base64");
+}
+
+const promptFailures: Record<string, string> = {
+  "1": "The customer's M-Pesa balance was not enough",
+  "1001": "The customer has another M-Pesa payment in progress; try again shortly",
+  "1019": "The payment prompt expired before the customer answered",
+  "1025": "M-Pesa could not send the prompt; try again",
+  "1032": "The customer cancelled the payment prompt",
+  "1037": "The customer's phone could not be reached",
+  "2001": "The customer entered the wrong M-Pesa PIN",
+};
+
+export function promptFailureReason(code: string, description?: string) {
+  return promptFailures[code] ?? description ?? "M-Pesa did not complete the payment";
 }
 
 // M-Pesa reports TransTime as YYYYMMDDHHmmss in East Africa Time.

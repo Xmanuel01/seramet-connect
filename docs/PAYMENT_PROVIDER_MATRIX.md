@@ -32,6 +32,17 @@ Implemented paths are OAuth, M-Pesa Express request/query for Paybill and Till (
 
 Each restaurant connects its own till or Paybill in Setup Centre. Its Daraja keys are stored encrypted (AES-256-GCM, bound to the restaurant's credential reference) in object storage under `SERAMET_CREDENTIAL_ENCRYPTION_KEY`, never in the database. Platform-wide `SERAMET_MPESA_*` values apply to sandbox connections only. Safaricom cannot send a signature header, so each connection's callback address ends in a random key; a wrong or missing key is refused. Payments customers make straight to the till or Paybill are kept as confirmed, unallocated M-Pesa collections for reconciliation, or linked to a bill when the account reference and exact amount both match an open request. A receipt is recorded once even if it arrives as both an STK result and a C2B notification. Production remains unconfigured until credentials, shortcode, passkey, callback routing and merchant certification pass live verification. The adapter deliberately does not claim refunds, reversals, balances or payouts.
 
+### M-Pesa matching (`src/payments/mpesa-matching.ts`)
+
+Money is applied to a bill automatically only with proof:
+
+- **Receipt code**: a cashier types the M-Pesa code at the POS. If that receipt already reached the till it is applied to the bill at once; if not, the code is held as unverified and the later notification verifies it (a different amount is flagged, not accepted).
+- **Account reference**: a Paybill account number naming exactly one open bill whose balance equals the payment.
+
+Everything else is listed in Payment Control > M-Pesa with open bills of exactly the same balance billed up to 90 minutes before (or 15 minutes after) the payment, for a person to confirm (`applyUnallocatedPayment`, `payments.match`). Applying a received payment links it to the bill and issues the receipt without posting the money again.
+
+Unanswered prompts are checked every minute (and on demand) with the STK query. Cancelled, timed-out, wrong-PIN and insufficient-balance prompts are marked failed with a plain reason so the cashier can send again. A query saying "paid" carries no receipt, so it is noted but never counted as money; the receipt arrives by callback or notification.
+
 ## Pesapal boundary
 
 Only API 3.0 paths are used: RequestToken, RegisterIPN, SubmitOrderRequest, GetTransactionStatus and RefundRequest. An IPN causes authoritative status retrieval. Refund request acceptance maps to PROCESSING. Additional restricted operations remain configuration/certification dependent.
