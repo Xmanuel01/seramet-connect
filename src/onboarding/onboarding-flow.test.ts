@@ -450,6 +450,37 @@ describe.sequential("guided onboarding flow against real records", () => {
     expect(audit.n).toBe(1);
   });
 
+  it("finishing a resumed onboarding again creates no duplicate accounts or templates", async () => {
+    const { provisioned, setup } = await onboard("resume-twice", {
+      menu: true,
+      noTax: false,
+      trackStock: true,
+    });
+    const counts = () =>
+      ["accounts", "setup_account_mappings", "document_templates"].map(
+        (table) =>
+          (
+            db.sqlite
+              .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id=?`)
+              .get(provisioned.tenantId) as { n: number }
+          ).n,
+      );
+    const before = counts();
+    const flow = new LocationCurrencyService(db, actor(provisioned));
+    const readiness = await setup.recalculateReadiness(provisioned.branchId, false);
+    // Every step was saved in this flow, so only the review is asked again.
+    expect(await flow.resumeOnboarding(readiness.overallScoreBps)).toMatchObject({
+      status: "IN_PROGRESS",
+      currentStep: step("review"),
+    });
+    await flow.saveOnboardingStep({
+      step: step("review"),
+      action: "COMPLETE",
+      response: { confirmed: true, standardAccounts: true },
+    });
+    expect(counts()).toEqual(before);
+  });
+
   it("creates and updates branch stations with audit, scoped to the actor", async () => {
     const provisioned = await register("flow-stations", "Flow Station Kitchen");
     const owner = actor(provisioned);
