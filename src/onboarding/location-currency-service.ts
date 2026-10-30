@@ -16,10 +16,19 @@ import type {
   OnboardingStepInput,
   OnboardingWizardState,
 } from "@/onboarding/location-currency-types";
+import {
+  ONBOARDING_FLOW_MARKER,
+  ONBOARDING_FLOW_VERSION,
+  ONBOARDING_REVIEW_STEP,
+  businessTypePresets,
+  onboardingStep,
+  requiredOnboardingStepNumbers,
+  translateLegacyProgress,
+  weekDays,
+} from "@/onboarding/onboarding-steps";
+import { standardChartStatements, starterTemplateStatements } from "@/onboarding/starter-setup";
 
 type DbRow = Record<string, unknown>;
-
-const requiredOnboardingSteps = [5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 export class LocationCurrencyService {
   constructor(
@@ -78,11 +87,12 @@ export class LocationCurrencyService {
           .first<DbRow>()
       : null;
     const canChangeBaseCurrency = !(await this.hasFinancialActivity());
+    const flow = storedProgress(progress);
     return {
-      currentStep: integer(progress["current_step"]),
-      status: text(progress["status"]) as OnboardingWizardState["status"],
-      completedSteps: parseNumberArray(text(progress["completed_steps_json"])),
-      responses: parseObject(text(progress["responses_json"])),
+      currentStep: flow.currentStep,
+      status: flow.status,
+      completedSteps: flow.completedSteps,
+      responses: flow.responses,
       version: integer(progress["version"]),
       location: location ? mapLocation(location) : null,
       suggestedCurrency: suggestedCurrency ? mapCurrency(suggestedCurrency) : null,
@@ -108,15 +118,23 @@ export class LocationCurrencyService {
       throw invalidTransition("Completed onboarding can only be reopened through Back");
     }
 
-    const completed = new Set(parseNumberArray(text(current["completed_steps_json"])));
-    const responses = parseObject(text(current["responses_json"]));
+    if (!Number.isInteger(input.step) || !onboardingStep(input.step)) {
+      throw validation("Unknown onboarding step");
+    }
+    // Progress saved by the previous flow is rewritten in the current numbering on this save.
+    const flow = storedProgress(current);
+    const completed = new Set(flow.completedSteps);
+    const responses: Record<string, unknown> = {
+      ...flow.responses,
+      [ONBOARDING_FLOW_MARKER]: ONBOARDING_FLOW_VERSION,
+    };
     const statements: D1PreparedStatement[] = [];
-    let currentStep = integer(current["current_step"]);
+    let currentStep = flow.currentStep;
     let status: OnboardingWizardState["status"] = "IN_PROGRESS";
     let eventAction: "SAVED" | "CONFIRMED" | "INVALIDATED" | "COMPLETED" = "SAVED";
 
     if (input.action === "BACK") {
-      currentStep = Math.max(5, input.step - 1);
+      currentStep = Math.max(1, input.step - 1);
       status = "IN_PROGRESS";
       eventAction = "INVALIDATED";
     } else {
@@ -124,18 +142,21 @@ export class LocationCurrencyService {
       statements.push(...(await this.stepStatements(input.step, input.response)));
       responses[String(input.step)] = input.response;
       completed.add(input.step);
-      currentStep = Math.min(20, input.step + 1);
-      if (input.step === 6 || input.step === 7) eventAction = "CONFIRMED";
+      currentStep = Math.min(ONBOARDING_REVIEW_STEP, input.step + 1);
+      if (input.step === 1 || input.step === 2) eventAction = "CONFIRMED";
     }
 
     if (input.action === "COMPLETE") {
-      if (input.step !== 20) throw validation("Only the review step can complete onboarding");
-      const missing = requiredOnboardingSteps.filter((step) => !completed.has(step));
+      if (input.step !== ONBOARDING_REVIEW_STEP)
+        throw validation("Only the review step can complete onboarding");
+      const missing = requiredOnboardingStepNumbers.filter((step) => !completed.has(step));
       if (missing.length) {
-        throw validation(`Complete required onboarding steps first: ${missing.join(", ")}`);
+        throw validation(
+          `Complete these steps first: ${missing.map((step) => onboardingStep(step)!.title).join("; ")}`,
+        );
       }
       status = "COMPLETED";
-      currentStep = 20;
+      currentStep = ONBOARDING_REVIEW_STEP;
       eventAction = "COMPLETED";
     }
 
@@ -474,18 +495,153 @@ export class LocationCurrencyService {
     return mapQuote(created);
   }
 
-  private async stepStatements(step: number, response: Record<string, unknown>) {
-    if (step === 5) return this.locationDraftStatements(response);
-    if (step === 6) return this.locationConfirmationStatements(response);
-    if (step === 7) return this.currencyStatements(response);
-    if (step === 9) return this.branchStatements(response);
-    if (step === 10) return this.branchLocationStatements(response);
-    if (step === 11)
-      return this.branchPolicyStatements("operating_hours_json", response["operatingHours"]);
-    if (step === 12)
-      return this.branchPolicyStatements("service_modes_json", response["serviceModes"]);
-    validateGenericStep(step, response);
-    return [];
+  private async stepStatements(
+    step: number,
+    response: Record<string, unknown>,
+  ): Promise<D1PreparedStatement[]> {
+    switch (onboardingStep(step)?.id) {
+      case "location":
+        if (response["confirmed"] !== true)
+          throw validation("Confirm the business location to continue");
+        return [
+          ...(await this.locationDraftStatements(response)),
+          ...(await this.locationConfirmationStatements(
+            requiredCode(response["countryCode"], 2, "Country"),
+          )),
+        ];
+      case "currency":
+        return this.currencyStatements(response);
+      case "businessType":
+        if (!Object.hasOwn(businessTypePresets, text(response["businessType"])))
+          throw validation("Choose the type of business");
+        return this.stockTrackingStatements(response["trackStock"] === true);
+      case "branch":
+        return [
+          ...(await this.branchStatements(response)),
+          ...(await this.branchLocationStatements(response)),
+        ];
+      case "hours":
+        return this.branchPolicyStatements(
+          "operating_hours_json",
+          operatingHours(response["operatingHours"]),
+        );
+      case "serviceModes":
+        return this.branchPolicyStatements(
+          "service_modes_json",
+          await this.configuredServiceModes(response["serviceModes"]),
+        );
+      case "tax":
+        if (response["noTax"] !== true && !(await this.count("tax_service_rules")))
+          throw validation("Add your tax rate, or choose that you do not charge tax");
+        return [];
+      case "payments":
+        if (!(await this.count("payment_methods")))
+          throw validation("Turn on at least one payment method");
+        return [];
+      case "stations":
+        if (!(await this.count("stations", this.actor.branchId)))
+          throw validation("Add at least one preparation station for this branch");
+        return [];
+      case "menu":
+        if (response["later"] !== true && !(await this.count("menu_catalog_items")))
+          throw validation("Add a menu item, or choose to set up the menu later");
+        return [];
+      case "team":
+        return [];
+      case "review":
+        if (response["confirmed"] !== true)
+          throw validation("Review and confirm the onboarding summary");
+        return this.starterSetupStatements(response["standardAccounts"] === true);
+      default:
+        throw validation("Unknown onboarding step");
+    }
+  }
+
+  /**
+   * Restaurants that start selling before tracking stock do not carry inventory, recipe or
+   * opening-stock tasks in readiness; they can turn tracking on later in Setup Centre.
+   */
+  private stockTrackingStatements(trackStock: boolean) {
+    const branchId = this.actor.branchId;
+    this.assertBranch(branchId);
+    const stamp = new Date().toISOString();
+    return [
+      this.db
+        .prepare(
+          `UPDATE branch_operating_profiles SET inventory_enabled=?,recipes_required=?,updated_by=?,updated_at=?
+           WHERE tenant_id=? AND branch_id=?`,
+        )
+        .bind(
+          trackStock ? 1 : 0,
+          trackStock ? 1 : 0,
+          this.actor.id,
+          stamp,
+          this.actor.tenantId,
+          branchId,
+        ),
+      this.db
+        .prepare(
+          "UPDATE tenant_onboarding_profiles SET accounting_mode=?,updated_by=?,updated_at=? WHERE tenant_id=?",
+        )
+        .bind(trackStock ? "PERPETUAL" : "PERIODIC", this.actor.id, stamp, this.actor.tenantId),
+    ];
+  }
+
+  /** Default document layouts, plus the standard chart of accounts when the owner approves it. */
+  private async starterSetupStatements(standardAccounts: boolean) {
+    const statements = await starterTemplateStatements(this.db, this.actor.tenantId);
+    if (!standardAccounts) return statements;
+    this.require(permissions.setupAccountingManage);
+    const tenant = await this.db
+      .prepare("SELECT default_currency FROM tenants WHERE id=?")
+      .bind(this.actor.tenantId)
+      .first<DbRow>();
+    const currency = text(tenant?.["default_currency"]);
+    if (!currency) throw validation("Choose the restaurant currency before setting up accounts");
+    const stamp = new Date().toISOString();
+    statements.push(
+      ...(await standardChartStatements(this.db, {
+        tenantId: this.actor.tenantId,
+        actorId: this.actor.id,
+        currency,
+        stamp,
+      })),
+      this.audit("STANDARD_CHART_APPROVED", "ACCOUNTING", "standard-restaurant-chart", {
+        currency,
+        approvedBy: this.actor.id,
+      }),
+    );
+    return statements;
+  }
+
+  /** Active rows of the tenant's own configuration; the onboarding steps check real records. */
+  private async count(
+    table: "tax_service_rules" | "payment_methods" | "stations" | "menu_catalog_items",
+    branchId?: string,
+  ) {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM ${table} WHERE tenant_id=? AND active=1${
+          branchId ? " AND branch_id=?" : ""
+        }`,
+      )
+      .bind(...(branchId ? [this.actor.tenantId, branchId] : [this.actor.tenantId]))
+      .first<DbRow>();
+    return integer(row?.["total"]);
+  }
+
+  private async configuredServiceModes(value: unknown) {
+    const codes = [...new Set(stringArray(value).map((code) => code.trim().toUpperCase()))];
+    if (!codes.length) throw validation("Select at least one service mode");
+    const channels = await this.db
+      .prepare("SELECT code FROM order_channels WHERE tenant_id=? AND active=1")
+      .bind(this.actor.tenantId)
+      .all<DbRow>();
+    const active = new Set((channels.results ?? []).map((row) => text(row["code"])));
+    const missing = codes.filter((code) => !active.has(code));
+    if (missing.length)
+      throw validation(`These service modes are not set up yet: ${missing.join(", ")}`);
+    return codes;
   }
 
   private async locationDraftStatements(response: Record<string, unknown>) {
@@ -539,21 +695,13 @@ export class LocationCurrencyService {
     ];
   }
 
-  private async locationConfirmationStatements(response: Record<string, unknown>) {
-    if (response["confirmed"] !== true)
-      throw validation("Confirm the business location to continue");
-    const location = await this.db
-      .prepare(
-        "SELECT country_code FROM tenant_business_locations WHERE tenant_id=? AND status='DRAFT'",
-      )
-      .bind(this.actor.tenantId)
-      .first<DbRow>();
-    if (!location) throw validation("Save the business location before confirming it");
+  // Runs in the same batch as locationDraftStatements, so it confirms the draft written there.
+  private async locationConfirmationStatements(countryCode: string) {
     const country = await this.db
       .prepare(
         "SELECT default_timezone,default_locale FROM country_reference WHERE code=? AND active=1",
       )
-      .bind(text(location["country_code"]))
+      .bind(countryCode)
       .first<DbRow>();
     if (!country) throw validation("The selected country is unavailable");
     const tenant = await this.db
@@ -561,7 +709,7 @@ export class LocationCurrencyService {
       .bind(this.actor.tenantId)
       .first<DbRow>();
     const payload = parseObject(text(tenant?.["payload_json"]));
-    payload["countryCode"] = text(location["country_code"]);
+    payload["countryCode"] = countryCode;
     const stamp = new Date().toISOString();
     return [
       this.db
@@ -583,7 +731,7 @@ export class LocationCurrencyService {
         .prepare(
           "UPDATE tenant_onboarding_profiles SET country_code=?,updated_by=?,updated_at=? WHERE tenant_id=?",
         )
-        .bind(text(location["country_code"]), this.actor.id, stamp, this.actor.tenantId),
+        .bind(countryCode, this.actor.id, stamp, this.actor.tenantId),
     ];
   }
 
@@ -1089,23 +1237,38 @@ function currencyConfiguration(response: Record<string, unknown>, code: string) 
   } as const;
 }
 
-function validateGenericStep(step: number, response: Record<string, unknown>) {
-  if (step === 8) requiredText(response["businessType"], "Business type", 80);
-  if (step === 13 && !["CONFIGURE_NOW", "DO_LATER"].includes(text(response["choice"]))) {
-    throw validation("Choose whether to configure tax now or later");
+function storedProgress(row: DbRow) {
+  return translateLegacyProgress({
+    currentStep: integer(row["current_step"]),
+    status: text(row["status"]) === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS",
+    completedSteps: parseNumberArray(text(row["completed_steps_json"])),
+    responses: parseObject(text(row["responses_json"])),
+  });
+}
+
+const timeOfDay = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Every weekday with valid times; a close earlier than the open means trading past midnight. */
+function operatingHours(value: unknown) {
+  if (!isObject(value)) throw validation("Configure opening hours to continue");
+  const hours: Record<string, { open: string; close: string; closed: boolean }> = {};
+  for (const day of weekDays) {
+    const entry = value[day];
+    if (!isObject(entry)) throw validation(`Opening hours for ${day} are missing`);
+    const closed = entry["closed"] === true;
+    const open = text(entry["open"]);
+    const close = text(entry["close"]);
+    if (!closed && (!timeOfDay.test(open) || !timeOfDay.test(close) || open === close))
+      throw validation(`Enter different opening and closing times for ${day}`);
+    hours[day] = { open, close, closed };
   }
-  if (step === 14 && !["CONFIGURE_NOW", "DO_LATER"].includes(text(response["choice"]))) {
-    throw validation("Choose whether to configure payment methods now or later");
-  }
-  if (step >= 15 && step <= 19 && !text(response["choice"])) {
-    throw validation("Choose an option to continue");
-  }
-  if (step === 20 && response["confirmed"] !== true)
-    throw validation("Review and confirm the onboarding summary");
+  if (Object.values(hours).every((day) => day.closed))
+    throw validation("Open the branch on at least one day");
+  return hours;
 }
 
 function redactStepResponse(step: number, response: Record<string, unknown>) {
-  if (step !== 5 && step !== 10) return response;
+  if (step !== 1 && step !== 4) return response;
   return {
     countryCode: response["countryCode"],
     cityProvided: Boolean(response["city"]),

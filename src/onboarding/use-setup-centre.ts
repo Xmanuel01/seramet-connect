@@ -95,6 +95,7 @@ export type SetupOptions = {
   documentTemplates: Array<Record<string, unknown>>;
   inventoryItems: Array<Record<string, unknown>>;
   units: Array<Record<string, unknown>>;
+  taxRules: Array<Record<string, unknown>>;
 };
 
 export type SetupMenuCatalogItem = {
@@ -174,6 +175,7 @@ export function useSetupCentre() {
     documentTemplates: [],
     inventoryItems: [],
     units: [],
+    taxRules: [],
   });
   const [mappings, setMappings] = useState<Array<Record<string, unknown>>>([]);
   const [openingStock, setOpeningStock] = useState<Array<Record<string, unknown>>>([]);
@@ -370,6 +372,7 @@ export function useSetupCentre() {
       documentTemplates: [],
       inventoryItems: [],
       units: [],
+      taxRules: [],
     });
     setOnboarding(null);
     setHistoricalSalesState(null);
@@ -394,10 +397,10 @@ export function useSetupCentre() {
     structureRefreshGuard,
   ]);
 
-  const post = useCallback(
-    async <T>(path: string, body: unknown) => {
+  const send = useCallback(
+    async <T>(path: string, body: unknown, method: "POST" | "PUT" | "PATCH" = "POST") => {
       const response = await authenticatedFetch(path, {
-        method: "POST",
+        method,
         headers,
         body: JSON.stringify(body),
       });
@@ -413,6 +416,16 @@ export function useSetupCentre() {
     },
     [headers],
   );
+
+  const post = useCallback(<T>(path: string, body: unknown) => send<T>(path, body), [send]);
+
+  // Light refresh for the guided onboarding: stations, roles and tax rules only.
+  const refreshOptions = useCallback(async () => {
+    if (scopeRef.current !== scopeKey) return;
+    const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
+    const result = await get<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`);
+    if (scopeRef.current === scopeKey) setOptions(result.options);
+  }, [branchId, get, isAllBranches, scopeKey]);
 
   const command = useCallback(
     async <T>(path: string, body: unknown) => {
@@ -756,6 +769,8 @@ export function useSetupCentre() {
     unavailableResources,
     refresh,
     command,
+    send,
+    refreshOptions,
     saveOnboardingStep,
     previewImport,
     recentMenuImports,

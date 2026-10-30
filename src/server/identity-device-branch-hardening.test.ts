@@ -419,7 +419,7 @@ describe.sequential("identity, device and branch hardening", () => {
     // branch, nor require marking the *entire tenant* LIVE before branch two.
     await db
       .prepare(
-        "UPDATE onboarding_wizard_progress SET status='COMPLETED',current_step=20 WHERE tenant_id=?",
+        "UPDATE onboarding_wizard_progress SET status='COMPLETED',current_step=12 WHERE tenant_id=?",
       )
       .bind(provisioned.tenantId)
       .run();

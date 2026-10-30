@@ -1,5 +1,6 @@
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
 import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
+import { isCurrentFlow, onboardingStepNumber } from "@/onboarding/onboarding-steps";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
 import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
@@ -56,6 +57,7 @@ import {
   type SetupSection,
   type SetupStage,
   type SetupSummary,
+  type StationSetupInput,
   type TaxServiceRuleInput,
   type TestRun,
 } from "@/onboarding/types";
@@ -557,7 +559,7 @@ export class OnboardingService {
   async setupOptions(branchId?: string) {
     this.require(permissions.setupView);
     if (branchId) await this.assertBranch(branchId);
-    const [accounts, roles, warehouses, stations, templates, inventoryItems, units] =
+    const [accounts, roles, warehouses, stations, templates, inventoryItems, units, taxRules] =
       await Promise.all([
         this.db
           .prepare(
@@ -601,6 +603,13 @@ export class OnboardingService {
           )
           .bind(this.actor.tenantId)
           .all(),
+        this.db
+          .prepare(
+            `SELECT id,branch_id,rule_type,code,name,rate_bps,calculation_mode,effective_from,active
+             FROM tax_service_rules WHERE tenant_id=? AND active=1 ORDER BY rule_type,code LIMIT 200`,
+          )
+          .bind(this.actor.tenantId)
+          .all(),
       ]);
     return {
       accounts: accounts.results ?? [],
@@ -617,6 +626,10 @@ export class OnboardingService {
       }),
       inventoryItems: inventoryItems.results ?? [],
       units: units.results ?? [],
+      taxRules: (taxRules.results ?? []).filter((row) => {
+        const target = string((row as Record<string, unknown>)["branch_id"]);
+        return !target || this.canReadBranch(target);
+      }),
     };
   }
 
@@ -3192,6 +3205,42 @@ export class OnboardingService {
     return { id };
   }
 
+  /** Create or update a branch preparation station; stations route orders to kitchen screens. */
+  async configureStation(input: StationSetupInput) {
+    this.require(permissions.setupManage);
+    await this.assertBranch(input.branchId);
+    const existing = await this.db
+      .prepare("SELECT id FROM stations WHERE tenant_id=? AND branch_id=? AND code=?")
+      .bind(this.actor.tenantId, input.branchId, input.code)
+      .first<{ id: string }>();
+    const id = existing?.id ?? stableId("station", `${input.branchId}:${input.code}`);
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO stations (tenant_id,id,branch_id,code,name,station_type,active,payload_json)
+           VALUES (?,?,?,?,?,?,?,'{}')
+           ON CONFLICT(tenant_id,id) DO UPDATE SET name=excluded.name,
+             station_type=excluded.station_type,active=excluded.active`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.code,
+          input.name,
+          input.stationType,
+          bool(input.active ?? true),
+        ),
+      this.audit(existing ? "STATION_UPDATED" : "STATION_CREATED", "STATION", id, {
+        branchId: input.branchId,
+        code: input.code,
+        stationType: input.stationType,
+        active: input.active ?? true,
+      }),
+    ]);
+    return { id, created: !existing };
+  }
+
   async configureProviderConnection(input: ProviderSetupInput) {
     this.require(permissions.settingsIntegrationManage);
     if (input.branchId) await this.assertBranch(input.branchId);
@@ -4403,7 +4452,9 @@ export class OnboardingService {
       "Preview and commit the menu import",
       { evidence: { count: counts.menuItems } },
     );
-    const branchPolicy = branchId ? await this.branchPolicy(branchId) : null;
+    const branchPolicy = branchId
+      ? await this.branchPolicy(branchId)
+      : await this.combinedBranchPolicy();
     const inventoryApplicable = branchPolicy?.inventory_enabled !== 0;
     if (inventoryApplicable)
       add(
@@ -4429,14 +4480,17 @@ export class OnboardingService {
         { evidence: { critical: critical.length, total: validationResult.issues.length } },
       );
     } else rows.push(notApplicable("RECIPES_UOM", "RECIPES_NOT_REQUIRED", branchId));
-    add(
-      "SUPPLIERS",
-      "SUPPLIER_MASTER_AVAILABLE",
-      counts.suppliers > 0,
-      `${counts.suppliers} active supplier(s) found`,
-      "Import suppliers when procurement is enabled",
-      { warning: true, evidence: { count: counts.suppliers } },
-    );
+    // Suppliers feed procurement, which only applies once stock is tracked.
+    if (inventoryApplicable)
+      add(
+        "SUPPLIERS",
+        "SUPPLIER_MASTER_AVAILABLE",
+        counts.suppliers > 0,
+        `${counts.suppliers} active supplier(s) found`,
+        "Import suppliers when procurement is enabled",
+        { warning: true, evidence: { count: counts.suppliers } },
+      );
+    else rows.push(notApplicable("SUPPLIERS", "SUPPLIERS_NOT_REQUIRED", branchId));
     const mappingCounts = await this.db
       .prepare(
         `SELECT COUNT(*) count FROM setup_account_mappings WHERE tenant_id=? AND status='CONFIGURED' AND finance_signoff_status='APPROVED' AND requirement='REQUIRED' AND (branch_id=? OR branch_id IS NULL)`,
@@ -4462,13 +4516,16 @@ export class OnboardingService {
       this.actor.tenantId,
       branchId ?? null,
     );
+    const noTaxSignedOff = taxCount === 0 && (await this.ownerSignedOffNoTax());
     add(
       "TAX_SERVICE",
       "TAX_SERVICE_REVIEWED",
-      taxCount > 0,
-      `${taxCount} active tax/service rule(s) found`,
+      taxCount > 0 || noTaxSignedOff,
+      noTaxSignedOff
+        ? "The owner confirmed during onboarding that no tax or service charge applies"
+        : `${taxCount} active tax/service rule(s) found`,
       "Configure tax and service charge rules or explicitly sign off not applicable",
-      { warning: true, evidence: { count: taxCount } },
+      { warning: true, evidence: { count: taxCount, noTaxSignedOff } },
     );
     const paymentCount = await count(
       this.db,
@@ -6478,6 +6535,41 @@ export class OnboardingService {
         now(),
       );
   }
+  /** Tenant-wide view: a requirement applies when any active branch requires it. */
+  private async combinedBranchPolicy() {
+    return this.db
+      .prepare(
+        `SELECT MAX(p.inventory_enabled) inventory_enabled,MAX(p.recipes_required) recipes_required,
+                MAX(p.payments_required) payments_required,MAX(p.printing_required) printing_required,
+                MAX(p.kds_required) kds_required
+         FROM branch_operating_profiles p
+         JOIN branches b ON b.tenant_id=p.tenant_id AND b.id=p.branch_id AND b.active=1
+         WHERE p.tenant_id=?`,
+      )
+      .bind(this.actor.tenantId)
+      .first<{
+        inventory_enabled: number | null;
+        recipes_required: number | null;
+        payments_required: number | null;
+        printing_required: number | null;
+        kds_required: number | null;
+      }>();
+  }
+  /** The guided onboarding tax step records an explicit "no tax charged" answer. */
+  private async ownerSignedOffNoTax() {
+    const progress = await this.db
+      .prepare("SELECT responses_json FROM onboarding_wizard_progress WHERE tenant_id=?")
+      .bind(this.actor.tenantId)
+      .first<{ responses_json: string }>();
+    try {
+      const responses = JSON.parse(progress?.responses_json ?? "{}") as Record<string, unknown>;
+      const tax = responses[String(onboardingStepNumber("tax"))] as
+        Record<string, unknown> | undefined;
+      return isCurrentFlow(responses) && tax?.["noTax"] === true;
+    } catch {
+      return false;
+    }
+  }
   private async branchPolicy(branchId: string) {
     return this.db
       .prepare("SELECT * FROM branch_operating_profiles WHERE tenant_id=? AND branch_id=?")
@@ -6934,7 +7026,7 @@ async function count(db: D1Database, query: string, ...values: unknown[]) {
     .first<CountRow>();
   return number(row?.count);
 }
-function stableId(prefix: string, value: string) {
+export function stableId(prefix: string, value: string) {
   return `${prefix}-${value
     .trim()
     .toLowerCase()

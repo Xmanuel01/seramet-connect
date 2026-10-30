@@ -248,6 +248,15 @@ export type TaxServiceRuleInput = {
   active?: boolean;
 };
 
+export type StationSetupInput = {
+  branchId: string;
+  code: string;
+  name: string;
+  stationType:
+    "KITCHEN" | "GRILL" | "FRYER" | "BAR" | "COFFEE" | "DESSERT" | "PASS" | "DISPATCH" | "OTHER";
+  active?: boolean;
+};
+
 export type ProviderSetupInput = {
   id?: string;
   branchId?: string;

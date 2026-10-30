@@ -29,6 +29,7 @@ import {
   reasonRequestSchema,
   setupTestRequestSchema,
   setupWeightSchema,
+  stationSetupSchema,
   subscriptionLifecycleSchema,
   taxServiceRuleSchema,
 } from "@/onboarding/schemas";
@@ -46,8 +47,10 @@ import type {
   OpeningStockInput,
   OrganisationProvisionInput,
   ProviderSetupInput,
+  StationSetupInput,
   TaxServiceRuleInput,
 } from "@/onboarding/types";
+import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { ServerOperationError } from "@/server/errors";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
@@ -426,6 +429,14 @@ export async function handleOnboardingApi(
       },
       201,
     );
+  }
+  if (url.pathname === "/api/seramet/setup/stations" && request.method === "POST") {
+    const station = await service.configureStation(
+      await parse<StationSetupInput>(request, stationSetupSchema),
+    );
+    // Order routing and kitchen screens read stations from the cached configuration.
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    return json({ ok: true, station }, station.created ? 201 : 200);
   }
   if (url.pathname === "/api/seramet/setup/provider-connections" && request.method === "POST") {
     return json(
