@@ -1,0 +1,8 @@
+[
+  {
+    "id": "GHSA-g3hv-75wg-m249",
+    "package": "minimatch",
+    "expires": "2026-12-31",
+    "reason": "Dev-only lint tooling (eslint, typescript-eslint) pins minimatch below 11.0.1 and no patched eslint release exists yet; forcing minimatch 11 breaks eslint's default import. Production audit is clean."
+  }
+]
