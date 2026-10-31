@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   handlePrintingApi,
   deriveBridgeSigningKey,
+  printSigningMaster,
   authorizeDelivery,
   signPrintJob,
 } from "@/server/printing-api";
@@ -732,4 +733,16 @@ it("authorizes only the exact claimed immutable station obligation and renders i
   expect(text).toContain("REPRINT");
   expect(text).toContain("Reprinted by: Reviewing manager");
   expect(text).not.toContain(`Reprinted by: ${state.orders[0]!.cashier}`);
+});
+
+it("derives a separate print signing master when no explicit key is configured", async () => {
+  const jwt = "j".repeat(48);
+  const derived = await printSigningMaster({ SERAMET_JWT_SECRET: jwt });
+  expect(derived).toMatch(/^[0-9a-f]{64}$/);
+  expect(derived).not.toContain(jwt);
+  expect(await printSigningMaster({ SERAMET_JWT_SECRET: jwt })).toBe(derived);
+  expect(
+    await printSigningMaster({ SERAMET_JWT_SECRET: jwt, SERAMET_PRINT_SIGNING_KEY: signingKey }),
+  ).toBe(signingKey);
+  expect(await printSigningMaster({ SERAMET_JWT_SECRET: "short" })).toBe("");
 });

@@ -265,7 +265,11 @@ export function PrinterAdministration() {
       body: JSON.stringify({ bridgeId }),
       signal: AbortSignal.timeout(10000),
     });
-    return response.ok ? ((await response.json()) as BridgeEnrollment) : null;
+    if (response.ok) return (await response.json()) as BridgeEnrollment;
+    // 403 can mean this bridge id is not allowed, so the caller may retry with a new one.
+    if (response.status === 403) return null;
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message || `Could not connect this PC (error ${response.status}).`);
   };
   const connectThisPc = async () => {
     setBusy(true);
