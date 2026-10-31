@@ -56,7 +56,8 @@ export async function handleWorkerQueue(
   env: SerametEnv,
 ) {
   if (!env.SERAMET_DB) throw new Error("Durable worker requires authoritative database");
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+  // Jobs act on payments and messages, so they never use a cached copy of configuration.
+  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
   for (const message of batch.messages) {
     try {
       await processMessage(message, env);
@@ -329,7 +330,7 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
   if (!env.SERAMET_DB || !env.SERAMET_WORK_QUEUE) {
     throw new Error("Scheduled work requires authoritative database and durable queue");
   }
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
   const tenants = await env.SERAMET_DB.prepare("SELECT id FROM tenants WHERE active = 1").all<{
     id: string;
   }>();

@@ -236,7 +236,11 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     const repo = createTransactionRepository(env.SERAMET_DB, env);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
-    if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+    // Reads may use configuration cached for a few seconds. Anything that changes state (a
+    // sale, a payment, a provider callback, a setting) loads it fresh, because another server
+    // may still cache a payment method or permission that was just disabled.
+    if (env.SERAMET_DB)
+      await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, request.method !== "GET");
     const closingReportResponse = await handleDailyClosingApi(request, env, repo);
     if (closingReportResponse) return closingReportResponse;
     const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
