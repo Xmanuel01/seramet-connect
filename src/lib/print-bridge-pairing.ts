@@ -74,13 +74,44 @@ export async function pairLocalBridge({
     body: JSON.stringify({ ...enrollment, token }),
     signal: AbortSignal.timeout(15000),
   });
-  if (response.status === 409)
+  if (response.ok) return;
+  const code = ((await response.json().catch(() => null)) as { code?: string } | null)?.code;
+  if (code === "JOBS_IN_PROGRESS")
     throw new Error(
-      "This computer's print bridge is connected from another browser. To move it here, open " +
-        "Windows Settings > Apps, uninstall Seramet Print Bridge, run the installer again, " +
-        "then click Connect this PC.",
+      "This computer is still sending print jobs for another branch. Wait for them to finish, " +
+        "then click Connect this PC again.",
     );
-  if (!response.ok) throw new Error("The print bridge did not accept the connection.");
+  if (code === "ALREADY_PAIRED")
+    throw Object.assign(
+      new Error(
+        "This computer's print bridge is connected from another browser. To move it here, open " +
+          "Windows Settings > Apps, uninstall Seramet Print Bridge, run the installer again, " +
+          "then click Connect this PC.",
+      ),
+      { code },
+    );
+  throw new Error("The print bridge did not accept the connection.");
+}
+
+// The token a pairing attempt sends is kept until the attempt is confirmed, so a
+// pairing whose response was lost can still be taken over by the next attempt.
+const pendingTokenKey = "seramet.print-bridge.pending-token.v1";
+
+export function readPendingBridgeToken() {
+  try {
+    return window.localStorage.getItem(pendingTokenKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function writePendingBridgeToken(token: string | null) {
+  try {
+    if (token) window.localStorage.setItem(pendingTokenKey, token);
+    else window.localStorage.removeItem(pendingTokenKey);
+  } catch {
+    /* Without storage a lost pairing response needs a reinstall, as before. */
+  }
 }
 
 export function randomBridgeToken() {

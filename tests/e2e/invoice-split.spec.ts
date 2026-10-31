@@ -273,7 +273,6 @@ test("Connect this PC pairs the local bridge with a server enrollment and detect
     expect(route.request().headers().authorization).toBeUndefined();
     expect(body.tenantId).toBe(fixture.tenantId);
     expect(body.branchId).toBe(fixture.firstBranchId);
-    expect(body.signingKey.length).toBeGreaterThanOrEqual(32);
     paired = body;
     return route.fulfill({
       contentType: "application/json",
@@ -295,10 +294,17 @@ test("Connect this PC pairs the local bridge with a server enrollment and detect
   await page.goto("/seramet-printers");
   const thisPc = page.getByRole("region", { name: "This computer" });
   await expect(thisPc).toContainText("Print bridge 3.1.0 is ready on FRONT DESK");
+  const enrollmentResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/seramet/printing/enrollment") && response.status() === 200,
+  );
   await thisPc.getByRole("button", { name: "Connect this PC", exact: true }).click();
+  const enrollment = await (await enrollmentResponse).json();
   await expect(page.getByText("Front Desk Thermal", { exact: true })).toBeVisible();
   await expect(thisPc).toContainText("Connected: FRONT DESK");
-  expect(paired!.bridgeId).toMatch(/^front-desk-[0-9a-f]{6}$/);
+  expect(paired!.bridgeId).toMatch(/^front-desk-[0-9a-f]{12}$/);
+  expect(enrollment.bridgeId).toBe(paired!.bridgeId);
+  expect((paired as unknown as { signingKey: string }).signingKey).toBe(enrollment.signingKey);
   expect(paired!.token).toMatch(/^[0-9a-f]{64}$/);
   expect(paired!.authorizationEndpoint).toBe(
     `${new URL(page.url()).origin}/api/seramet/printing/consume`,

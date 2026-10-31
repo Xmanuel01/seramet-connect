@@ -29,6 +29,11 @@ export async function discoverInstalledPrinters(
       : AbortSignal.timeout(7000),
     cache: "no-store",
   });
+  if (response.status === 401)
+    throw Object.assign(
+      new Error("This computer's print bridge is connected from another browser or restaurant."),
+      { code: "BRIDGE_PAIRED_ELSEWHERE" },
+    );
   if (!response.ok)
     throw new Error(
       "Installed printers could not be detected. Check the local bridge and Windows printer setup.",
@@ -40,7 +45,10 @@ export async function discoverInstalledPrinters(
     typeof body.bridgeId !== "string" ||
     !body.bridgeId
   )
-    throw new Error("This bridge is not enrolled for the selected restaurant and branch.");
+    throw Object.assign(
+      new Error("This bridge is not enrolled for the selected restaurant and branch."),
+      { code: "BRIDGE_PAIRED_ELSEWHERE" },
+    );
   if (
     !Array.isArray(body.printers) ||
     body.printers.length > 256 ||

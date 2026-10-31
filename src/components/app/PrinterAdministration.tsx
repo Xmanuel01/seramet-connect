@@ -16,6 +16,8 @@ import {
   pairLocalBridge,
   probeLocalBridge,
   randomBridgeToken,
+  readPendingBridgeToken,
+  writePendingBridgeToken,
   type BridgeEnrollment,
   type LocalBridgeProbe,
 } from "@/lib/print-bridge-pairing";
@@ -76,6 +78,7 @@ export function PrinterAdministration() {
     printers: DiscoveredPrinter[];
   } | null>(null);
   const [discoveryNotice, setDiscoveryNotice] = useState("");
+  const [pairedElsewhere, setPairedElsewhere] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const inventoryScope = `${activeTenantId}:${branchId}:${installedBridge.endpoint}:${installedBridge.token}:${installedBridge.enabled}`;
   const inventoryScopeRef = useRef(inventoryScope);
@@ -86,6 +89,7 @@ export function PrinterAdministration() {
       if (!mayManage) return;
       setDiscovering(true);
       setDiscoveryNotice("");
+      setPairedElsewhere(false);
       try {
         const result = await discoverInstalledPrinters(
           installedBridge,
@@ -103,6 +107,9 @@ export function PrinterAdministration() {
       } catch (error) {
         if (inventoryScopeRef.current === requestedScope && !signal?.aborted) {
           setInventory(null);
+          setPairedElsewhere(
+            (error as { code?: string } | null)?.code === "BRIDGE_PAIRED_ELSEWHERE",
+          );
           setDiscoveryNotice(
             error instanceof Error ? error.message : "Printer discovery unavailable.",
           );
@@ -126,7 +133,7 @@ export function PrinterAdministration() {
   const [thisPc, setThisPc] = useState<LocalBridgeProbe | "checking">("checking");
   const checkThisPc = useCallback(async (signal?: AbortSignal) => {
     setThisPc("checking");
-    const probe = await probeLocalBridge(undefined, signal);
+    const probe = await probeLocalBridge(loadInstalledPrintBridgeConfig().endpoint, signal);
     if (!signal?.aborted) setThisPc(probe);
   }, []);
   useEffect(() => {
@@ -264,7 +271,8 @@ export function PrinterAdministration() {
     setBusy(true);
     setNotice("");
     try {
-      const probe = await probeLocalBridge();
+      const endpoint = installedBridge.endpoint;
+      const probe = await probeLocalBridge(endpoint);
       setThisPc(probe);
       if (probe.state === "missing" || probe.state === "blocked")
         throw new Error("Install and open the Seramet Print Bridge on this computer first.");
@@ -273,13 +281,24 @@ export function PrinterAdministration() {
       enrollment ??= await requestEnrollment(bridgeIdForMachine(probe.machineName));
       if (!enrollment) throw new Error("You do not have permission to connect printers here.");
       const token = randomBridgeToken();
-      await pairLocalBridge({
-        enrollment,
-        token,
-        currentToken: installedBridge.token.length >= 32 ? installedBridge.token : undefined,
-      });
-      const local = { enabled: true, endpoint: installedBridge.endpoint, token };
+      // The saved token, then the one a previous attempt may have committed before its
+      // response was lost.
+      const candidates = [
+        ...new Set([installedBridge.token, readPendingBridgeToken()].filter((t) => t.length >= 32)),
+      ];
+      writePendingBridgeToken(token);
+      for (let index = 0; ; index += 1) {
+        try {
+          await pairLocalBridge({ endpoint, enrollment, token, currentToken: candidates[index] });
+          break;
+        } catch (error) {
+          const alreadyPaired = (error as { code?: string }).code === "ALREADY_PAIRED";
+          if (!alreadyPaired || index + 1 >= candidates.length) throw error;
+        }
+      }
+      const local = { enabled: true, endpoint, token };
       saveInstalledPrintBridgeConfig(local);
+      writePendingBridgeToken(null);
       setBridge(local);
       await checkThisPc();
       setNotice("This computer is connected. Choose its printer below, then run a test receipt.");
@@ -374,9 +393,15 @@ export function PrinterAdministration() {
                           ? "This computer's print bridge does not accept this Seramet address."
                           : thisPc.state === "unpaired"
                             ? `Print bridge ${thisPc.version} is ready on ${thisPc.machineName}. Connect it to this restaurant.`
-                            : installedBridge.enabled && detected
-                              ? `Connected: ${thisPc.machineName} (${thisPc.bridgeId}).`
-                              : `${thisPc.machineName} has a print bridge connected elsewhere. Reconnect it here.`}
+                            : !installedBridge.enabled ||
+                                installedBridge.token.length < 32 ||
+                                pairedElsewhere
+                              ? `${thisPc.machineName} has a print bridge connected elsewhere. Reconnect it here.`
+                              : detected
+                                ? `Connected: ${thisPc.machineName} (${thisPc.bridgeId}).`
+                                : discovering
+                                  ? `Connected: ${thisPc.machineName}. Looking for its printers...`
+                                  : `Connected: ${thisPc.machineName}, but its printers could not be listed. See the message below.`}
                   </p>
                 </div>
               </div>

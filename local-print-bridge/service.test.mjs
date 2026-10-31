@@ -129,7 +129,65 @@ test("the stored pairing is used again after a restart", async (t) => {
   try {
     assert.equal(restarted.paired, true);
     assert.equal(restarted.config.bridgeId, first.bridgeId);
+    await restarted.listen();
+    const printers = await fetch(`http://127.0.0.1:${restarted.server.address().port}/printers`, {
+      headers: { Origin: origin, Authorization: `Bearer ${first.token}` },
+    });
+    assert.equal(printers.status, 200);
   } finally {
     await restarted.close();
   }
+});
+
+test("simultaneous pairings cannot both take an unpaired bridge", async (t) => {
+  const { pair, running } = await service(t);
+  const [first, second] = [enrollment(), enrollment({ bridgeId: "front-desk-pc-9b1c" })];
+  const statuses = (await Promise.all([pair(first), pair(second)])).map((r) => r.status).sort();
+  assert.deepEqual(statuses, [200, 409]);
+  assert.ok([first.token, second.token].includes(running.config.token));
+});
+
+test("re-pairing to another branch is refused while print jobs are in flight", async (t) => {
+  const { pair, running } = await service(t);
+  const first = enrollment();
+  assert.equal((await pair(first)).status, 200);
+  running.bridge.store.db
+    .prepare(
+      "INSERT INTO jobs(id,fingerprint,printer,stage,payload,updated_at) VALUES (?,?,?,?,?,?)",
+    )
+    .run("job-1", "f", "printer", "TRANSMITTING", "{}", new Date().toISOString());
+  const moved = await pair(enrollment({ branchId: "other-branch" }), {
+    Authorization: `Bearer ${first.token}`,
+  });
+  assert.equal(moved.status, 409);
+  assert.equal((await moved.json()).code, "JOBS_IN_PROGRESS");
+  assert.equal(running.config.branchId, "branch");
+  // Reconnecting the same identity keeps the same job store, so it is allowed.
+  const reconnected = await pair(enrollment({ signingKey: first.signingKey }), {
+    Authorization: `Bearer ${first.token}`,
+  });
+  assert.equal(reconnected.status, 200);
+});
+
+test("a request already being served finishes before the bridge is swapped", async (t) => {
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const { call, pair } = await service(t, {
+    bridgeOptions: {
+      consume: async () => undefined,
+      discoverPrinters: async () => {
+        await gate;
+        return [{ name: "Rooftop", driver: "Generic / Text Only" }];
+      },
+    },
+  });
+  const first = enrollment();
+  assert.equal((await pair(first)).status, 200);
+  const printing = call("/printers", { headers: { Authorization: `Bearer ${first.token}` } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const repairing = pair(enrollment(), { Authorization: `Bearer ${first.token}` });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  release();
+  assert.equal((await printing).status, 200);
+  assert.equal((await repairing).status, 200);
 });

@@ -60,17 +60,29 @@ async function stopOtherInstances() {
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }
 
-async function bridgeHealthy() {
+// "ours": this packaged bridge (3.1+) answers; "other": some other program, such as an
+// older hand-started Node bridge, holds the port; "free": nothing is listening.
+async function portState() {
+  let response;
   try {
-    const response = await fetch(`http://127.0.0.1:${PORT}/health`, {
+    response = await fetch(`http://127.0.0.1:${PORT}/health`, {
+      headers: { Origin: DEFAULT_PAIRING_ORIGINS[0] },
       signal: AbortSignal.timeout(1500),
     });
-    // An unpaired bridge refuses origin-less callers it cannot vouch for; any answer means it runs.
-    return response.status === 200 || response.status === 403;
   } catch {
-    return false;
+    return "free";
   }
+  const body = await response.json().catch(() => null);
+  return response.ok && body?.ok === true && typeof body.paired === "boolean" && body.version
+    ? "ours"
+    : "other";
 }
+
+const portTaken = () =>
+  new Error(
+    `Another program is using port ${PORT}, possibly an older Seramet print bridge window. ` +
+      "Close it (or restart the computer) and open this installer again.",
+  );
 
 async function install() {
   await mkdir(installDir, { recursive: true });
@@ -101,18 +113,21 @@ async function install() {
   ];
   if (registered.some((result) => !result.ok))
     throw new Error("Windows did not accept the auto-start setting.");
-  if (!(await bridgeHealthy())) {
+  const state = await portState();
+  if (state === "other") throw portTaken();
+  if (state === "free") {
     spawn(installedExe, ["--service"], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
     }).unref();
-    let healthy = false;
-    for (let attempt = 0; attempt < 20 && !healthy; attempt += 1) {
+    let started = "free";
+    for (let attempt = 0; attempt < 20 && started === "free"; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      healthy = await bridgeHealthy();
+      started = await portState();
     }
-    if (!healthy) throw new Error(`The bridge did not start. Details are in ${logPath}.`);
+    if (started === "other") throw portTaken();
+    if (started !== "ours") throw new Error(`The bridge did not start. Details are in ${logPath}.`);
   }
   log(`Installed ${BRIDGE_VERSION}`);
   if (!silent) await run("cmd.exe", ["/c", "start", "", SERAMET_PRINTERS_URL]);

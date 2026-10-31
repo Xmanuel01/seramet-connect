@@ -11,6 +11,7 @@ import { BRIDGE_VERSION, createBridge } from "./server.mjs";
 // bridge to its own server.
 export const DEFAULT_PAIRING_ORIGINS = ["https://pos.seramet.co.ke"];
 const MAX_PAIRING_BODY = 16_384;
+const QUIESCE_TIMEOUT_MS = 15_000;
 
 export function readBridgeConfig(configPath) {
   if (!existsSync(configPath)) return null;
@@ -55,11 +56,20 @@ export function pairingConfig(body, origin, { port, dataDir }) {
   };
 }
 
-function tokenMatches(request, token) {
-  const supplied = Buffer.from(request.headers.authorization?.replace(/^Bearer\s+/i, "") ?? "");
+function tokenMatches(authorization, token) {
+  const supplied = Buffer.from(authorization?.replace(/^Bearer\s+/i, "") ?? "");
   const secret = Buffer.from(token);
   return supplied.length === secret.length && timingSafeEqual(supplied, secret);
 }
+
+const sameScope = (a, b) =>
+  a.tenantId === b.tenantId && a.branchId === b.branchId && a.bridgeId === b.bridgeId;
+
+const pairingErrors = {
+  INVALID_PAIRING: 400,
+  ALREADY_PAIRED: 409,
+  JOBS_IN_PROGRESS: 409,
+};
 
 /**
  * Runs the bridge from `configPath`, or waits unpaired until a Seramet page
@@ -78,23 +88,52 @@ export async function startBridgeService({
   const open = (config) => createBridge(config, { localTest, ...bridgeOptions });
   let config = readBridgeConfig(configPath);
   let bridge = config ? await open(config) : null;
+  // Pairings run one at a time, and print requests wait while the bridge is swapped.
   let pairing = Promise.resolve();
+  let swapping = null;
+  let inFlight = 0;
+  const idle = new Set();
+  const settle = () => {
+    if (inFlight > 0) return;
+    for (const resolve of idle) resolve();
+    idle.clear();
+  };
+  const quiesce = () =>
+    inFlight === 0
+      ? Promise.resolve()
+      : Promise.race([
+          new Promise((resolve) => idle.add(resolve)),
+          new Promise((resolve) => setTimeout(resolve, QUIESCE_TIMEOUT_MS)),
+        ]);
 
-  const pair = async (body, origin) => {
+  const pair = async (body, origin, authorization) => {
     const next = pairingConfig(body, origin, { port, dataDir });
-    const previous = { bridge, config };
-    // One bridge owns the job store at a time: close the old one before opening the new.
-    if (bridge) await bridge.close();
-    bridge = null;
+    // Checked inside the queue, so a pairing that just committed is honoured.
+    if (config && !tokenMatches(authorization, config.token)) throw new Error("ALREADY_PAIRED");
+    let release;
+    swapping = new Promise((resolve) => (release = resolve));
     try {
-      bridge = await open(next);
-    } catch (error) {
-      if (previous.config) bridge = await open(previous.config).catch(() => null);
-      throw error;
+      await quiesce();
+      // Accepted jobs live in a store scoped to tenant/branch/bridge; never strand them.
+      if (bridge && !sameScope(config, next) && bridge.store.activeCount() > 0)
+        throw new Error("JOBS_IN_PROGRESS");
+      const previous = config;
+      // One bridge owns the job store at a time: close the old one before opening the new.
+      if (bridge) await bridge.close();
+      bridge = null;
+      try {
+        bridge = await open(next);
+      } catch (error) {
+        if (previous) bridge = await open(previous).catch(() => null);
+        throw error;
+      }
+      await writeBridgeConfig(configPath, next);
+      config = next;
+      log(`Paired as ${next.bridgeId} for ${origin}`);
+    } finally {
+      swapping = null;
+      release();
     }
-    await writeBridgeConfig(configPath, next);
-    config = next;
-    log(`Paired as ${next.bridgeId} for ${origin}`);
   };
 
   const server = createServer(async (request, response) => {
@@ -106,7 +145,15 @@ export async function startBridgeService({
       response.end(JSON.stringify(body));
     };
     const isPairing = request.url === "/pair";
-    if (bridge && !isPairing) return bridge.server.emit("request", request, response);
+    if (!isPairing && swapping) await swapping;
+    if (bridge && !isPairing) {
+      inFlight += 1;
+      response.once("close", () => {
+        inFlight -= 1;
+        settle();
+      });
+      return bridge.server.emit("request", request, response);
+    }
 
     const origin = request.headers.origin;
     if (!origin || !origins.has(origin)) return reply(403, { code: "ORIGIN_DENIED" });
@@ -126,9 +173,6 @@ export async function startBridgeService({
         platform: process.platform,
       });
     if (!isPairing || request.method !== "POST") return reply(503, { code: "BRIDGE_NOT_PAIRED" });
-    // A paired bridge only re-pairs for whoever holds its current token.
-    if (config && !tokenMatches(request, config.token))
-      return reply(409, { code: "ALREADY_PAIRED" });
     const chunks = [];
     let size = 0;
     for await (const chunk of request) {
@@ -142,16 +186,15 @@ export async function startBridgeService({
     } catch {
       return reply(400, { code: "INVALID_PAIRING" });
     }
-    const attempt = pairing.then(() => pair(body, origin));
+    const attempt = pairing.then(() => pair(body, origin, request.headers.authorization));
     pairing = attempt.catch(() => undefined);
     try {
       await attempt;
       return reply(200, { paired: true, bridgeId: config.bridgeId, machineName: hostname() });
     } catch (error) {
       log(`Pairing rejected: ${error.message}`);
-      return reply(400, {
-        code: error.message === "INVALID_PAIRING" ? "INVALID_PAIRING" : "PAIRING_FAILED",
-      });
+      const status = pairingErrors[error.message];
+      return reply(status ?? 400, { code: status ? error.message : "PAIRING_FAILED" });
     }
   });
   server.requestTimeout = 10000;
@@ -163,6 +206,9 @@ export async function startBridgeService({
     },
     get config() {
       return config;
+    },
+    get bridge() {
+      return bridge;
     },
     listen() {
       return new Promise((resolve, reject) => {
