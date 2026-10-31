@@ -4,6 +4,35 @@ One existing bridge, two transports: Windows text spooling (including
 OS-installed USB printers) and RAW TCP ESC/POS. Node.js 24 is recommended.
 Nothing runs antivirus or printer sockets in the POS browser or primary Worker.
 
+## Quick Setup (Windows till PC)
+
+1. In Seramet open **Printers & devices**. The **This computer** card offers
+   **Download for Windows** (`SerametPrintBridge.exe`, Node included).
+2. Open the downloaded file. It installs for the signed-in Windows user under
+   `%LOCALAPPDATA%\Seramet\PrintBridge`, starts at every sign-in with no window,
+   and appears in Windows Settings > Apps for uninstalling. Running a newer
+   download updates it in place and keeps its pairing.
+3. Back in Seramet choose **Connect this PC**. The page requests a scoped
+   enrollment for a new machine identity (e.g. `front-desk-3f2a9c`) and hands it
+   with a fresh local token to the bridge's `POST /pair`. No file is moved and no
+   token is typed.
+4. Choose the detected Windows printer, save it, and run a test receipt.
+
+Pairing rules: an unpaired bridge answers only Seramet origins
+(`https://pos.seramet.co.ke`, plus `SERAMET_BRIDGE_PAIRING_ORIGINS`), and the
+enrollment's `authorizationEndpoint` must be that same origin's consume
+endpoint, so a page can only bind the bridge to its own server. A paired bridge
+re-pairs only for a caller holding its current token; otherwise uninstall and
+install again on that PC. The config and job store stay in the install folder
+(user-profile ACLs). Unsigned builds show Windows SmartScreen until the exe is
+code-signed.
+
+Build: `npm run bridge:build` on Windows (CI embeds Node 24). The
+**Publish Windows Print Bridge** workflow builds, smoke-tests the installer and
+publishes `print-bridge-v<version>`, the release the Printers page downloads.
+
+The manual enrollment file flow below remains for TCP-only or scripted setups.
+
 ## Coordinated Enrollment
 
 Do not deploy the transport PR independently from its authorization/admin and

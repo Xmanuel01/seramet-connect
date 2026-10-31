@@ -76,6 +76,7 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await page.getByLabel("TCP port").fill(String((tcp.address() as { port: number }).port));
     await page.getByRole("button", { name: "Save printer", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Printer configuration saved");
+    await page.getByText("Advanced: manual bridge connection", { exact: true }).click();
     await page
       .getByLabel("Local bridge endpoint")
       .fill(`http://127.0.0.1:${bridge.server.address().port}`);

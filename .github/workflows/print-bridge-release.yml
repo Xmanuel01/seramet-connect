@@ -1,0 +1,33 @@
+name: Publish Windows Print Bridge
+# Builds SerametPrintBridge.exe on Windows with Node 24, re-runs the installer
+# smoke test, and publishes it as the release the Printers page links to.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci
+      - run: node --test local-print-bridge/printing.test.mjs local-print-bridge/raster.test.mjs local-print-bridge/service.test.mjs
+      - run: npm run bridge:build
+      - run: node scripts/smoke-print-bridge-exe.mjs
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -e "import('./local-print-bridge/server.mjs').then(m=>console.log(m.BRIDGE_VERSION))")
+          node -e "const u=require('fs').readFileSync('src/lib/print-bridge-client-config.ts','utf8');if(!u.includes('print-bridge-v'+process.argv[1]+'/'))throw new Error('Download URL does not match bridge '+process.argv[1])" "$version"
+          cd .seramet/print-bridge
+          sha256sum SerametPrintBridge.exe > SerametPrintBridge.exe.sha256
+          gh release create "print-bridge-v$version" SerametPrintBridge.exe SerametPrintBridge.exe.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "Seramet Print Bridge $version for Windows" \
+            --notes "Download SerametPrintBridge.exe on the till PC and open it. Then in Seramet open Printers & devices and choose Connect this PC."

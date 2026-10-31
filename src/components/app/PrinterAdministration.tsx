@@ -1,15 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { discoverInstalledPrinters, type DiscoveredPrinter } from "@/lib/printer-discovery-client";
-import { Plus, Save, Pencil, RefreshCw, Printer, Download } from "lucide-react";
+import { Plus, Save, Pencil, RefreshCw, Printer, Download, Link2, Monitor } from "lucide-react";
 import { useAppContext } from "@/lib/app-context";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import {
+  bridgeIdForMachine,
   loadInstalledPrintBridgeConfig,
+  printBridgeDownloadUrl,
   saveInstalledPrintBridgeConfig,
 } from "@/lib/print-bridge-client-config";
+import {
+  pairLocalBridge,
+  probeLocalBridge,
+  randomBridgeToken,
+  type BridgeEnrollment,
+  type LocalBridgeProbe,
+} from "@/lib/print-bridge-pairing";
 import { SerametLocalPrintBridge, type PrintJob } from "@/lib/seramet-print-service";
 import type { PrinterConfiguration } from "@/printing/printer-configuration";
 import { Btn, Panel, PanelHead } from "@/components/app/ui";
@@ -114,6 +123,20 @@ export function PrinterAdministration() {
     return () => controller.abort();
   }, [discover, mayManage, installedBridge.enabled, installedBridge.token]);
   const detected = inventory?.scope === inventoryScope ? inventory : null;
+  const [thisPc, setThisPc] = useState<LocalBridgeProbe | "checking">("checking");
+  const checkThisPc = useCallback(async (signal?: AbortSignal) => {
+    setThisPc("checking");
+    const probe = await probeLocalBridge(undefined, signal);
+    if (!signal?.aborted) setThisPc(probe);
+  }, []);
+  useEffect(() => {
+    if (!mayManage) return;
+    const controller = new AbortController();
+    void checkThisPc(controller.signal);
+    return () => controller.abort();
+  }, [checkThisPc, mayManage]);
+  const thisPcBridgeId =
+    thisPc !== "checking" && thisPc.state === "paired" ? thisPc.bridgeId : null;
   const [attempts, setAttempts] = useState<
     Array<{ id: string; stage: string; outcome: string; updated_at: string }>
   >([]);
@@ -228,6 +251,44 @@ export function PrinterAdministration() {
       setBusy(false);
     }
   };
+  const requestEnrollment = async (bridgeId: string) => {
+    const response = await authenticatedFetch("/api/seramet/printing/enrollment", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ bridgeId }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return response.ok ? ((await response.json()) as BridgeEnrollment) : null;
+  };
+  const connectThisPc = async () => {
+    setBusy(true);
+    setNotice("");
+    try {
+      const probe = await probeLocalBridge();
+      setThisPc(probe);
+      if (probe.state === "missing" || probe.state === "blocked")
+        throw new Error("Install and open the Seramet Print Bridge on this computer first.");
+      // Keep an existing identity so printers already routed to this PC keep working.
+      let enrollment = probe.state === "paired" ? await requestEnrollment(probe.bridgeId) : null;
+      enrollment ??= await requestEnrollment(bridgeIdForMachine(probe.machineName));
+      if (!enrollment) throw new Error("You do not have permission to connect printers here.");
+      const token = randomBridgeToken();
+      await pairLocalBridge({
+        enrollment,
+        token,
+        currentToken: installedBridge.token.length >= 32 ? installedBridge.token : undefined,
+      });
+      const local = { enabled: true, endpoint: installedBridge.endpoint, token };
+      saveInstalledPrintBridgeConfig(local);
+      setBridge(local);
+      await checkThisPc();
+      setNotice("This computer is connected. Choose its printer below, then run a test receipt.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "This computer could not be connected.");
+    } finally {
+      setBusy(false);
+    }
+  };
   const testPrinter = async (
     printer: SavedPrinter,
     documentType: "BILL" | "RECEIPT" | "FOOD_KOT",
@@ -295,6 +356,69 @@ export function PrinterAdministration() {
       />
       <div className="space-y-4 p-4">
         {mayManage && (
+          <section
+            aria-label="This computer"
+            className="space-y-3 rounded-lg border border-border bg-secondary/40 p-3 text-sm"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Monitor className="h-4 w-4 shrink-0 text-primary" />
+                <div className="min-w-0 break-words">
+                  <strong>This computer</strong>
+                  <p className="text-muted-foreground">
+                    {thisPc === "checking"
+                      ? "Looking for the Seramet Print Bridge..."
+                      : thisPc.state === "missing"
+                        ? "The Seramet Print Bridge is not installed or not running on this computer."
+                        : thisPc.state === "blocked"
+                          ? "This computer's print bridge does not accept this Seramet address."
+                          : thisPc.state === "unpaired"
+                            ? `Print bridge ${thisPc.version} is ready on ${thisPc.machineName}. Connect it to this restaurant.`
+                            : installedBridge.enabled && detected
+                              ? `Connected: ${thisPc.machineName} (${thisPc.bridgeId}).`
+                              : `${thisPc.machineName} has a print bridge connected elsewhere. Reconnect it here.`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {thisPc !== "checking" && thisPc.state === "missing" && (
+                  <a
+                    href={printBridgeDownloadUrl}
+                    className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download for Windows
+                  </a>
+                )}
+                {thisPc !== "checking" &&
+                  (thisPc.state === "unpaired" || thisPc.state === "paired") && (
+                    <Btn disabled={busy} onClick={() => void connectThisPc()}>
+                      <Link2 className="h-4 w-4" />
+                      {thisPc.state === "unpaired" ? "Connect this PC" : "Reconnect this PC"}
+                    </Btn>
+                  )}
+                <Btn disabled={thisPc === "checking"} onClick={() => void checkThisPc()}>
+                  <RefreshCw className="h-4 w-4" />
+                  Check again
+                </Btn>
+              </div>
+            </div>
+            {thisPc !== "checking" && thisPc.state === "missing" && (
+              <ol className="list-decimal space-y-1 pl-5 text-muted-foreground">
+                <li>Download the bridge and open SerametPrintBridge.exe on this computer.</li>
+                <li>
+                  If Windows says &quot;Windows protected your PC&quot;, choose More info, then Run
+                  anyway.
+                </li>
+                <li>
+                  Come back here and choose Check again. If Chrome asks to access apps on this
+                  device, choose Allow.
+                </li>
+              </ol>
+            )}
+          </section>
+        )}
+        {mayManage && (
           <div className="space-y-3 border-b border-border pb-4">
             <Btn
               disabled={
@@ -322,21 +446,35 @@ export function PrinterAdministration() {
                   <strong>{printer.name}</strong>
                   <p className="text-xs text-muted-foreground">{printer.driver}</p>
                 </div>
-                <Btn
-                  disabled={busy}
-                  onClick={() => {
-                    setDraft({
-                      ...blank(branchId),
-                      name: printer.name,
-                      osPrinterName: printer.name,
-                      bridgeId: detected.bridgeId,
-                    });
-                    setOpen(true);
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                  Configure printer
-                </Btn>
+                {(() => {
+                  const existing = printers.find(
+                    (saved) =>
+                      saved.transport === "WINDOWS" && saved.osPrinterName === printer.name,
+                  );
+                  if (existing?.bridgeId === detected.bridgeId)
+                    return <span className="text-muted-foreground">Set up on this PC</span>;
+                  return (
+                    <Btn
+                      disabled={busy}
+                      onClick={() => {
+                        setDraft(
+                          existing
+                            ? { ...existing, bridgeId: detected.bridgeId }
+                            : {
+                                ...blank(branchId),
+                                name: printer.name,
+                                osPrinterName: printer.name,
+                                bridgeId: detected.bridgeId,
+                              },
+                        );
+                        setOpen(true);
+                      }}
+                    >
+                      <Plus className="h-4 w-4" />
+                      {existing ? "Use with this PC" : "Configure printer"}
+                    </Btn>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -389,7 +527,13 @@ export function PrinterAdministration() {
                   <td className="py-3">{printer.name}</td>
                   <td>{printer.transport}</td>
                   <td>{printer.paperWidth}</td>
-                  <td>{printer.enabled ? "Unknown" : "Disabled"}</td>
+                  <td>
+                    {!printer.enabled
+                      ? "Disabled"
+                      : printer.bridgeId === thisPcBridgeId
+                        ? "On this PC"
+                        : "Unknown"}
+                  </td>
                   <td>
                     <div className="flex flex-wrap gap-2">
                       {mayManage && (
@@ -752,49 +896,54 @@ export function PrinterAdministration() {
           </form>
         )}
         {mayManage && (
-          <form
-            className="grid gap-3 border-t border-border pt-4 sm:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveInstalledPrintBridgeConfig(bridge);
-              setNotice("Local bridge connection saved.");
-            }}
-          >
-            <label>
-              Local bridge endpoint
-              <input
-                required
-                type="url"
-                value={bridge.endpoint}
-                onChange={(e) => setBridge({ ...bridge, endpoint: e.target.value })}
-                className={inputClass}
-              />
-            </label>
-            <label>
-              Local bridge token
-              <input
-                required
-                type="password"
-                autoComplete="off"
-                minLength={32}
-                value={bridge.token}
-                onChange={(e) => setBridge({ ...bridge, token: e.target.value })}
-                className={inputClass}
-              />
-            </label>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={bridge.enabled}
-                onChange={(e) => setBridge({ ...bridge, enabled: e.target.checked })}
-              />
-              Enable installed bridge
-            </label>
-            <Btn type="submit">
-              <Save className="h-4 w-4" />
-              Save local connection
-            </Btn>
-          </form>
+          <details className="border-t border-border pt-4 text-sm">
+            <summary className="cursor-pointer text-muted-foreground">
+              Advanced: manual bridge connection
+            </summary>
+            <form
+              className="mt-3 grid gap-3 sm:grid-cols-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveInstalledPrintBridgeConfig(bridge);
+                setNotice("Local bridge connection saved.");
+              }}
+            >
+              <label>
+                Local bridge endpoint
+                <input
+                  required
+                  type="url"
+                  value={bridge.endpoint}
+                  onChange={(e) => setBridge({ ...bridge, endpoint: e.target.value })}
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                Local bridge token
+                <input
+                  required
+                  type="password"
+                  autoComplete="off"
+                  minLength={32}
+                  value={bridge.token}
+                  onChange={(e) => setBridge({ ...bridge, token: e.target.value })}
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={bridge.enabled}
+                  onChange={(e) => setBridge({ ...bridge, enabled: e.target.checked })}
+                />
+                Enable installed bridge
+              </label>
+              <Btn type="submit">
+                <Save className="h-4 w-4" />
+                Save local connection
+              </Btn>
+            </form>
+          </details>
         )}
       </div>
     </Panel>
