@@ -245,3 +245,80 @@ test("saved enrolled bridge auto-discovers Windows printers without creating rou
     true,
   );
 });
+
+test("Connect this PC pairs the local bridge with a server enrollment and detects its printers", async ({
+  context,
+  page,
+}) => {
+  await signIn(context, page);
+  let paired: { bridgeId: string; token: string; authorizationEndpoint: string } | null = null;
+  await page.route("http://127.0.0.1:48777/health", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        paired
+          ? {
+              ok: true,
+              paired: true,
+              machineName: "FRONT DESK",
+              version: "3.1.0",
+              bridgeId: paired.bridgeId,
+            }
+          : { ok: true, paired: false, machineName: "FRONT DESK", version: "3.1.0" },
+      ),
+    }),
+  );
+  await page.route("http://127.0.0.1:48777/pair", (route) => {
+    const body = route.request().postDataJSON();
+    expect(route.request().headers().authorization).toBeUndefined();
+    expect(body.tenantId).toBe(fixture.tenantId);
+    expect(body.branchId).toBe(fixture.firstBranchId);
+    paired = body;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ paired: true, bridgeId: body.bridgeId, machineName: "FRONT DESK" }),
+    });
+  });
+  await page.route("http://127.0.0.1:48777/printers", (route) => {
+    expect(route.request().headers().authorization).toBe(`Bearer ${paired?.token}`);
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        bridgeId: paired?.bridgeId,
+        tenantId: fixture.tenantId,
+        branchId: fixture.firstBranchId,
+        printers: [{ name: "Front Desk Thermal", driver: "Generic / Text Only" }],
+      }),
+    });
+  });
+  await page.goto("/seramet-printers");
+  const thisPc = page.getByRole("region", { name: "This computer" });
+  await expect(thisPc).toContainText("Print bridge 3.1.0 is ready on FRONT DESK");
+  const enrollmentResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/seramet/printing/enrollment") && response.status() === 200,
+  );
+  await thisPc.getByRole("button", { name: "Connect this PC", exact: true }).click();
+  const enrollment = await (await enrollmentResponse).json();
+  await expect(page.getByText("Front Desk Thermal", { exact: true })).toBeVisible();
+  await expect(thisPc).toContainText("Connected: FRONT DESK");
+  expect(paired!.bridgeId).toMatch(/^front-desk-[0-9a-f]{12}$/);
+  expect(enrollment.bridgeId).toBe(paired!.bridgeId);
+  expect((paired as unknown as { signingKey: string }).signingKey).toBe(enrollment.signingKey);
+  expect(paired!.token).toMatch(/^[0-9a-f]{64}$/);
+  expect(paired!.authorizationEndpoint).toBe(
+    `${new URL(page.url()).origin}/api/seramet/printing/consume`,
+  );
+  const stored = await page.evaluate(
+    (key) => JSON.parse(localStorage.getItem(key) ?? "null"),
+    printBridgeConfigStorageKey,
+  );
+  expect(stored).toEqual({
+    enabled: true,
+    endpoint: "http://127.0.0.1:48777",
+    token: paired!.token,
+  });
+  await page.getByRole("button", { name: "Configure printer", exact: true }).click();
+  await expect(page.getByLabel("Enrolled bridge ID")).toHaveValue(paired!.bridgeId);
+  await expect(page.getByLabel("Installed printer name")).toHaveValue("Front Desk Thermal");
+});

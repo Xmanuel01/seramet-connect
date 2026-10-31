@@ -18,6 +18,7 @@ import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-ser
 import { billingRecordToPrintOrder, receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import type { D1Database } from "@/server/database/d1";
 import { resolveRuntimeConfiguration } from "@/server/environment";
+import { pairableBridgeId } from "@/lib/print-bridge-client-config";
 import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { buildThermalLayout, validateRenderJob } from "../../printing-core/thermal-layout.mjs";
 
@@ -406,7 +407,10 @@ export async function handlePrintingApi(
           .bind(actor.tenantId, actor.branchId)
           .all<{ payload_json: string }>()
       ).results ?? [];
+    // "Connect this PC" pairs a bridge before any printer names it, so a fresh
+    // machine identity is allowed; hardware managers could create one anyway.
     if (
+      !pairableBridgeId.test(input.bridgeId) &&
       !rows.some((row) => {
         const config = printerConfigurationSchema.safeParse(JSON.parse(row.payload_json).printing);
         return config.success && config.data.enabled && config.data.bridgeId === input.bridgeId;

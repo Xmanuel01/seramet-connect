@@ -651,7 +651,7 @@ function SerametPrinters() {
                     ? installedBridge.online
                       ? "Connected"
                       : "Offline"
-                    : "Simulation"}
+                    : "Not connected"}
                 </Status>
               </div>
               <div className="mt-1 text-[12px] text-muted-foreground">
@@ -659,7 +659,7 @@ function SerametPrinters() {
                   ? installedBridge.online
                     ? `Version ${installedBridge.version ?? "unknown"} - ${installedBridge.platform ?? "OS"} - ${installedBridge.printers.length} OS printer(s) visible`
                     : (installedBridge.error ?? "Installed bridge is unavailable")
-                  : `Simulation bridge ${bridgeStatus.version} - heartbeat ${bridgeStatus.lastHeartbeat}`}
+                  : 'No print bridge is connected on this computer. Use "Connect this PC" under Configured printers.'}
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {bridgeStatus.supportedConnections.map((item) => (

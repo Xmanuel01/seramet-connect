@@ -300,6 +300,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       device.state.clearHistory();
     };
     await manager.reload();
+    await manager.getByText("Advanced: manual bridge connection", { exact: true }).click();
     await manager.getByLabel("Local bridge endpoint").fill(local.endpoint);
     await manager.getByLabel("Local bridge token").fill(token);
     await manager.getByLabel("Enable installed bridge").check();

@@ -17,7 +17,7 @@ test("Windows enumeration is fixed, hidden, bounded, read-only and coalesced", a
       assert.equal(file, "powershell.exe");
       assert.equal(options.shell, false);
       assert.equal(options.windowsHide, true);
-      assert.equal(options.timeout, 5000);
+      assert.equal(options.timeout, 20000);
       assert.match(args.at(-1), /Get-Printer -ErrorAction Stop/);
       assert.doesNotMatch(args.at(-1), /Out-Printer|Add-Printer|Remove-Printer/);
     },

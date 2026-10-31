@@ -42,7 +42,8 @@
     "typecheck": "tsc --noEmit",
     "validate": "node scripts/assert-no-lovable-source.mjs && npm run typecheck && npm run lint && npm test && npm run build && node scripts/verify-cloudflare-events.mjs",
     "format": "prettier --write .",
-    "test:pass6-load": "vitest run --config vitest.load.config.ts src/inventory/pass-6-load.test.ts"
+    "test:pass6-load": "vitest run --config vitest.load.config.ts src/inventory/pass-6-load.test.ts",
+    "bridge:build": "node scripts/build-print-bridge-exe.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

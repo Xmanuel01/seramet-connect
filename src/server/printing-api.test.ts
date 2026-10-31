@@ -562,6 +562,21 @@ it("derives isolated enrollment keys without exporting the server master", async
   ).rejects.toMatchObject({ status: 403 });
 });
 
+it("enrolls a freshly generated machine identity but not an arbitrary unconfigured one", async () => {
+  const enrollment = await (await handlePrintingApi(
+    request("enrollment", { bridgeId: "front-desk-3f2a9c" }),
+    env(),
+    repository,
+  ))!.json();
+  expect(enrollment.bridgeId).toBe("front-desk-3f2a9c");
+  expect(enrollment.signingKey).toBe(
+    await deriveBridgeSigningKey(signingKey, actor.tenantId, actor.branchId, "front-desk-3f2a9c"),
+  );
+  await expect(
+    handlePrintingApi(request("enrollment", { bridgeId: "Front Desk PC!" }), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+});
+
 it("authorizes only the exact claimed immutable station obligation and renders it reproducibly", async () => {
   await db
     .prepare(

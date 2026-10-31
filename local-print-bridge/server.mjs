@@ -2,7 +2,8 @@
 import { createServer } from "node:http";
 import { mkdir, writeFile, unlink, chmod } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
+import { isSea } from "node:sea";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { timingSafeEqual, createHash } from "node:crypto";
@@ -12,6 +13,8 @@ import { verifyPrintAuthorization } from "./authorization.mjs";
 import { encodePrintDocument } from "./raster-renderer.mjs";
 import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
 import { createPrinterDiscovery } from "./printer-discovery.mjs";
+
+export const BRIDGE_VERSION = "3.1.0";
 
 export async function createBridge(
   config,
@@ -106,11 +109,16 @@ export async function createBridge(
     }
     response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     response.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    // Chrome asks before a public HTTPS page may reach a loopback service.
+    if (request.headers["access-control-request-private-network"] === "true")
+      response.setHeader("Access-Control-Allow-Private-Network", "true");
     if (request.method === "OPTIONS") return reply(204, {});
     if (request.url === "/health" && request.method === "GET")
       return reply(200, {
         ok: true,
-        version: "3.0.0",
+        paired: true,
+        machineName: hostname(),
+        version: BRIDGE_VERSION,
         authorizationVersions: [1, 2],
         renderingModes: ["TEXT_ESC_POS", "RASTER_ESC_POS"],
         rasterCommands: ["GS_V_0"],
@@ -200,7 +208,7 @@ export async function createBridge(
   };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+async function runFromConfigFile() {
   const config = JSON.parse(
     readFileSync(
       process.env.SERAMET_BRIDGE_CONFIG ??
@@ -219,3 +227,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       void bridge.close();
     });
 }
+
+// The packaged Windows bridge bundles this module; only a direct `node server.mjs` runs it.
+if (!isSea() && process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  void runFromConfigFile();

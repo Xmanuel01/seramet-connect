@@ -6,6 +6,27 @@ export type InstalledPrintBridgeConfig = {
 
 export const printBridgeConfigStorageKey = "seramet.print-bridge.client.v1";
 
+export const printBridgeDownloadUrl =
+  "https://github.com/Xmanuel01/seramet-connect/releases/download/print-bridge-v3.1.0/SerametPrintBridge.exe";
+
+// The machine identity "Connect this PC" generates, e.g. "front-desk-3f2a9c41d07e".
+export const pairableBridgeId = /^[a-z0-9][a-z0-9-]{6,62}[a-z0-9]$/;
+
+export function bridgeIdForMachine(
+  machineName: string,
+  random: Uint8Array = crypto.getRandomValues(new Uint8Array(6)),
+) {
+  const name =
+    machineName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40)
+      .replace(/-+$/, "") || "pc";
+  const suffix = Array.from(random, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${name}-${suffix}`;
+}
+
 export const defaultInstalledPrintBridgeConfig: InstalledPrintBridgeConfig = {
   enabled: false,
   endpoint: "http://127.0.0.1:48777",

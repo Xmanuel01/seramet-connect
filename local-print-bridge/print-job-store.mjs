@@ -95,6 +95,14 @@ export class PrintJobStore {
   pending() {
     return this.db.prepare("SELECT * FROM jobs WHERE stage='QUEUED' ORDER BY rowid").all();
   }
+  /** Jobs still on their way to a printer (not yet a terminal or reconcilable stage). */
+  activeCount() {
+    return this.db
+      .prepare(
+        "SELECT COUNT(*) n FROM jobs WHERE stage IN ('CREATED','ASSIGNED','QUEUED','TRANSMITTING')",
+      )
+      .get().n;
+  }
   list() {
     return this.db
       .prepare("SELECT id,stage,outcome,updated_at FROM jobs ORDER BY rowid DESC LIMIT 100")
