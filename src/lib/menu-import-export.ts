@@ -311,24 +311,54 @@ export function parseCsvRows(text: string): RawMenuRow[] {
   );
 }
 
+// Optional XML namespace prefix, e.g. <x:row> from .NET/OpenXML SDK exports.
+const NS = "(?:[A-Za-z_][\\w.-]*:)?";
+// <name attrs/> or <name attrs>body</name>; group 1 = attributes, group 2 = body.
+const element = (name: string) =>
+  new RegExp(`<${NS}${name}\\b([^>]*?)(?:/>|>([\\s\\S]*?)</${NS}${name}>)`, "g");
+
 export async function parseXlsxRows(buffer: ArrayBuffer): Promise<RawMenuRow[]> {
-  const files = await readZipEntries(buffer);
-  const workbook = files.get("xl/workbook.xml") ?? "";
-  if ((workbook.match(/<sheet\b/g) ?? []).length > 10) {
-    throw new Error("Workbook has too many sheets");
-  }
-  const rels = files.get("xl/_rels/workbook.xml.rels") ?? "";
-  const firstSheetTarget =
-    firstMatch(rels, /Target="([^"]*worksheets\/sheet\d+\.xml)"/) ??
-    firstMatch(workbook, /sheetId="1"[^>]*r:id="([^"]+)"/);
-  const sheetPath = firstSheetTarget?.startsWith("xl/")
-    ? firstSheetTarget
-    : `xl/${firstSheetTarget ?? "worksheets/sheet1.xml"}`;
-  const sharedStrings = parseSharedStrings(files.get("xl/sharedStrings.xml") ?? "");
-  return sheetXmlToRows(
-    files.get(sheetPath.replace(/\\/g, "/")) ?? files.get("xl/worksheets/sheet1.xml") ?? "",
-    sharedStrings,
+  const raw = await readZipEntries(buffer);
+  // Some writers vary the case of part names; look parts up case-insensitively.
+  const files = new Map(
+    [...raw].map(([name, text]) => [name.replace(/^\/+/, "").toLowerCase(), text]),
   );
+  const part = (path: string) =>
+    files.get(path.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase());
+  const workbook = part("xl/workbook.xml") ?? "";
+  const sheets = [...workbook.matchAll(element("sheet"))].map((match) => match[1] ?? "");
+  if (sheets.length > 10) throw new Error("Workbook has too many sheets");
+  const relationships = new Map(
+    [...(part("xl/_rels/workbook.xml.rels") ?? "").matchAll(element("Relationship"))].map(
+      (match) => [
+        firstMatch(match[1] ?? "", /\bId="([^"]+)"/) ?? "",
+        firstMatch(match[1] ?? "", /\bTarget="([^"]+)"/) ?? "",
+      ],
+    ),
+  );
+  // Targets are relative to xl/ unless absolute ("/xl/worksheets/sheet1.xml").
+  const resolve = (target: string) =>
+    target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`;
+  const sharedStringsTarget =
+    [...relationships.values()].find((target) => /sharedStrings\.xml$/i.test(target)) ??
+    "sharedStrings.xml";
+  const sharedStrings = parseSharedStrings(part(resolve(sharedStringsTarget)) ?? "");
+  // Tab order is workbook order and hidden sheets are skipped. The menu is the first
+  // visible sheet that has data rows below its header row.
+  const visible = sheets
+    .filter((attrs) => !/\bstate="(?:hidden|veryHidden)"/.test(attrs))
+    .map((attrs) => relationships.get(firstMatch(attrs, /\br:id="([^"]+)"/) ?? ""))
+    .filter((target): target is string => Boolean(target))
+    .map((target) => part(resolve(target)));
+  const candidates = visible.length ? visible : [part("xl/worksheets/sheet1.xml")];
+  let firstRows: RawMenuRow[] | null = null;
+  for (const xml of candidates) {
+    if (xml === undefined) continue;
+    const rows = sheetXmlToRows(xml, sharedStrings);
+    if (rows.length) return rows;
+    firstRows ??= rows;
+  }
+  return firstRows ?? [];
 }
 
 async function readZipEntries(buffer: ArrayBuffer) {
@@ -385,33 +415,37 @@ async function inflateRaw(bytes: Uint8Array) {
 }
 
 function parseSharedStrings(xml: string) {
-  return [...xml.matchAll(/<si[^>]*>([\s\S]*?)<\/si>/g)].map((match) =>
+  // Phonetic guides (<rPh>) are reading hints, not cell text.
+  const phonetic = new RegExp(`<${NS}rPh\\b[\\s\\S]*?</${NS}rPh>`, "g");
+  return [...xml.matchAll(element("si"))].map((match) =>
     decodeXml(
-      [...(match[1] ?? "").matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)]
-        .map((part) => part[1] ?? "")
+      [...(match[2] ?? "").replace(phonetic, "").matchAll(element("t"))]
+        .map((text) => text[2] ?? "")
         .join(""),
     ),
   );
 }
 
 function sheetXmlToRows(xml: string, sharedStrings: string[]): RawMenuRow[] {
-  const table = [...xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)]
+  const valueTag = new RegExp(`<${NS}v\\b[^>]*>([\\s\\S]*?)</${NS}v>`);
+  const table = [...xml.matchAll(element("row"))]
     .map((rowMatch) => {
       const values: string[] = [];
-      [...(rowMatch[1] ?? "").matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)].forEach(
-        (cellMatch, fallbackIndex) => {
-          const attrs = cellMatch[1] ?? "";
-          const columnRef = firstMatch(attrs, /r="([A-Z]+)\d+"/);
-          const index = columnRef ? columnToIndex(columnRef) : fallbackIndex;
-          const type = firstMatch(attrs, /t="([^"]+)"/);
-          const body = cellMatch[2] ?? "";
-          const raw =
-            firstMatch(body, /<v[^>]*>([\s\S]*?)<\/v>/) ??
-            firstMatch(body, /<t[^>]*>([\s\S]*?)<\/t>/) ??
-            "";
-          values[index] = type === "s" ? (sharedStrings[Number(raw)] ?? "") : decodeXml(raw);
-        },
-      );
+      // Empty styled cells are self-closing (<c r="B2" s="1"/>) and hold no value.
+      [...(rowMatch[2] ?? "").matchAll(element("c"))].forEach((cellMatch, fallbackIndex) => {
+        const attrs = cellMatch[1] ?? "";
+        const columnRef = firstMatch(attrs, /\br="([A-Z]+)\d+"/);
+        const index = columnRef ? columnToIndex(columnRef) : fallbackIndex;
+        const type = firstMatch(attrs, /\bt="([^"]+)"/);
+        const body = cellMatch[2] ?? "";
+        const value = firstMatch(body, valueTag);
+        // Inline strings keep their text in <is><t>, possibly split into rich-text runs.
+        const inline = [...body.matchAll(element("t"))].map((text) => text[2] ?? "").join("");
+        values[index] =
+          type === "s"
+            ? (sharedStrings[Number(value)] ?? "")
+            : decodeXml(type === "inlineStr" ? inline : (value ?? inline));
+      });
       return values;
     })
     .filter((row) => row.some((value) => clean(value)));
@@ -489,6 +523,8 @@ function clean(value?: string) {
 
 function decodeXml(value: string) {
   return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number(decimal)))
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")

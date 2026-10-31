@@ -169,6 +169,26 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     );
   });
 
+  it("rejects a menu file with no item rows instead of validating an empty import", async () => {
+    await expect(
+      service.previewImport({
+        targetMode: "SELECTED_BRANCHES",
+        targetBranchIds: [branchId],
+        kind: "MENU",
+        originalName: "headings-only.csv",
+        mimeType: "text/csv",
+        bytes: new TextEncoder().encode("code,name,category,price\n"),
+        duplicateStrategy: "ERROR",
+        idempotencyKey: "headings-only",
+      }),
+    ).rejects.toThrow(/No rows were found in this file/);
+    const stored = await db
+      .prepare("SELECT COUNT(*) n FROM setup_imports WHERE tenant_id=? AND original_name=?")
+      .bind(tenantId, "headings-only.csv")
+      .first<{ n: number }>();
+    expect(stored?.n).toBe(0);
+  });
+
   it("requires authenticated CLEAN evidence tied to the exact file before preview or commit", async () => {
     const bytes = new TextEncoder().encode(
       "code,name,category,price,currency\nSEC-01,Validated item,MAIN,1250,KES",
