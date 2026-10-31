@@ -1241,9 +1241,9 @@ test("a restaurant below 80% ready resumes guided setup from Setup Centre", asyn
   await page.getByLabel("Email", { exact: true }).fill(registrationDraft.email);
   await page.getByLabel("Password", { exact: true }).fill(registrationDraft.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  // Let the post-sign-in redirect finish; navigating during it aborts the navigation.
-  await page.waitForURL((target) => !target.pathname.startsWith("/login"));
-  await page.waitForLoadState("networkidle");
+  // Sign-in stores the tenant, then redirects with location.assign(); navigating
+  // before that redirect lands aborts this goto (net::ERR_ABORTED).
+  await page.waitForURL((url) => url.pathname !== "/login");
   await page.goto("/seramet-setup");
   await expect(page.getByRole("heading", { name: "Setup Centre", exact: true })).toBeVisible();
   await expect(page.getByText("This restaurant is 27% ready.", { exact: false })).toBeVisible();
