@@ -1848,31 +1848,24 @@ export class OnboardingService {
       if (committed.created) created += 1;
       else if (committed.masterChanged) updated += 1;
       statements.push(...committed.statements);
+      // One row update per item: each statement is a database round trip.
       statements.push(
         this.db
           .prepare(
-            `UPDATE setup_import_rows SET status=?,committed_entity_type=?,committed_entity_id=?
+            `UPDATE setup_import_rows SET status=?,committed_entity_type=?,committed_entity_id=?,
+               materialized_at=COALESCE(?,materialized_at)
              WHERE tenant_id=? AND import_id=? AND row_number=?`,
           )
           .bind(
             committed.skipped ? "SKIPPED" : "COMMITTED",
             committed.entityType,
             committed.entityId,
+            record.import_kind === "MENU" ? now() : null,
             this.actor.tenantId,
             importId,
             row.row_number,
           ),
       );
-      if (record.import_kind === "MENU") {
-        statements.push(
-          this.db
-            .prepare(
-              `UPDATE setup_import_rows SET materialized_at=?
-               WHERE tenant_id=? AND import_id=? AND row_number=?`,
-            )
-            .bind(now(), this.actor.tenantId, importId, row.row_number),
-        );
-      }
     }
     const stamp = now();
     statements.push(
@@ -2441,7 +2434,9 @@ export class OnboardingService {
       throw invalidTransition("Menu import publication is not active");
     }
 
-    const rowLimit = Math.max(10, Math.min(25, record.batch_size));
+    // Verification is two set-based statements per batch, so batches can be larger than
+    // the commit batches; 90 keeps each statement under 100 bound parameters.
+    const rowLimit = 90;
     const rows = await this.db
       .prepare(
         `SELECT row_number,committed_entity_id
@@ -2453,31 +2448,37 @@ export class OnboardingService {
         row_number: number;
         committed_entity_id: string;
       }>();
-    const statements: D1PreparedStatement[] = [];
-    for (const row of rows.results ?? []) {
+    const batch = rows.results ?? [];
+    if (batch.length) {
+      const rowNumbers = batch.map((row) => row.row_number);
+      const marks = rowNumbers.map(() => "?").join(",");
+      // Every row in the batch must still match exactly its staged item under the approved
+      // plan; (tenant_id,import_id,menu_item_id) is unique, so each row matches at most once.
       const staged = await count(
         this.db,
-        `SELECT COUNT(*) count FROM menu_import_staged_items
-         WHERE tenant_id=? AND import_id=? AND menu_item_id=? AND plan_digest=?`,
+        `SELECT COUNT(*) count FROM setup_import_rows r
+         JOIN menu_import_staged_items s
+           ON s.tenant_id=r.tenant_id AND s.import_id=r.import_id
+          AND s.menu_item_id=r.committed_entity_id AND s.plan_digest=?
+         WHERE r.tenant_id=? AND r.import_id=? AND r.row_number IN (${marks})`,
+        record.approved_plan_digest,
         this.actor.tenantId,
         importId,
-        row.committed_entity_id,
-        record.approved_plan_digest,
+        ...rowNumbers,
       );
-      if (staged !== 1) {
+      if (staged !== batch.length) {
         throw invalidTransition("Approved menu import plan changed before publication");
       }
-      statements.push(
+      await this.db.batch([
         this.db
           .prepare(
             `UPDATE setup_import_rows SET publication_verified_at=?
-             WHERE tenant_id=? AND import_id=? AND row_number=?
+             WHERE tenant_id=? AND import_id=? AND row_number IN (${marks})
                AND publication_verified_at IS NULL`,
           )
-          .bind(now(), this.actor.tenantId, importId, row.row_number),
-      );
+          .bind(now(), this.actor.tenantId, importId, ...rowNumbers),
+      ]);
     }
-    if (statements.length) await this.db.batch(statements);
 
     const remaining = await count(
       this.db,
