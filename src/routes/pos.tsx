@@ -63,6 +63,7 @@ import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-ser
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
+import { AddTableDialog } from "@/components/app/AddTableDialog";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -156,8 +157,16 @@ function ScopedPOS() {
 
 function POS() {
   const navigate = useNavigate();
-  const { activeTenantId, branch, branchId, currentUser, platformState, role, hasPermission } =
-    useAppContext();
+  const {
+    activeTenantId,
+    branch,
+    branchId,
+    branchLabel,
+    currentUser,
+    platformState,
+    role,
+    hasPermission,
+  } = useAppContext();
   const tenant = platformState.tenants.find((item) => item.id === activeTenantId)!;
   const lifetime = useRef(crypto.randomUUID());
   const draftKey = posDraftKey(
@@ -2818,6 +2827,25 @@ function POS() {
                   </span>
                 ))}
               </div>
+              {floorTables.length === 0 && (
+                <div className="rounded-xl border border-dashed border-border p-6 text-sm">
+                  <p className="font-semibold">No tables are set up for this branch yet.</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Add your tables once and they will appear here for every dine-in order.
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <AddTableDialog
+                      branchLabel={branchLabel}
+                      existingCount={0}
+                      areas={branchServiceAreas.map((area) => ({ id: area.id, name: area.name }))}
+                      onCreated={() => undefined}
+                    />
+                    <Link to="/tables" className="text-[13px] font-semibold underline">
+                      Manage tables and dining areas
+                    </Link>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                 {floorTables.map((table) => (
                   <button
