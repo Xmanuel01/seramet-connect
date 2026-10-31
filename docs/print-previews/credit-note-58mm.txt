@@ -1,0 +1,54 @@
+       Sample Restaurant
+ Westlands, Example Rd, Nairobi
+        Tel 0700 000 000
+        PIN P000000000X
++------------------------------+
+          CREDIT NOTE
++-----------+------------------+
+|Issued to  |Example Ltd       |
+|Address    |Example Park,     |
+|           |Nairobi           |
+|Client PIN |P111111111Y       |
++-----------+------------------+
+|Credit note|CN-2026-0007      |
+|Date       |02/11/2026        |
+|Original   |INV-2026-0088     |
+|inv.       |(31/10/2026)      |
++-----------+------------------+
+|Reason     |10 soft drinks    |
+|           |returned unopened |
+|           |after the event;  |
+|           |credited at the   |
+|           |invoiced price.   |
++-----------+---+---+----------+
+|Item           |Qty|    Amount|
++---------------+---+----------+
+|Soft drinks,   | 10|  1,200.00|
+|assorted -     |   |          |
+|returned       |   |          |
+|@ 120.00       |   |          |
++---------------+---+----------+
+|Net (excl. VAT)|      1,034.48|
+|VAT 16%        |        165.52|
++---------------+--------------+
+|TOTAL          |      1,200.00|
++===============+==============+
+|Invoice total  |     45,300.00|
+|Paid to date   |   (20,000.00)|
+|This credit    |    (1,200.00)|
+|New balance due|     24,100.00|
++===============+==============+
+|eTIMS PENDING                 |
+|Not yet signed by KRA (queued |
+|02 Nov 09:15). It will be sent|
+|automatically.                |
++-----------+------------------+
+|Authorised |                  |
+|by         |                  |
++-----------+------------------+
+|Client ack.|                  |
+|           |                  |
++-----------+------------------+
+   Reduces the balance on the
+  original invoice. Not a cash
+            refund.

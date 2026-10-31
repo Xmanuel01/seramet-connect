@@ -1,0 +1,68 @@
+       Sample Restaurant
+ Westlands, Example Rd, Nairobi
+        Tel 0700 000 000
+        PIN P000000000X
++------------------------------+
+         PURCHASE ORDER
++-----------+------------------+
+|Supplier   |Example Supplies  |
+|           |Ltd               |
+|Address    |Industrial Area,  |
+|           |Nairobi           |
+|Supplier   |P222222222Z       |
+|PIN        |                  |
+|Contact    |Sales / 0722 000  |
+|           |000               |
++-----------+------------------+
+|PO no.     |PO-0058           |
+|Order date |31/10/2026        |
+|Deliver by |04/11/2026 before |
+|           |10:00             |
+|Deliver to |Westlands store   |
+|           |room              |
+|Terms      |30 days from GRN  |
++-----------+--+----+----------+
+|Item          | Qty|    Amount|
++--------------+----+----------+
+|Takeaway      |   3| 13,500.00|
+|containers    |    |          |
+|1000ml        |    |          |
+|Carton (250) @|    |          |
+|4,500.00      |    |          |
+|Kraft paper   |   2|  6,400.00|
+|bags, large   |    |          |
+|Carton (500) @|    |          |
+|3,200.00      |    |          |
+|Thermal paper |   2|  5,600.00|
+|rolls 80mm    |    |          |
+|Box (50) @    |    |          |
+|2,800.00      |    |          |
+|Dishwashing   |   2|  5,200.00|
+|liquid        |    |          |
+|20L jerrycan @|    |          |
+|2,600.00      |    |          |
+|Serviettes,   |   3|  5,400.00|
+|2-ply         |    |          |
+|Carton @      |    |          |
+|1,800.00      |    |          |
++--------------++---+----------+
+|Subtotal excl. |     36,100.00|
+|VAT            |              |
+|VAT 16%        |      5,776.00|
++---------------+--------------+
+|TOTAL          |     41,876.00|
++===============+==============+
+|Quote PO-0058 on the delivery |
+|note and invoice. Goods are   |
+|checked against this order on |
+|a GRN.                        |
++-----------+------------------+
+|Requested  |                  |
+|by         |                  |
++-----------+------------------+
+|Approved by|                  |
+|           |                  |
++-----------+------------------+
+|Supplier   |                  |
+|           |                  |
++-----------+------------------+

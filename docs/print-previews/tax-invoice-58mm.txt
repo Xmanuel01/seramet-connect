@@ -1,0 +1,61 @@
+       Sample Restaurant
+ Westlands, Example Rd, Nairobi
+        Tel 0700 000 000
+        PIN P000000000X
++------------------------------+
+          TAX INVOICE
++-----------+------------------+
+|Bill to    |Example Ltd       |
+|Address    |Example Park,     |
+|           |Nairobi           |
+|Client PIN |P111111111Y       |
+|Contact    |Accounts / 0711   |
+|           |000 000           |
++-----------+------------------+
+|Invoice no.|INV-2026-0088     |
+|Issue date |31/10/2026        |
+|Due date   |14/11/2026        |
+|LPO / Ref  |LPO-123           |
++-----------+---+---+----------+
+|Item           |Qty|    Amount|
++---------------+---+----------+
+|Catering -     | 40| 38,000.00|
+|staff lunch    |   |          |
+|buffet         |   |          |
+|@ 950.00       |   |          |
+|Soft drinks,   | 40|  4,800.00|
+|assorted       |   |          |
+|@ 120.00       |   |          |
+|Delivery and   |  1|  2,500.00|
+|setup          |   |          |
++---------------+---+----------+
+|Net (excl. VAT)|     39,051.72|
+|VAT 16%        |      6,248.28|
++---------------+--------------+
+|TOTAL          |     45,300.00|
++===============+==============+
+|PAY WITH M-PESA - scan the QR |
+|below or pay manually         |
++-----------+------------------+
+|Paybill    |000000            |
+|Account    |INV-2026-0088     |
+|Amount     |45,300.00         |
++-----------+------------------+
+|Bank       |Example Bank,     |
+|           |Westlands         |
+|Account    |Sample Restaurant |
+|           |/ 0000000000      |
++-----------+------------------+
+|KRA eTIMS  |Signed            |
+|CU Serial  |KRACU0000000001   |
+|CU Inv No  |0000000000000088  |
++-----------+------------------+
+|Prepared by|                  |
+|           |                  |
++-----------+------------------+
+|Received by|                  |
+|           |                  |
++-----------+------------------+
+Please pay by 14/11/2026. Quote
+         INV-2026-0088.
+[QR PAYMENT: Scan to pay with M-Pesa]

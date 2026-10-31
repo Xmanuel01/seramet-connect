@@ -1,0 +1,31 @@
+DISPATCH                            A-2310
++---------------+------------------------+
+|Channel        |Uber Eats               |
+|Platform       |#7F3K2                  |
+|Customer       |Customer                |
+|Phone          |07XX XXX XXX            |
+|Deliver to     |Example Apartments,     |
+|               |Block B, Westlands      |
+|Ordered        |31 Oct 21:14            |
+|Ready by       |21:35                   |
+|Rider          |Rider 1 / KMXX 000X     |
++---+-----------+-------+-----------+----+
+|Qty|Item               |     Amount|Pkd |
++---+-------------------+-----------+----+
+|  1|Chicken Biryani    |     750.00|    |
++---+-------------------+-----------+----+
+|  1|Pilau Beef         |     650.00|    |
++---+-------------------+-----------+----+
+|  2|Chapati            |     100.00|    |
++---+-------------------+-----------+----+
+|  1|Mango Juice        |     250.00|    |
++---+-------------------+-----------+----+
+|Order total            |        1,750.00|
+|Payment                |Cash on delivery|
+|RIDER COLLECTS         |        1,750.00|
++===============+=======+================+
+|Packed by      |                        |
++---------------+------------------------+
+|Picked up      |                        |
++---------------+------------------------+
+              Attach to bag

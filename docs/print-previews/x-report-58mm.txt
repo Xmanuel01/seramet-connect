@@ -1,0 +1,41 @@
+ Sample Restaurant / Westlands
+        PIN P000000000X
++------------------------------+
+       X REPORT - INTERIM
+ Shift still open. Counters not
+             reset.
++-----------+------------------+
+|Business   |31/10/2026        |
+|date       |                  |
+|Shift      |10:00 - 17:00     |
+|Cashier    |Cashier 1         |
++-----------+---+--------------+
+|Gross sales    |     61,300.00|
+|Discounts      |      (800.00)|
+|Net sales      |     60,500.00|
+|Net excl. VAT  |     52,155.17|
+|VAT 16%        |      8,344.83|
++---------------+-----+--------+
+|By payment     | Txns|  Amount|
++---------------+-----+--------+
+|Cash           |     |14,200.0|
+|               |     |       0|
+|M-Pesa         |     |33,600.0|
+|               |     |       0|
+|Card           |     |4,700.00|
+|Uber Eats      |     |8,000.00|
++---------------+-----+--------+
+|Total          |     |60,500.0|
+|               |     |       0|
++---------------+-----+--------+
+|Opening float  |      5,000.00|
+|Cash sales     |     14,200.00|
+|Expected cash  |     19,200.00|
++===========+===+==============+
+|Orders     |78                |
+|Average    |775.64            |
+|ticket     |                  |
+|Voids (not |1 / 650.00        |
+|in sales)  |                  |
++-----------+------------------+
+      Interim report only.

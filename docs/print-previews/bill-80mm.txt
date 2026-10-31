@@ -1,0 +1,35 @@
+            Sample Restaurant
+      Westlands, Example Rd, Nairobi
+             Tel 0700 000 000
++----------------------------------------+
+                   BILL
+              Not a receipt
++--------------------+-------------------+
+|Bill B-1042         |Table T-12         |
+|Order A-2291        |Covers 4           |
+|Server Ann          |31 Oct 2026 22:58  |
++--------------------+--+----+-----------+
+|Item                   | Qty|     Amount|
++-----------------------+----+-----------+
+|Chicken Biryani        |   2|   1,500.00|
+|@ 750.00               |    |           |
+|- 1 x no chilli        |    |           |
+|Pilau Beef             |   1|     650.00|
+|Chapati @ 50.00        |   4|     200.00|
+|Mango Juice @ 250.00   |   2|     500.00|
++-----------------------+----+-----------+
+|Net (excl. VAT)        |        2,456.90|
+|VAT 16%                |          393.10|
++-----------------------+----------------+
+|TOTAL                  |        2,850.00|
++=======================+================+
+|PAY WITH M-PESA - scan the QR below or  |
+|pay manually                            |
++---------------+------------------------+
+|Till           |000000                  |
+|Paybill        |000000                  |
+|Account        |B-1042                  |
+|Amount         |2,850.00                |
++---------------+------------------------+
+Show your payment message to the cashier.
+[QR PAYMENT: Scan to pay with M-Pesa]

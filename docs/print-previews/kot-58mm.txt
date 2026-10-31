@@ -1,0 +1,23 @@
+KITCHEN ORDER           KOT 0147
++---------------+--------------+
+|Table T-12     |Covers 4      |
+|Order A-2291   |Dine-in /     |
+|               |Round 1       |
+|Server Ann     |              |
++----+----------+--------------+
+| Qty|Item                     |
++----+-------------------------+
+|   2|CHICKEN BIRYANI          |
+|    |- 1 X NO CHILLI          |
++----+-------------------------+
+|   1|PILAU BEEF               |
+|    |NOTE: KACHUMBARI ON SIDE |
++----+-------------------------+
+|   4|CHAPATI                  |
++----+-------------------------+
+|SPECIAL REQUEST: Guest        |
+|allergic to peanuts - check   |
+|sauces                        |
++------------------------------+
+7 items / 3 lines
+            Printed 31 Oct 22:48

@@ -1,0 +1,41 @@
+       Sample Restaurant
+ Westlands, Example Rd, Nairobi
+        Tel 0700 000 000
+        PIN P000000000X
++------------------------------+
+            RECEIPT
++---------------+--------------+
+|Receipt        |31 Oct 2026   |
+|R-000231       |23:04         |
+|Bill B-1042    |Table T-12    |
+|Served by Ann  |Cashier       |
+|               |Cashier 1     |
++---------------+---+----------+
+|Item           |Qty|    Amount|
++---------------+---+----------+
+|Chicken Biryani|  2|  1,500.00|
+|@ 750.00       |   |          |
+|- 1 x no chilli|   |          |
+|Pilau Beef     |  1|    650.00|
+|Chapati @ 50.00|  4|    200.00|
+|Mango Juice    |  2|    500.00|
+|@ 250.00       |   |          |
++---------------+---+----------+
+|Net (excl. VAT)|      2,456.90|
+|VAT 16%        |        393.10|
++---------------+--------------+
+|TOTAL          |      2,850.00|
++========+======+===+==========+
+|Paid by |Ref       |    Amount|
++--------+----------+----------+
+|M-Pesa  |TJV4X8K2LM|  2,850.00|
++--------+----------+----------+
+      Asante! Karibu tena.
+      Prices include VAT.
++-----------+------------------+
+|KRA eTIMS  |Scan the QR below |
+|           |to verify         |
+|CU Serial  |KRACU0000000001   |
+|CU Inv No  |0000000000000231  |
++-----------+------------------+
+[QR ETIMS_VERIFY: Scan to verify on KRA eTIMS]
