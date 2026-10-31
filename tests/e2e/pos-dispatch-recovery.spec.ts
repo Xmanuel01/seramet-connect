@@ -162,9 +162,7 @@ test("another terminal's durable acknowledgement clears a recovered order; uncer
       await page.goto("/pos");
       await expect(page.getByPlaceholder("Item note")).toBeVisible();
       if (outcome === "BRIDGE_ACCEPTED") {
-        await expect(
-          page.getByRole("button", { name: "Place Order", exact: true }),
-        ).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Place Order", exact: true })).toBeDisabled();
         releaseSnapshot();
       }
       await expect(page.getByText("1 sent / 0 unsent", { exact: true })).toBeVisible();
