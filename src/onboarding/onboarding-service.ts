@@ -1461,6 +1461,11 @@ export class OnboardingService {
       throw validation("Import file could not be parsed within the safe workbook limits");
     }
     if (rawRows.length > file.maxRows) throw validation("Import row limit exceeded");
+    if (!rawRows.length)
+      throw validation(
+        "No rows were found in this file. Put the column headings in the first row of the " +
+          "first visible sheet, with one item per row below them, or upload the CSV template.",
+      );
     assertSafeParsedRows(rawRows);
     const target =
       input.kind === "MENU"
@@ -1681,6 +1686,8 @@ export class OnboardingService {
         verification: parseJson(record.verification_json, {}),
       };
     }
+    // Previews created before empty files were rejected must not commit as a success.
+    if (!record.row_count) throw validation("This import has no rows to commit");
     const productionLike = resolveRuntimeConfiguration(this.env).productionLike;
     if (
       (productionLike && !record.source_object_id) ||
@@ -2353,7 +2360,7 @@ export class OnboardingService {
       .prepare(
         `SELECT status,verification_status,approved_plan_digest,publish_status,catalogue_revision,
                 publish_idempotency_key,duplicate_strategy,target_branch_ids_json,created_by,
-                batch_size
+                batch_size,row_count
          FROM setup_imports WHERE tenant_id=? AND id=? AND import_kind='MENU'`,
       )
       .bind(this.actor.tenantId, importId)
@@ -2368,8 +2375,11 @@ export class OnboardingService {
         target_branch_ids_json: string;
         created_by: string;
         batch_size: number;
+        row_count: number;
       }>();
     if (!record) throw notFound("Menu import not found");
+    if (!record.row_count && record.publish_status !== "PUBLISHED")
+      throw invalidTransition("This menu import has no rows to publish");
     const branchIds = parseJson<string[]>(record.target_branch_ids_json, []);
     if (options.worker) await this.assertQueuedImportAuthority(record.created_by, branchIds);
     for (const branchId of branchIds) await this.assertImportBranch(branchId);
@@ -6334,7 +6344,10 @@ export class OnboardingService {
       validCount: number(record["valid_count"]),
       warningCount: number(record["warning_count"]),
       errorCount: number(record["error_count"]),
-      canCommit: cleanEvidence && string(record["status"]) === "VALIDATED",
+      canCommit:
+        cleanEvidence &&
+        string(record["status"]) === "VALIDATED" &&
+        number(record["row_count"]) > 0,
       rows: (rows.results ?? []).map((row) => ({
         rowNumber: number(row["row_number"]),
         rowKey: string(row["row_key"]),

@@ -244,7 +244,8 @@ function MenuImport() {
           setNotice("Menu import published and verified in the authoritative catalogue.");
           setNoticeTone("success");
           window.sessionStorage.removeItem(pendingImportKey);
-        } else if (restored.status === "FAILED") {
+        } else if (restored.status === "FAILED" || restored.rowCount === 0) {
+          // An empty import has nothing to resume; stop reopening it.
           window.sessionStorage.removeItem(pendingImportKey);
         }
       })
@@ -1271,7 +1272,9 @@ function MenuImport() {
                     {!previewRows.length && (
                       <tr>
                         <TD colSpan={8} className="py-10 text-center text-muted-foreground">
-                          Upload a file to create a server-side preview.
+                          {preview && preview.rowCount === 0
+                            ? "This file has no item rows. Put the headings in the first row of the first sheet, or upload the CSV template."
+                            : "Upload a file to create a server-side preview."}
                         </TD>
                       </tr>
                     )}
