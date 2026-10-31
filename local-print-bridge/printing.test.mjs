@@ -7,7 +7,7 @@ import { createServer } from "node:net";
 import { createHmac, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { permittedAddress, resolvePrinterTarget } from "./printer-target.mjs";
-import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
+import { sendTcp, sendWindows, sendWindowsRaw, deliverWithFallback } from "./transports.mjs";
 import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
@@ -218,6 +218,38 @@ test("Windows remains text spool transport with timeout and sanitized uncertaint
     "x",
     { transport: "WINDOWS", osPrinterName: "x" },
     { exec: (_e, _a, _o, cb) => cb(new Error("secret")) },
+  );
+  assert.equal(failed.stage, "UNCERTAIN");
+  assert.ok(!JSON.stringify(failed).includes("secret"));
+});
+
+test("Windows thermal printers get RAW ESC/POS; only a refused spool may fall back", async () => {
+  let call;
+  const ok = await sendWindowsRaw(
+    "C:\temp\ticket.bin",
+    { transport: "WINDOWS", osPrinterName: "Kitchen's printer; Remove-Item" },
+    {
+      exec: (exe, args, opts, callback) => {
+        call = { exe, args, opts };
+        callback(null);
+      },
+    },
+  );
+  assert.equal(ok.stage, "SPOOL_ACCEPTED");
+  assert.equal(call.opts.env.SERAMET_PRINTER_NAME, "Kitchen's printer; Remove-Item");
+  assert.equal(call.opts.env.SERAMET_PRINT_FILE, "C:\temp\ticket.bin");
+  assert.ok(!call.args.join(" ").includes("Remove-Item"));
+  assert.ok(call.args.at(-1).includes("'RAW'") || call.args.at(-1).includes('"RAW"'));
+  const refused = await sendWindowsRaw(
+    "x",
+    { transport: "WINDOWS", osPrinterName: "x" },
+    { exec: (_e, _a, _o, cb) => cb(Object.assign(new Error("secret"), { code: 2 })) },
+  );
+  assert.equal(refused.stage, "NOT_SENT");
+  const failed = await sendWindowsRaw(
+    "x",
+    { transport: "WINDOWS", osPrinterName: "x" },
+    { exec: (_e, _a, _o, cb) => cb(Object.assign(new Error("secret"), { code: 1 })) },
   );
   assert.equal(failed.stage, "UNCERTAIN");
   assert.ok(!JSON.stringify(failed).includes("secret"));

@@ -11,10 +11,10 @@ import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
 import { encodePrintDocument } from "./raster-renderer.mjs";
-import { sendTcp, sendWindows, deliverWithFallback } from "./transports.mjs";
+import { sendTcp, sendWindows, sendWindowsRaw, deliverWithFallback } from "./transports.mjs";
 import { createPrinterDiscovery } from "./printer-discovery.mjs";
 
-export const BRIDGE_VERSION = "3.1.0";
+export const BRIDGE_VERSION = "3.2.0";
 
 export async function createBridge(
   config,
@@ -80,12 +80,23 @@ export async function createBridge(
                 localTest: localTest && job.localTest === true,
               });
             }
-            const file = join(dataDir, `${createHash("sha256").update(job.id).digest("hex")}.txt`);
+            const base = join(dataDir, createHash("sha256").update(job.id).digest("hex"));
+            // Thermal printers get ESC/POS bytes through the RAW spooler; only when that
+            // path is unavailable (nothing spooled) does the driver print plain text.
+            if (profile && ["58mm", "80mm"].includes(profile.paperWidth)) {
+              try {
+                await writeFile(`${base}.bin`, encodePrintDocument(job, profile), { mode: 0o600 });
+                const raw = await sendWindowsRaw(`${base}.bin`, target);
+                if (raw.stage !== "NOT_SENT") return raw;
+              } finally {
+                await unlink(`${base}.bin`).catch(() => undefined);
+              }
+            }
             try {
-              await writeFile(file, job.content, { mode: 0o600 });
-              return await sendWindows(file, target);
+              await writeFile(`${base}.txt`, job.content, { mode: 0o600 });
+              return await sendWindows(`${base}.txt`, target);
             } finally {
-              await unlink(file).catch(() => undefined);
+              await unlink(`${base}.txt`).catch(() => undefined);
             }
           }))
       )({ ...verified, authorization: job.authorization });
