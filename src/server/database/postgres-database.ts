@@ -21,7 +21,12 @@ type QueryExecutor = {
 export class PostgresD1Database implements D1Database {
   readonly provider = "postgres" as const;
 
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    // Names the database behind this per-request pool, so read-only caches can outlive one
+    // request; connections themselves are never shared between requests.
+    readonly cacheIdentity?: string,
+  ) {}
 
   static fromHyperdrive(binding: HyperdriveBinding) {
     if (!binding.connectionString?.startsWith("postgres")) {
@@ -41,6 +46,7 @@ export class PostgresD1Database implements D1Database {
         idleTimeoutMillis: 30_000,
         allowExitOnIdle: true,
       }),
+      databaseIdentity(binding.connectionString),
     );
   }
 
@@ -190,4 +196,10 @@ export function replaceQuestionMarkParameters(sql: string) {
     output += character;
   }
   return output;
+}
+
+/** Host, port, user and database of a connection string, never its password. */
+function databaseIdentity(connectionString: string) {
+  const url = new URL(connectionString);
+  return `postgres://${decodeURIComponent(url.username)}@${url.host}${url.pathname}`;
 }

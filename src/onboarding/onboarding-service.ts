@@ -4387,6 +4387,97 @@ export class OnboardingService {
     tenant: Row,
     counts: SetupSummary["counts"],
   ): Promise<ReadinessResult[]> {
+    // Independent counts run together: each is a database round trip, and run one after
+    // another they made Setup Centre take many seconds to load.
+    const [
+      activeAdmins,
+      unassignedBranches,
+      taxCount,
+      paymentCount,
+      invalidProviderPaymentMethods,
+      deliveryCount,
+      stationCount,
+      deviceCount,
+      documentCount,
+      successfulTests,
+      verifiedBackups,
+    ] = await Promise.all([
+      count(
+        this.db,
+        `SELECT COUNT(DISTINCT u.id) count FROM users u
+         JOIN user_roles ur ON ur.tenant_id=u.tenant_id AND ur.user_id=u.id
+         JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
+         JOIN role_permissions rp ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
+         WHERE u.tenant_id=? AND u.active=1 AND rp.permission_code=?`,
+        this.actor.tenantId,
+        permissions.setupManage,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM branches b WHERE b.tenant_id=? AND b.active=1
+         AND NOT EXISTS (
+           SELECT 1 FROM user_branches ub JOIN users u ON u.tenant_id=ub.tenant_id AND u.id=ub.user_id AND u.active=1
+           WHERE ub.tenant_id=b.tenant_id AND ub.branch_id=b.id
+         )`,
+        this.actor.tenantId,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM tax_service_rules WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
+        this.actor.tenantId,
+        branchId ?? null,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM payment_methods WHERE tenant_id=? AND active=1`,
+        this.actor.tenantId,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM payment_methods pm
+         LEFT JOIN provider_connections pc ON pc.tenant_id=pm.tenant_id AND pc.id=pm.provider_connection_id
+         WHERE pm.tenant_id=? AND pm.active=1 AND pm.provider_connection_id IS NOT NULL
+         AND (pc.id IS NULL OR pc.status NOT IN ('CONFIGURED','CONNECTED') OR pc.secret_reference IS NULL)`,
+        this.actor.tenantId,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM order_channels WHERE tenant_id=? AND active=1 AND channel_type='MARKETPLACE'`,
+        this.actor.tenantId,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM stations WHERE tenant_id=? AND active=1 AND (? IS NULL OR branch_id=?)`,
+        this.actor.tenantId,
+        branchId ?? null,
+        branchId ?? null,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=? AND trust_status='ACTIVE' AND (? IS NULL OR branch_id=?)`,
+        this.actor.tenantId,
+        branchId ?? null,
+        branchId ?? null,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM document_templates WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
+        this.actor.tenantId,
+        branchId ?? null,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM setup_test_runs WHERE tenant_id=? AND status='SUCCESS' AND (? IS NULL OR branch_id=?)`,
+        this.actor.tenantId,
+        branchId ?? null,
+        branchId ?? null,
+      ),
+      count(
+        this.db,
+        `SELECT COUNT(*) count FROM backup_records WHERE tenant_id=? AND status IN ('SUCCEEDED','VERIFIED') AND verified_at IS NOT NULL`,
+        this.actor.tenantId,
+      ),
+    ]);
     const rows: ReadinessResult[] = [];
     const add = (
       section: SetupSection,
@@ -4442,16 +4533,6 @@ export class OnboardingService {
       "Create and configure at least one branch",
       { evidence: { count: counts.branches } },
     );
-    const activeAdmins = await count(
-      this.db,
-      `SELECT COUNT(DISTINCT u.id) count FROM users u
-       JOIN user_roles ur ON ur.tenant_id=u.tenant_id AND ur.user_id=u.id
-       JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
-       JOIN role_permissions rp ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
-       WHERE u.tenant_id=? AND u.active=1 AND rp.permission_code=?`,
-      this.actor.tenantId,
-      permissions.setupManage,
-    );
     add(
       "USERS_ROLES",
       "ACTIVE_ADMIN_EXISTS",
@@ -4459,15 +4540,6 @@ export class OnboardingService {
       `${activeAdmins} active setup administrator(s) found`,
       "Invite an active administrator with setup management permission",
       { evidence: { activeAdmins, activeUsers: counts.users } },
-    );
-    const unassignedBranches = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM branches b WHERE b.tenant_id=? AND b.active=1
-       AND NOT EXISTS (
-         SELECT 1 FROM user_branches ub JOIN users u ON u.tenant_id=ub.tenant_id AND u.id=ub.user_id AND u.active=1
-         WHERE ub.tenant_id=b.tenant_id AND ub.branch_id=b.id
-       )`,
-      this.actor.tenantId,
     );
     add(
       "USERS_ROLES",
@@ -4543,12 +4615,6 @@ export class OnboardingService {
         },
       },
     );
-    const taxCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM tax_service_rules WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
-      this.actor.tenantId,
-      branchId ?? null,
-    );
     const noTaxSignedOff = taxCount === 0 && (await this.ownerSignedOffNoTax());
     add(
       "TAX_SERVICE",
@@ -4559,19 +4625,6 @@ export class OnboardingService {
         : `${taxCount} active tax/service rule(s) found`,
       "Configure tax and service charge rules or explicitly sign off not applicable",
       { warning: true, evidence: { count: taxCount, noTaxSignedOff } },
-    );
-    const paymentCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM payment_methods WHERE tenant_id=? AND active=1`,
-      this.actor.tenantId,
-    );
-    const invalidProviderPaymentMethods = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM payment_methods pm
-       LEFT JOIN provider_connections pc ON pc.tenant_id=pm.tenant_id AND pc.id=pm.provider_connection_id
-       WHERE pm.tenant_id=? AND pm.active=1 AND pm.provider_connection_id IS NOT NULL
-       AND (pc.id IS NULL OR pc.status NOT IN ('CONFIGURED','CONNECTED') OR pc.secret_reference IS NULL)`,
-      this.actor.tenantId,
     );
     const paymentRequired = branchPolicy?.payments_required !== 0;
     if (paymentRequired)
@@ -4584,11 +4637,6 @@ export class OnboardingService {
         { evidence: { count: paymentCount, invalidProviderPaymentMethods } },
       );
     else rows.push(notApplicable("PAYMENTS", "PAYMENTS_NOT_REQUIRED", branchId));
-    const deliveryCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM order_channels WHERE tenant_id=? AND active=1 AND channel_type='MARKETPLACE'`,
-      this.actor.tenantId,
-    );
     if (deliveryCount)
       add(
         "DELIVERY_INTEGRATIONS",
@@ -4602,13 +4650,6 @@ export class OnboardingService {
         },
       );
     else rows.push(notApplicable("DELIVERY_INTEGRATIONS", "DELIVERY_NOT_ENABLED", branchId));
-    const stationCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM stations WHERE tenant_id=? AND active=1 AND (? IS NULL OR branch_id=?)`,
-      this.actor.tenantId,
-      branchId ?? null,
-      branchId ?? null,
-    );
     add(
       "KITCHEN_STATIONS",
       "STATIONS_CONFIGURED",
@@ -4616,13 +4657,6 @@ export class OnboardingService {
       `${stationCount} active station(s) found`,
       "Configure production stations and KDS routing",
       { evidence: { count: stationCount } },
-    );
-    const deviceCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=? AND trust_status='ACTIVE' AND (? IS NULL OR branch_id=?)`,
-      this.actor.tenantId,
-      branchId ?? null,
-      branchId ?? null,
     );
     const printingRequired = branchPolicy?.printing_required !== 0;
     if (printingRequired)
@@ -4635,12 +4669,6 @@ export class OnboardingService {
         { evidence: { count: deviceCount } },
       );
     else rows.push(notApplicable("PRINTERS_DEVICES", "PRINTING_NOT_REQUIRED", branchId));
-    const documentCount = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM document_templates WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
-      this.actor.tenantId,
-      branchId ?? null,
-    );
     add(
       "DOCUMENTS",
       "DOCUMENT_TEMPLATES_READY",
@@ -4666,13 +4694,6 @@ export class OnboardingService {
         { evidence: { count: openingCount } },
       );
     } else rows.push(notApplicable("OPENING_STOCK", "OPENING_STOCK_NOT_APPLICABLE", branchId));
-    const successfulTests = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM setup_test_runs WHERE tenant_id=? AND status='SUCCESS' AND (? IS NULL OR branch_id=?)`,
-      this.actor.tenantId,
-      branchId ?? null,
-      branchId ?? null,
-    );
     add(
       "TESTING",
       "REQUIRED_TESTS_PASSED",
@@ -4746,11 +4767,6 @@ export class OnboardingService {
         overrideAllowed: false,
       },
     );
-    const verifiedBackups = await count(
-      this.db,
-      `SELECT COUNT(*) count FROM backup_records WHERE tenant_id=? AND status IN ('SUCCEEDED','VERIFIED') AND verified_at IS NOT NULL`,
-      this.actor.tenantId,
-    );
     add(
       "READINESS",
       "VERIFIED_BACKUP_AVAILABLE",
@@ -4778,62 +4794,63 @@ export class OnboardingService {
   private async countSetupFacts(branchId?: string): Promise<SetupSummary["counts"]> {
     const scoped = branchId ? " AND branch_id=?" : "";
     const branchArgs = branchId ? [branchId] : [];
-    return {
+    // Started together and awaited once; see buildReadinessResults.
+    const pending = {
       branches: branchId
-        ? await count(
+        ? count(
             this.db,
             "SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND id=? AND active=1",
             this.actor.tenantId,
             branchId,
           )
-        : await count(
+        : count(
             this.db,
             "SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND active=1",
             this.actor.tenantId,
           ),
-      users: await count(
+      users: count(
         this.db,
         "SELECT COUNT(*) count FROM users WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      menuItems: await count(
+      menuItems: count(
         this.db,
         "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      inventoryItems: await count(
+      inventoryItems: count(
         this.db,
         "SELECT COUNT(*) count FROM inventory_items WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      suppliers: await count(
+      suppliers: count(
         this.db,
         "SELECT COUNT(*) count FROM suppliers WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      recipes: await count(
+      recipes: count(
         this.db,
         "SELECT COUNT(*) count FROM recipes WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      providerConnections: await count(
+      providerConnections: count(
         this.db,
         `SELECT COUNT(*) count FROM provider_connections WHERE tenant_id=?${scoped}`,
         this.actor.tenantId,
         ...branchArgs,
       ),
-      devices: await count(
+      devices: count(
         this.db,
         `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=?${scoped}`,
         this.actor.tenantId,
         ...branchArgs,
       ),
-      openImports: await count(
+      openImports: count(
         this.db,
         "SELECT COUNT(*) count FROM setup_imports WHERE tenant_id=? AND status NOT IN ('COMMITTED','REJECTED','FAILED')",
         this.actor.tenantId,
       ),
-      deadLetters: await count(
+      deadLetters: count(
         this.db,
         `SELECT
           (SELECT COUNT(*) FROM integration_dead_letters WHERE tenant_id=? AND status='OPEN') +
@@ -4842,6 +4859,10 @@ export class OnboardingService {
         this.actor.tenantId,
       ),
     };
+    const values = await Promise.all(Object.values(pending));
+    return Object.fromEntries(
+      Object.keys(pending).map((key, index) => [key, values[index]]),
+    ) as SetupSummary["counts"];
   }
 
   private async sectionWeights() {

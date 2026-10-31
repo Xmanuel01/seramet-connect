@@ -10,6 +10,7 @@ import {
   businessTypePresets,
   onboardingStep,
   paymentMethodPresets,
+  knownServiceModeCodes,
   serviceModePresets,
   weekDays,
   type BusinessTypePreset,
@@ -102,9 +103,12 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
     () => savedHours(saved(5)?.["operatingHours"]) ?? presetHours(preset),
   );
   const [serviceModes, setServiceModes] = useState<string[]>(() => {
-    const previous = stringArray(saved(6)?.["serviceModes"]);
+    // Only the modes shown as checkboxes; anything else would be saved without being visible.
+    const previous = knownServiceModeCodes(saved(6)?.["serviceModes"]);
     if (previous.length) return previous;
-    const active = channels.filter((item) => item.enabled).map((item) => item.code);
+    const active = knownServiceModeCodes(
+      channels.filter((item) => item.enabled).map((item) => item.code),
+    );
     return active.length ? active : preset.serviceModes;
   });
   const [tax, setTax] = useState(() => taxForm(vatRule, serviceRule, saved(7)));
