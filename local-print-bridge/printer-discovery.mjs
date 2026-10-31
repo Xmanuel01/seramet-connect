@@ -16,10 +16,12 @@ export function createPrinterDiscovery({
     if (cached && now() - checkedAt < 5000) return cached;
     if (pending) return pending;
     pending = new Promise((resolve, reject) => {
+      // The first Get-Printer loads the PrintManagement module, which takes several
+      // seconds on a cold or slow PC.
       execute(
         "powershell.exe",
         ["-NoProfile", "-NonInteractive", "-Command", command],
-        { windowsHide: true, timeout: 5000, maxBuffer: 131072, shell: false },
+        { windowsHide: true, timeout: 20000, maxBuffer: 131072, shell: false },
         (error, stdout) => {
           if (error) {
             reject(new Error("PRINTER_DISCOVERY_UNAVAILABLE"));

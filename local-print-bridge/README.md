@@ -113,7 +113,7 @@ HTTP/XML is a different protocol, not implemented here.
   the bridge's Windows account, with enrolled tenant/branch/bridge identity.
   Allowed-origin and bearer authorization are required. Requests share an
   in-flight enumeration and five-second cache; PowerShell is hidden and has a
-  five-second timeout. This is not physical delivery or paper-status certification.
+  20-second timeout (the first Get-Printer loads its module slowly on cold PCs). This is not physical delivery or paper-status certification.
 - Authenticated `POST /jobs`: requires short-lived scoped server evidence.
   Duplicate submissions return the existing durable outcome. Polling does not
   create another physical attempt. Altered identity reuse is rejected.

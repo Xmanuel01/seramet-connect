@@ -25,8 +25,8 @@ export async function discoverInstalledPrinters(
     credentials: "omit",
     redirect: "error",
     signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(7000)])
-      : AbortSignal.timeout(7000),
+      ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
+      : AbortSignal.timeout(25000),
     cache: "no-store",
   });
   if (response.status === 401)
