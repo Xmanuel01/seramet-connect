@@ -168,6 +168,8 @@ async function secureResponse(response: Response, env: SerametEnv, api: boolean)
   // user-consented foreground location even when entry was through another page.
   headers.set("permissions-policy", "camera=(), microphone=(), geolocation=(self), payment=()");
 
+  // connect-src allows loopback so the Printers page can reach the local Seramet Print
+  // Bridge (default http://127.0.0.1:48777; manual setups may use localhost or another port).
   if (productionLike) {
     headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
 
@@ -188,7 +190,7 @@ async function secureResponse(response: Response, env: SerametEnv, api: boolean)
 
         headers.set(
           "content-security-policy",
-          `default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; form-action 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'`,
+          `default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; form-action 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' http://127.0.0.1:* http://localhost:*`,
         );
 
         return new Response(securedHtml, {
@@ -200,7 +202,7 @@ async function secureResponse(response: Response, env: SerametEnv, api: boolean)
 
       headers.set(
         "content-security-policy",
-        "default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'",
+        "default-src 'self'; base-uri 'self'; frame-ancestors 'self'; object-src 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' http://127.0.0.1:* http://localhost:*",
       );
     }
   }
