@@ -71,6 +71,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/pos")({
   head: () => ({
@@ -256,7 +262,7 @@ function POS() {
   });
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
-  const [printNotice, setPrintNotice] = useState("Print routing is running in the background.");
+  const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
   const [kitchenNote, setKitchenNote] = useState(recoveredDraft?.kitchenNote ?? "");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>(
@@ -1703,54 +1709,6 @@ function POS() {
       }
     });
 
-  const sendKitchenAndBill = () =>
-    void runOrderAction(async () => {
-      if (!items.length) return;
-      if (selectedChannel?.requiresTable && !orderTable) {
-        setTablePickerOpen(true);
-        setPrintNotice("Select a table before sending this dine-in order to kitchen.");
-        setPrintNoticeType("warning");
-        return;
-      }
-      try {
-        const result = await queueKitchenTicketsForTable();
-        if (!result) return;
-        if (!kitchenDispatchHasDelivery(result)) {
-          setPrintNotice(
-            "Order saved in Kitchen, but KOT delivery is unconfirmed. " +
-              "Check Printers before creating the customer bill.",
-          );
-          setPrintNoticeType("warning");
-          return;
-        }
-        const billing = await mutateTransaction("prepareInvoiceForPayment", {
-          orderId: result.order.id,
-        });
-        const exactInvoice = billing?.state.bills.find(
-          (invoice) =>
-            invoice.orderIds.includes(result.order.id) &&
-            ["OPEN", "PARTIAL", "PENDING"].includes(invoice.status),
-        );
-        if (!exactInvoice) {
-          throw new Error("Kitchen dispatch succeeded, but the invoice was not confirmed.");
-        }
-        clearCurrentOrder(
-          `${result.order.id} sent to Kitchen and billed as ${exactInvoice.id}. ` +
-            "KOT physical delivery has not been independently verified.",
-          "success",
-        );
-        await navigate({ to: "/invoices" });
-      } catch (error) {
-        setPrintNotice(
-          cashierErrorMessage(
-            error,
-            "Check the Kitchen and Invoices for this order before retrying.",
-          ),
-        );
-        setPrintNoticeType("warning");
-      }
-    });
-
   const moveOrderToInvoice = async (printBill: boolean) => {
     if (orderActionRef.current) return;
     orderActionRef.current = true;
@@ -2666,7 +2624,9 @@ function POS() {
                 <dd className="num">{ksh(total)}</dd>
               </div>
             </dl>
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            {/* Place Order sends new items to the kitchen; Pay appears once the order
+                may be paid and becomes the main action when nothing is left to send. */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
               <Btn
                 onClick={holdOrder}
                 disabled={
@@ -2678,125 +2638,98 @@ function POS() {
               >
                 Hold
               </Btn>
-              {canPrintBill ? (
-                <>
-                  <Btn
-                    onClick={() => void moveOrderToInvoice(true)}
-                    disabled={orderActionBusy || selectedOrderUnavailable}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  disabled={orderActionBusy || selectedOrderUnavailable}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 text-[13px] font-semibold transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  More
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={!canPrintBill}
+                    onSelect={() => void moveOrderToInvoice(true)}
                   >
+                    <Printer className="h-4 w-4" />
                     Print bill
-                  </Btn>
-                  <Btn
-                    onClick={() => void moveOrderToInvoice(false)}
-                    disabled={orderActionBusy || selectedOrderUnavailable}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!canPrintBill}
+                    onSelect={() => void moveOrderToInvoice(false)}
                   >
                     <FileText className="h-4 w-4" />
                     Invoice
-                  </Btn>
-                </>
-              ) : (
-                <Btn className="col-span-2">More</Btn>
-              )}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-            <div className="mt-2 grid grid-cols-[minmax(0,1fr)_1.4fr] gap-2">
+            <div className="mt-2 flex gap-2">
+              {/* Stays available after sending: it also re-confirms a kitchen ticket
+                  whose delivery is uncertain, without printing a duplicate. */}
               <Btn
+                variant={hasUnsentItems || !activeOrderKitchenSent ? "primary" : undefined}
+                className="h-12 flex-1 text-[15px]"
                 onClick={queueKitchenTickets}
                 disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
               >
-                {orderActionBusy ? "Working..." : "Send kitchen"}
+                {orderActionBusy ? "Working..." : "Place Order"}
               </Btn>
-              <Btn
-                variant="primary"
-                className="h-11 text-[15px]"
-                onClick={() => void openPayment()}
-                disabled={
-                  orderActionBusy ||
-                  selectedOrderUnavailable ||
-                  paymentBusy ||
-                  !items.length ||
-                  !dineInPaymentReady
-                }
-                title={
-                  !dineInPaymentReady && selectedChannel?.requiresTable
-                    ? "Select a table and send all items to kitchen first"
-                    : undefined
-                }
-              >
-                {paymentBusy
-                  ? "Preparing..."
-                  : !dineInPaymentReady && selectedChannel?.requiresTable
-                    ? "Send kitchen first"
-                    : `Pay ${ksh(total)}`}
-              </Btn>
-            </div>
-            <div className="mt-2">
-              <Btn
-                className="w-full"
-                onClick={sendKitchenAndBill}
-                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
-              >
-                {orderActionBusy ? "Working..." : "Send kitchen & bill"}
-              </Btn>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              {paymentMethods.map((method) => {
-                const availability = paymentMethodAvailability(method);
-                return (
-                  <span
-                    key={method.id}
-                    className={cn(
-                      "rounded border px-1.5 py-0.5",
-                      availability.usable
-                        ? "border-border"
-                        : "border-warning/30 bg-warning-soft text-warning",
-                    )}
-                  >
-                    {method.displayName}: {availability.label}
-                  </span>
-                );
-              })}
-              <span className="rounded border border-border px-1.5 py-0.5">Split</span>
-            </div>
-            <div
-              className={cn(
-                "mt-3 rounded-lg border p-3",
-                printNoticeType === "success"
-                  ? "border-success/30 bg-success-soft text-success"
-                  : printNoticeType === "warning"
-                    ? "border-warning/30 bg-warning-soft text-warning"
-                    : "border-border bg-secondary/40 text-muted-foreground",
+              {dineInPaymentReady && (
+                <Btn
+                  variant={hasUnsentItems || !activeOrderKitchenSent ? undefined : "primary"}
+                  className="h-12 flex-1 text-[15px]"
+                  onClick={() => void openPayment()}
+                  disabled={
+                    orderActionBusy || selectedOrderUnavailable || paymentBusy || !items.length
+                  }
+                >
+                  {paymentBusy ? "Preparing..." : `Pay ${ksh(total)}`}
+                </Btn>
               )}
-            >
-              <div className="flex items-center gap-2">
-                {printNoticeType === "success" ? (
-                  <CheckCircle2 className="h-5 w-5 shrink-0" />
-                ) : (
-                  <Printer className="h-4 w-4 shrink-0 text-primary" />
+            </div>
+            {(printNotice !== IDLE_PRINT_NOTICE || trackedPrint || configurationError) && (
+              <div
+                className={cn(
+                  "mt-3 rounded-lg border p-3",
+                  printNoticeType === "success"
+                    ? "border-success/30 bg-success-soft text-success"
+                    : printNoticeType === "warning"
+                      ? "border-warning/30 bg-warning-soft text-warning"
+                      : "border-border bg-secondary/40 text-muted-foreground",
                 )}
-                <div className="min-w-0">
-                  <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
-                  <div className="mt-0.5 text-[11px]">
-                    {trackedPrint
-                      ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
-                      : "Operational feedback and printing state appear here."}
-                  </div>
-                  {configurationError && (
-                    <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
-                      <Link to="/seramet-printers" className="underline">
-                        Check printers and kitchen routes
-                      </Link>
-                      <Link
-                        to="/seramet-setup"
-                        search={{ section: "DOCUMENTS" }}
-                        className="underline"
-                      >
-                        Review document settings
-                      </Link>
-                    </div>
+              >
+                <div className="flex items-center gap-2">
+                  {printNoticeType === "success" ? (
+                    <CheckCircle2 className="h-5 w-5 shrink-0" />
+                  ) : (
+                    <Printer className="h-4 w-4 shrink-0 text-primary" />
                   )}
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
+                    <div className="mt-0.5 text-[11px]">
+                      {trackedPrint
+                        ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
+                        : "Operational feedback and printing state appear here."}
+                    </div>
+                    {(configurationError ||
+                      (printNoticeType === "warning" && /printer/i.test(printNotice))) && (
+                      <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+                        <Link to="/seramet-printers" className="underline">
+                          Check printers and kitchen routes
+                        </Link>
+                        <Link
+                          to="/seramet-setup"
+                          search={{ section: "DOCUMENTS" }}
+                          className="underline"
+                        >
+                          Review document settings
+                        </Link>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </aside>
       </div>
@@ -3308,6 +3241,9 @@ function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
     </span>
   );
 }
+
+// Placeholder shown before any action; the status box stays hidden until there is news.
+const IDLE_PRINT_NOTICE = "Print routing is running in the background.";
 
 function cashierErrorMessage(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : fallback;

@@ -29,7 +29,7 @@ test("POS displays restaurant time and missing routing cannot dispatch a new ord
       async () => (await (await fetch("/api/seramet/transactions")).json()).state.orders.length,
     );
   const before = await count();
-  await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+  await page.getByRole("button", { name: "Place Order", exact: true }).click();
   await expect(page.getByText(/Kitchen routing is unavailable:/)).toBeVisible();
   await expect(page.getByRole("link", { name: "Check printers and kitchen routes" })).toBeVisible();
   await expect(page.getByPlaceholder("Item note")).toHaveValue("No onion - preserve cashier work");
@@ -163,13 +163,13 @@ test("another terminal's durable acknowledgement clears a recovered order; uncer
       await expect(page.getByPlaceholder("Item note")).toBeVisible();
       if (outcome === "BRIDGE_ACCEPTED") {
         await expect(
-          page.getByRole("button", { name: "Send kitchen", exact: true }),
+          page.getByRole("button", { name: "Place Order", exact: true }),
         ).toBeDisabled();
         releaseSnapshot();
       }
       await expect(page.getByText("1 sent / 0 unsent", { exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Send kitchen", exact: true })).toBeEnabled();
-      await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Place Order", exact: true })).toBeEnabled();
+      await page.getByRole("button", { name: "Place Order", exact: true }).click();
       if (outcome === "BRIDGE_ACCEPTED") {
         await expect(
           page.getByText(`${order.id} is already in kitchen; no new KOT is required.`, {

@@ -371,7 +371,12 @@ export const SerametPrintService = {
     const explicitStation = productionStation
       ? eligible.filter((printer) => printer.stationKeys?.includes(productionStation))
       : [];
-    if (explicitStation.length > 1) throw new Error("Ambiguous station printer assignment");
+    if (explicitStation.length > 1)
+      throw new Error(
+        `${explicitStation.map((printer) => printer.name).join(" and ")} are both set to print ` +
+          `${productionStation} tickets. In Printers & devices, edit one so only one printer ` +
+          `prints ${productionStation}.`,
+      );
     const configured = eligible.filter((printer) => printer.configuredTransport);
     const exact =
       explicitStation[0] ??
