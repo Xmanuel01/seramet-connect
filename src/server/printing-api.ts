@@ -131,6 +131,33 @@ export async function signPrintJob(job: Record<string, unknown>, key: string) {
   ).join("");
   return { payload, signature };
 }
+// The explicit SERAMET_PRINT_SIGNING_KEY wins. Otherwise derive a separate print
+// master from the session secret every deployment already has, so printing needs no
+// extra setup. The label keeps the two keys independent: a print key never signs sessions.
+export async function printSigningMaster(
+  env: Pick<SerametEnv, "SERAMET_PRINT_SIGNING_KEY" | "SERAMET_JWT_SECRET">,
+) {
+  if (env.SERAMET_PRINT_SIGNING_KEY && env.SERAMET_PRINT_SIGNING_KEY.length >= 32)
+    return env.SERAMET_PRINT_SIGNING_KEY;
+  if (!env.SERAMET_JWT_SECRET || env.SERAMET_JWT_SECRET.length < 32) return "";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(env.SERAMET_JWT_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.sign(
+        "HMAC",
+        key,
+        new TextEncoder().encode("seramet-print-signing-master-v1"),
+      ),
+    ),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
 export async function deriveBridgeSigningKey(
   master: string,
   tenantId: string,
@@ -237,7 +264,7 @@ async function reserveDelivery(
   if (job.expiresAt <= now || job.expiresAt > now + 120000)
     throw new SerametHttpError(403, "Expired delivery evidence");
   const key = await deriveBridgeSigningKey(
-    env.SERAMET_PRINT_SIGNING_KEY ?? "",
+    await printSigningMaster(env),
     job.tenantId,
     job.branchId,
     job.bridgeId,
@@ -418,7 +445,7 @@ export async function handlePrintingApi(
     )
       throw new SerametHttpError(403, "Configured branch bridge required");
     const signingKey = await deriveBridgeSigningKey(
-      env.SERAMET_PRINT_SIGNING_KEY ?? "",
+      await printSigningMaster(env),
       actor.tenantId,
       actor.branchId,
       input.bridgeId,
@@ -725,7 +752,8 @@ export async function handlePrintingApi(
       content = SerametPrintService.formatDuplicateCopy(content, printer.paperWidth);
     }
   }
-  if (!env.SERAMET_PRINT_SIGNING_KEY || env.SERAMET_PRINT_SIGNING_KEY.length < 32)
+  const signingMaster = await printSigningMaster(env);
+  if (signingMaster.length < 32)
     throw new SerametHttpError(503, "Protected print signing is not configured");
   if (input.testRenderingMode && input.documentType !== "TEST")
     throw new SerametHttpError(400, "Rendering overrides are diagnostic-only");
@@ -783,12 +811,7 @@ export async function handlePrintingApi(
   });
   const authorization = await signPrintJob(
     delivery,
-    await deriveBridgeSigningKey(
-      env.SERAMET_PRINT_SIGNING_KEY,
-      actor.tenantId,
-      actor.branchId,
-      printer.bridgeId,
-    ),
+    await deriveBridgeSigningKey(signingMaster, actor.tenantId, actor.branchId, printer.bridgeId),
   );
   return respond({ authorization, retry: Boolean(recoveryId) });
 }
