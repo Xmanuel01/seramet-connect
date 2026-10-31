@@ -62,22 +62,27 @@ export class LocationCurrencyService {
 
   async getOnboardingState(): Promise<OnboardingWizardState> {
     this.require(permissions.setupView);
-    const progress = await this.db
-      .prepare(
-        `SELECT current_step,status,completed_steps_json,responses_json,version
-         FROM onboarding_wizard_progress WHERE tenant_id=?`,
-      )
-      .bind(this.actor.tenantId)
-      .first<DbRow>();
+    // Independent reads run together; each is a database round trip.
+    const [progress, location, financialActivity, acceptedCurrencies] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT current_step,status,completed_steps_json,responses_json,version
+           FROM onboarding_wizard_progress WHERE tenant_id=?`,
+        )
+        .bind(this.actor.tenantId)
+        .first<DbRow>(),
+      this.db
+        .prepare(
+          `SELECT country_code,administrative_level_1,administrative_level_2,city,address_line,
+                  postal_code,latitude_microdegrees,longitude_microdegrees,status
+           FROM tenant_business_locations WHERE tenant_id=?`,
+        )
+        .bind(this.actor.tenantId)
+        .first<DbRow>(),
+      this.hasFinancialActivity(),
+      this.listAcceptedCurrencies(),
+    ]);
     if (!progress) throw notFound("Onboarding progress was not initialized");
-    const location = await this.db
-      .prepare(
-        `SELECT country_code,administrative_level_1,administrative_level_2,city,address_line,
-                postal_code,latitude_microdegrees,longitude_microdegrees,status
-         FROM tenant_business_locations WHERE tenant_id=?`,
-      )
-      .bind(this.actor.tenantId)
-      .first<DbRow>();
     const suggestedCurrency = location
       ? await this.db
           .prepare(
@@ -88,7 +93,7 @@ export class LocationCurrencyService {
           .bind(text(location["country_code"]))
           .first<DbRow>()
       : null;
-    const canChangeBaseCurrency = !(await this.hasFinancialActivity());
+    const canChangeBaseCurrency = !financialActivity;
     const flow = storedProgress(progress);
     return {
       currentStep: flow.currentStep,
@@ -98,7 +103,7 @@ export class LocationCurrencyService {
       version: integer(progress["version"]),
       location: location ? mapLocation(location) : null,
       suggestedCurrency: suggestedCurrency ? mapCurrency(suggestedCurrency) : null,
-      acceptedCurrencies: await this.listAcceptedCurrencies(),
+      acceptedCurrencies,
       canChangeBaseCurrency,
       baseCurrencyLockReason: canChangeBaseCurrency
         ? null

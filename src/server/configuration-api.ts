@@ -158,7 +158,9 @@ export async function handleConfigurationApi(
   if (isRead && request.method === "GET") {
     const actor = await authenticateSerametRequest(request, env);
     const db = requireDatabase(env);
-    const repository = await hydrateAuthoritativeConfiguration(db, env);
+    // The app reads this after its own changes, so it always reflects the database; other
+    // requests may use configuration cached for a few seconds.
+    const repository = await hydrateAuthoritativeConfiguration(db, env, true);
     const state = scopeState(repository.snapshot(), actor.tenantId);
     if (url.pathname.endsWith("/export")) {
       requireAny(actor, [permissions.settingsOrganisationManage, permissions.auditView]);
