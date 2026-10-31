@@ -28,6 +28,6 @@ it("routes exact same-role stations and refuses ambiguity, disabled and unmapped
   expect(SerametPrintService.resolvePrinter(profile, "FOOD_KOT", "GRILL").routeMode).toBe("failed");
   profile.printers.push(device("duplicate", "MAIN KITCHEN"));
   expect(() => SerametPrintService.resolvePrinter(profile, "FOOD_KOT", "MAIN KITCHEN")).toThrow(
-    "Ambiguous",
+    "main and duplicate are both set to print MAIN KITCHEN tickets",
   );
 });
