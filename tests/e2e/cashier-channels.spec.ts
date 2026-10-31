@@ -376,13 +376,36 @@ test("legacy delivery orders can complete missing contact details without unlock
       legacyChannel.requiresAddress = required;
       await api("configuration/import", { mode: "APPLY", configuration });
     };
+    const key =
+      "seramet.pos.draft.v1:" +
+      [fixture.tenantId, fixture.firstBranchId, actor.id, actor.deviceId ?? "account"]
+        .map(encodeURIComponent)
+        .join(":");
+    // The server commits the kitchen send before the POS finishes claiming the KOT
+    // obligation and clears the order, and that clear autosaves an empty draft. Wait
+    // for that autosave so it cannot overwrite the draft injected by restoreDraft().
+    const waitForClearedPosDraft = () =>
+      expect
+        .poll(() =>
+          page.evaluate((key) => {
+            const draft = JSON.parse(sessionStorage.getItem(key) ?? "null");
+            return draft ? { activeOrderId: draft.activeOrderId, lines: draft.lines } : null;
+          }, key),
+        )
+        .toEqual({ activeOrderId: null, lines: {} });
+    // A reload first paints the IndexedDB-cached snapshot, whose revision predates the
+    // configuration import. Sending before the server snapshot lands is a stale-revision 409.
+    const waitForServerSnapshot = () =>
+      expect(page.getByLabel("Connection: Online", { exact: true })).toBeVisible();
     await configureRequirements(false);
     await page.reload();
+    await waitForServerSnapshot();
     const before = await snapshot();
     await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
     await expect
       .poll(async () => (await snapshot()).state.orders.length)
       .toBe(before.state.orders.length + 1);
+    await waitForClearedPosDraft();
     const sent = (await snapshot()).state.orders.find((order) => order.channel === channel.code)!;
     expect(sent.lines[0]!.sentAt).toBeTruthy();
     expect(sent.delivery?.recipientName).toBeFalsy();
@@ -392,11 +415,6 @@ test("legacy delivery orders can complete missing contact details without unlock
     const restoreDraft = async () => {
       const current = await snapshot();
       const order = current.state.orders.find((candidate) => candidate.id === sent.id)!;
-      const key =
-        "seramet.pos.draft.v1:" +
-        [fixture.tenantId, fixture.firstBranchId, actor.id, actor.deviceId ?? "account"]
-          .map(encodeURIComponent)
-          .join(":");
       // Exercise the existing saved-order recovery contract, not the held-order queue.
       await page.evaluate(
         ({ key, orderId, productId, channelId, quantity, revision, digest }) => {
@@ -426,6 +444,7 @@ test("legacy delivery orders can complete missing contact details without unlock
         },
       );
       await page.reload();
+      await waitForServerSnapshot();
       await expect(
         page.getByText(`${order.lines.length} sent / 0 unsent`, { exact: true }),
       ).toBeVisible();
@@ -448,6 +467,7 @@ test("legacy delivery orders can complete missing contact details without unlock
           (await snapshot()).state.orders.find((order) => order.id === sent.id)?.lines.length,
       )
       .toBe(2);
+    await waitForClearedPosDraft();
     const updated = (await snapshot()).state.orders.find((order) => order.id === sent.id)!;
     expect(updated.channel).toBe(channel.code);
     expect(updated.delivery).toMatchObject({
