@@ -159,7 +159,7 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
     );
     try {
       const before = await snapshot();
-      const send = page.getByRole("button", { name: "Send kitchen", exact: true });
+      const send = page.getByRole("button", { name: "Place Order", exact: true });
       if (channelType === "OWN_DELIVERY") {
         await page.getByLabel("Customer name", { exact: true }).fill("Disposable recipient");
         await send.click();
@@ -207,9 +207,8 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
       }
       if (channelType === "DINE_IN") {
         expect(channel.requiresTable).toBe(true);
-        await expect(
-          page.getByRole("button", { name: "Send kitchen first", exact: true }),
-        ).toBeDisabled();
+        // Dine-in cannot be paid before it reaches the kitchen, so Pay is not offered yet.
+        await expect(page.getByRole("button", { name: /^Pay / })).toHaveCount(0);
         await send.click();
         const picker = page.getByRole("dialog", { name: "Select table", exact: true });
         await expect(picker).toBeVisible();
@@ -401,7 +400,7 @@ test("legacy delivery orders can complete missing contact details without unlock
     await page.reload();
     await waitForServerSnapshot();
     const before = await snapshot();
-    await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await page.getByRole("button", { name: "Place Order", exact: true }).click();
     await expect
       .poll(async () => (await snapshot()).state.orders.length)
       .toBe(before.state.orders.length + 1);
@@ -460,7 +459,7 @@ test("legacy delivery orders can complete missing contact details without unlock
     await customer.fill("Legacy delivery recipient");
     await address.fill("Westlands legacy delivery destination 10");
     await page.getByRole("button", { name: "Add Pilot meal to order", exact: true }).click();
-    await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await page.getByRole("button", { name: "Place Order", exact: true }).click();
     await expect
       .poll(
         async () =>
@@ -504,7 +503,7 @@ test("own delivery rejects dispatch without the configured required customer and
           action: response.request().postDataJSON()?.action,
         });
     });
-    await page.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await page.getByRole("button", { name: "Place Order", exact: true }).click();
     // Wait for a real rejection or a completed request, not the ordinary customer-picker label.
     await expect
       .poll(

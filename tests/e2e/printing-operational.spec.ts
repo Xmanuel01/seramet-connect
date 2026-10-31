@@ -395,7 +395,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .getByRole("button", { name: new RegExp(held.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) })
       .click();
     await expect(cashier.getByText(`Order ${held.id}`, { exact: true })).toBeVisible();
-    await cashier.getByRole("button", { name: "Send kitchen", exact: true }).click();
+    await cashier.getByRole("button", { name: "Place Order", exact: true }).click();
     await expect
       .poll(
         async () =>
@@ -422,7 +422,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         expect(itemText).not.toContain(other.name.toUpperCase());
     }
     events.push(
-      "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Send kitchen; three authoritative obligations and independent emulator destinations verified",
+      "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Place Order; three authoritative obligations and independent emulator destinations verified",
     );
     await cashier.screenshot({ path: join(evidence, "pos-sent.png"), fullPage: true });
     await cashier.goto("/invoices");
