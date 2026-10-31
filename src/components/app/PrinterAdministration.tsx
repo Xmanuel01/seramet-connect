@@ -63,6 +63,20 @@ export function PrinterAdministration() {
   const [printers, setPrinters] = useState<SavedPrinter[]>([]);
   const [draft, setDraft] = useState(() => blank(branchId));
   const [open, setOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [formRequest, setFormRequest] = useState(0);
+  // The form renders below the printer table, often off-screen; bring it into view
+  // whenever a Configure/Edit button opens it.
+  const openForm = () => {
+    setOpen(true);
+    setFormRequest((count) => count + 1);
+  };
+  useEffect(() => {
+    if (!formRequest) return;
+    const form = formRef.current;
+    form?.scrollIntoView({ behavior: "smooth", block: "start" });
+    form?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [formRequest]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [bridge, setBridge] = useState(loadInstalledPrintBridgeConfig);
@@ -367,7 +381,7 @@ export function PrinterAdministration() {
               <Btn
                 onClick={() => {
                   setDraft(blank(branchId));
-                  setOpen(true);
+                  openForm();
                 }}
               >
                 <Plus className="h-4 w-4" />
@@ -496,7 +510,7 @@ export function PrinterAdministration() {
                                 bridgeId: detected.bridgeId,
                               },
                         );
-                        setOpen(true);
+                        openForm();
                       }}
                     >
                       <Plus className="h-4 w-4" />
@@ -578,7 +592,7 @@ export function PrinterAdministration() {
                             disabled={busy}
                             onClick={() => {
                               setDraft(printer);
-                              setOpen(true);
+                              openForm();
                             }}
                             title="Edit printer"
                           >
@@ -629,6 +643,7 @@ export function PrinterAdministration() {
         </div>
         {mayManage && open && (
           <form
+            ref={formRef}
             onSubmit={(event) => {
               event.preventDefault();
               void save(draft);
