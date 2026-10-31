@@ -25,7 +25,8 @@ jobs:
       - run: npm ci
       - run: npm ls --all
       - run: npm audit --omit=dev --audit-level=high
-      - run: npm audit --include=dev --audit-level=moderate
+      - name: Audit dependencies (moderate+, dated dev-only exceptions)
+        run: node --test scripts/audit-dependencies.test.mjs && node scripts/audit-dependencies.mjs
       - run: npm run typecheck
       - name: Typecheck scanner against the actual Cloudflare runtime API
         env:
