@@ -113,6 +113,7 @@ type PersistedEntity = {
 
 export class D1AuthoritativeTransactionRepository implements TransactionRepository {
   readonly authoritative = true;
+  private readonly verifiedTenants = new Set<string>();
 
   constructor(
     private readonly db: D1Database,
@@ -2398,7 +2399,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       .prepare(
         `SELECT entity_type, entity_id, branch_id, business_date, status, payload_json,
                 version, created_at, updated_at
-         FROM authoritative_records WHERE tenant_id = ?`,
+         FROM authoritative_records
+         WHERE tenant_id = ? AND (entity_type LIKE 'state:%' OR entity_type LIKE 'payments:%')`,
       )
       .bind(tenantId)
       .all<AuthoritativeRow>();
@@ -2406,6 +2408,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
   }
 
   private async assertTenant(tenantId: string) {
+    // A repository lives for one request, and a single read used to check the schema and
+    // tenant up to three times, each a database round trip. Only a passing check is kept.
+    if (this.verifiedTenants.has(tenantId)) return;
     await this.migrate();
     const tenant = await this.db
       .prepare("SELECT id FROM tenants WHERE id = ? AND active = 1")
@@ -2414,6 +2419,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     if (!tenant) {
       throw new ServerOperationError("TENANT_SCOPE_VIOLATION", 403, "Tenant is not active");
     }
+    this.verifiedTenants.add(tenantId);
   }
 
   private async readMutationCommit(tenantId: string, idempotencyKey: string) {

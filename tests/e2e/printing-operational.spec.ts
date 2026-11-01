@@ -479,7 +479,8 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       }
       await page.setViewportSize({ width: 1280, height: 900 });
     };
-    await verifyPreviewFit(manager, "TAX INVOICE");
+    // Only an invoice that charged tax is titled TAX INVOICE; this demo menu has no tax rule.
+    await verifyPreviewFit(manager, bill.tax !== 0 ? "TAX INVOICE" : "INVOICE");
     await manager
       .getByRole("dialog")
       .getByRole("button", { name: "Close", exact: true })

@@ -78,7 +78,46 @@ async function verifyLegacySupabaseToken(token: string, baseUrl: string, publish
   return mapIdentity(payload, user);
 }
 
+// Every API request used to wait on its own Supabase Auth round trip, and opening a page sends
+// several at once. A confirmed token is trusted again for a short while, never past its expiry;
+// Seramet's own session record, which carries sign-out and revocation, is still read each time.
+const userConfirmationMs = 30_000;
+const confirmedUsers = new Map<
+  string,
+  { expiresAt: number; user: Promise<SupabaseUserResponse> }
+>();
+
 async function fetchSupabaseUser(token: string, baseUrl: string, publishableKey: string) {
+  const now = Date.now();
+  const key = await sha256Hex(`${baseUrl}\n${token}`);
+  const cached = confirmedUsers.get(key);
+  if (cached && cached.expiresAt > now) return cached.user;
+  if (confirmedUsers.size > 1_000) {
+    for (const [entry, value] of confirmedUsers)
+      if (value.expiresAt <= now) confirmedUsers.delete(entry);
+  }
+  let tokenExpiry = Number.POSITIVE_INFINITY;
+  try {
+    const exp = decodeJwt(token).exp;
+    if (typeof exp === "number") tokenExpiry = exp * 1000;
+  } catch {
+    // Supabase rejects a malformed token below.
+  }
+  // Concurrent requests for the same token share one lookup; a failure is never remembered.
+  const user = requestSupabaseUser(token, baseUrl, publishableKey);
+  confirmedUsers.set(key, { expiresAt: Math.min(now + userConfirmationMs, tokenExpiry), user });
+  user.catch(() => {
+    if (confirmedUsers.get(key)?.user === user) confirmedUsers.delete(key);
+  });
+  return user;
+}
+
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function requestSupabaseUser(token: string, baseUrl: string, publishableKey: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 7_500);
   try {
