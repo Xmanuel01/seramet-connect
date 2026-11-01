@@ -288,7 +288,7 @@ function Invoices() {
       const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
-        title: `${documentType === "INVOICE" ? "Tax invoice" : documentType.toLowerCase()} - ${invoice.id}`,
+        title: `${documentType === "RECEIPT" ? "Receipt" : "Invoice"}-${invoiceDisplayName(invoice.id).replace(/^Inv-/, "")}`,
         documentType,
         template: job.template,
         content: job.content,
@@ -861,30 +861,13 @@ function Invoices() {
         <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-[760px] grid-cols-[minmax(0,1fr)] overflow-y-auto border-border bg-card">
           <DialogHeader>
             <DialogTitle>{printPreview?.title}</DialogTitle>
-            <DialogDescription>
-              Rendered from the Seramet printer template: {printPreview?.template}
-            </DialogDescription>
+            <DialogDescription className="sr-only">Print preview</DialogDescription>
           </DialogHeader>
           {printPreview && (
             <div className="space-y-4">
               <DocumentTextPreview content={printPreview.content} />
               <div className="flex flex-wrap justify-end gap-2">
                 <Btn onClick={() => setPrintPreview(null)}>Close</Btn>
-                <Btn
-                  onClick={() => {
-                    const blob = new Blob([printPreview.content], {
-                      type: "text/plain;charset=utf-8",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.download = `${printPreview.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.txt`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  Download template
-                </Btn>
                 <Btn
                   variant="primary"
                   onClick={() => {
