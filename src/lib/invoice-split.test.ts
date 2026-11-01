@@ -52,15 +52,15 @@ describe("custom invoice allocations", () => {
     ]);
     expect(allocations.remainingMinor).toBe(0);
     expect(allocations.splits[1]!.label).toBe("Person 2");
-    expect(invoiceDisplayName("BILL-00027")).toBe("Inv-00027");
-    expect(invoiceDisplayName("INV-00027")).toBe("Inv-00027");
+    expect(invoiceDisplayName("BILL-00027")).toBe("INV-00027");
+    expect(invoiceDisplayName("INV-00027")).toBe("INV-00027");
   });
   it.each([
-    ["BILL-00001", "Inv-00001"],
-    ["INV-00001", "Inv-00001"],
-    ["InV-00001", "Inv-00001"],
-    ["INV-00027-S2", "Inv-00027-S2"],
-    ["BILL-123456", "Inv-123456"],
+    ["BILL-00001", "INV-00001"],
+    ["INV-00001", "INV-00001"],
+    ["InV-00001", "INV-00001"],
+    ["INV-00027-S2", "INV-00027-S2"],
+    ["BILL-123456", "INV-123456"],
   ])("displays compact reference %s without changing its serial", (id, expected) => {
     expect(invoiceDisplayName(id)).toBe(expected);
   });

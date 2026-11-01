@@ -288,7 +288,7 @@ function Invoices() {
       const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
-        title: `${documentType === "RECEIPT" ? "Receipt" : "Invoice"}-${invoiceDisplayName(invoice.id).replace(/^Inv-/, "")}`,
+        title: `${documentType === "RECEIPT" ? "Receipt for" : "Invoice"} ${invoiceDisplayName(invoice.id)}`,
         documentType,
         template: job.template,
         content: job.content,
