@@ -1367,25 +1367,24 @@ function POS() {
         setPaymentBusy(false);
       }
     }
-    setPayments((current) => [
-      ...current,
-      {
-        id: `${Date.now()}-${current.length}`,
-        methodId: selectedPaymentMethod.id,
-        method: selectedPaymentMethod.displayName,
-        amount,
-        tenderCurrency,
-        tenderAmountMinor,
-        cashTenderedMinor,
-        ...(quote ? { fxQuote: quote } : {}),
-        ...(reference ? { reference } : {}),
-        status: "staged",
-      },
-    ]);
+    const staged: (typeof payments)[number] = {
+      id: `${Date.now()}-${payments.length}`,
+      methodId: selectedPaymentMethod.id,
+      method: selectedPaymentMethod.displayName,
+      amount,
+      tenderCurrency,
+      tenderAmountMinor,
+      cashTenderedMinor,
+      ...(quote ? { fxQuote: quote } : {}),
+      ...(reference ? { reference } : {}),
+      status: "staged",
+    };
+    setPayments((current) => [...current, staged]);
     setTendered(Math.max(0, total - paid - amount));
     setCashReceived(Math.max(0, total - paid - amount));
     setTenderCurrency(tenant.defaultCurrency);
     setPaymentReference("");
+    return staged;
   };
 
   const removePayment = (id: string) => {
@@ -1774,15 +1773,34 @@ function POS() {
     setReceiptOptions((current) => ({ ...current, [option]: !current[option] }));
   };
 
+  // A full payment needs no separate Add payment step: Confirm stages the amount shown
+  // (normally the whole balance) and commits it. Split and partial still build up lines.
   const confirmPayment = async () => {
-    if (paid < total && paymentMode !== "partial") return;
+    let added: (typeof payments)[number][] = [];
+    if (
+      paymentMode === "full" &&
+      due > 0 &&
+      !payments.some((payment) => payment.status === "staged")
+    ) {
+      const staged = await addPayment();
+      if (!staged) return;
+      added = [staged];
+    }
+    const stagedTotal = added.reduce((sum, payment) => sum + payment.amount, 0);
+    if (paid + stagedTotal < total && paymentMode !== "partial") {
+      setPrintNotice(
+        `Add ${ksh(total - paid - stagedTotal)} more before confirming, or switch to partial payment.`,
+      );
+      setPrintNoticeType("warning");
+      return;
+    }
     if (paymentSubmitRef.current || paymentBusy) return;
     if (!paymentInvoiceId || !paymentOrderId) {
       setPrintNotice("Payment session expired. Reopen payment for this invoice.");
       setPrintNoticeType("warning");
       return;
     }
-    const stagedPayments = payments.filter((payment) => payment.status === "staged");
+    const stagedPayments = [...payments, ...added].filter((payment) => payment.status === "staged");
     if (!stagedPayments.length) {
       setPrintNotice("Add a payment component before confirming.");
       setPrintNoticeType("warning");
@@ -3116,17 +3134,20 @@ function POS() {
                         className="h-10 rounded-md border border-border bg-card px-3 text-[13px] font-semibold text-foreground outline-none"
                       />
                     </label>
-                    <Btn
-                      className="self-end"
-                      onClick={() => void addPayment()}
-                      disabled={
-                        paymentBusy ||
-                        !selectedPaymentMethod ||
-                        !paymentMethodAvailability(selectedPaymentMethod).usable
-                      }
-                    >
-                      {paymentBusy ? "Checking rate" : "Add payment"}
-                    </Btn>
+                    {/* Split and partial build up several lines; a full payment is added by Confirm. */}
+                    {paymentMode !== "full" && (
+                      <Btn
+                        className="self-end"
+                        onClick={() => void addPayment()}
+                        disabled={
+                          paymentBusy ||
+                          !selectedPaymentMethod ||
+                          !paymentMethodAvailability(selectedPaymentMethod).usable
+                        }
+                      >
+                        {paymentBusy ? "Checking rate" : "Add payment"}
+                      </Btn>
+                    )}
                   </div>
                   {selectedPaymentMethod?.category === "CASH" && (
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -3208,7 +3229,7 @@ function POS() {
                       ))}
                     </div>
                   </div>
-                  {paid < total && paymentMode !== "partial" && (
+                  {paid < total && paymentMode === "split" && (
                     <div className="rounded-md bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                       Add {ksh(total - paid)} more before confirming, or switch to partial payment.
                     </div>
@@ -3220,8 +3241,11 @@ function POS() {
                       onClick={confirmPayment}
                       disabled={
                         paymentBusy ||
-                        payments.every((payment) => payment.status !== "staged") ||
-                        (paid < total && paymentMode !== "partial")
+                        (paymentMode === "full"
+                          ? !selectedPaymentMethod ||
+                            !paymentMethodAvailability(selectedPaymentMethod).usable
+                          : payments.every((payment) => payment.status !== "staged") ||
+                            (paid < total && paymentMode !== "partial"))
                       }
                     >
                       Confirm{" "}

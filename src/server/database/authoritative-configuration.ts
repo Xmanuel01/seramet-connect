@@ -98,6 +98,7 @@ export async function loadAuthoritativePlatformState(
     users,
     userRoles,
     userBranches,
+    accountMappings,
   ] = await Promise.all([
     all(
       db,
@@ -131,7 +132,35 @@ export async function loadAuthoritativePlatformState(
          ON pb.tenant_id=ub.tenant_id AND pb.user_id=ub.user_id
        ORDER BY is_primary DESC,ub.branch_id`,
     ),
+    all(
+      db,
+      `SELECT tenant_id,mapping_key,account_id FROM setup_account_mappings
+       WHERE branch_id IS NULL AND status='CONFIGURED' AND account_id IS NOT NULL
+         AND mapping_key IN ('CUSTOMER_RECEIVABLE','CASH','PAYMENT_CLEARING')`,
+    ),
   ]);
+  // Methods created in onboarding or Settings carry no accounts of their own. They post to
+  // the tenant-wide Setup Centre mappings, the same receivable every POS invoice debits.
+  const mappedAccount = (tenantId: string, key: string) =>
+    optionalString(
+      accountMappings.find((row) => row["tenant_id"] === tenantId && row["mapping_key"] === key) ??
+        {},
+      "account_id",
+    );
+  const withDefaultAccounts = (method: PaymentMethodDefinition): PaymentMethodDefinition => {
+    const receivable =
+      method.receivableAccountId ?? mappedAccount(method.tenantId, "CUSTOMER_RECEIVABLE");
+    const settlement =
+      method.settlementAccountId ??
+      (method.category === "CASH"
+        ? (method.cashAccountId ?? mappedAccount(method.tenantId, "CASH"))
+        : mappedAccount(method.tenantId, "PAYMENT_CLEARING"));
+    return {
+      ...method,
+      ...(receivable ? { receivableAccountId: receivable } : {}),
+      ...(settlement ? { settlementAccountId: settlement } : {}),
+    };
+  };
 
   const permissionsByRole = groupValues(rolePermissions, "role_id", "permission_code");
   const rolesByUser = groupValues(userRoles, "user_id", "role_id");
@@ -244,35 +273,37 @@ export async function loadAuthoritativePlatformState(
       }),
     ),
     paymentMethods: paymentMethods.map((row) =>
-      mergePayload<PaymentMethodDefinition>(row, {
-        id: string(row, "id"),
-        tenantId: string(row, "tenant_id"),
-        code: string(row, "code"),
-        displayName: string(row, "code"),
-        category: string(row, "category") as PaymentMethodDefinition["category"],
-        enabled: boolean(row, "active"),
-        sortOrder: 0,
-        requiresReference: false,
-        requiresCustomer: false,
-        supportsRefund: false,
-        supportsSplit: false,
-        ...(optionalString(row, "provider_connection_id")
-          ? { providerConnectionId: optionalString(row, "provider_connection_id") }
-          : {}),
-        ...(optionalString(row, "settlement_account_id")
-          ? { settlementAccountId: optionalString(row, "settlement_account_id") }
-          : {}),
-        ...(optionalString(row, "clearing_account_id")
-          ? { clearingAccountId: optionalString(row, "clearing_account_id") }
-          : {}),
-        ...(optionalString(row, "receivable_account_id")
-          ? { receivableAccountId: optionalString(row, "receivable_account_id") }
-          : {}),
-        ...(optionalString(row, "cash_account_id")
-          ? { cashAccountId: optionalString(row, "cash_account_id") }
-          : {}),
-        metadata: {},
-      }),
+      withDefaultAccounts(
+        mergePayload<PaymentMethodDefinition>(row, {
+          id: string(row, "id"),
+          tenantId: string(row, "tenant_id"),
+          code: string(row, "code"),
+          displayName: string(row, "code"),
+          category: string(row, "category") as PaymentMethodDefinition["category"],
+          enabled: boolean(row, "active"),
+          sortOrder: 0,
+          requiresReference: false,
+          requiresCustomer: false,
+          supportsRefund: false,
+          supportsSplit: false,
+          ...(optionalString(row, "provider_connection_id")
+            ? { providerConnectionId: optionalString(row, "provider_connection_id") }
+            : {}),
+          ...(optionalString(row, "settlement_account_id")
+            ? { settlementAccountId: optionalString(row, "settlement_account_id") }
+            : {}),
+          ...(optionalString(row, "clearing_account_id")
+            ? { clearingAccountId: optionalString(row, "clearing_account_id") }
+            : {}),
+          ...(optionalString(row, "receivable_account_id")
+            ? { receivableAccountId: optionalString(row, "receivable_account_id") }
+            : {}),
+          ...(optionalString(row, "cash_account_id")
+            ? { cashAccountId: optionalString(row, "cash_account_id") }
+            : {}),
+          metadata: {},
+        }),
+      ),
     ),
     orderChannels: orderChannels.map((row) =>
       mergePayload<OrderChannelDefinition>(row, {
