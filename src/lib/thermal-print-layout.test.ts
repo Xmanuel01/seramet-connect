@@ -21,8 +21,24 @@ describe("ruled thermal document layouts", () => {
       expect(fixture.content).toContain(
         ["FOOD_KOT", "BAR_TICKET"].includes(fixture.documentType) ? "NO ONION" : "No onion",
       );
-      expect(fixture.content).toMatch(/Separate sauce|SEPARATE SAUCE/);
-      if (["BILL", "RECEIPT", "INVOICE"].includes(fixture.documentType)) {
+      // Table cells wrap, so compare with cell borders and line breaks collapsed.
+      expect(fixture.content.replace(/[\s|]+/g, " ")).toMatch(/Separate sauce|SEPARATE SAUCE/);
+      if (["BILL", "RECEIPT"].includes(fixture.documentType)) {
+        for (const value of [
+          "246.90",
+          "32.00",
+          "283.90",
+          "Service charge",
+          "Discount",
+          "10.00",
+          "(5.00)",
+        ])
+          expect(fixture.content).toContain(value);
+        expect(fixture.content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
+        // Every rule belongs to a table: no bare edge-to-edge lines.
+        expect(fixture.content).not.toMatch(/^[-=]+$/m);
+        if (fixture.name.includes("copy")) expect(fixture.content).toContain("DUPLICATE COPY");
+      } else if (fixture.documentType === "INVOICE") {
         for (const value of ["246.90", "32.00", "283.90", "SERVICE", "DISCOUNT", "10.00", "5.00"])
           expect(fixture.content).toContain(value);
         expect(fixture.content).toContain("|QTY|ITEM");
@@ -201,8 +217,8 @@ describe("ruled thermal document layouts", () => {
       "PIN:",
       "Due Date:",
       "not configured",
-      "SERVICE",
-      "DISCOUNT",
+      "Service charge",
+      "Discount",
     ])
       expect(bill).not.toContain(absent);
     expect(bill).toContain("100.00");
@@ -217,6 +233,7 @@ describe("ruled thermal document layouts", () => {
     const copy = SerametPrintService.formatDuplicateCopy(bill, "80mm", "Recovery Manager");
     expect(copy).toContain("DUPLICATE COPY");
     expect(copy).toContain("Reprinted by: Recovery Manager");
-    expect(copy).toContain("Original Cashier");
+    // "Cashier Original Cashier" wraps inside its grid cell.
+    expect(copy).toMatch(/^\|Cashier Original\s+\|.*\n\|Cashier\s+\|/m);
   });
 });

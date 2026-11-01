@@ -57,12 +57,13 @@ export function businessHeader(
 }
 
 /**
- * Document title between two rules. Titles printing-core already treats as
- * strong (BILL, RECEIPT, TAX INVOICE) print bold on raster printers.
+ * Centered document title. No rules around it: every rule on the page belongs
+ * to a table, so nothing prints as a bare edge-to-edge line. Titles
+ * printing-core already treats as strong (BILL, RECEIPT, TAX INVOICE) print
+ * bold on raster printers.
  */
 export function titleBar(title: string, width: number, subtitle?: string): string[] {
-  const rule = `+${"-".repeat(width - 2)}+`;
-  return [rule, ...centered(title, width), ...centered(subtitle, width), rule];
+  return [...centered(title, width), ...centered(subtitle, width)];
 }
 
 export function copyLine(ctx: PrintContext, width: number): string[] {
@@ -224,13 +225,16 @@ export function levyRows(totals: SaleTotals): AmountRow[] {
 
 export function saleTotalsTable(width: number, totals: SaleTotals, ctx: PrintContext) {
   const extras = totals.serviceCharge !== 0 || totals.discount !== 0;
+  // Tax added on top of the subtotal needs the subtotal shown to add up.
+  const taxOnTop = totals.vat !== undefined && totals.net === undefined;
+  const vatLabel = totals.vatRate !== undefined ? `VAT ${totals.vatRate}%` : "VAT";
   return [
     ...amountsTable(width, [
-      extras && ["Subtotal", money(totals.subtotal)],
+      (extras || taxOnTop) && ["Subtotal", money(totals.subtotal)],
       totals.serviceCharge !== 0 && ["Service charge", money(totals.serviceCharge)],
       totals.discount !== 0 && ["Discount", `(${money(totals.discount)})`],
       totals.net !== undefined && ["Net (excl. VAT)", money(totals.net)],
-      totals.vat !== undefined && [`VAT ${totals.vatRate}%`, money(totals.vat)],
+      totals.vat !== undefined && [vatLabel, money(totals.vat)],
       ...levyRows(totals),
       ["TOTAL", money(totals.total)],
     ]),

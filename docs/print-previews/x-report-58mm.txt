@@ -1,6 +1,5 @@
  Sample Restaurant / Westlands
         PIN P000000000X
-+------------------------------+
        X REPORT - INTERIM
  Shift still open. Counters not
              reset.

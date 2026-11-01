@@ -1725,7 +1725,7 @@ describe("Pass 10 CRM, loyalty and customer intelligence", () => {
     const receipt = SerametPrintService.createDocumentJob(profile, order, "RECEIPT").content;
     const kot = SerametPrintService.createProductionTicketJobs(profile, order, [], "NEW").jobs[0]
       ?.content;
-    expect(receipt).toContain("POINTS EARNED");
+    expect(receipt).toContain("Points earned");
     expect(receipt).toContain("Configured reward");
     expect(kot).not.toMatch(/POINTS|MEMBER|VOUCHER|REWARD/);
   });

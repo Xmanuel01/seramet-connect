@@ -1,5 +1,4 @@
  Sample Restaurant / Westlands
-+------------------------------+
      RIDER CASH COLLECTION
 +-----------+------------------+
 |Slip no.   |RC-0219           |

@@ -1,5 +1,6 @@
 import {
   box,
+  clean,
   centered,
   compose,
   fieldPanels,
@@ -30,6 +31,7 @@ import {
   saleColumns,
   saleItemsTable,
   saleTotalsTable,
+  type SaleTotals,
   titleBar,
   widthOf,
 } from "./shared";
@@ -234,27 +236,77 @@ export function renderAmendmentTicket(
 // ---------------------------------------------------------------------------
 // Customer bill (pre-payment / proforma)
 
+export interface CustomerDetails {
+  name?: string;
+  phone?: string;
+  email?: string;
+}
+
+export interface LoyaltyDetails {
+  memberCode?: string;
+  tier?: string;
+  pointsEarned?: number;
+  pointsBalance?: number;
+  rewardUsed?: string;
+  voucherUsed?: string;
+  message?: string;
+}
+
+function customerFields(width: number, customer: CustomerDetails | undefined) {
+  if (!customer) return [];
+  return fields(width, [
+    ["Customer", customer.name],
+    ["Phone", customer.phone],
+    ["Email", customer.email],
+  ]);
+}
+
+function loyaltyFields(width: number, loyalty: LoyaltyDetails | undefined) {
+  if (!loyalty) return [];
+  const points = (value: number | undefined) =>
+    value === undefined ? undefined : value.toLocaleString("en-US");
+  return [
+    ...fields(width, [
+      ["Member", loyalty.memberCode],
+      ["Tier", loyalty.tier],
+      ["Points earned", points(loyalty.pointsEarned)],
+      ["Points balance", points(loyalty.pointsBalance)],
+      ["Reward used", loyalty.rewardUsed],
+      ["Voucher used", loyalty.voucherUsed],
+    ]),
+    ...footer(width, loyalty.message),
+  ];
+}
+
 export interface CustomerBillInput {
   business: BusinessIdentity;
   tax: TaxSettings;
   billNumber: string;
   orderNumber: string;
+  orderType?: string;
   table?: string;
   covers?: number;
   server?: string;
+  cashier?: string;
+  customer?: CustomerDetails;
   issuedAt: DisplayTime;
   lines: SaleLine[];
   serviceCharge?: number;
   discount?: number;
+  /** Totals already settled by the till. Printed as given instead of being recomputed from lines. */
+  totals?: SaleTotals;
   payment?: MobileMoneyDetails;
+  /** Free-text payment options (bank, card, etc.) printed in a box under the totals. */
+  paymentInstructions?: string[];
   footerMessage?: string;
 }
 
 export function renderCustomerBill(input: CustomerBillInput, ctx: PrintContext): PrintedDocument {
   const width = widthOf(ctx);
   const qrCodes: QrCode[] = [];
-  const totals = computeSaleTotals(input.lines, input.tax, input);
+  const totals = input.totals ?? computeSaleTotals(input.lines, input.tax, input);
   const payment = input.payment && { account: input.billNumber, ...input.payment };
+  const instructions = (input.paymentInstructions ?? []).filter((line) => clean(line));
   const content = compose(width, [
     businessHeader(input.business, width, false),
     titleBar("BILL", width, "Not a receipt"),
@@ -263,13 +315,17 @@ export function renderCustomerBill(input: CustomerBillInput, ctx: PrintContext):
       `Bill ${input.billNumber}`,
       input.table && `Table ${input.table}`,
       `Order ${input.orderNumber}`,
+      input.orderType,
       input.covers !== undefined && `Covers ${input.covers}`,
       input.server && `Server ${input.server}`,
+      input.cashier && `Cashier ${input.cashier}`,
       input.issuedAt,
     ]),
+    customerFields(width, input.customer),
     saleItemsTable(width, input.lines),
     saleTotalsTable(width, totals, ctx),
     mobileMoneyBlock(width, payment, totals.total, qrCodes),
+    instructions.length > 0 && box(width, ["PAYMENT OPTIONS", ...instructions]),
     footer(width, input.footerMessage ?? "Show your payment message to the cashier."),
   ]);
   return { kind: "BILL", paper: ctx.paper, content, qrCodes };
@@ -284,14 +340,19 @@ export interface SalesReceiptInput {
   receiptNumber: string;
   billNumber?: string;
   orderNumber?: string;
+  orderType?: string;
   table?: string;
   server?: string;
   cashier?: string;
+  customer?: CustomerDetails;
   issuedAt: DisplayTime;
   lines: SaleLine[];
   serviceCharge?: number;
   discount?: number;
+  /** Totals already settled by the till. Printed as given instead of being recomputed from lines. */
+  totals?: SaleTotals;
   payments: Payment[];
+  loyalty?: LoyaltyDetails;
   etims?: EtimsStatus;
   footerMessage?: string;
 }
@@ -299,26 +360,33 @@ export interface SalesReceiptInput {
 export function renderSalesReceipt(input: SalesReceiptInput, ctx: PrintContext): PrintedDocument {
   const width = widthOf(ctx);
   const qrCodes: QrCode[] = [];
-  const totals = computeSaleTotals(input.lines, input.tax, input);
+  const totals = input.totals ?? computeSaleTotals(input.lines, input.tax, input);
   const paid = sum(input.payments.map((payment) => payment.amount));
   const change = paid > totals.total ? sum([paid, -totals.total]) : 0;
-  const vatNote = input.tax.vatRegistered ? "Prices include VAT." : undefined;
+  const vatNote =
+    input.tax.vatRegistered && input.tax.pricesIncludeVat !== false
+      ? "Prices include VAT."
+      : undefined;
   const content = compose(width, [
     businessHeader(input.business, width),
-    titleBar("RECEIPT", width),
+    titleBar("RECEIPT", width, paid >= totals.total ? "PAID" : undefined),
     copyLine(ctx, width),
     grid(width, [
       `Receipt ${input.receiptNumber}`,
       input.issuedAt,
       input.billNumber && `Bill ${input.billNumber}`,
+      input.orderNumber && `Order ${input.orderNumber}`,
+      input.orderType,
       input.table && `Table ${input.table}`,
       input.server && `Served by ${input.server}`,
       input.cashier && `Cashier ${input.cashier}`,
     ]),
+    customerFields(width, input.customer),
     saleItemsTable(width, input.lines),
     saleTotalsTable(width, totals, ctx),
     paymentsTable(width, input.payments, change),
     paid < totals.total && box(width, [`BALANCE DUE ${money(sum([totals.total, -paid]))}`]),
+    loyaltyFields(width, input.loyalty),
     footer(width, input.footerMessage ?? "Thank you!", vatNote),
     etimsBlock(width, input.etims, qrCodes),
   ]);

@@ -1,7 +1,6 @@
                               Sample Restaurant
                         Westlands, Example Rd, Nairobi
                       Tel 0700 000 000 / PIN P000000000X
-+----------------------------------------------------------------------------+
                                  CREDIT NOTE
 +------------+------------------------+-------------+------------------------+
 |Issued to   |Example Ltd             |Credit note  |CN-2026-0007            |

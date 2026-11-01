@@ -1,7 +1,6 @@
                               Sample Restaurant
                         Westlands, Example Rd, Nairobi
                       Tel 0700 000 000 / PIN P000000000X
-+----------------------------------------------------------------------------+
                              GOODS RECEIVED NOTE
 +------------+------------------------+-------------+------------------------+
 |Supplier    |Example Supplies Ltd    |GRN no.      |GRN-0112                |

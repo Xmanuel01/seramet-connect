@@ -1,6 +1,5 @@
  Sample Restaurant / Westlands
         PIN P000000000X
-+------------------------------+
  Z REPORT - SHIFT CLOSE Z-0304
 +-----------+------------------+
 |Business   |31/10/2026        |

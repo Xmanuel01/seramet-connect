@@ -2,7 +2,6 @@
  Westlands, Example Rd, Nairobi
         Tel 0700 000 000
         PIN P000000000X
-+------------------------------+
         PAYMENT RECEIPT
 +-----------+------------------+
 |Receipt no.|PR-000045         |

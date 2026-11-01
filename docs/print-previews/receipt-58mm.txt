@@ -2,8 +2,8 @@
  Westlands, Example Rd, Nairobi
         Tel 0700 000 000
         PIN P000000000X
-+------------------------------+
             RECEIPT
+              PAID
 +---------------+--------------+
 |Receipt        |31 Oct 2026   |
 |R-000231       |23:04         |

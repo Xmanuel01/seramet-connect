@@ -587,19 +587,20 @@ describe("Seramet POS acceptance scenarios", () => {
       "Mona Swahili",
       "RECEIPT",
       "RCP #T-100",
-      "Order: #T-100",
-      "Cashier: Amina W.",
+      "Order #T-100",
+      "Cashier Amina W.",
       "Chicken Biryani",
       "No ice",
-      "SUBTOTAL",
-      "TAX",
+      "Subtotal",
+      "VAT",
       "TOTAL",
       "PAID",
-      "M-PESA",
-      "Ref: TH7XXXXXXX",
+      "M-Pesa",
+      "TH7XXXXXXX",
       profileForMode("PRINTER_ONLY").printIdentity.footerMessage,
     ].forEach((text) => {
-      expect(receipt.content.replace(/\s+:/g, ":")).toContain(text);
+      // Table cells wrap, so compare with cell borders and line breaks collapsed.
+      expect(receipt.content.replace(/[\s|]+/g, " ")).toContain(text);
     });
     expect(receipt.content.toLowerCase()).not.toContain("cost");
     expect(receipt.content.toLowerCase()).not.toContain("profit");
@@ -643,11 +644,11 @@ describe("Seramet POS acceptance scenarios", () => {
     const invoice = SerametPrintService.createDocumentJob(profile, order, "INVOICE");
 
     expect(bill.content).toContain("BILL");
-    expect(bill.content).toContain("PAYMENT PENDING");
+    expect(bill.content).toContain("Not a receipt");
     expect(bill.content).not.toContain("PAID");
     expect(receipt.content).toContain("RECEIPT");
     expect(receipt.content).toContain("PAID");
-    expect(receipt.content).toContain("M-PESA");
+    expect(receipt.content).toContain("M-Pesa");
     expect(invoice.content).toContain("TAX INVOICE");
     expect(invoice.content).toContain("PAYMENT INFORMATION");
     expect(invoice.content).toContain("Authorised Signatory");
