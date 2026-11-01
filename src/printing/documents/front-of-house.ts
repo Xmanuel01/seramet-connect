@@ -74,6 +74,11 @@ export interface ProductionTicketInput {
   server?: string;
   /** Sub-station such as GRILL or FRYER when a kitchen routes by station. */
   stationName?: string;
+  branch?: string;
+  /** Who sent the order, when it is not the server. */
+  sentBy?: string;
+  /** How the ticket reached this printer when not the station's own, e.g. "POS front printer". */
+  via?: string;
   printedAt: DisplayTime;
   lines: ProductionLine[];
   note?: string;
@@ -97,6 +102,9 @@ export function renderProductionTicket(
       `${input.orderType}${input.round ? ` / Round ${input.round}` : ""}`,
       input.server && `Server ${input.server}`,
       input.stationName && `Station ${input.stationName}`,
+      input.branch && `Branch ${input.branch}`,
+      input.sentBy && `Sent by ${input.sentBy}`,
+      input.via && `Via ${input.via}`,
     ]),
     table(
       width,
@@ -123,12 +131,13 @@ export function renderProductionTicket(
 export interface VoidTicketInput {
   station: Station;
   voidNumber: string;
-  cancelsTicket: string;
+  cancelsTicket?: string;
   orderNumber: string;
   table?: string;
   at: DisplayTime;
   lines: ProductionLine[];
-  reason: string;
+  /** Left blank to fill in by hand when the till has no recorded reason. */
+  reason?: string;
   requestedBy: string;
   authorisedBy?: string;
 }
@@ -142,7 +151,7 @@ export function renderVoidTicket(input: VoidTicketInput, ctx: PrintContext): Pri
       `Void ${input.voidNumber}`,
       input.station === "BAR" ? "Bar" : "Kitchen",
       input.table && `Table ${input.table}`,
-      `Cancels ${input.cancelsTicket}`,
+      input.cancelsTicket && `Cancels ${input.cancelsTicket}`,
       `Order ${input.orderNumber}`,
       input.at,
     ]),
@@ -158,11 +167,11 @@ export function renderVoidTicket(input: VoidTicketInput, ctx: PrintContext): Pri
     fields(
       width,
       [
-        ["Reason", input.reason],
+        ["Reason", input.reason ?? ""],
         ["Requested by", input.requestedBy],
         ["Authorised by", input.authorisedBy ?? ""],
       ],
-      { keepEmpty: ["Authorised by"] },
+      { keepEmpty: ["Reason", "Authorised by"] },
     ),
     signatures(width, [input.station === "BAR" ? "Bar ack." : "Kitchen ack."], 1),
     spread("Logged in void report", `Printed ${input.at}`, width),
@@ -177,18 +186,23 @@ export interface AmendmentChange {
   /** For CHANGE: what it was and what it is now. */
   was?: string;
   now?: string;
+  modifiers?: string[];
+  note?: string;
 }
 
 export interface AmendmentTicketInput {
   station: Station;
   ticketNumber: string;
-  amendsTicket: string;
+  amendsTicket?: string;
   orderNumber: string;
   table?: string;
   server?: string;
+  stationName?: string;
+  branch?: string;
   at: DisplayTime;
   changes: AmendmentChange[];
   reason?: string;
+  note?: string;
 }
 
 function signedQuantity(change: AmendmentChange) {
@@ -208,10 +222,12 @@ export function renderAmendmentTicket(
     copyLine(ctx, width),
     grid(width, [
       input.table && `Table ${input.table}`,
-      `Amends ${input.amendsTicket}`,
+      input.amendsTicket && `Amends ${input.amendsTicket}`,
       `Order ${input.orderNumber}`,
       input.at,
       input.server && `Server ${input.server}`,
+      input.stationName && `Station ${input.stationName}`,
+      input.branch && `Branch ${input.branch}`,
     ]),
     table(
       width,
@@ -223,10 +239,13 @@ export function renderAmendmentTicket(
           change.item.toUpperCase(),
           ...(change.was ? [`Was: ${change.was}`] : []),
           ...(change.now ? [`Now: ${change.now}`] : []),
+          ...modifierLines(change.modifiers, true),
+          ...(change.note ? [`NOTE: ${change.note.toUpperCase()}`] : []),
         ],
       ]),
       { header: ["Action", "Qty", "Item"], rowRules: true },
     ),
+    input.note && box(width, [`SPECIAL REQUEST: ${input.note}`]),
     input.reason && fields(width, [["Reason", input.reason]]),
     spread("Prepare the changes only", `Printed ${input.at}`, width),
   ]);

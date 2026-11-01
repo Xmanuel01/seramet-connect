@@ -8,7 +8,7 @@ export interface PrintContext {
   /** Currency shown in totals labels. Amounts themselves print without a symbol. */
   currency?: string;
   /** Set for any print after the first. Prints a REPRINT line so copies can't pass as originals. */
-  copy?: { number: number; at: DisplayTime; by?: string };
+  copy?: { number?: number; at: DisplayTime; by?: string };
 }
 
 export interface BusinessIdentity {

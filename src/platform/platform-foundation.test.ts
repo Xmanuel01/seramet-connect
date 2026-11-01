@@ -188,9 +188,9 @@ describe.sequential("pass 1 platform foundation acceptance", () => {
     customerDocuments.forEach((content) => {
       expect(content?.toUpperCase()).toContain("HARBOR HOUSE");
     });
-    expect(kot?.toUpperCase()).toContain("HARBOR QUAY");
+    expect(kot?.replace(/[\s|]+/g, " ").toUpperCase()).toContain("HARBOR QUAY");
     expect(kot?.toUpperCase()).not.toContain("HARBOR HOUSE");
-    expect(kot?.split("\n")[0]).toMatch(/^KITCHEN ORDER KOT /);
+    expect(kot?.split("\n")[0]).toMatch(/^KITCHEN ORDER\s+KOT /);
     expect(customerDocuments[2]).toContain("TAX-HH-7788");
     expect(customerDocuments[0]).toContain("9 Quay Avenue");
   });

@@ -69,7 +69,8 @@ export function titleBar(title: string, width: number, subtitle?: string): strin
 export function copyLine(ctx: PrintContext, width: number): string[] {
   if (!ctx.copy) return [];
   const by = ctx.copy.by ? ` by ${ctx.copy.by}` : "";
-  return centered(`REPRINT #${ctx.copy.number} ${ctx.copy.at}${by}`, width);
+  const number = ctx.copy.number !== undefined ? ` #${ctx.copy.number}` : "";
+  return centered(`REPRINT${number} ${ctx.copy.at}${by}`, width);
 }
 
 /** "Amounts in KES" on A4 only; thermal paper skips the line. */

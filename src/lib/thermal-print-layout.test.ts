@@ -16,13 +16,14 @@ describe("ruled thermal document layouts", () => {
     it(`${fixture.name} preserves columns, details and authoritative totals`, () => {
       const width = fixture.width === "58mm" ? 32 : 42;
       bounded(fixture.content, width);
-      expect(fixture.content).toContain("Disposable branch");
+      // Table cells wrap, so compare with cell borders and line breaks collapsed.
+      const flat = fixture.content.replace(/[\s|]+/g, " ");
+      expect(flat).toContain("Disposable branch");
       expect(fixture.content).toMatch(/\|\s*2\|/);
       expect(fixture.content).toContain(
         ["FOOD_KOT", "BAR_TICKET"].includes(fixture.documentType) ? "NO ONION" : "No onion",
       );
-      // Table cells wrap, so compare with cell borders and line breaks collapsed.
-      expect(fixture.content.replace(/[\s|]+/g, " ")).toMatch(/Separate sauce|SEPARATE SAUCE/);
+      expect(flat).toMatch(/Separate sauce|SEPARATE SAUCE/);
       if (["BILL", "RECEIPT"].includes(fixture.documentType)) {
         for (const value of [
           "246.90",
@@ -52,7 +53,7 @@ describe("ruled thermal document layouts", () => {
         }
         if (fixture.name.includes("copy")) expect(fixture.content).toContain("DUPLICATE COPY");
       } else {
-        expect(fixture.content.split("\n")[0]).toMatch(/^(KITCHEN ORDER KOT|BAR ORDER BAR) /);
+        expect(fixture.content.split("\n")[0]).toMatch(/^(KITCHEN ORDER\s+KOT|BAR ORDER\s+BOT) /);
         for (const clutter of [
           "Disposable Test Restaurant",
           "TEST-PIN-ONLY",
@@ -63,7 +64,9 @@ describe("ruled thermal document layouts", () => {
           "BAR TICKET",
         ])
           expect(fixture.content).not.toContain(clutter);
-        expect(fixture.content).toContain("STATION:");
+        expect(flat).toMatch(/Station (MAIN|BAR)/);
+        // Every rule belongs to a table: no bare edge-to-edge lines.
+        expect(fixture.content).not.toMatch(/^[-=]+$/m);
         expect(fixture.content).toContain(
           fixture.documentType === "BAR_TICKET" ? "BAR ORDER" : "KITCHEN ORDER",
         );
@@ -225,8 +228,10 @@ describe("ruled thermal document layouts", () => {
     const production = SerametPrintService.createProductionTicketJobs(profile, order, [], "REPRINT")
       .jobs[0]!.content;
     const plain = production.replace(/\s+/g, " ");
-    expect(plain).toContain("Reprinted by: Recovery Manager");
-    expect(plain).not.toContain("Reprinted by: Original Cashier");
+    expect(plain).toContain("REPRINT");
+    // KDS tickets keep the legacy "Reprinted by:" wording; printed tickets say "by".
+    expect(plain).toMatch(/by:? Recovery Manager/);
+    expect(plain).not.toMatch(/by:? Original Cashier/);
     expect(production).not.toContain("Merchant Trading Name");
     expect(production).toMatch(/\|\s*2\|SIDE/);
     expect(production).toContain("SAUCE SEPARATE");

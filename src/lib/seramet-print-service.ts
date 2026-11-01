@@ -1,6 +1,12 @@
 import { activeLocale, activeCurrency } from "@/lib/currency";
 import { parseMajorAmount, formatMinor, minorDigits } from "@/payments/money";
-import { renderCustomerBill, renderSalesReceipt } from "@/printing/documents";
+import {
+  renderAmendmentTicket as renderOrderChangeTemplate,
+  renderCustomerBill,
+  renderProductionTicket as renderStationTicketTemplate,
+  renderSalesReceipt,
+  renderVoidTicket as renderVoidTemplate,
+} from "@/printing/documents";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
 import type { Product } from "@/lib/menu-product";
@@ -1110,6 +1116,20 @@ function renderProductionTicket(
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
+  // KDS screens, dispatch slips and tickets with prices keep the legacy layout for now.
+  if (documentType !== "KDS_TICKET" && documentType !== "DISPATCH_TICKET" && !showPrices) {
+    return renderStationTicket(
+      documentType === "BAR_TICKET" ? "BAR" : "KITCHEN",
+      order,
+      station,
+      lines,
+      amendmentType,
+      profile,
+      ticketNumber,
+      width === 32 ? "58mm" : "80mm",
+    );
+  }
+
   if (amendmentType !== "NEW") {
     return renderAmendmentTicket(
       amendmentType,
@@ -1146,6 +1166,101 @@ function renderProductionTicket(
     thermalItems(lines, width, showPrices, money, true),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
   ]);
+}
+
+/** Kitchen and bar tickets on the shared table templates. */
+function renderStationTicket(
+  kind: "KITCHEN" | "BAR",
+  order: OrderForPrint,
+  station: ProductionStation,
+  lines: OrderLineForPrint[],
+  amendmentType: NonNullable<PrintJob["amendmentType"]>,
+  profile: BranchHardwareProfile,
+  ticketNumber: string,
+  paper: "58mm" | "80mm",
+) {
+  const identity = profile.printIdentity;
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed !== "-" ? trimmed : undefined;
+  };
+  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const at = `${issued.date} ${issued.time}`;
+  const orderNumber = cleanOrderId(order.orderId);
+  const table = set(order.table);
+  const server = set(order.waiter);
+  const note = set(order.kitchenNote);
+  const branch = set(identity.branchName);
+  const ctx = { paper };
+  const items = lines.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    modifiers: line.modifiers ?? [],
+    ...(line.itemNote ? { note: line.itemNote } : {}),
+  }));
+
+  if (amendmentType === "VOID") {
+    const voidedBy = set(order.voidedBy) ?? order.requestedBy;
+    const reason = set(order.voidReason);
+    const approvedBy = set(order.voidApprovedBy);
+    return renderVoidTemplate(
+      {
+        station: kind,
+        voidNumber: ticketNumber,
+        orderNumber,
+        ...(table ? { table } : {}),
+        at,
+        lines: items,
+        ...(reason ? { reason } : {}),
+        requestedBy: voidedBy,
+        ...(approvedBy ? { authorisedBy: approvedBy } : {}),
+      },
+      ctx,
+    ).content;
+  }
+
+  if (amendmentType === "ADDITION") {
+    return renderOrderChangeTemplate(
+      {
+        station: kind,
+        ticketNumber,
+        orderNumber,
+        ...(table ? { table } : {}),
+        ...(server ? { server } : {}),
+        stationName: station,
+        ...(branch ? { branch } : {}),
+        at,
+        changes: items.map((item) => ({ action: "ADD" as const, item: item.name, ...item })),
+        ...(note ? { note } : {}),
+      },
+      ctx,
+    ).content;
+  }
+
+  // A reprint's createdAt is the reprint request, so re-rendering stays reproducible.
+  const reprint = amendmentType === "REPRINT";
+  const sentBy =
+    !reprint && order.requestedBy !== order.waiter ? set(order.requestedBy) : undefined;
+  return renderStationTicketTemplate(
+    {
+      station: kind,
+      ticketNumber,
+      orderNumber,
+      orderType: order.orderType,
+      ...(table ? { table } : {}),
+      ...(server ? { server } : {}),
+      stationName: station,
+      ...(branch ? { branch } : {}),
+      ...(sentBy ? { sentBy } : {}),
+      ...(profile.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM"
+        ? { via: "POS front printer" }
+        : {}),
+      printedAt: at,
+      lines: items,
+      ...(note ? { note } : {}),
+    },
+    reprint ? { ...ctx, copy: { at, by: order.requestedBy } } : ctx,
+  ).content;
 }
 
 function renderCustomerDocument(
