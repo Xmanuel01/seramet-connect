@@ -68,3 +68,70 @@ describe("verified account display name", () => {
     },
   );
 });
+
+describe("Supabase user confirmation", () => {
+  const env = {
+    SERAMET_IDENTITY_PROVIDER: "supabase",
+    SERAMET_SUPABASE_URL: baseUrl,
+    SERAMET_SUPABASE_PUBLISHABLE_KEY: "disposable-publishable-fixture",
+  } as const;
+
+  function signedToken() {
+    return new SignJWT({ session_id: "confirmation-session" })
+      .setProtectedHeader({ alg: "ES256", kid: "account-name" })
+      .setIssuer(`${baseUrl}/auth/v1`)
+      .setAudience("authenticated")
+      .setSubject("account-owner")
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(keys.privateKey);
+  }
+
+  function supabaseAuth(userResponses: Array<() => Response>) {
+    const userRequests = { count: 0 };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/.well-known/jwks.json")) {
+        return Response.json({ keys: [{ ...publicKey, alg: "ES256", kid: "account-name" }] });
+      }
+      if (url.pathname === "/auth/v1/user") {
+        const respond = userResponses[Math.min(userRequests.count, userResponses.length - 1)]!;
+        userRequests.count += 1;
+        return respond();
+      }
+      throw new Error(`Unexpected fixture request: ${url.pathname}`);
+    });
+    return userRequests;
+  }
+
+  const confirmed = () => Response.json({ id: "account-owner" });
+
+  it("asks Supabase once for a burst of requests with the same token", async () => {
+    const userRequests = supabaseAuth([confirmed]);
+    const token = await signedToken();
+    await Promise.all([1, 2, 3].map(() => verifyExternalIdentity(token, env)));
+    await verifyExternalIdentity(token, env);
+    expect(userRequests.count).toBe(1);
+  });
+
+  it("asks again once the confirmation window has passed", async () => {
+    const userRequests = supabaseAuth([confirmed]);
+    const token = await signedToken();
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+    await verifyExternalIdentity(token, env);
+    clock.mockReturnValue(start + 31_000);
+    await verifyExternalIdentity(token, env);
+    expect(userRequests.count).toBe(2);
+  });
+
+  it("never remembers a rejected token", async () => {
+    const userRequests = supabaseAuth([() => new Response(null, { status: 401 }), confirmed]);
+    const token = await signedToken();
+    await expect(verifyExternalIdentity(token, env)).rejects.toThrow();
+    await expect(verifyExternalIdentity(token, env)).resolves.toMatchObject({
+      subject: "account-owner",
+    });
+    expect(userRequests.count).toBe(2);
+  });
+});

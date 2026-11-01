@@ -29,6 +29,12 @@ export type BackendStatus =
 
 type PersistenceMode = "unknown" | "development" | "authoritative";
 
+// Shared by every page in this tab. Each page used to repeat the health and session requests
+// before it could ask for its snapshot; the server's persistence mode cannot change while the
+// tab is open, and a sign-in scope only needs proving once (an auth rejection forgets it).
+let probedPersistenceMode: Exclude<PersistenceMode, "unknown"> | undefined;
+const validatedSessions = new Map<string, { deviceId?: string }>();
+
 export function useTransactionEngine() {
   const { activeTenantId, branch, branchId, role, currentUser } = useAppContext();
   const [state, setState] = useState<TransactionState>(() => createEmptyTransactionState(""));
@@ -99,16 +105,20 @@ export function useTransactionEngine() {
       try {
         let mode = modeRef.current;
         if (mode === "unknown") {
-          const health = await fetch("/api/seramet/health");
-          if (!health.ok) {
-            throw Object.assign(new Error(`Server health failed: ${health.status}`), {
-              httpStatus: health.status,
-            });
+          if (!probedPersistenceMode) {
+            const health = await fetch("/api/seramet/health");
+            if (!health.ok) {
+              throw Object.assign(new Error(`Server health failed: ${health.status}`), {
+                httpStatus: health.status,
+              });
+            }
+            const healthBody = (await health.json()) as { database?: string };
+            if (healthBody.database !== "authoritative" && !import.meta.env.DEV)
+              throw new Error("Authoritative persistence unavailable");
+            probedPersistenceMode =
+              healthBody.database === "authoritative" ? "authoritative" : "development";
           }
-          const healthBody = (await health.json()) as { database?: string };
-          if (healthBody.database !== "authoritative" && !import.meta.env.DEV)
-            throw new Error("Authoritative persistence unavailable");
-          mode = healthBody.database === "authoritative" ? "authoritative" : "development";
+          mode = probedPersistenceMode;
           if (scopeRef.current !== requestScope) return undefined;
           modeRef.current = mode;
           setPersistenceMode(mode);
@@ -124,18 +134,24 @@ export function useTransactionEngine() {
           return { state: localState, revision: 0 };
         }
         if (sessionScopeRef.current !== requestScope) {
-          const session = await authenticatedFetch("/api/seramet/auth/session", {
-            headers,
-            signal: AbortSignal.timeout(12_000),
-          });
-          if (!session.ok) {
-            throw Object.assign(new Error(`Session validation failed: ${session.status}`), {
-              httpStatus: session.status,
+          let validated = validatedSessions.get(requestScope);
+          if (!validated) {
+            const session = await authenticatedFetch("/api/seramet/auth/session", {
+              headers,
+              signal: AbortSignal.timeout(12_000),
             });
+            if (!session.ok) {
+              throw Object.assign(new Error(`Session validation failed: ${session.status}`), {
+                httpStatus: session.status,
+              });
+            }
+            const sessionBody = (await session.json()) as { actor?: { deviceId?: string } };
+            const deviceId = sessionBody.actor?.deviceId;
+            validated = deviceId ? { deviceId } : {};
+            validatedSessions.set(requestScope, validated);
           }
-          const sessionBody = (await session.json()) as { actor?: { deviceId?: string } };
           if (scopeRef.current !== requestScope) return undefined;
-          if (sessionBody.actor?.deviceId) deviceIdRef.current = sessionBody.actor.deviceId;
+          if (validated.deviceId) deviceIdRef.current = validated.deviceId;
           sessionScopeRef.current = requestScope;
         }
         if (hydrationScopeRef.current !== requestScope) {
@@ -236,6 +252,10 @@ export function useTransactionEngine() {
       } catch (error) {
         if (scopeRef.current !== requestScope) return undefined;
         const httpStatus = (error as { httpStatus?: number }).httpStatus;
+        if (httpStatus === 401 || httpStatus === 403) {
+          validatedSessions.delete(requestScope);
+          sessionScopeRef.current = "";
+        }
         // HTTP rejections are NOT an internet outage and must not enable
         // offline mutations or overwrite a valid working state with stale cache.
         posConnectivity.failure(httpStatus, !navigator.onLine);
