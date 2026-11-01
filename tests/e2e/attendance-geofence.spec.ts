@@ -55,6 +55,7 @@ type Fixture = {
   tenantId: string;
   userId: string;
   managerAccessToken: string;
+  phoneAccessToken: string;
   firstBranchId: string;
   secondBranchId: string;
 };
@@ -259,7 +260,8 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
     permissions: ["geolocation"],
     geolocation: { latitude: -1.26, longitude: 36.806, accuracy: 2 },
   });
-  await authorize(context);
+  // A personal phone: the manager token is bound to the branch till, which clocks in without GPS.
+  await authorize(context, fixture.phoneAccessToken);
   const page = await context.newPage();
   await establishSession(page);
   const document = await page.goto("/attendance");
@@ -288,7 +290,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   await page.getByRole("button", { name: "Clock in" }).click();
   expect((await rejected).status()).toBe(422);
   const deniedDialog = page.getByRole("dialog", { name: "Attendance not confirmed" });
-  await expect(deniedDialog).toContainText("within 10 metres");
+  await expect(deniedDialog).toContainText(/within \d+ metres/);
   await deniedDialog.getByRole("button", { name: "Report a delay", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Report a delay" })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -315,7 +317,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
       const response = await route.fetch({
         headers: {
           ...route.request().headers(),
-          authorization: `Bearer ${fixture.managerAccessToken}`,
+          authorization: `Bearer ${fixture.phoneAccessToken}`,
           "x-seramet-tenant-id": fixture.tenantId,
           "x-seramet-branch-id": fixture.firstBranchId,
         },

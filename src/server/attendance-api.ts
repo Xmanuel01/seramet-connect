@@ -31,7 +31,8 @@ const punchSchema = z
     action: z.enum(["IN", "OUT"]),
     branchId: z.string().min(1).max(120),
     idempotencyKey: key,
-    location,
+    // Omitted on the branch's registered till PC, which proves presence without GPS.
+    location: location.optional(),
     sessionId: z.string().uuid().optional(),
     expectedVersion: z.number().int().positive().optional(),
   })
@@ -288,6 +289,19 @@ async function ensureEmployee(
     .first();
   if (!found) deny(403, "Employee is not active or assigned to the branch");
 }
+// The signed-in session is bound to an active POS terminal enrolled at this branch. The
+// device credential is checked at sign-in, so the till itself is evidence of presence.
+async function tillFor(db: D1Database, actor: ServerActor, branchId: string) {
+  if (!actor.deviceId) return null;
+  return db
+    .prepare(
+      `SELECT id FROM hardware_devices
+       WHERE tenant_id=? AND id=? AND branch_id=? AND device_type='POS_TERMINAL'
+         AND trust_status='ACTIVE' AND lifecycle_state='ACTIVE' AND revoked_at IS NULL`,
+    )
+    .bind(actor.tenantId, actor.deviceId, branchId)
+    .first<{ id: string }>();
+}
 async function fenceFor(db: D1Database, actor: ServerActor, branchId: string) {
   return db
     .prepare(
@@ -392,6 +406,7 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
   const own =
     open?.branch_id === branch.id ? open : await readSession(db, actor, actor.id, today, branch.id);
   const fence = await fenceFor(db, actor, branch.id);
+  const till = await tillFor(db, actor, branch.id);
   const canManage = manager(actor);
   const records = canManage
     ? ((
@@ -443,6 +458,7 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     branchTimezone: branch.timezone,
     me: own ? publicSession(own) : null,
     openElsewhere: Boolean(open && open.branch_id !== branch.id),
+    tillClock: Boolean(till),
     canManage,
     canConfigure:
       actor.authLevel === "FULL" &&
@@ -452,9 +468,10 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     summary: summary && workforce ? { ...summary, ...workforce } : null,
     geofence: {
       enabled: fence?.enabled === 1,
-      radiusMeters: fence?.radius_m ?? 10,
-      maxAccuracyMeters: fence?.max_accuracy_m ?? 8,
-      maxFixAgeSeconds: fence?.max_fix_age_seconds ?? 30,
+      // Indoor phone GPS is typically accurate to 20-50 m, so start from workable values.
+      radiusMeters: fence?.radius_m ?? 100,
+      maxAccuracyMeters: fence?.max_accuracy_m ?? 100,
+      maxFixAgeSeconds: fence?.max_fix_age_seconds ?? 60,
       graceMinutes: fence?.grace_minutes ?? 0,
       version: fence?.version ?? 0,
       ...(canManage
@@ -875,24 +892,31 @@ export async function handleAttendanceApi(
   if (url.pathname === "/api/seramet/attendance/punch" && request.method === "POST") {
     const body = parse(punchSchema, await request.json().catch(() => null));
     const ctx = await context(actor, db, body.branchId);
-    const fence = await fenceFor(db, actor, body.branchId);
-    if (!fence || fence.enabled !== 1 || fence.latitude === null || fence.longitude === null)
-      deny(409, "Attendance geofence is not configured for this branch. Ask a supervisor");
-    const decision = evaluateAttendanceGeofence(body.location, {
-      latitude: fence.latitude,
-      longitude: fence.longitude,
-      radiusMeters: fence.radius_m,
-      maximumAccuracyMeters: fence.max_accuracy_m,
-      maximumFixAgeSeconds: fence.max_fix_age_seconds,
-    });
-    if (!decision.allowed) {
-      const message =
-        decision.reason === "OUTSIDE_GEOFENCE"
-          ? `Unable to check in or out. You must be within ${fence.radius_m} metres of your workplace. Move closer and try again, or contact your supervisor.`
-          : decision.reason === "LOW_ACCURACY"
-            ? "Your location is not accurate enough to verify attendance. Enable precise location, try outdoors, or contact your supervisor."
-            : "Your location could not be verified. Request a fresh precise location and try again, or contact your supervisor.";
-      deny(422, message);
+    const till = await tillFor(db, actor, body.branchId);
+    let evidence: { accuracy: number; distance: number } | undefined;
+    if (!till) {
+      const fence = await fenceFor(db, actor, body.branchId);
+      if (!fence || fence.enabled !== 1 || fence.latitude === null || fence.longitude === null)
+        deny(409, "Attendance geofence is not configured for this branch. Ask a supervisor");
+      if (!body.location)
+        deny(422, "Your location is required to clock in or out away from the restaurant till.");
+      const decision = evaluateAttendanceGeofence(body.location, {
+        latitude: fence.latitude,
+        longitude: fence.longitude,
+        radiusMeters: fence.radius_m,
+        maximumAccuracyMeters: fence.max_accuracy_m,
+        maximumFixAgeSeconds: fence.max_fix_age_seconds,
+      });
+      if (!decision.allowed) {
+        const message =
+          decision.reason === "OUTSIDE_GEOFENCE"
+            ? `Unable to check in or out. You must be within ${fence.radius_m} metres of your workplace. Move closer and try again, or contact your supervisor.`
+            : decision.reason === "LOW_ACCURACY"
+              ? "Your location is not accurate enough to verify attendance. Enable precise location, try outdoors, or contact your supervisor."
+              : "Your location could not be verified. Request a fresh precise location and try again, or contact your supervisor.";
+        deny(422, message);
+      }
+      evidence = { accuracy: decision.accuracyMeters, distance: decision.distanceMeters };
     }
     return noStore({
       ok: true,
@@ -915,8 +939,9 @@ export async function handleAttendanceApi(
             body.idempotencyKey,
             "GEOFENCE",
             hash,
-            undefined,
-            { accuracy: decision.accuracyMeters, distance: decision.distanceMeters },
+            // Self-service punches share the GEOFENCE source; the event names the till.
+            till ? `TILL:${till.id}` : undefined,
+            evidence,
             body,
           ),
       )),

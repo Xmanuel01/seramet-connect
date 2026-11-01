@@ -332,6 +332,67 @@ describe.sequential("authoritative geofenced attendance", () => {
       .get(tenantId, actor.id) as Record<string, unknown>;
     expect(JSON.stringify(session)).not.toContain("-1.264");
   });
+  function till(branch = branchId, type = "POS_TERMINAL", trust = "ACTIVE") {
+    const deviceId = `till-${id()}`;
+    db.sqlite
+      .prepare(
+        "INSERT INTO hardware_devices(tenant_id,id,branch_id,device_type,name,trust_status,registered_by,registered_at,payload_json,lifecycle_state,credential_version) VALUES(?,?,?,?,'Front till',?,?,?,'{}','ACTIVE',1)",
+      )
+      .run(tenantId, deviceId, branch, type, trust, actor.id, new Date().toISOString());
+    return deviceId;
+  }
+  it("clocks staff in and out at the branch's registered till PC without GPS", async () => {
+    actor = { ...actor, authLevel: "POS_PIN", deviceId: till() };
+    const report = await call("/api/seramet/attendance?branchId=" + branchId);
+    expect((report.data as unknown as { tillClock: boolean }).tillClock).toBe(true);
+    // No workplace geofence is configured and no location is sent.
+    const inPunch = await call("/api/seramet/attendance/punch", "POST", {
+      branchId,
+      action: "IN",
+      idempotencyKey: id(),
+    });
+    expect(inPunch.data.session.employeeId).toBe(actor.id);
+    const out = await call("/api/seramet/attendance/punch", "POST", {
+      branchId,
+      action: "OUT",
+      idempotencyKey: id(),
+      sessionId: inPunch.data.session.id,
+      expectedVersion: 1,
+    });
+    expect(out.data.session.clockOutAt).toBeTruthy();
+    const events = db.sqlite
+      .prepare("SELECT reason,accuracy_m FROM employee_attendance_events WHERE tenant_id=?")
+      .all(tenantId) as Array<{ reason: string; accuracy_m: number | null }>;
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.reason === `TILL:${actor.deviceId}`)).toBe(true);
+    expect(events.every((event) => event.accuracy_m === null)).toBe(true);
+  });
+  it("does not treat other devices as a till: another branch, a non-terminal or a revoked one", async () => {
+    const otherBranch = db.sqlite
+      .prepare("SELECT id FROM branches WHERE tenant_id=? AND id<>? LIMIT 1")
+      .get(tenantId, branchId) as { id: string } | undefined;
+    const devices = [till(branchId, "KDS"), till(branchId, "POS_TERMINAL", "REVOKED")];
+    if (otherBranch) devices.push(till(otherBranch.id));
+    for (const deviceId of devices) {
+      actor = { ...actor, authLevel: "POS_PIN", deviceId };
+      await expect(
+        call("/api/seramet/attendance/punch", "POST", {
+          branchId,
+          action: "IN",
+          idempotencyKey: id(),
+        }),
+      ).rejects.toThrow(/not configured/i);
+    }
+    actor = { ...actor, authLevel: "FULL", deviceId: undefined };
+    await call("/api/seramet/attendance/geofence", "PUT", { ...fence, expectedVersion: 0 });
+    await expect(
+      call("/api/seramet/attendance/punch", "POST", {
+        branchId,
+        action: "IN",
+        idempotencyKey: id(),
+      }),
+    ).rejects.toThrow(/location is required/i);
+  });
   it("rejects stale, inaccurate and outside location claims", async () => {
     await call("/api/seramet/attendance/geofence", "PUT", fence);
     const base = { branchId, action: "IN", idempotencyKey: id() };

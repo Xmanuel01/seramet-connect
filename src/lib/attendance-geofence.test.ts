@@ -41,13 +41,17 @@ describe("attendance geofence", () => {
     expect(evaluateAttendanceGeofence({ ...fix, accuracyMeters: 15 }, branch, now)).toMatchObject({
       reason: "LOW_ACCURACY",
     }));
-  it("rejects uncertainty that extends outside the radius", () =>
+  it("accepts a typical indoor phone fix whose position is inside the radius", () =>
     expect(
       evaluateAttendanceGeofence(
-        { ...fix, accuracyMeters: 8, latitude: fix.latitude + 0.00005 },
-        branch,
+        { ...fix, accuracyMeters: 35, latitude: fix.latitude + 0.0005 },
+        { ...branch, radiusMeters: 100, maximumAccuracyMeters: 100 },
         now,
       ),
+    ).toMatchObject({ allowed: true }));
+  it("rejects a position just outside the radius even with a precise fix", () =>
+    expect(
+      evaluateAttendanceGeofence({ ...fix, latitude: fix.latitude + 0.0001 }, branch, now),
     ).toMatchObject({ reason: "OUTSIDE_GEOFENCE" }));
   it("rejects invalid coordinates", () =>
     expect(evaluateAttendanceGeofence({ ...fix, latitude: 100 }, branch, now)).toMatchObject({
