@@ -15,6 +15,12 @@ import {
 } from "@/printing/printer-configuration";
 import type { TransactionRepository } from "@/lib/seramet-repository";
 import { SerametPrintService, type OrderForPrint } from "@/lib/seramet-print-service";
+import { PlatformConfigurationError } from "@/platform/repositories/configuration-repository";
+import {
+  renderCustomerBill,
+  renderProductionTicket,
+  renderSalesReceipt,
+} from "@/printing/documents";
 import { billingRecordToPrintOrder, receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import type { D1Database } from "@/server/database/d1";
 import { resolveRuntimeConfiguration } from "@/server/environment";
@@ -693,7 +699,7 @@ export async function handlePrintingApi(
     if (obligation.reviewReason) recoveryId = obligation.claimToken;
   } else if (input.documentType === "TEST") {
     manage(actor);
-    content = `SERAMET\n*** TEST ${input.testKind ?? "BILL"} ***\n+---+--------------------------+\n|QTY|ITEM                      |\n+---+--------------------------+\n|  1|Printer diagnostic        |\n+---+--------------------------+\nTOTAL KES 0.00\nNOT A SALE`;
+    content = diagnosticContent(actor, input.testKind ?? "BILL", printer.paperWidth);
     id = `TEST:${actor.id}:${input.recordId}:${input.copyIndex}`;
   } else {
     requirePermission(actor, permissions.invoicesManage);
@@ -814,4 +820,113 @@ export async function handlePrintingApi(
     await deriveBridgeSigningKey(signingMaster, actor.tenantId, actor.branchId, printer.bridgeId),
   );
   return respond({ authorization, retry: Boolean(recoveryId) });
+}
+
+/**
+ * A test print renders the same templates as real documents, at the printer's
+ * paper width and with the branch header, so a test shows exactly how bills,
+ * receipts and kitchen tickets will print. Amounts are zero and nothing is stored.
+ */
+function diagnosticContent(
+  actor: ServerActor,
+  kind: "BILL" | "RECEIPT" | "FOOD_KOT",
+  paperWidth: "58mm" | "80mm",
+) {
+  const width = paperWidth === "58mm" ? 32 : 42;
+  const banner = "PRINTER TEST - NOT A SALE";
+  return [
+    " ".repeat(Math.floor((width - banner.length) / 2)) + banner,
+    diagnosticBody(actor, kind, paperWidth),
+  ]
+    .join("\n")
+    .trimEnd();
+}
+
+function diagnosticBody(
+  actor: ServerActor,
+  kind: "BILL" | "RECEIPT" | "FOOD_KOT",
+  paperWidth: "58mm" | "80mm",
+) {
+  const issuedAt = new Date().toISOString().replace("T", " ").slice(0, 16);
+  const line = {
+    name: "Printer diagnostic",
+    quantity: 1,
+    unitPrice: 0,
+    modifiers: ["Check the borders and columns"],
+  };
+  let profile: ReturnType<typeof SerametPrintService.getBranchHardwareProfile> | undefined;
+  try {
+    profile = SerametPrintService.getBranchHardwareProfile(actor.branchId, actor.tenantId);
+  } catch (error) {
+    if (!(error instanceof PlatformConfigurationError)) throw error;
+  }
+  // A branch without print settings still gets the same layouts, under a plain header.
+  if (!profile) {
+    const ctx = { paper: paperWidth };
+    const business = { name: "Seramet" };
+    const tax = { vatRegistered: false };
+    if (kind === "FOOD_KOT")
+      return renderProductionTicket(
+        {
+          station: "KITCHEN",
+          ticketNumber: "#TEST",
+          orderNumber: "#TEST",
+          orderType: "Printer test",
+          table: "T1",
+          printedAt: issuedAt,
+          lines: [line],
+        },
+        ctx,
+      ).content;
+    if (kind === "RECEIPT")
+      return renderSalesReceipt(
+        {
+          business,
+          tax,
+          receiptNumber: "RCP-TEST",
+          issuedAt,
+          lines: [line],
+          payments: [{ method: "Cash", amount: 0 }],
+        },
+        ctx,
+      ).content;
+    return renderCustomerBill(
+      { business, tax, billNumber: "INV-TEST", orderNumber: "#TEST", issuedAt, lines: [line] },
+      ctx,
+    ).content;
+  }
+  for (const template of Object.values(profile.templateSettings)) template.width = paperWidth;
+  for (const route of Object.values(profile.documentRoutes)) route.template = paperWidth;
+  profile.kitchenMode = "PRINTER_ONLY";
+  const order: OrderForPrint = {
+    orderId: "#TEST",
+    branch: profile.branch,
+    terminalId: "printer-test",
+    requestedBy: "Printer test",
+    cashier: "Printer test",
+    waiter: "Printer test",
+    createdAt: new Date().toISOString(),
+    orderType: "Printer test",
+    table: "T1",
+    receiptNumber: "RCP-TEST",
+    invoiceNumber: "INV-TEST",
+    paymentMethod: "Cash",
+    subtotal: 0,
+    tax: 0,
+    total: 0,
+    paid: 0,
+    lines: [
+      {
+        ...line,
+        id: "printer-test-line",
+        category: "Test",
+        productionStation: "MAIN KITCHEN",
+      },
+    ],
+  };
+  return kind === "FOOD_KOT"
+    ? (SerametPrintService.createProductionTicketJobs(profile, order, []).jobs.find(
+        (job) => job.kitchenDelivery !== "KDS_DISPLAY",
+      )?.content ?? "")
+    : SerametPrintService.createDocumentJob(profile, order, kind).content;
 }
