@@ -42,7 +42,8 @@ export function validateRenderProfile(profile, transport = "TCP") {
     !["58mm", "80mm"].includes(profile.paperWidth) ||
     profile.encoding !== "ascii" ||
     !["none", "partial", "full"].includes(profile.cutter) ||
-    ![undefined, "TEXT_ESC_POS", "RASTER_ESC_POS"].includes(profile.renderingMode)
+    ![undefined, "TEXT_ESC_POS", "RASTER_ESC_POS"].includes(profile.renderingMode) ||
+    ![undefined, "SOLID", "ASCII"].includes(profile.ruleStyle)
   )
     throw new Error("UNSUPPORTED_RENDER_PROFILE");
   if (profile.renderingMode !== "RASTER_ESC_POS") return;
@@ -85,7 +86,8 @@ export function rasterMetrics(layout, profile) {
   const height = heights.reduce((a, b) => a + b, 0);
   const stride = profile.raster.printableWidthDots / 8;
   const bands = Math.ceil(height / profile.raster.maxBandHeight);
-  const bytes = stride * height + bands * 8 + 8 + (profile.cutter === "none" ? 0 : 3);
+  // ESC @ ESC a 0, then ESC d 3 to clear a tear bar or GS V 66/65 0 to feed to the cutter.
+  const bytes = stride * height + bands * 8 + 5 + (profile.cutter === "none" ? 3 : 4);
   if (height > profile.raster.maxHeightDots || bytes > profile.raster.maxBytes)
     throw new Error("RASTER_SIZE_LIMIT");
   return { heights, height, stride, bands, bytes, lineHeight };

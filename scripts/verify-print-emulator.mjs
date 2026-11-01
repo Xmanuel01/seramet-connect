@@ -166,18 +166,20 @@ try {
     await writeFile(join(evidence, `${fixture.name}.bin`), wire);
     const commands = snapshot.history.map((entry) => entry.command.type);
     assert.ok(commands.includes("InitializePrinter"));
+    // A partial cut is GS V 66 0: the printer feeds to its own cutter, so no ESC d.
     assert.ok(commands.includes("CutPaper"));
-    assert.ok(commands.includes("LineFeed"));
     const text = raster
       ? fixture.content
       : snapshot.printer.buffer
           .filter((line) => line.kind === "Text")
           .map((line) => line.line.text)
+          // It decodes text as UTF-8: FS . shows as its own text line and CP437 box glyphs as U+FFFD.
+          .filter((line) => line !== "\x1c.")
           .join("\n");
     if (fixture.name.startsWith("kot") || fixture.name.startsWith("bar")) {
       assert.match(text, /SAUCE/i);
       assert.match(text, /NO ONION/i);
-      assert.match(text, /^(KITCHEN ORDER KOT|BAR ORDER BAR) /);
+      assert.match(text, /^(KITCHEN ORDER\s+KOT|BAR ORDER\s+BOT) /);
       assert.ok(!text.includes("Disposable Test Restaurant"));
       assert.ok(!/KITCHEN TICKET|BAR TICKET|NEW ORDER/.test(text));
     } else assert.match(text, /283\.90/);
@@ -277,7 +279,12 @@ try {
       await page.setViewportSize({ width: 1100, height: Math.max(1000, captureHeight) });
       await page.locator(".paper").screenshot({ path: join(evidence, `${fixture.name}.png`) });
     }
-    const unknown = commands.filter((command) => command === "Unknown").length;
+    // This emulator does not model ESC 2 (restore default line spacing); nothing else may be unknown.
+    const unknown = snapshot.history.filter(
+      (entry) =>
+        entry.command.type === "Unknown" &&
+        !Buffer.from(entry.command.data).equals(Buffer.from([27, 50])),
+    ).length;
     assert.equal(unknown, 0);
     results.push({
       name: fixture.name,
