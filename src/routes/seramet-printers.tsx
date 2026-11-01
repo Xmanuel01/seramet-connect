@@ -21,6 +21,7 @@ import {
   type PrintTemplateSettings,
 } from "@/lib/seramet-print-service";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { solidRules } from "../../printing-core/solid-rules.mjs";
 
 export const Route = createFileRoute("/seramet-printers")({
   head: () => ({
@@ -933,8 +934,8 @@ function SerametPrinters() {
               <div className="mt-3 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
                 {template.footerMessage}
               </div>
-              <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-relaxed text-foreground">
-                {customerPreviews[template.documentType]}
+              <pre className="mt-3 max-h-56 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
+                {solidRules(customerPreviews[template.documentType] ?? "")}
               </pre>
             </article>
           ))}
@@ -956,8 +957,8 @@ function SerametPrinters() {
                 <div className="text-[13px] font-bold">{job.documentType.replaceAll("_", " ")}</div>
                 <Status>{job.kitchenDelivery?.replaceAll("_", " ")}</Status>
               </div>
-              <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-relaxed text-foreground">
-                {job.content}
+              <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[10px] leading-none text-foreground">
+                {solidRules(job.content)}
               </pre>
             </article>
           ))}

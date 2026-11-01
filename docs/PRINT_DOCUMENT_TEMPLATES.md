@@ -26,14 +26,22 @@ test and to call from the POS, the server or the print bridge.
 
 - **Continuous ruled tables, no dotted lines.** Output uses the `+---+` / `|`
   format that `printing-core/thermal-layout.mjs` already parses, so raster
-  printers draw solid lines. `printing-core` is unchanged, so installed print
+  printers draw solid lines. Text-mode printers draw them too: from bridge
+  3.3.0 `printing-core/solid-rules.mjs` turns the rules into CP437
+  box-drawing glyphs (`ESC t 0`, after `FS .` to leave Chinese/Kanji mode)
+  printed at zero line spacing (`ESC 3 0`) so vertical borders touch. A printer
+  without CP437 box glyphs can be set to "Table lines: Plain characters"
+  (`ruleStyle: "ASCII"`). The in-app previews use the same mapping. The
+  template text itself is unchanged, so installed print
   bridges keep validating jobs.
 - **Any width.** `paper` is `58mm` (32 columns), `80mm` (42) or `A4` (78).
   Narrow paper folds columns into the item cell (unit price, packed tick, GRN
   counts) instead of squeezing them.
 - **Paper saving.** Stacked tables share one merged border. Empty optional
   fields are dropped. The unit price only prints when the quantity is above
-  one. "Amounts in KES" only prints on A4.
+  one. "Amounts in KES" only prints on A4. Printers with a cutter get
+  `GS V 66 0` / `GS V 65 0`, which feeds exactly to that printer's cutter,
+  instead of a fixed three-line feed.
 - **Bold where it matters.** Titles (`BILL`, `RECEIPT`, `TAX INVOICE`, the
   first line of every ticket), the `TOTAL` row, allergy notes and `REPRINT`
   lines use the patterns printing-core already treats as strong.

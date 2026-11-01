@@ -6,12 +6,32 @@ import type {
   TransactionState,
 } from "@/lib/transaction-engine";
 import type { OrderForPrint, ProductionStation } from "@/lib/seramet-print-service";
+import type { InvoiceComponents } from "@/payments/invoice-components";
+import { majorFromMinor } from "@/payments/money";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 function productionStation(value?: string): ProductionStation {
   const station = value?.trim();
   return (station || "NONE") as ProductionStation;
+}
+
+/**
+ * Documents print item lines at gross, so the subtotal they show is gross sales
+ * with any discount and service charge on their own rows. A bill's own subtotal
+ * is net of discount and includes service charge, which would leave the printed
+ * lines and total disagreeing.
+ */
+function printedSubtotal(components: InvoiceComponents | undefined, subtotal: number) {
+  if (!components) return { subtotal };
+  const major = (minor: number) => majorFromMinor(minor, components.currency);
+  return {
+    subtotal: major(components.grossSalesMinor),
+    ...(components.serviceChargeMinor
+      ? { serviceCharge: major(components.serviceChargeMinor) }
+      : {}),
+    ...(components.discountsMinor ? { discount: major(components.discountsMinor) } : {}),
+  };
 }
 
 function orderTypeFromBilling(row: BillingRecord, orders: TransactionOrder[] = []) {
@@ -74,7 +94,7 @@ export function billingRecordToPrintOrder(
       productionStation: productionStation(line.productionStation),
       ...(line.itemNote ? { itemNote: line.itemNote } : {}),
     })),
-    subtotal: row.subtotal,
+    ...printedSubtotal(row.financialComponents, row.subtotal),
     tax: row.tax,
     total: row.total,
     paid: row.paid,
@@ -155,7 +175,7 @@ export function receiptRecordToPrintOrder(
       productionStation: productionStation(line.productionStation),
       ...(line.itemNote ? { itemNote: line.itemNote } : {}),
     })),
-    subtotal,
+    ...printedSubtotal(bill?.financialComponents ?? order?.financialComponents, subtotal),
     tax,
     total: receipt.total,
     paid: receipt.paidAmount,

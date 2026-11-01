@@ -780,6 +780,21 @@ export function PrinterAdministration() {
                 </option>
               </select>
             </label>
+            {draft.renderingMode !== "RASTER_ESC_POS" && (
+              <label>
+                Table lines
+                <select
+                  className={inputClass}
+                  value={draft.ruleStyle ?? "SOLID"}
+                  onChange={(event) =>
+                    setDraft({ ...draft, ruleStyle: event.target.value as "SOLID" | "ASCII" })
+                  }
+                >
+                  <option value="SOLID">Solid lines (printer box characters)</option>
+                  <option value="ASCII">Plain characters (+ - |)</option>
+                </select>
+              </label>
+            )}
             {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
               <details className="sm:col-span-2">
                 <summary>Raster capabilities</summary>

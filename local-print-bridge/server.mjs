@@ -14,7 +14,7 @@ import { encodePrintDocument } from "./raster-renderer.mjs";
 import { sendTcp, sendWindows, sendWindowsRaw, deliverWithFallback } from "./transports.mjs";
 import { createPrinterDiscovery } from "./printer-discovery.mjs";
 
-export const BRIDGE_VERSION = "3.2.0";
+export const BRIDGE_VERSION = "3.3.0";
 
 export async function createBridge(
   config,
