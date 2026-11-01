@@ -1,7 +1,7 @@
 import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 
 export function invoiceDisplayName(id: string) {
-  return `Inv-${id.replace(/^(?:BILL|INV)-/i, "")}`;
+  return `INV-${id.replace(/^(?:BILL|INV)-/i, "")}`;
 }
 
 export function invoiceSplitAmounts(
