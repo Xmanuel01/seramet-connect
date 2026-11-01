@@ -89,7 +89,11 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
         .getByRole("status")
         .filter({ hasText: "Transport submitted; physical delivery unconfirmed" }),
     ).toBeVisible();
-    await expect.poll(() => Buffer.concat(chunks).toString("ascii")).toContain("TEST RECEIPT");
+    // The test receipt is the real receipt template under a diagnostic banner.
+    await expect
+      .poll(() => Buffer.concat(chunks).toString("ascii"))
+      .toContain("PRINTER TEST - NOT A SALE");
+    expect(Buffer.concat(chunks).toString("ascii")).toContain("RECEIPT");
     await page.getByRole("button", { name: "Inspect bridge queue", exact: true }).click();
     await expect(page.getByText("BYTES_SUBMITTED", { exact: true })).toBeVisible();
     const denied = await page.evaluate(
