@@ -650,8 +650,8 @@ describe("Seramet POS acceptance scenarios", () => {
     expect(receipt.content).toContain("PAID");
     expect(receipt.content).toContain("M-Pesa");
     expect(invoice.content).toContain("TAX INVOICE");
-    expect(invoice.content).toContain("PAYMENT INFORMATION");
-    expect(invoice.content).toContain("Authorised Signatory");
+    expect(invoice.content).toMatch(/PAY WITH M-PESA|Bank|PAYMENT OPTIONS/);
+    expect(invoice.content).toContain("Prepared by");
   });
 
   it("marks addition, cancelled item and duplicate production tickets clearly", () => {

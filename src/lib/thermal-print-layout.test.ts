@@ -24,7 +24,7 @@ describe("ruled thermal document layouts", () => {
         ["FOOD_KOT", "BAR_TICKET"].includes(fixture.documentType) ? "NO ONION" : "No onion",
       );
       expect(flat).toMatch(/Separate sauce|SEPARATE SAUCE/);
-      if (["BILL", "RECEIPT"].includes(fixture.documentType)) {
+      if (["BILL", "RECEIPT", "INVOICE"].includes(fixture.documentType)) {
         for (const value of [
           "246.90",
           "32.00",
@@ -38,17 +38,10 @@ describe("ruled thermal document layouts", () => {
         expect(fixture.content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
         // Every rule belongs to a table: no bare edge-to-edge lines.
         expect(fixture.content).not.toMatch(/^[-=]+$/m);
-        if (fixture.name.includes("copy")) expect(fixture.content).toContain("DUPLICATE COPY");
-      } else if (fixture.documentType === "INVOICE") {
-        for (const value of ["246.90", "32.00", "283.90", "SERVICE", "DISCOUNT", "10.00", "5.00"])
-          expect(fixture.content).toContain(value);
-        expect(fixture.content).toContain("|QTY|ITEM");
-        expect(fixture.content).toContain(width === 32 ? "AMT" : "AMOUNT");
-        expect(fixture.content).not.toContain("ORDER DETAILS");
         if (fixture.documentType === "INVOICE") {
           expect(fixture.content).toContain("TAX INVOICE");
-          expect(fixture.content).not.toContain("Due Date:");
-          expect(fixture.content).toContain("Unit:");
+          expect(fixture.content).not.toMatch(/Due date/i);
+          expect(fixture.content).toContain("@ 123.45");
           expect(fixture.content).toContain("TEST-PIN-ONLY");
         }
         if (fixture.name.includes("copy")) expect(fixture.content).toContain("DUPLICATE COPY");

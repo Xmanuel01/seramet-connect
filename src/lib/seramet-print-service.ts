@@ -5,6 +5,7 @@ import {
   renderCustomerBill,
   renderProductionTicket as renderStationTicketTemplate,
   renderSalesReceipt,
+  renderTaxInvoice,
   renderVoidTicket as renderVoidTemplate,
 } from "@/printing/documents";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
@@ -1269,14 +1270,14 @@ function renderCustomerDocument(
   template: PrintTemplateSettings,
   profile: BranchHardwareProfile,
 ) {
-  if (template.width === "A4") {
-    return renderA4Invoice(order, template, profile);
-  }
   // The shared templates print two-decimal amounts; other currencies keep the
   // legacy layout until the templates format by currency.
   const currency = profile.printIdentity.currency ?? activeCurrency();
-  if (documentType !== "INVOICE" && minorDigits(currency) === 2) {
+  if (minorDigits(currency) === 2) {
     return renderTableDocument(documentType, order, template, profile, template.width);
+  }
+  if (template.width === "A4") {
+    return renderA4Invoice(order, template, profile);
   }
 
   const width = template.width === "58mm" ? 32 : 42;
@@ -1337,13 +1338,16 @@ function renderCustomerDocument(
   ]);
 }
 
-/** Bill and receipt on the shared table templates, printing the till's settled totals. */
+/**
+ * Bill, receipt and invoice on the shared table templates, printing the till's
+ * settled totals. A4 paper always prints the invoice layout.
+ */
 function renderTableDocument(
-  documentType: "BILL" | "RECEIPT",
+  documentType: "BILL" | "RECEIPT" | "INVOICE",
   order: OrderForPrint,
   template: PrintTemplateSettings,
   profile: BranchHardwareProfile,
-  paper: "58mm" | "80mm",
+  paper: "58mm" | "80mm" | "A4",
 ) {
   const identity = profile.printIdentity;
   const set = (value: string | undefined) => {
@@ -1404,9 +1408,67 @@ function renderTableDocument(
     totals,
   };
   const ctx = { paper, currency: identity.currency ?? activeCurrency() };
+  const till = set(order.tillNumber) ?? set(identity.tillNumber);
+  const bankDetails = [identity.bankName, identity.bankAccountName, identity.bankAccountNumber]
+    .map(set)
+    .filter((value): value is string => Boolean(value));
+  // Instructions that only repeat the till or bank details printed above are dropped.
+  const extraInstructions = (shown: string[]) =>
+    identity.paymentInstructions.filter(
+      (line) => set(line) && !shown.some((value) => line.includes(value)),
+    );
+  const payments = (
+    order.paymentBreakdown?.length
+      ? order.paymentBreakdown
+      : [
+          {
+            method: order.paymentMethod ?? "Recorded",
+            amount: order.paid ?? order.total,
+            reference: order.paymentReference,
+          },
+        ]
+  ).map((payment) => ({
+    method: payment.method,
+    amount: payment.amount,
+    ...(payment.reference ? { reference: payment.reference } : {}),
+  }));
+
+  if (documentType === "INVOICE" || paper === "A4") {
+    const paid = order.paid ?? 0;
+    const bank = [set(identity.bankName), set(identity.bankAccountName)].filter(Boolean).join(", ");
+    const bankAccount = set(identity.bankAccountNumber);
+    const contact = [set(order.customerPhone), set(order.customerEmail)]
+      .filter(Boolean)
+      .join(" / ");
+    return renderTaxInvoice(
+      {
+        ...common,
+        // The title follows whether tax was charged, not whether the tax line is shown.
+        tax: { vatRegistered: order.tax !== 0, pricesIncludeVat: false },
+        client: {
+          name: set(order.customer) ?? "Walk-in customer",
+          ...(contact ? { contact } : {}),
+        },
+        invoiceNumber: order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`,
+        issueDate: common.issuedAt,
+        ...(paid !== 0 ? { paidToDate: paid, payments } : {}),
+        ...(till || bank
+          ? {
+              payment: {
+                ...(till ? { till, account: "" } : {}),
+                ...(bank ? { bank } : {}),
+                ...(bankAccount ? { bankAccount } : {}),
+              },
+            }
+          : {}),
+        paymentInstructions: extraInstructions([...(till ? [till] : []), ...bankDetails]),
+        footerMessage: template.footerMessage,
+      },
+      ctx,
+    ).content;
+  }
 
   if (documentType === "BILL") {
-    const till = set(order.tillNumber) ?? set(identity.tillNumber);
     return renderCustomerBill(
       {
         ...common,
@@ -1414,22 +1476,13 @@ function renderTableDocument(
         ...(set(order.waiter) ? { server: set(order.waiter) } : {}),
         // Buy Goods tills take no account number.
         ...(till ? { payment: { till, account: "" } } : {}),
-        paymentInstructions: identity.paymentInstructions.filter((line) => set(line)),
+        paymentInstructions: extraInstructions(till ? [till] : []),
         footerMessage: template.footerMessage,
       },
       ctx,
     ).content;
   }
 
-  const payments = order.paymentBreakdown?.length
-    ? order.paymentBreakdown
-    : [
-        {
-          method: order.paymentMethod ?? "Recorded",
-          amount: order.paid ?? order.total,
-          ...(order.paymentReference ? { reference: order.paymentReference } : {}),
-        },
-      ];
   const loyalty = order.loyaltySummary;
   return renderSalesReceipt(
     {
@@ -1437,11 +1490,7 @@ function renderTableDocument(
       receiptNumber: order.receiptNumber ?? `RCP ${cleanOrderId(order.orderId)}`,
       ...(order.invoiceNumber ? { billNumber: order.invoiceNumber } : {}),
       ...(set(order.waiter) && order.waiter !== order.cashier ? { server: set(order.waiter) } : {}),
-      payments: payments.map((payment) => ({
-        method: payment.method,
-        amount: payment.amount,
-        ...(payment.reference ? { reference: payment.reference } : {}),
-      })),
+      payments,
       ...(loyalty ? { loyalty } : {}),
       footerMessage: identity.footerMessage,
     },

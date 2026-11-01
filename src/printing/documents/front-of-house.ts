@@ -428,12 +428,24 @@ export interface TaxInvoiceInput {
   issueDate: DisplayTime;
   dueDate?: DisplayTime;
   reference?: string;
+  orderNumber?: string;
+  orderType?: string;
+  table?: string;
+  cashier?: string;
   lines: InvoiceLine[];
+  serviceCharge?: number;
   discount?: number;
+  /** Totals already settled by the till. Printed as given instead of being recomputed from lines. */
+  totals?: SaleTotals;
   paidToDate?: number;
+  /** Payments already taken against the invoice, listed under the totals. */
+  payments?: Payment[];
   payment?: MobileMoneyDetails & { bank?: string; bankAccount?: string };
+  /** Free-text payment options printed in a box when a balance is due. */
+  paymentInstructions?: string[];
   etims?: EtimsStatus;
   terms?: string;
+  footerMessage?: string;
 }
 
 /** # | Description | Qty | Unit price | VAT | Amount on A4; the receipt layout on thermal paper. */
@@ -465,8 +477,12 @@ export function invoiceItemsTable(width: number, lines: InvoiceLine[], vatLabel?
 export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): PrintedDocument {
   const width = widthOf(ctx);
   const qrCodes: QrCode[] = [];
-  const totals = computeSaleTotals(input.lines, input.tax, { discount: input.discount });
+  const totals = input.totals ?? computeSaleTotals(input.lines, input.tax, input);
   const paid = input.paidToDate ?? 0;
+  const instructions = (input.paymentInstructions ?? []).filter((line) => clean(line));
+  const extras = totals.serviceCharge !== 0 || totals.discount !== 0;
+  // Tax added on top of the subtotal needs the subtotal shown to add up.
+  const taxOnTop = totals.vat !== undefined && totals.net === undefined;
   const balance = sum([totals.total, -paid]);
   const payment = input.payment && { account: input.invoiceNumber, ...input.payment };
   const terms =
@@ -489,19 +505,31 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
         ["Issue date", input.issueDate],
         ["Due date", input.dueDate],
         ["LPO / Ref", input.reference],
+        ["Order", input.orderNumber],
+        [
+          "Service",
+          [input.orderType, input.table && `Table ${input.table}`].filter(Boolean).join(" / "),
+        ],
+        ["Cashier", input.cashier],
       ],
     ),
     invoiceItemsTable(width, input.lines, totals.vatRate ? `${totals.vatRate}%` : undefined),
     amountsTable(width, [
+      (extras || taxOnTop) && ["Subtotal", money(totals.subtotal)],
+      totals.serviceCharge !== 0 && ["Service charge", money(totals.serviceCharge)],
       totals.discount !== 0 && ["Discount", `(${money(totals.discount)})`],
       totals.net !== undefined && ["Net (excl. VAT)", money(totals.net)],
-      totals.vat !== undefined && [`VAT ${totals.vatRate}%`, money(totals.vat)],
+      totals.vat !== undefined && [
+        totals.vatRate !== undefined ? `VAT ${totals.vatRate}%` : "VAT",
+        money(totals.vat),
+      ],
       ...levyRows(totals),
       ["TOTAL", money(totals.total)],
       paid !== 0 && ["Paid to date", `(${money(paid)})`],
       paid !== 0 && ["BALANCE DUE", money(balance)],
     ]),
     currencyNote(width, ctx),
+    input.payments && input.payments.length > 0 && paymentsTable(width, input.payments),
     balance > 0 && mobileMoneyBlock(width, payment, balance, qrCodes),
     balance > 0 &&
       input.payment?.bank &&
@@ -509,9 +537,10 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
         ["Bank", input.payment.bank],
         ["Account", input.payment.bankAccount],
       ]),
+    balance > 0 && instructions.length > 0 && box(width, ["PAYMENT OPTIONS", ...instructions]),
     etimsBlock(width, input.etims, qrCodes),
     signatures(width, ["Prepared by", "Received by"]),
-    footer(width, terms),
+    footer(width, terms, input.footerMessage),
   ]);
   return { kind: "TAX_INVOICE", paper: ctx.paper, content, qrCodes };
 }
