@@ -191,7 +191,8 @@ test("ruled tables print as continuous CP437 box lines with touching rows", () =
   const top = sheet.rows.findIndex((row) => row?.[6]);
   let bottom = top;
   while (sheet.rows[bottom + 1]?.[6]) bottom++;
-  assert.ok(bottom - top >= 7 * 24, "left border spans every table row");
+  // From the middle of the top rule to the upper stroke of the double rule, 7 rows below.
+  assert.ok(bottom - top >= 7 * 24 - 2 - 12, "left border spans every table row");
   for (let y = top; y <= bottom; y++) assert.ok(sheet.rows[y]?.[31 * 12 + 6], `right y=${y}`);
   assert.equal(sheet.cuts.length, 1);
   assert.equal(sheet.cuts[0].feedsToCutter, true);
