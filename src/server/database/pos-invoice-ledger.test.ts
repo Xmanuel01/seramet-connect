@@ -206,6 +206,88 @@ describe("authoritative invoice recognition", () => {
     ).toBe(1);
   });
 
+  it("settles with onboarding-created methods that carry no accounts of their own", async () => {
+    const stamp = new Date().toISOString();
+    for (const [key, id, type] of [
+      ["CASH", "drawer-cash", "CASH"],
+      ["PAYMENT_CLEARING", "clearing", "ASSET"],
+    ] as const) {
+      await db
+        .prepare(
+          "INSERT INTO accounts (tenant_id,id,code,name,account_type,currency,active,payload_json) VALUES (?,?,?,?,?,'KES',1,'{}')",
+        )
+        .bind(tenantId, id, id, id, type)
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO setup_account_mappings (tenant_id,id,scope_key,mapping_key,requirement,account_id,status,finance_signoff_status,updated_by,updated_at) VALUES (?,?,'TENANT',?,'REQUIRED',?,'CONFIGURED','APPROVED',?,?)",
+        )
+        .bind(tenantId, key, key, id, actor.id, stamp)
+        .run();
+    }
+    // Exactly what onboarding and Settings create: code, category and display name only.
+    for (const [id, code, category] of [
+      ["onboarded-cash", "HOUSE_CASH", "CASH"],
+      ["onboarded-mpesa", "MPESA", "DIGITAL_WALLET"],
+    ] as const) {
+      await db
+        .prepare(
+          "INSERT INTO payment_methods (tenant_id,id,code,category,active,payload_json) VALUES (?,?,?,?,1,?)",
+        )
+        .bind(
+          tenantId,
+          id,
+          code,
+          category,
+          JSON.stringify({
+            id,
+            tenantId,
+            code,
+            category,
+            displayName: code,
+            enabled: true,
+            metadata: {},
+          }),
+        )
+        .run();
+    }
+    const configuration = await hydrateAuthoritativeConfiguration(db, {}, true);
+    const methods = configuration.listPaymentMethods(tenantId, false);
+    expect(methods.find((row) => row.id === "onboarded-mpesa")).toMatchObject({
+      receivableAccountId: "receivable",
+      settlementAccountId: "clearing",
+    });
+    expect(methods.find((row) => row.id === "onboarded-cash")).toMatchObject({
+      receivableAccountId: "receivable",
+      settlementAccountId: "drawer-cash",
+    });
+
+    let state = await issued();
+    const orchestrator = new PaymentOrchestrator();
+    state = orchestrator.openDrawer(state, {
+      tenantId,
+      branchId,
+      employeeId: actor.id,
+      openingFloatMinor: 0,
+      currency: "KES",
+      actor: actor.name,
+    });
+    await repo.saveState(state, actor, "Open disposable drawer");
+    state = orchestrator.recordCash(state, {
+      tenantId,
+      branchId,
+      drawerSessionId: state.paymentOperations!.drawerSessions[0]!.id,
+      paymentMethodId: "onboarded-cash",
+      invoiceId: "invoice-1",
+      amountMinor: 12400,
+      cashTenderedMinor: 15000,
+      currency: "KES",
+      actor: actor.name,
+    });
+    await repo.saveState(state, actor, "Collect cash with an onboarding-created method");
+    expect((await movements())!.find((row) => row.account_id === "receivable")?.balance).toBe(0);
+  });
+
   it.each(["SPLIT", "MERGED", "VOID"] as const)(
     "reverses an unpaid %s invoice exactly once",
     async (status) => {
