@@ -77,9 +77,10 @@ export function evaluateAttendanceGeofence(
     return { allowed: false, reason: "LOW_ACCURACY" };
   }
   const distance = distanceMeters(fix, branch);
-  // Conservative decision: accuracy circle must fit within the permitted radius.
-  // A 10m radius with 15m uncertainty is not reliable evidence of presence.
-  if (distance + fix.accuracyMeters > branch.radiusMeters) {
+  // The reported position must fall inside the radius. Requiring the whole accuracy circle
+  // to fit rejected almost every indoor phone (20-50 m accuracy); the maximum accuracy
+  // setting is what bounds how vague a fix may be.
+  if (distance > branch.radiusMeters) {
     return { allowed: false, reason: "OUTSIDE_GEOFENCE", distanceMeters: distance };
   }
   return { allowed: true, distanceMeters: distance, accuracyMeters: fix.accuracyMeters };
