@@ -485,6 +485,24 @@ it("issues server-generated diagnostic evidence without accepting client content
     target: { id: printer.id, host: "127.0.0.1" },
   });
   expect(payload.content).toContain("NOT A SALE");
+  // The test print uses the real kitchen ticket template at the printer's width.
+  expect(payload.content).toMatch(/^KITCHEN ORDER\s+KOT /m);
+  expect(payload.content).toContain("PRINTER DIAGNOSTIC");
+  const width = printer.paperWidth === "58mm" ? 32 : 42;
+  for (const line of payload.content.split("\n")) expect(line.length).toBeLessThanOrEqual(width);
+  expect(payload.content).not.toMatch(/^[-=]+$/m);
+  for (const testKind of ["BILL", "RECEIPT"]) {
+    const document = await (await handlePrintingApi(
+      request("authorize", { ...input, testKind, recordId: crypto.randomUUID() }),
+      env(),
+      repository,
+    ))!.json();
+    const content = JSON.parse(
+      Buffer.from(document.authorization.payload, "base64url").toString("utf8"),
+    ).content;
+    expect(content).toContain(testKind === "BILL" ? "BILL" : "RECEIPT");
+    expect(content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
+  }
   expect(JSON.stringify(result)).not.toContain(signingKey);
   await expect(
     handlePrintingApi(request("authorize", { ...input, content: "injected" }), env(), repository),
