@@ -598,3 +598,87 @@ test("own delivery rejects dispatch without the configured required customer and
     await staff.close();
   }
 });
+
+test("dine-in POS flow: typed order, Place Order, reopen at the table, cash with change", async ({
+  browser,
+  context,
+}) => {
+  const { staff, page, snapshot, tableCode } = await prepare(browser, context, "DINE_IN");
+  try {
+    const before = await snapshot();
+    // prepare() typed "Pilot meal" and added one; two more taps make three portions.
+    const add = page.getByRole("button", { name: "Add Pilot meal", exact: true });
+    await add.click();
+    await add.click();
+    await page.getByPlaceholder("Item note").fill("No chilli");
+    await page.getByPlaceholder("Special request for kitchen or bar").fill("Birthday table");
+    await expect(page.getByText("Ksh 3,000").first()).toBeVisible();
+
+    const placeOrder = page.getByRole("button", { name: "Place Order", exact: true });
+    await placeOrder.click();
+    const picker = page.getByRole("dialog", { name: "Select table", exact: true });
+    await picker.getByRole("button", { name: new RegExp(`Table ${tableCode} `) }).click();
+    await expect(page.getByText(`Table ${tableCode} selected`, { exact: true })).toBeVisible();
+    await placeOrder.click();
+
+    await expect
+      .poll(async () => (await snapshot()).state.orders.length)
+      .toBe(before.state.orders.length + 1);
+    const placed = (await snapshot()).state.orders.find(
+      (row) => !before.state.orders.some((old) => old.id === row.id),
+    )!;
+    expect(placed.table).toBe(tableCode);
+    expect(placed.total).toBe(3000);
+    expect(placed.lines).toEqual([
+      expect.objectContaining({ quantity: 3, itemNote: "No chilli", sentAt: expect.any(String) }),
+    ]);
+    expect(placed.kitchenNote).toBe("Birthday table");
+    expect(
+      (await snapshot()).state.kitchenPrintObligations?.filter((row) => row.orderId === placed.id),
+    ).toHaveLength(1);
+
+    // Place Order clears the screen; staff reopen the running order from its table.
+    const panel = page.getByRole("complementary");
+    await page.getByRole("button", { name: "Select table", exact: true }).first().click();
+    const tables = page.getByRole("dialog", { name: "Select table", exact: true });
+    const occupied = tables.getByRole("button", { name: new RegExp(`Table ${tableCode} `) });
+    await expect(occupied).toContainText("Occupied");
+    await occupied.click();
+    await expect(panel.getByText(`Order ${placed.id}`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Pay Ksh 3,000", exact: true }).click();
+    const payment = page.getByRole("dialog", { name: "Take payment", exact: true });
+    await payment.getByRole("button", { name: /^Cash/ }).click();
+    await payment.getByLabel(/^Cash received/).fill("5000");
+    // Full payment: the balance is pre-filled and Confirm commits it in one step.
+    await expect(payment.getByLabel(/^Amount to apply/)).toHaveValue("3000");
+    await expect(payment.getByRole("button", { name: "Add payment", exact: true })).toHaveCount(0);
+    await payment.getByRole("button", { name: /^Confirm .* payment$/ }).click();
+    await expect(payment.getByText("Payment confirmed")).toBeVisible();
+    await expect(payment.getByText(`Order ${placed.id} is fully paid.`)).toBeVisible();
+    await payment.getByRole("button", { name: "Close order", exact: true }).click();
+
+    const after = (await snapshot()).state;
+    const bill = after.bills.find((row) => row.orderIds.includes(placed.id))!;
+    expect(bill.status).toBe("PAID");
+    const receipts = after.receipts.filter((row) => row.orderId === placed.id);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ total: 3000, paidAmount: 3000, change: 2000 });
+    expect(receipts[0]!.paymentBreakdown).toEqual([
+      expect.objectContaining({ method: "CASH", amount: 3000 }),
+    ]);
+    expect(after.orders.find((row) => row.id === placed.id)?.status).toBe("PAID");
+
+    // The table is free again for the next guests.
+    await page
+      .getByRole("button", { name: /^(Select table|Table \S+)$/ })
+      .first()
+      .click();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Select table", exact: true })
+        .getByRole("button", { name: new RegExp(`Table ${tableCode} `) }),
+    ).toContainText("Available");
+  } finally {
+    await staff.close();
+  }
+});
