@@ -234,6 +234,67 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     ).rejects.toThrow(/expired|consumed/i);
   });
 
+  it("returns the cashier-facing reason when a settlement rule rejects the command", async () => {
+    const provisioned = await register("settle-rule", "Settlement Rule Restaurant");
+    const authenticated = actor(provisioned);
+    await configureKenyanCurrency(new LocationCurrencyService(db, authenticated));
+    seedCashConfiguration(provisioned);
+    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+
+    let state = createEmptyTransactionState(provisioned.tenantId);
+    state = TransactionEngine.createOrder(
+      state,
+      {
+        tenantId: provisioned.tenantId,
+        branchId: provisioned.branchId,
+        branch: "Configured branch",
+        customer: "Walk-in customer",
+        channel: "DINE_IN",
+        cashier: "Owner",
+        waiter: "Owner",
+        lines: [
+          {
+            id: "line-rule-1",
+            name: "Configured item",
+            category: "Configured category",
+            quantity: 1,
+            unitPrice: 210,
+            productionStation: "NONE",
+          },
+        ],
+      },
+      "OPEN",
+    );
+    state = TransactionEngine.sendToKitchen(state, state.orders[0]!.id, "Owner");
+    state = TransactionEngine.requestBill(state, state.orders[0]!.id, "Owner");
+    const repository = new D1AuthoritativeTransactionRepository(db);
+    await repository.saveState(state, authenticated, "Settlement rule state");
+
+    // No cash drawer is open: the till must see that reason, not a generic server failure.
+    await expect(
+      repository.commitMutation({
+        actor: authenticated,
+        action: "settleInvoice",
+        payload: {
+          input: {
+            tenantId: provisioned.tenantId,
+            invoiceId: state.bills[0]!.id,
+            paymentMethodId: "cash-configured",
+            amount: 210,
+            cashier: "Owner",
+          },
+        },
+        idempotencyKey: "settle-rule-command-0001",
+        requestHash: "settle-rule-command-hash-0001",
+        correlationId: "settle-rule-correlation-0001",
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      status: 422,
+      message: "Open a cash drawer before collecting cash",
+    });
+  });
+
   it("locks base currency after authoritative financial activity", async () => {
     const provisioned = await register("currency-lock", "Currency Lock Restaurant");
     const service = new LocationCurrencyService(db, actor(provisioned));

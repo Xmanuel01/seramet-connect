@@ -1,0 +1,25 @@
+            Sample Restaurant
+      Westlands, Example Rd, Nairobi
+    Tel 0700 000 000 / PIN P000000000X
+             PAYMENT RECEIPT
++---------------+------------------------+
+|Receipt no.    |PR-000045               |
+|Date           |31 Oct 2026 23:10       |
+|Received from  |Example Ltd             |
+|Client PIN     |P111111111Y             |
++---------------+-------+----------------+
+|INV-2026-0088 total    |       45,300.00|
+|Previously paid        |          (0.00)|
+|THIS PAYMENT           |       20,000.00|
+|Balance remaining      |       25,300.00|
++============+==========+===+============+
+|Paid by     |Ref           |      Amount|
++------------+--------------+------------+
+|M-Pesa      |TJW2P9Q4HD    |   20,000.00|
++------------+--+-----------+------------+
+|In words       |Twenty thousand         |
+|               |shillings only          |
+|Received by    |Cashier 1               |
++---------------+------------------------+
+   Confirms payment only. Tax invoice:
+              INV-2026-0088.

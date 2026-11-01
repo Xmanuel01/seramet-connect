@@ -1,0 +1,80 @@
+       Sample Restaurant
+ Westlands, Example Rd, Nairobi
+        Tel 0700 000 000
+        PIN P000000000X
+      GOODS RECEIVED NOTE
++-----------+------------------+
+|Supplier   |Example Supplies  |
+|           |Ltd               |
+|Delivery   |DN-5531           |
+|note       |                  |
+|Supplier   |SI-9910           |
+|inv.       |                  |
++-----------+------------------+
+|GRN no.    |GRN-0112          |
+|Against PO |PO-0058           |
+|Received   |04/11/2026 09:40  |
+|Received at|Westlands store   |
+|           |room              |
++-----------+---+---+----------+
+|Item           |Acc|    Amount|
++---------------+---+----------+
+|Takeaway       |  3| 13,500.00|
+|containers     |   |          |
+|1000ml         |   |          |
+|Carton (250) @ |   |          |
+|4,500.00       |   |          |
+|Ord 3 / Rec 3 /|   |          |
+|Rej 0          |   |          |
++---------------+---+----------+
+|Kraft paper    |  2|  6,400.00|
+|bags, large    |   |          |
+|Carton (500) @ |   |          |
+|3,200.00       |   |          |
+|Ord 2 / Rec 2 /|   |          |
+|Rej 0          |   |          |
++---------------+---+----------+
+|Thermal paper  |  2|  5,600.00|
+|rolls 80mm     |   |          |
+|Box (50) @     |   |          |
+|2,800.00       |   |          |
+|Ord 2 / Rec 2 /|   |          |
+|Rej 0          |   |          |
++---------------+---+----------+
+|Dishwashing    |  1|  2,600.00|
+|liquid         |   |          |
+|20L jerrycan @ |   |          |
+|2,600.00       |   |          |
+|Ord 2 / Rec 1 /|   |          |
+|Rej 0          |   |          |
+|Short 1 -      |   |          |
+|back-order     |   |          |
++---------------+---+----------+
+|Serviettes,    |  2|  3,600.00|
+|2-ply          |   |          |
+|Carton @       |   |          |
+|1,800.00       |   |          |
+|Ord 3 / Rec 3 /|   |          |
+|Rej 1          |   |          |
+|1 carton damp, |   |          |
+|returned       |   |          |
++---------------+---+----------+
+|Accepted excl. |     31,700.00|
+|VAT            |              |
+|VAT 16%        |      5,072.00|
++---------------+--------------+
+|TOTAL          |     36,772.00|
++===========+===+==============+
+|Return note|RN-0019           |
++-----------+------------------+
+|Received by|                  |
+|           |                  |
++-----------+------------------+
+|Checked by |                  |
+|           |                  |
++-----------+------------------+
+|Driver     |                  |
+|           |                  |
++-----------+------------------+
+  Only accepted quantities are
+  posted to stock and payable.

@@ -1,0 +1,63 @@
+ Sample Restaurant / Westlands
+        PIN P000000000X
+ Z REPORT - SHIFT CLOSE Z-0304
++-----------+------------------+
+|Business   |31/10/2026        |
+|date       |                  |
+|Shift      |10:00 - 23:30     |
+|Closed by  |Cashier 1         |
+|Approved by|Supervisor        |
++-----------+---+--------------+
+|Gross sales    |    148,600.00|
+|Discounts      |    (2,400.00)|
+|Credit notes   |    (1,500.00)|
+|Net sales      |    144,700.00|
+|Net excl. VAT  |    124,741.38|
+|VAT 16%        |     19,958.62|
++---------------+--------------+
+|By category    |        Amount|
++---------------+--------------+
+|Food           |    104,200.00|
+|Drinks         |     40,500.00|
++---------------+-----+--------+
+|By payment     | Txns|  Amount|
++---------------+-----+--------+
+|Cash           |   48|32,450.0|
+|               |     |       0|
+|M-Pesa         |   97|78,900.0|
+|               |     |       0|
+|Card           |   14|12,350.0|
+|               |     |       0|
+|Uber Eats      |   25|18,000.0|
+|               |     |       0|
+|Credit         |    2|3,000.00|
++---------------+-----+--------+
+|Total          |  186|144,700.|
+|               |     |      00|
++---------------+-----+--------+
+|Opening float  |      5,000.00|
+|Cash sales     |     32,450.00|
+|Payouts        |    (1,200.00)|
+|Expected cash  |     36,250.00|
+|Counted cash   |     36,100.00|
+|VARIANCE       |      (150.00)|
++===========+===+==============+
+|Orders     |186 / 312 covers  |
+|Average    |777.96            |
+|ticket     |                  |
+|Voids (not |3 / 1,300.00      |
+|in sales)  |                  |
+|Rider      |50.00             |
+|shortages  |                  |
+|Receipts   |R-000046 to       |
+|           |R-000231          |
+|eTIMS      |0                 |
+|pending    |                  |
++-----------+------------------+
+|Cashier    |                  |
+|           |                  |
++-----------+------------------+
+|Supervisor |                  |
+|           |                  |
++-----------+------------------+
+ Counters reset. Printed 23:30.

@@ -731,8 +731,8 @@ it("authorizes only the exact claimed immutable station obligation and renders i
   ))!.json();
   const text = decode(reprint).content.replace(/\s+/g, " ");
   expect(text).toContain("REPRINT");
-  expect(text).toContain("Reprinted by: Reviewing manager");
-  expect(text).not.toContain(`Reprinted by: ${state.orders[0]!.cashier}`);
+  expect(text).toContain("by Reviewing manager");
+  expect(text).not.toContain(`by ${state.orders[0]!.cashier}`);
 });
 
 it("derives a separate print signing master when no explicit key is configured", async () => {

@@ -19,7 +19,10 @@ import { authoritativeBusinessDate } from "@/server/business-date";
 import { QUANTITY_SCALE, quantityCostMinor } from "@/inventory/quantity";
 import { parseMajorAmount } from "@/payments/money";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
-import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import {
+  getConfigurationRepository,
+  PlatformConfigurationError,
+} from "@/platform/repositories/configuration-repository";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { PosInvoiceLedger } from "@/server/database/pos-invoice-ledger";
 
@@ -187,7 +190,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       );
     }
     const authoritative = await this.authoritativeMutationInput(current, input);
-    const next = applyServerMutation(current, input.action, authoritative, input.actor);
+    const next = businessRuleErrors(() =>
+      applyServerMutation(current, input.action, authoritative, input.actor),
+    );
     try {
       const revision = await this.persistState({
         state: next,
@@ -3770,4 +3775,23 @@ async function sha256(value: string) {
 function isConstraintError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /constraint|unique|mutation_commits/i.test(message);
+}
+
+/**
+ * The transaction engine and settlement rules reject commands with plain errors
+ * written for the cashier ("Open a cash drawer before collecting cash"). Return
+ * them as validation failures so the till shows the reason instead of a generic
+ * server failure. Typed errors keep their own status.
+ */
+function businessRuleErrors<T>(apply: () => T): T {
+  try {
+    return apply();
+  } catch (error) {
+    if (
+      error instanceof PlatformConfigurationError ||
+      (error instanceof Error && error.constructor === Error)
+    )
+      throw new ServerOperationError("VALIDATION_FAILED", 422, error.message);
+    throw error;
+  }
 }

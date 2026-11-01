@@ -1,0 +1,38 @@
+            Sample Restaurant
+           STOCK TRANSFER NOTE
++---------------+------------------------+
+|STN no.        |STN-0031                |
+|Date           |01/11/2026              |
+|From           |Main store              |
+|To             |Westlands kitchen store |
+|Reason         |Weekend stock top-up    |
+|Transport      |Driver 1 / KXX 000X     |
++---------------+-+----+-----+-----------+
+|Item             |Sent|Rcvd |      Value|
++-----------------+----+-----+-----------+
+|Basmati rice     |   2|     |   9,600.00|
+|25kg bag         |    |     |           |
++-----------------+----+-----+-----------+
+|Cooking oil      |   1|     |   6,500.00|
+|20L jerrycan     |    |     |           |
++-----------------+----+-----+-----------+
+|Beef, boneless   |  15|     |   9,750.00|
+|kg               |    |     |           |
+|Chilled          |    |     |           |
++-----------------+----+-----+-----------+
+|Mango pulp       |   4|     |   4,400.00|
+|5L tin           |    |     |           |
++-----------------+----++----+-----------+
+|Total value at cost    |       30,250.00|
++===============+=======+================+
+|Issued by      |                        |
+|               |                        |
++---------------+------------------------+
+|Transported by |                        |
+|               |                        |
++---------------+------------------------+
+|Received by    |                        |
+|               |                        |
++---------------+------------------------+
+  Receiving branch fills in Received and
+ signs. Variances are flagged in Seramet.

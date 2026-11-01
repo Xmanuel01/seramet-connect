@@ -1,5 +1,13 @@
 import { activeLocale, activeCurrency } from "@/lib/currency";
 import { parseMajorAmount, formatMinor, minorDigits } from "@/payments/money";
+import {
+  renderAmendmentTicket as renderOrderChangeTemplate,
+  renderCustomerBill,
+  renderProductionTicket as renderStationTicketTemplate,
+  renderSalesReceipt,
+  renderTaxInvoice,
+  renderVoidTicket as renderVoidTemplate,
+} from "@/printing/documents";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
 import type { Product } from "@/lib/menu-product";
@@ -162,6 +170,10 @@ export type OrderForPrint = {
   customerPhone?: string;
   customerEmail?: string;
   kitchenNote?: string;
+  /** Void tickets only: why the items were cancelled and who cancelled and approved it. */
+  voidReason?: string;
+  voidedBy?: string;
+  voidApprovedBy?: string;
   receiptNumber?: string;
   invoiceNumber?: string;
   tillNumber?: string;
@@ -338,8 +350,7 @@ export const SerametPrintService = {
     const width = paperWidth === "58mm" ? 32 : paperWidth === "80mm" ? 42 : 78;
     return joinThermalSections([
       ...centeredLines("DUPLICATE COPY", width),
-      ...compactDetails([["Reprinted by", operator]], width),
-      rule(width),
+      operator?.trim() ? thermalBox("", [`Reprinted by: ${operator}`], width) : "",
       content,
     ]);
   },
@@ -1106,6 +1117,20 @@ function renderProductionTicket(
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
+  // KDS screens, dispatch slips and tickets with prices keep the legacy layout for now.
+  if (documentType !== "KDS_TICKET" && documentType !== "DISPATCH_TICKET" && !showPrices) {
+    return renderStationTicket(
+      documentType === "BAR_TICKET" ? "BAR" : "KITCHEN",
+      order,
+      station,
+      lines,
+      amendmentType,
+      profile,
+      ticketNumber,
+      width === 32 ? "58mm" : "80mm",
+    );
+  }
+
   if (amendmentType !== "NEW") {
     return renderAmendmentTicket(
       amendmentType,
@@ -1144,12 +1169,113 @@ function renderProductionTicket(
   ]);
 }
 
+/** Kitchen and bar tickets on the shared table templates. */
+function renderStationTicket(
+  kind: "KITCHEN" | "BAR",
+  order: OrderForPrint,
+  station: ProductionStation,
+  lines: OrderLineForPrint[],
+  amendmentType: NonNullable<PrintJob["amendmentType"]>,
+  profile: BranchHardwareProfile,
+  ticketNumber: string,
+  paper: "58mm" | "80mm",
+) {
+  const identity = profile.printIdentity;
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed !== "-" ? trimmed : undefined;
+  };
+  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const at = `${issued.date} ${issued.time}`;
+  const orderNumber = cleanOrderId(order.orderId);
+  const table = set(order.table);
+  const server = set(order.waiter);
+  const note = set(order.kitchenNote);
+  const branch = set(identity.branchName);
+  const ctx = { paper };
+  const items = lines.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    modifiers: line.modifiers ?? [],
+    ...(line.itemNote ? { note: line.itemNote } : {}),
+  }));
+
+  if (amendmentType === "VOID") {
+    const voidedBy = set(order.voidedBy) ?? order.requestedBy;
+    const reason = set(order.voidReason);
+    const approvedBy = set(order.voidApprovedBy);
+    return renderVoidTemplate(
+      {
+        station: kind,
+        voidNumber: ticketNumber,
+        orderNumber,
+        ...(table ? { table } : {}),
+        at,
+        lines: items,
+        ...(reason ? { reason } : {}),
+        requestedBy: voidedBy,
+        ...(approvedBy ? { authorisedBy: approvedBy } : {}),
+      },
+      ctx,
+    ).content;
+  }
+
+  if (amendmentType === "ADDITION") {
+    return renderOrderChangeTemplate(
+      {
+        station: kind,
+        ticketNumber,
+        orderNumber,
+        ...(table ? { table } : {}),
+        ...(server ? { server } : {}),
+        stationName: station,
+        ...(branch ? { branch } : {}),
+        at,
+        changes: items.map((item) => ({ action: "ADD" as const, item: item.name, ...item })),
+        ...(note ? { note } : {}),
+      },
+      ctx,
+    ).content;
+  }
+
+  // A reprint's createdAt is the reprint request, so re-rendering stays reproducible.
+  const reprint = amendmentType === "REPRINT";
+  const sentBy =
+    !reprint && order.requestedBy !== order.waiter ? set(order.requestedBy) : undefined;
+  return renderStationTicketTemplate(
+    {
+      station: kind,
+      ticketNumber,
+      orderNumber,
+      orderType: order.orderType,
+      ...(table ? { table } : {}),
+      ...(server ? { server } : {}),
+      stationName: station,
+      ...(branch ? { branch } : {}),
+      ...(sentBy ? { sentBy } : {}),
+      ...(profile.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM"
+        ? { via: "POS front printer" }
+        : {}),
+      printedAt: at,
+      lines: items,
+      ...(note ? { note } : {}),
+    },
+    reprint ? { ...ctx, copy: { at, by: order.requestedBy } } : ctx,
+  ).content;
+}
+
 function renderCustomerDocument(
   documentType: "BILL" | "RECEIPT" | "INVOICE",
   order: OrderForPrint,
   template: PrintTemplateSettings,
   profile: BranchHardwareProfile,
 ) {
+  // The shared templates print two-decimal amounts; other currencies keep the
+  // legacy layout until the templates format by currency.
+  const currency = profile.printIdentity.currency ?? activeCurrency();
+  if (minorDigits(currency) === 2) {
+    return renderTableDocument(documentType, order, template, profile, template.width);
+  }
   if (template.width === "A4") {
     return renderA4Invoice(order, template, profile);
   }
@@ -1210,6 +1336,166 @@ function renderCustomerDocument(
     rule(width),
     ...footer.split("\n").flatMap((line) => centeredLines(line, width)),
   ]);
+}
+
+/**
+ * Bill, receipt and invoice on the shared table templates, printing the till's
+ * settled totals. A4 paper always prints the invoice layout.
+ */
+function renderTableDocument(
+  documentType: "BILL" | "RECEIPT" | "INVOICE",
+  order: OrderForPrint,
+  template: PrintTemplateSettings,
+  profile: BranchHardwareProfile,
+  paper: "58mm" | "80mm" | "A4",
+) {
+  const identity = profile.printIdentity;
+  const set = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed !== "-" ? trimmed : undefined;
+  };
+  const brand = /^seramet(?:\s+(?:lite|pos))?$/i.test(identity.receiptBrand.trim())
+    ? identity.businessName
+    : identity.receiptBrand;
+  const business = {
+    name: brand,
+    branch: [
+      identity.businessName !== brand ? set(identity.businessName) : undefined,
+      template.showBranch ? set(identity.branchName) : undefined,
+    ]
+      .filter(Boolean)
+      .join(", "),
+    address: set(identity.address),
+    phone: set(identity.phone),
+    email: set(identity.email),
+    taxPin: set(identity.pin),
+  };
+  const issued = documentDateTime(order.createdAt, identity.timeZone);
+  const lines = order.lines.map((line) => ({
+    name: line.name,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    modifiers: line.modifiers ?? [],
+    ...(line.itemNote ? { note: line.itemNote } : {}),
+  }));
+  const tax = order.tax !== 0 && template.showTax ? order.tax : undefined;
+  const totals = {
+    subtotal: order.subtotal,
+    serviceCharge: order.serviceCharge ?? 0,
+    discount: order.discount ?? 0,
+    ...(tax !== undefined ? { vat: tax } : {}),
+    levies: [],
+    total: order.total,
+  };
+  const common = {
+    business,
+    tax: { vatRegistered: tax !== undefined, pricesIncludeVat: false },
+    orderNumber: cleanOrderId(order.orderId),
+    orderType: order.orderType,
+    ...(set(order.table) ? { table: set(order.table) } : {}),
+    ...(template.showCashier && set(order.cashier) ? { cashier: set(order.cashier) } : {}),
+    ...(template.showCustomer
+      ? {
+          customer: {
+            ...(set(order.customer) ? { name: set(order.customer) } : {}),
+            ...(set(order.customerPhone) ? { phone: set(order.customerPhone) } : {}),
+            ...(set(order.customerEmail) ? { email: set(order.customerEmail) } : {}),
+          },
+        }
+      : {}),
+    issuedAt: `${issued.date} ${issued.time}`,
+    lines,
+    totals,
+  };
+  const ctx = { paper, currency: identity.currency ?? activeCurrency() };
+  const till = set(order.tillNumber) ?? set(identity.tillNumber);
+  const bankDetails = [identity.bankName, identity.bankAccountName, identity.bankAccountNumber]
+    .map(set)
+    .filter((value): value is string => Boolean(value));
+  // Instructions that only repeat the till or bank details printed above are dropped.
+  const extraInstructions = (shown: string[]) =>
+    identity.paymentInstructions.filter(
+      (line) => set(line) && !shown.some((value) => line.includes(value)),
+    );
+  const payments = (
+    order.paymentBreakdown?.length
+      ? order.paymentBreakdown
+      : [
+          {
+            method: order.paymentMethod ?? "Recorded",
+            amount: order.paid ?? order.total,
+            reference: order.paymentReference,
+          },
+        ]
+  ).map((payment) => ({
+    method: payment.method,
+    amount: payment.amount,
+    ...(payment.reference ? { reference: payment.reference } : {}),
+  }));
+
+  if (documentType === "INVOICE" || paper === "A4") {
+    const paid = order.paid ?? 0;
+    const bank = [set(identity.bankName), set(identity.bankAccountName)].filter(Boolean).join(", ");
+    const bankAccount = set(identity.bankAccountNumber);
+    const contact = [set(order.customerPhone), set(order.customerEmail)]
+      .filter(Boolean)
+      .join(" / ");
+    return renderTaxInvoice(
+      {
+        ...common,
+        // The title follows whether tax was charged, not whether the tax line is shown.
+        tax: { vatRegistered: order.tax !== 0, pricesIncludeVat: false },
+        client: {
+          name: set(order.customer) ?? "Walk-in customer",
+          ...(contact ? { contact } : {}),
+        },
+        invoiceNumber: order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`,
+        issueDate: common.issuedAt,
+        ...(paid !== 0 ? { paidToDate: paid, payments } : {}),
+        ...(till || bank
+          ? {
+              payment: {
+                ...(till ? { till, account: "" } : {}),
+                ...(bank ? { bank } : {}),
+                ...(bankAccount ? { bankAccount } : {}),
+              },
+            }
+          : {}),
+        paymentInstructions: extraInstructions([...(till ? [till] : []), ...bankDetails]),
+        footerMessage: template.footerMessage,
+      },
+      ctx,
+    ).content;
+  }
+
+  if (documentType === "BILL") {
+    return renderCustomerBill(
+      {
+        ...common,
+        billNumber: order.invoiceNumber ?? `INV ${cleanOrderId(order.orderId)}`,
+        ...(set(order.waiter) ? { server: set(order.waiter) } : {}),
+        // Buy Goods tills take no account number.
+        ...(till ? { payment: { till, account: "" } } : {}),
+        paymentInstructions: extraInstructions(till ? [till] : []),
+        footerMessage: template.footerMessage,
+      },
+      ctx,
+    ).content;
+  }
+
+  const loyalty = order.loyaltySummary;
+  return renderSalesReceipt(
+    {
+      ...common,
+      receiptNumber: order.receiptNumber ?? `RCP ${cleanOrderId(order.orderId)}`,
+      ...(order.invoiceNumber ? { billNumber: order.invoiceNumber } : {}),
+      ...(set(order.waiter) && order.waiter !== order.cashier ? { server: set(order.waiter) } : {}),
+      payments,
+      ...(loyalty ? { loyalty } : {}),
+      footerMessage: identity.footerMessage,
+    },
+    ctx,
+  ).content;
 }
 
 function renderA4Invoice(
@@ -1285,14 +1571,16 @@ function renderAmendmentTicket(
     ),
     thermalItems(lines, width, false, formatMoney, true),
     boxedNote("SPECIAL REQUEST", order.kitchenNote, width),
+    // Missing void details print as blanks to fill by hand, never as made-up text.
     ...(amendmentType === "VOID"
-      ? compactDetails(
-          [
-            ["Reason", "Customer changed order."],
-            ["Cancelled by", order.cashier],
-            ["Approved by", "Supervisor"],
-          ],
-          width,
+      ? [
+          ["Reason", order.voidReason],
+          ["Cancelled by", order.voidedBy ?? order.requestedBy],
+          ["Approved by", order.voidApprovedBy],
+        ].flatMap(([label, value]) =>
+          value?.trim()
+            ? compactDetails([[label!, value]], width)
+            : [`${label!.padEnd(7)}: ${"_".repeat(Math.max(4, width - 14))}`],
         )
       : []),
   ]);

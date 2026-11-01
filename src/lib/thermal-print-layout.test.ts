@@ -16,27 +16,37 @@ describe("ruled thermal document layouts", () => {
     it(`${fixture.name} preserves columns, details and authoritative totals`, () => {
       const width = fixture.width === "58mm" ? 32 : 42;
       bounded(fixture.content, width);
-      expect(fixture.content).toContain("Disposable branch");
+      // Table cells wrap, so compare with cell borders and line breaks collapsed.
+      const flat = fixture.content.replace(/[\s|]+/g, " ");
+      expect(flat).toContain("Disposable branch");
       expect(fixture.content).toMatch(/\|\s*2\|/);
       expect(fixture.content).toContain(
         ["FOOD_KOT", "BAR_TICKET"].includes(fixture.documentType) ? "NO ONION" : "No onion",
       );
-      expect(fixture.content).toMatch(/Separate sauce|SEPARATE SAUCE/);
+      expect(flat).toMatch(/Separate sauce|SEPARATE SAUCE/);
       if (["BILL", "RECEIPT", "INVOICE"].includes(fixture.documentType)) {
-        for (const value of ["246.90", "32.00", "283.90", "SERVICE", "DISCOUNT", "10.00", "5.00"])
+        for (const value of [
+          "246.90",
+          "32.00",
+          "283.90",
+          "Service charge",
+          "Discount",
+          "10.00",
+          "(5.00)",
+        ])
           expect(fixture.content).toContain(value);
-        expect(fixture.content).toContain("|QTY|ITEM");
-        expect(fixture.content).toContain(width === 32 ? "AMT" : "AMOUNT");
-        expect(fixture.content).not.toContain("ORDER DETAILS");
+        expect(fixture.content).toMatch(/^\|Item\s*\|\s*Qty\|\s*Amount\|$/m);
+        // Every rule belongs to a table: no bare edge-to-edge lines.
+        expect(fixture.content).not.toMatch(/^[-=]+$/m);
         if (fixture.documentType === "INVOICE") {
           expect(fixture.content).toContain("TAX INVOICE");
-          expect(fixture.content).not.toContain("Due Date:");
-          expect(fixture.content).toContain("Unit:");
+          expect(fixture.content).not.toMatch(/Due date/i);
+          expect(fixture.content).toContain("@ 123.45");
           expect(fixture.content).toContain("TEST-PIN-ONLY");
         }
         if (fixture.name.includes("copy")) expect(fixture.content).toContain("DUPLICATE COPY");
       } else {
-        expect(fixture.content.split("\n")[0]).toMatch(/^(KITCHEN ORDER KOT|BAR ORDER BAR) /);
+        expect(fixture.content.split("\n")[0]).toMatch(/^(KITCHEN ORDER\s+KOT|BAR ORDER\s+BOT) /);
         for (const clutter of [
           "Disposable Test Restaurant",
           "TEST-PIN-ONLY",
@@ -47,7 +57,9 @@ describe("ruled thermal document layouts", () => {
           "BAR TICKET",
         ])
           expect(fixture.content).not.toContain(clutter);
-        expect(fixture.content).toContain("STATION:");
+        expect(flat).toMatch(/Station (MAIN|BAR)/);
+        // Every rule belongs to a table: no bare edge-to-edge lines.
+        expect(fixture.content).not.toMatch(/^[-=]+$/m);
         expect(fixture.content).toContain(
           fixture.documentType === "BAR_TICKET" ? "BAR ORDER" : "KITCHEN ORDER",
         );
@@ -201,22 +213,25 @@ describe("ruled thermal document layouts", () => {
       "PIN:",
       "Due Date:",
       "not configured",
-      "SERVICE",
-      "DISCOUNT",
+      "Service charge",
+      "Discount",
     ])
       expect(bill).not.toContain(absent);
     expect(bill).toContain("100.00");
     const production = SerametPrintService.createProductionTicketJobs(profile, order, [], "REPRINT")
       .jobs[0]!.content;
     const plain = production.replace(/\s+/g, " ");
-    expect(plain).toContain("Reprinted by: Recovery Manager");
-    expect(plain).not.toContain("Reprinted by: Original Cashier");
+    expect(plain).toContain("REPRINT");
+    // KDS tickets keep the legacy "Reprinted by:" wording; printed tickets say "by".
+    expect(plain).toMatch(/by:? Recovery Manager/);
+    expect(plain).not.toMatch(/by:? Original Cashier/);
     expect(production).not.toContain("Merchant Trading Name");
     expect(production).toMatch(/\|\s*2\|SIDE/);
     expect(production).toContain("SAUCE SEPARATE");
     const copy = SerametPrintService.formatDuplicateCopy(bill, "80mm", "Recovery Manager");
     expect(copy).toContain("DUPLICATE COPY");
     expect(copy).toContain("Reprinted by: Recovery Manager");
-    expect(copy).toContain("Original Cashier");
+    // "Cashier Original Cashier" wraps inside its grid cell.
+    expect(copy).toMatch(/^\|Cashier Original\s+\|.*\n\|Cashier\s+\|/m);
   });
 });
