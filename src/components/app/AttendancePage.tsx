@@ -63,6 +63,8 @@ type Data = {
   branchTimezone: string;
   me: Session | null;
   openElsewhere: boolean;
+  // Signed in on this branch's registered till PC: no GPS needed.
+  tillClock?: boolean;
   canManage: boolean;
   records: Session[];
   employees: Employee[];
@@ -365,9 +367,12 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         if (pending.action !== action)
           throw new Error("Confirm or safely retry the previous attendance request first");
       }
-      setMessage("Checking your precise location…");
       const generation = scopeGeneration.current;
-      const gps = await locationOnce();
+      let gps: Awaited<ReturnType<typeof locationOnce>> | undefined;
+      if (!data?.tillClock) {
+        setMessage("Checking your precise location…");
+        gps = await locationOnce();
+      }
       if (activeScope.current !== scope || generation !== scopeGeneration.current) return;
       const existing = punchKey.current;
       const idempotencyKey = existing?.action === action ? existing.key : crypto.randomUUID();
@@ -388,7 +393,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           action,
           branchId,
           idempotencyKey,
-          location: gps,
+          ...(gps ? { location: gps } : {}),
           ...(action === "OUT"
             ? {
                 sessionId: punchKey.current.sessionId,
@@ -610,7 +615,8 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         }
         minutesLate={current?.minutesLate}
         workedMinutes={current?.workedMinutes}
-        locationEnabled={Boolean(data?.geofence.enabled)}
+        locationEnabled={Boolean(data?.geofence.enabled || data?.tillClock)}
+        tillClock={Boolean(data?.tillClock)}
         canSetLocation={Boolean(data?.canConfigure && canConfigure)}
         openElsewhere={Boolean(data?.openElsewhere)}
         unknown={unknown}
