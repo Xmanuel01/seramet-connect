@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Btn } from "@/components/app/ui";
+import { reportError } from "@/lib/user-facing-error";
 import {
   Dialog,
   DialogContent,
@@ -90,9 +91,10 @@ export function InvoiceSplitDialog({
               close();
             } catch (cause) {
               setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "Split could not be confirmed. Your amounts were retained.",
+                reportError(
+                  cause,
+                  "The split wasn't saved. Your amounts are still here; try again.",
+                ),
               );
             } finally {
               submitting.current = false;

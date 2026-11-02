@@ -4,6 +4,7 @@ import { Btn, Status } from "@/components/app/ui";
 import type { TransactionState } from "@/lib/transaction-engine";
 import { formatMinor } from "@/payments/money";
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
+import { reportError } from "@/lib/user-facing-error";
 
 /**
  * M-Pesa payments that reached the till without a Seramet prompt and are not yet on a bill.
@@ -148,7 +149,7 @@ export function MpesaPrompts({
     } catch (error) {
       setResults((current) => ({
         ...current,
-        [intentId]: error instanceof Error ? error.message : "Could not check the payment",
+        [intentId]: reportError(error, "Couldn't check this payment. Try again."),
       }));
     } finally {
       setChecking("");

@@ -3,6 +3,7 @@ import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import { requireInventoryResponse } from "./inventory-response";
 import type { InventorySummary } from "@/inventory/types";
+import { RequestError, UserFacingError, reportError } from "@/lib/user-facing-error";
 
 export type InventoryListRow = {
   id: string;
@@ -362,7 +363,7 @@ export function useInventoryControlCentre(enabled: boolean) {
       setData(next);
       setStatus("ready");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Inventory server query failed");
+      setError(reportError(cause, "Couldn't load inventory. Try again."));
       setStatus("error");
     }
   }, [branchKey, enabled, headers]);
@@ -378,13 +379,15 @@ export function useInventoryControlCentre(enabled: boolean) {
       headers,
       body: JSON.stringify(isAllBranches ? {} : { branchId }),
     });
-    if (!response.ok)
-      throw new Error(`Inventory recalculation could not be queued (${response.status})`);
+    if (!response.ok) throw new RequestError(response.status, "");
   }, [branchId, enabled, headers, isAllBranches]);
 
   const command = useCallback(
     async <T>(path: string, body: unknown): Promise<T> => {
-      if (!enabled) throw new Error("Authoritative inventory commands require the server database");
+      if (!enabled)
+        throw new UserFacingError(
+          "Inventory changes need a connection. Reconnect, then try again.",
+        );
       const response = await fetch(path, {
         method: "POST",
         headers,
@@ -395,9 +398,7 @@ export function useInventoryControlCentre(enabled: boolean) {
         message?: string;
       };
       if (!response.ok) {
-        throw new Error(
-          payload.message ?? payload.error ?? `Inventory command failed (${response.status})`,
-        );
+        throw new RequestError(response.status, payload.message ?? payload.error ?? "");
       }
       await refresh();
       return payload;

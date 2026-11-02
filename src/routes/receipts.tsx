@@ -15,6 +15,7 @@ import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { recordBusinessDate } from "@/lib/pos-workflow";
+import { UserFacingError, reportError } from "@/lib/user-facing-error";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -113,7 +114,8 @@ function Receipts() {
     const receipt = rows.find((row) => row.id === receiptId);
     if (!receipt) throw new Error("The receipt is no longer available in this branch.");
     const order = receiptRecordToPrintOrder(receipt, state);
-    if (!order) throw new Error("The authoritative receipt is not available.");
+    if (!order)
+      throw new UserFacingError("This receipt isn't available yet. Refresh and try again.");
     return SerametPrintService.createDocumentJob(
       SerametPrintService.getBranchHardwareProfile(receipt.branch),
       order,
@@ -233,9 +235,7 @@ function Receipts() {
                       try {
                         setPreview({ id: receipt.id, scope, content: receiptContent(receipt.id) });
                       } catch (error) {
-                        setPrintNotice(
-                          error instanceof Error ? error.message : "Preview unavailable.",
-                        );
+                        setPrintNotice(reportError(error, "Couldn't open the preview. Try again."));
                       }
                     }}
                   >
