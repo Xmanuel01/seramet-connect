@@ -31,23 +31,25 @@ describe("POS production queue separation", () => {
     { id: "held-2", status: "HELD" as const },
     { id: "held-3", status: "HELD" as const },
   ];
-  it("reduces the entry queue from three to zero as orders enter kitchen and billing", () => {
+  it("keeps each order in the POS list until it is invoiced", () => {
     const bills: { orderIds: string[] }[] = [];
     expect(pendingPosOrders(orders, bills)).toHaveLength(3);
     const firstSent = orders.map((order) =>
       order.id === "held-1" ? { ...order, status: "SENT_TO_KITCHEN" as const } : order,
     );
-    expect(pendingPosOrders(firstSent, bills)).toHaveLength(2);
+    // A kitchen order stays in the POS list until it is invoiced.
+    expect(pendingPosOrders(firstSent, bills)).toHaveLength(3);
     expect(unbilledKitchenOrders(firstSent, bills).map((order) => order.id)).toEqual(["held-1"]);
     const secondBilled = firstSent.map((order) =>
       order.id === "held-2" ? { ...order, status: "BILL_REQUESTED" as const } : order,
     );
     bills.push({ orderIds: ["held-2"] });
-    expect(pendingPosOrders(secondBilled, bills)).toHaveLength(1);
+    expect(pendingPosOrders(secondBilled, bills)).toHaveLength(2);
     const finalPaid = secondBilled.map((order) =>
       order.id === "held-3" ? { ...order, status: "PAID" as const } : order,
     );
-    expect(pendingPosOrders(finalPaid, bills)).toHaveLength(0);
+    // held-1 is still in the kitchen without an invoice, so it is the one order left.
+    expect(pendingPosOrders(finalPaid, bills).map((order) => order.id)).toEqual(["held-1"]);
     expect(finalPaid).toHaveLength(3); // Clearing the badge never destroys order history.
   });
 });
@@ -183,11 +185,12 @@ describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
     const orderId = state.orders[0]!.id;
     expect(pendingPosOrders(state.orders, state.bills).map((order) => order.id)).toEqual([orderId]);
     state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
-    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(0);
+    expect(pendingPosOrders(state.orders, state.bills).map((order) => order.id)).toEqual([orderId]);
     expect(unbilledKitchenOrders(state.orders, state.bills)[0]?.id).toBe(orderId);
     expect(state.orders[0]?.lines[0]?.sentAt).toBeTruthy();
     state = TransactionEngine.prepareInvoiceForPayment(state, orderId, "Cashier");
     expect(unbilledKitchenOrders(state.orders, state.bills)).toHaveLength(0);
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(0);
     expect(state.bills).toHaveLength(1);
     expect(state.bills[0]?.orderIds).toEqual([orderId]);
     expect(state.orders).toHaveLength(1);
@@ -223,7 +226,7 @@ describe("real three-order cashier-to-kitchen-to-payment acceptance", () => {
     );
   });
 
-  it("decrements pending 3→2→1→0 without deleting kitchen history or duplicating paid receipts", () => {
+  it("keeps unbilled kitchen orders pending without deleting kitchen history or duplicating paid receipts", () => {
     const makeDraft = (number: number): OrderDraft => ({
       tenantId: DEMO_TENANT_ID,
       branchId: DEMO_WESTLANDS_BRANCH_ID,
@@ -256,14 +259,14 @@ describe("real three-order cashier-to-kitchen-to-payment acceptance", () => {
 
     // Send the first held order to the kitchen, but do not bill it yet.
     state = TransactionEngine.sendToKitchen(state, ids[0]!, "Cashier");
-    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(2);
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(3);
     expect(unbilledKitchenOrders(state.orders, state.bills).map((o) => o.id)).toContain(ids[0]);
 
     // A separate held order must dispatch and produce only its own invoice.
     state = TransactionEngine.sendToKitchen(state, ids[1]!, "Cashier");
     state = TransactionEngine.prepareInvoiceForPayment(state, ids[1]!, "Cashier");
     state = TransactionEngine.prepareInvoiceForPayment(state, ids[1]!, "Cashier");
-    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(1);
+    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(2);
     expect(state.bills).toHaveLength(1);
     expect(state.bills[0]?.orderIds).toEqual([ids[1]]);
     expect(state.bills[0]?.orderIds).not.toContain(ids[0]);
@@ -283,7 +286,8 @@ describe("real three-order cashier-to-kitchen-to-payment acceptance", () => {
     state = TransactionEngine.confirmPaymentIntent(result.state, result.intent!.id, "TEST-REF-3");
     state = TransactionEngine.confirmPaymentIntent(state, result.intent!.id, "TEST-REF-3");
 
-    expect(pendingPosOrders(state.orders, state.bills)).toHaveLength(0);
+    // Only the first order, sent but never invoiced, is still waiting in POS.
+    expect(pendingPosOrders(state.orders, state.bills).map((order) => order.id)).toEqual([ids[0]]);
     expect(state.orders).toHaveLength(3);
     expect(state.bills).toHaveLength(2);
     expect(state.payments).toHaveLength(1);

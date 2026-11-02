@@ -425,13 +425,26 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Place Order; three authoritative obligations and independent emulator destinations verified",
     );
     await cashier.screenshot({ path: join(evidence, "pos-sent.png"), fullPage: true });
-    await cashier.goto("/invoices");
-    await expect(cashier.getByText(held.id, { exact: false }).first()).toBeVisible();
-    await cashier.getByRole("button", { name: "Create / open invoice", exact: true }).click();
+    // A sent order stays in the POS Orders list until the cashier invoices it there.
+    await cashier.getByRole("button", { name: /^Orders\s+\d/ }).click();
+    await cashier.getByRole("button", { name: new RegExp(held.id) }).click();
+    await cashier.getByRole("button", { name: "More", exact: true }).click();
+    await cashier.getByRole("menuitem", { name: "Invoice", exact: true }).click();
+    await expect
+      .poll(async () =>
+        (await snapshot()).state.bills.some((item: { orderIds: string[] }) =>
+          item.orderIds.includes(held.id),
+        ),
+      )
+      .toBe(true);
     const bill = (await snapshot()).state.bills.find((item: { orderIds: string[] }) =>
       item.orderIds.includes(held.id),
     );
     expect(bill).toBeTruthy();
+    // Invoices opens the new invoice on arrival, without a click.
+    const opened = cashier.getByRole("dialog", { name: `Invoice ${invoiceDisplayName(bill.id)}` });
+    await expect(opened).toBeVisible();
+    await opened.getByRole("button", { name: "Close", exact: true }).click();
     const expectedSubtotalMinor = setup.products.reduce(
       (sum: number, item: { station: string; priceMinor: number }) =>
         sum + item.priceMinor * (item.station === "MAIN" ? 2 : 1),

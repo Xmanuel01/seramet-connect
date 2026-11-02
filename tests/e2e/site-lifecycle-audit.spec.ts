@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { TransactionState } from "../../src/lib/transaction-engine";
+import { invoiceDisplayName } from "../../src/lib/invoice-split";
 
 const fixture = JSON.parse(readFileSync(".seramet/e2e-fixture.json", "utf8"));
 const setup = JSON.parse(readFileSync(".seramet/printing-operational-fixture.json", "utf8"));
@@ -389,11 +390,23 @@ test("staff account creation through sale and supervisor business-day close", as
     events.push(
       "Two server dispatch submissions produced one KOT obligation; physical print not acknowledged by this simulation",
     );
-    await cashier.goto("/invoices");
-    await cashier.getByRole("button", { name: "Create / open invoice", exact: true }).click();
+    // A sent order stays in the POS Orders list until the cashier invoices it there.
+    await cashier.reload();
+    await cashier.getByRole("button", { name: /^Orders\s+\d/ }).click();
+    await cashier.getByRole("button", { name: new RegExp(held.id) }).click();
+    await cashier.getByRole("button", { name: "More", exact: true }).click();
+    await cashier.getByRole("menuitem", { name: "Invoice", exact: true }).click();
+    await expect
+      .poll(async () =>
+        (await snapshot()).state.bills.some((invoice) => invoice.orderIds.includes(held.id)),
+      )
+      .toBe(true);
     current = await snapshot();
     const bill = current.state.bills.find((invoice) => invoice.orderIds.includes(held.id))!;
     expect(bill).toBeTruthy();
+    await expect(
+      cashier.getByRole("dialog", { name: `Invoice ${invoiceDisplayName(bill.id)}` }),
+    ).toBeVisible();
     await mutate("prepareInvoiceForPayment", { orderId: held.id });
     expect(
       (await snapshot()).state.bills.filter((invoice) => invoice.orderIds.includes(held.id)),

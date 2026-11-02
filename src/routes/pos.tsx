@@ -1754,8 +1754,10 @@ function POS() {
         }
         return;
       }
+      const invoice = billed.state.bills.find((bill) => bill.orderIds.includes(activeOrder.id));
       clearCurrentOrder(`${activeOrder.id} moved to Invoices without printing a customer bill.`);
-      await navigate({ to: "/invoices" });
+      // Invoices opens this invoice on arrival; the cashier does not have to find it.
+      await navigate({ to: "/invoices", search: invoice ? { invoice: invoice.id } : {} });
     } catch (error) {
       setPrintNotice(error instanceof Error ? error.message : "The invoice could not be created.");
       setPrintNoticeType("warning");

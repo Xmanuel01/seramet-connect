@@ -238,13 +238,11 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
       expect(
         (await snapshot()).state.kitchenPrintObligations?.some((row) => row.orderId === saved.id),
       ).toBe(true);
-      await page.goto("/invoices");
-      await expect(page.getByText(saved.id, { exact: false }).first()).toBeVisible();
-      await page
-        .getByText(new RegExp(`^${saved.id} ·`))
-        .locator("../..")
-        .getByRole("button", { name: "Create / open invoice", exact: true })
-        .click();
+      // A sent order stays in the POS Orders list until the cashier invoices it there.
+      await page.getByRole("button", { name: /^Orders\s+\d/ }).click();
+      await page.getByRole("button", { name: new RegExp(saved.id) }).click();
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Invoice", exact: true }).click();
       await expect
         .poll(
           async () =>
@@ -252,6 +250,11 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
         )
         .toBe(1);
       const bill = (await snapshot()).state.bills.find((row) => row.orderIds.includes(saved.id))!;
+      // Invoices opens the new invoice on arrival, without a click.
+      await expect(page).toHaveURL(/\/invoices$/);
+      await expect(
+        page.getByRole("dialog", { name: `Invoice ${invoiceDisplayName(bill.id)}` }),
+      ).toBeVisible();
       await page.reload();
       await page
         .getByRole("row")

@@ -7,8 +7,9 @@ import type {
 import { currentDateKey } from "@/lib/currency";
 
 /**
- * The POS Orders badge counts only orders that still require cashier dispatch.
- * Kitchen work and billing remain authoritative, but live in their own screens.
+ * The POS Orders list holds every order the cashier still has to finish: held or open orders
+ * waiting to go to the kitchen, and kitchen orders waiting for their invoice. Invoicing
+ * removes an order from the list; its history stays in Orders.
  */
 export function pendingPosOrders<T extends Pick<TransactionOrder, "id" | "status">>(
   orders: readonly T[],
@@ -16,9 +17,12 @@ export function pendingPosOrders<T extends Pick<TransactionOrder, "id" | "status
 ): T[] {
   const billedIds = new Set(bills.flatMap((bill) => bill.orderIds));
   return orders.filter(
-    (order) => (order.status === "HELD" || order.status === "OPEN") && !billedIds.has(order.id),
+    (order) =>
+      ["HELD", "OPEN", ...kitchenStatuses].includes(order.status) && !billedIds.has(order.id),
   );
 }
+
+const kitchenStatuses = ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"];
 
 /** Kitchen orders can be billed even after leaving the POS entry queue. */
 export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "status">>(
@@ -27,9 +31,7 @@ export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "s
 ): T[] {
   const billedIds = new Set(bills.flatMap((bill) => bill.orderIds));
   return orders.filter(
-    (order) =>
-      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status) &&
-      !billedIds.has(order.id),
+    (order) => kitchenStatuses.includes(order.status) && !billedIds.has(order.id),
   );
 }
 
