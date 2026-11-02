@@ -12,6 +12,7 @@ import { PrintJobStore } from "./print-job-store.mjs";
 import { PrintJobRunner } from "./job-runner.mjs";
 import { verifyPrintAuthorization } from "./authorization.mjs";
 import { encodeEscPos } from "./escpos-encoder.mjs";
+import { emulateEscPos } from "./escpos-emulator.mjs";
 import { createBridge } from "./server.mjs";
 
 const profile = { paperWidth: "58mm", encoding: "ascii", cutter: "partial", emphasis: true };
@@ -117,11 +118,19 @@ test("encoder emits bounded 58/80mm lines, safe text, feed and opted-in cut", ()
       ...profile,
       paperWidth,
     });
-    assert.deepEqual([...bytes.subarray(0, 5)], [27, 64, 27, 97, 0]);
-    assert.deepEqual([...bytes.subarray(-6)], [27, 100, 3, 29, 86, 1]);
+    // ESC @, FS . (single-byte mode), ESC t 0 (CP437), ESC a 0.
+    assert.deepEqual([...bytes.subarray(0, 10)], [27, 64, 28, 46, 27, 116, 0, 27, 97, 0]);
+    // GS V 66 0: feed to the cutter and cut, never a guessed line count.
+    assert.deepEqual([...bytes.subarray(-4)], [29, 86, 66, 0]);
     assert.ok(bytes.includes(Buffer.from("?p malicious")));
+    const columns = paperWidth === "58mm" ? 32 : 42;
+    for (const line of bytes.subarray(10, -4).toString("latin1").split("\n"))
+      assert.ok(line.replace(/\x1b(E.|3.|2)/g, "").length <= columns, line);
   }
   assert.throws(() => encodeEscPos("x", { ...profile, encoding: "utf8" }), /UNSUPPORTED/);
+  assert.throws(() => encodeEscPos("x", { ...profile, ruleStyle: "DOTTED" }), /UNSUPPORTED/);
+  const full = encodeEscPos("receipt", { ...profile, cutter: "full" });
+  assert.deepEqual([...full.subarray(-4)], [29, 86, 65, 0]);
   const bytes = encodeEscPos("receipt", { ...profile, cutter: "none" });
   assert.deepEqual([...bytes.subarray(-3)], [27, 100, 3]);
 });
@@ -133,17 +142,71 @@ test("semantic emphasis highlights totals and allergy instructions without leaki
   );
   const on = Buffer.from([27, 69, 1]);
   const off = Buffer.from([27, 69, 0]);
-  for (const line of [
-    "Merchant",
-    "  TAX INVOICE",
-    "|TOTAL    | KES 116.00|",
-    "| Allergy: no nuts |",
-  ])
-    assert.ok(bytes.includes(Buffer.concat([on, Buffer.from(line + "\n"), off])));
+  const vertical = Buffer.from([0xb3]);
+  for (const text of ["Merchant", "  TAX INVOICE", " Allergy: no nuts "])
+    assert.ok(bytes.includes(Buffer.concat([on, Buffer.from(text), off])), text);
+  // Borders stay outside the bold run, so a bold row keeps thin lines. The
+  // inner "|" has no rule above it, so it is cell text, not a border.
+  assert.ok(
+    bytes.includes(
+      Buffer.concat([vertical, on, Buffer.from("TOTAL    | KES 116.00"), off, vertical]),
+    ),
+  );
   assert.ok(!bytes.includes(Buffer.concat([on, Buffer.from("Ordinary row")])));
   const disabled = encodeEscPos("TOTAL\nAllergy", { ...profile, emphasis: false });
   assert.ok(!disabled.includes(on));
-  assert.deepEqual([...bytes.subarray(-6)], [27, 100, 3, 29, 86, 1]);
+  assert.deepEqual([...bytes.subarray(-4)], [29, 86, 66, 0]);
+});
+
+const ruledReceipt = [
+  "        Seramet Test Kitchen",
+  "+--------------------+---------+",
+  "|Item                | Amount  |",
+  "+--------------------+---------+",
+  "|Pilau | extra       |   450.00|",
+  "|Chapati             |    40.00|",
+  "+--------------+-----+---------+",
+  "|TOTAL         |         490.00|",
+  "+==============+===============+",
+  "Thank you!",
+].join("\n");
+
+test("ruled tables print as continuous CP437 box lines with touching rows", () => {
+  const bytes = encodeEscPos(ruledReceipt, { ...profile, emphasis: false });
+  const sheet = emulateEscPos(bytes, { widthDots: 384 });
+  const text = bytes.toString("latin1");
+  // No ASCII rules survive; a "|" typed inside a cell stays text.
+  assert.ok(!/\+-|-{3}|={3}/.test(text));
+  assert.ok(text.includes("Pilau | extra"));
+  assert.ok(bytes.includes(Buffer.from([0xda, 0xc4, 0xc4])), "top-left corner");
+  assert.ok(bytes.includes(Buffer.from([0xc3])) && bytes.includes(Buffer.from([0xc5])), "tees");
+  assert.ok(bytes.includes(Buffer.from([0xd4, 0xcd])) && bytes.includes(Buffer.from([0xbe])));
+  // The table runs at zero line spacing; the default is restored before the next text.
+  const tableStart = bytes.indexOf(Buffer.from([0xda]));
+  assert.deepEqual([...bytes.subarray(tableStart - 3, tableStart)], [27, 51, 0]);
+  const restored = bytes.indexOf(Buffer.from([27, 50]));
+  assert.ok(restored > bytes.lastIndexOf(Buffer.from([0xb3])));
+  assert.ok(restored < bytes.indexOf(Buffer.from("Thank you")));
+  // Left and right borders are unbroken from the top rule to the closing rule.
+  const top = sheet.rows.findIndex((row) => row?.[6]);
+  let bottom = top;
+  while (sheet.rows[bottom + 1]?.[6]) bottom++;
+  // From the middle of the top rule to the upper stroke of the double rule, 7 rows below.
+  assert.ok(bottom - top >= 7 * 24 - 2 - 12, "left border spans every table row");
+  for (let y = top; y <= bottom; y++) assert.ok(sheet.rows[y]?.[31 * 12 + 6], `right y=${y}`);
+  assert.equal(sheet.cuts.length, 1);
+  assert.equal(sheet.cuts[0].feedsToCutter, true);
+});
+
+test("solid tables use less paper than ASCII, which stays available for older printers", () => {
+  const solid = emulateEscPos(encodeEscPos(ruledReceipt, profile), { widthDots: 384 });
+  const plain = encodeEscPos(ruledReceipt, { ...profile, ruleStyle: "ASCII" });
+  assert.ok(solid.heightDots < emulateEscPos(plain, { widthDots: 384 }).heightDots);
+  // ASCII mode sends the ruled text as before: no code page or line spacing commands.
+  assert.deepEqual([...plain.subarray(0, 5)], [27, 64, 27, 97, 0]);
+  assert.ok(plain.includes(Buffer.from("+--------------------+---------+\n")));
+  assert.ok(!plain.includes(Buffer.from([27, 51, 0])));
+  assert.ok(!plain.includes(Buffer.from([28, 46])));
 });
 
 test("actual loopback TCP captures exact bytes without a Windows printer", async (t) => {

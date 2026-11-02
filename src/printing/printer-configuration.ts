@@ -31,6 +31,8 @@ export const printerConfigurationSchema = z
     emphasis: z.boolean().default(false),
     renderingMode: z.enum(["TEXT_ESC_POS", "RASTER_ESC_POS"]).optional(),
     raster: rasterCapabilities.optional(),
+    /** Text mode table borders: printer box-drawing glyphs (default) or plain +-| for printers without CP437. */
+    ruleStyle: z.enum(["SOLID", "ASCII"]).optional(),
     roles: z
       .array(
         z.enum(["FRONT", "BILL", "RECEIPT", "INVOICE", "KITCHEN", "BAR", "DISPATCH", "REPORT"]),
@@ -73,6 +75,7 @@ export function printerRenderingProfile(config: PrinterConfiguration, mode = con
     encoding: config.encoding,
     cutter: config.cutter,
     emphasis: config.emphasis,
+    ...(config.ruleStyle ? { ruleStyle: config.ruleStyle } : {}),
     ...(mode ? { renderingMode: mode } : {}),
     ...(mode === "RASTER_ESC_POS" ? { raster: config.raster } : {}),
   };

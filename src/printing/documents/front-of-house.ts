@@ -50,7 +50,13 @@ import type {
   TaxSettings,
 } from "./types";
 
-type Station = "KITCHEN" | "BAR";
+type Station = "KITCHEN" | "BAR" | "DISPATCH";
+
+const STATION_LABEL: Record<Station, string> = {
+  KITCHEN: "Kitchen",
+  BAR: "Bar",
+  DISPATCH: "Dispatch",
+};
 
 function ticketPrefix(station: Station) {
   return station === "BAR" ? "BOT" : "KOT";
@@ -90,7 +96,7 @@ export function renderProductionTicket(
 ): PrintedDocument {
   const width = widthOf(ctx);
   const bar = input.station === "BAR";
-  const title = bar ? "BAR ORDER" : "KITCHEN ORDER";
+  const title = `${STATION_LABEL[input.station].toUpperCase()} ORDER`;
   const content = compose(width, [
     // First line prints bold; the title also matches printing-core's strong titles.
     spread(title, `${ticketPrefix(input.station)} ${input.ticketNumber}`, width),
@@ -122,7 +128,8 @@ export function renderProductionTicket(
     input.note && box(width, [`SPECIAL REQUEST: ${input.note}`]),
     spread(itemCount(input.lines), `Printed ${input.printedAt}`, width),
   ]);
-  return { kind: bar ? "BOT" : "KOT", paper: ctx.paper, content, qrCodes: [] };
+  const kind = bar ? "BOT" : input.station === "DISPATCH" ? "DISPATCH_TICKET" : "KOT";
+  return { kind, paper: ctx.paper, content, qrCodes: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +156,7 @@ export function renderVoidTicket(input: VoidTicketInput, ctx: PrintContext): Pri
     copyLine(ctx, width),
     grid(width, [
       `Void ${input.voidNumber}`,
-      input.station === "BAR" ? "Bar" : "Kitchen",
+      STATION_LABEL[input.station],
       input.table && `Table ${input.table}`,
       input.cancelsTicket && `Cancels ${input.cancelsTicket}`,
       `Order ${input.orderNumber}`,
@@ -173,7 +180,7 @@ export function renderVoidTicket(input: VoidTicketInput, ctx: PrintContext): Pri
       ],
       { keepEmpty: ["Reason", "Authorised by"] },
     ),
-    signatures(width, [input.station === "BAR" ? "Bar ack." : "Kitchen ack."], 1),
+    signatures(width, [`${STATION_LABEL[input.station]} ack.`], 1),
     spread("Logged in void report", `Printed ${input.at}`, width),
   ]);
   return { kind: "VOID_TICKET", paper: ctx.paper, content, qrCodes: [] };
