@@ -1437,8 +1437,11 @@ function renderTableDocument(
   ).map((payment) => ({
     method: payment.method,
     amount: payment.amount,
-    // Till-generated cash references mean nothing to the guest and cost a line.
-    ...(payment.reference && !/^CASH-/i.test(payment.reference)
+    // Cash has no outside reference: what the till records is an internal id
+    // that means nothing to the guest and costs a line.
+    ...(payment.reference &&
+    !/^cash$/i.test(payment.method.trim()) &&
+    !/^CASH-/i.test(payment.reference)
       ? { reference: payment.reference }
       : {}),
   }));

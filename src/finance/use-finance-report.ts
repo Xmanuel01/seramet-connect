@@ -155,6 +155,7 @@ export function affectsFinance(event: unknown): boolean {
 }
 
 export const financeQueryRoot = "finance-report";
+const OFFLINE_MESSAGE = "You're offline. Reconnect, then try again.";
 
 /** Why a period can't be reported on, in words, or null when it can. */
 export function financePeriodProblem(from: string, to: string) {
@@ -314,6 +315,9 @@ export function useFinanceReport<T>(
 
   const { refetch } = query;
   const hasData = !periodProblem && query.data !== undefined;
+  // React Query pauses requests while the device is offline rather than failing
+  // them; say so, and the paused request resumes on its own once back online.
+  const offline = query.fetchStatus === "paused";
   return {
     status: !allowed
       ? ("denied" as const)
@@ -321,16 +325,18 @@ export function useFinanceReport<T>(
         ? ("error" as const)
         : hasData
           ? ("ready" as const)
-          : query.isError
+          : query.isError || offline
             ? ("error" as const)
             : ("loading" as const),
     report: (hasData ? query.data : null) as T | null,
     // With figures on screen, a failed refresh keeps them and says they may be out of date.
     error: periodProblem
       ? periodProblem
-      : query.isError
-        ? userMessage(query.error, "Something went wrong on our side. Try again in a moment.")
-        : "",
+      : offline
+        ? OFFLINE_MESSAGE
+        : query.isError
+          ? userMessage(query.error, "Something went wrong on our side. Try again in a moment.")
+          : "",
     refreshing: hasData && query.isFetching,
     updatedAt: query.dataUpdatedAt,
     refresh: useCallback(() => void refetch(), [refetch]),
