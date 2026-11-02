@@ -417,7 +417,11 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         (product: { station: string }) =>
           product.station === (device.name === "Kitchen" ? "MAIN" : device.name.toUpperCase()),
       );
-      const itemText = text.toUpperCase().replace(/\|/g, " ").replace(/\s+/g, " ");
+      // Table borders are CP437 box glyphs, which the emulator decodes as stray symbols.
+      const itemText = text
+        .toUpperCase()
+        .replace(/[^\x20-\x7e]|\|/g, " ")
+        .replace(/\s+/g, " ");
       expect(itemText).toContain(product.name.toUpperCase());
       for (const other of setup.products.filter((item: { id: string }) => item.id !== product.id))
         expect(itemText).not.toContain(other.name.toUpperCase());
