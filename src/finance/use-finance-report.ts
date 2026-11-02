@@ -155,6 +155,14 @@ export function affectsFinance(event: unknown): boolean {
 }
 
 export const financeQueryRoot = "finance-report";
+
+/** Why a period can't be reported on, in words, or null when it can. */
+export function financePeriodProblem(from: string, to: string) {
+  const date = /^\d{4}-\d{2}-\d{2}$/;
+  if (!date.test(from) || !date.test(to)) return "Choose a start and end date.";
+  if (from > to) return "Choose a start date on or before the end date.";
+  return null;
+}
 // Bursts of events (a busy service) become one refresh shortly after the last.
 const LIVE_REFRESH_DELAY_MS = 1_000;
 let liveRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -256,6 +264,8 @@ export function useFinanceReport<T>(
     hasPermission(permissions.accountingView) ||
     hasPermission(permissions.financeJournalView) ||
     hasPermission(permissions.financeView);
+  // A half-typed date never reaches the server; the page says what to fix instead.
+  const periodProblem = financePeriodProblem(from, to);
   const query = useQuery({
     ...financeQueryOptions<T>({
       tenantId: activeTenantId,
@@ -267,7 +277,7 @@ export function useFinanceReport<T>(
       limit,
       accountType,
     }),
-    enabled: allowed,
+    enabled: allowed && !periodProblem,
   });
 
   // Live updates refresh in the background: figures already on screen stay
@@ -287,20 +297,24 @@ export function useFinanceReport<T>(
   }, [allowed, queryClient]);
 
   const { refetch } = query;
-  const hasData = query.data !== undefined;
+  const hasData = !periodProblem && query.data !== undefined;
   return {
     status: !allowed
       ? ("denied" as const)
-      : hasData
-        ? ("ready" as const)
-        : query.isError
-          ? ("error" as const)
-          : ("loading" as const),
-    report: (query.data ?? null) as T | null,
+      : periodProblem
+        ? ("error" as const)
+        : hasData
+          ? ("ready" as const)
+          : query.isError
+            ? ("error" as const)
+            : ("loading" as const),
+    report: (hasData ? query.data : null) as T | null,
     // With figures on screen, a failed refresh keeps them and says they may be out of date.
-    error: query.isError
-      ? userMessage(query.error, "Something went wrong on our side. Try again in a moment.")
-      : "",
+    error: periodProblem
+      ? periodProblem
+      : query.isError
+        ? userMessage(query.error, "Something went wrong on our side. Try again in a moment.")
+        : "",
     refreshing: hasData && query.isFetching,
     updatedAt: query.dataUpdatedAt,
     refresh: useCallback(() => void refetch(), [refetch]),
