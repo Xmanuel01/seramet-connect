@@ -42,6 +42,8 @@ export const SALES_SOURCES = ["POS_INVOICE", "POS_INVOICE_REVERSAL"] as const;
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   ASSET: "Asset",
+  BANK: "Bank",
+  CASH: "Cash",
   LIABILITY: "Liability",
   EQUITY: "Equity",
   INCOME: "Income",
@@ -56,6 +58,8 @@ export function accountTypeLabel(type: string) {
 }
 
 export const INCOME_TYPES = ["INCOME", "REVENUE"];
+/** Matches the server's balance sheet: cash and bank accounts are assets. */
+export const ASSET_TYPES = ["ASSET", "BANK", "CASH"] as const;
 export const COST_TYPES = ["COGS", "COST_OF_GOODS_SOLD"];
 
 /** Branch names for this tenant, for tables that hold branch ids. */
