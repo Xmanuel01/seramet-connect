@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   affectsFinance,
+  financePeriodProblem,
   financeQueryOptions,
   financeQueryRoot,
   scheduleFinanceRefresh,
@@ -68,6 +69,21 @@ describe("which live events refresh the accounts", () => {
     );
     expect(affectsFinance({ topic: "workers", eventType: "CRM_CAMPAIGN_DISPATCH_COMPLETED" })).toBe(
       false,
+    );
+  });
+});
+
+describe("report periods", () => {
+  it("accepts a valid range, including a single day", () => {
+    expect(financePeriodProblem("2026-11-01", "2026-11-30")).toBeNull();
+    expect(financePeriodProblem("2026-11-02", "2026-11-02")).toBeNull();
+  });
+
+  it("explains a missing or reversed range instead of asking the server", () => {
+    expect(financePeriodProblem("", "2026-11-02")).toBe("Choose a start and end date.");
+    expect(financePeriodProblem("2026-11-02", "02/11/2026")).toBe("Choose a start and end date.");
+    expect(financePeriodProblem("2026-11-03", "2026-11-02")).toBe(
+      "Choose a start date on or before the end date.",
     );
   });
 });
