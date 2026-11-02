@@ -23,6 +23,7 @@ import {
   type OfflineAllowedCommand,
   type OfflineCommand,
 } from "@/offline/types";
+import { UserFacingError } from "@/lib/user-facing-error";
 
 export type BackendStatus =
   "loading" | "synced" | "syncing" | "offline" | "reconnecting" | "conflict" | "error";
@@ -495,7 +496,8 @@ export function useTransactionEngine() {
       }
       if (!navigator.onLine || posConnectivity.getSnapshot().state === "OFFLINE") {
         if (!offlineAllowedCommands.has(action as OfflineAllowedCommand)) {
-          throw new Error(`${action} is unavailable while the POS is offline`);
+          // Shown as is: the command name stays in the console, not on screen.
+          throw new UserFacingError("You're offline. Reconnect, then try again.");
         }
         if (
           !currentUser.deviceId ||
