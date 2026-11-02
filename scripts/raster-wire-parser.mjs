@@ -54,10 +54,23 @@ export function parseRasterWire(bytes) {
       feed &&
       !cut
     ) {
+      // Captures from bridges before 3.3.0: fixed feed, then cut.
       cut = true;
       pos += 3;
+    } else if (
+      bytes[pos] === 29 &&
+      bytes[pos + 1] === 86 &&
+      [65, 66].includes(bytes[pos + 2]) &&
+      bytes[pos + 3] === 0 &&
+      !feed &&
+      !cut
+    ) {
+      // GS V 65/66 0: the printer feeds to its own cutter position, then cuts.
+      cut = true;
+      feed = "TO_CUTTER";
+      pos += 4;
     } else throw new Error("UNKNOWN_CAPTURE_COMMAND");
   }
-  if (!bands.length || feed !== 3) throw new Error("INCOMPLETE_RASTER_CAPTURE");
+  if (!bands.length || !feed) throw new Error("INCOMPLETE_RASTER_CAPTURE");
   return { width, height, bands, feed, cut, data: Buffer.concat(bands.map((b) => b.data)) };
 }

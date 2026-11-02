@@ -9,7 +9,9 @@ import { getConfigurationRepository } from "@/platform/repositories/configuratio
 import {
   bridgeIdForMachine,
   loadInstalledPrintBridgeConfig,
+  latestPrintBridgeVersion,
   printBridgeDownloadUrl,
+  printBridgeUpdateAvailable,
   saveInstalledPrintBridgeConfig,
 } from "@/lib/print-bridge-client-config";
 import {
@@ -158,6 +160,10 @@ export function PrinterAdministration() {
   }, [checkThisPc, mayManage]);
   const thisPcBridgeId =
     thisPc !== "checking" && thisPc.state === "paired" ? thisPc.bridgeId : null;
+  const updateAvailable =
+    thisPc !== "checking" &&
+    (thisPc.state === "unpaired" || thisPc.state === "paired") &&
+    printBridgeUpdateAvailable(thisPc.version);
   const [attempts, setAttempts] = useState<
     Array<{ id: string; stage: string; outcome: string; updated_at: string }>
   >([]);
@@ -433,6 +439,15 @@ export function PrinterAdministration() {
                     Download for Windows
                   </a>
                 )}
+                {updateAvailable && (
+                  <a
+                    href={printBridgeDownloadUrl}
+                    className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+                  >
+                    <Download className="h-4 w-4" />
+                    Update to {latestPrintBridgeVersion}
+                  </a>
+                )}
                 {thisPc !== "checking" &&
                   (thisPc.state === "unpaired" || thisPc.state === "paired") && (
                     <Btn disabled={busy} onClick={() => void connectThisPc()}>
@@ -458,6 +473,13 @@ export function PrinterAdministration() {
                   device, choose Allow.
                 </li>
               </ol>
+            )}
+            {updateAvailable && (
+              <p className="text-muted-foreground">
+                This computer runs print bridge {thisPc.version}. Download{" "}
+                {latestPrintBridgeVersion} and open it: it updates in place and stays connected.
+                Then choose Check again.
+              </p>
             )}
           </section>
         )}
@@ -780,6 +802,21 @@ export function PrinterAdministration() {
                 </option>
               </select>
             </label>
+            {draft.renderingMode !== "RASTER_ESC_POS" && (
+              <label>
+                Table lines
+                <select
+                  className={inputClass}
+                  value={draft.ruleStyle ?? "SOLID"}
+                  onChange={(event) =>
+                    setDraft({ ...draft, ruleStyle: event.target.value as "SOLID" | "ASCII" })
+                  }
+                >
+                  <option value="SOLID">Solid lines (printer box characters)</option>
+                  <option value="ASCII">Plain characters (+ - |)</option>
+                </select>
+              </label>
+            )}
             {draft.renderingMode === "RASTER_ESC_POS" && draft.raster && (
               <details className="sm:col-span-2">
                 <summary>Raster capabilities</summary>

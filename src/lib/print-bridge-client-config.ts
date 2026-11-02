@@ -7,7 +7,22 @@ export type InstalledPrintBridgeConfig = {
 export const printBridgeConfigStorageKey = "seramet.print-bridge.client.v1";
 
 export const printBridgeDownloadUrl =
-  "https://github.com/Xmanuel01/seramet-connect/releases/download/print-bridge-v3.2.0/SerametPrintBridge.exe";
+  "https://github.com/Xmanuel01/seramet-connect/releases/download/print-bridge-v3.3.0/SerametPrintBridge.exe";
+
+/** The bridge version the download link installs. The release workflow keeps the link and the bridge in step. */
+export const latestPrintBridgeVersion = /print-bridge-v(\d+\.\d+\.\d+)\//.exec(
+  printBridgeDownloadUrl,
+)![1]!;
+
+/** True when a running bridge reports an older version than the download link installs. */
+export function printBridgeUpdateAvailable(installed: string | undefined) {
+  const parse = (value: string) => /^(\d+)\.(\d+)\.(\d+)$/.exec(value)?.slice(1).map(Number);
+  const current = installed ? parse(installed) : undefined;
+  const latest = parse(latestPrintBridgeVersion)!;
+  if (!current) return false;
+  for (let i = 0; i < 3; i++) if (current[i] !== latest[i]) return current[i]! < latest[i]!;
+  return false;
+}
 
 // The machine identity "Connect this PC" generates, e.g. "front-desk-3f2a9c41d07e".
 export const pairableBridgeId = /^[a-z0-9][a-z0-9-]{6,62}[a-z0-9]$/;

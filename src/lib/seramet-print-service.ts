@@ -1109,7 +1109,14 @@ function renderProductionTicket(
 ) {
   const width = productionTicketWidth(profile, documentType);
   const isBar = documentType === "BAR_TICKET";
-  const title = documentType === "KDS_TICKET" ? "KDS ORDER" : isBar ? "BAR ORDER" : "KITCHEN ORDER";
+  const title =
+    documentType === "KDS_TICKET"
+      ? "KDS ORDER"
+      : isBar
+        ? "BAR ORDER"
+        : documentType === "DISPATCH_TICKET"
+          ? "DISPATCH ORDER"
+          : "KITCHEN ORDER";
   const ticketPrefix = isBar ? "BAR" : "KOT";
   const showPrices = profile.templateSettings.BILL.showKotPrices === true;
   const identity = profile.printIdentity;
@@ -1117,10 +1124,10 @@ function renderProductionTicket(
   const issued = documentDateTime(order.createdAt, identity.timeZone);
   const ticketNumber = printableTicketNumber(kitchenTicketId, order.orderId);
 
-  // KDS screens, dispatch slips and tickets with prices keep the legacy layout for now.
-  if (documentType !== "KDS_TICKET" && documentType !== "DISPATCH_TICKET" && !showPrices) {
+  // KDS screens and tickets with prices keep the legacy layout for now.
+  if (documentType !== "KDS_TICKET" && !showPrices) {
     return renderStationTicket(
-      documentType === "BAR_TICKET" ? "BAR" : "KITCHEN",
+      isBar ? "BAR" : documentType === "DISPATCH_TICKET" ? "DISPATCH" : "KITCHEN",
       order,
       station,
       lines,
@@ -1171,7 +1178,7 @@ function renderProductionTicket(
 
 /** Kitchen and bar tickets on the shared table templates. */
 function renderStationTicket(
-  kind: "KITCHEN" | "BAR",
+  kind: "KITCHEN" | "BAR" | "DISPATCH",
   order: OrderForPrint,
   station: ProductionStation,
   lines: OrderLineForPrint[],
@@ -1430,8 +1437,16 @@ function renderTableDocument(
   ).map((payment) => ({
     method: payment.method,
     amount: payment.amount,
-    ...(payment.reference ? { reference: payment.reference } : {}),
+    // Till-generated cash references mean nothing to the guest and cost a line.
+    ...(payment.reference && !/^CASH-/i.test(payment.reference)
+      ? { reference: payment.reference }
+      : {}),
   }));
+  // Cash is recorded at the amount applied to the bill, with change kept apart.
+  // Print what the guest handed over, so the receipt shows the change returned.
+  const cash = payments.map((payment) => /^cash$/i.test(payment.method.trim())).lastIndexOf(true);
+  if (documentType === "RECEIPT" && cash >= 0 && (order.change ?? 0) > 0)
+    payments[cash] = { ...payments[cash]!, amount: payments[cash]!.amount + order.change! };
 
   if (documentType === "INVOICE" || paper === "A4") {
     const paid = order.paid ?? 0;
