@@ -449,7 +449,8 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     // Invoices opens the new invoice on arrival, without a click.
     const opened = cashier.getByRole("dialog", { name: `Invoice ${invoiceDisplayName(bill.id)}` });
     await expect(opened).toBeVisible();
-    await opened.getByRole("button", { name: "Close", exact: true }).click();
+    await cashier.keyboard.press("Escape");
+    await expect(opened).toBeHidden();
     const expectedSubtotalMinor = setup.products.reduce(
       (sum: number, item: { station: string; priceMinor: number }) =>
         sum + item.priceMinor * (item.station === "MAIN" ? 2 : 1),
