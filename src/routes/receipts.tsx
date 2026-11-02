@@ -16,6 +16,7 @@ import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { recordBusinessDate } from "@/lib/pos-workflow";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
+import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -68,7 +69,10 @@ function Receipts() {
       Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
     );
   };
-  const rows = state.receipts
+  // The chosen day comes straight from the server, so the list shows before the
+  // till has loaded its full copy; the till's own receipts are merged in by id.
+  const server = useDocumentList("receipts", periodDate);
+  const rows = mergeDocuments(server.rows, state.receipts)
     .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
     .filter((receipt) => !periodDate || receiptBusinessDate(receipt) === periodDate);
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
@@ -80,7 +84,7 @@ function Receipts() {
       setPrintNotice("A specific reprint reason of at least 12 characters is required.");
       return;
     }
-    const receipt = state.receipts.find((item) => item.id === receiptId);
+    const receipt = rows.find((item) => item.id === receiptId);
     if (!receipt) return;
     const order = receiptRecordToPrintOrder(receipt, state);
     if (!order) return;
@@ -155,7 +159,7 @@ function Receipts() {
   return (
     <AppShell
       title="Receipts"
-      subtitle={`Immutable issued receipt register - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={exportRows}>Export</Btn>

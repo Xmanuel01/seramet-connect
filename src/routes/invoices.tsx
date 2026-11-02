@@ -36,6 +36,7 @@ import { SettlementService, settlementReferenceLabel } from "@/payments/settleme
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { RequestError, UserFacingError, reportError, userMessage } from "@/lib/user-facing-error";
+import { mergeDocuments, useDocumentList, type InvoiceListStatus } from "@/lib/use-document-list";
 
 export const Route = createFileRoute("/invoices")({
   head: () => ({
@@ -199,7 +200,14 @@ function Invoices() {
       return activeTimeZone();
     }
   })();
-  const rows = state.bills.filter((bill) => matchesBranch(bill.branchId ?? bill.branch));
+  // A chosen day comes straight from the server, so it shows before the till has
+  // loaded its full copy; the till's own bills (including offline ones) win by id.
+  const server = useDocumentList("invoices", periodDate, {
+    status: statusFilter.toLowerCase() as InvoiceListStatus,
+  });
+  const rows = mergeDocuments(server.rows, state.bills).filter((bill) =>
+    matchesBranch(bill.branchId ?? bill.branch),
+  );
   const awaitingBill = unbilledKitchenOrders(
     state.orders.filter((order) => (order.branchId ?? branchId) === branchId),
     state.bills,
