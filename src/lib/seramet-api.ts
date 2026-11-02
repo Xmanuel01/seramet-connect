@@ -819,11 +819,9 @@ async function getTransactions(request: Request, env: SerametEnv, repo: Transact
   )
     return json({ ok: true, unchanged: true, revision });
   const state = await repo.loadState(actor.tenantId);
-  return json({
-    ok: true,
-    state: filterStateForActor(state, actor),
-    revision: await repo.revision(actor.tenantId),
-  });
+  // The revision read before loading never claims a newer state than the one returned, so a
+  // write that lands in between makes the next refresh reload instead of answering "unchanged".
+  return json({ ok: true, state: filterStateForActor(state, actor), revision });
 }
 
 async function replaceTransactions(request: Request, env: SerametEnv, repo: TransactionRepository) {

@@ -119,20 +119,21 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     const text = state.printer.buffer
       .filter((line: { kind: string }) => line.kind === "Text")
       .map((line: { line: { text: string } }) => line.line.text)
+      // The emulator decodes text as UTF-8, so FS . shows as its own text line.
+      .filter((line: string) => line !== "\x1c.")
       .join("\n");
+    // A partial cut is GS V 66 0: the printer feeds to its own cutter, so no separate line feed.
     expect(
       state.history.some(
         (entry: { command: { type: string } }) => entry.command.type === "CutPaper",
       ),
     ).toBe(true);
-    expect(
-      state.history.some(
-        (entry: { command: { type: string } }) => entry.command.type === "LineFeed",
-      ),
-    ).toBe(true);
+    // This emulator does not model ESC 2 (restore default line spacing); nothing else may be unknown.
     expect(
       state.history.filter(
-        (entry: { command: { type: string } }) => entry.command.type === "Unknown",
+        (entry: { command: { type: string; data?: number[] } }) =>
+          entry.command.type === "Unknown" &&
+          !Buffer.from(entry.command.data ?? []).equals(Buffer.from([27, 50])),
       ),
     ).toHaveLength(0);
     if (width === "58mm")
@@ -416,7 +417,11 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         (product: { station: string }) =>
           product.station === (device.name === "Kitchen" ? "MAIN" : device.name.toUpperCase()),
       );
-      const itemText = text.toUpperCase().replace(/\|/g, " ").replace(/\s+/g, " ");
+      // Table borders are CP437 box glyphs, which the emulator decodes as stray symbols.
+      const itemText = text
+        .toUpperCase()
+        .replace(/[^\x20-\x7e]|\|/g, " ")
+        .replace(/\s+/g, " ");
       expect(itemText).toContain(product.name.toUpperCase());
       for (const other of setup.products.filter((item: { id: string }) => item.id !== product.id))
         expect(itemText).not.toContain(other.name.toUpperCase());
@@ -479,7 +484,8 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       }
       await page.setViewportSize({ width: 1280, height: 900 });
     };
-    await verifyPreviewFit(manager, "TAX INVOICE");
+    // Only an invoice that charged tax is titled TAX INVOICE; this demo menu has no tax rule.
+    await verifyPreviewFit(manager, bill.tax !== 0 ? "TAX INVOICE" : "INVOICE");
     await manager
       .getByRole("dialog")
       .getByRole("button", { name: "Close", exact: true })
