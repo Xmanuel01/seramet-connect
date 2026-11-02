@@ -12,7 +12,7 @@ import {
   reportMoney,
   StatementRow,
 } from "@/finance/finance-ui";
-import { accountTypeLabel, COST_TYPES, INCOME_TYPES } from "@/finance/finance-labels";
+import { accountTypeLabel, ASSET_TYPES, COST_TYPES, INCOME_TYPES } from "@/finance/finance-labels";
 import {
   type FinancialAccountRow,
   financePeriodProblem,
@@ -83,15 +83,16 @@ export function profitAndLoss(statement: FinanceStatement) {
 
 export function balanceSheet(statement: FinanceStatement) {
   const base = statement.lines.filter((line) => line.currency === statement.scope.currency);
-  const group = (type: string, sign: 1 | -1): Line[] =>
+  const group = (types: readonly string[], sign: 1 | -1): Line[] =>
     base
-      .filter((account) => account.type === type)
+      .filter((account) => types.includes(account.type))
       .map((account) => ({ account, amount: sign * account.closingSignedMinor }))
       .filter((line) => line.amount !== 0);
   return {
-    assets: group("ASSET", 1),
-    liabilities: group("LIABILITY", -1),
-    equity: group("EQUITY", -1),
+    // Cash and bank accounts are assets too, as the server's totals count them.
+    assets: group(ASSET_TYPES, 1),
+    liabilities: group(["LIABILITY"], -1),
+    equity: group(["EQUITY"], -1),
   };
 }
 

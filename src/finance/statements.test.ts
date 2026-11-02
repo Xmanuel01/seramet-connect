@@ -97,13 +97,17 @@ describe("balance sheet", () => {
     const sheet = balanceSheet(
       statement([
         account("1000", "ASSET", {}, 150_000),
-        account("2000", "LIABILITY", {}, -60_000),
+        account("1010", "CASH", {}, 20_000),
+        account("1020", "BANK", {}, 30_000),
+        account("2000", "LIABILITY", {}, -110_000),
         account("3000", "EQUITY", {}, -90_000),
         account("1100", "ASSET", {}, 0),
       ]),
     );
-    expect(sheet.assets.map((line) => line.amount)).toEqual([150_000]);
-    expect(sheet.liabilities.map((line) => line.amount)).toEqual([60_000]);
+    // Cash and bank are assets, as in the server's balance sheet totals.
+    expect(sheet.assets.map((line) => line.account.code)).toEqual(["1000", "1010", "1020"]);
+    expect(sheet.assets.map((line) => line.amount)).toEqual([150_000, 20_000, 30_000]);
+    expect(sheet.liabilities.map((line) => line.amount)).toEqual([110_000]);
     expect(sheet.equity.map((line) => line.amount)).toEqual([90_000]);
   });
 });
