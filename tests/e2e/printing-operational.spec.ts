@@ -119,20 +119,21 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     const text = state.printer.buffer
       .filter((line: { kind: string }) => line.kind === "Text")
       .map((line: { line: { text: string } }) => line.line.text)
+      // The emulator decodes text as UTF-8, so FS . shows as its own text line.
+      .filter((line: string) => line !== "\x1c.")
       .join("\n");
+    // A partial cut is GS V 66 0: the printer feeds to its own cutter, so no separate line feed.
     expect(
       state.history.some(
         (entry: { command: { type: string } }) => entry.command.type === "CutPaper",
       ),
     ).toBe(true);
-    expect(
-      state.history.some(
-        (entry: { command: { type: string } }) => entry.command.type === "LineFeed",
-      ),
-    ).toBe(true);
+    // This emulator does not model ESC 2 (restore default line spacing); nothing else may be unknown.
     expect(
       state.history.filter(
-        (entry: { command: { type: string } }) => entry.command.type === "Unknown",
+        (entry: { command: { type: string; data?: number[] } }) =>
+          entry.command.type === "Unknown" &&
+          !Buffer.from(entry.command.data ?? []).equals(Buffer.from([27, 50])),
       ),
     ).toHaveLength(0);
     if (width === "58mm")
