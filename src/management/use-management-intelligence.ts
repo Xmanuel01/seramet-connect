@@ -8,6 +8,7 @@ import type {
   ManagementControlCentre,
   OwnerControlCentre,
 } from "@/management/types";
+import { RequestError, reportError } from "@/lib/user-facing-error";
 
 export function useManagementIntelligence(enabled = true) {
   const { activeTenantId, branchId, branchRecords, currentUser, isAllBranches, role } =
@@ -66,11 +67,7 @@ export function useManagementIntelligence(enabled = true) {
               error?: string;
             };
             if (!response.ok || !body.controlCentre) {
-              throw new Error(
-                body.message ??
-                  body.error ??
-                  `Management read model unavailable (${response.status})`,
-              );
+              throw new RequestError(response.status, body.message ?? body.error ?? "");
             }
             return body.controlCentre;
           }),
@@ -83,9 +80,7 @@ export function useManagementIntelligence(enabled = true) {
                   message?: string;
                 };
                 if (!response.ok || !body.owner) {
-                  throw new Error(
-                    body.message ?? `Owner read model unavailable (${response.status})`,
-                  );
+                  throw new RequestError(response.status, body.message ?? "");
                 }
                 return body.owner;
               },
@@ -101,7 +96,7 @@ export function useManagementIntelligence(enabled = true) {
       if (!read.isCurrent()) return;
       setControls([]);
       setOwner(null);
-      setError(cause instanceof Error ? cause.message : "Management read model unavailable");
+      setError(reportError(cause, "Something went wrong on our side. Try again in a moment."));
       setStatus("error");
     }
   }, [branchKey, enabled, headers, isAllBranches, readGuard, scopeKey]);
@@ -139,9 +134,7 @@ export function useManagementIntelligence(enabled = true) {
         error?: string;
       };
       if (!response.ok) {
-        throw new Error(
-          payload.message ?? payload.error ?? `Management command failed (${response.status})`,
-        );
+        throw new RequestError(response.status, payload.message ?? payload.error ?? "");
       }
       await refresh();
       return payload;

@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { CreditNotesPage } from "@/finance/AdvancedFinanceModules";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Not available yet; old links open the Finance overview.
 export const Route = createFileRoute("/credit-notes")({
-  head: () => ({ meta: [{ title: "credit notes - Seramet" }] }),
-  component: CreditNotesPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/finance", replace: true });
+  },
 });

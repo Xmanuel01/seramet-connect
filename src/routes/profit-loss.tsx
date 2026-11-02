@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { IncomeStatementPage } from "@/finance/FinancialReports";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Merged into Statements; old links open the matching tab.
 export const Route = createFileRoute("/profit-loss")({
-  head: () => ({ meta: [{ title: "Posted Profit and Loss - Seramet" }] }),
-  component: IncomeStatementPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/statements", search: { tab: "profit-loss" }, replace: true });
+  },
 });

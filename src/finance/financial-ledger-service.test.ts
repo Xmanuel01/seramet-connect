@@ -122,16 +122,18 @@ function post(
     entries: Array<[string, number, number]>;
     date?: string;
     currency?: string;
+    sourceType?: string;
   },
 ) {
   db.sqlite
     .prepare(
-      "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,?,?,'TEST_SALE',?,?,'DRAFT','Test posting',?,'{}',?)",
+      "INSERT INTO journal_entries (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,correlation_id,payload_json,created_at) VALUES (?,?,?,?,?,?,'DRAFT','Test posting',?,'{}',?)",
     )
     .run(
       input.tenant,
       input.id,
       input.branch,
+      input.sourceType ?? "TEST_SALE",
       input.id,
       input.date ?? "2026-09-20",
       input.id,
@@ -158,6 +160,30 @@ describe("Authoritative finance and ERP-style reporting integrity", () => {
     seed(db);
   });
   afterEach(() => db.close());
+
+  it("limits the ledger to sales and their reversals for the daily sales journal", async () => {
+    for (const [id, sourceType] of [
+      ["pos-sale", "POS_INVOICE"],
+      ["pos-reversal", "POS_INVOICE_REVERSAL"],
+    ])
+      post(db, {
+        tenant: t,
+        branch: a,
+        id,
+        sourceType,
+        entries: [
+          ["cash", 300, 0],
+          ["income", 0, 300],
+        ],
+      });
+    const service = new FinancialLedgerService(db, actor());
+    const sales = await service.ledger({ ...window, source: "SALES" });
+    expect(new Set(sales.rows.map((row) => row.voucher_id))).toEqual(
+      new Set(["pos-sale", "pos-reversal"]),
+    );
+    const all = await service.ledger(window);
+    expect(all.rows.map((row) => row.voucher_id)).toContain("sale-a");
+  });
 
   it("shows only scoped, posted, source-traceable journals and branch-safe account masters", async () => {
     const service = new FinancialLedgerService(db, actor());

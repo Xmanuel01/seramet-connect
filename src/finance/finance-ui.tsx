@@ -2,11 +2,13 @@ import { Link } from "@tanstack/react-router";
 import { AlertTriangle } from "lucide-react";
 import { Btn, Panel, Status } from "@/components/app/ui";
 import { formatMinor as formatCurrencyMinor } from "@/payments/money";
+import { activeLocale } from "@/lib/currency";
 import type { FinancialIssue } from "@/finance/use-finance-report";
 import { financeIssueGuidance } from "@/finance/finance-issue-guidance";
+import { closeBlocker } from "@/finance/finance-labels";
 
 export function reportMoney(minor: number, currency: string) {
-  return formatCurrencyMinor(minor, currency, "en-KE");
+  return formatCurrencyMinor(minor, currency, activeLocale());
 }
 
 export function FinanceDates({
@@ -44,7 +46,7 @@ export function FinanceDates({
           onChange={(event) => setTo(event.target.value)}
         />
       </label>
-      <Btn onClick={refresh}>Refresh authorized records</Btn>
+      <Btn onClick={refresh}>Refresh</Btn>
     </div>
   );
 }
@@ -123,18 +125,19 @@ export function FinanceQuality({
                 <details className="group">
                   <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                     <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-warning" />
-                    <span className="min-w-0 flex-1">{guidance.title}</span>
+                    <span className="min-w-0 flex-1">
+                      {guidance.title}
+                      {issue.count > 1 && (
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          ({issue.count})
+                        </span>
+                      )}
+                    </span>
                     <span className="text-[11px] font-medium text-muted-foreground group-open:hidden">
                       What to do
                     </span>
                   </summary>
-                  <div className="space-y-2 px-3 pb-3 pl-9 text-muted-foreground">
-                    <p>{issue.detail}</p>
-                    {guidance.nextStep && <p className="text-foreground">{guidance.nextStep}</p>}
-                    <p className="break-words text-[11px]">
-                      Reference: {issue.code} ({issue.count})
-                    </p>
-                  </div>
+                  <p className="px-3 pb-3 pl-9">{guidance.nextStep}</p>
                 </details>
               </li>
             );
@@ -142,7 +145,11 @@ export function FinanceQuality({
         </ul>
       )}
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px]">
-        <Link className="font-semibold text-primary hover:underline" to="/reconciliation">
+        <Link
+          className="font-semibold text-primary hover:underline"
+          to="/payment-control"
+          search={{ tab: "bank" }}
+        >
           Review unmatched records
         </Link>
         {issues.some((issue) =>
@@ -185,4 +192,115 @@ export function exportVisibleFinancialCsv(
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+}
+
+/** Tabs whose selection lives in the page address, so links and bookmarks open the right one. */
+export function PageTabs<T extends string>({
+  tabs,
+  active,
+  onSelect,
+}: {
+  tabs: ReadonlyArray<{ id: T; label: string }>;
+  active: T;
+  onSelect: (id: T) => void;
+}) {
+  return (
+    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border p-2">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={tab.id === active}
+          onClick={() => onSelect(tab.id)}
+          className={
+            "h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
+            (tab.id === active ? "bg-primary text-primary-foreground" : "hover:bg-secondary")
+          }
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** One label/amount line in a statement. */
+export function StatementRow({
+  label,
+  amount,
+  currency,
+  strong,
+  compare,
+  indent,
+}: {
+  label: string;
+  amount: number;
+  currency: string;
+  strong?: boolean;
+  compare?: number | undefined;
+  indent?: boolean;
+}) {
+  return (
+    <div
+      className={
+        "flex items-baseline justify-between gap-4 px-4 py-2.5 text-[13px] " +
+        (strong ? "border-t border-border font-bold" : "")
+      }
+    >
+      <span className={indent ? "pl-4 text-muted-foreground" : ""}>{label}</span>
+      <span className="flex gap-6 tabular-nums">
+        {compare !== undefined && (
+          <span className="w-32 text-right text-muted-foreground">
+            {reportMoney(compare, currency)}
+          </span>
+        )}
+        <span className="w-32 text-right">{reportMoney(amount, currency)}</span>
+      </span>
+    </div>
+  );
+}
+
+/** Open period-close blockers, each linked to the page where it is fixed. */
+export function NeedsAttention({
+  blockers,
+  empty,
+}: {
+  blockers: ReadonlyArray<{ code: string; count: number; severity: string }>;
+  empty: string;
+}) {
+  if (!blockers.length) return <p className="p-4 text-[12px] text-muted-foreground">{empty}</p>;
+  return (
+    <ul className="divide-y divide-border">
+      {blockers.map((blocker) => {
+        const { label, link } = closeBlocker(blocker.code);
+        const content = (
+          <>
+            <AlertTriangle
+              aria-hidden="true"
+              className={
+                "h-4 w-4 shrink-0 " +
+                (["HIGH", "CRITICAL"].includes(blocker.severity)
+                  ? "text-destructive"
+                  : "text-warning")
+              }
+            />
+            <span className="min-w-0 flex-1">{label}</span>
+            <span className="tabular-nums font-semibold">{blocker.count}</span>
+          </>
+        );
+        return (
+          <li key={blocker.code} className="text-[13px]">
+            {link ? (
+              <Link {...link} className="flex items-center gap-3 px-4 py-3 hover:bg-secondary/50">
+                {content}
+              </Link>
+            ) : (
+              <div className="flex items-center gap-3 px-4 py-3">{content}</div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }

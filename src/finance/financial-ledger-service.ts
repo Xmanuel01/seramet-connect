@@ -448,6 +448,8 @@ export class FinancialLedgerService {
       offset?: number;
       accountId?: string;
       accountType?: string;
+      /** "SALES" limits the ledger to sales and their reversals (the daily sales journal). */
+      source?: "SALES";
     },
   ) {
     const scope = await this.scope(input);
@@ -469,8 +471,13 @@ export class FinancialLedgerService {
     ) {
       throw new SerametHttpError(400, "Unsupported accounting account filter");
     }
+    const salesSources = ["POS_INVOICE", "POS_INVOICE_REVERSAL"];
     const condition =
-      (input.accountId ? "AND a.id=? " : "") + (input.accountType ? "AND a.account_type=?" : "");
+      (input.accountId ? "AND a.id=? " : "") +
+      (input.accountType ? "AND a.account_type=? " : "") +
+      (input.source === "SALES"
+        ? `AND je.source_type IN (${salesSources.map(() => "?").join(",")})`
+        : "");
     const bindings = [
       scope.tenantId,
       scope.from,
@@ -478,6 +485,7 @@ export class FinancialLedgerService {
       ...scope.branchIds,
       ...(input.accountId ? [input.accountId] : []),
       ...(input.accountType ? [input.accountType] : []),
+      ...(input.source === "SALES" ? salesSources : []),
     ];
     const result = await this.db
       .prepare(

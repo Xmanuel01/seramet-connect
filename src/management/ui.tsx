@@ -30,7 +30,7 @@ export function ManagementReadModelState({
             {loading
               ? "Loading figures"
               : status === "error"
-                ? "Management metrics unavailable"
+                ? "Couldn't load these figures"
                 : "No figures for this period yet"}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">

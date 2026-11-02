@@ -25,24 +25,25 @@ export const Route = createFileRoute("/reports")({
 });
 
 const availableReports = [
+  { to: "/statements", label: "Statements", detail: "Profit & loss, balance sheet and cash flow" },
   {
-    to: "/daily-sales-journal",
-    label: "Daily sales journal",
-    detail: "Closed business-date snapshot",
+    to: "/general-ledger",
+    label: "General ledger",
+    detail: "Every posted entry, including the sales journal",
   },
-  { to: "/profit-loss", label: "Profit and loss", detail: "Settled revenue and configured costs" },
+  { to: "/prime-cost", label: "Prime cost", detail: "Cost of sales and labour against revenue" },
   {
     to: "/supplier-performance",
     label: "Supplier performance",
-    detail: "Evidence-backed procurement metrics",
+    detail: "Delivery and price performance by supplier",
   },
-  { to: "/attendance", label: "Attendance", detail: "Recorded employee attendance" },
+  { to: "/attendance", label: "Attendance", detail: "Hours worked by staff" },
 ] as const;
 
 function Reports() {
   const { activeTenantId, branch, branchLabel, branchRecords, branchScope, currency, timeZone } =
     useAppContext();
-  const { state, syncFromBackend, backendStatus } = useTransactionEngine();
+  const { state, syncFromBackend } = useTransactionEngine();
   const selectedBranches =
     branchScope.type === "ALL"
       ? branchRecords
@@ -83,7 +84,7 @@ function Reports() {
       )
     : 0;
   return (
-    <AppShell title="Report centre" subtitle={`Operational and financial reports - ${branchLabel}`}>
+    <AppShell title="Reports" subtitle={branchLabel}>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric
           label="Ordered"
@@ -122,18 +123,16 @@ function Reports() {
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel>
           <PanelHead
-            title="Report shell preview"
-            sub="Daily sales summary"
+            title="Today's sales"
+            sub={
+              businessDateLabel === "Per branch"
+                ? "Each branch's own business day"
+                : businessDateLabel
+            }
             right={<Btn onClick={() => void syncFromBackend()}>Refresh</Btn>}
           />
           <div className="border-b border-border px-4 py-3">
-            <Chips
-              items={[
-                `Business date: ${businessDateLabel}`,
-                `Branch: ${branch}`,
-                `Sync: ${backendStatus}`,
-              ]}
-            />
+            <Chips items={[`Business date: ${businessDateLabel}`, `Branch: ${branchLabel}`]} />
           </div>
           <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
             <Metric label="Net sales" value={totalSales} money />
@@ -196,7 +195,7 @@ function Reports() {
         </Panel>
 
         <Panel>
-          <PanelHead title="Available reports" sub="Reports backed by implemented data sources" />
+          <PanelHead title="More reports" />
           <ul className="divide-y divide-border">
             {availableReports.map((item) => (
               <li key={item.to} className="px-4 py-2.5 text-[13px] hover:bg-secondary/50">

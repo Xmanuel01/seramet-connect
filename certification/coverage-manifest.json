@@ -302,6 +302,9 @@
     "src/routes/settings.tsx": {
       "directBrowser": "LOCAL_FIXTURE"
     },
+    "src/routes/statements.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
     "src/routes/stock-count.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },

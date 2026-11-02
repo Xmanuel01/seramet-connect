@@ -35,7 +35,7 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
     { ...fixture, branchId },
   );
   await page.goto("/payment-control");
-  await expect(page.getByRole("heading", { name: "Payment Control Centre" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Payments", exact: true })).toBeVisible();
   const opened = await page.evaluate(
     async ({ tenantId, userId, branchId }) => {
       const current = await (await fetch("/api/seramet/transactions")).json();

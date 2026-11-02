@@ -7,19 +7,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { currentDateKey, formatDate, ksh } from "@/lib/currency";
+import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import { useAppContext } from "@/lib/app-context";
 import { reportError } from "@/lib/user-facing-error";
 
 export const Route = createFileRoute("/supplier-bills")({
   head: () => ({
-    meta: [
-      { title: "Supplier Bills - Seramet" },
-      {
-        name: "description",
-        content:
-          "Supplier invoices linked to purchase orders, goods receipts, three-way matching and accounts payable journals.",
-      },
-    ],
+    meta: [{ title: "Supplier Bills - Seramet" }],
   }),
   component: SupplierBills,
 });
@@ -86,7 +80,7 @@ function SupplierBills() {
   return (
     <AppShell
       title="Supplier bills"
-      subtitle={`Three-way matched supplier invoices and AP posting - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Link to="/receiving">
@@ -112,7 +106,7 @@ function SupplierBills() {
           value={
             visibleCurrencies.length > 1
               ? overdueBills.length
-              : ksh(overdueMinor / 100, visibleCurrency)
+              : formatMinor(overdueMinor, visibleCurrency)
           }
           invert={overdueBills.length > 0}
         />
@@ -130,20 +124,15 @@ function SupplierBills() {
 
       {authoritative && availableReceipts.length === 0 && receipts.length > 0 && (
         <div className="mt-3 rounded-md border border-border bg-secondary/30 px-3 py-2 text-[12px] text-muted-foreground">
-          No unbilled posted receipt is visible for this branch. Refresh to retrieve the latest
-          receipt history.
+          Every received delivery already has a bill. Refresh to check for new deliveries.
         </div>
       )}
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Supplier invoice register"
-          sub="Invoice, PO, receipt, match result and posted accounts-payable evidence"
-        />
+        <PanelHead title="Bills" />
         {!invoices.length ? (
           <div className="p-8 text-center text-[13px] text-muted-foreground">
-            No supplier invoices have been posted in this branch yet. Post receiving first, then
-            enter the supplier bill against that goods receipt.
+            No supplier bills yet. Receive the delivery first, then enter its bill here.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -184,18 +173,18 @@ function SupplierBills() {
                       {row.due_date ? formatDate(row.due_date) : "Not set"}
                     </TD>
                     <TD className="num text-right">
-                      {ksh(Number(row.subtotal_minor) / 100, row.currency)}
+                      {formatMinor(Number(row.subtotal_minor), row.currency)}
                     </TD>
                     <TD className="num text-right">
-                      {ksh(Number(row.tax_minor) / 100, row.currency)}
+                      {formatMinor(Number(row.tax_minor), row.currency)}
                     </TD>
                     <TD className="num text-right font-semibold">
-                      {ksh(Number(row.total_minor) / 100, row.currency)}
+                      {formatMinor(Number(row.total_minor), row.currency)}
                     </TD>
                     <TD className="num text-right">
                       {row.variance_minor === null
                         ? "—"
-                        : ksh(Number(row.variance_minor) / 100, row.currency)}
+                        : formatMinor(Number(row.variance_minor), row.currency)}
                     </TD>
                     <TD>
                       <Status>{displayStatus(row.match_status ?? "Pending")}</Status>
@@ -209,27 +198,6 @@ function SupplierBills() {
             </table>
           </div>
         )}
-      </Panel>
-
-      <Panel className="mt-4">
-        <PanelHead
-          title="Control notes"
-          sub="Supplier payment scheduling remains separate from procurement bill posting"
-        />
-        <div className="grid gap-3 p-4 md:grid-cols-3">
-          <ControlNote
-            title="Document integrity"
-            text="A bill can only post when supplier, branch, purchase order, goods receipt and currency belong to the same procurement chain."
-          />
-          <ControlNote
-            title="Three-way match"
-            text="Seramet compares ordered quantities/value, accepted receipt value and the supplier invoice total before posting the match result."
-          />
-          <ControlNote
-            title="Accounting"
-            text="Posting creates the supplier invoice, match record and the configured inventory/tax/accounts-payable journal in one transaction."
-          />
-        </div>
       </Panel>
 
       <EnterSupplierBillDialog
@@ -247,8 +215,8 @@ function SupplierBills() {
               const response = result as { supplierInvoice?: { matchStatus?: string } };
               const status = response.supplierInvoice?.matchStatus;
               return status === "MATCHED"
-                ? "Supplier bill matched and posted to accounts payable."
-                : `Supplier bill posted with ${status ?? "unconfirmed"} matching status. Review the exception before payment.`;
+                ? "Bill posted. It matches the order and the delivery."
+                : "Bill posted, but it doesn't match the order or delivery. Check it before paying.";
             },
           ).then((succeeded) => {
             if (succeeded) setEntryOpen(false);
@@ -302,7 +270,7 @@ function EnterSupplierBillDialog({
 
   useEffect(() => {
     if (!receipt) return;
-    setSubtotal(String(Number(receipt.total_minor) / 100));
+    setSubtotal(String(majorFromMinor(Number(receipt.total_minor), invoiceCurrency)));
     setTax("0");
   }, [receipt?.id]);
 
@@ -323,15 +291,16 @@ function EnterSupplierBillDialog({
     }
   }, [open]);
 
-  const subtotalNumber = nonNegative(subtotal);
-  const taxNumber = nonNegative(tax);
-  const total = subtotalNumber === null || taxNumber === null ? null : subtotalNumber + taxNumber;
+  // Amounts are kept in the currency's minor units, so a currency without cents isn't scaled by 100.
+  const subtotalMinor = nonNegativeMinor(subtotal, invoiceCurrency);
+  const taxMinor = nonNegativeMinor(tax, invoiceCurrency);
+  const totalMinor = subtotalMinor === null || taxMinor === null ? null : subtotalMinor + taxMinor;
   const valid =
     Boolean(receipt && purchaseOrder && supplier && invoiceNumber.trim()) &&
     Boolean(invoiceDate) &&
-    subtotalNumber !== null &&
-    taxNumber !== null &&
-    total !== null &&
+    subtotalMinor !== null &&
+    taxMinor !== null &&
+    totalMinor !== null &&
     (!dueDate || dueDate >= invoiceDate);
 
   return (
@@ -351,8 +320,8 @@ function EnterSupplierBillDialog({
               {receipts.map((row) => (
                 <option key={row.id} value={row.id}>
                   {row.receipt_number} - {row.supplier_name} -{" "}
-                  {ksh(
-                    Number(row.total_minor) / 100,
+                  {formatMinor(
+                    Number(row.total_minor),
                     data?.procurement.purchaseOrders.find(
                       (order) => order.id === row.purchase_order_id,
                     )?.currency || fallbackCurrency,
@@ -395,9 +364,9 @@ function EnterSupplierBillDialog({
           </Field>
           <ReadOnlyField
             label="Receipt value"
-            value={receipt ? ksh(Number(receipt.total_minor) / 100, invoiceCurrency) : "—"}
+            value={receipt ? formatMinor(Number(receipt.total_minor), invoiceCurrency) : "—"}
           />
-          <Field label="Invoice subtotal">
+          <Field label="Bill amount before tax">
             <input
               inputMode="decimal"
               value={subtotal}
@@ -405,7 +374,7 @@ function EnterSupplierBillDialog({
               className={inputClass}
             />
           </Field>
-          <Field label="Recoverable tax">
+          <Field label="Tax on the bill">
             <input
               inputMode="decimal"
               value={tax}
@@ -417,25 +386,27 @@ function EnterSupplierBillDialog({
 
         <div className="grid gap-3 rounded-lg border border-border bg-secondary/30 p-3 sm:grid-cols-3">
           <Evidence
-            label="PO total"
+            label="Order total"
             value={
-              purchaseOrder ? ksh(Number(purchaseOrder.total_minor) / 100, invoiceCurrency) : "—"
+              purchaseOrder ? formatMinor(Number(purchaseOrder.total_minor), invoiceCurrency) : "—"
             }
           />
           <Evidence
-            label="Accepted receipt"
-            value={receipt ? ksh(Number(receipt.total_minor) / 100, invoiceCurrency) : "—"}
+            label="Delivery received"
+            value={receipt ? formatMinor(Number(receipt.total_minor), invoiceCurrency) : "—"}
           />
           <Evidence
-            label="Invoice total"
-            value={total === null ? "Invalid" : ksh(total, invoiceCurrency)}
+            label="Bill total"
+            value={
+              totalMinor === null ? "Check the amounts" : formatMinor(totalMinor, invoiceCurrency)
+            }
           />
         </div>
 
         {!receipts.length && (
           <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
-            No uninvoiced posted goods receipt is available. Complete receiving before posting a
-            supplier bill.
+            Every received delivery already has a bill. Receive the delivery before entering its
+            bill.
           </div>
         )}
 
@@ -455,9 +426,9 @@ function EnterSupplierBillDialog({
                 invoiceDate,
                 ...(dueDate ? { dueDate } : {}),
                 currency: invoiceCurrency,
-                subtotalMinor: Math.round(subtotalNumber! * 100),
-                taxMinor: Math.round(taxNumber! * 100),
-                totalMinor: Math.round(total! * 100),
+                subtotalMinor: subtotalMinor!,
+                taxMinor: taxMinor!,
+                totalMinor: totalMinor!,
               })
             }
           >
@@ -498,15 +469,6 @@ function Evidence({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ControlNote({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-secondary/20 p-3">
-      <div className="text-[12px] font-semibold">{title}</div>
-      <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{text}</div>
-    </div>
-  );
-}
-
 function isOverdue(dueDate: string | null, status: string, today: string) {
   return Boolean(dueDate && dueDate < today && !["PAID", "DISPUTED"].includes(status));
 }
@@ -515,9 +477,13 @@ function displayStatus(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function nonNegative(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+function nonNegativeMinor(value: string, currency: string) {
+  try {
+    const minor = parseMajorAmount(value, currency);
+    return minor >= 0 ? minor : null;
+  } catch {
+    return null;
+  }
 }
 
 function addDays(date: string, days: number) {
