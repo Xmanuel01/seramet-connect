@@ -1,6 +1,6 @@
 import { FONT } from "./font-5x8.mjs";
 import { rasterMetrics, validateRenderJob } from "../printing-core/thermal-layout.mjs";
-import { encodeEscPos } from "./escpos-encoder.mjs";
+import { encodeEscPos, finishCommands } from "./escpos-encoder.mjs";
 
 // Bounded bands, never a full-page pixel allocation. Adjacent GS v 0 bands
 // contain no text line-feed commands, so table borders meet across band seams.
@@ -58,8 +58,6 @@ export function encodePrintDocument(job, profile = job.profile) {
       b.data,
     );
   }
-  chunks.push(Buffer.from([27, 100, 3]));
-  if (profile.cutter !== "none")
-    chunks.push(Buffer.from([29, 86, profile.cutter === "partial" ? 1 : 0]));
+  chunks.push(finishCommands(profile.cutter));
   return Buffer.concat(chunks);
 }

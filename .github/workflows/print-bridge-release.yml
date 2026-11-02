@@ -1,12 +1,39 @@
 name: Publish Windows Print Bridge
 # Builds SerametPrintBridge.exe on Windows with Node 24, re-runs the installer
 # smoke test, and publishes it as the release the Printers page links to.
+# A merge to main that changes BRIDGE_VERSION publishes that version on its own,
+# so the Printers page download and Update button never point at a missing file.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["local-print-bridge/server.mjs"]
+concurrency: print-bridge-release
 permissions:
   contents: write
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip a version that is already released
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/.*BRIDGE_VERSION = "\(.*\)";.*/\1/p' local-print-bridge/server.mjs)
+          test -n "$version"
+          if gh release view "print-bridge-v$version" >/dev/null 2>&1; then
+            echo "print-bridge-v$version is already published; nothing to do."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
   release:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
