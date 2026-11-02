@@ -182,9 +182,10 @@ export function GeneralLedgerPage({ account, source }: { account?: string; sourc
     >
       <FinanceDates {...dates} refresh={ledger.refresh} />
       <div className="mt-3 flex flex-wrap items-end gap-3">
-        <label className="grid gap-1 text-[12px] font-medium">
-          Show
+        <div className="grid gap-1 text-[12px] font-medium">
+          <label htmlFor="ledger-source">Show</label>
           <select
+            id="ledger-source"
             className="h-9 rounded border border-border bg-background px-3"
             value={source ?? ""}
             onChange={(event) =>
@@ -194,10 +195,11 @@ export function GeneralLedgerPage({ account, source }: { account?: string; sourc
             <option value="">All entries</option>
             <option value="sales">Sales journal</option>
           </select>
-        </label>
-        <label className="grid min-w-[220px] gap-1 text-[12px] font-medium">
-          Account
+        </div>
+        <div className="grid min-w-[220px] gap-1 text-[12px] font-medium">
+          <label htmlFor="ledger-account">Account</label>
           <select
+            id="ledger-account"
             className="h-9 rounded border border-border bg-background px-3"
             value={account ?? ""}
             onChange={(event) => setFilters({ account: event.target.value || undefined, source })}
@@ -209,7 +211,7 @@ export function GeneralLedgerPage({ account, source }: { account?: string; sourc
               </option>
             ))}
           </select>
-        </label>
+        </div>
         {(account || source) && (
           <Btn onClick={() => setFilters({})}>
             <X className="h-4 w-4" /> Clear filters

@@ -15,6 +15,7 @@ import {
 import { accountTypeLabel, COST_TYPES, INCOME_TYPES } from "@/finance/finance-labels";
 import {
   type FinancialAccountRow,
+  financePeriodProblem,
   type FinanceStatement,
   useFinancePeriod,
   useFinanceReport,
@@ -34,12 +35,14 @@ export function isStatementTab(value: unknown): value is StatementTab {
   return statementTabs.some((tab) => tab.id === value);
 }
 
-/** The period of the same length that ends the day before `from`. */
+/** The period of the same length that ends the day before `from`; null for an invalid range. */
 export function previousPeriod(from: string, to: string) {
+  if (financePeriodProblem(from, to)) return null;
   const day = 86_400_000;
   const start = Date.parse(from + "T00:00:00Z");
   const end = Date.parse(to + "T00:00:00Z");
-  const length = Math.max(0, Math.round((end - start) / day));
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const length = Math.round((end - start) / day);
   const iso = (time: number) => new Date(time).toISOString().slice(0, 10);
   return { from: iso(start - (length + 1) * day), to: iso(start - day) };
 }
@@ -302,6 +305,10 @@ function TrialBalance({ statement }: { statement: FinanceStatement }) {
   const cell = "border-t border-border px-3 py-2.5 text-[12px]";
   const num = cell + " text-right tabular-nums";
   const currency = statement.scope.currency;
+  if (rows.length === 0)
+    return (
+      <p className="p-4 text-[12px] text-muted-foreground">Nothing recorded in this period.</p>
+    );
   return (
     <div className="overflow-x-auto">
       <div className="flex items-center gap-2 p-4 pb-2 text-[12px]">
@@ -342,9 +349,6 @@ function TrialBalance({ statement }: { statement: FinanceStatement }) {
           </tr>
         </tbody>
       </table>
-      {rows.length === 0 && (
-        <p className="p-4 text-[12px] text-muted-foreground">Nothing recorded in this period.</p>
-      )}
     </div>
   );
 }
@@ -428,9 +432,14 @@ export function StatementsPage({ tab }: { tab: StatementTab }) {
   const [compare, setCompare] = useState(false);
   const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
   const prior = previousPeriod(dates.from, dates.to);
-  const previous = useFinanceReport<FinanceStatement>("statement", prior.from, prior.to, {
-    enabled: compare && tab === "profit-loss",
-  });
+  const previous = useFinanceReport<FinanceStatement>(
+    "statement",
+    prior?.from ?? "",
+    prior?.to ?? "",
+    {
+      enabled: Boolean(prior) && compare && tab === "profit-loss",
+    },
+  );
   const statement = result.report;
   return (
     <AppShell
@@ -456,14 +465,16 @@ export function StatementsPage({ tab }: { tab: StatementTab }) {
             />
             {tab === "profit-loss" && (
               <>
-                <label className="flex items-center justify-end gap-2 px-4 pt-3 text-[12px]">
-                  <input
-                    type="checkbox"
-                    checked={compare}
-                    onChange={(event) => setCompare(event.target.checked)}
-                  />
-                  Compare with {prior.from} – {prior.to}
-                </label>
+                {prior && (
+                  <label className="flex items-center justify-end gap-2 px-4 pt-3 text-[12px]">
+                    <input
+                      type="checkbox"
+                      checked={compare}
+                      onChange={(event) => setCompare(event.target.checked)}
+                    />
+                    Compare with {prior.from} – {prior.to}
+                  </label>
+                )}
                 <ProfitAndLoss statement={statement} previous={compare ? previous.report : null} />
               </>
             )}
