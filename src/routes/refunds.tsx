@@ -20,6 +20,7 @@ import { getConfigurationRepository } from "@/platform/repositories/configuratio
 import { permissions } from "@/platform/permissions";
 import { majorFromMinor, parseMajorAmount } from "@/payments/money";
 import { refundableReceiptMinor } from "@/payments/refund-eligibility";
+import { UserFacingError, reportError } from "@/lib/user-facing-error";
 
 export const Route = createFileRoute("/refunds")({
   head: () => ({ meta: [{ title: "Refunds - Seramet" }] }),
@@ -134,8 +135,8 @@ function Refunds() {
           (row) => row.requestKey === operation.requestKey && row.receiptId === receipt.id,
         );
         if (!confirmed || (result && "offline" in result && result.offline))
-          throw new Error(
-            "The server has not confirmed this refund request. Your entries were retained.",
+          throw new UserFacingError(
+            "The refund request wasn't saved. Your entries are still here; try again.",
           );
         setSelectedId(confirmed.id);
         setNotice(
@@ -156,7 +157,7 @@ function Refunds() {
             (operation.kind === "reject" ? "REJECTED" : "APPROVED") ||
           (result && "offline" in result && result.offline)
         )
-          throw new Error("The server has not confirmed approval.");
+          throw new UserFacingError("The decision wasn't saved. Try again.");
         setNotice(
           operation.kind === "reject"
             ? `Refund ${pending.id} rejected. No payout has been made.`
@@ -167,9 +168,7 @@ function Refunds() {
     } catch (cause) {
       if (scopeRef.current === requestedScope)
         setError(
-          cause instanceof Error
-            ? cause.message
-            : "Refund operation failed. Your entries were retained.",
+          reportError(cause, "The refund wasn't saved. Your entries are still here; try again."),
         );
     } finally {
       busyRef.current = false;

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { RequestError, isAbort, userMessage } from "@/lib/user-facing-error";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
 import { scopedFinancePeriod } from "@/finance/finance-period-state";
@@ -122,8 +124,161 @@ export function useFinancePeriod() {
   };
 }
 
+export type FinanceReportKind = "statement" | "ledger" | "receivables" | "payables";
+
+// Till commands that never move money. Every other command, and any event this
+// list does not know, refreshes the figures: a needless background refresh is
+// cheap, stale accounts are not.
+const NON_FINANCIAL_COMMANDS = new Set([
+  "addRider",
+  "assignDeliveryRider",
+  "claimKitchenPrintObligation",
+  "claimKitchenPrintObligations",
+  "recallProductionStation",
+  "requestKitchenReprint",
+  "reviewKitchenPrintObligation",
+  "setDeliveryStatus",
+  "setProductionStationStatus",
+  "settleKitchenPrintObligation",
+  "upsertOrderDraft",
+]);
+const FINANCIAL_JOBS = /CLOSING|LEDGER|JOURNAL|POST|SETTLE|PAYMENT|BANK|RECONCIL/;
+
+/** Whether a live event can change accounting figures. */
+export function affectsFinance(event: unknown): boolean {
+  if (!event || typeof event !== "object") return true;
+  const { topic, eventType } = event as { topic?: unknown; eventType?: unknown };
+  const type = typeof eventType === "string" ? eventType : "";
+  if (topic === "transactions") return !NON_FINANCIAL_COMMANDS.has(type);
+  if (topic === "workers") return FINANCIAL_JOBS.test(type);
+  return true;
+}
+
+export const financeQueryRoot = "finance-report";
+
+/** Why a period can't be reported on, in words, or null when it can. */
+export function financePeriodProblem(from: string, to: string) {
+  const date = /^\d{4}-\d{2}-\d{2}$/;
+  if (!date.test(from) || !date.test(to)) return "Choose a start and end date.";
+  if (from > to) return "Choose a start date on or before the end date.";
+  return null;
+}
+// Bursts of events (a busy service) become one refresh shortly after the last.
+const LIVE_REFRESH_DELAY_MS = 1_000;
+let liveRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Refreshes on-screen finance reports once, shortly after the last of a burst of calls. */
+const listening = new WeakSet<QueryClient>();
+
+/**
+ * Subscribes once per app to live events. It stays subscribed after finance
+ * pages close: invalidation marks every cached report stale (refetching only
+ * those on screen), so a report reopened later never shows figures from
+ * before an event it missed.
+ */
+export function listenForFinanceEvents(queryClient: QueryClient) {
+  if (typeof window === "undefined" || listening.has(queryClient)) return;
+  listening.add(queryClient);
+  window.addEventListener("seramet:realtime", (event) => {
+    if (affectsFinance((event as CustomEvent).detail)) scheduleFinanceRefresh(queryClient);
+  });
+  window.addEventListener("seramet:refresh", () => scheduleFinanceRefresh(queryClient));
+}
+
+export function scheduleFinanceRefresh(queryClient: QueryClient) {
+  if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+  liveRefreshTimer = setTimeout(() => {
+    liveRefreshTimer = undefined;
+    // Only reports on screen refetch now; the rest refetch when next opened.
+    void queryClient.invalidateQueries({ queryKey: [financeQueryRoot], refetchType: "active" });
+  }, LIVE_REFRESH_DELAY_MS);
+}
+
+/** How long a report may take before the page offers to try again. */
+const REPORT_TIMEOUT_MS = 20_000;
+
+/** Cancels when the page moves on, or when the report takes too long. */
+export function withDeadline(signal: AbortSignal, ms = REPORT_TIMEOUT_MS) {
+  return typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.any([signal, AbortSignal.timeout(ms)])
+    : signal;
+}
+
+async function fetchFinanceReport<T>(path: string, signal: AbortSignal): Promise<T> {
+  const response = await authenticatedFetch(path, {
+    credentials: "same-origin",
+    signal: withDeadline(signal),
+    headers: { Accept: "application/json" },
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    ok?: boolean;
+    report?: T;
+    message?: string;
+  };
+  if (!response.ok || !body.ok || !body.report)
+    throw new RequestError(response.ok ? 502 : response.status, body.message ?? "");
+  return body.report;
+}
+
+export type FinanceReportRequest = {
+  tenantId: string;
+  /** Omitted for "all branches". */
+  branchId?: string;
+  kind: FinanceReportKind;
+  from: string;
+  to: string;
+  page?: number;
+  limit?: number;
+  accountType?: string;
+};
+
+/** How a finance report is cached, shared, retried and fetched. */
+export function financeQueryOptions<T>(
+  request: FinanceReportRequest,
+  fetchReport: (path: string, signal: AbortSignal) => Promise<T> = fetchFinanceReport,
+) {
+  const { tenantId, branchId, kind, from, to, page = 0, limit = 100, accountType = "" } = request;
+  const ledger = kind === "ledger";
+  return queryOptions({
+    // Pages asking for the same report share one request and one cached copy.
+    queryKey: [
+      financeQueryRoot,
+      tenantId,
+      branchId ?? "ALL",
+      kind,
+      from,
+      to,
+      ...(ledger ? [page, limit, accountType] : []),
+    ],
+    staleTime: 30_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    // Retry once for network and server faults; a refusal or a bad date range won't change.
+    retry: (failures, error) => {
+      const status = error instanceof RequestError ? error.httpStatus : undefined;
+      return failures < 1 && (status === undefined || status >= 500);
+    },
+    queryFn: async ({ signal }) => {
+      const search = new URLSearchParams({ from, to });
+      if (branchId) search.set("branchId", branchId);
+      if (ledger) {
+        search.set("limit", String(limit));
+        search.set("offset", String(page * limit));
+        if (accountType) search.set("accountType", accountType);
+      }
+      try {
+        return await fetchReport(`/api/seramet/finance/reports/${kind}?${search}`, signal);
+      } catch (error) {
+        if (!isAbort(error)) console.error(error);
+        throw error;
+      }
+    },
+  });
+}
+
 export function useFinanceReport<T>(
-  kind: "statement" | "ledger" | "receivables" | "payables",
+  kind: FinanceReportKind,
   from: string,
   to: string,
   page = 0,
@@ -131,99 +286,56 @@ export function useFinanceReport<T>(
   accountType = "",
 ) {
   const { activeTenantId, branchId, isAllBranches, hasPermission } = useAppContext();
+  const queryClient = useQueryClient();
   const allowed =
     hasPermission(permissions.accountingView) ||
     hasPermission(permissions.financeJournalView) ||
     hasPermission(permissions.financeView);
-  const [revision, setRevision] = useState(0);
-  const [state, setState] = useState<{
-    key: string;
-    status: "loading" | "ready" | "error";
-    report: T | null;
-    error: string;
-  }>({ key: "", status: "loading", report: null, error: "" });
-  const key = useMemo(
-    () =>
-      [
-        activeTenantId,
-        isAllBranches ? "ALL" : branchId,
-        kind,
-        from,
-        to,
-        page,
-        limit,
-        accountType,
-        revision,
-      ].join(":"),
-    [activeTenantId, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision],
-  );
-  useEffect(() => {
-    if (!allowed) return;
-    const controller = new AbortController();
-    setState({ key, status: "loading", report: null, error: "" });
-    const query = new URLSearchParams({ from, to });
-    if (!isAllBranches) query.set("branchId", branchId);
-    if (kind === "ledger") {
-      query.set("limit", String(limit));
-      query.set("offset", String(page * limit));
-      if (accountType) query.set("accountType", accountType);
-    }
-    void authenticatedFetch("/api/seramet/finance/reports/" + kind + "?" + query, {
-      credentials: "same-origin",
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    })
-      .then(async (response) => {
-        const body = (await response.json().catch(() => ({}))) as {
-          ok?: boolean;
-          report?: T;
-          message?: string;
-          error?: string;
-        };
-        if (!response.ok || !body.ok || !body.report) {
-          throw new Error(
-            body.message ||
-              body.error ||
-              "Finance report could not be loaded (" + response.status + ")",
-          );
-        }
-        if (!controller.signal.aborted)
-          setState({ key, status: "ready", report: body.report, error: "" });
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
-          setState({
-            key,
-            status: "error",
-            report: null,
-            error: cause instanceof Error ? cause.message : "Finance report unavailable",
-          });
-      });
-    return () => controller.abort();
-  }, [key, allowed, isAllBranches, branchId, kind, from, to, page, limit, accountType, revision]);
-  // Finance pages must refresh after cash settlement or any authoritative
-  // real-time event, without requiring the operator to manually reload.
-  useEffect(() => {
-    if (!allowed || typeof window === "undefined") return;
-    let timer: number | undefined;
-    const schedule = () => {
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => setRevision((value) => value + 1), 250);
-    };
-    window.addEventListener("seramet:refresh", schedule);
-    window.addEventListener("seramet:realtime", schedule);
-    return () => {
-      if (timer) window.clearTimeout(timer);
-      window.removeEventListener("seramet:refresh", schedule);
-      window.removeEventListener("seramet:realtime", schedule);
-    };
-  }, [allowed]);
+  // A half-typed date never reaches the server; the page says what to fix instead.
+  const periodProblem = financePeriodProblem(from, to);
+  const query = useQuery({
+    ...financeQueryOptions<T>({
+      tenantId: activeTenantId,
+      branchId: isAllBranches ? undefined : branchId,
+      kind,
+      from,
+      to,
+      page,
+      limit,
+      accountType,
+    }),
+    enabled: allowed && !periodProblem,
+  });
 
-  const current = allowed && state.key === key ? state : null;
+  // Live updates refresh in the background: figures already on screen stay
+  // until the new ones arrive, so the page never blanks during service.
+  useEffect(() => {
+    if (allowed) listenForFinanceEvents(queryClient);
+  }, [allowed, queryClient]);
+
+  const { refetch } = query;
+  const hasData = !periodProblem && query.data !== undefined;
   return {
-    status: !allowed ? ("denied" as const) : (current?.status ?? "loading"),
-    report: current?.status === "ready" ? current.report : null,
-    error: current?.error ?? "",
-    refresh: useCallback(() => setRevision((value) => value + 1), []),
+    status: !allowed
+      ? ("denied" as const)
+      : periodProblem
+        ? ("error" as const)
+        : hasData
+          ? ("ready" as const)
+          : query.isError
+            ? ("error" as const)
+            : ("loading" as const),
+    report: (hasData ? query.data : null) as T | null,
+    // With figures on screen, a failed refresh keeps them and says they may be out of date.
+    error: periodProblem
+      ? periodProblem
+      : query.isError
+        ? userMessage(query.error, "Something went wrong on our side. Try again in a moment.")
+        : "",
+    refreshing: hasData && query.isFetching,
+    updatedAt: query.dataUpdatedAt,
+    refresh: useCallback(() => {
+      if (!periodProblem) void refetch();
+    }, [periodProblem, refetch]),
   };
 }

@@ -35,6 +35,7 @@ import {
 import { SettlementService, settlementReferenceLabel } from "@/payments/settlement-service";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
+import { RequestError, UserFacingError, reportError, userMessage } from "@/lib/user-facing-error";
 
 type InvoicesSearch = { invoice?: string };
 
@@ -187,8 +188,10 @@ function Invoices() {
     );
     identity = { email: configuredIdentity.email, phone: configuredIdentity.phone };
   } catch (error) {
-    identityConfigurationError =
-      error instanceof Error ? error.message : "Document identity is not configured";
+    identityConfigurationError = userMessage(
+      error,
+      "Add the business email and phone in Settings to send invoices.",
+    );
   }
   const invoiceTimeZone = (() => {
     try {
@@ -268,8 +271,7 @@ function Invoices() {
     try {
       const profile = SerametPrintService.getBranchHardwareProfile(invoice.branch);
       const source = billingDocumentToPrintOrder(invoice, state, documentType);
-      if (!source)
-        throw new Error("No authoritative payment receipt is available for this invoice.");
+      if (!source) throw new UserFacingError("This invoice has no payment receipt yet.");
       const job = SerametPrintService.createDocumentJob(profile, source, documentType);
       setPrintPreview({
         billingId: invoice.id,
@@ -286,7 +288,7 @@ function Invoices() {
         ),
       );
     } catch (error) {
-      setWarning(error instanceof Error ? error.message : "Printing is not configured.");
+      setWarning(reportError(error, "Couldn't prepare this document for printing. Try again."));
     }
   };
 
@@ -399,11 +401,16 @@ function Invoices() {
       );
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { message?: string };
-        setWarning(body.message ?? "Provider payment could not be initiated.");
+        setWarning(
+          reportError(
+            new RequestError(response.status, body.message ?? ""),
+            "Couldn't send the payment request. Try again.",
+          ),
+        );
         return;
       }
       await syncFromBackend();
-      setWarning("Payment request initiated. The invoice stays open until verified confirmation.");
+      setWarning("Payment request sent. The invoice stays open until the payment is confirmed.");
       setSettleInvoice(null);
       return;
     }
@@ -419,7 +426,7 @@ function Invoices() {
         },
       });
     } catch (error) {
-      setWarning(error instanceof Error ? error.message : "Settlement could not be recorded.");
+      setWarning(reportError(error, "Couldn't record the payment. Try again."));
       return;
     }
     if (disposition === "CONFIRMED") {
@@ -849,7 +856,7 @@ function Invoices() {
                       printPreview.documentType,
                     );
                     if (!document) {
-                      setWarning("No authoritative payment receipt is available for this invoice.");
+                      setWarning("This invoice has no payment receipt yet.");
                       return;
                     }
                     const result = printCustomerDocument(document, printPreview.documentType);
@@ -895,8 +902,8 @@ function Invoices() {
               (result && "offline" in result && result.offline) ||
               confirmed?.length !== splits.length
             )
-              throw new Error(
-                "The server has not confirmed the split. Your amounts were retained.",
+              throw new UserFacingError(
+                "The split wasn't saved. Your amounts are still here; try again.",
               );
             setSelectedIds([]);
           }}

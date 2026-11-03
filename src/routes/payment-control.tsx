@@ -26,6 +26,7 @@ import { MpesaPrompts, MpesaToMatch } from "@/components/app/MpesaToMatch";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { closingPolicy } from "@/payments/daily-closing";
+import { RequestError, reportError } from "@/lib/user-facing-error";
 
 export const Route = createFileRoute("/payment-control")({
   head: () => ({
@@ -183,9 +184,7 @@ function PaymentControlCentre() {
   const runMutation = (label: string, action: string, payload: unknown) => {
     void mutateTransaction(action, payload)
       .then(() => setNotice(label))
-      .catch((error) =>
-        setNotice(error instanceof Error ? error.message : "Payment operation failed"),
-      );
+      .catch((error) => setNotice(reportError(error, "That didn't save. Try again.")));
   };
 
   // Asks Safaricom about one unanswered prompt and reports the outcome in plain words.
@@ -206,7 +205,7 @@ function PaymentControlCentre() {
       message?: string;
       results?: Array<{ outcome: string; reason?: string }>;
     };
-    if (!response.ok) throw new Error(payload.message ?? "Could not check the payment");
+    if (!response.ok) throw new RequestError(response.status, payload.message ?? "");
     await syncFromBackend();
     const result = payload.results?.[0];
     if (!result) return "Nothing to check; the prompt already finished";

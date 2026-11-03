@@ -282,7 +282,7 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
         await staff.setOffline(true);
         await settle.click();
         await expect(
-          page.getByText("settleInvoice is unavailable while the POS is offline", { exact: true }),
+          page.getByText("You're offline. Reconnect, then try again.", { exact: true }),
         ).toBeVisible();
         expect(
           (await snapshot()).state.receipts.filter((row) => row.invoiceId === bill.id),
