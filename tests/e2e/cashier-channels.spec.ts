@@ -207,8 +207,8 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
       }
       if (channelType === "DINE_IN") {
         expect(channel.requiresTable).toBe(true);
-        // Dine-in cannot be paid before it reaches the kitchen, so Pay is not offered yet.
-        await expect(page.getByRole("button", { name: /^Pay / })).toHaveCount(0);
+        // Dine-in cannot be billed before it reaches the kitchen.
+        await expect(page.getByRole("button", { name: /^Bill / })).toBeDisabled();
         await send.click();
         const picker = page.getByRole("dialog", { name: "Select table", exact: true });
         await expect(picker).toBeVisible();
@@ -238,13 +238,8 @@ for (const channelType of ["TAKEAWAY", "DINE_IN", "OWN_DELIVERY"]) {
       expect(
         (await snapshot()).state.kitchenPrintObligations?.some((row) => row.orderId === saved.id),
       ).toBe(true);
-      await page.goto("/invoices");
-      await expect(page.getByText(saved.id, { exact: false }).first()).toBeVisible();
-      await page
-        .getByText(new RegExp(`^${saved.id} ·`))
-        .locator("../..")
-        .getByRole("button", { name: "Create / open invoice", exact: true })
-        .click();
+      // Place Order cleared the screen; the order waits in Orders until it is billed.
+      await billFromOrders(page, saved.id);
       await expect
         .poll(
           async () =>
@@ -599,7 +594,18 @@ test("own delivery rejects dispatch without the configured required customer and
   }
 });
 
-test("dine-in POS flow: typed order, Place Order, reopen at the table, cash with change", async ({
+async function billFromOrders(page: import("@playwright/test").Page, orderId: string) {
+  await page.getByRole("button", { name: /^Orders/ }).click();
+  await page.getByRole("button", { name: new RegExp(`^${orderId}`) }).click();
+  await page.getByRole("button", { name: /^Bill / }).click();
+  await page
+    .getByRole("dialog", { name: `Bill ${orderId}`, exact: true })
+    .getByRole("button", { name: "Don't print bill", exact: true })
+    .click();
+  await page.goto("/invoices");
+}
+
+test("dine-in POS flow: typed order, Place Order, reopen at the table, Bill, settle cash with change", async ({
   browser,
   context,
 }) => {
@@ -645,17 +651,34 @@ test("dine-in POS flow: typed order, Place Order, reopen at the table, cash with
     await expect(occupied).toContainText("Occupied");
     await occupied.click();
     await expect(panel.getByText(`Order ${placed.id}`, { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Pay Ksh 3,000", exact: true }).click();
-    const payment = page.getByRole("dialog", { name: "Take payment", exact: true });
-    await payment.getByRole("button", { name: /^Cash/ }).click();
-    await payment.getByLabel(/^Cash received/).fill("5000");
-    // Full payment: the balance is pre-filled and Confirm commits it in one step.
-    await expect(payment.getByLabel(/^Amount to apply/)).toHaveValue("3000");
-    await expect(payment.getByRole("button", { name: "Add payment", exact: true })).toHaveCount(0);
-    await payment.getByRole("button", { name: /^Confirm .* payment$/ }).click();
-    await expect(payment.getByText("Payment confirmed")).toBeVisible();
-    await expect(payment.getByText(`Order ${placed.id} is fully paid.`)).toBeVisible();
-    await payment.getByRole("button", { name: "Close order", exact: true }).click();
+    // Bill turns the order into an unpaid invoice and clears the screen.
+    await page.getByRole("button", { name: "Bill Ksh 3,000", exact: true }).click();
+    const confirm = page.getByRole("dialog", { name: `Bill ${placed.id}`, exact: true });
+    await expect(confirm.getByText("Ksh 3,000").last()).toBeVisible();
+    await confirm.getByRole("button", { name: "Don't print bill", exact: true }).click();
+    await expect(panel.getByText(`Order ${placed.id}`, { exact: true })).toHaveCount(0);
+    await expect
+      .poll(async () =>
+        (await snapshot()).state.bills.find((row) => row.orderIds.includes(placed.id)),
+      )
+      .toMatchObject({ paymentStatus: "UNPAID" });
+
+    // Invoices opens on unpaid bills; cash is taken there, with change.
+    const unpaid = (await snapshot()).state.bills.find((row) => row.orderIds.includes(placed.id))!;
+    await page.goto("/invoices");
+    const row = page.getByRole("row").filter({ hasText: invoiceDisplayName(unpaid.id) });
+    await row.getByRole("button", { name: "Settle", exact: true }).click();
+    const settle = page.getByRole("dialog", { name: "Settle invoice", exact: true });
+    await settle.getByRole("button", { name: "Cash", exact: true }).click();
+    await expect(settle.getByLabel("Amount", { exact: true })).toHaveValue("3000");
+    await settle.getByLabel("Cash received", { exact: true }).fill("5000");
+    await expect(settle.getByText("Ksh 2,000", { exact: true })).toBeVisible();
+    await settle.getByRole("button", { name: "Settle invoice", exact: true }).click();
+    const recorded = page.getByRole("dialog", { name: "Settlement recorded" });
+    // Currency formatting uses a non-breaking space; toContainText normalises it.
+    await expect(recorded).toContainText("Give Ksh 2,000 change.");
+    await recorded.getByRole("button", { name: "Do not print", exact: true }).click();
+    await page.goto("/pos");
 
     const after = (await snapshot()).state;
     const bill = after.bills.find((row) => row.orderIds.includes(placed.id))!;

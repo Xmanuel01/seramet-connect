@@ -389,8 +389,9 @@ test("staff account creation through sale and supervisor business-day close", as
     events.push(
       "Two server dispatch submissions produced one KOT obligation; physical print not acknowledged by this simulation",
     );
+    // Billing happens on POS; the API stands in for the cashier here.
+    await mutate("prepareInvoiceForPayment", { orderId: held.id });
     await cashier.goto("/invoices");
-    await cashier.getByRole("button", { name: "Create / open invoice", exact: true }).click();
     current = await snapshot();
     const bill = current.state.bills.find((invoice) => invoice.orderIds.includes(held.id))!;
     expect(bill).toBeTruthy();

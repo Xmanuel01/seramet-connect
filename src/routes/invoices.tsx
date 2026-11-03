@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { recordBusinessDate, resolvePosTimeZone, unbilledKitchenOrders } from "@/lib/pos-workflow";
-import { useRef, useState } from "react";
+import { recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
 import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
@@ -10,7 +10,9 @@ import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } 
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { activeTimeZone, ksh } from "@/lib/currency";
+import { activeLocale, activeTimeZone, ksh } from "@/lib/currency";
+import { formatMinor, parseMajorAmount } from "@/payments/money";
+import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
@@ -149,12 +151,18 @@ function Invoices() {
   const [settlementReference, setSettlementReference] = useState("");
   const [settlementCustomerPhone, setSettlementCustomerPhone] = useState("");
   const [settlementAmount, setSettlementAmount] = useState(0);
+  const [cashReceived, setCashReceived] = useState(0);
+  // Change to hand back, already formatted in the currency it is given in.
+  const [changeGiven, setChangeGiven] = useState("");
+  const [acceptedCurrencies, setAcceptedCurrencies] = useState<AcceptedCurrency[]>([]);
+  const [tenderCurrency, setTenderCurrency] = useState("");
+  const [fxQuote, setFxQuote] = useState<FxPaymentQuote | null>(null);
+  const [settling, setSettling] = useState(false);
   const [receiptPrompt, setReceiptPrompt] = useState<BillingRecord | null>(null);
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
   const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Open" | "Pending">("Open");
-  const [billingOrderId, setBillingOrderId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Pending">("Unpaid");
   const [periodDate, setPeriodDate] = useState("");
   const {
     activeTenantId,
@@ -164,6 +172,7 @@ function Invoices() {
     currentUser,
     matchesBranch,
     hasPermission,
+    role,
   } = useAppContext();
   const canSplit = hasPermission(permissions.invoicesManage);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
@@ -173,11 +182,50 @@ function Invoices() {
   const currency = getConfigurationRepository().getTenant(activeTenantId).defaultCurrency;
   const { state, mutate, syncFromBackend } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
+  useEffect(() => {
+    const controller = new AbortController();
+    const token = getSerametAccessToken();
+    void fetch("/api/seramet/setup/payment-currencies", {
+      signal: controller.signal,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "x-seramet-user-id": currentUser.id,
+        "x-seramet-tenant-id": activeTenantId,
+        "x-seramet-branch-id": branchId,
+        "x-seramet-user": currentUser.name,
+        "x-seramet-role": role,
+      },
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as { currencies?: AcceptedCurrency[] };
+        if (response.ok && body.currencies) setAcceptedCurrencies(body.currencies);
+      })
+      // Without the list, cash is taken in the base currency only.
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [activeTenantId, branchId, currentUser.id, currentUser.name, role]);
   const settlementService = new SettlementService();
   const settlementMethods = settlementService.listMethods(activeTenantId);
   const selectedSettlementMethod = settlementMethods.find(
     (method) => method.id === settlementMethod,
   );
+  // Foreign cash this branch takes with the chosen method; the base currency always comes first.
+  const foreignCurrencies =
+    selectedSettlementMethod?.category === "CASH"
+      ? acceptedCurrencies.filter(
+          (option) =>
+            !option.isBase &&
+            option.status === "ACTIVE" &&
+            option.cashEligible &&
+            (!option.branchIds.length || option.branchIds.includes(branchId)) &&
+            (!option.paymentMethodIds.length ||
+              option.paymentMethodIds.includes(selectedSettlementMethod.id)),
+        )
+      : [];
+  const tender = foreignCurrencies.some((option) => option.code === tenderCurrency)
+    ? tenderCurrency
+    : currency;
+  const foreignTender = tender !== currency;
   let identity = { email: "", phone: "" };
   let identityConfigurationError = "";
   try {
@@ -232,16 +280,12 @@ function Invoices() {
   const rows = mergeDocuments(server.rows, state.bills).filter((bill) =>
     matchesBranch(bill.branchId ?? bill.branch),
   );
-  const awaitingBill = unbilledKitchenOrders(
-    state.orders.filter((order) => (order.branchId ?? branchId) === branchId),
-    state.bills,
-  );
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
     .filter((row) => !periodDate || invoiceDay(row) === periodDate)
     .filter((row) => {
       if (statusFilter === "Paid") return row.paymentStatus === "PAID";
-      if (statusFilter === "Open") return row.status === "OPEN" || row.paymentStatus === "PARTIAL";
+      if (statusFilter === "Unpaid") return row.paid < row.total;
       if (statusFilter === "Pending")
         return row.status === "PENDING" || row.paymentStatus === "UNPAID";
       return true;
@@ -260,29 +304,6 @@ function Invoices() {
   };
 
   const selectedBills = activeRows.filter((row) => selectedIds.includes(row.id));
-
-  const createBillFromKitchen = async (orderId: string) => {
-    if (billingOrderId) return;
-    setBillingOrderId(orderId);
-    try {
-      const result = await mutate("prepareInvoiceForPayment", { orderId });
-      const invoice = result?.state?.bills.find(
-        (bill) =>
-          bill.orderIds.includes(orderId) && ["OPEN", "PARTIAL", "PENDING"].includes(bill.status),
-      );
-      if (!invoice)
-        throw new UserFacingError(
-          "Couldn't open an invoice for this order. Refresh and try again.",
-        );
-      setStatusFilter("Open");
-      setPeriodDate("");
-      setWarning(`${orderId} is available in Invoices as ${invoice.id}.`);
-    } catch (error) {
-      setWarning(reportError(error, "Couldn't create this invoice. Try again."));
-    } finally {
-      setBillingOrderId(null);
-    }
-  };
 
   const toggleInvoice = (invoiceId: string) => {
     setSelectedIds((current) =>
@@ -406,8 +427,87 @@ function Invoices() {
         "",
     );
     setSettlementAmount(invoice.total - invoice.paid);
+    setCashReceived(0);
+    setTenderCurrency(currency);
+    setFxQuote(null);
     setSettlementReference("");
     setSettlementCustomerPhone("");
+  };
+
+  const fxHeaders = () => {
+    const token = getSerametAccessToken();
+    return {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "x-seramet-user-id": currentUser.id,
+      "x-seramet-tenant-id": activeTenantId,
+      "x-seramet-branch-id": branchId,
+      "x-seramet-user": currentUser.name,
+      "x-seramet-role": role,
+    };
+  };
+
+  const settleInForeignCash = async (
+    invoice: BillingRecord,
+    amount: number,
+    paymentMethodId: string,
+  ) => {
+    if (settling) return;
+    setSettling(true);
+    try {
+      const amountMinor = parseMajorAmount(amount, currency);
+      // First press: lock the rate so the cashier can tell the customer what to pay.
+      if (!fxQuote) {
+        const response = await fetch("/api/seramet/setup/fx-quotes", {
+          method: "POST",
+          headers: fxHeaders(),
+          body: JSON.stringify({
+            branchId: invoice.branchId ?? branchId,
+            invoiceId: invoice.id,
+            paymentMethodId,
+            baseAmountMinor: amountMinor,
+            tenderCurrency: tender,
+            idempotencyKey: `fx-quote:${crypto.randomUUID()}`,
+          }),
+        });
+        const body = (await response.json().catch(() => ({}))) as {
+          quote?: FxPaymentQuote;
+          message?: string;
+        };
+        if (!response.ok || !body.quote)
+          throw new RequestError(response.ok ? 502 : response.status, body.message ?? "");
+        setFxQuote(body.quote);
+        return;
+      }
+      const tenderedMinor = cashReceived
+        ? parseMajorAmount(cashReceived, fxQuote.tenderCurrency)
+        : fxQuote.tenderAmountMinor;
+      if (tenderedMinor < fxQuote.tenderAmountMinor) {
+        setWarning("Cash received is less than the amount due in this currency.");
+        return;
+      }
+      await mutate("applyConfiguredPayment", {
+        invoiceId: invoice.id,
+        paymentMethodId,
+        amountMinor,
+        cashTenderedMinor: tenderedMinor,
+        fxQuoteId: fxQuote.id,
+        tenderCurrency: fxQuote.tenderCurrency,
+        tenderedAmountMinor: tenderedMinor,
+      });
+      const changeMinor = tenderedMinor - fxQuote.tenderAmountMinor;
+      setChangeGiven(
+        changeMinor > 0 ? formatMinor(changeMinor, fxQuote.tenderCurrency, activeLocale()) : "",
+      );
+      setReceiptPrompt(invoice);
+      setSettleInvoice(null);
+    } catch (error) {
+      // A rejected or expired rate is dropped so the next press asks for a fresh one.
+      setFxQuote(null);
+      setWarning(reportError(error, "Couldn't take payment in this currency. Try again."));
+    } finally {
+      setSettling(false);
+    }
   };
 
   const confirmSettlement = async () => {
@@ -418,7 +518,20 @@ function Invoices() {
       return;
     }
     if (settlementAmount <= 0) return;
-    const amount = Math.min(settlementAmount, settleInvoice.total - settleInvoice.paid);
+    const outstanding = settleInvoice.total - settleInvoice.paid;
+    const amount = Math.min(settlementAmount, outstanding);
+    const isCash = selectedSettlementMethod?.category === "CASH";
+    if (isCash && foreignTender && selectedSettlementMethod) {
+      await settleInForeignCash(settleInvoice, amount, selectedSettlementMethod.id);
+      return;
+    }
+    if (isCash && cashReceived > 0 && cashReceived < amount) {
+      setWarning("Cash received is less than the amount being paid.");
+      return;
+    }
+    // Change is only given when the whole balance is paid in cash; the server
+    // keeps the balance and records the change from what was handed over.
+    const change = isCash && amount >= outstanding ? Math.max(0, cashReceived - amount) : 0;
     const disposition = selectedSettlementMethod
       ? settlementService.disposition(selectedSettlementMethod)
       : undefined;
@@ -473,7 +586,7 @@ function Invoices() {
           tenantId: activeTenantId,
           invoiceId: settleInvoice.id,
           paymentMethodId: settlementMethod,
-          amount,
+          amount: amount + change,
           reference: settlementReference,
           cashier: currentUser.name,
         },
@@ -483,6 +596,7 @@ function Invoices() {
       return;
     }
     if (disposition === "CONFIRMED") {
+      setChangeGiven(change > 0 ? ksh(change) : "");
       setReceiptPrompt(settleInvoice);
     } else if (disposition === "AWAITING_VERIFICATION") {
       setWarning("Payment reference recorded for verification. No paid receipt was generated.");
@@ -527,37 +641,6 @@ function Invoices() {
           </button>
         </div>
       )}
-      {awaitingBill.length > 0 && (
-        <Panel className="mt-4">
-          <PanelHead
-            title="Kitchen orders awaiting billing"
-            sub="Dispatched kitchen orders remain available after leaving the POS pending queue."
-          />
-          <div className="divide-y divide-border">
-            {awaitingBill.map((order) => (
-              <div
-                key={order.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-              >
-                <div className="min-w-0 text-[13px]">
-                  <div className="font-bold">
-                    {order.id} · {order.customer}
-                  </div>
-                  <div className="text-muted-foreground">
-                    {order.status.replaceAll("_", " ")} · {order.channel} · {ksh(order.total)}
-                  </div>
-                </div>
-                <Btn
-                  onClick={() => void createBillFromKitchen(order.id)}
-                  disabled={billingOrderId !== null}
-                >
-                  {billingOrderId === order.id ? "Preparing..." : "Create / open invoice"}
-                </Btn>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      )}
       <Panel className="mt-4">
         <PanelHead
           title="Invoices"
@@ -571,7 +654,7 @@ function Invoices() {
               {
                 label: "Status",
                 value: statusFilter,
-                options: ["Open", "Paid", "Pending", "All"],
+                options: ["Unpaid", "Paid", "Pending", "All"],
                 selectedOption: statusFilter,
                 onOptionChange: (value) => setStatusFilter(value as typeof statusFilter),
                 onClear: () => setStatusFilter("All"),
@@ -822,10 +905,48 @@ function Invoices() {
                     type="number"
                     min={0}
                     value={settlementAmount}
-                    onChange={(event) => setSettlementAmount(Number(event.target.value))}
+                    onChange={(event) => {
+                      setSettlementAmount(Number(event.target.value));
+                      setFxQuote(null);
+                    }}
                     className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
                   />
                 </label>
+                {foreignCurrencies.length > 0 && (
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                    Currency
+                    <select
+                      value={tender}
+                      onChange={(event) => {
+                        setTenderCurrency(event.target.value);
+                        setCashReceived(0);
+                        setFxQuote(null);
+                      }}
+                      className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
+                    >
+                      <option value={currency}>{currency}</option>
+                      {foreignCurrencies.map((option) => (
+                        <option key={option.code} value={option.code}>
+                          {option.code} - {option.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {selectedSettlementMethod?.category === "CASH" && (
+                  <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
+                    {foreignTender ? `Cash received (${tender})` : "Cash received"}
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={cashReceived || ""}
+                      placeholder={foreignTender ? "" : String(settlementAmount)}
+                      onChange={(event) => setCashReceived(Number(event.target.value))}
+                      className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none"
+                    />
+                  </label>
+                )}
                 {selectedSettlementMethod?.requiresReference && (
                   <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                     {settlementReferenceLabel(selectedSettlementMethod)}
@@ -862,6 +983,23 @@ function Invoices() {
                     </label>
                   )}
               </div>
+              {foreignTender && fxQuote && (
+                <div className="flex items-center justify-between rounded-md bg-info-soft px-3 py-2 text-[13px] font-semibold text-info">
+                  <span>Customer pays (rate held 5 minutes)</span>
+                  <span className="num text-[16px]">
+                    {formatMinor(fxQuote.tenderAmountMinor, fxQuote.tenderCurrency, activeLocale())}
+                  </span>
+                </div>
+              )}
+              {selectedSettlementMethod?.category === "CASH" &&
+                !foreignTender &&
+                cashReceived > settlementAmount &&
+                settlementAmount >= settleInvoice.total - settleInvoice.paid && (
+                  <div className="flex items-center justify-between rounded-md bg-success-soft px-3 py-2 text-[13px] font-semibold text-success">
+                    <span>Change due</span>
+                    <span className="num text-[16px]">{ksh(cashReceived - settlementAmount)}</span>
+                  </div>
+                )}
               {selectedSettlementMethod?.category === "CREDIT" && (
                 <div className="rounded-md bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
                   Credit settlement posts to the customer or partner receivable account for later
@@ -876,7 +1014,11 @@ function Invoices() {
               <div className="flex justify-end gap-2 border-t border-border pt-4">
                 <Btn onClick={() => setSettleInvoice(null)}>Cancel</Btn>
                 <Btn variant="primary" onClick={confirmSettlement}>
-                  {settlementMethod === "PENDING" ? "Mark pending" : "Settle invoice"}
+                  {settlementMethod === "PENDING"
+                    ? "Mark pending"
+                    : foreignTender && !fxQuote
+                      ? `Get ${tender} amount`
+                      : "Settle invoice"}
                 </Btn>
               </div>
             </div>
@@ -890,7 +1032,8 @@ function Invoices() {
               <CheckCircle2 className="h-5 w-5 text-success" /> Settlement recorded
             </DialogTitle>
             <DialogDescription>
-              {receiptPrompt?.id} has been settled and will appear on Receipts once cleared.
+              {receiptPrompt?.id} is paid.
+              {changeGiven && ` Give ${changeGiven} change.`}
             </DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">

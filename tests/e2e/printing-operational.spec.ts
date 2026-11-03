@@ -430,9 +430,24 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       "UI create three-station order, quantity 2, item preparation note, Hold, exact recall, Place Order; three authoritative obligations and independent emulator destinations verified",
     );
     await cashier.screenshot({ path: join(evidence, "pos-sent.png"), fullPage: true });
+    // Place Order cleared the screen; bill the order from Orders without printing.
+    await cashier.getByRole("button", { name: /^Orders\s+\d/ }).click();
+    await cashier
+      .getByRole("button", { name: new RegExp(held.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) })
+      .click();
+    await cashier.getByRole("button", { name: /^Bill / }).click();
+    await cashier
+      .getByRole("dialog", { name: `Bill ${held.id}`, exact: true })
+      .getByRole("button", { name: "Don't print bill", exact: true })
+      .click();
+    await expect
+      .poll(async () =>
+        (await snapshot()).state.bills.some((item: { orderIds: string[] }) =>
+          item.orderIds.includes(held.id),
+        ),
+      )
+      .toBe(true);
     await cashier.goto("/invoices");
-    await expect(cashier.getByText(held.id, { exact: false }).first()).toBeVisible();
-    await cashier.getByRole("button", { name: "Create / open invoice", exact: true }).click();
     const bill = (await snapshot()).state.bills.find((item: { orderIds: string[] }) =>
       item.orderIds.includes(held.id),
     );

@@ -176,10 +176,16 @@ test("another terminal's durable acknowledgement clears a recovered order; uncer
         ).toBeVisible();
         await expect(page.getByPlaceholder("Item note")).toHaveCount(0);
       } else {
+        // The order still clears: it stays in Orders, and only the ticket needs checking.
         await expect(
-          page.getByText(/Verify the ticket in Printers before leaving this order/),
+          page.getByText(
+            `${order.id} is in Orders, but its kitchen ticket isn't confirmed. Check it in Printers.`,
+            {
+              exact: true,
+            },
+          ),
         ).toBeVisible();
-        await expect(page.getByPlaceholder("Item note")).toBeVisible();
+        await expect(page.getByPlaceholder("Item note")).toHaveCount(0);
       }
       current = await snapshot();
       expect(

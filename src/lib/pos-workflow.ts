@@ -6,30 +6,17 @@ import type {
 } from "@/lib/transaction-engine";
 import { currentDateKey } from "@/lib/currency";
 
-/**
- * The POS Orders badge counts only orders that still require cashier dispatch.
- * Kitchen work and billing remain authoritative, but live in their own screens.
- */
+/** Orders still on the till: held, or sent to the kitchen and not yet billed. */
 export function pendingPosOrders<T extends Pick<TransactionOrder, "id" | "status">>(
   orders: readonly T[],
   bills: readonly Pick<BillingRecord, "orderIds">[],
 ): T[] {
   const billedIds = new Set(bills.flatMap((bill) => bill.orderIds));
   return orders.filter(
-    (order) => (order.status === "HELD" || order.status === "OPEN") && !billedIds.has(order.id),
-  );
-}
-
-/** Kitchen orders can be billed even after leaving the POS entry queue. */
-export function unbilledKitchenOrders<T extends Pick<TransactionOrder, "id" | "status">>(
-  orders: readonly T[],
-  bills: readonly Pick<BillingRecord, "orderIds">[],
-): T[] {
-  const billedIds = new Set(bills.flatMap((bill) => bill.orderIds));
-  return orders.filter(
     (order) =>
-      ["SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(order.status) &&
-      !billedIds.has(order.id),
+      ["HELD", "OPEN", "SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
+        order.status,
+      ) && !billedIds.has(order.id),
   );
 }
 
