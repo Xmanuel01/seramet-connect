@@ -4,6 +4,7 @@ import { Activity, Cable, ImageIcon, Printer, RotateCcw, ShieldCheck, Upload } f
 import { AppShell } from "@/components/app/AppShell";
 import { PrinterAdministration } from "@/components/app/PrinterAdministration";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { KitchenPrintBypassPanel } from "@/components/app/KitchenPrintBypassPanel";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { permissions } from "@/platform/permissions";
@@ -415,6 +416,7 @@ function SerametPrinters() {
         }
       >
         <PrinterAdministration />
+        <KitchenPrintBypassPanel />
         <Panel>
           <PanelHead
             title="Print setup required"

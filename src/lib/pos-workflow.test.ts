@@ -23,6 +23,8 @@ import {
   resolvePosTimeZone,
   acknowledgedKitchenDispatch,
 } from "./pos-workflow";
+import { kitchenPrintRecoveryItems } from "./kitchen-print-recovery";
+import { startKitchenPrintBypass } from "./kitchen-print-bypass";
 
 describe("POS production queue separation", () => {
   const orders = [
@@ -156,6 +158,59 @@ describe("authoritative held-to-kitchen-to-invoice order continuity", () => {
     expect(check(accepted.map((ticket) => ({ ...ticket, lines: [] })))).toBe(false);
     const repeated = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
     expect(repeated.kitchenPrintObligations).toHaveLength(2);
+  });
+  it("files kitchen tickets as bypassed while the branch printer bypass is on", () => {
+    const platform = createDefaultDemoPlatformState();
+    const branch = platform.branches.find((row) => row.id === DEMO_WESTLANDS_BRANCH_ID)!;
+    branch.metadata = startKitchenPrintBypass(branch.metadata, {
+      startedBy: "Owner",
+      reason: "Kitchen printer is being replaced",
+    });
+    setConfigurationRepositoryForTests(new ConfigurationRepository(platform));
+    let state = TransactionEngine.holdOrder(createEmptyTransactionState(DEMO_TENANT_ID), {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      branch: "Westlands",
+      table: "05",
+      customer: "Table 05",
+      channel: "Dine-In",
+      cashier: "Cashier",
+      lines: [
+        {
+          id: "bypass-line",
+          productId: "p1",
+          name: "Meal",
+          category: "Meals",
+          quantity: 1,
+          unitPrice: 100,
+          productionStation: "MAIN KITCHEN",
+        },
+      ],
+    });
+    const orderId = state.orders[0]!.id;
+    state = TransactionEngine.sendToKitchen(state, orderId, "Cashier");
+    const tickets = state.kitchenPrintObligations!;
+    expect(tickets.map((ticket) => ticket.status)).toEqual(["BYPASSED"]);
+    // The order counts as dispatched, and nothing is left for printer recovery.
+    expect(
+      acknowledgedKitchenDispatch(
+        state.orders[0]!,
+        tickets,
+        DEMO_TENANT_ID,
+        DEMO_WESTLANDS_BRANCH_ID,
+      ),
+    ).toBe(true);
+    expect(kitchenPrintRecoveryItems(tickets, DEMO_WESTLANDS_BRANCH_ID)).toHaveLength(0);
+    // Bypassed tickets can never be claimed for printing later.
+    expect(() =>
+      TransactionEngine.claimKitchenPrintObligations(
+        state,
+        [tickets[0]!.id],
+        DEMO_WESTLANDS_BRANCH_ID,
+        "Cashier",
+        "claim-token",
+      ),
+    ).toThrow();
   });
   it("moves the exact held order out of entry pending without deleting the kitchen or invoice record", () => {
     const draft: OrderDraft = {

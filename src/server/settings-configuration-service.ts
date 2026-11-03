@@ -60,6 +60,8 @@ export const createOrderChannelInputSchema = z
       "OTHER",
     ]),
     useOnlinePrice: z.boolean(),
+    /** Omitted: dine-in channels need a table, others do not. */
+    requiresTable: z.boolean().optional(),
     reason,
   })
   .strict();
@@ -68,12 +70,17 @@ export const updateOrderChannelInputSchema = z
   .object({
     enabled: z.boolean().optional(),
     useOnlinePrice: z.boolean().optional(),
+    requiresTable: z.boolean().optional(),
     reason,
   })
   .strict()
-  .refine((value) => value.enabled !== undefined || value.useOnlinePrice !== undefined, {
-    message: "At least one channel setting is required",
-  });
+  .refine(
+    (value) =>
+      value.enabled !== undefined ||
+      value.useOnlinePrice !== undefined ||
+      value.requiresTable !== undefined,
+    { message: "At least one channel setting is required" },
+  );
 
 export async function createRole(
   db: D1Database,
@@ -306,7 +313,8 @@ export async function createOrderChannel(
       existing.enabled &&
       existing.displayName === parsed.displayName &&
       existing.channelType === parsed.channelType &&
-      existing.metadata["useOnlinePrice"] === parsed.useOnlinePrice
+      existing.metadata["useOnlinePrice"] === parsed.useOnlinePrice &&
+      (parsed.requiresTable === undefined || existing.requiresTable === parsed.requiresTable)
     ) {
       return { orderChannel: existing, duplicate: true };
     }
@@ -321,7 +329,7 @@ export async function createOrderChannel(
     channelType: parsed.channelType,
     enabled: true,
     requiresCustomer: ["OWN_DELIVERY", "PHONE", "WHATSAPP"].includes(parsed.channelType),
-    requiresTable: parsed.channelType === "DINE_IN",
+    requiresTable: parsed.requiresTable ?? parsed.channelType === "DINE_IN",
     requiresAddress: parsed.channelType === "OWN_DELIVERY",
     isExternallyPaid: parsed.channelType === "MARKETPLACE",
     sortOrder,
@@ -388,6 +396,7 @@ export async function updateOrderChannel(
   const next: OrderChannelDefinition = {
     ...current,
     enabled: parsed.enabled ?? current.enabled,
+    requiresTable: parsed.requiresTable ?? current.requiresTable,
     metadata: {
       ...current.metadata,
       ...(parsed.useOnlinePrice === undefined ? {} : { useOnlinePrice: parsed.useOnlinePrice }),

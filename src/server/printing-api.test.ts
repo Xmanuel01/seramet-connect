@@ -764,3 +764,61 @@ it("derives a separate print signing master when no explicit key is configured",
   ).toBe(signingKey);
   expect(await printSigningMaster({ SERAMET_JWT_SECRET: "short" })).toBe("");
 });
+
+it("turns the kitchen printer bypass on for 36 hours, records who and why, and turns it off", async () => {
+  const send = (method: "POST" | "DELETE", input?: unknown) =>
+    handlePrintingApi(
+      new Request("http://localhost/api/seramet/printing/dispatch-bypass", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        ...(input ? { body: JSON.stringify(input) } : {}),
+      }),
+      env(),
+      repository,
+    );
+  await expect(send("POST", { reason: "short" })).rejects.toMatchObject({ status: 400 });
+
+  const started = await send("POST", { reason: "Kitchen printer is being replaced" });
+  expect(started!.status).toBe(201);
+  const { bypass } = await started!.json();
+  expect(bypass).toMatchObject({
+    startedBy: "Disposable manager",
+    reason: "Kitchen printer is being replaced",
+  });
+  expect(Date.parse(bypass.until) - Date.parse(bypass.startedAt)).toBe(36 * 60 * 60 * 1000);
+  // It cannot be restarted to stretch the window.
+  await expect(send("POST", { reason: "Kitchen printer is being replaced" })).rejects.toMatchObject(
+    { status: 409 },
+  );
+  const branch = await db
+    .prepare("SELECT payload_json FROM branches WHERE tenant_id=? AND id=?")
+    .bind(actor.tenantId, branchId)
+    .first<{ payload_json: string }>();
+  expect(JSON.parse(branch!.payload_json).metadata.kitchenPrintBypassUntil).toBe(bypass.until);
+
+  const ended = await send("DELETE");
+  expect((await ended!.json()).bypass).toBeNull();
+  const audit = await db
+    .prepare("SELECT action FROM audit_events WHERE tenant_id=? ORDER BY created_at")
+    .bind(actor.tenantId)
+    .all<{ action: string }>();
+  expect((audit.results ?? []).map((row) => row.action)).toEqual([
+    "KITCHEN_PRINT_BYPASS_STARTED",
+    "KITCHEN_PRINT_BYPASS_ENDED",
+  ]);
+});
+
+it("lets only hardware managers change the printer bypass", async () => {
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(
+    handlePrintingApi(
+      new Request("http://localhost/api/seramet/printing/dispatch-bypass", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Kitchen printer is being replaced" }),
+      }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 403 });
+});

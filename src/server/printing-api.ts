@@ -26,6 +26,11 @@ import type { D1Database } from "@/server/database/d1";
 import { resolveRuntimeConfiguration } from "@/server/environment";
 import { pairableBridgeId } from "@/lib/print-bridge-client-config";
 import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import {
+  activeKitchenPrintBypass,
+  endKitchenPrintBypass,
+  startKitchenPrintBypass,
+} from "@/lib/kitchen-print-bypass";
 import { buildThermalLayout, validateRenderJob } from "../../printing-core/thermal-layout.mjs";
 
 const authorizationSchema = z
@@ -600,6 +605,61 @@ export async function handlePrintingApi(
     ]);
     invalidateAuthoritativeConfiguration(db);
     return respond({ printer: saved }, 201);
+  }
+  if (url.pathname === "/api/seramet/printing/dispatch-bypass") {
+    // Lets the active branch send orders to the kitchen without a printer or
+    // KDS route for 36 hours. Only hardware managers may turn it on or off.
+    if (request.method !== "POST" && request.method !== "DELETE")
+      return respond({ code: "NOT_FOUND" }, 404);
+    manage(actor);
+    const branchRow = await db
+      .prepare("SELECT payload_json FROM branches WHERE tenant_id=? AND id=?")
+      .bind(actor.tenantId, actor.branchId)
+      .first<{ payload_json: string }>();
+    if (!branchRow) throw new SerametHttpError(403, "Choose a branch first.");
+    const branchPayload = JSON.parse(branchRow.payload_json) as {
+      metadata?: Record<string, unknown>;
+    };
+    const metadata = branchPayload.metadata ?? {};
+    const current = activeKitchenPrintBypass(metadata);
+    let next: Record<string, unknown>;
+    let action: string;
+    let detail: string;
+    if (request.method === "POST") {
+      const input = z
+        .object({ reason: z.string().trim().min(12).max(240) })
+        .strict()
+        .safeParse(await parse(request));
+      if (!input.success)
+        throw new SerametHttpError(400, "Give a reason of at least 12 characters.");
+      if (current)
+        throw new SerametHttpError(409, "The printer bypass is already on for this branch.");
+      next = startKitchenPrintBypass(metadata, {
+        startedBy: actor.name,
+        reason: input.data.reason,
+      });
+      action = "KITCHEN_PRINT_BYPASS_STARTED";
+      detail = input.data.reason;
+    } else {
+      if (!current) return respond({ bypass: null });
+      next = endKitchenPrintBypass(metadata);
+      action = "KITCHEN_PRINT_BYPASS_ENDED";
+      detail = `Ended early; was on until ${current.until}`;
+    }
+    await db.batch([
+      db
+        .prepare("UPDATE branches SET payload_json=? WHERE tenant_id=? AND id=?")
+        .bind(JSON.stringify({ ...branchPayload, metadata: next }), actor.tenantId, actor.branchId),
+      auditStatement(db, actor, `PRINT-BYPASS:${crypto.randomUUID()}`, action, detail, {
+        before: current,
+        after: activeKitchenPrintBypass(next),
+      }),
+    ]);
+    invalidateAuthoritativeConfiguration(db);
+    return respond(
+      { bypass: activeKitchenPrintBypass(next) },
+      request.method === "POST" ? 201 : 200,
+    );
   }
   if (url.pathname !== "/api/seramet/printing/authorize" || request.method !== "POST")
     return respond({ code: "NOT_FOUND" }, 404);
