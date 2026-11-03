@@ -52,13 +52,15 @@ export function userMessage(error: unknown, fallback: string): string {
   if (status === 401) return "Your session ended. Sign in again.";
   if (status === 403) return "You don't have access to this. Ask an owner or manager.";
   if (status === 429) return "Too many requests at once. Wait a moment, then try again.";
+  // The fetch helper tags some network failures with a status (503), so check
+  // the connection before trusting any other status.
+  if (offline()) return "You're offline. Reconnect, then try again.";
   // Business rules (already paid, amount too high, period closed) come back as
   // 400/409/422 with a message meant for the operator.
   const serverMessage = (error as { serverMessage?: unknown } | null)?.serverMessage;
   const detail =
     typeof serverMessage === "string" ? serverMessage : error instanceof Error ? error.message : "";
   if ((status === 400 || status === 409 || status === 422) && plain(detail)) return detail.trim();
-  if (status === undefined && offline()) return "You're offline. Reconnect, then try again.";
   if ((error as { name?: unknown } | null)?.name === "TimeoutError")
     return "This is taking longer than usual. Try again.";
   return fallback;

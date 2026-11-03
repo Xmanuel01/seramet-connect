@@ -168,6 +168,23 @@ const LIVE_REFRESH_DELAY_MS = 1_000;
 let liveRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** Refreshes on-screen finance reports once, shortly after the last of a burst of calls. */
+const listening = new WeakSet<QueryClient>();
+
+/**
+ * Subscribes once per app to live events. It stays subscribed after finance
+ * pages close: invalidation marks every cached report stale (refetching only
+ * those on screen), so a report reopened later never shows figures from
+ * before an event it missed.
+ */
+export function listenForFinanceEvents(queryClient: QueryClient) {
+  if (typeof window === "undefined" || listening.has(queryClient)) return;
+  listening.add(queryClient);
+  window.addEventListener("seramet:realtime", (event) => {
+    if (affectsFinance((event as CustomEvent).detail)) scheduleFinanceRefresh(queryClient);
+  });
+  window.addEventListener("seramet:refresh", () => scheduleFinanceRefresh(queryClient));
+}
+
 export function scheduleFinanceRefresh(queryClient: QueryClient) {
   if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
   liveRefreshTimer = setTimeout(() => {
@@ -177,10 +194,20 @@ export function scheduleFinanceRefresh(queryClient: QueryClient) {
   }, LIVE_REFRESH_DELAY_MS);
 }
 
+/** How long a report may take before the page offers to try again. */
+const REPORT_TIMEOUT_MS = 20_000;
+
+/** Cancels when the page moves on, or when the report takes too long. */
+export function withDeadline(signal: AbortSignal, ms = REPORT_TIMEOUT_MS) {
+  return typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function"
+    ? AbortSignal.any([signal, AbortSignal.timeout(ms)])
+    : signal;
+}
+
 async function fetchFinanceReport<T>(path: string, signal: AbortSignal): Promise<T> {
   const response = await authenticatedFetch(path, {
     credentials: "same-origin",
-    signal,
+    signal: withDeadline(signal),
     headers: { Accept: "application/json" },
   });
   const body = (await response.json().catch(() => ({}))) as {
@@ -299,17 +326,7 @@ export function useFinanceReport<T>(
   // Live updates refresh in the background: figures already on screen stay
   // until the new ones arrive, so the page never blanks during service.
   useEffect(() => {
-    if (!allowed || typeof window === "undefined") return;
-    const live = (event: Event) => {
-      if (affectsFinance((event as CustomEvent).detail)) scheduleFinanceRefresh(queryClient);
-    };
-    const fallback = () => scheduleFinanceRefresh(queryClient);
-    window.addEventListener("seramet:realtime", live);
-    window.addEventListener("seramet:refresh", fallback);
-    return () => {
-      window.removeEventListener("seramet:realtime", live);
-      window.removeEventListener("seramet:refresh", fallback);
-    };
+    if (allowed) listenForFinanceEvents(queryClient);
   }, [allowed, queryClient]);
 
   const { refetch } = query;
@@ -333,6 +350,8 @@ export function useFinanceReport<T>(
         : "",
     refreshing: hasData && query.isFetching,
     updatedAt: query.dataUpdatedAt,
-    refresh: useCallback(() => void refetch(), [refetch]),
+    refresh: useCallback(() => {
+      if (!periodProblem) void refetch();
+    }, [periodProblem, refetch]),
   };
 }
