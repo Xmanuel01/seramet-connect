@@ -179,14 +179,15 @@ try {
     if (fixture.name.startsWith("kot") || fixture.name.startsWith("bar")) {
       assert.match(text, /SAUCE/i);
       assert.match(text, /NO ONION/i);
-      assert.match(text, /^(KITCHEN ORDER\s+KOT|BAR ORDER\s+BOT) /);
+      assert.match(text, /^\s*(KITCHEN ORDER\s+KOT|BAR ORDER\s+BOT) /);
       assert.ok(!text.includes("Disposable Test Restaurant"));
       assert.ok(!/KITCHEN TICKET|BAR TICKET|NEW ORDER/.test(text));
     } else assert.match(text, /283\.90/);
     if (fixture.documentType === "INVOICE") assert.match(text, /TAX INVOICE/);
     assert.ok(!text.includes("Due Date: -"));
     assert.ok(
-      text.split("\n").every((line) => line.length <= (fixture.width === "58mm" ? 32 : 42)),
+      // 80mm text is indented 3 to centre the 42 template columns in 48.
+      text.split("\n").every((line) => line.length <= (fixture.width === "58mm" ? 32 : 48)),
     );
     await writeFile(
       join(evidence, `${fixture.name}.commands.json`),

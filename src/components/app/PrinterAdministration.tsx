@@ -49,7 +49,7 @@ function blank(branchId: string): PrinterConfiguration {
     port: 9100,
     paperWidth: "80mm",
     encoding: "ascii",
-    cutter: "none",
+    cutter: "full",
     emphasis: false,
     roles: ["BILL", "RECEIPT"],
     stations: [],
@@ -880,9 +880,9 @@ export function PrinterAdministration() {
                 }
                 className={inputClass}
               >
-                <option value="none">None</option>
-                <option value="partial">Partial cut</option>
                 <option value="full">Full cut</option>
+                <option value="partial">Partial cut (leaves a small tab)</option>
+                <option value="none">No cutter (tear by hand)</option>
               </select>
             </label>
             <label>
