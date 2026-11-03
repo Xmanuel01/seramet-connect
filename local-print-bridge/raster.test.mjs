@@ -82,7 +82,7 @@ test("solid borders and intersections remain continuous across raster band seams
   assert.equal(encodePrintDocument(j).length, p.m.bytes);
   assert.deepEqual([...encodePrintDocument(j).subarray(-4)], [29, 86, 66, 0]);
   j.profile.cutter = "none";
-  assert.deepEqual([...encodePrintDocument(j).subarray(-3)], [27, 100, 3]);
+  assert.deepEqual([...encodePrintDocument(j).subarray(-3)], [27, 100, 5]);
   assert.equal(encodePrintDocument(j).length, rasterMetrics(j.document, j.profile).bytes);
 });
 test("independent wire decoder reconstructs pixels and rejects corrupt/truncated commands", () => {
