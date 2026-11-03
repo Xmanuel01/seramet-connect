@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { TaxCentrePage } from "@/finance/FinancialReports";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Not available yet; old links open the Finance overview.
 export const Route = createFileRoute("/tax-centre")({
-  head: () => ({ meta: [{ title: "Tax Control - Seramet" }] }),
-  component: TaxCentrePage,
+  beforeLoad: () => {
+    throw redirect({ to: "/finance", replace: true });
+  },
 });

@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { AccountingHubPage } from "@/finance/FinancialReports";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Merged into the Finance overview.
 export const Route = createFileRoute("/accounting")({
-  head: () => ({ meta: [{ title: "Accounting Hub - Seramet" }] }),
-  component: AccountingHubPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/finance", replace: true });
+  },
 });

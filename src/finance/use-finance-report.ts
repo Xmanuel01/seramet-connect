@@ -227,9 +227,16 @@ export type FinanceReportRequest = {
   kind: FinanceReportKind;
   from: string;
   to: string;
+} & FinanceLedgerFilters;
+
+/** Ledger paging and filters; ignored by the other reports. */
+export type FinanceLedgerFilters = {
   page?: number;
   limit?: number;
   accountType?: string;
+  accountId?: string;
+  /** "SALES" for the daily sales journal. */
+  source?: "SALES";
 };
 
 /** How a finance report is cached, shared, retried and fetched. */
@@ -237,7 +244,18 @@ export function financeQueryOptions<T>(
   request: FinanceReportRequest,
   fetchReport: (path: string, signal: AbortSignal) => Promise<T> = fetchFinanceReport,
 ) {
-  const { tenantId, branchId, kind, from, to, page = 0, limit = 100, accountType = "" } = request;
+  const {
+    tenantId,
+    branchId,
+    kind,
+    from,
+    to,
+    page = 0,
+    limit = 100,
+    accountType = "",
+    accountId = "",
+    source = "",
+  } = request;
   const ledger = kind === "ledger";
   return queryOptions({
     // Pages asking for the same report share one request and one cached copy.
@@ -248,7 +266,7 @@ export function financeQueryOptions<T>(
       kind,
       from,
       to,
-      ...(ledger ? [page, limit, accountType] : []),
+      ...(ledger ? [page, limit, accountType, accountId, source] : []),
     ],
     staleTime: 30_000,
     gcTime: 5 * 60_000,
@@ -266,6 +284,8 @@ export function financeQueryOptions<T>(
         search.set("limit", String(limit));
         search.set("offset", String(page * limit));
         if (accountType) search.set("accountType", accountType);
+        if (accountId) search.set("accountId", accountId);
+        if (source) search.set("source", source);
       }
       try {
         return await fetchReport(`/api/seramet/finance/reports/${kind}?${search}`, signal);
@@ -281,9 +301,7 @@ export function useFinanceReport<T>(
   kind: FinanceReportKind,
   from: string,
   to: string,
-  page = 0,
-  limit = 100,
-  accountType = "",
+  { enabled = true, ...filters }: FinanceLedgerFilters & { enabled?: boolean } = {},
 ) {
   const { activeTenantId, branchId, isAllBranches, hasPermission } = useAppContext();
   const queryClient = useQueryClient();
@@ -300,11 +318,9 @@ export function useFinanceReport<T>(
       kind,
       from,
       to,
-      page,
-      limit,
-      accountType,
+      ...filters,
     }),
-    enabled: allowed && !periodProblem,
+    enabled: allowed && enabled && !periodProblem,
   });
 
   // Live updates refresh in the background: figures already on screen stay

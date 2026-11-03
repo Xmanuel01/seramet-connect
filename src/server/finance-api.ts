@@ -104,12 +104,16 @@ export async function handleFinanceApi(
       const offset = Number(url.searchParams.get("offset") ?? "0");
       const accountId = url.searchParams.get("accountId")?.trim() || undefined;
       const accountType = url.searchParams.get("accountType")?.trim() || undefined;
+      const source = url.searchParams.get("source")?.trim() || undefined;
+      if (source !== undefined && source !== "SALES")
+        throw new SerametHttpError(400, "Unsupported ledger source filter");
       report = await service.ledger({
         ...opts,
         limit,
         offset,
         ...(accountId ? { accountId } : {}),
         ...(accountType ? { accountType } : {}),
+        ...(source ? { source } : {}),
       });
       break;
     }

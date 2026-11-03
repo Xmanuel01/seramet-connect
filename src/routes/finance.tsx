@@ -1,217 +1,198 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { AlertTriangle, ArrowRight } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { useAppContext } from "@/lib/app-context";
-import { formatDateTime } from "@/lib/currency";
+import { FinanceFetchState, NeedsAttention, reportMoney } from "@/finance/finance-ui";
+import { profitAndLoss } from "@/finance/StatementsPage";
 import {
-  configuredTenantCurrency,
-  formatBps,
-  formatMinor,
-  ManagementReadModelState,
-  QualityStatus,
-} from "@/management/ui";
+  type FinanceStatement,
+  useFinancePeriod,
+  useFinanceReport,
+} from "@/finance/use-finance-report";
+import { useAppContext } from "@/lib/app-context";
+import { formatBps, formatMinor, ManagementReadModelState } from "@/management/ui";
 import { useManagementIntelligence } from "@/management/use-management-intelligence";
 
 export const Route = createFileRoute("/finance")({
   head: () => ({ meta: [{ title: "Finance - Seramet" }] }),
-  component: Finance,
+  component: FinanceOverview,
 });
 
-function Finance() {
-  const { activeTenantId, branchLabel, platformState } = useAppContext();
+function FinanceOverview() {
+  const { branchLabel } = useAppContext();
   const management = useManagementIntelligence();
+  const dates = useFinancePeriod();
+  const accounts = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
   const control = management.control;
   const pnl = control?.flashPnl;
-  const currency =
-    pnl?.currency ??
-    control?.latest?.currency ??
-    configuredTenantCurrency(platformState.tenants, activeTenantId);
-  const rows = pnl
-    ? ([
-        ["Gross sales", pnl.grossSalesMinor],
-        ["Discounts", -pnl.discountsMinor],
-        ["Refunds", -pnl.refundsMinor],
-        ["Net revenue", pnl.netRevenueMinor],
-        ["COGS", -pnl.cogsMinor],
-        ["Gross profit", pnl.grossProfitMinor],
-        ["Labour cost", -pnl.labourCostMinor],
-        ["Marketplace commissions", -pnl.marketplaceCommissionMinor],
-        ["Payment processing fees", -pnl.paymentProcessingFeesMinor],
-        ["Delivery fees", -pnl.deliveryFeesMinor],
-        ["Operating expenses", -pnl.operatingExpensesMinor],
-        ["Flash operating result", pnl.flashOperatingResultMinor],
-      ] as const)
-    : [];
+  const statement = accounts.report;
+  const posted = statement ? profitAndLoss(statement) : null;
+  const blockers = control?.closeReadiness?.blockers ?? [];
+  const liveLabel = pnl
+    ? pnl.periodStart === pnl.periodEnd
+      ? `${pnl.periodStart}, before closing`
+      : `${pnl.periodStart} – ${pnl.periodEnd}, before closing`
+    : "";
   return (
     <AppShell
       title="Finance"
-      subtitle={`Daily flash P&L and profitability - ${branchLabel}${management.asOf ? ` - fetched ${formatDateTime(management.asOf)}` : ""}`}
-      actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
+      subtitle={branchLabel}
+      actions={
+        <Btn
+          onClick={() => {
+            void management.refresh();
+            accounts.refresh();
+          }}
+        >
+          Refresh
+        </Btn>
+      }
     >
-      <div
-        role="note"
-        className="mb-3 rounded-lg border border-warning/40 bg-warning-soft p-3 text-[12px]"
-      >
-        <strong>Estimated figures, not posted accounts.</strong> See{" "}
-        <Link to="/accounting" className="font-semibold underline">
-          Accounting
-        </Link>{" "}
-        and the{" "}
-        <Link to="/general-ledger" className="font-semibold underline">
-          General ledger
-        </Link>
-        .
-      </div>
-      <ManagementReadModelState status={management.status} error={management.error} empty={!pnl} />
-      {management.status === "ready" && pnl && (
-        <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
-            <Metric label="Net revenue" value={formatMinor(pnl.netRevenueMinor, currency)} />
-            <Metric label="Gross profit" value={formatMinor(pnl.grossProfitMinor, currency)} />
+      <Panel>
+        <PanelHead
+          title="Sales and profit"
+          sub={liveLabel}
+          right={
+            <Link
+              to="/prime-cost"
+              className="text-[12px] font-semibold text-primary hover:underline"
+            >
+              Prime cost
+            </Link>
+          }
+        />
+        <ManagementReadModelState
+          status={management.status}
+          error={management.error}
+          empty={!pnl}
+        />
+        {management.status === "ready" && pnl && (
+          <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-5">
+            <Metric label="Net sales" value={formatMinor(pnl.netRevenueMinor, pnl.currency)} />
+            <Metric label="Cost of sales" value={formatMinor(pnl.cogsMinor, pnl.currency)} />
+            <Metric label="Gross profit" value={formatMinor(pnl.grossProfitMinor, pnl.currency)} />
             <Metric label="Gross margin" value={formatBps(pnl.grossMarginBps)} />
-            <Metric label="COGS" value={formatMinor(pnl.cogsMinor, currency)} />
-            <Metric label="Contribution" value={formatMinor(pnl.contributionMinor, currency)} />
             <Metric
-              label="Flash result"
-              value={formatMinor(pnl.flashOperatingResultMinor, currency)}
+              label="Operating result"
+              value={formatMinor(pnl.flashOperatingResultMinor, pnl.currency)}
             />
           </div>
+        )}
+      </Panel>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-            <Panel>
-              <PanelHead
-                title="Daily flash P&L"
-                sub={`${pnl.periodStart} - ${pnl.periodEnd}`}
-                right={<QualityStatus quality={pnl.quality} />}
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <Panel>
+          <PanelHead
+            title="Accounts"
+            sub={`${dates.from} – ${dates.to}`}
+            right={
+              <Link
+                to="/statements"
+                search={{ tab: "profit-loss" }}
+                className="inline-flex items-center gap-1 text-[12px] font-semibold text-primary hover:underline"
+              >
+                Statements <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            }
+          />
+          <FinanceFetchState
+            status={accounts.status}
+            error={accounts.error}
+            retry={accounts.refresh}
+          />
+          {statement && posted && (
+            <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
+              <Metric
+                label="Income"
+                value={reportMoney(posted.totals.income, statement.scope.currency)}
               />
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    <TH>Line</TH>
-                    <TH className="text-right">Amount</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(([label, amount]) => (
-                    <tr key={label}>
-                      <TD
-                        className={
-                          label.includes("result") || label === "Gross profit"
-                            ? "font-bold"
-                            : "font-medium"
-                        }
-                      >
-                        {label}
-                      </TD>
-                      <TD className="num text-right">{formatMinor(amount, currency)}</TD>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {pnl.qualityReasons.length > 0 && (
-                <div className="border-t border-border p-4 text-[12px] text-muted-foreground">
-                  Partial because:{" "}
-                  {pnl.qualityReasons.join(", ").replaceAll("_", " ").toLowerCase()}.
+              <Metric
+                label="Expenses"
+                value={reportMoney(
+                  posted.totals.costOfSales + posted.totals.expenses,
+                  statement.scope.currency,
+                )}
+              />
+              <Metric
+                label="Net result"
+                value={reportMoney(posted.totals.netResult, statement.scope.currency)}
+              />
+              <div className="rounded-xl border border-border bg-card p-3.5 shadow-card">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Books
                 </div>
-              )}
-            </Panel>
-            <div className="grid content-start gap-4">
-              <Panel>
-                <PanelHead title="Inventory to GL" />
-                <div className="space-y-3 p-4 text-[13px]">
-                  <div className="flex justify-between">
-                    <span>Subledger</span>
-                    <span className="num font-semibold">
-                      {formatMinor(
-                        Number(control?.inventoryGl?.subledgerValueMinor ?? 0),
-                        currency,
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>General ledger</span>
-                    <span className="num font-semibold">
-                      {formatMinor(Number(control?.inventoryGl?.glValueMinor ?? 0), currency)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t border-border pt-3">
-                    <span>Difference</span>
-                    <span className="num font-bold">
-                      {formatMinor(Number(control?.inventoryGl?.differenceMinor ?? 0), currency)}
-                    </span>
-                  </div>
-                  <Status>{String(control?.inventoryGl?.status ?? "Unavailable")}</Status>
+                <div className="mt-2">
+                  <Status>
+                    {statement.quality === "RECONCILED" ? "Balanced" : "Needs attention"}
+                  </Status>
                 </div>
-              </Panel>
-              <Panel>
-                <PanelHead title="Supplier payables" />
-                <div className="p-4">
-                  <div className="text-[22px] font-bold">
-                    {formatMinor(
-                      control?.suppliers.reduce(
-                        (sum, supplier) => sum + supplier.outstandingPayableMinor,
-                        0,
-                      ) ?? 0,
-                      currency,
-                    )}
-                  </div>
-                  <p className="mt-1 text-[12px] text-muted-foreground">
-                    Open approved and posted supplier invoices.
-                  </p>
-                </div>
-              </Panel>
+              </div>
             </div>
-          </div>
+          )}
+        </Panel>
 
-          <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Channel profitability"
-              sub="Channels are configured data; fees come from persisted charges and settlements"
+        <Panel>
+          <PanelHead title="Needs attention" />
+          {statement && statement.quality !== "RECONCILED" && (
+            <Link
+              to="/statements"
+              search={{ tab: "trial-balance" }}
+              className="flex items-center gap-3 border-b border-border px-4 py-3 text-[13px] hover:bg-secondary/50"
+            >
+              <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-warning" />
+              <span className="min-w-0 flex-1">Accounts checks</span>
+              <span className="font-semibold tabular-nums">{statement.issues.length}</span>
+            </Link>
+          )}
+          {management.status === "ready" && (
+            <NeedsAttention
+              blockers={blockers}
+              empty={
+                statement?.quality === "RECONCILED" || !statement
+                  ? "Nothing needs attention."
+                  : "No other items."
+              }
             />
-            <table className="w-full min-w-[920px]">
-              <thead>
-                <tr>
-                  <TH>Channel</TH>
-                  <TH className="text-right">Orders</TH>
-                  <TH className="text-right">Net sales</TH>
-                  <TH className="text-right">Commission</TH>
-                  <TH className="text-right">COGS</TH>
-                  <TH className="text-right">Contribution</TH>
-                  <TH className="text-right">Settlement diff</TH>
-                  <TH>Quality</TH>
+          )}
+        </Panel>
+      </div>
+
+      {management.status === "ready" && control && control.channels.length > 0 && (
+        <Panel className="mt-4 overflow-x-auto">
+          <PanelHead title="Profit by channel" sub={liveLabel} />
+          <table className="w-full min-w-[640px]">
+            <thead>
+              <tr>
+                <TH>Channel</TH>
+                <TH className="text-right">Orders</TH>
+                <TH className="text-right">Net sales</TH>
+                <TH className="text-right">Commission</TH>
+                <TH className="text-right">Cost of sales</TH>
+                <TH className="text-right">Contribution</TH>
+              </tr>
+            </thead>
+            <tbody>
+              {control.channels.map((channel) => (
+                <tr key={channel.channelKey}>
+                  <TD className="font-semibold">{channel.channelLabel}</TD>
+                  <TD className="num text-right">{channel.orderCount}</TD>
+                  <TD className="num text-right">
+                    {formatMinor(channel.netSalesMinor, channel.currency)}
+                  </TD>
+                  <TD className="num text-right">
+                    {formatMinor(channel.commissionMinor, channel.currency)}
+                  </TD>
+                  <TD className="num text-right">
+                    {formatMinor(channel.cogsMinor, channel.currency)}
+                  </TD>
+                  <TD className="num text-right font-semibold">
+                    {formatMinor(channel.contributionMinor, channel.currency)}
+                  </TD>
                 </tr>
-              </thead>
-              <tbody>
-                {control?.channels.map((channel) => (
-                  <tr key={channel.channelKey}>
-                    <TD className="font-semibold">{channel.channelLabel}</TD>
-                    <TD className="num text-right">{channel.orderCount}</TD>
-                    <TD className="num text-right">
-                      {formatMinor(channel.netSalesMinor, channel.currency)}
-                    </TD>
-                    <TD className="num text-right">
-                      {formatMinor(channel.commissionMinor, channel.currency)}
-                    </TD>
-                    <TD className="num text-right">
-                      {formatMinor(channel.cogsMinor, channel.currency)}
-                    </TD>
-                    <TD className="num text-right font-semibold">
-                      {formatMinor(channel.contributionMinor, channel.currency)}
-                    </TD>
-                    <TD className="num text-right">
-                      {channel.settlementDifferenceMinor === null
-                        ? "Missing"
-                        : formatMinor(channel.settlementDifferenceMinor, channel.currency)}
-                    </TD>
-                    <TD>
-                      <QualityStatus quality={channel.quality} />
-                    </TD>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
-        </>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
       )}
     </AppShell>
   );

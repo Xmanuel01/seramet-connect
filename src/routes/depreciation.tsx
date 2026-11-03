@@ -1,7 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { DepreciationPage } from "@/finance/AdvancedFinanceModules";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+// Not available yet; old links open the Finance overview.
 export const Route = createFileRoute("/depreciation")({
-  head: () => ({ meta: [{ title: "depreciation - Seramet" }] }),
-  component: DepreciationPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/finance", replace: true });
+  },
 });

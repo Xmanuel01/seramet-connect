@@ -302,6 +302,9 @@
     "src/routes/settings.tsx": {
       "directBrowser": "LOCAL_FIXTURE"
     },
+    "src/routes/statements.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
     "src/routes/stock-count.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },
@@ -362,6 +365,10 @@
       "servicePostgres": "CRM"
     },
     "src/server/daily-closing-api.ts": {
+      "directHttp": "NOT_VERIFIED",
+      "servicePostgres": "NOT_VERIFIED"
+    },
+    "src/server/documents-api.ts": {
       "directHttp": "NOT_VERIFIED",
       "servicePostgres": "NOT_VERIFIED"
     },

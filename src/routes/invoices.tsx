@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { invoiceBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
@@ -36,6 +36,7 @@ import { SettlementService, settlementReferenceLabel } from "@/payments/settleme
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { RequestError, UserFacingError, reportError, userMessage } from "@/lib/user-facing-error";
+import { mergeDocuments, useDocumentList, type InvoiceListStatus } from "@/lib/use-document-list";
 
 type InvoicesSearch = { invoice?: string };
 
@@ -164,8 +165,15 @@ function Invoices() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const openedFromPosRef = useRef("");
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, hasPermission } =
-    useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    branchLabel,
+    branchRecords,
+    currentUser,
+    matchesBranch,
+    hasPermission,
+  } = useAppContext();
   const canSplit = hasPermission(permissions.invoicesManage);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
@@ -208,10 +216,34 @@ function Invoices() {
       return activeTimeZone();
     }
   })();
-  const rows = state.bills.filter((bill) => matchesBranch(bill.branchId ?? bill.branch));
+  // The same cutoff-adjusted day the server files the invoice under.
+  const invoiceDay = (invoice: BillingRecord) => {
+    const record = branchRecords.find((candidate) => candidate.id === invoice.branchId);
+    return recordBusinessDate(
+      invoice.businessDate,
+      invoice.issuedAt,
+      record?.timezone ?? invoiceTimeZone,
+      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
+    );
+  };
+  // Actions need the till's own copy (payments, orders); a row that so far has
+  // only arrived from the server waits for it.
+  const loadedLocally = (invoice: BillingRecord) => {
+    if (state.bills.some((bill) => bill.id === invoice.id)) return true;
+    setWarning("This invoice is still loading on this till. Try again in a moment.");
+    return false;
+  };
+  // A chosen day comes straight from the server, so it shows before the till has
+  // loaded its full copy; the till's own bills (including offline ones) win by id.
+  const server = useDocumentList("invoices", periodDate, {
+    status: statusFilter.toLowerCase() as InvoiceListStatus,
+  });
+  const rows = mergeDocuments(server.rows, state.bills).filter((bill) =>
+    matchesBranch(bill.branchId ?? bill.branch),
+  );
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
-    .filter((row) => !periodDate || invoiceBusinessDate(row, invoiceTimeZone) === periodDate)
+    .filter((row) => !periodDate || invoiceDay(row) === periodDate)
     .filter((row) => {
       if (statusFilter === "Paid") return row.paymentStatus === "PAID";
       if (statusFilter === "Open") return row.status === "OPEN" || row.paymentStatus === "PARTIAL";
@@ -268,6 +300,7 @@ function Invoices() {
     invoice: BillingRecord,
     documentType: PrintPreviewState["documentType"],
   ) => {
+    if (!loadedLocally(invoice)) return;
     try {
       const profile = SerametPrintService.getBranchHardwareProfile(invoice.branch);
       const source = billingDocumentToPrintOrder(invoice, state, documentType);
@@ -324,6 +357,7 @@ function Invoices() {
     openSplit(selectedBills[0]!);
   };
   const openSplit = (invoice: BillingRecord) => {
+    if (!loadedLocally(invoice)) return;
     if (!canSplit) {
       setWarning("Invoice management permission is required to split invoices.");
       return;
@@ -346,6 +380,7 @@ function Invoices() {
   };
 
   const openSettle = (invoice: BillingRecord) => {
+    if (!loadedLocally(invoice)) return;
     setSettleInvoice(invoice);
     setSettlementMethod(
       settlementService.recommendMethod(activeTenantId, invoice, state)?.id ??
@@ -441,7 +476,12 @@ function Invoices() {
 
   // Arriving from the POS with a new invoice opens it once its record has loaded, then drops
   // the hand-off from the address so a refresh or Back does not reopen it.
-  const posInvoice = search.invoice ? rows.find((row) => row.id === search.invoice) : undefined;
+  // Wait for the till's own copy: printing needs its payments and orders.
+  const posInvoice = search.invoice
+    ? state.bills.find(
+        (bill) => bill.id === search.invoice && matchesBranch(bill.branchId ?? bill.branch),
+      )
+    : undefined;
   const openPrintTemplateRef = useRef(openPrintTemplate);
   openPrintTemplateRef.current = openPrintTemplate;
   useEffect(() => {
@@ -479,6 +519,14 @@ function Invoices() {
           value={activeRows.filter((row) => row.paymentStatus !== "PAID").length}
         />
       </div>
+      {server.error && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+          <span>{server.error} Records made on this till are still shown.</span>
+          <button type="button" className="font-semibold underline" onClick={server.refresh}>
+            Retry
+          </button>
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Invoices"
