@@ -265,7 +265,7 @@ describe("one sale, from the till to the reports", () => {
     expect(
       (await documents.invoices({ ...today, status: "paid" })).rows.map((row) => row.id),
     ).toEqual(["flow-invoice"]);
-    expect((await documents.invoices({ ...today, status: "open" })).rows).toHaveLength(0);
+    expect((await documents.invoices({ ...today, status: "unpaid" })).rows).toHaveLength(0);
 
     // The receipt shows what the customer handed over and the change, not internal ids.
     const receipts = (await documents.receipts(today)).rows;
