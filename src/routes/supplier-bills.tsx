@@ -123,7 +123,11 @@ function SupplierBills() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? "Supplier bills can be posted once this device is back online."
+            ? typeof navigator !== "undefined" && !navigator.onLine
+              ? "Supplier bills can be entered once this device is back online."
+              : persistenceMode === "unknown"
+                ? "Loading…"
+                : "Supplier bills can't be entered on this device. Use Seramet online at your restaurant's address."
             : notice || control.error}
         </div>
       )}

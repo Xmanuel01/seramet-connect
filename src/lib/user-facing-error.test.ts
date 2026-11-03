@@ -67,6 +67,14 @@ describe("what people see when something fails", () => {
     expect(userMessage(new TypeError("Failed to fetch"), fallback)).toBe(
       "You're offline. Reconnect, then try again.",
     );
+    // The fetch helper tags some network failures as 503.
+    expect(userMessage(Object.assign(new Error("x"), { httpStatus: 503 }), fallback)).toBe(
+      "You're offline. Reconnect, then try again.",
+    );
+    // Signing in again or asking for access still comes first.
+    expect(userMessage(new RequestError(401, ""), fallback)).toBe(
+      "Your session ended. Sign in again.",
+    );
   });
 
   it("logs technical detail but not cancelled requests or written messages", () => {
