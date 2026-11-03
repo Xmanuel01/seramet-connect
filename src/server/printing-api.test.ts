@@ -444,6 +444,56 @@ it("persists administrator config, edits/disables it and lists only active branc
   expect(other.printers).toEqual([]);
 });
 
+it("deletes a printer from the branch but keeps its record, unless another printer backs onto it", async () => {
+  const save = async (input: unknown) =>
+    (await (await handlePrintingApi(request("printers", input), env(), repository))!.json())
+      .printer as { id: string; name: string };
+  const remove = (id: string) =>
+    handlePrintingApi(
+      new Request(`http://localhost/api/seramet/printing/printers/${id}`, { method: "DELETE" }),
+      env(),
+      repository,
+    );
+  const main = await save(configuration());
+  const backup = await save({
+    ...configuration(),
+    name: "Disposable backup",
+    fallbackPrinterId: main.id,
+  });
+
+  await expect(remove(main.id)).rejects.toMatchObject({
+    status: 409,
+    message: expect.stringContaining("Disposable backup"),
+  });
+
+  expect((await remove(backup.id))!.status).toBe(200);
+  const listed = await (await handlePrintingApi(request("printers"), env(), repository))!.json();
+  expect(listed.printers.map((printer: { id: string }) => printer.id)).toEqual([main.id]);
+  const stored = await db
+    .prepare("SELECT trust_status FROM hardware_devices WHERE tenant_id=? AND id=?")
+    .bind(actor.tenantId, backup.id)
+    .first<{ trust_status: string }>();
+  expect(stored?.trust_status).toBe("REVOKED");
+  const audit = await db
+    .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=?")
+    .bind(actor.tenantId, "PRINTER_DELETED")
+    .first<{ count: number }>();
+  expect(audit?.count).toBe(1);
+
+  // A stale edit form cannot bring a deleted printer back.
+  await expect(
+    handlePrintingApi(
+      request("printers", { ...configuration(), id: backup.id, name: "Disposable backup" }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 404 });
+  await expect(remove(backup.id)).rejects.toMatchObject({ status: 404 });
+
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(remove(main.id)).rejects.toMatchObject({ status: 403 });
+});
+
 it("denies cashier configuration and cross-branch targets", async () => {
   const input = configuration();
   actor.permissions = [permissions.ordersUpdate];
