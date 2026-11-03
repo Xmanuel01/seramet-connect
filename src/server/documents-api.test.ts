@@ -115,10 +115,10 @@ describe("invoice and receipt lists by date", () => {
 
   it("filters by payment state the way the Invoices page does", async () => {
     const service = new DocumentListService(db, actor());
-    const ids = async (status: "open" | "paid" | "pending") =>
+    const ids = async (status: "unpaid" | "paid" | "pending") =>
       (await service.invoices({ ...today, status })).rows.map((row) => row.id).sort();
     expect(await ids("paid")).toEqual(["INV-1"]);
-    expect(await ids("open")).toEqual(["INV-2", "INV-3"]);
+    expect(await ids("unpaid")).toEqual(["INV-2", "INV-3"]);
     expect(await ids("pending")).toEqual(["INV-2"]);
   });
 

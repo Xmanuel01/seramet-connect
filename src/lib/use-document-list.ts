@@ -9,7 +9,7 @@ import type { BillingRecord, ReceiptRecord } from "@/lib/transaction-engine";
 // a list can show before the till's full local copy has loaded.
 
 export type DocumentKind = "invoices" | "receipts";
-export type InvoiceListStatus = "all" | "open" | "paid" | "pending";
+export type InvoiceListStatus = "all" | "unpaid" | "paid" | "pending";
 type Row<K extends DocumentKind> = K extends "invoices" ? BillingRecord : ReceiptRecord;
 
 export type DocumentListRequest = {

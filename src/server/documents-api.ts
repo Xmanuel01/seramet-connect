@@ -15,7 +15,7 @@ import type { BillingRecord, ReceiptRecord } from "@/lib/transaction-engine";
 // Back-office lists use this instead of the whole tenant history.
 
 const BASE_PATH = "/api/seramet/documents/";
-export const INVOICE_STATUS_FILTERS = ["all", "open", "paid", "pending"] as const;
+export const INVOICE_STATUS_FILTERS = ["all", "unpaid", "paid", "pending"] as const;
 export type InvoiceStatusFilter = (typeof INVOICE_STATUS_FILTERS)[number];
 
 export type DocumentWindow = {
@@ -113,7 +113,7 @@ export class DocumentListService {
     // Same meaning as the Invoices page filters; merged and split bills are replaced by others.
     const statusCondition = {
       all: "",
-      open: "AND (status='OPEN' OR (paid_minor>0 AND paid_minor<total_minor))",
+      unpaid: "AND paid_minor<total_minor",
       paid: "AND paid_minor>=total_minor",
       pending: "AND (status='PENDING' OR paid_minor=0)",
     }[status];
