@@ -5,6 +5,8 @@ import {
   financePeriodProblem,
   financeQueryOptions,
   financeQueryRoot,
+  listenForFinanceEvents,
+  withDeadline,
   scheduleFinanceRefresh,
 } from "./use-finance-report";
 import { RequestError } from "@/lib/user-facing-error";
@@ -167,6 +169,46 @@ describe("finance report cache", () => {
     });
     const all = financeQueryOptions({ ...request, branchId: undefined }, fetchReport);
     expect(all.queryKey).toContain("ALL");
+  });
+
+  it("listens once for the whole app, so reports not on screen still go stale", () => {
+    vi.useFakeTimers();
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    const queryClient = client();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+    listenForFinanceEvents(queryClient);
+    listenForFinanceEvents(queryClient);
+    target.dispatchEvent(
+      new CustomEvent("seramet:realtime", {
+        detail: { topic: "transactions", eventType: "settleInvoice" },
+      }),
+    );
+    target.dispatchEvent(
+      new CustomEvent("seramet:realtime", {
+        detail: { topic: "transactions", eventType: "setProductionStationStatus" },
+      }),
+    );
+    vi.advanceTimersByTime(1_000);
+    // One refresh, not two: the listener was installed once, and the kitchen event is ignored.
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("gives up on a stalled report so the page can offer to try again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const stalled = vi.fn(
+      (_path: string, signal: AbortSignal) =>
+        new Promise<never>((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason)),
+        ),
+    );
+    const observer = new QueryObserver(
+      client(),
+      financeQueryOptions(request, (path, signal) => stalled(path, withDeadline(signal, 50))),
+    );
+    await settled(observer);
+    expect(observer.getCurrentResult().error?.name).toBe("TimeoutError");
   });
 
   it("turns a burst of live events into one refresh", () => {
