@@ -47,7 +47,7 @@ export function acknowledgedKitchenDispatch(
   if (
     !lines.length ||
     !tickets.length ||
-    tickets.some((ticket) => ticket.status !== "BRIDGE_ACCEPTED")
+    tickets.some((ticket) => ticket.status !== "BRIDGE_ACCEPTED" && ticket.status !== "BYPASSED")
   )
     return false;
   return lines.every(

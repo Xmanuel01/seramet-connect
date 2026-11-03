@@ -69,6 +69,9 @@ function Settings() {
   const [channelCode, setChannelCode] = useState("");
   const [channelType, setChannelType] = useState<OrderChannelType>("OTHER");
   const [channelUsesOnlinePrice, setChannelUsesOnlinePrice] = useState(false);
+  // Follows the channel type until the user sets it themselves.
+  const [channelRequiresTable, setChannelRequiresTable] = useState<boolean | null>(null);
+  const newChannelRequiresTable = channelRequiresTable ?? channelType === "DINE_IN";
   const [configNotice, setConfigNotice] = useState({
     kind: "info" as "info" | "success" | "error",
     message: "Configuration changes apply to the active tenant.",
@@ -121,7 +124,7 @@ function Settings() {
     .filter((method) => method.tenantId === activeTenantId && method.enabled)
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const orderChannels = platformState.orderChannels
-    .filter((channel) => channel.tenantId === activeTenantId && channel.enabled)
+    .filter((channel) => channel.tenantId === activeTenantId)
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
   useEffect(() => {
@@ -208,11 +211,13 @@ function Settings() {
         code,
         channelType,
         useOnlinePrice: channelUsesOnlinePrice,
+        requiresTable: newChannelRequiresTable,
         reason: "Created from Settings order channels",
       });
       setChannelName("");
       setChannelCode("");
       setChannelUsesOnlinePrice(false);
+      setChannelRequiresTable(null);
       setConfigNotice({
         kind: "success",
         message: `${displayName} was saved and is now available in the POS order-source control.`,
@@ -271,7 +276,7 @@ function Settings() {
   const updateConfiguredChannel = async (
     channelId: string,
     displayName: string,
-    change: { enabled?: boolean; useOnlinePrice?: boolean },
+    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
     try {
@@ -823,6 +828,15 @@ function Settings() {
                   />
                   Use online price
                 </label>
+                <label className="flex h-9 items-center gap-2 self-end rounded-md border border-border bg-card px-3 text-[12px] font-semibold text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={newChannelRequiresTable}
+                    disabled={!canManageOrderChannels}
+                    onChange={(event) => setChannelRequiresTable(event.target.checked)}
+                  />
+                  Needs a table
+                </label>
                 <Btn
                   className="self-end"
                   disabled={
@@ -846,6 +860,7 @@ function Settings() {
                       <div className="text-[13px] font-semibold">{channel.displayName}</div>
                       <div className="text-[11px] text-muted-foreground">
                         {channel.code} - {channel.channelType}
+                        {channel.requiresTable ? " - needs a table" : ""}
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -859,6 +874,16 @@ function Settings() {
                         }
                       >
                         Online price: {channel.metadata["useOnlinePrice"] === true ? "On" : "Off"}
+                      </Btn>
+                      <Btn
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onClick={() =>
+                          void updateConfiguredChannel(channel.id, channel.displayName, {
+                            requiresTable: !channel.requiresTable,
+                          })
+                        }
+                      >
+                        Table: {channel.requiresTable ? "Required" : "Not required"}
                       </Btn>
                       <Btn
                         disabled={!canManageOrderChannels || Boolean(configSaving)}

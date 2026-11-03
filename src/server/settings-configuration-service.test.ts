@@ -141,6 +141,50 @@ describe.sequential("server-authoritative settings configuration", () => {
     expect(auditCount("ORDER_CHANNEL_DISABLED", channel.orderChannel.id)).toBe(1);
   });
 
+  it("lets each restaurant choose which order channels need a table", async () => {
+    const manager = actor([permissions.settingsChannelManage]);
+    const reason = "Configure table seating for this channel";
+    // Without a choice, dine-in needs a table and other types do not.
+    const dineIn = await createOrderChannel(db, manager, {
+      code: "SIT_IN",
+      displayName: "Sit-in",
+      channelType: "DINE_IN",
+      useOnlinePrice: false,
+      reason,
+    });
+    expect(dineIn.orderChannel.requiresTable).toBe(true);
+    // A counter-service dine-in channel can skip tables from the start.
+    const counter = await createOrderChannel(db, manager, {
+      code: "COUNTER",
+      displayName: "Counter",
+      channelType: "DINE_IN",
+      useOnlinePrice: false,
+      requiresTable: false,
+      reason,
+    });
+    expect(counter.orderChannel.requiresTable).toBe(false);
+    // A non-dine-in channel, e.g. a terrace, can require one.
+    const terrace = await createOrderChannel(db, manager, {
+      code: "TERRACE",
+      displayName: "Terrace",
+      channelType: "OTHER",
+      useOnlinePrice: false,
+      requiresTable: true,
+      reason,
+    });
+    expect(terrace.orderChannel.requiresTable).toBe(true);
+
+    const changed = await updateOrderChannel(db, manager, dineIn.orderChannel.id, {
+      requiresTable: false,
+      reason: "Sit-in now uses counter service without tables",
+    });
+    expect(changed.orderChannel).toMatchObject({ requiresTable: false, enabled: true });
+    expect(storedPayload("order_channels", dineIn.orderChannel.id)).toMatchObject({
+      requiresTable: false,
+    });
+    expect(auditCount("ORDER_CHANNEL_UPDATED", dineIn.orderChannel.id)).toBe(1);
+  });
+
   it("creates a role idempotently but refuses to disable a role assigned to active staff", async () => {
     const input = {
       name: "Stock Counter",

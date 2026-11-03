@@ -29,6 +29,7 @@ import {
   pendingPosOrders,
   resolvePosTimeZone,
 } from "@/lib/pos-workflow";
+import { activeKitchenPrintBypass } from "@/lib/kitchen-print-bypass";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { permissions } from "@/platform/permissions";
 import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
@@ -182,6 +183,8 @@ function POS() {
     return () => tracePos("POS_UNMOUNT", id);
   }, []);
   const branchRecord = platformState.branches.find((item) => item.id === branchId)!;
+  // Set by a manager in Printers; the server decides when it ends.
+  const printBypass = activeKitchenPrintBypass(branchRecord.metadata);
   const orderChannels = useMemo(
     () =>
       platformState.orderChannels
@@ -947,7 +950,7 @@ function POS() {
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return null;
     if (selectedChannel?.requiresTable && !tableNo) {
-      throw new Error("Select a table before sending a dine-in order to kitchen.");
+      throw new Error("Choose a table before sending this order to the kitchen.");
     }
     const knownOrderIds = new Set(transactionState.orders.map((order) => order.id));
     const sentLineIds = new Set(
@@ -981,12 +984,12 @@ function POS() {
         printResult: null,
       };
     }
-    if (!profile) {
+    if (!profile && !printBypass) {
       throw new Error(
         `Kitchen routing is unavailable: ${configurationError ?? "configure a KDS or printer route first"}.`,
       );
     }
-    if (profile) {
+    if (profile && !printBypass) {
       const preflight = SerametPrintService.createProductionTicketJobs(
         profile,
         { ...buildPrintOrder(tableNo), lines: previewLines },
@@ -1038,13 +1041,22 @@ function POS() {
       };
     }
 
-    const obligations = (resultState.state.kitchenPrintObligations ?? []).filter(
+    const newTickets = (resultState.state.kitchenPrintObligations ?? []).filter(
       (item) =>
         item.orderId === authoritativeOrder.id &&
         item.branchId === branchId &&
-        item.status === "PENDING" &&
         item.lines.some((line) => ticketLines.some((sent) => sent.id === line.id)),
     );
+    const obligations = newTickets.filter((item) => item.status === "PENDING");
+    // The server filed these tickets under the printer bypass: nothing to print.
+    if (!obligations.length && newTickets.some((item) => item.status === "BYPASSED")) {
+      return {
+        order: authoritativeOrder,
+        state: resultState.state,
+        printResult: null,
+        bypassed: true,
+      };
+    }
     if (!obligations.length) {
       throw new Error(
         "Kitchen accepted the order but did not expose a durable KOT obligation. " +
@@ -1207,13 +1219,20 @@ function POS() {
       if (!items.length) return;
       if (selectedChannel?.requiresTable && !orderTable) {
         setTablePickerOpen(true);
-        setPrintNotice("Select a table before sending this dine-in order to kitchen.");
+        setPrintNotice("Choose a table before sending this order to the kitchen.");
         setPrintNoticeType("warning");
         return;
       }
       try {
         const result = await queueKitchenTicketsForTable();
         if (!result) return;
+        if ("bypassed" in result && result.bypassed) {
+          clearCurrentOrder(
+            `${result.order.id} sent to the kitchen and saved in Orders. Printer bypass is on, so no ticket was printed.`,
+            "warning",
+          );
+          return;
+        }
         const dispatched = kitchenDispatchHasDelivery(result);
         if (dispatched) {
           const notice = result.printResult?.jobs.length
@@ -1385,6 +1404,24 @@ function POS() {
         </div>
       </div>
 
+      {printBypass && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-foreground"
+        >
+          <Printer className="h-4 w-4 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1">
+            <span className="font-bold">
+              Printer bypass is on until{" "}
+              {formatBypassEnd(printBypass.until, tenant.locale, clockTimeZone)}.
+            </span>{" "}
+            Orders go to the kitchen without printed tickets; tell the kitchen by hand.
+          </div>
+          {hasPermission(permissions.settingsHardwareView) && (
+            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Printers</Btn>
+          )}
+        </div>
+      )}
       {unresolvedKitchenTickets.length > 0 && (
         <div
           role="alert"
@@ -2102,6 +2139,15 @@ function POS() {
       </Dialog>
     </AppShell>
   );
+}
+
+function formatBypassEnd(until: string, locale: string, timeZone: string) {
+  return new Intl.DateTimeFormat(locale || undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(new Date(until));
 }
 
 function PosClock({ locale, timeZone }: { locale: string; timeZone: string }) {
