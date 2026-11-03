@@ -29,10 +29,18 @@ export type DocumentWindow = {
 export type DocumentPage<T> = { rows: T[]; hasMore: boolean; offset: number; limit: number };
 
 function isoDate(value: string, label: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value + "T00:00:00Z")))
+  // Round-trip the date so 2026-02-31 is refused rather than read as 3 March.
+  const parsed = new Date(value + "T00:00:00Z");
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  )
     throw new SerametHttpError(400, `Choose a valid ${label} date.`);
   return value;
 }
+
+type DocumentRow = { payload_json: string; business_date: string };
 
 function parsePayload<T>(json: string): T | null {
   try {
@@ -76,8 +84,9 @@ export class DocumentListService {
     } else {
       if (!this.actor.permissions.includes(permissions.tenantScopeAllBranches))
         throw new SerametHttpError(403, "You don't have access to all branches.");
+      // Closed branches keep their history, as they do in the till's own copy.
       const result = await this.db
-        .prepare("SELECT id FROM branches WHERE tenant_id=? AND active=1 ORDER BY id")
+        .prepare("SELECT id FROM branches WHERE tenant_id=? ORDER BY id")
         .bind(this.actor.tenantId)
         .all<{ id: string }>();
       branchIds = (result.results ?? []).map((branch) => branch.id);
@@ -111,7 +120,7 @@ export class DocumentListService {
     const result = await this.db
       .prepare(
         [
-          "SELECT payload_json FROM invoices WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
+          "SELECT payload_json, business_date FROM invoices WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
           "AND",
           scope.branches,
           "AND status NOT IN ('MERGED','SPLIT')",
@@ -127,7 +136,7 @@ export class DocumentListService {
         scope.limit + 1,
         scope.offset,
       )
-      .all<{ payload_json: string }>();
+      .all<DocumentRow>();
     return this.page(result.results ?? [], scope);
   }
 
@@ -137,7 +146,7 @@ export class DocumentListService {
     const result = await this.db
       .prepare(
         [
-          "SELECT payload_json FROM receipts WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
+          "SELECT payload_json, business_date FROM receipts WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
           "AND",
           scope.branches,
           "ORDER BY business_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?",
@@ -151,19 +160,23 @@ export class DocumentListService {
         scope.limit + 1,
         scope.offset,
       )
-      .all<{ payload_json: string }>();
+      .all<DocumentRow>();
     return this.page(result.results ?? [], scope);
   }
 
-  private page<T>(
-    rows: Array<{ payload_json: string }>,
+  private page<T extends { businessDate?: string }>(
+    rows: DocumentRow[],
     scope: { limit: number; offset: number },
   ): DocumentPage<T> {
     return {
-      rows: rows
-        .slice(0, scope.limit)
-        .map((row) => parsePayload<T>(row.payload_json))
-        .filter((row): row is T => row !== null),
+      rows: rows.slice(0, scope.limit).flatMap((row): T[] => {
+        const payload = parsePayload<T>(row.payload_json);
+        // Older payloads lack the business date; the column holds the
+        // cutoff-adjusted day the record was selected by.
+        return payload
+          ? [{ ...payload, businessDate: payload.businessDate || row.business_date }]
+          : [];
+      }),
       hasMore: rows.length > scope.limit,
       offset: scope.offset,
       limit: scope.limit,

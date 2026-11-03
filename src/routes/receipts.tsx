@@ -87,7 +87,10 @@ function Receipts() {
     const receipt = rows.find((item) => item.id === receiptId);
     if (!receipt) return;
     const order = receiptRecordToPrintOrder(receipt, state);
-    if (!order) return;
+    if (!order) {
+      setPrintNotice("This receipt is still loading on this till. Try again in a moment.");
+      return;
+    }
 
     const result = printCustomerDocument(order, "RECEIPT", {
       reprintReason: reason,
@@ -175,6 +178,14 @@ function Receipts() {
         <Metric label="Reprints" value={reprints} note="requires reason" />
         <Metric label="Digital delivery" value="Ready" note="WhatsApp + email" />
       </div>
+      {server.error && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+          <span>{server.error} Records made on this till are still shown.</span>
+          <button type="button" className="font-semibold underline" onClick={server.refresh}>
+            Retry
+          </button>
+        </div>
+      )}
       {(printNotice || configurationError) && (
         <div className="mt-4 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
           Printing unavailable: {printNotice || configurationError}

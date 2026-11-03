@@ -19,6 +19,15 @@ describe("merging server and till documents", () => {
     ]);
   });
 
+  it("puts the newest record first, wherever it came from", () => {
+    const server = [
+      { id: "RCP-2", issuedAt: "2026-11-02T09:00:00Z" },
+      { id: "RCP-1", issuedAt: "2026-11-02T08:00:00Z" },
+    ];
+    const local = [{ id: "RCP-3", issuedAt: "2026-11-02T10:00:00Z" }];
+    expect(mergeDocuments(server, local).map((row) => row.id)).toEqual(["RCP-3", "RCP-2", "RCP-1"]);
+  });
+
   it("uses the till's copy alone until the server answers", () => {
     const local = [{ id: "RCP-3" }];
     expect(mergeDocuments(undefined, local)).toBe(local);
@@ -33,6 +42,7 @@ describe("document list requests", () => {
       documentQueryOptions(
         {
           tenantId: "t",
+          userId: "u",
           branchId: "westlands",
           kind: "invoices",
           date: "2026-11-02",
@@ -62,11 +72,46 @@ describe("document list requests", () => {
   });
 
   it("keeps different days, branches and lists apart", () => {
-    const base = { tenantId: "t", branchId: "b", kind: "receipts" as const, date: "2026-11-02" };
+    const base = {
+      tenantId: "t",
+      userId: "u",
+      branchId: "b",
+      kind: "receipts" as const,
+      date: "2026-11-02",
+    };
     const key = (request: Parameters<typeof documentQueryOptions>[0]) =>
       JSON.stringify(documentQueryOptions(request).queryKey);
     expect(key(base)).not.toBe(key({ ...base, date: "2026-11-01" }));
     expect(key(base)).not.toBe(key({ ...base, branchId: "c" }));
     expect(key(base)).not.toBe(key({ ...base, kind: "invoices" }));
+    // Another person signing in on this device never sees the last one's list.
+    expect(key(base)).not.toBe(key({ ...base, userId: "someone-else" }));
+  });
+
+  it("reads every page of a busy day", async () => {
+    const fetchPage = vi.fn(async (path: string) => {
+      const offset = Number(new URL(path, "https://pos.example").searchParams.get("offset"));
+      return { rows: [{ id: `R-${offset}` }], hasMore: offset < 400 };
+    });
+    const observer = new QueryObserver(
+      new QueryClient(),
+      documentQueryOptions(
+        { tenantId: "t", userId: "u", kind: "receipts", date: "2026-11-02" },
+        fetchPage,
+      ),
+    );
+    await new Promise<void>((resolve) => {
+      const stop = observer.subscribe((result) => {
+        if (result.isSuccess) {
+          stop();
+          resolve();
+        }
+      });
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(3);
+    expect(observer.getCurrentResult().data).toEqual({
+      rows: [{ id: "R-0" }, { id: "R-200" }, { id: "R-400" }],
+      hasMore: false,
+    });
   });
 });

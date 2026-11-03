@@ -14,16 +14,20 @@ type Row<K extends DocumentKind> = K extends "invoices" ? BillingRecord : Receip
 
 export type DocumentListRequest = {
   tenantId: string;
+  /** The signed-in user: what one person may see is never served to the next. */
+  userId: string;
   /** Omitted for "all branches". */
   branchId?: string;
   kind: DocumentKind;
   date: string;
   status?: InvoiceListStatus;
-  page?: number;
   limit?: number;
 };
 
 export const documentQueryRoot = "document-list";
+/** Pages fetched for one day before the list relies on the till's own copy. */
+export const MAX_DOCUMENT_PAGES = 10;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 async function fetchDocuments<T>(path: string, signal: AbortSignal) {
   const response = await authenticatedFetch(path, {
@@ -49,9 +53,9 @@ export function documentQueryOptions<T>(
     signal: AbortSignal,
   ) => Promise<{ rows: T[]; hasMore: boolean }> = fetchDocuments,
 ) {
-  const { tenantId, branchId, kind, date, status = "all", page = 0, limit = 200 } = request;
+  const { tenantId, userId, branchId, kind, date, status = "all", limit = 200 } = request;
   return queryOptions({
-    queryKey: [documentQueryRoot, tenantId, branchId ?? "ALL", kind, date, status, page, limit],
+    queryKey: [documentQueryRoot, tenantId, userId, branchId ?? "ALL", kind, date, status, limit],
     staleTime: 15_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: true,
@@ -61,20 +65,30 @@ export function documentQueryOptions<T>(
       return failures < 1 && (httpStatus === undefined || httpStatus >= 500);
     },
     queryFn: async ({ signal }) => {
-      const search = new URLSearchParams({
-        from: date,
-        to: date,
-        limit: String(limit),
-        offset: String(page * limit),
-      });
-      if (branchId) search.set("branchId", branchId);
-      if (kind === "invoices") search.set("status", status);
+      // A stalled connection gives up, so the page can say so and offer a retry.
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+      const rows: T[] = [];
+      let hasMore = true;
       try {
-        return await fetchPage(`/api/seramet/documents/${kind}?${search}`, signal);
+        // A busy day can run past one page; read on until the day is complete.
+        for (let page = 0; hasMore && page < MAX_DOCUMENT_PAGES; page++) {
+          const search = new URLSearchParams({
+            from: date,
+            to: date,
+            limit: String(limit),
+            offset: String(page * limit),
+          });
+          if (branchId) search.set("branchId", branchId);
+          if (kind === "invoices") search.set("status", status);
+          const result = await fetchPage(`/api/seramet/documents/${kind}?${search}`, deadline);
+          rows.push(...result.rows);
+          hasMore = result.hasMore;
+        }
       } catch (error) {
         if (!isAbort(error)) console.error(error);
         throw error;
       }
+      return { rows, hasMore };
     },
   });
 }
@@ -88,13 +102,19 @@ function scheduleDocumentRefresh(queryClient: QueryClient) {
   }, 1_000);
 }
 
-/** Server rows for one business date, plus the till's own copies of the same records. */
-export function mergeDocuments<T extends { id: string }>(server: T[] | undefined, local: T[]) {
+/**
+ * Server rows for one business date, plus the till's own copies of the same
+ * records, newest first.
+ */
+export function mergeDocuments<T extends { id: string; issuedAt?: string }>(
+  server: T[] | undefined,
+  local: T[],
+) {
   if (!server) return local;
   const byId = new Map(server.map((row) => [row.id, row]));
   // The till's copy wins: it may hold changes not yet on the server, or made offline.
   for (const row of local) byId.set(row.id, row);
-  return [...byId.values()];
+  return [...byId.values()].sort((a, b) => (b.issuedAt ?? "").localeCompare(a.issuedAt ?? ""));
 }
 
 /**
@@ -106,18 +126,22 @@ export function useDocumentList<K extends DocumentKind>(
   date: string,
   options: { status?: InvoiceListStatus; enabled?: boolean } = {},
 ) {
-  const { activeTenantId, branchId, isAllBranches } = useAppContext();
+  const { activeTenantId, branchId, currentUser, isAllBranches } = useAppContext();
   const queryClient = useQueryClient();
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(date);
   const query = useQuery({
     ...documentQueryOptions<Row<K>>({
       tenantId: activeTenantId,
+      userId: currentUser.id,
       ...(isAllBranches ? {} : { branchId }),
       kind,
       date,
       ...(options.status ? { status: options.status } : {}),
     }),
     enabled: valid && options.enabled !== false,
+    // Live events cover the branch this device follows; other branches in an
+    // all-branches view are checked on a timer instead.
+    refetchInterval: isAllBranches ? 30_000 : false,
   });
 
   useEffect(() => {
