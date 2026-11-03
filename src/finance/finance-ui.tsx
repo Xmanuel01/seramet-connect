@@ -58,15 +58,29 @@ export function FinanceFetchState({
   error: string;
   retry: () => void;
 }) {
-  if (status === "ready") return null;
+  if (status === "ready") {
+    // Figures stay on screen when a background refresh fails.
+    if (!error) return null;
+    return (
+      <p
+        role="status"
+        className="mt-4 flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground"
+      >
+        {error} The figures shown may be out of date.
+        <button type="button" className="font-semibold text-foreground underline" onClick={retry}>
+          Retry
+        </button>
+      </p>
+    );
+  }
   return (
     <Panel className="mt-4 p-5">
       <p className="text-[13px] font-semibold">
         {status === "loading"
-          ? "Loading authorized accounting records..."
+          ? "Loading…"
           : status === "denied"
-            ? "Accounting reporting permission required"
-            : "Financial data could not be verified"}
+            ? "You don't have access to accounting reports. Ask an owner or manager."
+            : "Couldn't load this report"}
       </p>
       {status === "error" && (
         <>

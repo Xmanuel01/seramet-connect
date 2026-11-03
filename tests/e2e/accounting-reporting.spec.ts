@@ -95,8 +95,12 @@ test("accounting pages preserve configuration evidence and recover from invalid 
       const from = main.getByLabel("From", { exact: true });
       const original = await from.inputValue();
       await from.fill("");
+      // A cleared date is explained on the page; nothing is sent to the server.
       await expect(
-        main.getByText("Financial data could not be verified", { exact: true }).first(),
+        main.getByText("Couldn't load this report", { exact: true }).first(),
+      ).toBeVisible();
+      await expect(
+        main.getByText("Choose a start and end date.", { exact: true }).first(),
       ).toBeVisible();
       await expect(page.getByText("This page didn't load", { exact: true })).toHaveCount(0);
       await from.fill(original);

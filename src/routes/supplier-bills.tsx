@@ -8,6 +8,7 @@ import { useInventoryControlCentre } from "@/inventory/use-inventory-control-cen
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { currentDateKey, formatDate, ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
+import { reportError } from "@/lib/user-facing-error";
 
 export const Route = createFileRoute("/supplier-bills")({
   head: () => ({
@@ -25,7 +26,7 @@ export const Route = createFileRoute("/supplier-bills")({
 
 function SupplierBills() {
   const { branchId, branchLabel, currency } = useAppContext();
-  const { persistenceMode, backendStatus } = useTransactionEngine();
+  const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
   const data = control.data.find((row) => row.branchId === branchId);
@@ -75,7 +76,7 @@ function SupplierBills() {
       setNotice(typeof success === "function" ? success(result) : success);
       return true;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Supplier bill operation failed");
+      setNotice(reportError(error, "Couldn't save the supplier bill. Try again."));
       return false;
     } finally {
       setBusy(false);
@@ -122,7 +123,11 @@ function SupplierBills() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Supplier bill posting requires the authoritative server database. Backend: ${backendStatus}.`
+            ? typeof navigator !== "undefined" && !navigator.onLine
+              ? "Supplier bills can be entered once this device is back online."
+              : persistenceMode === "unknown"
+                ? "Loading…"
+                : "Supplier bills can't be entered on this device. Use Seramet online at your restaurant's address."
             : notice || control.error}
         </div>
       )}

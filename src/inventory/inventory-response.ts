@@ -5,5 +5,9 @@ export async function requireInventoryResponse(response: Response, resource: str
     error?: string;
   };
   const detail = payload.message ?? payload.error;
-  throw new Error(`${resource} query failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  // The full text is for logs; the status and server message let the page show plain words.
+  throw Object.assign(
+    new Error(`${resource} query failed (${response.status})${detail ? `: ${detail}` : ""}`),
+    { httpStatus: response.status, serverMessage: detail ?? "" },
+  );
 }
