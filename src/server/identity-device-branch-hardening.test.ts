@@ -576,3 +576,122 @@ function employeeInput(roleId: string, branchId: string, pin: string) {
     temporaryPin: false,
   };
 }
+
+describe.sequential("employee editing", () => {
+  beforeEach(() => {
+    db = createMigratedTestDatabase();
+  });
+
+  afterEach(() => db.close());
+
+  async function standardRole(tenantId: string, code: string) {
+    const row = await db
+      .prepare("SELECT id FROM roles WHERE tenant_id=? AND code=?")
+      .bind(tenantId, code)
+      .first<{ id: string }>();
+    return row!.id;
+  }
+
+  it("updates an employee's details and role, and refuses duplicates and the owner", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const cashier = await standardRole(provisioned.tenantId, "CASHIER");
+    const chef = await standardRole(provisioned.tenantId, "CHEF");
+    const employee = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "602947"),
+      email: "cashier.one@example.test",
+      phone: "0700000001",
+    });
+    await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "830275"),
+      idempotencyKey: "employee-create-second-00000001",
+      fullName: "Cashier Two",
+      employeeCode: "CASH-02",
+      email: "cashier.two@example.test",
+      phone: "0700000002",
+    });
+
+    await service.updateEmployee(owner, employee.id, {
+      fullName: "Head Cook One",
+      employeeCode: "cook-01",
+      jobTitle: "Cook",
+      email: "Cook.One@Example.test",
+      phone: "+254 700 000 003",
+      roleId: chef,
+    });
+    const saved = await db
+      .prepare(
+        `SELECT u.name,u.employee_code,u.job_title,u.email,u.normalized_email,u.phone,
+                (SELECT GROUP_CONCAT(role_id) FROM user_roles ur
+                  WHERE ur.tenant_id=u.tenant_id AND ur.user_id=u.id) AS roles
+         FROM users u WHERE u.tenant_id=? AND u.id=?`,
+      )
+      .bind(provisioned.tenantId, employee.id)
+      .first();
+    expect(saved).toEqual({
+      name: "Head Cook One",
+      employee_code: "COOK-01",
+      job_title: "Cook",
+      email: "Cook.One@Example.test",
+      normalized_email: "cook.one@example.test",
+      phone: "+254 700 000 003",
+      roles: chef,
+    });
+    const audits = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=? AND entity_id=?",
+      )
+      .bind(provisioned.tenantId, "EMPLOYEE_UPDATED", employee.id)
+      .first<{ count: number }>();
+    expect(audits?.count).toBe(1);
+
+    const details = {
+      fullName: "Head Cook One",
+      employeeCode: "CASH-02",
+      jobTitle: "Cook",
+      email: "cook.one@example.test",
+      phone: "0700000003",
+      roleId: chef,
+    };
+    await expect(service.updateEmployee(owner, employee.id, details)).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(
+      service.updateEmployee(owner, provisioned.userId, { ...details, employeeCode: "OWNER-1" }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("does not let a manager edit someone with more access than they have", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const supervisor = await standardRole(provisioned.tenantId, "SUPERVISOR");
+    const employee = await service.createEmployee(owner, {
+      ...employeeInput(supervisor, provisioned.branchId, "602947"),
+      email: "supervisor@example.test",
+      phone: "0700000001",
+    });
+    const manager = {
+      ...owner,
+      id: "limited-manager",
+      permissions: [permissions.usersManage, permissions.employeeCredentialsManage],
+    };
+    await expect(
+      service.updateEmployee(manager, employee.id, {
+        fullName: "Renamed",
+        employeeCode: "CASH-01",
+        jobTitle: "Supervisor",
+        email: "supervisor@example.test",
+        phone: "0700000001",
+        roleId: supervisor,
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+  });
+});

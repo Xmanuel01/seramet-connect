@@ -76,6 +76,8 @@ async function prepare(browser: Browser, admin: BrowserContext, channelType: str
     idempotencyKey: randomUUID(),
     fullName: `Acceptance cashier ${suffix}`,
     employeeCode,
+    email: `${employeeCode.toLowerCase()}@example.test`,
+    phone: "0700000000",
     jobTitle: "Cashier",
     roleId: role.id,
     assignedBranchIds: [fixture.firstBranchId],

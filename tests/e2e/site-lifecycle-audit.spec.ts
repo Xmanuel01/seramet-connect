@@ -299,6 +299,8 @@ test("staff account creation through sale and supervisor business-day close", as
         idempotencyKey: randomUUID(),
         fullName: `Audit cashier ${scenario}`,
         employeeCode,
+        email: `${employeeCode.toLowerCase()}@example.test`,
+        phone: "0700000000",
         jobTitle: "Cashier",
         roleId: setup.roleId,
         assignedBranchIds: [branchId],
