@@ -1,4 +1,5 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Download, FilePlus2, X } from "lucide-react";
 import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
@@ -9,480 +10,287 @@ import {
   FinanceQuality,
   reportMoney,
 } from "@/finance/finance-ui";
+import { humanize, sourceLabel, useBranchName } from "@/finance/finance-labels";
 import {
   useFinancePeriod,
   useFinanceReport,
-  type FinanceStatement,
   type FinanceLedger,
-  type ReceivableReport,
+  type FinanceStatement,
   type PayableReport,
+  type ReceivableReport,
 } from "@/finance/use-finance-report";
 import { useAppContext } from "@/lib/app-context";
+import { majorFromMinor, minorDigits } from "@/payments/money";
+import { permissions } from "@/platform/permissions";
 
 const headerClass = "px-3 py-2 text-left text-[11px] font-semibold uppercase text-muted-foreground";
-const cellClass = "border-t border-border px-3 py-3 text-[12px]";
+const cellClass = "border-t border-border px-3 py-2.5 text-[12px]";
 const numClass = cellClass + " text-right tabular-nums";
 
-function JournalLines({ report }: { report: FinanceLedger }) {
+function plainAmount(minor: number, currency: string) {
+  return majorFromMinor(minor, currency).toFixed(minorDigits(currency));
+}
+
+function Pager({
+  page,
+  hasMore,
+  onPage,
+}: {
+  page: number;
+  hasMore: boolean;
+  onPage: (page: number) => void;
+}) {
+  if (page === 0 && !hasMore) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+      <Btn disabled={page === 0} onClick={() => onPage(page - 1)}>
+        Previous
+      </Btn>
+      <span className="text-[12px]">Page {page + 1}</span>
+      <Btn disabled={!hasMore} onClick={() => onPage(page + 1)}>
+        Next
+      </Btn>
+    </div>
+  );
+}
+
+function JournalLines({ report, empty }: { report: FinanceLedger; empty: string }) {
+  const branchName = useBranchName();
+  const { isAllBranches } = useAppContext();
+  const columns = [
+    "Date",
+    "Entry",
+    "Account",
+    ...(isAllBranches ? ["Branch"] : []),
+    "Debit",
+    "Credit",
+  ];
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[800px]">
+      <table className="w-full min-w-[720px]">
         <thead>
           <tr>
-            {["Posted date", "Voucher", "Source", "Account", "Branch", "Debit", "Credit"].map(
-              (name) => (
-                <th className={headerClass} key={name}>
-                  {name}
-                </th>
-              ),
-            )}
+            {columns.map((name) => (
+              <th
+                className={headerClass + (["Debit", "Credit"].includes(name) ? " text-right" : "")}
+                key={name}
+              >
+                {name}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {report.rows.map((row) => (
             <tr key={row.voucher_id + ":" + row.line_number}>
-              <td className={cellClass}>{row.business_date}</td>
-              <td className={cellClass}>{row.voucher_id}</td>
+              <td className={cellClass + " whitespace-nowrap"}>{row.business_date}</td>
               <td className={cellClass}>
-                {row.source_type}
-                <span className="block text-muted-foreground">{row.source_id}</span>
+                {sourceLabel(row.source_type)}
+                {row.description && (
+                  <span className="block text-muted-foreground">{row.description}</span>
+                )}
               </td>
               <td className={cellClass}>
-                <strong>{row.account_code}</strong> {row.account_name}
+                {row.account_code} {row.account_name}
               </td>
-              <td className={cellClass}>{row.branch_id}</td>
+              {isAllBranches && <td className={cellClass}>{branchName(row.branch_id)}</td>}
               <td className={numClass}>
-                {row.debit_minor ? reportMoney(row.debit_minor, row.currency) : "—"}
+                {row.debit_minor ? reportMoney(row.debit_minor, row.currency) : ""}
               </td>
               <td className={numClass}>
-                {row.credit_minor ? reportMoney(row.credit_minor, row.currency) : "—"}
+                {row.credit_minor ? reportMoney(row.credit_minor, row.currency) : ""}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {report.rows.length === 0 && (
-        <p className="p-5 text-[12px] text-muted-foreground">
-          No posted journals match this period and branch. Draft documents are not represented here.
-        </p>
-      )}
+      {report.rows.length === 0 && <p className="p-5 text-[12px] text-muted-foreground">{empty}</p>}
     </div>
   );
 }
 
-export function GeneralLedgerPage() {
+function exportLedger(name: string, report: FinanceLedger, branchName: (id: string) => string) {
+  exportVisibleFinancialCsv(
+    name,
+    [
+      "Date",
+      "Entry",
+      "Description",
+      "Account code",
+      "Account",
+      "Branch",
+      "Currency",
+      "Debit",
+      "Credit",
+    ],
+    report.rows.map((row) => [
+      row.business_date,
+      sourceLabel(row.source_type),
+      row.description,
+      row.account_code,
+      row.account_name,
+      branchName(row.branch_id),
+      row.currency,
+      plainAmount(row.debit_minor, row.currency),
+      plainAmount(row.credit_minor, row.currency),
+    ]),
+  );
+}
+
+export function GeneralLedgerPage({ account, source }: { account?: string; source?: "sales" }) {
   const { branchLabel } = useAppContext();
+  const navigate = useNavigate();
+  const branchName = useBranchName();
   const dates = useFinancePeriod();
-  const [page, setPage] = useState(0);
-  const ledger = useFinanceReport<FinanceLedger>("ledger", dates.from, dates.to, page);
+  const filterKey = [dates.from, dates.to, account, source].join(":");
+  const [pageState, setPageState] = useState({ key: filterKey, page: 0 });
+  const page = pageState.key === filterKey ? pageState.page : 0;
+  const ledger = useFinanceReport<FinanceLedger>("ledger", dates.from, dates.to, {
+    page,
+    ...(account ? { accountId: account } : {}),
+    ...(source === "sales" ? { source: "SALES" as const } : {}),
+  });
   const statement = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  function exportPage() {
-    if (!ledger.report) return;
-    exportVisibleFinancialCsv(
-      "seramet-posted-ledger-page-" + (page + 1) + ".csv",
-      [
-        "Date",
-        "Voucher",
-        "Line",
-        "Source type",
-        "Source ID",
-        "Account code",
-        "Account name",
-        "Branch",
-        "Currency",
-        "Debit minor",
-        "Credit minor",
-      ],
-      ledger.report.rows.map((row) => [
-        row.business_date,
-        row.voucher_id,
-        row.line_number,
-        row.source_type,
-        row.source_id,
-        row.account_code,
-        row.account_name,
-        row.branch_id,
-        row.currency,
-        row.debit_minor,
-        row.credit_minor,
-      ]),
-    );
-  }
+  const accounts = statement.report?.lines ?? [];
+  const setFilters = (next: { account?: string | undefined; source?: "sales" | undefined }) =>
+    void navigate({
+      to: "/general-ledger",
+      search: {
+        ...(next.account ? { account: next.account } : {}),
+        ...(next.source ? { source: next.source } : {}),
+      },
+    });
   return (
-    <AppShell title="General ledger" subtitle={"Posted, traceable vouchers — " + branchLabel}>
-      <FinanceDates
-        {...dates}
-        refresh={() => {
-          setPage(0);
-          ledger.refresh();
-          statement.refresh();
-        }}
-      />
+    <AppShell
+      title="General Ledger"
+      subtitle={branchLabel}
+      actions={
+        ledger.report && (
+          <Btn
+            onClick={() =>
+              exportLedger(
+                `ledger-${dates.from}-to-${dates.to}-page-${page + 1}.csv`,
+                ledger.report!,
+                branchName,
+              )
+            }
+          >
+            <Download className="h-4 w-4" /> Export CSV
+          </Btn>
+        )
+      }
+    >
+      <FinanceDates {...dates} refresh={ledger.refresh} />
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="grid gap-1 text-[12px] font-medium">
+          <label htmlFor="ledger-source">Show</label>
+          <select
+            id="ledger-source"
+            className="h-9 rounded border border-border bg-background px-3"
+            value={source ?? ""}
+            onChange={(event) =>
+              setFilters({ account, source: event.target.value === "sales" ? "sales" : undefined })
+            }
+          >
+            <option value="">All entries</option>
+            <option value="sales">Sales journal</option>
+          </select>
+        </div>
+        <div className="grid min-w-[220px] gap-1 text-[12px] font-medium">
+          <label htmlFor="ledger-account">Account</label>
+          <select
+            id="ledger-account"
+            className="h-9 rounded border border-border bg-background px-3"
+            value={account ?? ""}
+            onChange={(event) => setFilters({ account: event.target.value || undefined, source })}
+          >
+            <option value="">All accounts</option>
+            {accounts.map((row) => (
+              <option key={row.accountId} value={row.accountId}>
+                {row.code} {row.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {(account || source) && (
+          <Btn onClick={() => setFilters({})}>
+            <X className="h-4 w-4" /> Clear filters
+          </Btn>
+        )}
+      </div>
       <FinanceFetchState status={ledger.status} error={ledger.error} retry={ledger.refresh} />
-      <FinanceFetchState
-        status={statement.status}
-        error={statement.error}
-        retry={statement.refresh}
-      />
-      {statement.report && (
+      {ledger.report && (
+        <Panel className="mt-4">
+          <JournalLines
+            report={ledger.report}
+            empty={
+              source === "sales"
+                ? "No sales were posted in this period."
+                : "Nothing was posted in this period."
+            }
+          />
+          <Pager
+            page={page}
+            hasMore={ledger.report.hasMore}
+            onPage={(next) => setPageState({ key: filterKey, page: next })}
+          />
+        </Panel>
+      )}
+      {statement.report && statement.report.quality !== "RECONCILED" && (
         <FinanceQuality quality={statement.report.quality} issues={statement.report.issues} />
-      )}
-      {ledger.report && statement.report && (
-        <>
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric
-              label="Period debit (base currency)"
-              value={reportMoney(
-                statement.report.trial.periodDebitMinor,
-                statement.report.scope.currency,
-              )}
-            />
-            <Metric
-              label="Period credit (base currency)"
-              value={reportMoney(
-                statement.report.trial.periodCreditMinor,
-                statement.report.scope.currency,
-              )}
-            />
-            <Metric
-              label="Accounting status"
-              value={statement.report.trial.balanced ? "Trial balance matches" : "Review required"}
-            />
-          </div>
-          <Panel className="mt-4">
-            <PanelHead
-              title="Posted journal lines"
-              sub="Pagination is server-side. CSV exports the current verified page only."
-              right={<Btn onClick={exportPage}>Export visible page</Btn>}
-            />
-            <JournalLines report={ledger.report} />
-            <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-              <Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>
-                Previous
-              </Btn>
-              <span className="text-[12px]">Page {page + 1}</span>
-              <Btn disabled={!ledger.report.hasMore} onClick={() => setPage((value) => value + 1)}>
-                Next
-              </Btn>
-            </div>
-          </Panel>
-          <Panel className="mt-4">
-            <PanelHead
-              title="Configured chart of accounts"
-              sub="Tenant accounts with posted balances; branch-specific accounts are access controlled."
-            />
-            <div className="grid gap-2 p-4 md:grid-cols-2">
-              {statement.report.lines.map((account) => (
-                <div
-                  key={account.accountId}
-                  className="rounded border border-border p-3 text-[12px]"
-                >
-                  <strong>
-                    {account.code} {account.name}
-                  </strong>
-                  <span className="block text-muted-foreground">
-                    {account.type} · {account.currency}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </>
-      )}
-    </AppShell>
-  );
-}
-
-export function TrialBalancePage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  return (
-    <AppShell
-      title="Trial balance"
-      subtitle={"Opening, movement and closing from posted journals — " + branchLabel}
-    >
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && (
-        <>
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric
-              label="Period debit"
-              value={reportMoney(data.trial.periodDebitMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Period credit"
-              value={reportMoney(data.trial.periodCreditMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Trial balance check"
-              value={data.trial.balanced ? "Balanced" : "Review required"}
-            />
-          </div>
-          <FinanceQuality quality={data.quality} issues={data.issues} />
-          <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Account-level trial balance"
-              sub="All amounts shown in the account's currency. The branch scope is enforced by the server."
-            />
-            <table className="w-full min-w-[760px]">
-              <thead>
-                <tr>
-                  {[
-                    "Code",
-                    "Account",
-                    "Type",
-                    "Currency",
-                    "Opening debit / (credit)",
-                    "Period debit",
-                    "Period credit",
-                    "Closing debit / (credit)",
-                  ].map((name) => (
-                    <th key={name} className={headerClass}>
-                      {name}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {data.lines.map((row) => (
-                  <tr key={row.accountId}>
-                    <td className={cellClass}>{row.code}</td>
-                    <td className={cellClass}>{row.name}</td>
-                    <td className={cellClass}>{row.type}</td>
-                    <td className={cellClass}>{row.currency}</td>
-                    <td className={numClass}>
-                      {reportMoney(row.openingDebitMinor - row.openingCreditMinor, row.currency)}
-                    </td>
-                    <td className={numClass}>{reportMoney(row.periodDebitMinor, row.currency)}</td>
-                    <td className={numClass}>{reportMoney(row.periodCreditMinor, row.currency)}</td>
-                    <td className={numClass}>
-                      {reportMoney(row.closingSignedMinor, row.currency)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Panel>
-        </>
-      )}
-    </AppShell>
-  );
-}
-
-export function BalanceSheetPage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  const groups = data
-    ? ([
-        ["Assets", data.balanceSheet.assetsMinor],
-        ["Liabilities", data.balanceSheet.liabilitiesMinor],
-        ["Recorded equity", data.balanceSheet.equityMinor],
-        ["Unclosed earnings (lifetime)", data.balanceSheet.unclosedEarningsMinor],
-        ["Difference", data.balanceSheet.differenceMinor],
-      ] as const)
-    : [];
-  return (
-    <AppShell title="Balance sheet" subtitle={"Posted chart-of-accounts balances — " + branchLabel}>
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && (
-        <>
-          <FinanceQuality quality={data.quality} issues={data.issues} />
-          <Panel className="mt-4">
-            <PanelHead
-              title="Statement of financial position"
-              sub={
-                "As of " +
-                data.scope.to +
-                ". Base currency only; incomplete source posting prevents certification."
-              }
-              right={<Status>{data.quality}</Status>}
-            />
-            <div className="divide-y divide-border">
-              {groups.map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-4 p-4 text-[13px]">
-                  <span>{label}</span>
-                  <strong>{reportMoney(value, data.scope.currency)}</strong>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </>
-      )}
-    </AppShell>
-  );
-}
-
-export function CashFlowPage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  return (
-    <AppShell title="Cash movement" subtitle={"Posted cash/bank account activity — " + branchLabel}>
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && (
-        <>
-          <FinanceQuality quality={data.quality} issues={data.issues} />
-          {data.cashMovement ? (
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-              <Metric
-                label="Opening recorded cash/bank"
-                value={reportMoney(data.cashMovement.openingMinor, data.scope.currency)}
-              />
-              <Metric
-                label="Net posted cash movement"
-                value={reportMoney(data.cashMovement.periodMinor, data.scope.currency)}
-              />
-              <Metric
-                label="Closing recorded cash/bank"
-                value={reportMoney(
-                  data.cashMovement.openingMinor + data.cashMovement.periodMinor,
-                  data.scope.currency,
-                )}
-              />
-            </div>
-          ) : (
-            <Panel className="mt-4 p-5 text-[13px]">
-              An accurate cash-flow statement is unavailable: explicitly classify real cash and bank
-              ledger accounts, then verify payment and statement reconciliation. No simulated
-              operating, investing or financing totals will be displayed.
-            </Panel>
-          )}
-          <Panel className="mt-4 p-4 text-[12px] text-muted-foreground">
-            Operating, investing and financing classification requires approved transaction-level
-            mappings and reconciled banking evidence. This view reports recorded movement only.
-            <Link to="/reconciliation" className="ml-1 underline">
-              Open reconciliation
-            </Link>
-          </Panel>
-        </>
-      )}
-    </AppShell>
-  );
-}
-
-export function IncomeStatementPage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  return (
-    <AppShell
-      title="Posted profit and loss"
-      subtitle={"Accrual ledger view, distinct from management flash sales — " + branchLabel}
-    >
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && (
-        <>
-          <FinanceQuality quality={data.quality} issues={data.issues} />
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric
-              label="Posted income"
-              value={reportMoney(data.incomeStatement.incomeMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Posted expenses and COGS"
-              value={reportMoney(data.incomeStatement.expenseMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Posted period result"
-              value={reportMoney(data.incomeStatement.netResultMinor, data.scope.currency)}
-            />
-          </div>
-          <Panel className="mt-4">
-            <PanelHead
-              title="Account-level income statement"
-              sub="Only posted revenue, expense and cost-of-goods accounts; unposted POS revenue is explicitly flagged."
-            />
-            <div className="divide-y divide-border">
-              {data.lines
-                .filter((line) =>
-                  ["INCOME", "REVENUE", "EXPENSE", "COGS", "COST_OF_GOODS_SOLD"].includes(
-                    line.type,
-                  ),
-                )
-                .map((line) => (
-                  <div key={line.accountId} className="flex justify-between gap-4 p-3 text-[12px]">
-                    <span>
-                      {line.code} {line.name} ({line.type})
-                    </span>
-                    <span className="tabular-nums">
-                      {reportMoney(
-                        ["INCOME", "REVENUE"].includes(line.type)
-                          ? line.periodCreditMinor - line.periodDebitMinor
-                          : line.periodDebitMinor - line.periodCreditMinor,
-                        line.currency,
-                      )}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          </Panel>
-          <p className="mt-3 text-[12px] text-muted-foreground">
-            <Link to="/finance" className="underline">
-              View daily management flash P&L
-            </Link>
-            . Flash operating metrics and posted accrual accounts can differ pending complete source
-            posting.
-          </p>
-        </>
       )}
     </AppShell>
   );
 }
 
 export function ReceivablesPage() {
-  const { branchLabel } = useAppContext();
+  const { branchLabel, isAllBranches } = useAppContext();
+  const branchName = useBranchName();
   const dates = useFinancePeriod();
   const result = useFinanceReport<ReceivableReport>("receivables", dates.from, dates.to);
   const data = result.report;
+  const total = data?.rows
+    .filter((row) => row.currency === data.currency)
+    .reduce((sum, row) => sum + Number(row.total_minor) - Number(row.paid_minor), 0);
   return (
-    <AppShell title="Accounts receivable" subtitle={"Unpaid POS invoices — " + branchLabel}>
+    <AppShell title="Receivables" subtitle={branchLabel}>
       <FinanceDates {...dates} refresh={result.refresh} />
       <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
       {data && (
         <>
-          <Panel className="mt-4 p-4 text-[12px]">
-            {data.note} Marketplace receivable settlement reports are accessed separately through{" "}
-            <Link to="/reconciliation" className="underline">
-              Reconciliation
-            </Link>
-            . Invoice due dates are not yet stored in the authoritative POS invoice register; this
-            page cannot claim verified customer overdue ageing.
-          </Panel>
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Metric label="Unpaid invoices" value={data.rows.length} />
+            <Metric label="Balance owed" value={reportMoney(total ?? 0, data.currency)} />
+          </div>
           {data.truncated && (
-            <p className="mt-2 text-warning">
-              More than 200 open invoices: use a narrower period; no partial sum is represented as a
-              total.
+            <p className="mt-3 text-[12px] text-muted-foreground">
+              Showing the first 200 unpaid invoices. Choose a shorter period to see the rest.
             </p>
           )}
           <Panel className="mt-4 overflow-x-auto">
             <PanelHead
-              title="Open POS invoices"
-              sub="Invoice-level total and paid amount are persisted server-side."
+              title="Unpaid invoices"
+              sub={`Dated up to ${dates.to}. Balances are as they stand today.`}
             />
-            <table className="w-full min-w-[700px]">
+            <table className="w-full min-w-[640px]">
               <thead>
                 <tr>
                   {[
                     "Invoice",
-                    "Business date",
-                    "Branch",
+                    "Date",
+                    ...(isAllBranches ? ["Branch"] : []),
                     "Status",
-                    "Currency",
                     "Total",
                     "Paid",
-                    "Remaining",
+                    "Balance",
                   ].map((label) => (
-                    <th key={label} className={headerClass}>
+                    <th
+                      key={label}
+                      className={
+                        headerClass +
+                        (["Total", "Paid", "Balance"].includes(label) ? " text-right" : "")
+                      }
+                    >
                       {label}
                     </th>
                   ))}
@@ -491,18 +299,19 @@ export function ReceivablesPage() {
               <tbody>
                 {data.rows.map((row) => (
                   <tr key={row.id}>
-                    <td className={cellClass}>{row.invoice_number}</td>
+                    <td className={cellClass + " font-semibold"}>{row.invoice_number}</td>
                     <td className={cellClass}>{row.business_date}</td>
-                    <td className={cellClass}>{row.branch_id}</td>
-                    <td className={cellClass}>{row.status}</td>
-                    <td className={cellClass}>{row.currency}</td>
+                    {isAllBranches && <td className={cellClass}>{branchName(row.branch_id)}</td>}
+                    <td className={cellClass}>
+                      <Status>{humanize(row.status)}</Status>
+                    </td>
                     <td className={numClass}>
                       {reportMoney(Number(row.total_minor), row.currency)}
                     </td>
                     <td className={numClass}>
                       {reportMoney(Number(row.paid_minor), row.currency)}
                     </td>
-                    <td className={numClass}>
+                    <td className={numClass + " font-semibold"}>
                       {reportMoney(Number(row.total_minor) - Number(row.paid_minor), row.currency)}
                     </td>
                   </tr>
@@ -510,7 +319,7 @@ export function ReceivablesPage() {
               </tbody>
             </table>
             {!data.rows.length && (
-              <p className="p-5 text-[12px]">No unpaid POS invoices in the authorized scope.</p>
+              <p className="p-5 text-[12px] text-muted-foreground">No unpaid invoices.</p>
             )}
           </Panel>
         </>
@@ -520,49 +329,61 @@ export function ReceivablesPage() {
 }
 
 export function PayablesPage() {
-  const { branchLabel } = useAppContext();
+  const { branchLabel, isAllBranches, hasPermission } = useAppContext();
+  const branchName = useBranchName();
   const dates = useFinancePeriod();
   const result = useFinanceReport<PayableReport>("payables", dates.from, dates.to);
   const data = result.report;
+  const open = data?.rows.filter((row) => !["PAID", "CANCELLED", "VOID"].includes(row.status));
+  const total = open
+    ?.filter((row) => row.currency === data?.currency)
+    .reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const notPosted = data?.rows.filter((row) => !row.journal_entry_id).length ?? 0;
   return (
     <AppShell
-      title="Accounts payable"
-      subtitle={"Recorded supplier bill register — " + branchLabel}
+      title="Payables"
+      subtitle={branchLabel}
+      actions={
+        hasPermission(permissions.procurementView) && (
+          <Link to="/supplier-bills">
+            <Btn variant="primary">
+              <FilePlus2 className="h-4 w-4" /> Enter a bill
+            </Btn>
+          </Link>
+        )
+      }
     >
       <FinanceDates {...dates} refresh={result.refresh} />
       <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
       {data && (
         <>
-          <Panel className="mt-4 p-4 text-[12px] text-warning">
-            {data.note} Amounts below are the original invoice totals.
-            <Link to="/procurement" className="ml-1 underline">
-              Open procurement
-            </Link>
-          </Panel>
-          {data.truncated && (
-            <p className="mt-2 text-warning">
-              The register exceeded 200 records. Filter to review more.
-            </p>
-          )}
+          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Metric label="Open bills" value={open?.length ?? 0} />
+            <Metric label="Amount on open bills" value={reportMoney(total ?? 0, data.currency)} />
+            <Metric label="Not posted" value={notPosted} invert={notPosted > 0} />
+          </div>
+          <p className="mt-3 text-[12px] text-muted-foreground">
+            Amounts are bill totals. Part-payments to suppliers aren&apos;t deducted yet.
+            {data.truncated &&
+              " Showing the first 200 bills; choose a shorter period to see the rest."}
+          </p>
           <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Recorded supplier invoices"
-              sub="Status and journal links come directly from procurement."
-            />
-            <table className="w-full min-w-[790px]">
+            <table className="w-full min-w-[700px]">
               <thead>
                 <tr>
                   {[
                     "Supplier",
-                    "Invoice",
+                    "Bill",
                     "Date",
-                    "Due date",
-                    "Branch",
+                    "Due",
+                    ...(isAllBranches ? ["Branch"] : []),
                     "Amount",
                     "Status",
-                    "Journal",
                   ].map((label) => (
-                    <th key={label} className={headerClass}>
+                    <th
+                      key={label}
+                      className={headerClass + (label === "Amount" ? " text-right" : "")}
+                    >
                       {label}
                     </th>
                   ))}
@@ -571,22 +392,25 @@ export function PayablesPage() {
               <tbody>
                 {data.rows.map((row) => (
                   <tr key={row.id}>
-                    <td className={cellClass}>{row.supplier_name}</td>
+                    <td className={cellClass + " font-semibold"}>{row.supplier_name}</td>
                     <td className={cellClass}>{row.invoice_number}</td>
                     <td className={cellClass}>{row.invoice_date}</td>
-                    <td className={cellClass}>{row.due_date || "Not recorded"}</td>
-                    <td className={cellClass}>{row.branch_id}</td>
+                    <td className={cellClass}>{row.due_date || "—"}</td>
+                    {isAllBranches && <td className={cellClass}>{branchName(row.branch_id)}</td>}
                     <td className={numClass}>
                       {reportMoney(Number(row.total_minor), row.currency)}
                     </td>
-                    <td className={cellClass}>{row.status}</td>
-                    <td className={cellClass}>{row.journal_entry_id || "Not posted"}</td>
+                    <td className={cellClass}>
+                      <Status>{row.journal_entry_id ? humanize(row.status) : "Not posted"}</Status>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {!data.rows.length && (
-              <p className="p-5 text-[12px]">No recorded non-draft supplier invoices.</p>
+              <p className="p-5 text-[12px] text-muted-foreground">
+                No supplier bills in this period.
+              </p>
             )}
           </Panel>
         </>
@@ -597,235 +421,93 @@ export function PayablesPage() {
 
 export function ExpensesPage() {
   const { branchLabel } = useAppContext();
+  const branchName = useBranchName();
   const dates = useFinancePeriod();
-  const [page, setPage] = useState(0);
-  const entries = useFinanceReport<FinanceLedger>(
-    "ledger",
-    dates.from,
-    dates.to,
+  const periodKey = dates.from + ":" + dates.to;
+  const [pageState, setPageState] = useState({ key: periodKey, page: 0 });
+  const page = pageState.key === periodKey ? pageState.page : 0;
+  const entries = useFinanceReport<FinanceLedger>("ledger", dates.from, dates.to, {
     page,
-    100,
-    "EXPENSE",
-  );
+    accountType: "EXPENSE",
+  });
   const statement = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const expenseMinor = statement.report?.lines
-    .filter((line) => line.type === "EXPENSE" && line.currency === statement.report?.scope.currency)
-    .reduce((sum, line) => sum + line.periodDebitMinor - line.periodCreditMinor, 0);
+  const report = statement.report;
+  const byAccount = (report?.lines ?? [])
+    .filter((line) => line.type === "EXPENSE" && line.currency === report?.scope.currency)
+    .map((line) => ({ line, amount: line.periodDebitMinor - line.periodCreditMinor }))
+    .filter((item) => item.amount !== 0)
+    .sort((a, b) => b.amount - a.amount);
+  const total = byAccount.reduce((sum, item) => sum + item.amount, 0);
   return (
     <AppShell
-      title="Posted operating expenses"
-      subtitle={"Recorded accounting expense entries — " + branchLabel}
+      title="Expenses"
+      subtitle={branchLabel}
+      actions={
+        entries.report && (
+          <Btn
+            onClick={() =>
+              exportLedger(`expenses-${dates.from}-to-${dates.to}.csv`, entries.report!, branchName)
+            }
+          >
+            <Download className="h-4 w-4" /> Export CSV
+          </Btn>
+        )
+      }
     >
-      <FinanceDates
-        {...dates}
-        refresh={() => {
-          setPage(0);
-          entries.refresh();
-          statement.refresh();
-        }}
-      />
-      <FinanceFetchState status={entries.status} error={entries.error} retry={entries.refresh} />
+      <FinanceDates {...dates} refresh={entries.refresh} />
       <FinanceFetchState
         status={statement.status}
         error={statement.error}
         retry={statement.refresh}
       />
-      {statement.report && (
-        <>
-          <FinanceQuality issues={statement.report.issues} quality={statement.report.quality} />
-          <div className="mt-4">
-            <Metric
-              label="Posted operating expenses"
-              value={reportMoney(expenseMinor ?? 0, statement.report.scope.currency)}
+      {report && (
+        <div className="mt-4 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <Panel>
+            <PanelHead title="By account" />
+            <div className="divide-y divide-border">
+              {byAccount.map(({ line, amount }) => (
+                <Link
+                  key={line.accountId}
+                  to="/general-ledger"
+                  search={{ account: line.accountId }}
+                  className="flex justify-between gap-3 px-4 py-2.5 text-[12px] hover:bg-secondary/50"
+                >
+                  <span>{line.name}</span>
+                  <span className="tabular-nums">{reportMoney(amount, report.scope.currency)}</span>
+                </Link>
+              ))}
+              {byAccount.length === 0 && (
+                <p className="p-4 text-[12px] text-muted-foreground">No expenses this period.</p>
+              )}
+              <div className="flex justify-between gap-3 px-4 py-2.5 text-[13px] font-bold">
+                <span>Total</span>
+                <span className="tabular-nums">{reportMoney(total, report.scope.currency)}</span>
+              </div>
+            </div>
+          </Panel>
+          <Panel>
+            <PanelHead title="Entries" />
+            <FinanceFetchState
+              status={entries.status}
+              error={entries.error}
+              retry={entries.refresh}
             />
-          </div>
-        </>
-      )}
-      <Panel className="mt-4 p-4 text-[12px] text-muted-foreground">
-        This register reflects posted GL expenses, not unsubmitted employee reimbursement claims.
-        Submit supplier bills through{" "}
-        <Link className="underline" to="/procurement">
-          Procurement
-        </Link>
-        ; claim approvals require their own authorized accounting workflow.
-      </Panel>
-      {entries.report && (
-        <Panel className="mt-4">
-          <PanelHead title="Expense GL source vouchers" />
-          <JournalLines report={entries.report} />
-          <div className="flex justify-between border-t border-border p-3">
-            <Btn disabled={page === 0} onClick={() => setPage((value) => value - 1)}>
-              Previous
-            </Btn>
-            <span className="text-[12px]">Page {page + 1}</span>
-            <Btn disabled={!entries.report.hasMore} onClick={() => setPage((value) => value + 1)}>
-              Next
-            </Btn>
-          </div>
-        </Panel>
-      )}
-    </AppShell>
-  );
-}
-
-export function TaxCentrePage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  return (
-    <AppShell title="Tax control" subtitle={"Posted tax ledger evidence — " + branchLabel}>
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && <FinanceQuality quality={data.quality} issues={data.issues} />}
-      <Panel className="mt-4 p-5 text-[13px]">
-        <strong>Tax return preparation is not configured</strong>
-        <p className="mt-2 text-[12px] text-muted-foreground">
-          No validated, jurisdiction-specific tax ledger mappings, return period rules, statutory
-          deadlines or reconciled supplier input-tax evidence have been verified. Zero must not be
-          interpreted as a filed return or absence of tax obligations. Configure and audit those
-          inputs before activating tax calculation or filing.
-        </p>
-        <Link to="/general-ledger" className="mt-3 inline-block text-[12px] underline">
-          Inspect actual posted tax-related journal descriptions
-        </Link>
-      </Panel>
-    </AppShell>
-  );
-}
-
-export function DailySalesJournalPage() {
-  const { activeTenantId, branchId, branchLabel, isAllBranches } = useAppContext();
-  const dates = useFinancePeriod();
-  const [pageState, setPageState] = useState({ period: "", page: 0 });
-  const period = `${activeTenantId}:${isAllBranches ? "ALL" : branchId}:${dates.from}:${dates.to}`;
-  const page = pageState.period === period ? pageState.page : 0;
-  const ledger = useFinanceReport<FinanceLedger>("ledger", dates.from, dates.to, page);
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  return (
-    <AppShell
-      title="Daily sales journal control"
-      subtitle={"Verify posted Z-report coverage — " + branchLabel}
-    >
-      <FinanceDates
-        {...dates}
-        refresh={() => {
-          setPageState({ period, page: 0 });
-          ledger.refresh();
-          result.refresh();
-        }}
-      />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      <FinanceFetchState status={ledger.status} error={ledger.error} retry={ledger.refresh} />
-      {data && <FinanceQuality quality={data.quality} issues={data.issues} />}
-      {ledger.report && (
-        <Panel className="mt-4">
-          <PanelHead
-            title="Posted journal evidence"
-            sub="All posted sources for the selected branch and period; not a generated sales summary."
-          />
-          <JournalLines report={ledger.report} />
-          <div className="flex items-center justify-between gap-2 border-t border-border p-3">
-            <Btn disabled={page === 0} onClick={() => setPageState({ period, page: page - 1 })}>
-              Previous
-            </Btn>
-            <span className="text-[12px]">Page {page + 1}</span>
-            <Btn
-              disabled={!ledger.report.hasMore}
-              onClick={() => setPageState({ period, page: page + 1 })}
-            >
-              Next
-            </Btn>
-          </div>
-        </Panel>
-      )}
-      <Panel className="mt-4 p-5 text-[13px]">
-        <strong>Sales-to-ledger reconciliation</strong>
-        <p className="mt-2 text-[12px] text-muted-foreground">
-          Each day's settled POS payments, tax, refunds, discounts, marketplace clearing and cash
-          variance must be reconciled to configured journal accounts using an idempotent
-          source-ledger posting. Until a genuine daily journal bridge is verified, the system will
-          not offer a button that pretends to post a balanced Z-report.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-3 text-[12px]">
-          <Link className="underline" to="/reconciliation">
-            Review genuine day-end reconciliation
-          </Link>
-          <Link className="underline" to="/general-ledger">
-            Review posted journals
-          </Link>
-          <Link className="underline" to="/invoices">
-            Review actual customer invoices
-          </Link>
+            {entries.report && (
+              <>
+                <JournalLines
+                  report={entries.report}
+                  empty="No expenses were posted in this period."
+                />
+                <Pager
+                  page={page}
+                  hasMore={entries.report.hasMore}
+                  onPage={(next) => setPageState({ key: periodKey, page: next })}
+                />
+              </>
+            )}
+          </Panel>
         </div>
-      </Panel>
-    </AppShell>
-  );
-}
-
-export function AccountingHubPage() {
-  const { branchLabel } = useAppContext();
-  const dates = useFinancePeriod();
-  const result = useFinanceReport<FinanceStatement>("statement", dates.from, dates.to);
-  const data = result.report;
-  const destinations = [
-    ["/general-ledger", "General ledger", "Actual posted journals and account master"],
-    ["/trial-balance", "Trial balance", "Real account opening balances and period movement"],
-    ["/balance-sheet", "Balance sheet", "Reported posted balances with completeness warnings"],
-    ["/profit-loss", "Posted profit and loss", "Account-based accrual view"],
-    ["/cash-flow", "Cash movement", "Requires classified bank and cash accounts"],
-    ["/receivables", "Customer receivables", "Unpaid server invoices; marketplace separate"],
-    ["/payables", "Supplier invoice register", "Payment allocation not yet verified"],
-    ["/expenses", "Posted expense register", "Only actual posted operating expenses"],
-    [
-      "/period-close",
-      "Period close readiness",
-      "Live management controls; cannot close books itself",
-    ],
-    ["/tax-centre", "Tax controls", "Tax configuration and filing not yet verified"],
-  ] as const;
-  return (
-    <AppShell title="Accounting hub" subtitle={"Source-to-ledger control centre — " + branchLabel}>
-      <FinanceDates {...dates} refresh={result.refresh} />
-      <FinanceFetchState status={result.status} error={result.error} retry={result.refresh} />
-      {data && (
-        <>
-          <FinanceQuality quality={data.quality} issues={data.issues} />
-          <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric
-              label="Period posted debit"
-              value={reportMoney(data.trial.periodDebitMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Period posted credit"
-              value={reportMoney(data.trial.periodCreditMinor, data.scope.currency)}
-            />
-            <Metric
-              label="Reporting coverage"
-              value={data.quality === "RECONCILED" ? "GL checks pass" : "Action required"}
-            />
-          </div>
-        </>
       )}
-      <Panel className="mt-4">
-        <PanelHead
-          title="Financial workflows"
-          sub="Every link shows real records or explicitly explains missing integrations."
-        />
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {destinations.map(([to, label, description]) => (
-            <Link
-              key={to}
-              to={to}
-              className="rounded-lg border border-border p-3 hover:bg-secondary/50"
-            >
-              <strong className="text-[13px]">{label}</strong>
-              <p className="mt-1 text-[12px] text-muted-foreground">{description}</p>
-            </Link>
-          ))}
-        </div>
-      </Panel>
     </AppShell>
   );
 }

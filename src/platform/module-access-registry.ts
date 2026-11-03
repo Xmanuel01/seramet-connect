@@ -537,6 +537,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     policyCode: "MODULE_ACCESS.FINANCE",
     routes: [
       "/finance",
+      "/statements",
       "/profit-loss",
       "/balance-sheet",
       "/cash-flow",

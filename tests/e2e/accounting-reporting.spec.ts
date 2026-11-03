@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 const fixture = JSON.parse(readFileSync(".seramet/e2e-fixture.json", "utf8"));
 
-test("accounting pages preserve configuration evidence and recover from invalid filters", async ({
+test("finance pages show real account checks, redirect old links and recover from invalid filters", async ({
   browser,
 }) => {
   test.setTimeout(180000);
@@ -47,41 +47,57 @@ test("accounting pages preserve configuration evidence and recover from invalid 
     }, fixture);
     const directory = resolve(".seramet/accounting-photo-fixes");
     await mkdir(directory, { recursive: true });
-    for (const path of ["/daily-sales-journal", "/tax-centre", "/general-ledger"]) {
+    // Old addresses land on the merged pages.
+    for (const [path, expected, name] of [
+      ["/daily-sales-journal", "/general-ledger?source=sales", "sales-journal"],
+      ["/profit-loss", "/statements?tab=profit-loss", "statements"],
+      ["/general-ledger", "/general-ledger", "general-ledger"],
+    ] as const) {
       await page.setViewportSize({ width: 1440, height: 1000 });
       await page.goto(path);
+      await expect(page).toHaveURL(new RegExp(expected.replace(/[?]/g, "\\?") + "$"));
       await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
       const main = page.locator("main");
       // The shared tenant has genuine cash/receivable accounts for the cash shift.
       // Missing classifications and journals must still remain visible below.
-      await expect(main.getByText("Chart of accounts not configured", { exact: true })).toHaveCount(
+      await expect(main.getByText("Your accounts aren't set up yet", { exact: true })).toHaveCount(
         0,
       );
       await expect(
-        main.getByText("Cash and bank accounts need classification", { exact: true }),
+        main.getByText("Cash and bank accounts aren't marked", { exact: true }),
       ).toBeVisible();
       await expect(
-        main.getByText("No posted journals in this period", { exact: true }),
+        main.getByText("Nothing was posted in this period", { exact: true }),
       ).toBeVisible();
       await expect(
         main.getByRole("link", { name: "Set up accounts in Setup Centre" }),
       ).toHaveAttribute("href", "/seramet-setup?section=ACCOUNTING");
-      if (path === "/daily-sales-journal") {
+      if (name === "sales-journal") {
+        await expect(main.getByLabel("Show", { exact: true })).toHaveValue("sales");
         await expect(
-          main.getByRole("columnheader", { name: "Voucher", exact: true }),
-        ).toBeVisible();
-        await expect(
-          main.getByText("No posted journals match this period and branch.", { exact: false }),
-        ).toBeVisible();
-        await expect(main.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
-      }
-      if (path === "/tax-centre") {
-        await expect(
-          main.getByText("Tax return preparation is not configured", { exact: true }),
+          main.getByText("No sales were posted in this period.", { exact: true }),
         ).toBeVisible();
       }
+      if (name === "statements") {
+        await expect(main.getByRole("tab", { name: "Profit & Loss" })).toHaveAttribute(
+          "aria-selected",
+          "true",
+        );
+        await expect(main.getByText("Net result", { exact: true }).first()).toBeVisible();
+        await main.getByRole("tab", { name: "Trial Balance" }).click();
+        await expect(page).toHaveURL(/\/statements\?tab=trial-balance$/);
+        // This disposable tenant has posted nothing, so there is no table to show.
+        await expect(
+          main.getByText("Nothing recorded in this period.", { exact: true }),
+        ).toBeVisible();
+        await expect(main.getByText("Out of balance", { exact: true })).toHaveCount(0);
+      }
+      // No internal codes or developer wording on screen.
+      await expect(main).not.toContainText(
+        /authoritative|idempoten|backend|server-side|[A-Z]{3,}_[A-Z]{3,}/,
+      );
       await page.screenshot({
-        path: resolve(directory, `${path.slice(1)}-desktop.png`),
+        path: resolve(directory, `${name}-desktop.png`),
         fullPage: true,
       });
       await page.setViewportSize({ width: 390, height: 844 });
@@ -89,7 +105,7 @@ test("accounting pages preserve configuration evidence and recover from invalid 
         .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
         .toBe(true);
       await page.screenshot({
-        path: resolve(directory, `${path.slice(1)}-mobile.png`),
+        path: resolve(directory, `${name}-mobile.png`),
         fullPage: true,
       });
       const from = main.getByLabel("From", { exact: true });
@@ -105,11 +121,8 @@ test("accounting pages preserve configuration evidence and recover from invalid 
       await expect(page.getByText("This page didn't load", { exact: true })).toHaveCount(0);
       await from.fill(original);
       await expect(
-        main.getByText("Cash and bank accounts need classification", { exact: true }),
+        main.getByText("Cash and bank accounts aren't marked", { exact: true }),
       ).toBeVisible();
-      await expect(main.getByText("Chart of accounts not configured", { exact: true })).toHaveCount(
-        0,
-      );
     }
     expect(errors).toEqual([]);
   } finally {

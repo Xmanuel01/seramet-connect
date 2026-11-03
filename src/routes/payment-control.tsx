@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FileUp, RefreshCcw, Search, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -27,32 +27,28 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { closingPolicy } from "@/payments/daily-closing";
 import { RequestError, reportError } from "@/lib/user-facing-error";
-
-export const Route = createFileRoute("/payment-control")({
-  head: () => ({
-    meta: [
-      { title: "Payment Control Centre - Seramet" },
-      {
-        name: "description",
-        content: "Payment, settlement, cash drawer, bank and EOD reconciliation operations.",
-      },
-    ],
-  }),
-  component: PaymentControlCentre,
-});
+import { humanize } from "@/finance/finance-labels";
+import { RefundsWorkspace } from "@/components/app/RefundsWorkspace";
 
 const tabs = [
-  "Payments",
-  "M-Pesa",
-  "Unmatched",
-  "Settlements",
-  "Cash Drawers",
-  "Bank",
-  "Refunds",
-  "Reconciliation",
-  "EOD",
+  { id: "payments", label: "Payments" },
+  { id: "settlements", label: "Settlements" },
+  { id: "cash-drawers", label: "Cash drawers" },
+  { id: "bank", label: "Bank & reconciliation" },
+  { id: "refunds", label: "Refunds" },
+  { id: "daily-closing", label: "Daily closing" },
 ] as const;
-type Tab = (typeof tabs)[number];
+type Tab = (typeof tabs)[number]["id"];
+const paymentViews = ["All", "M-Pesa", "Unmatched"] as const;
+type PaymentView = (typeof paymentViews)[number];
+
+export const Route = createFileRoute("/payment-control")({
+  validateSearch: (search: Record<string, unknown>): { tab: Tab } => ({
+    tab: tabs.some((tab) => tab.id === search["tab"]) ? (search["tab"] as Tab) : "payments",
+  }),
+  head: () => ({ meta: [{ title: "Payments - Seramet" }] }),
+  component: PaymentControlCentre,
+});
 
 function PaymentControlCentre() {
   const engine = useTransactionEngine();
@@ -65,8 +61,17 @@ function PaymentControlCentre() {
     currentUser,
     hasPermission,
     isAllBranches,
+    platformState,
     timeZone,
   } = useAppContext();
+  const { tab } = Route.useSearch();
+  const navigate = useNavigate();
+  const setTab = (next: Tab) => void navigate({ to: "/payment-control", search: { tab: next } });
+  const [paymentView, setPaymentView] = useState<PaymentView>("All");
+  const staffName = (id: string) =>
+    platformState.users.find((user) => user.id === id)?.name ??
+    state.employees.find((employee) => employee.id === id)?.name ??
+    "Staff member";
   const activeBranch = branchRecords.find((candidate) => candidate.id === branchId);
   const activeTimeZone = activeBranch?.timezone ?? timeZone;
   const activeCutoffMinutes = Number(activeBranch?.metadata["businessDayCutoffMinutes"] ?? 0);
@@ -75,12 +80,12 @@ function PaymentControlCentre() {
     activeTimeZone,
     activeCutoffMinutes,
   );
-  const [tab, setTab] = useState<Tab>("Payments");
   const [periodDate, setPeriodDate] = useState(currentBusinessDate);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedTransactionId, setSelectedTransactionId] = useState("");
-  const [openingFloat, setOpeningFloat] = useState("5000");
+  // The cashier enters the cash actually counted into the drawer.
+  const [openingFloat, setOpeningFloat] = useState("");
   const [manualPaymentId, setManualPaymentId] = useState("");
   const [manualBankId, setManualBankId] = useState("");
   const [manualReason, setManualReason] = useState("");
@@ -237,7 +242,7 @@ function PaymentControlCentre() {
     const payment = transactions.find((candidate) => candidate.id === manualPaymentId);
     const bank = bankTransactions.find((candidate) => candidate.id === manualBankId);
     if (!session || !payment || !bank) {
-      setNotice("Select a payment and bank transaction after starting reconciliation.");
+      setNotice("Choose Match payments first, then pick a payment and its bank entry.");
       return;
     }
     runMutation(
@@ -258,21 +263,34 @@ function PaymentControlCentre() {
     );
   };
 
-  const openDrawer = () =>
+  const openingFloatMinor = (() => {
+    try {
+      const minor = parseMajorAmount(openingFloat, currency);
+      return minor >= 0 ? minor : null;
+    } catch {
+      return null;
+    }
+  })();
+  const openDrawer = () => {
+    if (openingFloatMinor === null) {
+      setNotice("Enter the cash counted into the drawer.");
+      return;
+    }
     runMutation("Cash drawer opened.", "openPaymentDrawer", {
       input: {
         tenantId: activeTenantId,
         branchId,
         employeeId: currentUser.id,
-        openingFloatMinor: parseMajorAmount(openingFloat, currency),
+        openingFloatMinor,
         currency,
         deviceId: `${branchId}-POS`,
         actor: currentUser.name,
       },
     });
+  };
 
   const approveDrawer = (drawerId: string) =>
-    runMutation("Cash variance approved with an audit reason.", "approveDrawerVariance", {
+    runMutation("Cash difference approved.", "approveDrawerVariance", {
       input: {
         tenantId: activeTenantId,
         drawerSessionId: drawerId,
@@ -293,10 +311,12 @@ function PaymentControlCentre() {
       (account) => account.tenantId === activeTenantId && account.type === "BANK" && account.active,
     );
     if (!bankPreview?.canPost || !bankAccount) {
-      setNotice("A valid preview and configured bank account are required.");
+      setNotice(
+        "Check the statement preview, and set up a bank account in Setup Centre → Payments.",
+      );
       return;
     }
-    runMutation("Bank statement imported idempotently.", "importBankTransactions", {
+    runMutation("Bank statement imported.", "importBankTransactions", {
       input: {
         tenantId: activeTenantId,
         ...(isAllBranches ? {} : { branchId }),
@@ -318,7 +338,7 @@ function PaymentControlCentre() {
         return provider?.category === "DELIVERY";
       });
     if (!connection) {
-      setNotice("Configure a marketplace connection before importing a settlement.");
+      setNotice("Connect a delivery platform in Integrations before importing its settlements.");
       return;
     }
     const source = file.name.toLowerCase().endsWith(".xlsx")
@@ -331,10 +351,10 @@ function PaymentControlCentre() {
 
   const importSettlementPreview = () => {
     if (!settlementPreview?.canPost) {
-      setNotice("Resolve settlement preview errors before importing.");
+      setNotice("Fix the rows marked in the preview, then import.");
       return;
     }
-    runMutation("Settlement batches imported for matching.", "importSettlementBatches", {
+    runMutation("Settlements imported.", "importSettlementBatches", {
       inputs: settlementPreview.recognized.map((normalized) => ({
         tenantId: activeTenantId,
         ...(isAllBranches ? {} : { branchId }),
@@ -354,10 +374,10 @@ function PaymentControlCentre() {
         candidate.status !== "MATCHED",
     );
     if (!bank) {
-      setNotice("No exact unallocated bank receipt matches this settlement.");
+      setNotice("No bank entry matches this settlement's amount yet.");
       return;
     }
-    runMutation("Settlement matched to the exact bank receipt.", "matchSettlementToBank", {
+    runMutation("Settlement matched to its bank entry.", "matchSettlementToBank", {
       input: {
         tenantId: activeTenantId,
         settlementBatchId: settlementId,
@@ -376,7 +396,7 @@ function PaymentControlCentre() {
       : undefined;
     const accountConfig = connection?.configuration["settlementAccounts"];
     if (!isSettlementAccountMappings(accountConfig)) {
-      setNotice("Configure every settlement posting account before posting.");
+      setNotice("Set the accounts for this platform's settlements in Integrations, then post.");
       return;
     }
     runMutation(
@@ -395,16 +415,16 @@ function PaymentControlCentre() {
 
   return (
     <AppShell
-      title="Payment Control Centre"
-      subtitle={`Sales, collections, settlements and EOD control - ${branchLabel}`}
+      title="Payments"
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={runAutomaticMatching} disabled={!hasPermission(permissions.paymentsMatch)}>
-            <RefreshCcw className="h-4 w-4" /> Auto reconcile
+            <RefreshCcw className="h-4 w-4" /> Match payments
           </Btn>
           <Btn
             variant="primary"
-            onClick={() => setTab("EOD")}
+            onClick={() => setTab("daily-closing")}
             disabled={!hasPermission(permissions.reconciliationView)}
           >
             <ShieldCheck className="h-4 w-4" /> Daily closing
@@ -415,10 +435,10 @@ function PaymentControlCentre() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Metric label="Sales today" value={salesToday} money />
         <Metric label="Collected today" value={majorFromMinor(collectedMinor, currency)} money />
-        <Metric label="Outstanding receivables" value={outstandingReceivables} money invert />
+        <Metric label="Unpaid invoices" value={outstandingReceivables} money invert />
         <Metric label="Unmatched payments" value={unmatchedTransactions.length} invert />
         <Metric
-          label="Cash variance"
+          label="Cash difference"
           value={majorFromMinor(cashVarianceMinor, currency)}
           money
           invert
@@ -435,19 +455,21 @@ function PaymentControlCentre() {
           <div className="flex gap-1 overflow-x-auto">
             {tabs.map((item) => (
               <button
-                key={item}
-                onClick={() => setTab(item)}
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === item.id}
+                onClick={() => setTab(item.id)}
                 className={cn(
                   "h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold",
-                  tab === item ? "bg-primary text-primary-foreground" : "hover:bg-secondary",
+                  tab === item.id ? "bg-primary text-primary-foreground" : "hover:bg-secondary",
                 )}
               >
-                {item}
+                {item.label}
               </button>
             ))}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Chips items={[`Scope: ${branchLabel}`, `Period: ${periodDate}`]} />
             <label className="relative min-w-[220px] flex-1 sm:max-w-sm">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <input
@@ -471,7 +493,36 @@ function PaymentControlCentre() {
           </div>
         )}
 
-        {tab === "Payments" && (
+        {tab === "payments" && (
+          <div
+            role="group"
+            aria-label="Show"
+            className="flex gap-1 border-b border-border px-3 py-2"
+          >
+            {paymentViews.map((view) => (
+              <button
+                key={view}
+                type="button"
+                aria-pressed={paymentView === view}
+                onClick={() => setPaymentView(view)}
+                className={cn(
+                  "h-8 rounded-md px-3 text-[12px] font-semibold",
+                  paymentView === view
+                    ? "bg-secondary"
+                    : "text-muted-foreground hover:bg-secondary/60",
+                )}
+              >
+                {view}
+                {view === "Unmatched" && unmatchedTransactions.length > 0 && (
+                  <span className="ml-1.5 rounded bg-warning-soft px-1.5 text-[11px]">
+                    {unmatchedTransactions.length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab === "payments" && paymentView === "All" && (
           <div className="grid xl:grid-cols-[minmax(0,1fr)_360px]">
             <TransactionList
               rows={transactions}
@@ -487,7 +538,8 @@ function PaymentControlCentre() {
           </div>
         )}
 
-        {tab === "M-Pesa" &&
+        {tab === "payments" &&
+          paymentView === "M-Pesa" &&
           (isAllBranches ? (
             <p className="p-6 text-[13px] text-muted-foreground">
               Choose a branch to match its M-Pesa payments.
@@ -514,17 +566,17 @@ function PaymentControlCentre() {
               />
             </>
           ))}
-        {tab === "Unmatched" && (
+        {tab === "payments" && paymentView === "Unmatched" && (
           <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div>
-              <h2 className="text-[14px] font-semibold">Unmatched payment queue</h2>
+              <h2 className="text-[14px] font-semibold">Payments to match</h2>
               <p className="mb-3 text-[12px] text-muted-foreground">
-                Weak and ambiguous matches require authorized review.
+                These couldn&apos;t be matched automatically. Match each one to its bank entry.
               </p>
               <TransactionCards rows={unmatchedTransactions} />
             </div>
             <div className="space-y-3 rounded-lg border border-border p-3">
-              <div className="text-[13px] font-semibold">Manual match</div>
+              <div className="text-[13px] font-semibold">Match by hand</div>
               <select
                 value={manualPaymentId}
                 onChange={(event) => setManualPaymentId(event.target.value)}
@@ -555,7 +607,7 @@ function PaymentControlCentre() {
                 value={manualReason}
                 onChange={(event) => setManualReason(event.target.value)}
                 className="h-10 w-full rounded-md border border-border bg-card px-3 text-[12px]"
-                placeholder="Required review reason"
+                placeholder="Reason (required)"
               />
               <Btn
                 variant="primary"
@@ -563,16 +615,16 @@ function PaymentControlCentre() {
                 onClick={manuallyMatch}
                 disabled={!hasPermission(permissions.paymentsMatch)}
               >
-                Approve manual match
+                Match
               </Btn>
             </div>
           </div>
         )}
 
-        {tab === "Settlements" && (
+        {tab === "settlements" && (
           <div className="p-4">
             <ImportBar
-              label="Import settlement CSV/XLSX"
+              label="Import settlement file (CSV or Excel)"
               onFile={handleSettlementFile}
               canPost={Boolean(settlementPreview?.canPost)}
               onPost={importSettlementPreview}
@@ -594,7 +646,7 @@ function PaymentControlCentre() {
                   <div className="num text-[13px] font-semibold">
                     Net {formatMinor(settlement.netExpectedMinor, settlement.currency)}
                   </div>
-                  <Status>{settlement.status}</Status>
+                  <Status>{humanize(settlement.status)}</Status>
                   <div className="flex gap-2">
                     <Btn
                       onClick={() => matchSettlement(settlement.id)}
@@ -618,27 +670,31 @@ function PaymentControlCentre() {
                   </div>
                 </div>
               ))}
-              {!settlements.length && <EmptyLine text="No settlement batches in this scope." />}
+              {!settlements.length && <EmptyLine text="No settlements imported for this day." />}
             </div>
           </div>
         )}
 
-        {tab === "Cash Drawers" && (
+        {tab === "cash-drawers" && (
           <div className="grid gap-4 p-4 xl:grid-cols-[320px_minmax(0,1fr)]">
             <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="text-[13px] font-semibold">Drawer controls</div>
-              <MoneyInput label="Opening float" value={openingFloat} onChange={setOpeningFloat} />
+              <MoneyInput
+                label="Cash counted into the drawer"
+                value={openingFloat}
+                onChange={setOpeningFloat}
+              />
               <input
                 value={manualReason}
                 onChange={(event) => setManualReason(event.target.value)}
                 className="h-10 w-full rounded-md border border-border bg-card px-3 text-[12px]"
-                placeholder="Variance approval reason"
+                placeholder="Reason for approving a difference"
               />
               <Btn
                 variant="primary"
                 className="w-full"
                 onClick={openDrawer}
-                disabled={!hasPermission(permissions.cashOpen)}
+                disabled={!hasPermission(permissions.cashOpen) || openingFloatMinor === null}
               >
                 Open drawer
               </Btn>
@@ -648,18 +704,18 @@ function PaymentControlCentre() {
                 <div key={drawer.id} className="rounded-lg border border-border p-3">
                   <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
                     <div>
-                      <div className="font-semibold">{drawer.id}</div>
+                      <div className="font-semibold">{staffName(drawer.employeeId)}</div>
                       <div className="text-[12px] text-muted-foreground">
-                        {drawer.employeeId} - opened {new Date(drawer.openedAt).toLocaleString()}
+                        Opened {new Date(drawer.openedAt).toLocaleString()}
                       </div>
                     </div>
-                    <Status>{drawer.status}</Status>
+                    <Status>{humanize(drawer.status)}</Status>
                     <div className="flex gap-2">
                       {drawer.status === "OPEN" &&
                         closingPolicy(state, activeTenantId, branchId).mode ===
                           "MULTI_CASHIER_SHIFTS" && (
                           <Btn
-                            onClick={() => setTab("EOD")}
+                            onClick={() => setTab("daily-closing")}
                             disabled={!hasPermission(permissions.cashClose)}
                           >
                             Shift review
@@ -712,15 +768,15 @@ function PaymentControlCentre() {
                   </div>
                 </div>
               ))}
-              {!drawers.length && <EmptyLine text="No cash drawer sessions in this scope." />}
+              {!drawers.length && <EmptyLine text="No cash drawers opened on this day." />}
             </div>
           </div>
         )}
 
-        {tab === "Bank" && (
+        {tab === "bank" && (
           <div className="p-4">
             <ImportBar
-              label="Import bank statement CSV/XLSX"
+              label="Import bank statement (CSV or Excel)"
               onFile={handleBankFile}
               canPost={Boolean(bankPreview?.canPost)}
               onPost={importBankPreview}
@@ -732,47 +788,9 @@ function PaymentControlCentre() {
           </div>
         )}
 
-        {tab === "Refunds" && (
-          <div className="grid gap-3 p-4">
-            {refunds.map((refund) => (
-              <div
-                key={refund.id}
-                className="grid gap-3 rounded-lg border border-border p-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center"
-              >
-                <div>
-                  <div className="font-semibold">
-                    {refund.id} - {refund.reason}
-                  </div>
-                  <div className="text-[12px] text-muted-foreground">
-                    Original {refund.originalTransactionId} - requested by {refund.requestedBy}
-                  </div>
-                </div>
-                <div className="num text-[13px] font-semibold">
-                  {formatMinor(refund.amountMinor, refund.currency)}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Status>{refund.status}</Status>
-                  {refund.status === "REQUESTED" && (
-                    <Btn
-                      variant="primary"
-                      onClick={() =>
-                        runMutation("Refund approved for provider processing.", "approveRefund", {
-                          refundId: refund.id,
-                        })
-                      }
-                      disabled={!hasPermission(permissions.paymentsRefundApprove)}
-                    >
-                      Approve
-                    </Btn>
-                  )}
-                </div>
-              </div>
-            ))}
-            {!refunds.length && <EmptyLine text="No refund requests in this scope." />}
-          </div>
-        )}
+        {tab === "refunds" && <RefundsWorkspace />}
 
-        {tab === "Reconciliation" && (
+        {tab === "bank" && (
           <div className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div className="grid gap-3">
               {matches.map((match) => (
@@ -786,27 +804,27 @@ function PaymentControlCentre() {
                     </div>
                     <div className="text-[12px] text-muted-foreground">{match.reason}</div>
                   </div>
-                  <Status>{match.confidence}</Status>
-                  <Status>{match.status}</Status>
+                  <Status>{humanize(match.confidence)}</Status>
+                  <Status>{humanize(match.status)}</Status>
                 </div>
               ))}
               {!matches.length && (
-                <EmptyLine text="Run automatic matching to create a reconciliation session." />
+                <EmptyLine text="No matches yet. Choose Match payments to match them automatically." />
               )}
             </div>
             <div className="space-y-3">
-              <div className="text-[13px] font-semibold">Open exceptions</div>
+              <div className="text-[13px] font-semibold">Needs review</div>
               {exceptions.map((exception) => (
                 <div key={exception.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="font-semibold">{exception.reason.replaceAll("_", " ")}</div>
-                    <Status>{exception.severity}</Status>
+                    <div className="font-semibold">{humanize(exception.reason)}</div>
+                    <Status>{humanize(exception.severity)}</Status>
                   </div>
                   <p className="mt-1 text-[12px] text-muted-foreground">{exception.detail}</p>
                   <Btn
                     className="mt-3 w-full"
                     onClick={() =>
-                      runMutation("Exception resolved.", "resolveReconciliationException", {
+                      runMutation("Marked as resolved.", "resolveReconciliationException", {
                         input: {
                           tenantId: activeTenantId,
                           exceptionId: exception.id,
@@ -817,7 +835,7 @@ function PaymentControlCentre() {
                     }
                     disabled={!hasPermission(permissions.reconciliationManage)}
                   >
-                    Resolve with reason
+                    Mark resolved
                   </Btn>
                 </div>
               ))}
@@ -825,13 +843,13 @@ function PaymentControlCentre() {
                 value={manualReason}
                 onChange={(event) => setManualReason(event.target.value)}
                 className="h-10 w-full rounded-md border border-border bg-card px-3 text-[12px]"
-                placeholder="Required resolution reason"
+                placeholder="Reason (required)"
               />
             </div>
           </div>
         )}
 
-        {tab === "EOD" && (
+        {tab === "daily-closing" && (
           <DailyClosingPanel key={`${activeTenantId}:${branchId}`} engine={engine} />
         )}
       </Panel>
@@ -876,12 +894,12 @@ function TransactionList({
                 <TD className="num text-muted-foreground">
                   {row.providerTransactionId ?? row.customerReference ?? row.merchantReference}
                 </TD>
-                <TD>{row.direction}</TD>
+                <TD>{humanize(row.direction)}</TD>
                 <TD className="num text-right font-semibold">
                   {formatMinor(row.amountMinor, row.currency)}
                 </TD>
                 <TD>
-                  <Status>{row.status}</Status>
+                  <Status>{humanize(row.status)}</Status>
                 </TD>
               </tr>
             ))}
@@ -914,7 +932,7 @@ function TransactionCards({
         >
           <div className="flex justify-between gap-3">
             <span className="num font-semibold">{row.id}</span>
-            <Status>{row.status}</Status>
+            <Status>{humanize(row.status)}</Status>
           </div>
           <div className="num mt-2 text-[18px] font-bold">
             {formatMinor(row.amountMinor, row.currency)}
@@ -924,7 +942,7 @@ function TransactionCards({
           </div>
         </button>
       ))}
-      {!rows.length && <EmptyLine text="No payment transactions match the current filters." />}
+      {!rows.length && <EmptyLine text="No payments match these filters." />}
     </div>
   );
 }
@@ -947,7 +965,7 @@ function PaymentDetails({
 }) {
   return (
     <aside className="border-t border-border p-4 xl:border-l xl:border-t-0">
-      <PanelHead title="Payment details" sub="Allocation and audit timeline" />
+      <PanelHead title="Payment details" sub="Where it was applied, and its history" />
       {transaction ? (
         <div className="space-y-4 pt-4">
           <div className="grid grid-cols-2 gap-2 text-[12px]">
@@ -958,8 +976,8 @@ function PaymentDetails({
                 transaction.paymentMethodId
               }
             />
-            <Detail label="Status" value={transaction.status} />
-            <Detail label="Invoice/order" value={transaction.merchantReference} />
+            <Detail label="Status" value={humanize(transaction.status)} />
+            <Detail label="Invoice or order" value={transaction.merchantReference} />
             <Detail
               label="Amount"
               value={formatMinor(transaction.amountMinor, transaction.currency)}
@@ -974,17 +992,16 @@ function PaymentDetails({
                   )}
                 />
                 <Detail
-                  label="Base allocation"
+                  label="Applied in main currency"
                   value={formatMinor(
                     transaction.currencyEvidence.baseAmountMinor,
                     transaction.currencyEvidence.baseCurrency,
                   )}
                 />
                 <Detail
-                  label="Rate evidence"
+                  label="Exchange rate"
                   value={`${transaction.currencyEvidence.rateNumerator}/${transaction.currencyEvidence.rateDenominator}`}
                 />
-                <Detail label="FX quote" value={transaction.currencyEvidence.quoteId} />
               </>
             )}
           </div>
@@ -1024,7 +1041,7 @@ function PaymentDetails({
           </div>
         </div>
       ) : (
-        <EmptyLine text="Select a transaction to inspect its references, allocations and audit history." />
+        <EmptyLine text="Choose a payment to see its details." />
       )}
     </aside>
   );
@@ -1057,10 +1074,10 @@ function BankRows({
             </div>
           </div>
           <span className="num font-semibold">{formatMinor(row.amountMinor, row.currency)}</span>
-          <Status>{row.status}</Status>
+          <Status>{humanize(row.status)}</Status>
         </div>
       ))}
-      {!rows.length && <EmptyLine text="No bank transactions imported for this scope." />}
+      {!rows.length && <EmptyLine text="No bank entries imported yet." />}
     </div>
   );
 }
@@ -1102,9 +1119,9 @@ function ImportBar({
 function PreviewSummary({ preview }: { preview: StatementPreview<unknown> }) {
   return (
     <div className="mt-3 grid grid-cols-2 gap-2 text-[12px] sm:grid-cols-4">
-      <Detail label="Recognized" value={String(preview.recognized.length)} />
+      <Detail label="Ready to import" value={String(preview.recognized.length)} />
       <Detail label="Duplicates" value={String(preview.duplicates.length)} />
-      <Detail label="Unknown" value={String(preview.unknown.length)} />
+      <Detail label="Not recognised" value={String(preview.unknown.length)} />
       <Detail
         label="Errors"
         value={String(preview.issues.filter((item) => item.severity === "ERROR").length)}
