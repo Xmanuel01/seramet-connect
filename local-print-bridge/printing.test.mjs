@@ -127,13 +127,19 @@ test("encoder emits bounded 58/80mm lines, safe text, feed and opted-in cut", ()
     const columns = paperWidth === "58mm" ? 32 : 48;
     for (const line of bytes.subarray(10, -4).toString("latin1").split("\n"))
       assert.ok(line.replace(/\x1b(E.|3.|2)/g, "").length <= columns, line);
-    // Each line starts with the indent that centres it (none on 58mm).
-    const firstLine = bytes
-      .subarray(10)
+    // Every printed line, wrapped ones included, starts with exactly the indent
+    // that centres it (none on 58mm).
+    const printed = bytes
+      .subarray(10, -4)
       .toString("latin1")
-      .split("\n")[0]
-      .replace(/\x1b(E.|3.|2)/g, "");
-    assert.equal(firstLine.startsWith("   "), paperWidth === "80mm", JSON.stringify(firstLine));
+      .split("\n")
+      .slice(0, -1)
+      .map((line) => line.replace(/\x1b(E.|3.|2)/g, ""));
+    assert.ok(printed.length >= 4, "the long line wraps onto several lines");
+    for (const line of printed) {
+      const indent = /^ */.exec(line)[0].length;
+      assert.equal(indent, paperWidth === "80mm" ? 3 : 0, JSON.stringify(line));
+    }
   }
   assert.throws(() => encodeEscPos("x", { ...profile, encoding: "utf8" }), /UNSUPPORTED/);
   assert.throws(() => encodeEscPos("x", { ...profile, ruleStyle: "DOTTED" }), /UNSUPPORTED/);

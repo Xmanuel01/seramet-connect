@@ -27,7 +27,7 @@ export const printerConfigurationSchema = z
     port: z.number().int().min(1024).max(65535).default(9100),
     paperWidth: z.enum(["58mm", "80mm"]).default("80mm"),
     encoding: z.literal("ascii").default("ascii"),
-    cutter: z.enum(["none", "partial", "full"]).default("full"),
+    cutter: z.enum(["none", "partial", "full"]).default("none"),
     emphasis: z.boolean().default(false),
     renderingMode: z.enum(["TEXT_ESC_POS", "RASTER_ESC_POS"]).optional(),
     raster: rasterCapabilities.optional(),
