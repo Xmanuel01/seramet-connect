@@ -69,7 +69,7 @@ describe.sequential("identity, device and branch hardening", () => {
         .prepare(
           "INSERT INTO roles (tenant_id,id,code,name,active,payload_json) VALUES (?,?,?,?,1,'{}')",
         )
-        .bind(provisioned.tenantId, roleId, "CASHIER", "Cashier"),
+        .bind(provisioned.tenantId, roleId, "PIN_TEST_CASHIER", "PIN test cashier"),
       db
         .prepare("INSERT INTO role_permissions (tenant_id,role_id,permission_code) VALUES (?,?,?)")
         .bind(provisioned.tenantId, roleId, permissions.posAccess),

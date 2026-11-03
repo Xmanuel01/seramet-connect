@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
+import { MoreHorizontal, Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { EmployeeStationAccess } from "@/components/app/EmployeeStationAccess";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
@@ -51,6 +57,7 @@ function Employees() {
     isAllBranches,
     authenticationLevel,
     sessionId,
+    refreshConfiguration,
   } = useAppContext();
   const [storedEmployees, setEmployees] = useState<EmployeeRow[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
@@ -257,6 +264,44 @@ function Employees() {
       }
     }
   }
+  // The owner role is never handed out, and nobody can grant a role above their own access.
+  const assignableRoles = roleRecords.filter(
+    (role) =>
+      role.active &&
+      role.code !== "ACCOUNT_OWNER" &&
+      !role.permissions.some((permission) => !currentUser.permissions.includes(permission)),
+  );
+  const canManageRoles = hasPermission(permissions.settingsRoleManage);
+  async function addStandardRoles() {
+    if (!canManageRoles || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/seramet/configuration/roles/standard", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ reason: "Standard staff roles added from Employees" }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        added?: string[];
+      };
+      if (!response.ok) throw new Error(result.message ?? "Couldn't add the staff roles.");
+      await refreshConfiguration();
+      setNotice(
+        result.added?.length
+          ? "Staff roles added. Choose one for this employee."
+          : "The staff roles are already set up.",
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't add the staff roles.");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
   const locked = employees.filter(
     (employee) => employee.locked_until && Date.parse(employee.locked_until) > Date.now(),
   );
@@ -341,31 +386,45 @@ function Employees() {
               value={draft.phone}
               onChange={(value) => setDraft({ ...draft, phone: value })}
             />
-            <label className={labelClass}>
-              Operational role
-              <select
-                className={fieldClass}
-                required
-                value={draft.roleId}
-                onChange={(event) => setDraft({ ...draft, roleId: event.target.value })}
-              >
-                <option value="">Select role</option>
-                {roleRecords
-                  .filter(
-                    (role) =>
-                      role.active &&
-                      role.code !== "ACCOUNT_OWNER" &&
-                      !role.permissions.some(
-                        (permission) => !currentUser.permissions.includes(permission),
-                      ),
-                  )
-                  .map((role) => (
+            {assignableRoles.length ? (
+              <label className={labelClass}>
+                Role
+                <select
+                  className={fieldClass}
+                  required
+                  value={draft.roleId}
+                  onChange={(event) => setDraft({ ...draft, roleId: event.target.value })}
+                >
+                  <option value="">Select role</option>
+                  {assignableRoles.map((role) => (
                     <option key={role.id} value={role.id}>
                       {role.name}
                     </option>
                   ))}
-              </select>
-            </label>
+                </select>
+              </label>
+            ) : (
+              <div className={labelClass}>
+                Role
+                <div className="mt-1.5 rounded-md border border-dashed border-border px-3 py-2 text-sm font-normal text-foreground">
+                  {canManageRoles ? (
+                    <>
+                      There are no staff roles yet.{" "}
+                      <button
+                        type="button"
+                        className="font-semibold text-primary underline underline-offset-2"
+                        disabled={busy}
+                        onClick={() => void addStandardRoles()}
+                      >
+                        Add standard roles
+                      </button>
+                    </>
+                  ) : (
+                    "There are no staff roles yet. Ask the account owner to add them in Settings."
+                  )}
+                </div>
+              </div>
+            )}
             <fieldset className="grid gap-2 md:col-span-2 xl:col-span-3">
               <legend className="text-xs font-semibold text-muted-foreground">
                 Assigned branches
@@ -458,23 +517,22 @@ function Employees() {
       <Panel className="mt-4 overflow-x-auto">
         <PanelHead
           title="Employee register"
-          sub="PIN hashes and credential metadata are never returned"
+          sub="Everyone who works in this branch"
           right={
             <Btn onClick={() => void load()} disabled={busy} title="Refresh">
               <RefreshCcw className="h-4 w-4" />
             </Btn>
           }
         />
-        <table className="w-full min-w-[820px]">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr>
               <TH>Employee</TH>
-              <TH>Code</TH>
               <TH>Job title</TH>
-              <TH>Primary branch</TH>
-              <TH>Credential</TH>
+              <TH>Branch</TH>
+              <TH>PIN</TH>
               <TH>Status</TH>
-              {canManage && <TH>Phone account</TH>}
+              {canManage && <TH className="w-12" />}
             </tr>
           </thead>
           <tbody>
@@ -483,55 +541,58 @@ function Employees() {
                 <TD>
                   <div className="font-semibold">{employee.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {employee.email ?? "No email"}
+                    {[employee.employee_code, employee.email].filter(Boolean).join(" · ") ||
+                      "No code or email"}
                   </div>
                 </TD>
-                <TD>{employee.employee_code ?? "Not assigned"}</TD>
-                <TD>{employee.job_title ?? "Not configured"}</TD>
+                <TD>{employee.job_title ?? "—"}</TD>
                 <TD>
                   {branchRecords.find((branch) => branch.id === employee.primary_branch_id)?.name ??
-                    "Not assigned"}
+                    "—"}
                 </TD>
                 <TD>
-                  <Status>
-                    {!employee.credential_configured
-                      ? "NOT CONFIGURED"
-                      : employee.locked_until && Date.parse(employee.locked_until) > Date.now()
-                        ? "LOCKED"
-                        : employee.must_change
-                          ? "RESET REQUIRED"
-                          : "READY"}
+                  <Status className={statusTone[pinStatus(employee)]}>{pinStatus(employee)}</Status>
+                </TD>
+                <TD>
+                  <Status className={statusTone[titleCase(employee.employment_status)]}>
+                    {titleCase(employee.employment_status)}
                   </Status>
                 </TD>
-                <TD>
-                  <Status>{employee.employment_status}</Status>
-                </TD>
                 {canManage && (
-                  <TD>
-                    <div className="flex flex-wrap gap-2">
-                      <Btn
-                        disabled={busy || !employee.email}
-                        onClick={() => void invitation(employee)}
+                  <TD className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        disabled={busy}
+                        aria-label={`Actions for ${employee.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary disabled:opacity-50"
                       >
-                        Invite account
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => void invitation(employee, false, true)}>
-                        Invitation status
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => void invitation(employee, true)}>
-                        Revoke invite
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => setStationEmployee(employee)}>
-                        Preparation stations
-                      </Btn>
-                    </div>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          disabled={!employee.email}
+                          onSelect={() => void invitation(employee)}
+                        >
+                          {employee.email ? "Invite to sign in" : "Invite to sign in (needs email)"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => void invitation(employee, false, true)}>
+                          Check invitation
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => void invitation(employee, true)}>
+                          Cancel invitation
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setStationEmployee(employee)}>
+                          Preparation stations
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TD>
                 )}
               </tr>
             ))}
             {!employees.length && !busy ? (
               <tr>
-                <TD colSpan={6}>No employees are configured in this branch scope.</TD>
+                <TD colSpan={canManage ? 6 : 5}>No employees in this branch yet.</TD>
               </tr>
             ) : null}
           </tbody>
@@ -547,6 +608,22 @@ function Employees() {
     </AppShell>
   );
 }
+
+function pinStatus(employee: EmployeeRow) {
+  if (!employee.credential_configured) return "No PIN";
+  if (employee.locked_until && Date.parse(employee.locked_until) > Date.now()) return "Locked";
+  return employee.must_change ? "PIN change needed" : "PIN set";
+}
+
+const statusTone: Record<string, string> = {
+  "PIN set": "bg-success-soft text-success",
+  "PIN change needed": "bg-warning-soft text-warning",
+  Locked: "bg-danger-soft text-danger",
+  Active: "bg-success-soft text-success",
+};
+
+const titleCase = (value: string) =>
+  value.charAt(0).toUpperCase() + value.slice(1).toLowerCase().replaceAll("_", " ");
 
 const fieldClass =
   "mt-1.5 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";

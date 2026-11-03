@@ -24,6 +24,8 @@ import {
   createRole,
   createRoleInputSchema,
   deactivateRole,
+  installStandardRoles,
+  installStandardRolesInputSchema,
   updateOrderChannel,
   updateOrderChannelInputSchema,
   updatePaymentMethod,
@@ -42,6 +44,16 @@ export async function handleConfigurationApi(
       requireDatabase(env),
       actor,
       await readSettingsBody(request, createRoleInputSchema),
+    );
+    await refreshConfiguration(requireDatabase(env), env);
+    return json({ ok: true, ...result });
+  }
+  if (url.pathname === "/api/seramet/configuration/roles/standard" && request.method === "POST") {
+    const actor = await settingsMutationActor(request, env, "roles");
+    const result = await installStandardRoles(
+      requireDatabase(env),
+      actor,
+      await readSettingsBody(request, installStandardRolesInputSchema),
     );
     await refreshConfiguration(requireDatabase(env), env);
     return json({ ok: true, ...result });

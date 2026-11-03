@@ -371,7 +371,7 @@ test("People provides an Add Employee path to the authorized employee register",
   await page.getByLabel("Employee code", { exact: true }).fill(employeeCode);
   await page.getByLabel("Job title", { exact: true }).fill("Waiter");
   await page
-    .getByRole("combobox", { name: "Operational role", exact: true })
+    .getByRole("combobox", { name: "Role", exact: true })
     .selectOption({ label: "Attendance employee" });
   await page.getByLabel("Temporary PIN", { exact: true }).fill("602947");
   await page.getByLabel("Confirm PIN", { exact: true }).fill("602947");
