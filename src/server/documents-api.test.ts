@@ -173,3 +173,34 @@ describe("invoice and receipt lists by date", () => {
     await expect(service.invoices({ ...today, limit: 999 })).rejects.toThrow();
   });
 });
+
+describe("date lookups use the branch/date indexes", () => {
+  it("reads invoices and receipts by branch and business date without scanning history", () => {
+    const db = createMigratedTestDatabase();
+    try {
+      const plan = (sql: string) =>
+        (
+          db.sqlite
+            .prepare(`EXPLAIN QUERY PLAN ${sql}`)
+            .all(tenant, "2026-11-01", "2026-11-02", "westlands") as {
+            detail: string;
+          }[]
+        )
+          .map((row) => row.detail)
+          .join("\n");
+      const order = "ORDER BY business_date DESC, created_at DESC, id DESC LIMIT 201";
+      expect(
+        plan(
+          `SELECT payload_json FROM invoices WHERE tenant_id=? AND business_date BETWEEN ? AND ? AND branch_id IN (?) AND status NOT IN ('MERGED','SPLIT') ${order}`,
+        ),
+      ).toContain("idx_invoices_tenant_branch_date");
+      expect(
+        plan(
+          `SELECT payload_json FROM receipts WHERE tenant_id=? AND business_date BETWEEN ? AND ? AND branch_id IN (?) ${order}`,
+        ),
+      ).toContain("idx_receipts_tenant_branch_date");
+    } finally {
+      db.close();
+    }
+  });
+});
