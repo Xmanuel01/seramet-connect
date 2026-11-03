@@ -101,7 +101,10 @@ describe("invoice and receipt lists by date", () => {
 
   it("returns only the branch and dates asked for, newest first, without merged or split bills", async () => {
     const page = await new DocumentListService(db, actor()).invoices(today);
-    expect(page.rows.map((row) => row.id).sort()).toEqual(["INV-1", "INV-2", "INV-3"]);
+    // Same date and time, so the newest id comes first.
+    expect(page.rows.map((row) => row.id)).toEqual(["INV-3", "INV-2", "INV-1"]);
+    // Older payloads without a business date carry the day they were filed under.
+    expect(page.rows.every((row) => row.businessDate === "2026-11-02")).toBe(true);
     expect(page.hasMore).toBe(false);
     const month = await new DocumentListService(db, actor()).invoices({
       from: "2026-10-01",
@@ -130,6 +133,17 @@ describe("invoice and receipt lists by date", () => {
     expect(new Set([...first.rows, ...second.rows].map((row) => row.id)).size).toBe(3);
   });
 
+  it("includes closed branches' history in an all-branches view", async () => {
+    db.sqlite.prepare("UPDATE branches SET active=0 WHERE id='ngong'").run();
+    const owner: ServerActor = {
+      ...actor(),
+      branchScope: { type: "ALL" },
+    };
+    const page = await new DocumentListService(db, owner).invoices(today);
+    expect(page.rows.map((row) => row.id)).toContain("INV-6");
+    expect(page.rows.map((row) => row.id)).not.toContain("INV-X");
+  });
+
   it("lists receipts by date", async () => {
     const page = await new DocumentListService(db, actor()).receipts(today);
     expect(page.rows.map((row) => row.id)).toEqual(["RCP-1"]);
@@ -153,6 +167,9 @@ describe("invoice and receipt lists by date", () => {
       /on or before/,
     );
     await expect(service.invoices({ from: "", to: "2026-11-02" })).rejects.toThrow(/valid/);
+    await expect(service.invoices({ from: "2026-02-31", to: "2026-03-02" })).rejects.toThrow(
+      /valid/,
+    );
     await expect(service.invoices({ ...today, limit: 999 })).rejects.toThrow();
   });
 });
