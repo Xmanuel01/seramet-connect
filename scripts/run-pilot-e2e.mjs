@@ -24,6 +24,7 @@ const allowed = new Set([
   "tests/e2e/invoice-split.spec.ts",
   "tests/e2e/pos-dispatch-recovery.spec.ts",
   "tests/e2e/accounting-reporting.spec.ts",
+  "tests/e2e/finance-live.spec.ts",
   "tests/e2e/daily-closing.spec.ts",
   "tests/e2e/pilot-two-terminal.spec.ts",
   "tests/e2e/menu-import-pipeline.spec.ts",
