@@ -8,6 +8,10 @@ export function kitchenPrintRecoveryItems<
   T extends Pick<KitchenPrintObligation, "branchId" | "status">,
 >(obligations: readonly T[], branchId: string): T[] {
   return obligations.filter(
-    (item) => item.branchId === branchId && item.status !== "BRIDGE_ACCEPTED",
+    (item) =>
+      item.branchId === branchId &&
+      item.status !== "BRIDGE_ACCEPTED" &&
+      // Bypassed tickets were deliberately never printed; nothing to recover.
+      item.status !== "BYPASSED",
   );
 }

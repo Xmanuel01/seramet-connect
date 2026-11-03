@@ -9,6 +9,7 @@ import {
   PlatformConfigurationError,
 } from "@/platform/repositories/configuration-repository";
 import { normalizePaymentOperations, emptyPaymentOperationsState } from "@/payments/payment-state";
+import { activeKitchenPrintBypass } from "@/lib/kitchen-print-bypass";
 import type { PaymentOperationsState } from "@/payments/types";
 import type { CostControlSnapshot } from "@/cost-control/types";
 import { cashCount } from "@/payments/cash-count";
@@ -405,7 +406,8 @@ export type KitchenPrintObligation = {
   kind: "ORIGINAL" | "ADDITION" | "REPRINT";
   parentObligationId?: string;
   lines: TransactionLine[];
-  status: "PENDING" | "CLAIMED" | "BRIDGE_ACCEPTED" | "UNCERTAIN";
+  /** BYPASSED: sent while the branch's printer bypass was on; never printed. */
+  status: "PENDING" | "CLAIMED" | "BRIDGE_ACCEPTED" | "UNCERTAIN" | "BYPASSED";
   createdAt: string;
   updatedAt: string;
   claimedBy?: string;
@@ -1920,6 +1922,19 @@ export const TransactionEngine = {
       groups.set(line.productionStation, [...(groups.get(line.productionStation) ?? []), line]);
     }
     state.kitchenPrintObligations ??= [];
+    // The branch's bypass at the moment of sending decides; a later change
+    // never turns these tickets back into print work.
+    const bypass = (() => {
+      try {
+        return activeKitchenPrintBypass(
+          configurationRepository.getBranch(tenantId, branchId).metadata,
+          stamp,
+        );
+      } catch {
+        // No branch configuration to read: printing stays required.
+        return null;
+      }
+    })();
     for (const [station, stationLines] of groups) {
       const stableId = `KOT:${order.id}:${sourceId}:${station}`;
       if (state.kitchenPrintObligations.some((item) => item.id === stableId)) continue;
@@ -1933,9 +1948,10 @@ export const TransactionEngine = {
         sourceId,
         kind,
         lines: stationLines.map((line) => ({ ...line })),
-        status: "PENDING",
+        status: bypass ? "BYPASSED" : "PENDING",
         createdAt: stamp,
         updatedAt: stamp,
+        ...(bypass ? { failureReason: `Printer bypass until ${bypass.until}` } : {}),
       });
     }
   },
