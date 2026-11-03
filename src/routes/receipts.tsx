@@ -16,6 +16,7 @@ import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { recordBusinessDate } from "@/lib/pos-workflow";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
+import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -68,7 +69,10 @@ function Receipts() {
       Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
     );
   };
-  const rows = state.receipts
+  // The chosen day comes straight from the server, so the list shows before the
+  // till has loaded its full copy; the till's own receipts are merged in by id.
+  const server = useDocumentList("receipts", periodDate);
+  const rows = mergeDocuments(server.rows, state.receipts)
     .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
     .filter((receipt) => !periodDate || receiptBusinessDate(receipt) === periodDate);
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
@@ -80,10 +84,13 @@ function Receipts() {
       setPrintNotice("A specific reprint reason of at least 12 characters is required.");
       return;
     }
-    const receipt = state.receipts.find((item) => item.id === receiptId);
+    const receipt = rows.find((item) => item.id === receiptId);
     if (!receipt) return;
     const order = receiptRecordToPrintOrder(receipt, state);
-    if (!order) return;
+    if (!order) {
+      setPrintNotice("This receipt is still loading on this till. Try again in a moment.");
+      return;
+    }
 
     const result = printCustomerDocument(order, "RECEIPT", {
       reprintReason: reason,
@@ -155,7 +162,7 @@ function Receipts() {
   return (
     <AppShell
       title="Receipts"
-      subtitle={`Immutable issued receipt register - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={exportRows}>Export</Btn>
@@ -171,6 +178,14 @@ function Receipts() {
         <Metric label="Reprints" value={reprints} note="requires reason" />
         <Metric label="Digital delivery" value="Ready" note="WhatsApp + email" />
       </div>
+      {server.error && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
+          <span>{server.error} Records made on this till are still shown.</span>
+          <button type="button" className="font-semibold underline" onClick={server.refresh}>
+            Retry
+          </button>
+        </div>
+      )}
       {(printNotice || configurationError) && (
         <div className="mt-4 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
           Printing unavailable: {printNotice || configurationError}
