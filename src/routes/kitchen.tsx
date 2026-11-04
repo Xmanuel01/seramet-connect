@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Status } from "@/components/app/ui";
 import { formatTime } from "@/lib/currency";
@@ -59,6 +59,16 @@ function KDS() {
     role,
   } = useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => setNow(Date.now());
+    const timer = setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
   const { items: menuItems } = useOperationalMenu({
     tenantId: activeTenantId,
     branchId,
@@ -92,10 +102,10 @@ function KDS() {
       state.orders
         .filter((order) => matchesBranch(order.branchId ?? order.branch))
         .filter(shouldShowKitchenOrder)
-        .flatMap((order) => buildKitchenTickets(order, configuredStations, menuItems))
+        .flatMap((order) => buildKitchenTickets(order, configuredStations, menuItems, now))
         .filter((ticket) => ticket.state !== "SERVED")
         .sort((a, b) => b.ageMinutes - a.ageMinutes),
-    [configuredStations, matchesBranch, menuItems, state.orders],
+    [configuredStations, matchesBranch, menuItems, now, state.orders],
   );
 
   const stations = useMemo(

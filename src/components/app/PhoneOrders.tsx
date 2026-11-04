@@ -10,14 +10,22 @@ import {
 } from "@/components/ui/dialog";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
+import { TransactionPeriodFilter, useTransactionPeriod } from "./TransactionPeriodFilter";
+import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 export function PhoneOrders() {
   const { branchLabel, branchId, timeZone } = useAppContext();
   const { state, backendStatus } = useTransactionEngine();
+  const period = useTransactionPeriod();
+  const server = useDocumentList("orders", period.range.from, {
+    to: period.range.to,
+    basis: "calendar",
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null),
     [search, setSearch] = useState("");
-  const orders = state.orders.filter(
+  const orders = mergeDocuments(server.rows, state.orders).filter(
     (order) =>
       order.branchId === branchId &&
+      period.matches(order.createdAt, order.branchId) &&
       `${order.id} ${order.table ?? ""} ${order.status}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -31,6 +39,17 @@ export function PhoneOrders() {
       <Panel>
         <PanelHead title="Branch orders" />
         <div className="grid gap-3 p-4">
+          <TransactionPeriodFilter filter={period} />
+          {server.error && (
+            <p role="alert">
+              {server.error} <button onClick={server.refresh}>Try again</button>
+            </p>
+          )}
+          {server.hasMore && (
+            <Btn disabled={server.loading} onClick={server.loadMore}>
+              Load more history
+            </Btn>
+          )}
           <label className="grid gap-1 text-sm">
             Find order
             <input

@@ -3416,7 +3416,7 @@ export const TransactionEngine = {
       id: id("BILL", next, "bills"),
       ...scope,
       sourceBillIds: billIds,
-      orderIds: bills.flatMap((bill) => bill.orderIds),
+      orderIds: [...new Set(bills.flatMap((bill) => bill.orderIds))],
       customer: "Merged bill",
       ...(customerIds.length === 1 ? { customerId: customerIds[0] } : {}),
       ...(customerCodes.length === 1 ? { customerCode: customerCodes[0] } : {}),

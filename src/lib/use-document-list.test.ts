@@ -35,6 +35,39 @@ describe("merging server and till documents", () => {
 });
 
 describe("document list requests", () => {
+  it("keeps range end, calendar basis and history batches in the query identity", () => {
+    const request = {
+      tenantId: "t",
+      userId: "u",
+      kind: "receipts" as const,
+      date: "2026-11-01",
+      to: "2026-11-04",
+    };
+    const key = (input: typeof request & { basis?: "calendar"; pages?: number }) =>
+      documentQueryOptions(input).queryKey;
+    expect(key(request)).not.toEqual(key({ ...request, to: "2026-11-05" }));
+    expect(key(request)).not.toEqual(key({ ...request, basis: "calendar" }));
+    expect(key(request)).not.toEqual(key({ ...request, pages: 20 }));
+  });
+  it("requests all-time history from the server instead of only cached rows", async () => {
+    const fetchPage = vi.fn(async (_path: string) => ({
+      rows: [{ id: "old-record" }],
+      hasMore: false,
+    }));
+    const client = new QueryClient();
+    const result = await client.fetchQuery(
+      documentQueryOptions(
+        { tenantId: "t", userId: "u", kind: "orders", date: "", to: "", basis: "calendar" },
+        fetchPage,
+      ),
+    );
+    const url = new URL(fetchPage.mock.calls[0]![0], "https://pos.example");
+    expect(url.searchParams.get("from")).toBe("");
+    expect(url.searchParams.get("to")).toBe("");
+    expect(url.searchParams.get("basis")).toBe("calendar");
+    expect(result.rows).toEqual([{ id: "old-record" }]);
+    client.clear();
+  });
   it("asks for one business date, branch and status", async () => {
     const fetchPage = vi.fn(async (_path: string) => ({ rows: [], hasMore: false }));
     const observer = new QueryObserver(

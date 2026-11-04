@@ -48,6 +48,26 @@ const bill = (overrides: Partial<BillingRecord> = {}): BillingRecord => ({
 });
 
 describe("Orders dashboard financial populations", () => {
+  it("uses issue dates and each branch timezone for calendar-range totals", () => {
+    const state = createEmptyTransactionState("tenant");
+    state.orders = [order({ businessDate: "2026-09-29" })];
+    state.bills = [
+      bill({ businessDate: "2026-09-29" }),
+      bill({ id: "other-zone", branchId: "london", issuedAt: at, total: 250 }),
+    ];
+    const result = ordersDashboardFinancials(
+      state,
+      () => true,
+      { from: "2026-09-30", to: "2026-09-30" },
+      "Africa/Nairobi",
+      "KES",
+      0,
+      "calendar",
+      (branch) => (branch === "london" ? "Europe/London" : "Africa/Nairobi"),
+    );
+    expect(result.activeOrderValue).toBe(1000);
+    expect(result.invoiceOutstanding).toBe(1000);
+  });
   it("keeps held orders out of invoice balances and paid invoice sales", () => {
     const state = createEmptyTransactionState("tenant");
     state.orders = [order()];

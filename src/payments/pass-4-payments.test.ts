@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SettlementService } from "./settlement-service";
+import { TransactionEngine } from "@/lib/transaction-engine";
 import {
   createTestPaymentProvider,
   testPaymentProviderDefinition,
@@ -63,6 +65,137 @@ beforeEach(() => {
 });
 
 describe("Pass 4 payment domain acceptance", () => {
+  it("merges split invoices without repeating order references or counting the source total", () => {
+    let state = TransactionEngine.splitBill(
+      stateWithBills(3000),
+      "INV-T-1",
+      [
+        { label: "A", amount: 1200 },
+        { label: "B", amount: 1800 },
+      ],
+      actor,
+    );
+    const childIds = state.bills
+      .filter((bill) => bill.splitFromBillId === "INV-T-1")
+      .map((bill) => bill.id);
+    state = TransactionEngine.mergeBills(state, childIds, actor, "Guests chose one bill");
+    const merged = state.bills.find((bill) => bill.status === "OPEN")!;
+    expect(merged.orderIds).toEqual(["ORD-INV-T-1"]);
+    expect(merged.total).toBe(3000);
+    expect(merged.paid).toBe(0);
+    expect(merged.sourceBillIds).toEqual(childIds);
+    expect(state.bills.filter((bill) => bill.status === "OPEN")).toHaveLength(1);
+  });
+  it("settles three split children independently by cash, wallet and bank", () => {
+    const service = new SettlementService();
+    let state = TransactionEngine.splitBill(
+      stateWithBills(3000),
+      "INV-T-1",
+      [
+        { label: "Cash guest", amount: 1000 },
+        { label: "Wallet guest", amount: 1000 },
+        { label: "Bank guest", amount: 1000 },
+      ],
+      actor,
+    );
+    state = orchestrator.openDrawer(state, {
+      tenantId,
+      branchId,
+      employeeId: "cashier",
+      openingFloatMinor: 0,
+      currency,
+      actor,
+    });
+    const children = state.bills.filter((invoice) => invoice.splitFromBillId === "INV-T-1");
+    for (const [label, paymentMethodId] of [
+      ["Cash guest", "payment-demo-cash"],
+      ["Wallet guest", "payment-demo-mpesa-till"],
+      ["Bank guest", "payment-demo-bank"],
+    ]) {
+      const invoice = children.find((child) => child.customer === label)!;
+      state = service.settle(state, {
+        tenantId,
+        invoiceId: invoice.id,
+        paymentMethodId: paymentMethodId!,
+        amount: 1000,
+        reference: `SPLIT-${paymentMethodId}`,
+        cashier: actor,
+      });
+      if (paymentMethodId !== "payment-demo-cash") {
+        expect(state.bills.find((bill) => bill.id === invoice.id)?.paid).toBe(0);
+        const pending = state.paymentOperations!.transactions.find(
+          (payment) => payment.paymentMethodId === paymentMethodId,
+        )!;
+        state = orchestrator.verifyPendingCollection(state, {
+          tenantId,
+          transactionId: pending.id,
+          providerTransactionId: `VERIFIED-${paymentMethodId}`,
+          amountMinor: kes(1000),
+          currency,
+          actor,
+          verified: true,
+        });
+      }
+    }
+    expect(
+      state.bills
+        .filter((bill) => bill.splitFromBillId)
+        .every((bill) => bill.paid === 1000 && bill.paymentStatus === "PAID"),
+    ).toBe(true);
+    expect(state.bills.find((bill) => bill.id === "INV-T-1")).toMatchObject({
+      status: "SPLIT",
+      paid: 0,
+    });
+    expect(state.receipts).toHaveLength(3);
+    expect(new Set(state.receipts.map((receipt) => receipt.invoiceId)).size).toBe(3);
+    expect(
+      state.paymentOperations!.allocations.reduce((total, row) => total + row.amountMinor, 0),
+    ).toBe(kes(3000));
+  });
+
+  it("keeps partial cash tender and change separate from allocated balance", () => {
+    const service = new SettlementService();
+    let state = orchestrator.openDrawer(stateWithBills(1000), {
+      tenantId,
+      branchId,
+      employeeId: "cashier",
+      openingFloatMinor: 0,
+      currency,
+      actor,
+    });
+    state = service.settle(state, {
+      tenantId,
+      invoiceId: "INV-T-1",
+      paymentMethodId: "payment-demo-cash",
+      amount: 300,
+      cashTendered: 500,
+      cashier: actor,
+    });
+    expect(state.bills[0]).toMatchObject({ paid: 300, paymentStatus: "PARTIAL" });
+    expect(state.paymentOperations!.transactions[0]!.metadata).toMatchObject({
+      cashTenderedMinor: kes(500),
+      changeGivenMinor: kes(200),
+    });
+    expect(() =>
+      service.settle(state, {
+        tenantId,
+        invoiceId: "INV-T-1",
+        paymentMethodId: "payment-demo-bank",
+        amount: 701,
+        reference: "EXCESS",
+        cashier: actor,
+      }),
+    ).toThrow(/exceeds/);
+    expect(() =>
+      service.settle(state, {
+        tenantId,
+        invoiceId: "INV-T-1",
+        paymentMethodId: "payment-demo-cash",
+        amount: Number.NaN,
+        cashier: actor,
+      }),
+    ).toThrow(/positive/);
+  });
   it("AC 1-4 separates sale, intent, immutable transaction and many-to-many allocations", () => {
     let state = stateWithBills(2_000, 2_000);
     const created = orchestrator.createIntent(state, {

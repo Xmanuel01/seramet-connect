@@ -17,6 +17,7 @@ export type SettlementInput = {
   invoiceId: string;
   paymentMethodId: string;
   amount: number;
+  cashTendered?: number;
   reference?: string;
   cashier: string;
   deviceId?: string;
@@ -83,7 +84,7 @@ export class SettlementService {
         candidate.id === input.paymentMethodId || candidate.code === input.paymentMethodId,
     );
     if (!method) throw new PlatformConfigurationError("No active payment methods");
-    if (input.amount <= 0) {
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new PlatformConfigurationError("Settlement amount must be positive");
     }
     if (method.requiresReference && !input.reference?.trim()) {
@@ -100,10 +101,25 @@ export class SettlementService {
       : this.repository.resolveBranch(input.tenantId, invoice.branch);
     const tenant = this.repository.getTenant(input.tenantId);
     const currency = tenant.defaultCurrency;
-    const outstanding = Math.max(0, invoice.total - invoice.paid);
-    const allocatedMajor = Math.min(input.amount, outstanding);
-    const amountMinor = parseMajorAmount(allocatedMajor, currency);
-    const tenderedMinor = parseMajorAmount(input.amount, currency);
+    const outstandingMinor = Math.max(
+      0,
+      parseMajorAmount(invoice.total, currency) - parseMajorAmount(invoice.paid, currency),
+    );
+    const requestedMinor = parseMajorAmount(input.amount, currency);
+    if (
+      ["VOID", "SPLIT", "MERGED", "DRAFT_BILL"].includes(invoice.status) ||
+      outstandingMinor <= 0
+    ) {
+      throw new PlatformConfigurationError("This invoice cannot accept payment");
+    }
+    if (
+      requestedMinor > outstandingMinor &&
+      (method.category !== "CASH" || input.cashTendered !== undefined)
+    ) {
+      throw new PlatformConfigurationError("Payment exceeds the outstanding balance");
+    }
+    const amountMinor = Math.min(requestedMinor, outstandingMinor);
+    const tenderedMinor = parseMajorAmount(input.cashTendered ?? input.amount, currency);
     const reference =
       input.reference?.trim().toUpperCase() ||
       `${compactCode(method.code)}-${invoice.id}-${Date.now()}`;
