@@ -1,4 +1,5 @@
 import { businessDateForTimestamp } from "@/lib/business-date";
+import { inDateWindow, type DateWindow } from "@/lib/transaction-period";
 import type { BillingRecord, TransactionState } from "@/lib/transaction-engine";
 import { majorFromMinor, parseMajorAmount, sumMinor } from "@/payments/money";
 
@@ -25,15 +26,22 @@ export type OrdersDashboardFinancials = {
 export function ordersDashboardFinancials(
   state: Pick<TransactionState, "orders" | "bills" | "refunds" | "marketplaceReceivables">,
   matchesBranch: BranchMatcher,
-  periodDate: string,
+  periodDate: string | DateWindow,
   timeZone: string,
   currency: string,
   businessDayCutoffMinutes = 0,
+  basis: "business" | "calendar" = "business",
+  branchTimeZone?: (branchId?: string) => string,
 ): OrdersDashboardFinancials {
-  const matchesDate = (date: string | undefined, timestamp: string) =>
-    !periodDate ||
-    (date || businessDateForTimestamp(timestamp, timeZone, businessDayCutoffMinutes)) ===
-      periodDate;
+  const matchesDate = (date: string | undefined, timestamp: string, branchId?: string) => {
+    const day =
+      basis === "calendar"
+        ? businessDateForTimestamp(timestamp, branchTimeZone?.(branchId) ?? timeZone)
+        : date || businessDateForTimestamp(timestamp, timeZone, businessDayCutoffMinutes);
+    return typeof periodDate === "string"
+      ? !periodDate || day === periodDate
+      : inDateWindow(day, periodDate);
+  };
   const amount = (value: number) => parseMajorAmount(value, currency);
 
   const activeOrderValueMinor = sumMinor(
@@ -41,7 +49,7 @@ export function ordersDashboardFinancials(
       .filter(
         (order) =>
           matchesBranch(order.branchId ?? order.branch) &&
-          matchesDate(order.businessDate, order.createdAt) &&
+          matchesDate(order.businessDate, order.createdAt, order.branchId) &&
           ["HELD", "OPEN", "SENT_TO_KITCHEN", "IN_PROGRESS", "READY", "SERVED"].includes(
             order.status,
           ),
@@ -54,7 +62,7 @@ export function ordersDashboardFinancials(
   const bills = state.bills.filter(
     (bill) =>
       matchesBranch(bill.branchId ?? bill.branch) &&
-      matchesDate(bill.businessDate, bill.issuedAt) &&
+      matchesDate(bill.businessDate, bill.issuedAt, bill.branchId) &&
       !["DRAFT_BILL", "VOID", "MERGED", "SPLIT"].includes(bill.status),
   );
 
@@ -87,7 +95,7 @@ export function ordersDashboardFinancials(
         (refund) =>
           matchesBranch(refund.branchId ?? refund.branch) &&
           refund.status === "COMPLETED" &&
-          matchesDate(refund.businessDate, refund.completedAt ?? refund.createdAt),
+          matchesDate(refund.businessDate, refund.completedAt ?? refund.createdAt, refund.branchId),
       )
       .map((refund) => amount(refund.amount)),
   );

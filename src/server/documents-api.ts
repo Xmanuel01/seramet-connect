@@ -8,7 +8,9 @@ import {
 import { permissions } from "@/platform/permissions";
 import { ServerOperationError } from "@/server/errors";
 import type { D1Database } from "@/server/database/d1";
-import type { BillingRecord, ReceiptRecord } from "@/lib/transaction-engine";
+import type { BillingRecord, ReceiptRecord, TransactionOrder } from "@/lib/transaction-engine";
+import { calendarDateStart } from "@/lib/transaction-period";
+import { shiftBusinessDate } from "@/lib/business-date";
 
 // Invoice and receipt history by date, a page at a time, read from the
 // relational tables the transaction repository keeps beside its snapshot.
@@ -24,6 +26,7 @@ export type DocumentWindow = {
   branchId?: string;
   limit?: number;
   offset?: number;
+  basis?: "business" | "calendar";
 };
 
 export type DocumentPage<T> = { rows: T[]; hasMore: boolean; offset: number; limit: number };
@@ -63,16 +66,16 @@ export class DocumentListService {
   }
 
   private async window(input: DocumentWindow) {
-    const from = isoDate(input.from, "start");
-    const to = isoDate(input.to, "end");
+    const allTime = input.from === "" && input.to === "";
+    const from = allTime ? "" : isoDate(input.from, "start");
+    const to = allTime ? "" : isoDate(input.to, "end");
     const days = (Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 86_400_000;
     if (days < 0) throw new SerametHttpError(400, "Choose a start date on or before the end date.");
-    if (days > 366) throw new SerametHttpError(400, "Choose a period of a year or less.");
     const limit = input.limit ?? 100;
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)
       throw new SerametHttpError(400, "Invalid page size.");
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000)
+    if (!Number.isSafeInteger(offset) || offset < 0)
       throw new SerametHttpError(400, "Invalid page.");
     let branchIds: string[];
     if (input.branchId) {
@@ -92,7 +95,30 @@ export class DocumentListService {
       branchIds = (result.results ?? []).map((branch) => branch.id);
     }
     if (!branchIds.length) throw new SerametHttpError(409, "No branch is set up yet.");
+    let dateCondition = allTime ? "1=1" : "business_date BETWEEN ? AND ?";
+    let dateBindings: string[] = allTime ? [] : [from, to];
+    if (!allTime && input.basis === "calendar") {
+      const branches = await this.db
+        .prepare("SELECT id, timezone FROM branches WHERE tenant_id=?")
+        .bind(this.actor.tenantId)
+        .all<{ id: string; timezone: string }>();
+      const allowed = (branches.results ?? []).filter((branch) => branchIds.includes(branch.id));
+      // Merged invoices may retain an older accounting date. Select by issue
+      // time only; an accounting-date prefilter would silently lose them.
+      dateCondition =
+        "(" +
+        allowed.map(() => "(branch_id=? AND created_at>=? AND created_at<?)").join(" OR ") +
+        ")";
+      dateBindings = allowed.flatMap((branch) => [
+        branch.id,
+        calendarDateStart(from, branch.timezone),
+        calendarDateStart(shiftBusinessDate(to, 1), branch.timezone),
+      ]);
+      if (!allowed.length) throw new SerametHttpError(409, "No branch is set up yet.");
+    }
     return {
+      dateCondition,
+      dateBindings,
       from,
       to,
       limit,
@@ -120,7 +146,8 @@ export class DocumentListService {
     const result = await this.db
       .prepare(
         [
-          "SELECT payload_json, business_date FROM invoices WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
+          "SELECT payload_json, business_date FROM invoices WHERE tenant_id=? AND",
+          scope.dateCondition,
           "AND",
           scope.branches,
           "AND status NOT IN ('MERGED','SPLIT')",
@@ -130,8 +157,7 @@ export class DocumentListService {
       )
       .bind(
         this.actor.tenantId,
-        scope.from,
-        scope.to,
+        ...scope.dateBindings,
         ...scope.branchIds,
         scope.limit + 1,
         scope.offset,
@@ -146,7 +172,8 @@ export class DocumentListService {
     const result = await this.db
       .prepare(
         [
-          "SELECT payload_json, business_date FROM receipts WHERE tenant_id=? AND business_date BETWEEN ? AND ?",
+          "SELECT payload_json, business_date FROM receipts WHERE tenant_id=? AND",
+          scope.dateCondition,
           "AND",
           scope.branches,
           "ORDER BY business_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?",
@@ -154,8 +181,25 @@ export class DocumentListService {
       )
       .bind(
         this.actor.tenantId,
-        scope.from,
-        scope.to,
+        ...scope.dateBindings,
+        ...scope.branchIds,
+        scope.limit + 1,
+        scope.offset,
+      )
+      .all<DocumentRow>();
+    return this.page(result.results ?? [], scope);
+  }
+
+  async orders(input: DocumentWindow): Promise<DocumentPage<TransactionOrder>> {
+    this.require(permissions.ordersView);
+    const scope = await this.window(input);
+    const result = await this.db
+      .prepare(
+        `SELECT payload_json, business_date FROM orders WHERE tenant_id=? AND ${scope.dateCondition} AND ${scope.branches} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
+      .bind(
+        this.actor.tenantId,
+        ...scope.dateBindings,
         ...scope.branchIds,
         scope.limit + 1,
         scope.offset,
@@ -197,7 +241,11 @@ export async function handleDocumentsApi(
   const service = new DocumentListService(env.SERAMET_DB, actor);
   const param = (name: string) => url.searchParams.get(name)?.trim() || undefined;
   const branchId = param("branchId");
+  const basis = param("basis") ?? "business";
+  if (basis !== "business" && basis !== "calendar")
+    throw new SerametHttpError(400, "Unsupported date basis.");
   const window: DocumentWindow = {
+    basis,
     from: param("from") ?? "",
     to: param("to") ?? "",
     ...(branchId ? { branchId } : {}),
@@ -206,6 +254,9 @@ export async function handleDocumentsApi(
   };
   let page: DocumentPage<unknown>;
   switch (url.pathname.slice(BASE_PATH.length)) {
+    case "orders":
+      page = await service.orders(window);
+      break;
     case "invoices":
       page = await service.invoices({
         ...window,

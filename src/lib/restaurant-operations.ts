@@ -7,6 +7,7 @@ import {
 import { TransactionEngine, type TransactionState } from "@/lib/transaction-engine";
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { shouldShowKitchenOrder } from "@/kitchen/kds-model";
 
 export type OperationsSeverity = "critical" | "warning" | "info";
 export type OperationsAction = {
@@ -65,9 +66,23 @@ export function deriveBranchOperations(
   const openOrders = branchOrders.filter(
     (order) => !["PAID", "CANCELLED", "REFUNDED"].includes(order.status),
   );
-  const lateKitchenOrders = openOrders.filter((order) => {
-    if (!["SENT_TO_KITCHEN", "IN_PROGRESS"].includes(order.status)) return false;
-    const created = new Date(order.createdAt).getTime();
+  const kitchenStarted = (order: TransactionState["orders"][number]) => {
+    const sent = order.lines
+      .filter(
+        (line) =>
+          line.productionStation && !["SERVED", "CANCELLED"].includes(line.productionStatus ?? ""),
+      )
+      .map((line) => Date.parse(line.sentAt ?? order.createdAt))
+      .filter(Number.isFinite);
+    return sent.length ? Math.min(...sent) : Date.parse(order.createdAt);
+  };
+  const lateKitchenOrders = branchOrders.filter((order) => {
+    if (
+      !["SENT_TO_KITCHEN", "IN_PROGRESS", "PAID"].includes(order.status) ||
+      !shouldShowKitchenOrder(order)
+    )
+      return false;
+    const created = kitchenStarted(order);
     return Number.isFinite(created) && now - created >= 18 * 60_000;
   });
 
@@ -161,7 +176,7 @@ export function deriveBranchOperations(
   if (lateKitchenOrders.length > 0) {
     const oldest = Math.max(
       ...lateKitchenOrders.map((order) =>
-        Math.max(0, Math.floor((now - new Date(order.createdAt).getTime()) / 60_000)),
+        Math.max(0, Math.floor((now - kitchenStarted(order)) / 60_000)),
       ),
     );
     actions.push({

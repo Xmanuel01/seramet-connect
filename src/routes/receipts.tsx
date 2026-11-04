@@ -11,10 +11,12 @@ import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import {
+  TransactionPeriodFilter,
+  useTransactionPeriod,
+} from "@/components/app/TransactionPeriodFilter";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { recordBusinessDate } from "@/lib/pos-workflow";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
 import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
@@ -40,41 +42,28 @@ export const Route = createFileRoute("/receipts")({
 });
 
 function Receipts() {
-  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
+  const period = useTransactionPeriod();
   const [printNotice, setPrintNotice] = useState("");
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
     null,
   );
-  const {
-    activeTenantId,
-    branchId,
-    branchLabel,
-    branchRecords,
-    currentUser,
-    matchesBranch,
-    timeZone,
-  } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, timeZone } =
+    useAppContext();
   const { state, mutate } = useTransactionEngine();
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);
   const configuration = getConfigurationRepository();
   const businessName = configuration.getTenant(activeTenantId).tradingName;
-  const receiptBusinessDate = (receipt: (typeof state.receipts)[number]) => {
-    const record = branchRecords.find((candidate) => candidate.id === receipt.branchId);
-    return recordBusinessDate(
-      receipt.businessDate,
-      receipt.issuedAt,
-      record?.timezone ?? timeZone,
-      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
-    );
-  };
   // The chosen day comes straight from the server, so the list shows before the
   // till has loaded its full copy; the till's own receipts are merged in by id.
-  const server = useDocumentList("receipts", periodDate);
+  const server = useDocumentList("receipts", period.range.from, {
+    to: period.range.to,
+    basis: "calendar",
+  });
   const rows = mergeDocuments(server.rows, state.receipts)
     .filter((receipt) => matchesBranch(receipt.branchId ?? receipt.branch))
-    .filter((receipt) => !periodDate || receiptBusinessDate(receipt) === periodDate);
+    .filter((receipt) => period.matches(receipt.issuedAt, receipt.branchId));
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
   const reprints = rows.reduce((sum, receipt) => sum + receipt.reprints.length, 0);
 
@@ -148,7 +137,7 @@ function Receipts() {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `receipts-${periodDate || "all"}.csv`;
+    link.download = `receipts-${period.range.from || "all"}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -191,6 +180,14 @@ function Receipts() {
           Printing unavailable: {printNotice || configurationError}
         </div>
       )}
+      {server.hasMore && (
+        <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          Showing loaded records and totals. More history is available.{" "}
+          <Btn disabled={server.loading} onClick={server.loadMore}>
+            Load more
+          </Btn>
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Receipt register"
@@ -198,20 +195,14 @@ function Receipts() {
           right={<SearchInput placeholder="Search receipt or order..." />}
         />
         <div className="border-b border-border px-4 py-3">
+          <TransactionPeriodFilter filter={period} />
           <Chips
             items={[
-              {
-                label: "Period",
-                value: formatFilterDate(periodDate),
-                dateValue: periodDate,
-                onDateChange: setPeriodDate,
-                onClear: () => setPeriodDate(""),
-              },
               { label: "Scope", value: branchLabel },
               { label: "Payment", value: "All" },
               { label: "Retention", value: "Permanent" },
             ]}
-            onClear={() => setPeriodDate("")}
+            onClear={() => period.setPeriod("All Time")}
           />
         </div>
         <DataTable

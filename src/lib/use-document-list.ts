@@ -1,16 +1,20 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
 import { isAbort, RequestError, userMessage } from "@/lib/user-facing-error";
-import type { BillingRecord, ReceiptRecord } from "@/lib/transaction-engine";
+import type { BillingRecord, ReceiptRecord, TransactionOrder } from "@/lib/transaction-engine";
 
 // Invoice and receipt history for one date range, straight from the server, so
 // a list can show before the till's full local copy has loaded.
 
-export type DocumentKind = "invoices" | "receipts";
+export type DocumentKind = "invoices" | "receipts" | "orders";
 export type InvoiceListStatus = "all" | "unpaid" | "paid" | "pending";
-type Row<K extends DocumentKind> = K extends "invoices" ? BillingRecord : ReceiptRecord;
+type Row<K extends DocumentKind> = K extends "invoices"
+  ? BillingRecord
+  : K extends "orders"
+    ? TransactionOrder
+    : ReceiptRecord;
 
 export type DocumentListRequest = {
   tenantId: string;
@@ -20,6 +24,9 @@ export type DocumentListRequest = {
   branchId?: string;
   kind: DocumentKind;
   date: string;
+  to?: string;
+  basis?: "business" | "calendar";
+  pages?: number;
   status?: InvoiceListStatus;
   limit?: number;
 };
@@ -54,8 +61,21 @@ export function documentQueryOptions<T>(
   ) => Promise<{ rows: T[]; hasMore: boolean }> = fetchDocuments,
 ) {
   const { tenantId, userId, branchId, kind, date, status = "all", limit = 200 } = request;
+  const to = request.to ?? date;
   return queryOptions({
-    queryKey: [documentQueryRoot, tenantId, userId, branchId ?? "ALL", kind, date, status, limit],
+    queryKey: [
+      documentQueryRoot,
+      tenantId,
+      userId,
+      branchId ?? "ALL",
+      kind,
+      date,
+      status,
+      limit,
+      to,
+      request.basis,
+      request.pages,
+    ],
     staleTime: 15_000,
     gcTime: 5 * 60_000,
     refetchOnWindowFocus: true,
@@ -71,14 +91,15 @@ export function documentQueryOptions<T>(
       let hasMore = true;
       try {
         // A busy day can run past one page; read on until the day is complete.
-        for (let page = 0; hasMore && page < MAX_DOCUMENT_PAGES; page++) {
+        for (let page = 0; hasMore && page < (request.pages ?? MAX_DOCUMENT_PAGES); page++) {
           const search = new URLSearchParams({
             from: date,
-            to: date,
+            to,
             limit: String(limit),
             offset: String(page * limit),
           });
           if (branchId) search.set("branchId", branchId);
+          if (request.basis) search.set("basis", request.basis);
           if (kind === "invoices") search.set("status", status);
           const result = await fetchPage(`/api/seramet/documents/${kind}?${search}`, deadline);
           rows.push(...result.rows);
@@ -118,17 +139,25 @@ export function mergeDocuments<T extends { id: string; issuedAt?: string }>(
 }
 
 /**
- * One business date of invoices or receipts. Disabled when `date` is empty
- * ("all dates"), which only the till's local copy can answer.
+ * Date-window history, including all time. Additional batches remain available
+ * through loadMore rather than imposing a permanent history cutoff.
  */
 export function useDocumentList<K extends DocumentKind>(
   kind: K,
   date: string,
-  options: { status?: InvoiceListStatus; enabled?: boolean } = {},
+  options: {
+    status?: InvoiceListStatus;
+    enabled?: boolean;
+    to?: string;
+    basis?: "business" | "calendar";
+  } = {},
 ) {
   const { activeTenantId, branchId, currentUser, isAllBranches } = useAppContext();
   const queryClient = useQueryClient();
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const valid = !date || /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const scope = JSON.stringify([activeTenantId, currentUser.id, branchId, kind, date, options]);
+  const [pageState, setPageState] = useState({ scope, pages: MAX_DOCUMENT_PAGES });
+  const pages = pageState.scope === scope ? pageState.pages : MAX_DOCUMENT_PAGES;
   const query = useQuery({
     ...documentQueryOptions<Row<K>>({
       tenantId: activeTenantId,
@@ -136,6 +165,9 @@ export function useDocumentList<K extends DocumentKind>(
       ...(isAllBranches ? {} : { branchId }),
       kind,
       date,
+      to: options.to,
+      basis: options.basis,
+      pages,
       ...(options.status ? { status: options.status } : {}),
     }),
     enabled: valid && options.enabled !== false,
@@ -159,6 +191,8 @@ export function useDocumentList<K extends DocumentKind>(
   return {
     rows: valid ? query.data?.rows : undefined,
     hasMore: query.data?.hasMore ?? false,
+    loading: query.isFetching,
+    loadMore: () => setPageState({ scope, pages: pages + MAX_DOCUMENT_PAGES }),
     error: query.isError
       ? userMessage(query.error, "Couldn't load this day's documents. Try again.")
       : "",

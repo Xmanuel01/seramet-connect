@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
@@ -10,13 +9,16 @@ import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } 
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { activeLocale, activeTimeZone, ksh } from "@/lib/currency";
-import { formatMinor, parseMajorAmount } from "@/payments/money";
+import { activeLocale, ksh } from "@/lib/currency";
+import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate } from "@/lib/date-filters";
+import {
+  TransactionPeriodFilter,
+  useTransactionPeriod,
+} from "@/components/app/TransactionPeriodFilter";
 import { TransactionEngine, type BillingRecord } from "@/lib/transaction-engine";
 import { SerametPrintService } from "@/lib/seramet-print-service";
 import { billingDocumentToPrintOrder } from "@/lib/print-order-adapter";
@@ -163,17 +165,9 @@ function Invoices() {
   const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Pending">("Unpaid");
-  const [periodDate, setPeriodDate] = useState("");
-  const {
-    activeTenantId,
-    branchId,
-    branchLabel,
-    branchRecords,
-    currentUser,
-    matchesBranch,
-    hasPermission,
-    role,
-  } = useAppContext();
+  const period = useTransactionPeriod();
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, hasPermission, role } =
+    useAppContext();
   const canSplit = hasPermission(permissions.invoicesManage);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
@@ -240,31 +234,6 @@ function Invoices() {
       "Add the business email and phone in Settings to send invoices.",
     );
   }
-  const invoiceTimeZone = (() => {
-    try {
-      const config = getConfigurationRepository();
-      const tenant = config.getTenant(activeTenantId);
-      const branch = config.getBranch(activeTenantId, branchId);
-      return resolvePosTimeZone(
-        branch.timezone,
-        tenant.timezone,
-        tenant.countryCode,
-        tenant.defaultCurrency,
-      );
-    } catch {
-      return activeTimeZone();
-    }
-  })();
-  // The same cutoff-adjusted day the server files the invoice under.
-  const invoiceDay = (invoice: BillingRecord) => {
-    const record = branchRecords.find((candidate) => candidate.id === invoice.branchId);
-    return recordBusinessDate(
-      invoice.businessDate,
-      invoice.issuedAt,
-      record?.timezone ?? invoiceTimeZone,
-      Number(record?.metadata["businessDayCutoffMinutes"] ?? 0),
-    );
-  };
   // Actions need the till's own copy (payments, orders); a row that so far has
   // only arrived from the server waits for it.
   const loadedLocally = (invoice: BillingRecord) => {
@@ -274,7 +243,9 @@ function Invoices() {
   };
   // A chosen day comes straight from the server, so it shows before the till has
   // loaded its full copy; the till's own bills (including offline ones) win by id.
-  const server = useDocumentList("invoices", periodDate, {
+  const server = useDocumentList("invoices", period.range.from, {
+    to: period.range.to,
+    basis: "calendar",
     status: statusFilter.toLowerCase() as InvoiceListStatus,
   });
   const rows = mergeDocuments(server.rows, state.bills).filter((bill) =>
@@ -282,7 +253,7 @@ function Invoices() {
   );
   const activeRows = rows
     .filter((row) => row.status !== "MERGED" && row.status !== "SPLIT")
-    .filter((row) => !periodDate || invoiceDay(row) === periodDate)
+    .filter((row) => period.matches(row.issuedAt, row.branchId))
     .filter((row) => {
       if (statusFilter === "Paid") return row.paymentStatus === "PAID";
       if (statusFilter === "Unpaid") return row.paid < row.total;
@@ -426,7 +397,12 @@ function Invoices() {
         settlementMethods[0]?.id ??
         "",
     );
-    setSettlementAmount(invoice.total - invoice.paid);
+    setSettlementAmount(
+      majorFromMinor(
+        parseMajorAmount(invoice.total, currency) - parseMajorAmount(invoice.paid, currency),
+        currency,
+      ),
+    );
     setCashReceived(0);
     setTenderCurrency(currency);
     setFxQuote(null);
@@ -517,9 +493,17 @@ function Invoices() {
       setSettleInvoice(null);
       return;
     }
-    if (settlementAmount <= 0) return;
-    const outstanding = settleInvoice.total - settleInvoice.paid;
-    const amount = Math.min(settlementAmount, outstanding);
+    if (!Number.isFinite(settlementAmount) || settlementAmount <= 0) return;
+    const outstanding = majorFromMinor(
+      parseMajorAmount(settleInvoice.total, currency) -
+        parseMajorAmount(settleInvoice.paid, currency),
+      currency,
+    );
+    if (settlementAmount > outstanding) {
+      setWarning("Payment exceeds the outstanding balance.");
+      return;
+    }
+    const amount = settlementAmount;
     const isCash = selectedSettlementMethod?.category === "CASH";
     if (isCash && foreignTender && selectedSettlementMethod) {
       await settleInForeignCash(settleInvoice, amount, selectedSettlementMethod.id);
@@ -529,9 +513,7 @@ function Invoices() {
       setWarning("Cash received is less than the amount being paid.");
       return;
     }
-    // Change is only given when the whole balance is paid in cash; the server
-    // keeps the balance and records the change from what was handed over.
-    const change = isCash && amount >= outstanding ? Math.max(0, cashReceived - amount) : 0;
+    const change = isCash ? Math.max(0, cashReceived - amount) : 0;
     const disposition = selectedSettlementMethod
       ? settlementService.disposition(selectedSettlementMethod)
       : undefined;
@@ -561,7 +543,7 @@ function Invoices() {
             ...(settlementCustomerPhone.trim()
               ? { customerPhone: settlementCustomerPhone.trim() }
               : {}),
-            idempotencyKey: `invoice:${settleInvoice.id}:${selectedSettlementMethod.id}:${amount}`,
+            idempotencyKey: `invoice:${settleInvoice.id}:${selectedSettlementMethod.id}:${amount}:paid:${parseMajorAmount(settleInvoice.paid, currency)}`,
           }),
         },
       );
@@ -586,7 +568,8 @@ function Invoices() {
           tenantId: activeTenantId,
           invoiceId: settleInvoice.id,
           paymentMethodId: settlementMethod,
-          amount: amount + change,
+          amount,
+          ...(isCash ? { cashTendered: cashReceived || amount } : {}),
           reference: settlementReference,
           cashier: currentUser.name,
         },
@@ -641,6 +624,14 @@ function Invoices() {
           </button>
         </div>
       )}
+      {server.hasMore && (
+        <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          Showing loaded records and totals. More history is available.{" "}
+          <Btn disabled={server.loading} onClick={server.loadMore}>
+            Load more
+          </Btn>
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead
           title="Invoices"
@@ -648,6 +639,7 @@ function Invoices() {
           right={<SearchInput placeholder="Search invoice or customer..." />}
         />
         <div className="px-4 pt-3">
+          <TransactionPeriodFilter filter={period} />
           <Chips
             items={[
               { label: "Scope", value: branchLabel },
@@ -659,13 +651,6 @@ function Invoices() {
                 onOptionChange: (value) => setStatusFilter(value as typeof statusFilter),
                 onClear: () => setStatusFilter("All"),
               },
-              {
-                label: "Period",
-                value: formatFilterDate(periodDate),
-                dateValue: periodDate,
-                onDateChange: setPeriodDate,
-                onClear: () => setPeriodDate(""),
-              },
               { label: "Overdue exposure", value: ksh(overdue) },
               {
                 label: "",
@@ -675,7 +660,7 @@ function Invoices() {
             ]}
             onClear={() => {
               setStatusFilter("All");
-              setPeriodDate("");
+              period.setPeriod("All Time");
               setSelectedIds([]);
             }}
           />
@@ -993,8 +978,7 @@ function Invoices() {
               )}
               {selectedSettlementMethod?.category === "CASH" &&
                 !foreignTender &&
-                cashReceived > settlementAmount &&
-                settlementAmount >= settleInvoice.total - settleInvoice.paid && (
+                cashReceived > settlementAmount && (
                   <div className="flex items-center justify-between rounded-md bg-success-soft px-3 py-2 text-[13px] font-semibold text-success">
                     <span>Change due</span>
                     <span className="num text-[16px]">{ksh(cashReceived - settlementAmount)}</span>

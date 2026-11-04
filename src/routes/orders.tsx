@@ -1,5 +1,6 @@
+import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import {
@@ -11,14 +12,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatTime, ksh } from "@/lib/currency";
-import { businessDateForTimestamp } from "@/lib/business-date";
 import { ordersDashboardFinancials } from "@/lib/orders-dashboard-financials";
-import { invoiceCandidatesForOrder, orderBusinessDate } from "@/lib/orders-interface";
+import { invoiceCandidatesForOrder } from "@/lib/orders-interface";
 import { billingRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate } from "@/lib/date-filters";
+import {
+  TransactionPeriodFilter,
+  useTransactionPeriod,
+} from "@/components/app/TransactionPeriodFilter";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { PhoneOrders } from "@/components/app/PhoneOrders";
 
 export const Route = createFileRoute("/orders")({
@@ -48,10 +52,8 @@ function Orders() {
     useAppContext();
   const configuredBranch = branchRecords.find((record) => record.id === branchId);
   const branchTimeZone = configuredBranch?.timezone ?? timeZone;
-  const cutoffMinutes = Number(configuredBranch?.metadata["businessDayCutoffMinutes"] ?? 0);
-  const currentBusinessDate = businessDateForTimestamp(new Date(), branchTimeZone, cutoffMinutes);
   const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
-  const [periodDate, setPeriodDate] = useState(currentBusinessDate);
+  const period = useTransactionPeriod();
   const [cancelOpen, setCancelOpen] = useState(false);
   const [detailsOrderId, setDetailsOrderId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -59,20 +61,22 @@ function Orders() {
   const [operationBusy, setOperationBusy] = useState(false);
   const { state, mutate } = useTransactionEngine();
   const { printCustomerDocument } = useSerametPrintQueue(branchId);
-  useEffect(() => setPeriodDate(currentBusinessDate), [branchId, currentBusinessDate]);
-  const rows = state.orders
+  const server = useDocumentList("orders", period.range.from, {
+    to: period.range.to,
+    basis: "calendar",
+  });
+  const rows = mergeDocuments(server.rows, state.orders)
     .filter((order) => matchesBranch(order.branchId ?? order.branch))
-    .filter(
-      (order) =>
-        !periodDate || orderBusinessDate(order, branchTimeZone, cutoffMinutes) === periodDate,
-    );
+    .filter((order) => period.matches(order.createdAt, order.branchId));
   const financials = ordersDashboardFinancials(
-    state,
+    { ...state, orders: mergeDocuments(server.rows, state.orders) },
     matchesBranch,
-    periodDate,
+    period.range,
     branchTimeZone,
     currency,
-    cutoffMinutes,
+    0,
+    "calendar",
+    (id) => branchRecords.find((branch) => branch.id === id)?.timezone ?? branchTimeZone,
   );
   const cancelled = rows.filter((order) => order.status === "CANCELLED").length;
   const selectedOrder =
@@ -199,24 +203,31 @@ function Orders() {
           {operationNotice}
         </div>
       )}
+      {server.error && (
+        <p role="alert">
+          {server.error} <button onClick={server.refresh}>Try again</button>
+        </p>
+      )}
+      {server.hasMore && (
+        <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          Showing loaded records and totals. More history is available.{" "}
+          <Btn disabled={server.loading} onClick={server.loadMore}>
+            Load more
+          </Btn>
+        </div>
+      )}
       <Panel className="mt-4">
         <PanelHead title="All orders" sub="Permanent order history - no hard deletion" />
         <div className="border-b border-border px-4 py-3">
+          <TransactionPeriodFilter filter={period} />
           <Chips
             items={[
-              {
-                label: "Period",
-                value: formatFilterDate(periodDate, currentBusinessDate),
-                dateValue: periodDate,
-                onDateChange: setPeriodDate,
-                onClear: () => setPeriodDate(""),
-              },
               { label: "Scope", value: branchLabel },
               { label: "Channel", value: "All" },
               { label: "Status", value: "Any" },
               { label: "Retention", value: "Permanent" },
             ]}
-            onClear={() => setPeriodDate("")}
+            onClear={() => period.setPeriod("All Time")}
           />
         </div>
         <div className="grid gap-3 p-3 md:hidden">
@@ -361,7 +372,7 @@ function Orders() {
                 <div>
                   <dt className="text-muted-foreground">Created</dt>
                   <dd>
-                    {orderBusinessDate(detailsOrder, branchTimeZone, cutoffMinutes)} ·{" "}
+                    {businessDateForTimestamp(detailsOrder.createdAt, branchTimeZone)} ·{" "}
                     {formatTime(
                       detailsOrder.createdAt,
                       { hour: "2-digit", minute: "2-digit" },

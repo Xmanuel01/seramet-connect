@@ -1,8 +1,50 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEmptyTransactionState, type TransactionState } from "@/lib/transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
 
 describe("restaurant operations branch isolation", () => {
+  it("counts paid unfinished kitchen work but excludes served lines and uses dispatch age", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-04T12:00:00Z"));
+    try {
+      const state = createEmptyTransactionState("tenant-branch-isolation");
+      state.orders = [
+        {
+          id: "paid-pending",
+          branch: "Branch A",
+          status: "PAID",
+          createdAt: "2026-11-04T10:00:00Z",
+          lines: [
+            {
+              productionStation: "HOT",
+              productionStatus: "PREPARING",
+              sentAt: "2026-11-04T11:00:00Z",
+            },
+          ],
+        },
+        {
+          id: "served",
+          branch: "Branch A",
+          status: "IN_PROGRESS",
+          createdAt: "2026-11-04T10:00:00Z",
+          lines: [{ productionStation: "HOT", productionStatus: "SERVED" }],
+        },
+        {
+          id: "recently-sent",
+          branch: "Branch A",
+          status: "SENT_TO_KITCHEN",
+          createdAt: "2026-11-04T10:00:00Z",
+          lines: [
+            { productionStation: "HOT", productionStatus: "NEW", sentAt: "2026-11-04T11:59:00Z" },
+          ],
+        },
+      ] as unknown as TransactionState["orders"];
+      expect(deriveBranchOperations(state, "Branch A").lateKitchenTickets).toBe(1);
+      expect(state.orders).toHaveLength(3);
+      expect(state.orders[0]!.status).toBe("PAID");
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it("excludes records with missing branch identity from branch summaries", () => {
     const state = createEmptyTransactionState("tenant-branch-isolation");
     state.orders = [

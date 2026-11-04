@@ -91,11 +91,68 @@ function seed(db: SqliteD1TestDatabase) {
 
 describe("invoice and receipt lists by date", () => {
   let db: SqliteD1TestDatabase;
+  it("allows all-time and multi-year history without weakening branch isolation", async () => {
+    const service = new DocumentListService(db, actor());
+    const all = await service.invoices({ from: "", to: "" });
+    expect(all.rows.map((row) => row.id)).toEqual(expect.arrayContaining(["INV-1", "INV-4"]));
+    expect(all.rows.some((row) => ["INV-6", "INV-X"].includes(row.id))).toBe(false);
+    expect((await service.invoices({ from: "2000-01-01", to: "2026-11-04" })).rows).toHaveLength(
+      all.rows.length,
+    );
+  });
+  it("uses issued calendar time rather than the accounting cutoff for daily views", async () => {
+    db.sqlite
+      .prepare("UPDATE invoices SET created_at=?, business_date=? WHERE id='INV-4'")
+      .run("2026-11-03T21:30:00.000Z", "2026-10-15");
+    const service = new DocumentListService(db, actor());
+    const result = await service.invoices({
+      from: "2026-11-04",
+      to: "2026-11-04",
+      basis: "calendar",
+    });
+    expect(result.rows.map((row) => row.id)).toEqual(["INV-4"]);
+    expect(
+      (await service.invoices({ from: "2026-11-03", to: "2026-11-03", basis: "calendar" })).rows,
+    ).toHaveLength(0);
+  });
   beforeEach(() => {
     db = createMigratedTestDatabase();
     seed(db);
   });
   afterEach(() => db.close());
+
+  it("pages permanent order history without exposing another tenant or branch", async () => {
+    for (const [t, branch, id] of [
+      [tenant, "westlands", "O-1"],
+      [tenant, "westlands", "O-2"],
+      [tenant, "ngong", "O-3"],
+      [other, "elsewhere", "O-X"],
+    ]) {
+      db.sqlite
+        .prepare(
+          "INSERT INTO orders (tenant_id,id,branch_id,display_number,status,channel_id,business_date,currency,total_minor,correlation_id,version,payload_json,created_at,updated_at) VALUES (?,?,?,?,'OPEN',NULL,'2020-01-01','KES',100,'test',1,?,?,?)",
+        )
+        .run(
+          t,
+          id,
+          branch,
+          id,
+          JSON.stringify({ id, branchId: branch }),
+          "2020-01-01T10:00:00.000Z",
+          "2020-01-01T10:00:00.000Z",
+        );
+    }
+    const service = new DocumentListService(db, actor());
+    const first = await service.orders({ from: "", to: "", limit: 1 });
+    const second = await service.orders({ from: "", to: "", limit: 1, offset: 1 });
+    expect(first.rows.map((row) => row.id)).toEqual(["O-2"]);
+    expect(first.hasMore).toBe(true);
+    expect(second.rows.map((row) => row.id)).toEqual(["O-1"]);
+    expect(second.hasMore).toBe(false);
+    await expect(
+      new DocumentListService(db, actor("westlands", [])).orders({ from: "", to: "" }),
+    ).rejects.toThrow(/access/);
+  });
 
   const today = { from: "2026-11-02", to: "2026-11-02" };
 
