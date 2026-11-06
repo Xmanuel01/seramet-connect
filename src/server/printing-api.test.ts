@@ -66,7 +66,10 @@ beforeEach(async () => {
     .bind(tenantId, branchId, branchId, "Disposable branch", "Africa/Nairobi")
     .run();
 });
-afterEach(() => db.close());
+afterEach(() => {
+  vi.useRealTimers();
+  db.close();
+});
 const request = (path: string, input?: unknown) =>
   new Request(
     `http://localhost/api/seramet/printing/${path}`,
@@ -766,6 +769,8 @@ it("derives a separate print signing master when no explicit key is configured",
 });
 
 it("turns the kitchen printer bypass on for 36 hours, records who and why, and turns it off", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-06T06:00:00Z"));
   const send = (method: "POST" | "DELETE", input?: unknown) =>
     handlePrintingApi(
       new Request("http://localhost/api/seramet/printing/dispatch-bypass", {
@@ -796,6 +801,8 @@ it("turns the kitchen printer bypass on for 36 hours, records who and why, and t
     .first<{ payload_json: string }>();
   expect(JSON.parse(branch!.payload_json).metadata.kitchenPrintBypassUntil).toBe(bypass.until);
 
+  // Distinct event times make the audit ordering assertion independent of runner speed.
+  vi.setSystemTime(new Date("2026-11-06T06:00:01Z"));
   const ended = await send("DELETE");
   expect((await ended!.json()).bypass).toBeNull();
   const audit = await db

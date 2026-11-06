@@ -111,3 +111,16 @@ printing changes, dependency changes, or changes to the separate financial PR.
   database and available queue. Cloudflare version
   `e946787e-dedc-4d7d-a38f-bcbd5b6ea259` at 100% was verified to carry that build ID
   and is the recorded application rollback target. No production write was made.
+- Review identified that moving management tools to `/schedule` could exclude a
+  `staff.manage`-only role previously admitted by Attendance. Time Tracking now
+  has a scoped route definition retaining staff-view/management access without
+  granting unrelated People pages; staff and attendance DENY policies still
+  apply. Four registry cases and one server-profile case cover this boundary.
+- CI `42192401440` exposed an unrelated pre-existing test race: the printing
+  bypass audit test sorted two events by equal timestamps. Only that test's
+  Date clock is controlled and advanced before ending the bypass; chronological
+  assertions remain intact. Printing runtime/configuration is unchanged.
+- Focused follow-up: 87 tests across the registry, server module access,
+  attendance API and printing API suites passed; TypeScript and focused lint
+  passed. Browser workflow `42192401352` and operational demo `42192401302`
+  passed on the preceding candidate. Exact revised-head CI remains required.
