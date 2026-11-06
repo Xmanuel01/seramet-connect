@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
+import { MoreHorizontal, Plus, RefreshCcw, ShieldCheck, UserPlus, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { EmployeeStationAccess } from "@/components/app/EmployeeStationAccess";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
@@ -26,6 +39,18 @@ type EmployeeRow = {
   locked_until: string | null;
   must_change: number | null;
   credential_configured: number;
+  role_id: string | null;
+  account_owner: number;
+};
+
+type EmployeeEdit = {
+  id: string;
+  fullName: string;
+  employeeCode: string;
+  jobTitle: string;
+  email: string;
+  phone: string;
+  roleId: string;
 };
 
 const emptyDraft = {
@@ -51,6 +76,7 @@ function Employees() {
     isAllBranches,
     authenticationLevel,
     sessionId,
+    refreshConfiguration,
   } = useAppContext();
   const [storedEmployees, setEmployees] = useState<EmployeeRow[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
@@ -58,6 +84,8 @@ function Employees() {
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
   const [showForm, setShowForm] = useState(false);
   const [stationEmployee, setStationEmployee] = useState<EmployeeRow | null>(null);
+  const [editing, setEditing] = useState<EmployeeEdit | null>(null);
+  const [editError, setEditError] = useState("");
   const [busy, setBusy] = useState(true);
   const [notice, setNotice] = useState("");
   const invitationKeys = useRef(new Map<string, string>());
@@ -121,6 +149,7 @@ function Employees() {
     setDraft(emptyDraft);
     setShowForm(false);
     setStationEmployee(null);
+    setEditing(null);
     setNotice("");
     setAssignedBranchIds([branchId]);
     setPrimaryBranchId(branchId);
@@ -141,15 +170,14 @@ function Employees() {
     setBusy(true);
     setNotice("");
     try {
-      const { email, phone, ...required } = draft;
       const payload = JSON.stringify({
         idempotencyKey: employeeCreateKey,
-        ...required,
+        ...draft,
+        email: draft.email.trim(),
+        phone: draft.phone.trim(),
         assignedBranchIds,
         primaryBranchId,
         effectiveFrom: effectiveFrom.current,
-        ...(email.trim() ? { email: email.trim() } : {}),
-        ...(phone.trim() ? { phone: phone.trim() } : {}),
       });
       if (uncertainPayload.current) {
         const check = await fetch(`/api/seramet/employees/creation-attempts/${employeeCreateKey}`, {
@@ -257,6 +285,92 @@ function Employees() {
       }
     }
   }
+  // The owner role is never handed out, and nobody can grant a role above their own access.
+  const assignableRoles = roleRecords.filter(
+    (role) =>
+      role.active &&
+      role.code !== "ACCOUNT_OWNER" &&
+      !role.permissions.some((permission) => !currentUser.permissions.includes(permission)),
+  );
+  const canManageRoles = hasPermission(permissions.settingsRoleManage);
+  async function addStandardRoles() {
+    if (!canManageRoles || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setNotice("");
+    try {
+      const response = await fetch("/api/seramet/configuration/roles/standard", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ reason: "Standard staff roles added from Employees" }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        added?: string[];
+      };
+      if (!response.ok) throw new Error(result.message ?? "Couldn't add the staff roles.");
+      await refreshConfiguration();
+      setNotice(
+        result.added?.length
+          ? "Staff roles added. Choose one for this employee."
+          : "The staff roles are already set up.",
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't add the staff roles.");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
+  function startEdit(employee: EmployeeRow) {
+    if (!canManage || employee.account_owner) return;
+    setEditError("");
+    setEditing({
+      id: employee.id,
+      fullName: employee.name,
+      employeeCode: employee.employee_code ?? "",
+      jobTitle: employee.job_title ?? "",
+      email: employee.email ?? "",
+      phone: employee.phone ?? "",
+      roleId: employee.role_id ?? "",
+    });
+  }
+  async function saveEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editing || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setEditError("");
+    const scopeAtStart = scope;
+    try {
+      const { id, ...details } = editing;
+      const response = await fetch(`/api/seramet/employees/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify({
+          ...details,
+          email: details.email.trim(),
+          phone: details.phone.trim(),
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = (await response.json().catch(() => ({}))) as { message?: string };
+      if (activeScope.current !== scopeAtStart) return;
+      if (!response.ok) throw new Error(result.message ?? "Couldn't save these details.");
+      setEditing(null);
+      setNotice(`${details.fullName.trim()} was updated.`);
+      await load();
+    } catch (error) {
+      if (activeScope.current === scopeAtStart)
+        setEditError(error instanceof Error ? error.message : "Couldn't save these details.");
+    } finally {
+      if (activeScope.current === scopeAtStart) {
+        submitting.current = false;
+        setBusy(false);
+      }
+    }
+  }
   const locked = employees.filter(
     (employee) => employee.locked_until && Date.parse(employee.locked_until) > Date.now(),
   );
@@ -331,41 +445,58 @@ function Employees() {
               required
             />
             <Field
-              label="Email (optional)"
+              label="Email"
               type="email"
               value={draft.email}
               onChange={(value) => setDraft({ ...draft, email: value })}
+              required
             />
             <Field
-              label="Phone (optional)"
+              label="Phone"
+              type="tel"
               value={draft.phone}
               onChange={(value) => setDraft({ ...draft, phone: value })}
+              required
             />
-            <label className={labelClass}>
-              Operational role
-              <select
-                className={fieldClass}
-                required
-                value={draft.roleId}
-                onChange={(event) => setDraft({ ...draft, roleId: event.target.value })}
-              >
-                <option value="">Select role</option>
-                {roleRecords
-                  .filter(
-                    (role) =>
-                      role.active &&
-                      role.code !== "ACCOUNT_OWNER" &&
-                      !role.permissions.some(
-                        (permission) => !currentUser.permissions.includes(permission),
-                      ),
-                  )
-                  .map((role) => (
+            {assignableRoles.length ? (
+              <label className={labelClass}>
+                Role
+                <select
+                  className={fieldClass}
+                  required
+                  value={draft.roleId}
+                  onChange={(event) => setDraft({ ...draft, roleId: event.target.value })}
+                >
+                  <option value="">Select role</option>
+                  {assignableRoles.map((role) => (
                     <option key={role.id} value={role.id}>
                       {role.name}
                     </option>
                   ))}
-              </select>
-            </label>
+                </select>
+              </label>
+            ) : (
+              <div className={labelClass}>
+                Role
+                <div className="mt-1.5 rounded-md border border-dashed border-border px-3 py-2 text-sm font-normal text-foreground">
+                  {canManageRoles ? (
+                    <>
+                      There are no staff roles yet.{" "}
+                      <button
+                        type="button"
+                        className="font-semibold text-primary underline underline-offset-2"
+                        disabled={busy}
+                        onClick={() => void addStandardRoles()}
+                      >
+                        Add standard roles
+                      </button>
+                    </>
+                  ) : (
+                    "There are no staff roles yet. Ask the account owner to add them in Settings."
+                  )}
+                </div>
+              </div>
+            )}
             <fieldset className="grid gap-2 md:col-span-2 xl:col-span-3">
               <legend className="text-xs font-semibold text-muted-foreground">
                 Assigned branches
@@ -458,85 +589,190 @@ function Employees() {
       <Panel className="mt-4 overflow-x-auto">
         <PanelHead
           title="Employee register"
-          sub="PIN hashes and credential metadata are never returned"
+          sub="Everyone who works in this branch"
           right={
             <Btn onClick={() => void load()} disabled={busy} title="Refresh">
               <RefreshCcw className="h-4 w-4" />
             </Btn>
           }
         />
-        <table className="w-full min-w-[820px]">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr>
               <TH>Employee</TH>
-              <TH>Code</TH>
               <TH>Job title</TH>
-              <TH>Primary branch</TH>
-              <TH>Credential</TH>
+              <TH>Branch</TH>
+              <TH>PIN</TH>
               <TH>Status</TH>
-              {canManage && <TH>Phone account</TH>}
+              {canManage && <TH className="w-12" />}
             </tr>
           </thead>
           <tbody>
             {employees.map((employee) => (
-              <tr key={employee.id}>
+              <tr
+                key={employee.id}
+                className={
+                  canManage && !employee.account_owner
+                    ? "cursor-pointer hover:bg-secondary/50"
+                    : undefined
+                }
+                onClick={() => startEdit(employee)}
+              >
                 <TD>
-                  <div className="font-semibold">{employee.name}</div>
+                  <div className="font-semibold">
+                    {employee.name}
+                    {employee.account_owner ? (
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        Account owner
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="text-xs text-muted-foreground">
-                    {employee.email ?? "No email"}
+                    {[employee.employee_code, employee.email].filter(Boolean).join(" · ") ||
+                      "No code or email"}
                   </div>
                 </TD>
-                <TD>{employee.employee_code ?? "Not assigned"}</TD>
-                <TD>{employee.job_title ?? "Not configured"}</TD>
+                <TD>{employee.job_title ?? "—"}</TD>
                 <TD>
                   {branchRecords.find((branch) => branch.id === employee.primary_branch_id)?.name ??
-                    "Not assigned"}
+                    "—"}
                 </TD>
                 <TD>
-                  <Status>
-                    {!employee.credential_configured
-                      ? "NOT CONFIGURED"
-                      : employee.locked_until && Date.parse(employee.locked_until) > Date.now()
-                        ? "LOCKED"
-                        : employee.must_change
-                          ? "RESET REQUIRED"
-                          : "READY"}
+                  <Status className={statusTone[pinStatus(employee)]}>{pinStatus(employee)}</Status>
+                </TD>
+                <TD>
+                  <Status className={statusTone[titleCase(employee.employment_status)]}>
+                    {titleCase(employee.employment_status)}
                   </Status>
                 </TD>
-                <TD>
-                  <Status>{employee.employment_status}</Status>
-                </TD>
                 {canManage && (
-                  <TD>
-                    <div className="flex flex-wrap gap-2">
-                      <Btn
-                        disabled={busy || !employee.email}
-                        onClick={() => void invitation(employee)}
+                  <TD className="text-right" onClick={(event) => event.stopPropagation()}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        disabled={busy}
+                        aria-label={`Actions for ${employee.name}`}
+                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary disabled:opacity-50"
                       >
-                        Invite account
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => void invitation(employee, false, true)}>
-                        Invitation status
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => void invitation(employee, true)}>
-                        Revoke invite
-                      </Btn>
-                      <Btn disabled={busy} onClick={() => setStationEmployee(employee)}>
-                        Preparation stations
-                      </Btn>
-                    </div>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        {!employee.account_owner && (
+                          <DropdownMenuItem onSelect={() => startEdit(employee)}>
+                            Edit details
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          disabled={!employee.email}
+                          onSelect={() => void invitation(employee)}
+                        >
+                          {employee.email ? "Invite to sign in" : "Invite to sign in (needs email)"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => void invitation(employee, false, true)}>
+                          Check invitation
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => void invitation(employee, true)}>
+                          Cancel invitation
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => setStationEmployee(employee)}>
+                          Preparation stations
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </TD>
                 )}
               </tr>
             ))}
             {!employees.length && !busy ? (
               <tr>
-                <TD colSpan={6}>No employees are configured in this branch scope.</TD>
+                <TD colSpan={canManage ? 6 : 5}>No employees in this branch yet.</TD>
               </tr>
             ) : null}
           </tbody>
         </table>
       </Panel>
+      <Dialog open={!!editing} onOpenChange={(open) => !open && !busy && setEditing(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit employee</DialogTitle>
+            <DialogDescription>
+              Changes apply from their next sign-in. Use the PIN reset to change a PIN.
+            </DialogDescription>
+          </DialogHeader>
+          {editing && (
+            <form onSubmit={saveEdit} className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Full name"
+                value={editing.fullName}
+                onChange={(value) => setEditing({ ...editing, fullName: value })}
+                required
+              />
+              <Field
+                label="Employee code"
+                value={editing.employeeCode}
+                onChange={(value) => setEditing({ ...editing, employeeCode: value.toUpperCase() })}
+                required
+              />
+              <Field
+                label="Job title"
+                value={editing.jobTitle}
+                onChange={(value) => setEditing({ ...editing, jobTitle: value })}
+                required
+              />
+              <label className={labelClass}>
+                Role
+                <select
+                  className={fieldClass}
+                  required
+                  value={editing.roleId}
+                  onChange={(event) => setEditing({ ...editing, roleId: event.target.value })}
+                >
+                  <option value="">Select role</option>
+                  {/* Keep the current role listed even when the editor could not grant it. */}
+                  {[
+                    ...assignableRoles,
+                    ...roleRecords.filter(
+                      (role) =>
+                        role.id === editing.roleId &&
+                        !assignableRoles.some((assignable) => assignable.id === role.id),
+                    ),
+                  ].map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Field
+                label="Email"
+                type="email"
+                value={editing.email}
+                onChange={(value) => setEditing({ ...editing, email: value })}
+                required
+              />
+              <Field
+                label="Phone"
+                type="tel"
+                value={editing.phone}
+                onChange={(value) => setEditing({ ...editing, phone: value })}
+                required
+              />
+              {editError ? (
+                <p role="alert" className="text-sm text-danger sm:col-span-2">
+                  {editError}
+                </p>
+              ) : null}
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <Btn type="button" disabled={busy} onClick={() => setEditing(null)}>
+                  Cancel
+                </Btn>
+                <Btn type="submit" variant="primary" disabled={busy}>
+                  {busy ? "Saving..." : "Save changes"}
+                </Btn>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
       {stationEmployee && canManage && (
         <EmployeeStationAccess
           employeeId={stationEmployee.id}
@@ -547,6 +783,22 @@ function Employees() {
     </AppShell>
   );
 }
+
+function pinStatus(employee: EmployeeRow) {
+  if (!employee.credential_configured) return "No PIN";
+  if (employee.locked_until && Date.parse(employee.locked_until) > Date.now()) return "Locked";
+  return employee.must_change ? "PIN change needed" : "PIN set";
+}
+
+const statusTone: Record<string, string> = {
+  "PIN set": "bg-success-soft text-success",
+  "PIN change needed": "bg-warning-soft text-warning",
+  Locked: "bg-danger-soft text-danger",
+  Active: "bg-success-soft text-success",
+};
+
+const titleCase = (value: string) =>
+  value.charAt(0).toUpperCase() + value.slice(1).toLowerCase().replaceAll("_", " ");
 
 const fieldClass =
   "mt-1.5 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";

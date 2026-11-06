@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { SerametHttpError, type ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
+import { roleCodeForName } from "@/platform/standard-roles";
 import type {
   OrderChannelDefinition,
   PaymentMethodDefinition,
   RoleDefinition,
 } from "@/platform/types";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
+import { existingRoleCodes, standardRoleStatements } from "@/server/standard-roles-service";
 
 const code = z
   .string()
@@ -81,6 +83,32 @@ export const updateOrderChannelInputSchema = z
       value.requiresTable !== undefined,
     { message: "At least one channel setting is required" },
   );
+
+export const installStandardRolesInputSchema = z.object({ reason }).strict();
+
+/** Adds the standard staff roles the restaurant does not have yet; existing roles are untouched. */
+export async function installStandardRoles(
+  db: D1Database,
+  actor: ServerActor,
+  input: z.infer<typeof installStandardRolesInputSchema>,
+) {
+  requirePermission(actor, permissions.settingsRoleManage);
+  const parsed = installStandardRolesInputSchema.parse(input);
+  const existing = await existingRoleCodes(db, actor.tenantId);
+  const statements = standardRoleStatements(db, actor.tenantId, existing);
+  if (!statements.length) return { added: [] as string[] };
+  await db.batch([
+    ...statements,
+    await auditStatement(db, actor, {
+      action: "STANDARD_ROLES_INSTALLED",
+      entityType: "ROLE",
+      entityId: "standard",
+      reason: parsed.reason,
+    }),
+  ]);
+  const after = await existingRoleCodes(db, actor.tenantId);
+  return { added: [...after].filter((code) => !existing.has(code)) };
+}
 
 export async function createRole(
   db: D1Database,
@@ -537,12 +565,7 @@ function requirePermission(actor: ServerActor, permission: string) {
 }
 
 function normalizeCode(value: string) {
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 40);
+  const normalized = roleCodeForName(value);
   if (!normalized) throw new SerametHttpError(400, "A valid role name is required");
   return normalized;
 }

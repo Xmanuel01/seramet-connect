@@ -320,6 +320,8 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
         idempotencyKey: randomUUID(),
         fullName: "Operational Cashier",
         employeeCode,
+        email: `${employeeCode.toLowerCase()}@example.test`,
+        phone: "0700000000",
         jobTitle: "Cashier",
         roleId: setup.roleId,
         assignedBranchIds: [fixture.firstBranchId],

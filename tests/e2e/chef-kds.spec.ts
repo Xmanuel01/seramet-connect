@@ -60,6 +60,8 @@ test("chef PIN session operates KDS Start, Ready and Served with persisted state
       idempotencyKey: randomUUID(),
       fullName: "Disposable KDS chef",
       employeeCode,
+      email: `${employeeCode.toLowerCase()}@example.test`,
+      phone: "0700000000",
       jobTitle: "Chef",
       roleId: chef.id,
       assignedBranchIds: [fixture.firstBranchId],
