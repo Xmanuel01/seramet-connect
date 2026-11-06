@@ -94,3 +94,20 @@ printing changes, dependency changes, or changes to the separate financial PR.
   the original failing route-render fixture instead of changing or hiding it.
 - Revised-commit CI and exact owner approval are required before release. No
   production records, schema, settings, printing or scanner changes are included.
+- Follow-up CI `42185774909` passed all core checks, including the full unit
+  suite and build. Browser run `42185774921` passed 64 scenarios and exposed an
+  outdated delayed-hydration assertion for the former Attendance roster. That
+  test now checks Clock In/Out, disabled controls during loading and the signed-in
+  employee's clock after loading, retaining all payroll acknowledgement checks.
+  The new management layout/export scenario is also included in the default CI
+  browser suite rather than remaining a local-only focused test.
+- Local follow-up: both render suites passed all 14 tests; TypeScript passed.
+  The selected browser run passed 24 cases and identified a test-fixture lookup
+  error (names belong to employee records, not schedule records). After selecting
+  the signed-in employee by ID, that one loading/payroll case passed separately,
+  completing all 25 distinct selected cases. No assertion was removed or skipped.
+- Read-only production preflight: operational health was healthy in production,
+  schema 31, build `1f22af69918a6a8da1bb66b7e01d0d5e299c71dd`, with an authoritative
+  database and available queue. Cloudflare version
+  `e946787e-dedc-4d7d-a38f-bcbd5b6ea259` at 100% was verified to carry that build ID
+  and is the recorded application rollback target. No production write was made.

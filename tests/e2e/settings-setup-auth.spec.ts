@@ -294,14 +294,14 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
       path === "/attendance" ? "**/api/seramet/attendance?**" : "**/api/seramet/transactions?**";
     const attendanceName =
       path === "/attendance"
-        ? await page.evaluate(async () => {
+        ? await page.evaluate(async (userId) => {
             const response = await fetch("/api/seramet/attendance");
             if (!response.ok) throw new Error("Attendance fixture unavailable");
             const body = await response.json();
-            if (!body.employees.length)
-              throw new Error("Expected an authenticated employee fixture");
-            return body.employees[0].name as string;
-          })
+            const employee = body.employees.find((row: { id: string }) => row.id === userId);
+            if (!employee?.name) throw new Error("Expected an authenticated employee fixture");
+            return employee.name as string;
+          }, fixture.userId)
         : name;
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
@@ -314,13 +314,25 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
     await page.goto(path);
     await expect(
       page.getByRole("heading", {
-        name: path === "/attendance" ? "Attendance" : "Payroll",
+        name: path === "/attendance" ? "Clock In/Out" : "Payroll",
         exact: true,
       }),
     ).toBeVisible();
     await expect(page.getByText("This page didn't load")).toHaveCount(0);
+    if (path === "/attendance") {
+      const clock = page.getByRole("region", { name: "My attendance" });
+      await expect(clock.getByText("Loading attendance", { exact: true })).toBeVisible();
+      await expect(clock.getByRole("button")).toBeDisabled();
+    }
     release();
-    await expect(page.getByRole("cell", { name: attendanceName, exact: true })).toBeVisible();
+    if (path === "/attendance") {
+      const clock = page.getByRole("region", { name: "My attendance" });
+      await expect(clock.getByText("Loading attendance", { exact: true })).toHaveCount(0);
+      await expect(clock.getByText(attendanceName, { exact: true })).toBeVisible();
+      await expect(clock.getByRole("button")).toHaveCount(1);
+    } else {
+      await expect(page.getByRole("cell", { name: attendanceName, exact: true })).toBeVisible();
+    }
     await page.unroute(endpoint);
   }
 
