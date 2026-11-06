@@ -79,4 +79,18 @@ printing changes, dependency changes, or changes to the separate financial PR.
   reports fail explicitly with a CSV alternative rather than dropping names.
 - Live deployment, physical-device GPS accuracy, and owner acceptance are NOT
   certified by these local tests. Required remote CI/release approval remains
-  separate. No production deployment was requested or performed for this change.
+  separate.
+
+## Release Follow-Up
+
+- Owner subsequently requested main merge and deployment. PR #205 contains only
+  this attendance change; the separate financial PR is not part of this release.
+- Initial exact-head CI run `42185014719` passed dependency audits, TypeScript,
+  lint, PostgreSQL schema/RLS checks and the isolated recovery fixture. The full
+  unit suite passed 1,518 tests and exposed one initial attendance render failure:
+  an absent employee name was used directly for avatar initials.
+- The clock now tolerates an absent/blank display name while keeping punch
+  controls disabled until attendance loads. Two focused regression cases retain
+  the original failing route-render fixture instead of changing or hiding it.
+- Revised-commit CI and exact owner approval are required before release. No
+  production records, schema, settings, printing or scanner changes are included.

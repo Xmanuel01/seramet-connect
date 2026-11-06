@@ -23,6 +23,13 @@ const render = (overrides: Partial<typeof base> = {}) =>
   renderToStaticMarkup(createElement(AttendanceClock, { ...base, ...overrides }));
 
 describe("Attendance clock", () => {
+  it.each([undefined, "  "])("renders safely before the employee name is available: %j", (name) => {
+    const html = render({ name, loaded: false });
+    expect(html).toContain("Employee");
+    expect(html).toContain("Loading attendance");
+    expect(html).toContain('disabled=""');
+  });
+
   it("shows employee identity and recorded times with shift details collapsed", () => {
     const html = render();
     expect(html).toContain("Amina");

@@ -8,7 +8,7 @@ import {
 } from "@/lib/attendance-summary";
 
 type Props = {
-  name: string;
+  name?: string;
   branch: string;
   businessDate?: string;
   timezone?: string;
@@ -36,6 +36,7 @@ type Props = {
 
 export function AttendanceClock(props: Props) {
   const { loaded, working, completed, unknown, busy, locationEnabled, openElsewhere } = props;
+  const name = props.name?.trim() || "Employee";
   const [now, setNow] = useState(() =>
     props.serverNow ? Date.parse(props.serverNow) : Date.now(),
   );
@@ -93,14 +94,14 @@ export function AttendanceClock(props: Props) {
               aria-hidden="true"
               className="mt-5 hidden h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-lg font-semibold text-primary md:flex"
             >
-              {props.name
+              {name
                 .split(/\s+/)
                 .slice(0, 2)
                 .map((part) => part[0])
                 .join("")}
             </div>
             <p className="mt-2 break-words text-xl font-semibold leading-tight md:mt-4 md:text-2xl">
-              {props.name}
+              {name}
             </p>
             <p className="mt-2 flex items-start gap-2 text-sm text-muted-foreground">
               <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
