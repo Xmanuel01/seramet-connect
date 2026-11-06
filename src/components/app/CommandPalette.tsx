@@ -37,7 +37,7 @@ const goto: { label: string; to: string }[] = [
   { label: "Go to People", to: "/people" },
   { label: "Open Employee 360", to: "/employees" },
   { label: "Open Attendance", to: "/attendance" },
-  { label: "Open Schedule", to: "/schedule" },
+  { label: "Open Time Tracking", to: "/schedule" },
   { label: "Open Payroll", to: "/payroll" },
   { label: "Go to Finance", to: "/finance" },
   { label: "Open Statements", to: "/statements" },

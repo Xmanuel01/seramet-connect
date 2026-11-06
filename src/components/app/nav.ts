@@ -266,8 +266,8 @@ export const navGroups: NavGroup[] = [
     items: [
       { label: "Overview", to: "/people", icon: IdCard },
       { label: "Employees", to: "/employees", icon: UserRound },
-      { label: "Attendance", to: "/attendance", icon: ClipboardCheck },
-      { label: "Schedule", to: "/schedule", icon: CalendarDays },
+      { label: "Clock In/Out", to: "/attendance", icon: ClipboardCheck },
+      { label: "Time Tracking", to: "/schedule", icon: CalendarDays },
       { label: "Payroll", to: "/payroll", icon: Wallet, permission: permissions.payrollManage },
       { label: "Leave", to: "/leave", icon: CalendarX },
       { label: "Performance", to: "/performance", icon: Award },

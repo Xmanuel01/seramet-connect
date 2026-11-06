@@ -54,4 +54,29 @@ describe("Attendance clock", () => {
     expect(html).toContain("Previous request not confirmed");
     expect(html).not.toContain('disabled=""');
   });
+  it("renders a live shift, weekly totals, and no break or PIN controls", () => {
+    const html = render({
+      working: true,
+      serverNow: "2026-11-06T06:00:00Z",
+      clockInAt: "2026-11-06T05:00:00Z",
+      businessDate: "2026-11-06",
+      timezone: "Africa/Nairobi",
+      week: [
+        {
+          employeeId: "staff",
+          businessDate: "2026-11-06",
+          clockInAt: "2026-11-06T05:00:00Z",
+          clockOutAt: null,
+        },
+      ],
+    });
+    expect(html).toContain("01:00:00");
+    expect(html).toContain("09:00:00");
+    expect(html).toContain("1h 00m");
+    expect(html).toContain("This week");
+    expect(html).not.toMatch(
+      /Start Break|End Break|Break duration|Switch Job|Project|type="password"|PIN/,
+    );
+    expect(html.match(/<button/g)).toHaveLength(1);
+  });
 });

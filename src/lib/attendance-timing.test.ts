@@ -9,7 +9,13 @@ describe("attendance timing without invented payroll rules", () => {
         clock_in_at: "2026-10-18T05:00:00Z",
         clock_out_at: "2026-10-18T06:17:59Z",
       }),
-    ).toEqual({ workedMinutes: 77, earlyDepartureMinutes: null, overtimeMinutes: null });
+    ).toMatchObject({
+      workedMinutes: 77,
+      earlyDepartureMinutes: null,
+      overtimeMinutes: null,
+      scheduledMinutes: null,
+      missingClockOut: false,
+    });
   });
   it("supports overnight schedules and cutoff starts after midnight", () => {
     const row = {
@@ -38,5 +44,26 @@ describe("attendance timing without invented payroll rules", () => {
         schedule_cutoff_minutes: 0,
       }),
     ).toMatchObject({ workedMinutes: 240, earlyDepartureMinutes: null });
+  });
+  it("flags overdue open overnight punches only after the scheduled end", () => {
+    const row = {
+      business_date: "2026-11-05",
+      clock_in_at: "2026-11-05T19:00:00Z",
+      clock_out_at: null,
+      scheduled_start: "22:00",
+      scheduled_end: "05:00",
+      schedule_timezone: "Africa/Nairobi",
+      schedule_cutoff_minutes: 240,
+    };
+    expect(attendanceTiming(row, "2026-11-06T01:00:00Z")).toMatchObject({
+      scheduledMinutes: 420,
+      missingClockOut: false,
+    });
+    expect(attendanceTiming(row, "2026-11-06T02:01:00Z")).toMatchObject({ missingClockOut: true });
+    expect(attendanceTiming({ ...row, clock_out_at: "2026-11-06T03:00:00Z" })).toMatchObject({
+      workedMinutes: 480,
+      overtimeMinutes: 60,
+      missingClockOut: false,
+    });
   });
 });
