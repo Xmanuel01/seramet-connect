@@ -9,26 +9,55 @@ type Centre = ReturnType<typeof useSetupCentre>;
 const inputClass = "h-10 w-full min-w-0 rounded-md border border-border bg-card px-3 text-[13px]";
 
 export function DeliveryConnect({ centre }: { centre: Centre }) {
-  const { activeTenantId, branchId, hasPermission } = useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    hasPermission,
+    currentUser,
+    role,
+    isAllBranches,
+    sessionId,
+    permissions: granted,
+    switchableBranchRecords,
+  } = useAppContext();
   return (
     <DeliveryForm
-      key={`${activeTenantId}:${branchId}`}
+      key={JSON.stringify([
+        activeTenantId,
+        branchId,
+        currentUser.id,
+        role,
+        isAllBranches,
+        sessionId,
+        granted,
+      ])}
       centre={centre}
+      allowedBranchIds={switchableBranchRecords.map((branch) => branch.id)}
       canManage={hasPermission(permissions.settingsIntegrationManage)}
     />
   );
 }
 
-function DeliveryForm({ centre, canManage }: { centre: Centre; canManage: boolean }) {
+function DeliveryForm({
+  centre,
+  canManage,
+  allowedBranchIds,
+}: {
+  centre: Centre;
+  canManage: boolean;
+  allowedBranchIds: string[];
+}) {
   const [branchId, setBranchId] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [saved, setSaved] = useState(false);
-  const [connectionId] = useState(() => `uber-testing-${crypto.randomUUID()}`);
+  const [connectionId, setConnectionId] = useState(() => `uber-testing-${crypto.randomUUID()}`);
   const connections = centre.integrations.filter(
-    (item) => item.providerId === "provider-delivery-uber-eats",
+    (item) =>
+      item.providerId === "provider-delivery-uber-eats" &&
+      Boolean(item.branchId && allowedBranchIds.includes(item.branchId)),
   );
   const existing = connections.some((item) => item.branchId === branchId);
   const unavailable =
@@ -43,6 +72,7 @@ function DeliveryForm({ centre, canManage }: { centre: Centre; canManage: boolea
       unavailable ||
       !canManage ||
       !branchId ||
+      !allowedBranchIds.includes(branchId) ||
       !clientId.trim() ||
       !clientSecret.trim()
     )
@@ -89,10 +119,7 @@ function DeliveryForm({ centre, canManage }: { centre: Centre; canManage: boolea
           </div>
         ))}
         <form onSubmit={(event) => void submit(event)} className="max-w-xl space-y-3">
-          <fieldset
-            disabled={!canManage || busy || unavailable || saved}
-            className="min-w-0 space-y-3"
-          >
+          <fieldset disabled={!canManage || busy || unavailable} className="min-w-0 space-y-3">
             <label className="grid gap-1 text-sm">
               Branch
               <select
@@ -104,11 +131,13 @@ function DeliveryForm({ centre, canManage }: { centre: Centre; canManage: boolea
                   setClientId("");
                   setClientSecret("");
                   setNotice("");
+                  setSaved(false);
+                  setConnectionId(`uber-testing-${crypto.randomUUID()}`);
                 }}
               >
                 <option value="">Select branch</option>
                 {centre.structure.branches
-                  .filter((branch) => branch.active)
+                  .filter((branch) => branch.active && allowedBranchIds.includes(branch.id))
                   .map((branch) => (
                     <option key={branch.id} value={branch.id}>
                       {branch.name}
@@ -140,7 +169,7 @@ function DeliveryForm({ centre, canManage }: { centre: Centre; canManage: boolea
             <Btn
               type="submit"
               variant="primary"
-              disabled={existing || !branchId || !clientId.trim() || !clientSecret.trim()}
+              disabled={saved || existing || !branchId || !clientId.trim() || !clientSecret.trim()}
             >
               <Save className="h-4 w-4" />
               {busy ? "Saving..." : "Save testing credentials"}

@@ -3725,29 +3725,35 @@ export class OnboardingService {
       )
       .bind(this.actor.tenantId)
       .all<Row>();
-    return (rows.results ?? []).map((row) => {
-      const adapter = getProviderRegistry().get(string(row.provider_id));
-      const health = providerHealth(string(row.status), number(row.dead_letters));
-      return {
-        connectionId: string(row.id),
-        providerId: string(row.provider_id),
-        displayName: adapter?.definition.displayName ?? string(row.provider_id),
-        category: adapter?.definition.category ?? "OTHER",
-        ...(row.branch_id ? { branchId: string(row.branch_id) } : {}),
-        environment: string(row.environment),
-        status: string(row.status),
-        health,
-        capabilities: adapter?.definition.capabilities ?? [],
-        ...(row.last_success ? { lastSuccess: string(row.last_success) } : {}),
-        ...(row.last_failure ? { lastFailure: string(row.last_failure) } : {}),
-        ...(row.last_webhook ? { lastWebhook: string(row.last_webhook) } : {}),
-        pendingQueue: number(row.pending_queue),
-        deadLetters: number(row.dead_letters),
-        ...(row.credentials_age_days !== null && row.credentials_age_days !== undefined
-          ? { credentialsAgeDays: number(row.credentials_age_days) }
-          : {}),
-      };
-    });
+    return (rows.results ?? [])
+      .filter((row) =>
+        row.branch_id
+          ? this.canReadBranch(string(row.branch_id))
+          : this.actor.branchScope.type === "ALL",
+      )
+      .map((row) => {
+        const adapter = getProviderRegistry().get(string(row.provider_id));
+        const health = providerHealth(string(row.status), number(row.dead_letters));
+        return {
+          connectionId: string(row.id),
+          providerId: string(row.provider_id),
+          displayName: adapter?.definition.displayName ?? string(row.provider_id),
+          category: adapter?.definition.category ?? "OTHER",
+          ...(row.branch_id ? { branchId: string(row.branch_id) } : {}),
+          environment: string(row.environment),
+          status: string(row.status),
+          health,
+          capabilities: adapter?.definition.capabilities ?? [],
+          ...(row.last_success ? { lastSuccess: string(row.last_success) } : {}),
+          ...(row.last_failure ? { lastFailure: string(row.last_failure) } : {}),
+          ...(row.last_webhook ? { lastWebhook: string(row.last_webhook) } : {}),
+          pendingQueue: number(row.pending_queue),
+          deadLetters: number(row.dead_letters),
+          ...(row.credentials_age_days !== null && row.credentials_age_days !== undefined
+            ? { credentialsAgeDays: number(row.credentials_age_days) }
+            : {}),
+        };
+      });
   }
 
   async deviceHealth(): Promise<DeviceHealthRow[]> {

@@ -140,7 +140,14 @@ describe.sequential("connecting a restaurant's own M-Pesa", () => {
     expect([...objects.data.values()].join("")).not.toContain("test-secret-never-public");
     expect(
       JSON.parse((await createSecretStore(env).resolve(row["secret_reference"]!)).value),
-    ).toMatchObject({ clientId: "test-client" });
+    ).toMatchObject({ clientId: "test-client", clientSecret: "test-secret-never-public" });
+    const restricted = new OnboardingService(
+      db,
+      { ...owner, assignedBranchIds: [], branchScope: { type: "BRANCH", branchId: "unassigned" } },
+      env,
+    );
+    expect(await restricted.integrationHealth()).toEqual([]);
+    expect(await service.integrationHealth()).toHaveLength(1);
   });
 
   it("rejects Uber credentials without integration management permission", async () => {
