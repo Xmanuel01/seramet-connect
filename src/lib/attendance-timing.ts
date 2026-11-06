@@ -28,13 +28,14 @@ function local(at: string, timeZone: string) {
       Date.parse(date + "T00:00:00Z") + minute * 60000 - Math.floor(Date.parse(at) / 60000) * 60000,
   };
 }
-export function attendanceTiming(row: TimedAttendance) {
+export function attendanceTiming(row: TimedAttendance, now = new Date().toISOString()) {
   const workedMinutes = row.clock_out_at
     ? Math.floor((Date.parse(row.clock_out_at) - Date.parse(row.clock_in_at)) / 60000)
     : null;
   let earlyDepartureMinutes: number | null = null;
+  let scheduledMinutes: number | null = null;
+  let missingClockOut = false;
   if (
-    row.clock_out_at &&
     row.scheduled_start &&
     row.scheduled_end &&
     row.schedule_timezone &&
@@ -42,7 +43,7 @@ export function attendanceTiming(row: TimedAttendance) {
     row.schedule_cutoff_minutes !== undefined
   ) {
     const start = local(row.clock_in_at, row.schedule_timezone);
-    const end = local(row.clock_out_at, row.schedule_timezone);
+    const end = local(row.clock_out_at ?? now, row.schedule_timezone);
     // Without an approved DST disambiguation policy, do not invent scheduled
     // comparisons across an offset transition. Actual UTC work duration is valid.
     if (start.offset === end.offset) {
@@ -57,8 +58,19 @@ export function attendanceTiming(row: TimedAttendance) {
             86400000,
         ) *
           1440;
-      earlyDepartureMinutes = Math.max(0, expectedEnd - actualEnd);
+      scheduledMinutes = (minuteOfDay(row.scheduled_end) - scheduledStart + 1440) % 1440 || 1440;
+      if (row.clock_out_at) earlyDepartureMinutes = Math.max(0, expectedEnd - actualEnd);
+      else missingClockOut = actualEnd > expectedEnd;
     }
   }
-  return { workedMinutes, earlyDepartureMinutes, overtimeMinutes: null };
+  return {
+    workedMinutes,
+    earlyDepartureMinutes,
+    scheduledMinutes,
+    overtimeMinutes:
+      workedMinutes !== null && scheduledMinutes !== null
+        ? Math.max(0, workedMinutes - scheduledMinutes)
+        : null,
+    missingClockOut,
+  };
 }

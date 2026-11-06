@@ -4,6 +4,7 @@ import { permissions } from "@/platform/permissions";
 import type { D1Database } from "@/server/database/d1";
 import { csvCell } from "@/onboarding/menu-import-schema";
 import { attendanceTiming } from "@/lib/attendance-timing";
+import { summarizeAttendance } from "@/lib/attendance-summary";
 
 export type AttendanceRecord = {
   id: string;
@@ -98,7 +99,36 @@ export async function attendanceRecords(
       422,
       "Export exceeds 5000 sessions; narrow the date or employee filters",
     );
+  const summaryRows = exporting
+    ? rows
+    : ((
+        await db
+          .prepare(
+            `SELECT s.*,u.name employee_name FROM employee_attendance_sessions s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id WHERE ${where} ORDER BY s.clock_in_at DESC,s.id DESC LIMIT 5001`,
+          )
+          .bind(...values)
+          .all<AttendanceRecord>()
+      ).results ?? []);
+  const serverNow = new Date().toISOString();
   return {
+    serverNow,
+    summary:
+      summaryRows.length <= 5000
+        ? {
+            ...summarizeAttendance(summaryRows.map(attendanceRecord), Date.parse(serverNow)),
+            sessions: summaryRows.length,
+            late: summaryRows.filter((row) => (row.minutes_late ?? 0) > 0).length,
+            missingClockOut: summaryRows.filter((row) => {
+              const timing = attendanceTiming(row, serverNow);
+              return (
+                !row.clock_out_at &&
+                (timing.missingClockOut ||
+                  (timing.scheduledMinutes === null &&
+                    Date.parse(serverNow) - Date.parse(row.clock_in_at) >= 86400000))
+              );
+            }).length,
+          }
+        : null,
     from,
     to,
     status,
@@ -118,6 +148,9 @@ export async function attendanceCsv(
   url: URL,
 ) {
   const report = await attendanceRecords(db, actor, branchId, today, url, true);
+  const format = url.searchParams.get("format") ?? "csv";
+  if (!["csv", "pdf"].includes(format))
+    throw new SerametHttpError(400, "Unsupported attendance export format");
   const localTime = (at: string | null) =>
     at
       ? new Intl.DateTimeFormat("en-CA", {
@@ -127,6 +160,14 @@ export async function attendanceCsv(
           hourCycle: "h23",
         }).format(new Date(at))
       : "";
+  const daily = new Map<string, typeof report.records>();
+  for (const row of report.records) {
+    const key = JSON.stringify([row.employeeId, row.businessDate]);
+    const group = daily.get(key) ?? [];
+    group.push(row);
+    daily.set(key, group);
+  }
+  const exportedDays = new Set<string>();
   const rows = [
     [
       "Employee",
@@ -137,27 +178,51 @@ export async function attendanceCsv(
       "Clock out (UTC)",
       "Worked whole minutes",
       "Late minutes",
+      "Scheduled minutes",
+      "Day worked minutes (first row per employee/date)",
+      "Day overtime over schedule minutes (first row per employee/date)",
+      "Day overtime assessment",
       "Clock-in source",
       "Clock-out source",
     ],
-    ...report.records.map((row) => [
-      row.employeeName,
-      row.businessDate,
-      localTime(row.clockInAt),
-      localTime(row.clockOutAt),
-      row.clockInAt,
-      row.clockOutAt ?? "",
-      row.workedMinutes?.toString() ?? "",
-      row.minutesLate?.toString() ?? "",
-      row.clockInSource,
-      row.clockOutSource ?? "",
-    ]),
+    ...report.records.map((row) => {
+      const key = JSON.stringify([row.employeeId, row.businessDate]);
+      const first = !exportedDays.has(key);
+      exportedDays.add(key);
+      const day = summarizeAttendance(daily.get(key) ?? [], Date.parse(report.serverNow));
+      return [
+        row.employeeName,
+        row.businessDate,
+        localTime(row.clockInAt),
+        localTime(row.clockOutAt),
+        row.clockInAt,
+        row.clockOutAt ?? "",
+        row.workedMinutes?.toString() ?? "",
+        row.minutesLate?.toString() ?? "",
+        row.scheduledMinutes?.toString() ?? "",
+        first ? String(day.workedMinutes) : "",
+        first && !day.unassessedDays ? String(day.overtimeMinutes) : "",
+        first
+          ? day.unassessedDays
+            ? "No comparable schedule"
+            : "Schedule comparison; not payroll"
+          : "",
+        row.clockInSource,
+        row.clockOutSource ?? "",
+      ];
+    }),
   ];
   const csv = rows
     .map((row) =>
       row.map((field) => csvCell(/^\s*[=+@-]/.test(field) ? "'" + field : field)).join(","),
     )
     .join("\r\n");
+  const pdf =
+    format === "pdf"
+      ? await (
+          await import("@/server/attendance-pdf")
+        ).renderAttendancePdf(report, branchId, timezone)
+      : null;
   await db
     .prepare(
       "INSERT INTO attendance_access_events(tenant_id,id,branch_id,actor_id,event_type,at,details_json) VALUES(?,?,?,?,'TIMESHEET_EXPORT',?,?)",
@@ -176,14 +241,15 @@ export async function attendanceCsv(
         source: report.source,
         rows: report.records.length,
         timezone,
+        format,
       }),
     )
     .run();
-  return new Response(csv, {
+  return new Response(pdf ? new Uint8Array(pdf) : csv, {
     headers: {
-      "content-type": "text/csv;charset=utf-8",
+      "content-type": pdf ? "application/pdf" : "text/csv;charset=utf-8",
       "cache-control": "no-store",
-      "content-disposition": `attachment; filename="seramet-attendance-${report.from}-${report.to}.csv"`,
+      "content-disposition": `attachment; filename="seramet-attendance-${report.from}-${report.to}.${format}"`,
     },
   });
 }
