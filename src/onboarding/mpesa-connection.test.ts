@@ -120,6 +120,44 @@ describe.sequential("connecting a restaurant's own M-Pesa", () => {
     expect(status.status).toBe("CREDENTIALS_REQUIRED");
   });
 
+  it("stores Uber testing credentials encrypted without activating delivery", async () => {
+    const { service, owner } = await restaurant("uber-testing");
+    const saved = await service.configureProviderConnection({
+      id: "uber-testing-isolated",
+      providerId: "provider-delivery-uber-eats",
+      branchId: owner.branchId,
+      environment: "SANDBOX",
+      enabled: false,
+      credentials: { clientId: "test-client", clientSecret: "test-secret-never-public" },
+    });
+    const row = db.sqlite
+      .prepare("SELECT * FROM provider_connections WHERE id=?")
+      .get(saved.id) as Record<string, string>;
+    expect(row["status"]).toBe("DISABLED");
+    expect(row["environment"]).toBe("SANDBOX");
+    expect(row["tenant_id"]).toBe(owner.tenantId);
+    expect(JSON.stringify(row)).not.toContain("test-secret-never-public");
+    expect([...objects.data.values()].join("")).not.toContain("test-secret-never-public");
+    expect(
+      JSON.parse((await createSecretStore(env).resolve(row["secret_reference"]!)).value),
+    ).toMatchObject({ clientId: "test-client" });
+  });
+
+  it("rejects Uber credentials without integration management permission", async () => {
+    const { owner } = await restaurant("uber-denied");
+    const service = new OnboardingService(db, { ...owner, permissions: [] }, env);
+    await expect(
+      service.configureProviderConnection({
+        providerId: "provider-delivery-uber-eats",
+        branchId: owner.branchId,
+        environment: "SANDBOX",
+        enabled: false,
+        credentials: { clientId: "test-client", clientSecret: "test-secret" },
+      }),
+    ).rejects.toThrow();
+    expect(objects.data.size).toBe(0);
+  });
+
   async function restaurant(slug: string) {
     const provisioned = await new RestaurantRegistrationService(db).register(
       {
