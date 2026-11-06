@@ -325,7 +325,7 @@ async function reserveDelivery(
   }
   const configured = await db
     .prepare(
-      "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+      "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
     )
     .bind(job.tenantId, job.branchId, job.target.id)
     .first<{ payload_json: string }>();
@@ -343,7 +343,7 @@ async function reserveDelivery(
     const target = job.fallbackTarget as { id?: string };
     const row = await db
       .prepare(
-        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
       )
       .bind(job.tenantId, job.branchId, target.id ?? "")
       .first<{ payload_json: string }>();
@@ -440,7 +440,7 @@ export async function handlePrintingApi(
       (
         await db
           .prepare(
-            "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER'",
+            "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
           )
           .bind(actor.tenantId, actor.branchId)
           .all<{ payload_json: string }>()
@@ -480,7 +480,7 @@ export async function handlePrintingApi(
     requirePermission(actor, permissions.settingsHardwareView);
     const rows = await db
       .prepare(
-        "SELECT id,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER'",
+        "SELECT id,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
       )
       .bind(actor.tenantId, actor.branchId)
       .all<{ id: string; payload_json: string }>();
@@ -512,15 +512,17 @@ export async function handlePrintingApi(
     }
     const id = printer.id ?? crypto.randomUUID();
     const existing = await db
-      .prepare("SELECT branch_id FROM hardware_devices WHERE tenant_id=? AND id=?")
+      .prepare("SELECT branch_id,trust_status FROM hardware_devices WHERE tenant_id=? AND id=?")
       .bind(actor.tenantId, id)
-      .first<{ branch_id: string }>();
+      .first<{ branch_id: string; trust_status: string }>();
     if (existing && existing.branch_id !== actor.branchId)
       throw new SerametHttpError(403, "Cross-branch printer replacement denied");
+    if (existing?.trust_status === "REVOKED")
+      throw new SerametHttpError(404, "This printer was deleted. Add it again as a new printer.");
     if (printer.fallbackPrinterId) {
       const fallback = await db
         .prepare(
-          "SELECT id,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+          "SELECT id,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
         )
         .bind(actor.tenantId, actor.branchId, printer.fallbackPrinterId)
         .first<{ id: string; payload_json: string }>();
@@ -606,6 +608,58 @@ export async function handlePrintingApi(
     invalidateAuthoritativeConfiguration(db);
     return respond({ printer: saved }, 201);
   }
+  const printerRoute = /^\/api\/seramet\/printing\/printers\/([^/]+)$/.exec(url.pathname);
+  if (printerRoute && request.method === "DELETE") {
+    manage(actor);
+    const id = decodeURIComponent(printerRoute[1]!);
+    const rows =
+      (
+        await db
+          .prepare(
+            "SELECT id,name,payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
+          )
+          .bind(actor.tenantId, actor.branchId)
+          .all<{ id: string; name: string; payload_json: string }>()
+      ).results ?? [];
+    const target = rows.find((row) => row.id === id);
+    if (!target) throw new SerametHttpError(404, "Printer not found in this branch");
+    const dependent = rows.find((row) => {
+      if (row.id === id) return false;
+      const parsed = printerConfigurationSchema.safeParse(JSON.parse(row.payload_json).printing);
+      return parsed.success && parsed.data.fallbackPrinterId === id;
+    });
+    if (dependent)
+      throw new SerametHttpError(
+        409,
+        `${dependent.name} uses this printer as its backup. Choose another backup there first.`,
+      );
+    // Deleting keeps the device record so past print jobs still point at it; it is revoked,
+    // which every printer lookup and the branch configuration skip.
+    await db.batch([
+      db
+        .prepare(
+          "UPDATE hardware_devices SET trust_status='REVOKED' WHERE tenant_id=? AND branch_id=? AND id=?",
+        )
+        .bind(actor.tenantId, actor.branchId, id),
+      db
+        .prepare("DELETE FROM print_routes WHERE tenant_id=? AND primary_device_id=?")
+        .bind(actor.tenantId, id),
+      db
+        .prepare(
+          "UPDATE print_routes SET fallback_device_id=NULL WHERE tenant_id=? AND fallback_device_id=?",
+        )
+        .bind(actor.tenantId, id),
+      auditStatement(
+        db,
+        actor,
+        `PRINT-DELETE:${crypto.randomUUID()}`,
+        "PRINTER_DELETED",
+        `Printer ${id} (${target.name})`,
+      ),
+    ]);
+    invalidateAuthoritativeConfiguration(db);
+    return respond({ deleted: id });
+  }
   if (url.pathname === "/api/seramet/printing/dispatch-bypass") {
     // Lets the active branch send orders to the kitchen without a printer or
     // KDS route for 36 hours. Only hardware managers may turn it on or off.
@@ -668,7 +722,7 @@ export async function handlePrintingApi(
   const input = parsed.data;
   const row = await db
     .prepare(
-      "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+      "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
     )
     .bind(actor.tenantId, actor.branchId, input.printerId)
     .first<{ payload_json: string }>();
@@ -682,7 +736,7 @@ export async function handlePrintingApi(
   if (printer.fallbackPrinterId) {
     const row = await db
       .prepare(
-        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER'",
+        "SELECT payload_json FROM hardware_devices WHERE tenant_id=? AND branch_id=? AND id=? AND device_type='PRINTER' AND trust_status<>'REVOKED'",
       )
       .bind(actor.tenantId, actor.branchId, printer.fallbackPrinterId)
       .first<{ payload_json: string }>();

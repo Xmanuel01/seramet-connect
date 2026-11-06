@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { discoverInstalledPrinters, type DiscoveredPrinter } from "@/lib/printer-discovery-client";
-import { Plus, Save, Pencil, RefreshCw, Printer, Download, Link2, Monitor } from "lucide-react";
+import {
+  Plus,
+  Save,
+  Pencil,
+  RefreshCw,
+  Printer,
+  Download,
+  Link2,
+  Monitor,
+  Trash2,
+} from "lucide-react";
 import { useAppContext } from "@/lib/app-context";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -26,6 +36,13 @@ import {
 import { SerametLocalPrintBridge, type PrintJob } from "@/lib/seramet-print-service";
 import type { PrinterConfiguration } from "@/printing/printer-configuration";
 import { Btn, Panel, PanelHead } from "@/components/app/ui";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type SavedPrinter = PrinterConfiguration & { id: string };
 const inputClass = "h-10 w-full rounded-md border border-border bg-background px-3 text-sm";
@@ -81,6 +98,7 @@ export function PrinterAdministration() {
   }, [formRequest]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [deleting, setDeleting] = useState<SavedPrinter | null>(null);
   const [bridge, setBridge] = useState(loadInstalledPrintBridgeConfig);
   const [installedBridge, setInstalledBridge] = useState(loadInstalledPrintBridgeConfig);
   useEffect(() => {
@@ -229,6 +247,28 @@ export function PrinterAdministration() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Printer save failed");
     } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (printer: SavedPrinter) => {
+    setBusy(true);
+    try {
+      const response = await authenticatedFetch(
+        `/api/seramet/printing/printers/${encodeURIComponent(printer.id)}`,
+        { method: "DELETE", headers: headers(), signal: AbortSignal.timeout(10000) },
+      );
+      const result = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) throw new Error(result.message ?? "Couldn't delete this printer.");
+      await refreshConfiguration();
+      await refresh();
+      setNotice(`${printer.name} was deleted.`);
+      window.dispatchEvent(
+        new CustomEvent("seramet:hardware-profile-change", { detail: { branchId } }),
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't delete this printer.");
+    } finally {
+      setDeleting(null);
       setBusy(false);
     }
   };
@@ -627,6 +667,14 @@ export function PrinterAdministration() {
                             }
                           >
                             {printer.enabled ? "Disable" : "Enable"}
+                          </Btn>
+                          <Btn
+                            disabled={busy}
+                            onClick={() => setDeleting(printer)}
+                            title="Delete printer"
+                            aria-label={`Delete ${printer.name}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Btn>
                           {(["BILL", "RECEIPT", "FOOD_KOT"] as const).map((kind) => (
                             <Btn
@@ -1027,6 +1075,30 @@ export function PrinterAdministration() {
           </details>
         )}
       </div>
+      <Dialog open={!!deleting} onOpenChange={(open) => !open && !busy && setDeleting(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {deleting?.name}?</DialogTitle>
+            <DialogDescription>
+              It stops receiving bills, receipts and kitchen tickets and is removed from this list.
+              Past print history is kept. To use it again, add it as a new printer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Btn disabled={busy} onClick={() => setDeleting(null)}>
+              Cancel
+            </Btn>
+            <Btn
+              variant="danger"
+              disabled={busy || !deleting}
+              onClick={() => deleting && void remove(deleting)}
+            >
+              <Trash2 className="h-4 w-4" />
+              {busy ? "Deleting..." : "Delete printer"}
+            </Btn>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Panel>
   );
 }
