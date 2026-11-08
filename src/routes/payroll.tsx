@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Download, RefreshCcw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { Btn, Metric, Panel, TD, TH } from "@/components/app/ui";
 import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { TransactionEngine } from "@/lib/transaction-engine";
+import { getSerametAccessToken } from "@/lib/access-token";
+import type { PayrollAttendanceRow } from "@/server/payroll-attendance";
 
 export const Route = createFileRoute("/payroll")({
   head: () => ({
@@ -13,254 +15,311 @@ export const Route = createFileRoute("/payroll")({
       { title: "Payroll - Seramet" },
       {
         name: "description",
-        content: "Payroll estimate, lateness deductions, allowances and controlled run status.",
-      },
-      { property: "og:title", content: "Payroll - Seramet" },
-      {
-        property: "og:description",
-        content: "Attendance-linked payroll preview with minute-level lateness deductions.",
+        content: "Monthly pay for your staff, with lateness deductions from their clock-ins.",
       },
     ],
   }),
   component: Payroll,
 });
 
+type PayrollRow = PayrollAttendanceRow & {
+  basePay: number;
+  lateDeduction: number;
+  netPay: number;
+};
+
+function currentMonth(timeZone: string) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date()).slice(0, 7);
+}
+
+function hours(minutes: number) {
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
 function Payroll() {
-  const { activeTenantId, branchId, isAllBranches, branchLabel, hasPermission } = useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    branchRecords,
+    isAllBranches,
+    branchLabel,
+    hasPermission,
+    timeZone,
+  } = useAppContext();
   const { state, mutate, backendStatus } = useTransactionEngine();
+  const [month, setMonth] = useState(() => currentMonth(timeZone));
+  const [staff, setStaff] = useState<{ scope: string; rows: PayrollAttendanceRow[] } | null>(null);
+  // Single-branch payroll starts loading straight away, so it never flashes "No staff".
+  const [loading, setLoading] = useState(!isAllBranches);
   const [notice, setNotice] = useState("");
   const [payDrafts, setPayDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const scopeKey = `${activeTenantId}:${branchId}:${isAllBranches ? "ALL" : "BRANCH"}`;
-  const scopeRef = useRef(scopeKey);
-  scopeRef.current = scopeKey;
+  const scope = `${activeTenantId}:${branchId}:${isAllBranches ? "ALL" : "BRANCH"}:${month}`;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
   const canEditPay = !isAllBranches && hasPermission("payroll.manage");
+  const branchName = branchRecords.find((branch) => branch.id === branchId)?.name ?? branchId;
+
+  const load = useCallback(async () => {
+    if (isAllBranches) return;
+    const requestScope = scope;
+    setLoading(true);
+    try {
+      const token = getSerametAccessToken();
+      const response = await fetch(
+        `/api/seramet/attendance/payroll?branchId=${encodeURIComponent(branchId)}&month=${month}`,
+        {
+          headers: {
+            "x-seramet-tenant-id": activeTenantId,
+            "x-seramet-branch-id": branchId,
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      const body = (await response.json().catch(() => ({}))) as {
+        employees?: PayrollAttendanceRow[];
+        message?: string;
+      };
+      if (scopeRef.current !== requestScope) return;
+      if (!response.ok) throw new Error(body.message ?? "Couldn't load payroll.");
+      setStaff({ scope: requestScope, rows: body.employees ?? [] });
+      setNotice("");
+    } catch (error) {
+      if (scopeRef.current === requestScope)
+        setNotice(error instanceof Error ? error.message : "Couldn't load payroll.");
+    } finally {
+      if (scopeRef.current === requestScope) setLoading(false);
+    }
+  }, [activeTenantId, branchId, isAllBranches, month, scope]);
+
   useEffect(() => {
     setPayDrafts({});
     setNotice("");
-  }, [scopeKey]);
-  const rows =
-    isAllBranches || state.tenantId !== activeTenantId
-      ? []
-      : TransactionEngine.getPayrollPreview(state, branchId);
-  const baseNet = rows.reduce((sum, row) => sum + row.employee.netMonthlyPay, 0);
-  const lateDeductions = rows.reduce((sum, row) => sum + row.latenessDeduction, 0);
-  const adjustedNet = rows.reduce((sum, row) => sum + row.adjustedNetPay, 0);
-  const lateMinutes = rows.reduce((sum, row) => sum + row.lateMinutes, 0);
+    void load();
+  }, [load]);
 
-  const savePay = async (employeeId: string, name: string, value: string, previous: number) => {
+  // Pay amounts live with the audited transaction records; attendance comes from clock-ins.
+  const rows: PayrollRow[] = (staff?.scope === scope ? staff.rows : []).map((employee) => {
+    const pay = state.employees.find((record) => record.id === employee.id);
+    const basePay = pay?.netMonthlyPay ?? 0;
+    const workingMinutes = Math.max(
+      1,
+      (pay?.monthlyWorkDays ?? 26) * (pay?.standardDailyHours ?? 8) * 60,
+    );
+    const lateDeduction = Math.min(
+      basePay,
+      Math.round((basePay / workingMinutes) * employee.lateMinutes * 100) / 100,
+    );
+    return { ...employee, basePay, lateDeduction, netPay: basePay - lateDeduction };
+  });
+  const total = (key: "basePay" | "lateDeduction" | "netPay") =>
+    rows.reduce((sum, row) => sum + row[key], 0);
+
+  const savePay = async (row: PayrollRow, value: string) => {
     if (savingRef.current || !canEditPay) return;
     const nextPay = Number(value);
     if (
       !/^\d+(?:\.\d{1,2})?$/.test(value) ||
       !Number.isFinite(nextPay) ||
-      nextPay < 0 ||
       !Number.isSafeInteger(Math.round(nextPay * 100))
     ) {
-      setNotice("Enter a non-negative base net pay with at most two decimal places.");
+      setNotice("Enter the monthly pay as a number, with at most two decimal places.");
       return;
     }
-    if (nextPay === previous) return;
-    const requestScope = scopeKey;
+    if (nextPay === row.basePay) return;
+    const requestScope = scope;
     savingRef.current = true;
     setSaving(true);
-    setNotice("Saving base net pay...");
+    setNotice(`Saving ${row.name}'s pay…`);
     try {
-      const result = await mutate("setEmployeeNetPay", { employeeId, netMonthlyPay: nextPay });
+      const result = await mutate("setEmployeeNetPay", {
+        employeeId: row.id,
+        netMonthlyPay: nextPay,
+        name: row.name,
+        branchId,
+        branch: branchName,
+        ...(row.jobTitle ? { role: row.jobTitle } : {}),
+      });
       if (scopeRef.current !== requestScope) return;
-      const saved = result.state.employees.find((employee) => employee.id === employeeId);
-      if (("offline" in result && result.offline) || saved?.netMonthlyPay !== nextPay) {
-        throw new Error("The server has not confirmed this pay change. Your entry was retained.");
-      }
+      const saved = result.state.employees.find((employee) => employee.id === row.id);
+      if (("offline" in result && result.offline) || saved?.netMonthlyPay !== nextPay)
+        throw new Error("The pay change wasn't confirmed. Your entry is kept; try again.");
       setPayDrafts((drafts) => {
         const next = { ...drafts };
-        delete next[employeeId];
+        delete next[row.id];
         return next;
       });
-      setNotice(`${name}'s base net pay updated.`);
+      setNotice(`${row.name}'s pay is saved.`);
     } catch (error) {
-      if (scopeRef.current === requestScope) {
-        setNotice(error instanceof Error ? error.message : "Pay change could not be saved.");
-      }
+      if (scopeRef.current === requestScope)
+        setNotice(error instanceof Error ? error.message : "The pay change wasn't saved.");
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
   };
 
+  const exportCsv = () => {
+    const lines = [
+      [
+        "Employee",
+        "Code",
+        "Days",
+        "Hours",
+        "Late minutes",
+        "Base pay",
+        "Late deduction",
+        "Net pay",
+      ],
+      ...rows.map((row) => [
+        row.name,
+        row.employeeCode ?? "",
+        String(row.daysWorked),
+        (row.workedMinutes / 60).toFixed(2),
+        String(row.lateMinutes),
+        row.basePay.toFixed(2),
+        row.lateDeduction.toFixed(2),
+        row.netPay.toFixed(2),
+      ]),
+    ]
+      .map((line) => line.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([lines], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `payroll-${branchName.replace(/\W+/g, "-").toLowerCase()}-${month}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <AppShell
       title="Payroll"
-      subtitle={`Historical payroll preview - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
-          <Btn
-            onClick={() =>
-              setNotice("Review base net pay and attendance exceptions before approval.")
-            }
-          >
-            Review changes
+          <input
+            type="month"
+            aria-label="Month"
+            className="h-9 rounded-md border border-border bg-card px-2 text-sm"
+            value={month}
+            max={currentMonth(timeZone)}
+            onChange={(event) => event.target.value && setMonth(event.target.value)}
+          />
+          <Btn onClick={() => void load()} disabled={loading} title="Refresh">
+            <RefreshCcw className="h-4 w-4" />
           </Btn>
-          <Btn variant="primary" disabled>
-            Run payroll
+          <Btn onClick={exportCsv} disabled={!rows.length}>
+            <Download className="h-4 w-4" />
+            Export
           </Btn>
         </>
       }
     >
-      {isAllBranches && (
-        <p role="status" className="mb-4 rounded-md border border-border p-3 text-sm">
-          Select a single branch to review payroll. Work schedules and payroll periods are
-          branch-specific.
+      {isAllBranches ? (
+        <p role="status" className="rounded-md border border-border bg-card p-4 text-sm">
+          Pick a single branch to see its payroll.
         </p>
-      )}
-      <p className="mb-4 rounded-md border border-border bg-card p-3 text-sm">
-        Payroll history. Clock-in records are kept in Attendance and do not add overtime
-        automatically.
-      </p>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Metric label="Base net pay" value={Math.round(baseNet)} money />
-        <Metric label="Employees" value={rows.length} />
-        <Metric label="Late minutes" value={lateMinutes} invert={lateMinutes > 0} />
-        <Metric
-          label="Late deductions"
-          value={Math.round(lateDeductions)}
-          money
-          invert={lateDeductions > 0}
-        />
-        <Metric label="Adjusted net" value={Math.round(adjustedNet)} money />
-      </div>
-      <div className="mt-3 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-        Late minutes are deducted at each employee's per-minute rate (monthly net pay ÷ work days ÷
-        daily hours ÷ 60). Statutory deductions are not filed from here yet.
-        {notice ? ` ${notice}` : ""}
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Panel>
-          <PanelHead
-            title="Payroll register"
-            sub="Base net pay and minute-level lateness deduction from attendance"
-            right={<Status>Draft</Status>}
-          />
-          <div className="grid gap-3 p-3 md:hidden">
-            {rows.map((row) => (
-              <article
-                key={row.employee.id}
-                className="rounded-lg border border-border bg-card p-3 shadow-card"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-[13px] font-bold">{row.employee.name}</div>
-                    <div className="text-[12px] text-muted-foreground">
-                      {row.employee.role} - {row.employee.branch}
-                    </div>
-                  </div>
-                  <Status>{row.lateMinutes > 0 ? "Attention" : "Calculated"}</Status>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-                  <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                    <span className="block text-muted-foreground">Base net</span>
-                    <span className="num font-semibold">{ksh(row.employee.netMonthlyPay)}</span>
-                  </div>
-                  <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                    <span className="block text-muted-foreground">Late</span>
-                    <span className="num font-semibold">{row.lateMinutes} min</span>
-                  </div>
-                  <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                    <span className="block text-muted-foreground">Deduct</span>
-                    <span className="num font-semibold">{ksh(row.latenessDeduction)}</span>
-                  </div>
-                  <div className="rounded-md bg-secondary/60 px-2 py-1.5">
-                    <span className="block text-muted-foreground">Adjusted</span>
-                    <span className="num font-semibold">{ksh(row.adjustedNetPay)}</span>
-                  </div>
-                </div>
-              </article>
-            ))}
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Metric label="Employees" value={rows.length} />
+            <Metric label="Monthly pay" value={Math.round(total("basePay"))} money />
+            <Metric
+              label="Late deductions"
+              value={Math.round(total("lateDeduction"))}
+              money
+              invert={total("lateDeduction") > 0}
+            />
+            <Metric label="Net pay" value={Math.round(total("netPay"))} money />
           </div>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[980px]">
+          {notice && (
+            <p
+              role="status"
+              className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm"
+            >
+              {notice}
+            </p>
+          )}
+          <Panel className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[820px]">
               <thead>
                 <tr>
                   <TH>Employee</TH>
-                  <TH>Role</TH>
-                  <TH>Branch</TH>
-                  <TH className="text-right">Base net</TH>
-                  <TH className="text-right">Hourly rate</TH>
-                  <TH className="text-right">Minute rate</TH>
-                  <TH className="text-right">Late min</TH>
+                  <TH className="text-right">Days</TH>
+                  <TH className="text-right">Hours</TH>
+                  <TH className="text-right">Late (min)</TH>
+                  <TH className="text-right">Monthly pay</TH>
                   <TH className="text-right">Late deduction</TH>
-                  <TH className="text-right">Adjusted net</TH>
-                  <TH>Status</TH>
+                  <TH className="text-right">Net pay</TH>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.employee.id} className="hover:bg-secondary/50">
-                    <TD className="font-semibold">{row.employee.name}</TD>
-                    <TD className="text-muted-foreground">{row.employee.role}</TD>
-                    <TD className="text-muted-foreground">{row.employee.branch}</TD>
+                  <tr key={row.id} className="hover:bg-secondary/50">
+                    <TD>
+                      <div className="font-semibold">
+                        {row.name}
+                        {row.left ? (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            Left
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {[row.employeeCode, row.jobTitle].filter(Boolean).join(" · ")}
+                        {row.openShifts
+                          ? ` · ${row.openShifts} shift${row.openShifts === 1 ? "" : "s"} still open`
+                          : ""}
+                      </div>
+                    </TD>
+                    <TD className="num text-right">{row.daysWorked}</TD>
+                    <TD className="num text-right">{hours(row.workedMinutes)}</TD>
+                    <TD className="num text-right">{row.lateMinutes}</TD>
                     <TD className="text-right">
                       <input
-                        type="number"
-                        min="0"
-                        aria-label={`Base net pay for ${row.employee.name}`}
+                        inputMode="decimal"
+                        aria-label={`Monthly pay for ${row.name}`}
                         disabled={!canEditPay || saving || backendStatus === "loading"}
-                        value={payDrafts[row.employee.id] ?? String(row.employee.netMonthlyPay)}
+                        value={payDrafts[row.id] ?? String(row.basePay)}
                         onChange={(event) =>
-                          setPayDrafts((drafts) => ({
-                            ...drafts,
-                            [row.employee.id]: event.target.value,
-                          }))
+                          setPayDrafts((drafts) => ({ ...drafts, [row.id]: event.target.value }))
                         }
-                        onBlur={(event) =>
-                          void savePay(
-                            row.employee.id,
-                            row.employee.name,
-                            event.target.value,
-                            row.employee.netMonthlyPay,
-                          )
-                        }
+                        onBlur={(event) => void savePay(row, event.target.value.trim())}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
                         className="num h-8 w-28 rounded-md border border-border bg-card px-2 text-right text-[12px] font-semibold outline-none focus:border-primary"
                       />
                     </TD>
-                    <TD className="num text-right">{ksh(row.hourlyRate)}</TD>
-                    <TD className="num text-right">{ksh(row.minuteRate)}</TD>
-                    <TD className="num text-right font-semibold">{row.lateMinutes}</TD>
-                    <TD className="num text-right text-danger">{ksh(row.latenessDeduction)}</TD>
-                    <TD className="num text-right font-semibold">{ksh(row.adjustedNetPay)}</TD>
-                    <TD>
-                      <Status>{row.lateMinutes > 0 ? "Attention" : "Calculated"}</Status>
+                    <TD
+                      className={`num text-right ${row.lateDeduction ? "text-danger" : "text-muted-foreground"}`}
+                    >
+                      {row.lateDeduction ? ksh(row.lateDeduction) : "—"}
                     </TD>
+                    <TD className="num text-right font-semibold">{ksh(row.netPay)}</TD>
                   </tr>
                 ))}
+                {!rows.length && (
+                  <tr>
+                    <TD colSpan={7} className="text-muted-foreground">
+                      {loading
+                        ? "Loading…"
+                        : "No staff in this branch. Add them on the Employees page."}
+                    </TD>
+                  </tr>
+                )}
               </tbody>
             </table>
-          </div>
-        </Panel>
-
-        <Panel>
-          <PanelHead title="Run controls" sub="High-risk changes require approval" />
-          <div className="space-y-3 p-4 text-[13px]">
-            {[
-              ["Attendance linked", true],
-              ["Lateness deductions calculated", true],
-              ["Base net pay reviewed", true],
-              ["Statutory payroll configuration", false],
-              ["Finance approval", false],
-            ].map(([step, complete]) => (
-              <div
-                key={String(step)}
-                className="flex items-center justify-between rounded-md bg-secondary/60 px-3 py-2"
-              >
-                <span className="font-semibold">{String(step)}</span>
-                <Status>{complete ? "Approved" : "Pending"}</Status>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
+          </Panel>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Net pay is monthly pay less late minutes at each employee&apos;s per-minute rate (26
+            days of 8 hours). Taxes and statutory deductions aren&apos;t included.
+          </p>
+        </>
+      )}
     </AppShell>
   );
 }

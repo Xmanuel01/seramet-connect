@@ -450,6 +450,14 @@ export function applyServerMutation(
         String(input["employeeId"]),
         Number(input["netMonthlyPay"]),
         actor.name,
+        typeof input["name"] === "string" && typeof input["branchId"] === "string"
+          ? {
+              name: input["name"],
+              branchId: input["branchId"],
+              branch: typeof input["branch"] === "string" ? input["branch"] : input["branchId"],
+              ...(typeof input["role"] === "string" ? { role: input["role"] } : {}),
+            }
+          : undefined,
       );
     case "addRider":
       return TransactionEngine.addRider(
