@@ -168,6 +168,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   const [message, setMessage] = useState("");
   const [punchError, setPunchError] = useState("");
   const [delayOpen, setDelayOpen] = useState(false);
+  const [showTimecards, setShowTimecards] = useState(false);
   const [reason, setReason] = useState("");
   const [selected, setSelected] = useState("");
   const [selectedSession, setSelectedSession] = useState("");
@@ -588,7 +589,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   const current = data?.me;
   return (
     <AppShell
-      title={scheduling ? "Time Tracking" : "Clock In/Out"}
+      title={scheduling ? "Attendance" : "Clock In/Out"}
       subtitle={branchLabel}
       actions={
         <Btn onClick={() => void refresh()} disabled={busy}>
@@ -626,7 +627,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       )}
       {scheduling && data && !data.canManage && (
         <p role="alert" className="py-6">
-          Time Tracking requires staff management permission.
+          Attendance requires staff management permission.
         </p>
       )}
       {message && (
@@ -918,8 +919,18 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           )}
         </>
       )}
+      {data && !scheduling && (
+        // Staff mostly need the clock; their full timecard history opens on request.
+        <div className="mt-4 flex justify-center">
+          <Btn onClick={() => setShowTimecards(!showTimecards)}>
+            {showTimecards ? "Hide my timecards" : "My timecards"}
+          </Btn>
+        </div>
+      )}
       {data &&
-        (!scheduling || (data.canManage && (view === "Timecards" || view === "Reports"))) && (
+        (!scheduling
+          ? showTimecards
+          : data.canManage && (view === "Timecards" || view === "Reports")) && (
           <AttendanceHistory
             revision={historyRevision}
             key={scope}

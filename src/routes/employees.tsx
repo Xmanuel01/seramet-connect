@@ -542,8 +542,7 @@ function Employees() {
       {showForm && canManage && activeScope.current === scope ? (
         <Panel className="mt-4">
           <PanelHead
-            title="Create employee access"
-            sub="Role and branch access are explicit; the PIN is never displayed after submission"
+            title="Add employee"
             right={<ShieldCheck className="h-4 w-4 text-primary" />}
           />
           <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
