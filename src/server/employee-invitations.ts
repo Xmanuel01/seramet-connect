@@ -15,6 +15,14 @@ const response = (body: unknown, status = 200) =>
 function fail(status: number, message: string): never {
   throw new SerametHttpError(status, message);
 }
+/**
+ * Supabase's newer secret keys (sb_secret_...) go only in the apikey header; the gateway
+ * rejects them as a Bearer token. The legacy admin key is a JWT and goes in both.
+ */
+export function invitationKeyHeaders(rawKey: string): Record<string, string> {
+  const key = rawKey.trim();
+  return key.startsWith("eyJ") ? { apikey: key, authorization: `Bearer ${key}` } : { apikey: key };
+}
 function setup(env: SerametEnv) {
   if (
     env.SERAMET_IDENTITY_PROVIDER !== "supabase" ||
@@ -160,14 +168,18 @@ export async function createEmployeeInvitation(
       {
         method: "POST",
         headers: {
-          apikey: env.SERAMET_SUPABASE_INVITATION_SECRET!,
-          authorization: `Bearer ${env.SERAMET_SUPABASE_INVITATION_SECRET!}`,
+          ...invitationKeyHeaders(env.SERAMET_SUPABASE_INVITATION_SECRET!),
           "content-type": "application/json",
         },
         body: JSON.stringify({ email: email.data.toLowerCase() }),
         signal: AbortSignal.timeout(15000),
       },
     );
+    if (provider.status === 401 || provider.status === 403)
+      fail(
+        502,
+        "Email invitations are set up with a key Supabase rejected, so no invitation was sent. Save the Supabase project's server-side admin key as SERAMET_SUPABASE_INVITATION_SECRET.",
+      );
     if (!provider.ok)
       fail(
         502,

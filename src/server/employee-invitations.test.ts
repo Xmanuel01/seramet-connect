@@ -7,6 +7,7 @@ import {
   createEmployeeInvitation,
   acceptEmployeeInvitation,
   revokeEmployeeInvitation,
+  invitationKeyHeaders,
 } from "@/server/employee-invitations";
 describe("verified employee account invitations", () => {
   let db: SqliteD1TestDatabase, actor: ServerActor, env: SerametEnv;
@@ -205,6 +206,22 @@ describe("verified employee account invitations", () => {
     expect(
       db.sqlite.prepare("SELECT * FROM identity_accounts WHERE user_id=?").get(employee),
     ).toBeUndefined();
+  });
+  it("sends a secret key only as apikey and a legacy JWT key as both", () => {
+    expect(invitationKeyHeaders(" sb_secret_disposable\n")).toEqual({
+      apikey: "sb_secret_disposable",
+    });
+    expect(invitationKeyHeaders("eyJdisposable.jwt.key")).toEqual({
+      apikey: "eyJdisposable.jwt.key",
+      authorization: "Bearer eyJdisposable.jwt.key",
+    });
+  });
+  it("says plainly when Supabase rejects the invitation key", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ message: "Invalid API key" }, { status: 401 })),
+    );
+    await expect(invite()).rejects.toThrow(/key Supabase rejected/);
   });
   it("keeps ambiguous provider failures visible without automatic resending", async () => {
     vi.stubGlobal(
