@@ -1,3 +1,4 @@
+import { verifyPin } from "@/server/pos-auth-service";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
 import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
@@ -103,7 +104,7 @@ describe("verified employee account invitations", () => {
       body: (await response.json()) as { id: string; status: string; repeated?: boolean },
     };
   }
-  it("invites once and links only after exact verified provider identity and fresh sign-in", async () => {
+  it("invites once and lets only the verified employee choose their PIN", async () => {
     const key = crypto.randomUUID(),
       first = await invite(key);
     expect(first.response.status).toBe(202);
@@ -117,20 +118,39 @@ describe("verified employee account invitations", () => {
     const activation = {
       invitationId: first.body.id,
       accessToken: "disposable-verification-token",
-      password: "Disposable-password-672!",
+      pin: "602947",
+      pinConfirmation: "602947",
     };
     const result = await acceptEmployeeInvitation(request(activation), env);
-    expect(await result.json()).toMatchObject({ reauthenticationRequired: true });
+    expect(await result.json()).toMatchObject({ pinSet: true });
+    // Staff get a PIN, not a password account: nothing is linked and no password is set.
     expect(
       db.sqlite
-        .prepare("SELECT user_id,subject FROM identity_accounts WHERE tenant_id=? AND user_id=?")
+        .prepare("SELECT * FROM identity_accounts WHERE tenant_id=? AND user_id=?")
         .get(tenant, employee),
-    ).toEqual({ user_id: employee, subject: "provider-disposable-subject" });
-    await acceptEmployeeInvitation(request(activation), env);
-    expect(fetch).toHaveBeenCalledTimes(2);
+    ).toBeUndefined();
+    const credential = db.sqlite
+      .prepare(
+        "SELECT algorithm,algorithm_version,iterations,salt_base64,hash_base64,temporary,must_change FROM employee_pin_credentials WHERE tenant_id=? AND user_id=?",
+      )
+      .get(tenant, employee) as {
+      algorithm: string;
+      algorithm_version: number;
+      iterations: number;
+      salt_base64: string;
+      hash_base64: string;
+      temporary: number;
+      must_change: number;
+    };
+    expect(credential).toMatchObject({ temporary: 0, must_change: 0 });
+    expect(await verifyPin("602947", credential)).toBe(true);
+    expect(
+      await acceptEmployeeInvitation(request(activation), env).then((r) => r.json()),
+    ).toMatchObject({ pinSet: true, repeated: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
     const events = db.sqlite.prepare("SELECT details_json FROM staff_access_events").all();
     expect(events).toHaveLength(3);
-    expect(JSON.stringify(events)).not.toContain(activation.password);
+    expect(JSON.stringify(events)).not.toContain(activation.pin);
     expect(result.headers.has("set-cookie")).toBe(false);
   });
   it("rejects missing provider configuration without emailing and denies unprivileged administrators", async () => {
@@ -165,7 +185,8 @@ describe("verified employee account invitations", () => {
     const activation = {
       invitationId: first.body.id,
       accessToken: "disposable-verification-token",
-      password: "Disposable-password-672!",
+      pin: "602947",
+      pinConfirmation: "602947",
     };
     const valid = env.SERAMET_IDENTITY_VERIFIER!;
     await expect(

@@ -11,8 +11,11 @@ import {
 export const Route = createFileRoute("/staff-login")({ component: StaffLogin });
 function StaffLogin() {
   const [email, setEmail] = useState(""),
-    [password, setPassword] = useState(""),
-    [confirmation, setConfirmation] = useState("");
+    [password, setPassword] = useState("");
+  // Invited staff choose a POS PIN here; only the account owner signs in with a password.
+  const [pin, setPin] = useState(""),
+    [pinConfirmation, setPinConfirmation] = useState("");
+  const [pinSet, setPinSet] = useState(false);
   const [invitation, setInvitation] = useState<{ id: string; token: string } | null>(null);
   const [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
@@ -40,7 +43,7 @@ function StaffLogin() {
     setMessage("");
     try {
       if (invitation) {
-        if (password !== confirmation) throw Error("Passwords do not match.");
+        if (pin !== pinConfirmation) throw Error("The two PINs don't match.");
         const response = await fetch("/api/seramet/public/auth/accept-invitation", {
           method: "POST",
           credentials: "same-origin",
@@ -48,17 +51,18 @@ function StaffLogin() {
           body: JSON.stringify({
             invitationId: invitation.id,
             accessToken: invitation.token,
-            password,
+            pin,
+            pinConfirmation,
           }),
           signal: AbortSignal.timeout(20000),
         });
         const result = (await response.json().catch(() => ({}))) as { message?: string };
-        if (!response.ok) throw Error(result.message ?? "Account activation was not confirmed.");
+        if (!response.ok) throw Error(result.message ?? "Your PIN wasn't confirmed. Try again.");
         setInvitation(null);
-        setPassword("");
-        setConfirmation("");
+        setPin("");
+        setPinConfirmation("");
+        setPinSet(true);
         window.history.replaceState(null, "", "/staff-login");
-        setMessage("Account activated. Sign in with your email and new password.");
         return;
       }
       await authMutation("login", { email, password });
@@ -81,8 +85,12 @@ function StaffLogin() {
   }
   return (
     <AuthShell
-      title={invitation ? "Activate staff account" : "Staff account sign in"}
-      subtitle="Your assigned restaurant access"
+      title={invitation ? "Choose your PIN" : pinSet ? "Your PIN is set" : "Staff account sign in"}
+      subtitle={
+        invitation
+          ? "You'll use this 6-digit PIN to sign in on the restaurant's POS"
+          : "Your assigned restaurant access"
+      }
       footer={
         <Link to="/pos-login" className="font-semibold text-primary">
           Back to employee PIN sign in
@@ -94,7 +102,53 @@ function StaffLogin() {
           {message}
         </p>
       )}
-      {restaurants.length ? (
+      {pinSet ? (
+        <p className="text-sm">
+          At the restaurant, sign in on the POS with your employee code and the PIN you just chose.
+          Keep your PIN to yourself.
+        </p>
+      ) : invitation ? (
+        <form className="grid gap-4" onSubmit={submit}>
+          <label className="grid gap-1">
+            New PIN
+            <input
+              className={authInputClass}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              pattern="\d{6}"
+              required
+              maxLength={6}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            />
+          </label>
+          <label className="grid gap-1">
+            Confirm PIN
+            <input
+              className={authInputClass}
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              pattern="\d{6}"
+              required
+              maxLength={6}
+              value={pinConfirmation}
+              onChange={(e) => setPinConfirmation(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            />
+          </label>
+          <p className="text-xs text-muted-foreground">
+            6 digits. Avoid easy PINs like 123456 or 111111.
+          </p>
+          <button
+            className={authButtonClass}
+            disabled={busy || pin.length !== 6 || pin !== pinConfirmation}
+            type="submit"
+          >
+            {busy ? "Please wait…" : "Set PIN"}
+          </button>
+        </form>
+      ) : restaurants.length ? (
         <div className="grid gap-2">
           {restaurants.map((restaurant) => (
             <button
@@ -108,26 +162,24 @@ function StaffLogin() {
         </div>
       ) : (
         <form className="grid gap-4" onSubmit={submit}>
-          {!invitation && (
-            <label className="grid gap-1">
-              Email
-              <input
-                className={authInputClass}
-                type="email"
-                autoComplete="username"
-                required
-                maxLength={254}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </label>
-          )}
           <label className="grid gap-1">
-            {invitation ? "New password" : "Password"}
+            Email
+            <input
+              className={authInputClass}
+              type="email"
+              autoComplete="username"
+              required
+              maxLength={254}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="grid gap-1">
+            Password
             <input
               className={authInputClass}
               type="password"
-              autoComplete={invitation ? "new-password" : "current-password"}
+              autoComplete="current-password"
               required
               minLength={10}
               maxLength={200}
@@ -135,27 +187,8 @@ function StaffLogin() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
-          {invitation && (
-            <label className="grid gap-1">
-              Confirm password
-              <input
-                className={authInputClass}
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={10}
-                maxLength={200}
-                value={confirmation}
-                onChange={(e) => setConfirmation(e.target.value)}
-              />
-            </label>
-          )}
-          <button
-            className={authButtonClass}
-            disabled={busy || (!!invitation && password !== confirmation)}
-            type="submit"
-          >
-            {busy ? "Please wait…" : invitation ? "Activate account" : "Sign in"}
+          <button className={authButtonClass} disabled={busy} type="submit">
+            {busy ? "Please wait…" : "Sign in"}
           </button>
         </form>
       )}

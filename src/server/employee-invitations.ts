@@ -6,7 +6,7 @@ import {
   type SerametEnv,
 } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
-import { requireFullAuthentication } from "@/server/pos-auth-service";
+import { PosIdentityService, requireFullAuthentication } from "@/server/pos-auth-service";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 
@@ -231,13 +231,15 @@ export async function acceptEmployeeInvitation(request: Request, env: SerametEnv
     .object({
       invitationId: z.string().uuid(),
       accessToken: z.string().min(20).max(20000),
-      password: z.string().min(10).max(200),
+      pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
+      pinConfirmation: z.string().regex(/^\d{4}(?:\d{2})?$/),
     })
     .strict()
     .safeParse(await request.json().catch(() => null));
-  if (!body.success) fail(400, "Invalid account activation details.");
-  const config = setup(env),
-    db = env.SERAMET_DB!;
+  if (!body.success) fail(400, "Enter the same 6-digit PIN in both boxes.");
+  // Fails early when invitations aren't configured on this server.
+  setup(env);
+  const db = env.SERAMET_DB!;
   const identity = await verifyExternalIdentity(body.data.accessToken, env).catch(() =>
     fail(401, "The invitation verification has expired. Request a new invitation."),
   );
@@ -277,7 +279,7 @@ export async function acceptEmployeeInvitation(request: Request, env: SerametEnv
     (record.effective_until && record.effective_until <= now)
   )
     fail(403, "This invitation does not authorize this employee account.");
-  if (record.status === "ACCEPTED") return response({ ok: true, reauthenticationRequired: true });
+  if (record.status === "ACCEPTED") return response({ ok: true, pinSet: true, repeated: true });
   const assignments = await db
     .prepare(
       "SELECT branch_id FROM user_branches WHERE tenant_id=? AND user_id=? ORDER BY branch_id",
@@ -311,35 +313,31 @@ export async function acceptEmployeeInvitation(request: Request, env: SerametEnv
   if (claimed.meta?.changes !== 1)
     fail(409, "Another activation is in progress. Sign in or ask an administrator to review it.");
   try {
-    const update = await fetch(`${config.base}/auth/v1/user`, {
-      method: "PUT",
-      headers: {
-        apikey: env.SERAMET_SUPABASE_PUBLISHABLE_KEY!,
-        authorization: `Bearer ${body.data.accessToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ password: body.data.password }),
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!update.ok) fail(502, "Account password setup was not confirmed.");
-    const updated = (await update.json()) as { id?: string };
-    if (updated.id !== record.provider_subject) fail(502, "Account setup identity mismatch.");
-    // A concurrent revocation removes the pending row from both SELECTs: no link is created.
+    // Staff sign in at the POS with a PIN; only the account owner uses a password. The
+    // verified invitation email proves who is choosing the PIN.
+    const accepted = {
+      clause:
+        "EXISTS(SELECT 1 FROM employee_account_invitations WHERE tenant_id=? AND id=? AND status='ACCEPTED')",
+      values: [record.tenant_id, record.id],
+    };
+    const pinStatements = await new PosIdentityService(db).invitationPinStatements(
+      record.tenant_id,
+      record.user_id,
+      body.data.pin,
+      body.data.pinConfirmation,
+      accepted,
+    );
+    // A concurrent revocation leaves the row unaccepted, so no PIN statement applies.
     const result = await db.batch([
-      db
-        .prepare(
-          `INSERT INTO identity_accounts(tenant_id,user_id,provider,subject,email,email_verified,linked_at,metadata_json)
-        SELECT tenant_id,user_id,'supabase',provider_subject,email,1,?,'{}' FROM employee_account_invitations WHERE tenant_id=? AND id=? AND status='ACCEPTING'`,
-        )
-        .bind(now, record.tenant_id, record.id),
       db
         .prepare(
           "UPDATE employee_account_invitations SET status='ACCEPTED',accepted_at=? WHERE tenant_id=? AND id=? AND status='ACCEPTING'",
         )
         .bind(now, record.tenant_id, record.id),
+      ...pinStatements,
       db
         .prepare(
-          "INSERT INTO staff_access_events(tenant_id,id,entity_type,entity_id,version,actor_id,branch_id,event_type,at,details_json) SELECT ?,?,'INVITATION',?,2,?,?,'INVITATION_ACCEPTED',?,'{}' WHERE EXISTS(SELECT 1 FROM employee_account_invitations WHERE tenant_id=? AND id=? AND status='ACCEPTED')",
+          "INSERT INTO staff_access_events(tenant_id,id,entity_type,entity_id,version,actor_id,branch_id,event_type,at,details_json) SELECT ?,?,'INVITATION',?,2,?,?,'INVITATION_ACCEPTED',?,'{\"credential\":\"PIN\"}' WHERE EXISTS(SELECT 1 FROM employee_account_invitations WHERE tenant_id=? AND id=? AND status='ACCEPTED')",
         )
         .bind(
           record.tenant_id,
@@ -352,7 +350,7 @@ export async function acceptEmployeeInvitation(request: Request, env: SerametEnv
           record.id,
         ),
     ]);
-    if (result[1]?.meta?.changes !== 1)
+    if (result[0]?.meta?.changes !== 1)
       fail(409, "Invitation was revoked before activation completed.");
   } catch (error) {
     await db
@@ -364,10 +362,10 @@ export async function acceptEmployeeInvitation(request: Request, env: SerametEnv
     if (error instanceof SerametHttpError) throw error;
     fail(
       503,
-      "Activation was not confirmed. Sign in with your chosen password or ask an administrator to review the invitation.",
+      "Your PIN wasn't confirmed. Open the invitation link again or ask your manager to send a new one.",
     );
   }
-  return response({ ok: true, reauthenticationRequired: true });
+  return response({ ok: true, pinSet: true });
 }
 export async function revokeEmployeeInvitation(
   env: SerametEnv,

@@ -671,6 +671,91 @@ export class PosIdentityService {
     ]);
   }
 
+  /**
+   * Statements that give an invited employee the PIN they chose, replacing any temporary
+   * PIN. Every statement only takes effect while `guard` (an EXISTS condition with its
+   * values) holds, so a revocation racing the activation leaves the credential untouched.
+   */
+  async invitationPinStatements(
+    tenantId: string,
+    userId: string,
+    pin: string,
+    pinConfirmation: string,
+    guard: { clause: string; values: unknown[] },
+  ): Promise<D1PreparedStatement[]> {
+    const policy = await this.policy(tenantId);
+    validatePin(pin, pinConfirmation, policy.pinLength);
+    const current = await this.db
+      .prepare("SELECT version FROM employee_pin_credentials WHERE tenant_id=? AND user_id=?")
+      .bind(tenantId, userId)
+      .first<{ version: number }>();
+    const credential = await derivePin(pin);
+    const stamp = now();
+    const statements: D1PreparedStatement[] = current
+      ? [
+          this.db
+            .prepare(
+              `INSERT INTO employee_pin_history
+                (tenant_id,user_id,version,algorithm,iterations,salt_base64,hash_base64,replaced_at)
+               SELECT tenant_id,user_id,version,algorithm,iterations,salt_base64,hash_base64,?
+               FROM employee_pin_credentials
+               WHERE tenant_id=? AND user_id=? AND version=? AND ${guard.clause}`,
+            )
+            .bind(stamp, tenantId, userId, current.version, ...guard.values),
+          this.db
+            .prepare(
+              `UPDATE employee_pin_credentials SET algorithm_version=?,iterations=?,salt_base64=?,
+                 hash_base64=?,pin_length=?,failed_attempts=0,locked_until=NULL,temporary=0,
+                 must_change=0,changed_at=?,changed_by=?,version=version+1
+               WHERE tenant_id=? AND user_id=? AND version=? AND ${guard.clause}`,
+            )
+            .bind(
+              credential.algorithmVersion,
+              credential.iterations,
+              credential.salt,
+              credential.hash,
+              pin.length,
+              stamp,
+              userId,
+              tenantId,
+              userId,
+              current.version,
+              ...guard.values,
+            ),
+        ]
+      : [
+          this.db
+            .prepare(
+              `INSERT INTO employee_pin_credentials
+                (tenant_id,user_id,algorithm,algorithm_version,iterations,salt_base64,hash_base64,
+                 pin_length,failed_attempts,locked_until,temporary,must_change,changed_at,changed_by,
+                 version)
+               SELECT ?,?,'PBKDF2-SHA256',?,?,?,?,?,0,NULL,0,0,?,?,1 WHERE ${guard.clause}`,
+            )
+            .bind(
+              tenantId,
+              userId,
+              credential.algorithmVersion,
+              credential.iterations,
+              credential.salt,
+              credential.hash,
+              pin.length,
+              stamp,
+              userId,
+              ...guard.values,
+            ),
+        ];
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE pos_sessions SET revoked_at=?,revoke_reason='EMPLOYEE_PIN_CHANGED'
+           WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL AND ${guard.clause}`,
+        )
+        .bind(stamp, tenantId, userId, ...guard.values),
+    );
+    return statements;
+  }
+
   async transferOwnership(actor: ServerActor, input: OwnershipTransferInput) {
     requireFullAuthentication(actor);
     requirePermission(actor, permissions.ownershipTransfer);
