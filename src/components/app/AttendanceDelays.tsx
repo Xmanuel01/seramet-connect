@@ -226,6 +226,27 @@ export function AttendanceDelays({
                 onChange={(e) => setReason(e.target.value)}
               />
             </label>
+            {reason.trim().length < 8 && (
+              <p className="text-xs text-muted-foreground">
+                Write at least 8 characters
+                {reason.trim().length ? ` (${8 - reason.trim().length} more)` : ""}, for example
+                &quot;Stuck in traffic on Mombasa Road&quot;.
+              </p>
+            )}
+            {pending && (
+              <div className="grid gap-2 rounded-md border border-warning/30 bg-warning-soft p-3 text-sm text-warning">
+                An earlier request from this device hasn&apos;t been confirmed yet. Send it again
+                before making a new one.
+                <Btn type="button" disabled={busy} onClick={() => void submit(pending)}>
+                  Send the earlier request again
+                </Btn>
+              </div>
+            )}
+            {message && open ? (
+              <p role="status" className="text-sm">
+                {message}
+              </p>
+            ) : null}
             <Btn
               type="submit"
               variant="primary"
