@@ -3,7 +3,12 @@ import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 
-const PIN_ITERATIONS = 600_000;
+// Cloudflare Workers refuses PBKDF2 above 100,000 rounds per call, so a PIN is hashed in
+// chained passes: each pass's output is the next pass's password, with the same salt.
+// algorithm_version 2 marks this scheme; the stored iterations are the total rounds.
+const PIN_ROUNDS_PER_PASS = 100_000;
+const PIN_PASSES = 4;
+const PIN_ALGORITHM_VERSION = 2;
 const DEVICE_CREDENTIAL_DAYS = 365;
 const POS_SESSION_HOURS = 8;
 
@@ -310,11 +315,12 @@ export class PosIdentityService {
           `INSERT INTO employee_pin_credentials
             (tenant_id,user_id,algorithm,algorithm_version,iterations,salt_base64,hash_base64,pin_length,
              failed_attempts,locked_until,temporary,must_change,changed_at,changed_by,version)
-           VALUES (?,?,'PBKDF2-SHA256',1,?,?,?,?,0,NULL,?,?,?, ?,1)`,
+           VALUES (?,?,'PBKDF2-SHA256',?,?,?,?,?,0,NULL,?,?,?, ?,1)`,
         )
         .bind(
           actor.tenantId,
           userId,
+          credential.algorithmVersion,
           credential.iterations,
           credential.salt,
           credential.hash,
@@ -581,13 +587,14 @@ export class PosIdentityService {
     validatePin(input.pin, input.pinConfirmation, policy.pinLength);
     const current = await this.db
       .prepare(
-        `SELECT version,algorithm,iterations,salt_base64,hash_base64 FROM employee_pin_credentials
-         WHERE tenant_id=? AND user_id=?`,
+        `SELECT version,algorithm,algorithm_version,iterations,salt_base64,hash_base64
+         FROM employee_pin_credentials WHERE tenant_id=? AND user_id=?`,
       )
       .bind(actor.tenantId, userId)
       .first<{
         version: number;
         algorithm: string;
+        algorithm_version: number;
         iterations: number;
         salt_base64: string;
         hash_base64: string;
@@ -617,11 +624,12 @@ export class PosIdentityService {
         ),
       this.db
         .prepare(
-          `UPDATE employee_pin_credentials SET iterations=?,salt_base64=?,hash_base64=?,pin_length=?,
-             failed_attempts=0,locked_until=NULL,temporary=?,must_change=?,changed_at=?,changed_by=?,
+          `UPDATE employee_pin_credentials SET algorithm_version=?,iterations=?,salt_base64=?,
+             hash_base64=?,pin_length=?,failed_attempts=0,locked_until=NULL,temporary=?,must_change=?,changed_at=?,changed_by=?,
              version=version+1 WHERE tenant_id=? AND user_id=?`,
         )
         .bind(
+          credential.algorithmVersion,
           credential.iterations,
           credential.salt,
           credential.hash,
@@ -791,7 +799,7 @@ export class PosIdentityService {
     const employee = await this.db
       .prepare(
         `SELECT u.id,u.name,u.active,u.employment_status,u.effective_from,u.effective_until,
-                c.algorithm,c.iterations,c.salt_base64,c.hash_base64,c.failed_attempts,c.locked_until,
+                c.algorithm,c.algorithm_version,c.iterations,c.salt_base64,c.hash_base64,c.failed_attempts,c.locked_until,
                 c.must_change,c.version
          FROM users u JOIN user_branches ub
            ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=?
@@ -821,6 +829,7 @@ export class PosIdentityService {
     }
     const correct = await verifyPin(pin, {
       algorithm: String(employee["algorithm"]),
+      algorithm_version: Number(employee["algorithm_version"]),
       iterations: Number(employee["iterations"]),
       salt_base64: String(employee["salt_base64"]),
       hash_base64: String(employee["hash_base64"]),
@@ -1018,12 +1027,13 @@ export class PosIdentityService {
     validatePin(input.pin, input.pinConfirmation, device.pinLength);
     const current = await this.db
       .prepare(
-        "SELECT version,algorithm,iterations,salt_base64,hash_base64 FROM employee_pin_credentials WHERE tenant_id=? AND user_id=? AND must_change=1",
+        "SELECT version,algorithm,algorithm_version,iterations,salt_base64,hash_base64 FROM employee_pin_credentials WHERE tenant_id=? AND user_id=? AND must_change=1",
       )
       .bind(actor.tenantId, actor.id)
       .first<{
         version: number;
         algorithm: string;
+        algorithm_version: number;
         iterations: number;
         salt_base64: string;
         hash_base64: string;
@@ -1054,9 +1064,10 @@ export class PosIdentityService {
           ),
         this.db
           .prepare(
-            "UPDATE employee_pin_credentials SET iterations=?,salt_base64=?,hash_base64=?,pin_length=?,temporary=0,must_change=0,failed_attempts=0,locked_until=NULL,changed_at=?,changed_by=?,version=version+1 WHERE tenant_id=? AND user_id=? AND version=?",
+            "UPDATE employee_pin_credentials SET algorithm_version=?,iterations=?,salt_base64=?,hash_base64=?,pin_length=?,temporary=0,must_change=0,failed_attempts=0,locked_until=NULL,changed_at=?,changed_by=?,version=version+1 WHERE tenant_id=? AND user_id=? AND version=?",
           )
           .bind(
+            credential.algorithmVersion,
             credential.iterations,
             credential.salt,
             credential.hash,
@@ -1279,44 +1290,59 @@ function validatePin(pin: string, confirmation: string, requiredLength: 4 | 6) {
     throw operation("VALIDATION_FAILED", 400, "Choose a less predictable PIN");
 }
 
-async function derivePin(pin: string, providedSalt?: Uint8Array) {
-  const salt = providedSalt ?? crypto.getRandomValues(new Uint8Array(16));
-  const saltBytes = Uint8Array.from(salt);
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, [
+async function pbkdf2(password: Uint8Array, salt: Uint8Array, iterations: number) {
+  const key = await crypto.subtle.importKey("raw", Uint8Array.from(password), "PBKDF2", false, [
     "deriveBits",
   ]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: saltBytes.buffer, iterations: PIN_ITERATIONS },
+    { name: "PBKDF2", hash: "SHA-256", salt: Uint8Array.from(salt).buffer, iterations },
     key,
     256,
   );
+  return new Uint8Array(bits);
+}
+
+/** Version 2: chained passes of at most 100,000 rounds, the most a Worker allows per call. */
+async function chainedPbkdf2(pin: string, salt: Uint8Array, passes: number) {
+  let output = new TextEncoder().encode(pin);
+  for (let pass = 0; pass < passes; pass += 1)
+    output = await pbkdf2(output, salt, PIN_ROUNDS_PER_PASS);
+  return output;
+}
+
+export async function derivePin(pin: string, providedSalt?: Uint8Array) {
+  const salt = Uint8Array.from(providedSalt ?? crypto.getRandomValues(new Uint8Array(16)));
   return {
-    iterations: PIN_ITERATIONS,
-    salt: base64(saltBytes),
-    hash: base64(new Uint8Array(bits)),
+    algorithmVersion: PIN_ALGORITHM_VERSION,
+    iterations: PIN_ROUNDS_PER_PASS * PIN_PASSES,
+    salt: base64(salt),
+    hash: base64(await chainedPbkdf2(pin, salt, PIN_PASSES)),
   };
 }
 
-async function verifyPin(
+export async function verifyPin(
   pin: string,
-  credential: { algorithm: string; iterations: number; salt_base64: string; hash_base64: string },
+  credential: {
+    algorithm: string;
+    algorithm_version?: number;
+    iterations: number;
+    salt_base64: string;
+    hash_base64: string;
+  },
 ) {
   if (credential.algorithm !== "PBKDF2-SHA256" || credential.iterations < 310_000) return false;
   const salt = fromBase64(credential.salt_base64);
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, [
-    "deriveBits",
-  ]);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: Uint8Array.from(salt).buffer,
-      iterations: credential.iterations,
-    },
-    key,
-    256,
-  );
-  return constantTimeEqual(new Uint8Array(bits), fromBase64(credential.hash_base64));
+  const version = Number(credential.algorithm_version ?? 1);
+  let bits: Uint8Array;
+  if (version === PIN_ALGORITHM_VERSION) {
+    if (credential.iterations % PIN_ROUNDS_PER_PASS !== 0) return false;
+    bits = await chainedPbkdf2(pin, salt, credential.iterations / PIN_ROUNDS_PER_PASS);
+  } else if (version === 1) {
+    // Single-call PBKDF2 from before version 2. Workers refuses it above 100,000 rounds,
+    // so such a credential can't be checked there; production never stored one.
+    bits = await pbkdf2(new TextEncoder().encode(pin), salt, credential.iterations);
+  } else return false;
+  return constantTimeEqual(bits, fromBase64(credential.hash_base64));
 }
 
 function zeroSalt() {
