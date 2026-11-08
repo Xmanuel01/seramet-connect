@@ -162,21 +162,20 @@ test("staff invitation setup clears URL credentials and waits for acknowledgemen
   await page.route("**/api/seramet/public/auth/accept-invitation", async (route) => {
     expect(route.request().postDataJSON()).toMatchObject({
       accessToken: token,
-      password: "Disposable-password-672!",
+      pin: "602947",
+      pinConfirmation: "602947",
     });
-    await route.fulfill({ json: { ok: true, reauthenticationRequired: true } });
+    await route.fulfill({ json: { ok: true, pinSet: true } });
   });
   await page.goto(
     `/staff-login?invitation=${crypto.randomUUID()}#access_token=${token}&refresh_token=disposable-refresh`,
   );
-  await expect(page.getByRole("heading", { name: "Activate staff account" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Choose your PIN" })).toBeVisible();
   await expect(page).not.toHaveURL(/access_token|refresh_token/);
-  await page.getByLabel("New password", { exact: true }).fill("Disposable-password-672!");
-  await page.getByLabel("Confirm password", { exact: true }).fill("Disposable-password-672!");
-  await page.getByRole("button", { name: "Activate account", exact: true }).click();
-  await expect(
-    page.getByText("Account activated. Sign in with your email and new password."),
-  ).toBeVisible();
+  await page.getByLabel("New PIN", { exact: true }).fill("602947");
+  await page.getByLabel("Confirm PIN", { exact: true }).fill("602947");
+  await page.getByRole("button", { name: "Set PIN", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Your PIN is set" })).toBeVisible();
   expect(
     await page.evaluate(
       (value) => JSON.stringify({ ...localStorage, ...sessionStorage }).includes(value),
