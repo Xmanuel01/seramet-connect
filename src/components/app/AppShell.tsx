@@ -298,24 +298,24 @@ export function AppShell({
     let cancelled = false;
     const refreshIntegrationAlerts = async () => {
       try {
-        const response = await fetch("/api/seramet/integrations/diagnostics", {
+        const response = await fetch("/api/seramet/integrations/alerts", {
           headers: {
             "x-seramet-tenant-id": activeTenantId,
             "x-seramet-user-id": currentUser.id,
           },
         });
+        // Counts only: the full diagnostics lists are for the Integrations page.
         const payload = (await response.json()) as {
           ok?: boolean;
-          deadLetters?: { status: string }[];
-          events?: { status: string }[];
-          health?: { status: string; message: string }[];
+          deadLetters?: number;
+          mappingIssues?: number;
+          unhealthy?: number;
+          unhealthyMessage?: string | null;
         };
         if (cancelled || !payload.ok) return;
-        const deadLetters =
-          payload.deadLetters?.filter((item) => item.status === "OPEN").length ?? 0;
-        const mappingIssues =
-          payload.events?.filter((item) => item.status === "MAPPING_REQUIRED").length ?? 0;
-        const unhealthy = payload.health?.filter((item) => item.status !== "HEALTHY") ?? [];
+        const deadLetters = payload.deadLetters ?? 0;
+        const mappingIssues = payload.mappingIssues ?? 0;
+        const unhealthy = payload.unhealthy ?? 0;
         const next: AppNotification[] = [];
         if (deadLetters)
           next.push({
@@ -337,13 +337,13 @@ export function AppShell({
             read: false,
             icon: AlertTriangle,
           });
-        if (unhealthy.length)
+        if (unhealthy)
           next.push({
             id: "integration-health",
             category: "Integrations",
-            message: `${unhealthy.length} provider connection${unhealthy.length === 1 ? "" : "s"} are not healthy`,
+            message: `${unhealthy} provider connection${unhealthy === 1 ? "" : "s"} are not healthy`,
             to: "/integrations",
-            source: unhealthy[0]?.message ?? "Integration health",
+            source: payload.unhealthyMessage ?? "Integration health",
             read: false,
             icon: AlertTriangle,
           });

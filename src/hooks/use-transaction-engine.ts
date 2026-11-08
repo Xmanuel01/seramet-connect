@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { changesTransactions } from "@/lib/realtime-relevance";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { closingMutationActions } from "@/payments/daily-closing";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
@@ -393,12 +394,16 @@ export function useTransactionEngine() {
     const refresh = () => {
       if (document.visibilityState !== "hidden") coordinator.request();
     };
+    // Skip live events that can't move the snapshot (background jobs, revisions we hold).
+    const live = (event: Event) => {
+      if (changesTransactions((event as CustomEvent).detail, revisionRef.current)) refresh();
+    };
     // No per-event full reload: one bounded, trailing refresh per event burst.
-    window.addEventListener("seramet:realtime", refresh);
+    window.addEventListener("seramet:realtime", live);
     window.addEventListener("seramet:refresh", refresh);
     return () => {
       coordinator.stop();
-      window.removeEventListener("seramet:realtime", refresh);
+      window.removeEventListener("seramet:realtime", live);
       window.removeEventListener("seramet:refresh", refresh);
     };
   }, [syncFromBackend]);

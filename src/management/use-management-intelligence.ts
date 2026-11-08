@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { changesRecords } from "@/lib/realtime-relevance";
 import { createScopedReadGuard } from "@/lib/scoped-read-guard";
 import { createTransactionRefreshCoordinator } from "@/lib/transaction-refresh-coordinator";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -117,11 +118,14 @@ export function useManagementIntelligence(enabled = true) {
       cancel: (timer) => window.clearTimeout(timer),
     });
     const onRefresh = () => coordinator.request();
-    window.addEventListener("seramet:realtime", onRefresh);
+    const onLive = (event: Event) => {
+      if (changesRecords((event as CustomEvent).detail)) onRefresh();
+    };
+    window.addEventListener("seramet:realtime", onLive);
     window.addEventListener("seramet:refresh", onRefresh);
     return () => {
       coordinator.stop();
-      window.removeEventListener("seramet:realtime", onRefresh);
+      window.removeEventListener("seramet:realtime", onLive);
       window.removeEventListener("seramet:refresh", onRefresh);
     };
   }, [refresh]);

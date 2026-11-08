@@ -936,6 +936,21 @@ export class IntegrationRuntime {
     return { events, mappings, outbox, deadLetters, health };
   }
 
+  /** What the header notifications need: counts and unhealthy connections only. */
+  async alertSummary(tenantId: string) {
+    const [counts, health] = await Promise.all([
+      this.dependencies.repository.alertCounts(tenantId),
+      this.dependencies.repository.listHealth(tenantId),
+    ]);
+    const unhealthy = health.filter((record) => record.status !== "HEALTHY");
+    return {
+      deadLetters: counts.openDeadLetters,
+      mappingIssues: counts.mappingRequired,
+      unhealthy: unhealthy.length,
+      unhealthyMessage: unhealthy[0]?.message ?? null,
+    };
+  }
+
   async testConnection(tenantId: string, connectionId: string) {
     const connection = this.requireTenantConnection(tenantId, connectionId);
     const providerHealth = await this.dependencies.health.calculate(

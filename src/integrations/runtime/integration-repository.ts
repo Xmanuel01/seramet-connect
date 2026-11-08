@@ -87,6 +87,8 @@ export type IntegrationRepository = {
   upsertHealth(record: IntegrationHealthRecord): Promise<void>;
   getHealth(tenantId: string, connectionId: string): Promise<IntegrationHealthRecord | null>;
   listHealth(tenantId: string): Promise<IntegrationHealthRecord[]>;
+  /** Counts for the header notifications, without loading every record. */
+  alertCounts(tenantId: string): Promise<{ openDeadLetters: number; mappingRequired: number }>;
   appendReplay(record: IntegrationReplay): Promise<void>;
   listReplays(tenantId: string, originalEventId?: string): Promise<IntegrationReplay[]>;
 };
@@ -262,6 +264,15 @@ class MemoryIntegrationRepository implements IntegrationRepository {
     return this.list("DEAD_LETTER", tenantId).filter(
       (row) => !connectionId || row.connectionId === connectionId,
     );
+  }
+  async alertCounts(tenantId: string) {
+    return {
+      openDeadLetters: this.list("DEAD_LETTER", tenantId).filter((row) => row.status === "OPEN")
+        .length,
+      mappingRequired: this.list("EVENT", tenantId).filter(
+        (row) => row.status === "MAPPING_REQUIRED",
+      ).length,
+    };
   }
   async updateDeadLetter(tenantId: string, id: string, update: Partial<IntegrationDeadLetter>) {
     const current = await this.require("DEAD_LETTER", tenantId, id);
@@ -663,6 +674,26 @@ class D1IntegrationRepository implements IntegrationRepository {
         "original_payload_json",
       )
     ).filter((row) => !connectionId || row.connectionId === connectionId);
+  }
+  async alertCounts(tenantId: string) {
+    const [deadLetters, events] = await Promise.all([
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM integration_dead_letters WHERE tenant_id = ? AND status = 'OPEN'",
+        )
+        .bind(tenantId)
+        .first<{ count: number }>(),
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM provider_events WHERE tenant_id = ? AND status = 'MAPPING_REQUIRED'",
+        )
+        .bind(tenantId)
+        .first<{ count: number }>(),
+    ]);
+    return {
+      openDeadLetters: Number(deadLetters?.count ?? 0),
+      mappingRequired: Number(events?.count ?? 0),
+    };
   }
   async updateDeadLetter(tenantId: string, id: string, update: Partial<IntegrationDeadLetter>) {
     const current = await this.getJsonRecord<IntegrationDeadLetter>(

@@ -404,6 +404,18 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       );
     }
 
+    if (url.pathname === "/api/seramet/integrations/alerts" && request.method === "GET") {
+      const actor = await requireAnyPermission(request, env, [
+        permissions.integrationsOrdersView,
+        permissions.settingsIntegrationManage,
+        permissions.auditView,
+      ]);
+      return json({
+        ok: true,
+        ...(await createIntegrationRuntime(env).alertSummary(actor.tenantId)),
+      });
+    }
+
     if (url.pathname === "/api/seramet/integrations/diagnostics" && request.method === "GET") {
       const actor = await requireAnyPermission(request, env, [
         permissions.integrationsOrdersView,
