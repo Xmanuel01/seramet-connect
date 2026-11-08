@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from "react";
+import { changesRecords } from "@/lib/realtime-relevance";
 import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
@@ -147,10 +148,13 @@ export function useDocumentList<K extends DocumentKind>(
   useEffect(() => {
     if (typeof window === "undefined") return;
     const refresh = () => scheduleDocumentRefresh(queryClient);
-    window.addEventListener("seramet:realtime", refresh);
+    const live = (event: Event) => {
+      if (changesRecords((event as CustomEvent).detail)) refresh();
+    };
+    window.addEventListener("seramet:realtime", live);
     window.addEventListener("seramet:refresh", refresh);
     return () => {
-      window.removeEventListener("seramet:realtime", refresh);
+      window.removeEventListener("seramet:realtime", live);
       window.removeEventListener("seramet:refresh", refresh);
     };
   }, [queryClient]);
