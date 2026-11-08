@@ -259,9 +259,10 @@ export function PrinterAdministration() {
       );
       const result = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(result.message ?? "Couldn't delete this printer.");
-      await refreshConfiguration();
-      await refresh();
       setNotice(`${printer.name} was deleted.`);
+      await refresh();
+      // The printer is gone on the server; a failed settings refresh must not undo that message.
+      await refreshConfiguration().catch(() => undefined);
       window.dispatchEvent(
         new CustomEvent("seramet:hardware-profile-change", { detail: { branchId } }),
       );

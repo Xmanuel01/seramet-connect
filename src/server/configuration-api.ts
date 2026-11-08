@@ -472,7 +472,25 @@ async function persistConfiguration(db: D1Database, state: PlatformState, actor:
           JSON.stringify(row),
         ),
     );
-  for (const row of state.printRoutes)
+  // An export made before a printer was deleted must not route documents back to it.
+  const revokedDevices = new Set(
+    (
+      (
+        await db
+          .prepare("SELECT id FROM hardware_devices WHERE tenant_id=? AND trust_status='REVOKED'")
+          .bind(actor.tenantId)
+          .all<{ id: string }>()
+      ).results ?? []
+    ).map((device) => device.id),
+  );
+  for (const imported of state.printRoutes.filter(
+    (route) => !revokedDevices.has(route.primaryDeviceId),
+  )) {
+    const { fallbackDeviceId, ...rest } = imported;
+    const row =
+      fallbackDeviceId && !revokedDevices.has(fallbackDeviceId)
+        ? imported
+        : (rest as typeof imported);
     statements.push(
       upsertPayload(
         db,
@@ -496,6 +514,7 @@ async function persistConfiguration(db: D1Database, state: PlatformState, actor:
         row,
       ),
     );
+  }
   for (const row of state.documentIdentities)
     statements.push(
       upsertPayload(

@@ -561,7 +561,8 @@ export async function handlePrintingApi(
         `INSERT INTO hardware_devices
       (tenant_id,id,branch_id,device_type,name,trust_status,registered_by,registered_at,payload_json)
       VALUES (?,?,?,'PRINTER',?,'ACTIVE',?,?,?) ON CONFLICT(tenant_id,id) DO UPDATE SET
-      name=excluded.name,payload_json=excluded.payload_json WHERE hardware_devices.branch_id=excluded.branch_id`,
+      name=excluded.name,payload_json=excluded.payload_json
+      WHERE hardware_devices.branch_id=excluded.branch_id AND hardware_devices.trust_status<>'REVOKED'`,
       )
       .bind(
         actor.tenantId,
@@ -583,7 +584,7 @@ export async function handlePrintingApi(
       .first<{ payload_json: string }>();
     if (!branchRow) throw new SerametHttpError(403, "Authoritative branch unavailable");
     const branchPayload = JSON.parse(branchRow.payload_json);
-    await db.batch([
+    const written = await db.batch([
       configurationWrite,
       ...(updateBranchMode === false
         ? []
@@ -605,6 +606,9 @@ export async function handlePrintingApi(
         `Printer ${id}`,
       ),
     ]);
+    // A printer deleted between the checks above and this write is left as it was.
+    if (written[0]?.meta?.changes === 0)
+      throw new SerametHttpError(404, "This printer was deleted. Add it again as a new printer.");
     invalidateAuthoritativeConfiguration(db);
     return respond({ printer: saved }, 201);
   }
@@ -633,30 +637,47 @@ export async function handlePrintingApi(
         409,
         `${dependent.name} uses this printer as its backup. Choose another backup there first.`,
       );
-    // Deleting keeps the device record so past print jobs still point at it; it is revoked,
-    // which every printer lookup and the branch configuration skip.
-    await db.batch([
+    // A route's stored payload carries its fallback too, so both are cleared.
+    const fallbackRoutes =
+      (
+        await db
+          .prepare(
+            "SELECT id,payload_json FROM print_routes WHERE tenant_id=? AND fallback_device_id=?",
+          )
+          .bind(actor.tenantId, id)
+          .all<{ id: string; payload_json: string }>()
+      ).results ?? [];
+    // Deleting keeps the device record so past print jobs still point at it. It is revoked,
+    // which every printer lookup and the branch configuration skip, and retired, so device
+    // activation cannot bring it back. Only the request that revokes it records the deletion.
+    const deleted = await db.batch([
       db
         .prepare(
-          "UPDATE hardware_devices SET trust_status='REVOKED' WHERE tenant_id=? AND branch_id=? AND id=?",
+          "UPDATE hardware_devices SET trust_status='REVOKED',lifecycle_state='RETIRED' WHERE tenant_id=? AND branch_id=? AND id=? AND trust_status<>'REVOKED'",
         )
         .bind(actor.tenantId, actor.branchId, id),
       db
         .prepare("DELETE FROM print_routes WHERE tenant_id=? AND primary_device_id=?")
         .bind(actor.tenantId, id),
-      db
-        .prepare(
-          "UPDATE print_routes SET fallback_device_id=NULL WHERE tenant_id=? AND fallback_device_id=?",
-        )
-        .bind(actor.tenantId, id),
+      ...fallbackRoutes.map((route) => {
+        const payload = JSON.parse(route.payload_json || "{}") as Record<string, unknown>;
+        delete payload["fallbackDeviceId"];
+        return db
+          .prepare(
+            "UPDATE print_routes SET fallback_device_id=NULL,payload_json=? WHERE tenant_id=? AND id=?",
+          )
+          .bind(JSON.stringify(payload), actor.tenantId, route.id);
+      }),
       auditStatement(
         db,
         actor,
-        `PRINT-DELETE:${crypto.randomUUID()}`,
+        `PRINT-DELETE:${id}`,
         "PRINTER_DELETED",
         `Printer ${id} (${target.name})`,
       ),
     ]);
+    if (deleted[0]?.meta?.changes === 0)
+      throw new SerametHttpError(404, "Printer not found in this branch");
     invalidateAuthoritativeConfiguration(db);
     return respond({ deleted: id });
   }
