@@ -138,6 +138,18 @@ describe.sequential("authoritative geofenced attendance", () => {
     });
     return { waiting, release };
   }
+  it("shows a Kenyan branch still stored as UTC in Nairobi time", async () => {
+    db.sqlite
+      .prepare("UPDATE branches SET timezone='UTC' WHERE tenant_id=? AND id=?")
+      .run(tenantId, branchId);
+    db.sqlite.prepare("UPDATE tenants SET default_currency='KES' WHERE id=?").run(tenantId);
+    const response = await handleAttendanceApi(
+      request("/api/seramet/attendance?branchId=" + branchId),
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
+    );
+    const body = (await response!.json()) as { branchTimezone: string };
+    expect(body.branchTimezone).toBe("Africa/Nairobi");
+  });
   it("returns only the authenticated employee's weekly hours, including overnight work", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-05T19:00:00Z"));
