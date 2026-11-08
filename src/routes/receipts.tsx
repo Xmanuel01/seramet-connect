@@ -11,10 +11,10 @@ import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { formatFilterDate } from "@/lib/date-filters";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { recordBusinessDate } from "@/lib/pos-workflow";
+import { branchBusinessToday, recordBusinessDate } from "@/lib/pos-workflow";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
 import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
@@ -40,7 +40,6 @@ export const Route = createFileRoute("/receipts")({
 });
 
 function Receipts() {
-  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const [printNotice, setPrintNotice] = useState("");
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
@@ -55,6 +54,13 @@ function Receipts() {
     matchesBranch,
     timeZone,
   } = useAppContext();
+  // Today's business day at this branch, which runs past midnight until the cutoff.
+  const [periodDate, setPeriodDate] = useState(() =>
+    branchBusinessToday(
+      branchRecords.find((branch) => branch.id === branchId),
+      timeZone,
+    ),
+  );
   const { state, mutate } = useTransactionEngine();
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);

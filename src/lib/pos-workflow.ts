@@ -132,3 +132,19 @@ export function recordBusinessDate(
   if (businessDate) return businessDate;
   return businessDateForTimestamp(timestamp, timezone, cutoffMinutes);
 }
+
+/**
+ * The branch's business day right now. Until the branch cutoff it is still the previous
+ * date, so documents made after midnight stay under "today".
+ */
+export function branchBusinessToday(
+  branch: { timezone?: string; metadata?: Record<string, unknown> } | undefined,
+  fallbackTimezone: string,
+  now = new Date(),
+) {
+  return businessDateForTimestamp(
+    now,
+    branch?.timezone || fallbackTimezone,
+    Number(branch?.metadata?.["businessDayCutoffMinutes"] ?? 0),
+  );
+}

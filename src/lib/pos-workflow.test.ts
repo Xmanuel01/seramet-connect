@@ -19,6 +19,7 @@ import {
   formatPosClock,
   invoiceBusinessDate,
   pendingPosOrders,
+  branchBusinessToday,
   recordBusinessDate,
   resolvePosTimeZone,
   acknowledgedKitchenDispatch,
@@ -400,5 +401,29 @@ describe("two-branch concurrent-order source isolation", () => {
     expect(state.bills).toHaveLength(1);
     expect(state.bills[0]?.orderIds).toEqual([westId]);
     expect(state.bills[0]?.branchId).toBe(DEMO_WESTLANDS_BRANCH_ID);
+  });
+});
+
+describe("default date on Invoices and Receipts", () => {
+  const nairobi = { timezone: "Africa/Nairobi", metadata: { businessDayCutoffMinutes: 240 } };
+
+  it("is still yesterday's business day after midnight, before the cutoff", () => {
+    // 01:30 in Nairobi on 9 November belongs to the 8 November business day.
+    expect(branchBusinessToday(nairobi, "UTC", new Date("2026-11-08T22:30:00Z"))).toBe(
+      "2026-11-08",
+    );
+  });
+
+  it("moves to the new day at the cutoff", () => {
+    // 04:00 in Nairobi on 9 November.
+    expect(branchBusinessToday(nairobi, "UTC", new Date("2026-11-09T01:00:00Z"))).toBe(
+      "2026-11-09",
+    );
+  });
+
+  it("uses the fallback zone and midnight when the branch has no settings", () => {
+    expect(branchBusinessToday(undefined, "Africa/Nairobi", new Date("2026-11-08T22:30:00Z"))).toBe(
+      "2026-11-09",
+    );
   });
 });

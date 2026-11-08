@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { branchBusinessToday, recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
@@ -163,7 +163,6 @@ function Invoices() {
   const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Pending">("Unpaid");
-  const [periodDate, setPeriodDate] = useState("");
   const {
     activeTenantId,
     branchId,
@@ -174,6 +173,13 @@ function Invoices() {
     hasPermission,
     role,
   } = useAppContext();
+  // Opens on today's unpaid invoices; clearing the chips shows every day.
+  const [periodDate, setPeriodDate] = useState(() =>
+    branchBusinessToday(
+      branchRecords.find((branch) => branch.id === branchId),
+      activeTimeZone(),
+    ),
+  );
   const canSplit = hasPermission(permissions.invoicesManage);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
