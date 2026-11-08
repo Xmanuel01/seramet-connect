@@ -31,15 +31,15 @@ function CommandCentre() {
   const [resolutionNotes, setResolutionNotes] = useState<Record<string, string>>({});
   return (
     <AppShell
-      title="Command centre"
-      subtitle={`${branchLabel} - today at a glance`}
+      title="Overview"
+      subtitle={`${branchLabel} · today`}
       actions={
         <>
           <Btn onClick={() => void management.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
           <Btn variant="primary" onClick={() => void management.recalculate()}>
-            Recalculate
+            Update figures
           </Btn>
         </>
       }
@@ -48,6 +48,8 @@ function CommandCentre() {
         status={management.status}
         error={management.error}
         empty={management.status === "ready" && management.controls.length === 0}
+        emptyTitle="No figures for today yet"
+        emptyText="They appear once you start taking orders."
       />
       {management.status === "ready" && management.controls.length > 0 && (
         <>
@@ -61,22 +63,18 @@ function CommandCentre() {
               value={formatMinor(management.combined.grossProfitMinor, currency)}
             />
             <Metric label="Orders" value={management.combined.orderCount} />
-            <Metric
-              label="Food cost"
-              value={latest ? formatBps(latest.foodCostBps) : "Unavailable"}
-            />
-            <Metric
-              label="Average prep"
-              value={formatDuration(latest?.averagePrepTimeMs ?? null)}
-            />
-            <Metric label="Open actions" value={management.combined.openActions} />
+            {/* Food cost and prep time need recipes and kitchen timings; hidden until known. */}
+            {latest ? <Metric label="Food cost" value={formatBps(latest.foodCostBps)} /> : null}
+            {latest?.averagePrepTimeMs ? (
+              <Metric label="Average prep" value={formatDuration(latest.averagePrepTimeMs)} />
+            ) : null}
+            <Metric label="To check" value={management.combined.openActions} />
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             <Panel>
               <PanelHead
                 title="Needs attention"
-                sub="Persisted exceptions generated from configured thresholds"
                 right={
                   control?.latest ? <QualityStatus quality={control.latest.quality} /> : undefined
                 }
@@ -86,11 +84,11 @@ function CommandCentre() {
                   <table className="w-full min-w-[720px]">
                     <thead>
                       <tr>
-                        <TH>Severity</TH>
-                        <TH>Issue</TH>
-                        <TH>Evidence</TH>
+                        <TH>How urgent</TH>
+                        <TH>What</TH>
+                        <TH>Value / limit</TH>
                         <TH>Status</TH>
-                        <TH>Action</TH>
+                        <TH />
                       </tr>
                     </thead>
                     <tbody>
@@ -104,14 +102,12 @@ function CommandCentre() {
                             <TD>
                               <Status>{severityLabel(action.severity)}</Status>
                             </TD>
-                            <TD className="font-semibold">
-                              {action.actionType.replaceAll("_", " ")}
-                            </TD>
+                            <TD className="font-semibold">{sentence(action.actionType)}</TD>
                             <TD className="num text-muted-foreground">
                               {action.metricValue ?? "-"} / {action.thresholdValue ?? "-"}
                             </TD>
                             <TD>
-                              <Status>{action.status.replaceAll("_", " ")}</Status>
+                              <Status>{sentence(action.status)}</Status>
                             </TD>
                             <TD>
                               <div className="flex gap-2">
@@ -120,7 +116,7 @@ function CommandCentre() {
                                     href={deepLink}
                                     className="text-[12px] font-semibold text-primary"
                                   >
-                                    Evidence
+                                    Details
                                   </a>
                                 )}
                                 {action.status === "OPEN" && (
@@ -133,7 +129,7 @@ function CommandCentre() {
                                       )
                                     }
                                   >
-                                    Acknowledge
+                                    Seen
                                   </Btn>
                                 )}
                                 {action.status === "ACKNOWLEDGED" && (
@@ -146,7 +142,7 @@ function CommandCentre() {
                                       )
                                     }
                                   >
-                                    Start
+                                    Working on it
                                   </Btn>
                                 )}
                                 {action.status === "IN_PROGRESS" && (
@@ -154,7 +150,7 @@ function CommandCentre() {
                                     <input
                                       aria-label={`Resolution note for ${action.actionType}`}
                                       className="h-8 min-w-[150px] rounded-md border border-border bg-background px-2 text-[12px]"
-                                      placeholder="Resolution note"
+                                      placeholder="What did you do?"
                                       value={resolutionNotes[action.id] ?? ""}
                                       onChange={(event) =>
                                         setResolutionNotes((current) => ({
@@ -180,7 +176,7 @@ function CommandCentre() {
                                           );
                                       }}
                                     >
-                                      Resolve
+                                      Done
                                     </Btn>
                                   </>
                                 )}
@@ -194,86 +190,65 @@ function CommandCentre() {
                 </div>
               ) : (
                 <p className="p-4 text-[13px] text-muted-foreground">
-                  No active threshold exceptions.
+                  Nothing needs attention right now.
                 </p>
               )}
             </Panel>
 
             <div className="grid content-start gap-4">
-              <Panel className="p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                      Restaurant health
+              {control?.health && (
+                <Panel className="p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                        Overall
+                      </div>
+                      <div className="mt-2 text-[22px] font-bold">
+                        {sentence(control.health.status)}
+                      </div>
                     </div>
-                    <div className="mt-2 text-[22px] font-bold">
-                      {control?.health?.status.replaceAll("_", " ") ?? "Unavailable"}
-                    </div>
+                    <QualityStatus quality={control.health.quality} />
                   </div>
-                  {control?.health && <QualityStatus quality={control.health.quality} />}
-                </div>
-                <p className="mt-3 text-[12px] text-muted-foreground">
-                  {control?.health?.evidence.length ?? 0} policy-backed signals explain this state.
-                </p>
-              </Panel>
-              <Panel>
-                <PanelHead
-                  title="Close readiness"
-                  {...(control?.closeReadiness?.businessDate
-                    ? { sub: control.closeReadiness.businessDate }
-                    : {})}
-                />
-                <div className="p-4">
-                  <Status>
-                    {control?.closeReadiness?.status.replaceAll("_", " ") ?? "Unavailable"}
-                  </Status>
-                  <p className="mt-3 text-[12px] text-muted-foreground">
-                    {control?.closeReadiness?.blockerCount ?? 0} blockers and{" "}
-                    {control?.closeReadiness?.warningCount ?? 0} warnings.
-                  </p>
-                </div>
-              </Panel>
-              <Panel>
-                <PanelHead
-                  title="Effective targets"
-                  {...(control?.periodEnd ? { sub: control.periodEnd } : {})}
-                />
-                <div className="divide-y divide-border">
-                  {control?.targets.length ? (
-                    control.targets.map((target) => (
+                </Panel>
+              )}
+              {control?.closeReadiness && (
+                <Panel>
+                  <PanelHead title="End of day" sub={control.closeReadiness.businessDate} />
+                  <div className="p-4">
+                    <Status>{sentence(control.closeReadiness.status)}</Status>
+                    {control.closeReadiness.blockerCount || control.closeReadiness.warningCount ? (
+                      <p className="mt-3 text-[12px] text-muted-foreground">
+                        {control.closeReadiness.blockerCount} to fix,{" "}
+                        {control.closeReadiness.warningCount} to check before closing.
+                      </p>
+                    ) : null}
+                  </div>
+                </Panel>
+              )}
+              {control?.targets.length ? (
+                <Panel>
+                  <PanelHead title="Targets" />
+                  <div className="divide-y divide-border">
+                    {control.targets.map((target) => (
                       <div
                         key={`${target.metricCode}:${target.effectiveFrom}`}
                         className="flex items-center justify-between gap-3 px-4 py-2.5 text-[12px]"
                       >
-                        <div>
-                          <div className="font-semibold">
-                            {target.metricCode.replaceAll("_", " ")}
-                          </div>
-                          <div className="text-muted-foreground">
-                            {target.source.replaceAll("_", " ").toLowerCase()}
-                          </div>
-                        </div>
+                        <div className="font-semibold">{sentence(target.metricCode)}</div>
                         <span className="num font-semibold">
                           {formatTarget(target.targetValue, target.valueUnit, currency)}
                         </span>
                       </div>
-                    ))
-                  ) : (
-                    <p className="p-4 text-[12px] text-muted-foreground">
-                      No effective targets for this date.
-                    </p>
-                  )}
-                </div>
-              </Panel>
+                    ))}
+                  </div>
+                </Panel>
+              ) : null}
             </div>
           </div>
 
           {isAllBranches && (
             <Panel className="mt-4 overflow-x-auto">
-              <PanelHead
-                title="Branch comparison"
-                sub="Normalized rates and quality-aware daily facts"
-              />
+              <PanelHead title="Branches compared" />
               <table className="w-full min-w-[780px]">
                 <thead>
                   <tr>
@@ -297,7 +272,7 @@ function CommandCentre() {
                       <TD className="num text-right">{formatBps(metric.grossMarginBps)}</TD>
                       <TD className="num text-right">{metric.orderCount}</TD>
                       <TD>
-                        <Status>{health?.status ?? "Unavailable"}</Status>
+                        <Status>{health ? sentence(health.status) : "—"}</Status>
                       </TD>
                       <TD>
                         <QualityStatus quality={metric.quality} />
@@ -319,4 +294,10 @@ function formatTarget(value: number, unit: string, currency: string) {
   if (unit === "BPS") return formatBps(value);
   if (unit === "MILLISECONDS") return formatDuration(value);
   return value.toLocaleString();
+}
+
+/** "LOW_STOCK" → "Low stock". */
+function sentence(value: string) {
+  const words = value.replaceAll("_", " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }

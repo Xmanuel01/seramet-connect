@@ -59,23 +59,15 @@ function Branches() {
   return (
     <AppShell
       title="Branches"
-      subtitle="Operational performance and configuration by location"
       actions={
         <Link
           to="/seramet-setup"
           className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
         >
-          Manage branches
+          Add or edit branches
         </Link>
       }
     >
-      <Panel className="mb-4 p-4">
-        <PanelHead
-          title="Adding or changing a branch"
-          sub="Use Manage branches to open Setup Centre. This page shows how each branch is performing."
-        />
-      </Panel>
-
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Branches" value={rows.length} />
         <Metric
@@ -86,30 +78,30 @@ function Branches() {
           )}
         />
         <Metric label="Employees" value={rows.reduce((sum, row) => sum + row.staff, 0)} />
+        {/* A branch without enough data yet isn't a problem to flag. */}
         <Metric
           label="Needs attention"
-          value={rows.filter((row) => row.state !== "HEALTHY").length}
+          value={
+            rows.filter((row) => row.state !== "HEALTHY" && row.state !== "INSUFFICIENT DATA")
+              .length
+          }
           invert
         />
       </div>
 
       <Panel className="mt-4 overflow-x-auto">
-        <PanelHead
-          title="Configured locations"
-          sub="Archiving preserves historical orders and reports"
-        />
+        <PanelHead title="Your branches" />
         <table className="w-full min-w-[860px]">
           <thead>
             <tr>
               <TH>Branch</TH>
               <TH>Code</TH>
-              <TH>Primary operator</TH>
+              <TH>Manager</TH>
               <TH className="text-right">Orders</TH>
               <TH className="text-right">Net sales</TH>
               <TH className="text-right">Food cost</TH>
               <TH className="text-right">Staff</TH>
               <TH>Status</TH>
-              <TH>Quality</TH>
             </tr>
           </thead>
           <tbody>
@@ -118,7 +110,7 @@ function Branches() {
                 <TD>
                   <div className="font-semibold">{item.name}</div>
                   <div className="text-[11px] text-muted-foreground">
-                    {item.address || "Address not configured"}
+                    {item.address || "No address yet"}
                   </div>
                 </TD>
                 <TD className="font-semibold">{item.code}</TD>
@@ -130,10 +122,12 @@ function Branches() {
                 <TD className="num text-right">{formatBps(item.foodCostBps)}</TD>
                 <TD className="num text-right">{item.staff}</TD>
                 <TD>
-                  <Status>{item.state}</Status>
-                </TD>
-                <TD>
-                  <QualityStatus quality={item.quality} />
+                  {/* One status: the data-quality badge already says when there isn't enough. */}
+                  {item.state === "INSUFFICIENT DATA" || item.state === "INSUFFICIENT_DATA" ? (
+                    <QualityStatus quality={item.quality} />
+                  ) : (
+                    <Status>{sentence(item.state)}</Status>
+                  )}
                 </TD>
               </tr>
             ))}
@@ -142,4 +136,9 @@ function Branches() {
       </Panel>
     </AppShell>
   );
+}
+
+function sentence(value: string) {
+  const words = value.replaceAll("_", " ").toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }

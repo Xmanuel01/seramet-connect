@@ -211,13 +211,23 @@ export function AppShell({
     activeBranchRecord?.id ?? branchId,
     activeBranchRecord?.metadata["color"],
   );
+  // Enterprise tools (several companies, brands or franchises) only make sense once the
+  // business has more than one branch; the page itself stays reachable by its address.
+  const tenantBranchCount = platformState.branches.filter(
+    (item) => item.tenantId === activeTenantId,
+  ).length;
   const visibleNavGroups = getVisibleNavGroups(
     role,
     branch,
     permissions,
     activeTenantId,
     moduleAccess,
-  );
+  )
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.to !== "/enterprise" || tenantBranchCount > 1),
+    }))
+    .filter((group) => group.items.length > 0);
   const path = useRouterState().location.pathname;
   const unavailable = pilotUnavailable[path];
   const pageContent = unavailable ? (
