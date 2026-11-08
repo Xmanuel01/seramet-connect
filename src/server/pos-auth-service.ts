@@ -31,6 +31,7 @@ export type EmployeeCreateInput = {
   idempotencyKey: string;
   fullName: string;
   email?: string;
+  /** Leave empty to use the next code with the business's prefix, such as MONA-004. */
   employeeCode: string;
   phone?: string;
   jobTitle: string;
@@ -224,6 +225,8 @@ export class PosIdentityService {
       .bind(actor.tenantId, input.idempotencyKey)
       .first<{ response_json: string; request_hash: string; created_by: string }>();
     const requestHash = await sha256(stableJson(input));
+    if (!replay && !input.employeeCode.trim())
+      input = { ...input, employeeCode: (await this.nextEmployeeCode(actor.tenantId)).code };
     if (replay) {
       if (replay.request_hash !== requestHash || replay.created_by !== actor.id) {
         throw operation("CONFLICT", 409, "Idempotency key was reused with different employee data");
@@ -1106,6 +1109,74 @@ export class PosIdentityService {
       .run();
   }
 
+  /** The prefix new employee codes start with: the owner's choice, or the trading name. */
+  async employeeCodePrefix(tenantId: string) {
+    const tenant = await this.db
+      .prepare("SELECT trading_name,payload_json FROM tenants WHERE id=?")
+      .bind(tenantId)
+      .first<{ trading_name: string; payload_json: string | null }>();
+    let chosen: unknown;
+    try {
+      chosen = (JSON.parse(tenant?.payload_json || "{}") as { employeeCodePrefix?: unknown })
+        .employeeCodePrefix;
+    } catch {
+      chosen = undefined;
+    }
+    if (typeof chosen === "string" && EMPLOYEE_CODE_PREFIX.test(chosen)) return chosen;
+    return defaultEmployeeCodePrefix(tenant?.trading_name ?? "");
+  }
+
+  /**
+   * The next free code, such as ROOFTOP-004. Every code that is a number, or letters and a
+   * number (002, MONA-003), shares one running number, so changing the prefix never
+   * reuses one.
+   */
+  async nextEmployeeCode(tenantId: string) {
+    const prefix = await this.employeeCodePrefix(tenantId);
+    const rows = await this.db
+      .prepare("SELECT employee_code FROM users WHERE tenant_id=? AND employee_code IS NOT NULL")
+      .bind(tenantId)
+      .all<{ employee_code: string }>();
+    const pattern = /^(?:[A-Z0-9]+-)?(\d+)$/;
+    const highest = (rows.results ?? []).reduce((max, row) => {
+      const match = pattern.exec(row.employee_code.toUpperCase());
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    return { prefix, code: `${prefix}-${String(highest + 1).padStart(3, "0")}` };
+  }
+
+  async setEmployeeCodePrefix(actor: ServerActor, prefix: string) {
+    requireFullAuthentication(actor);
+    requirePermission(actor, permissions.usersManage);
+    const value = prefix.trim().toUpperCase();
+    if (!EMPLOYEE_CODE_PREFIX.test(value))
+      throw operation(
+        "VALIDATION_FAILED",
+        400,
+        "Use 2 to 10 letters or numbers for the code prefix, like MONA",
+      );
+    const tenant = await this.db
+      .prepare("SELECT payload_json FROM tenants WHERE id=?")
+      .bind(actor.tenantId)
+      .first<{ payload_json: string | null }>();
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(tenant?.payload_json || "{}") as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    const stamp = now();
+    await this.db.batch([
+      this.db
+        .prepare("UPDATE tenants SET payload_json=?,updated_at=? WHERE id=?")
+        .bind(JSON.stringify({ ...payload, employeeCodePrefix: value }), stamp, actor.tenantId),
+      audit(this.db, actor, "EMPLOYEE_CODE_PREFIX_CHANGED", "TENANT", actor.tenantId, {
+        prefix: value,
+      }),
+    ]);
+    return this.nextEmployeeCode(actor.tenantId);
+  }
+
   async listEmployees(actor: ServerActor) {
     requirePermission(actor, permissions.usersView);
     const branchPredicate =
@@ -1270,7 +1341,11 @@ function validateEmployeeDetails(
 ) {
   if (input.fullName.trim().length < 2 || input.fullName.length > 120)
     throw operation("VALIDATION_FAILED", 400, "Employee name is invalid");
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$/.test(input.employeeCode.trim()))
+  // An empty code on a new employee is filled in from the business's prefix.
+  if (
+    input.employeeCode.trim() &&
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$/.test(input.employeeCode.trim())
+  )
     throw operation("VALIDATION_FAILED", 400, "Employee code is invalid");
   if (input.jobTitle.trim().length < 2 || input.jobTitle.length > 100)
     throw operation("VALIDATION_FAILED", 400, "Job title is invalid");
@@ -1383,6 +1458,13 @@ function base64Url(bytes: Uint8Array) {
 
 function normalizeEmail(value?: string) {
   return value?.trim().toLowerCase() || null;
+}
+
+const EMPLOYEE_CODE_PREFIX = /^[A-Z0-9]{2,10}$/;
+
+export function defaultEmployeeCodePrefix(tradingName: string) {
+  const word = (tradingName.trim().split(/\s+/)[0] ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return word.length >= 2 ? word.slice(0, 10) : "EMP";
 }
 
 function normalizeCode(value: string) {

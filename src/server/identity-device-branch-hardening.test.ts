@@ -787,6 +787,59 @@ describe.sequential("employee editing", () => {
     expect(invitation?.status).toBe("REVOKED");
   });
 
+  it("numbers new employee codes with the business's prefix, which the owner can change", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const cashier = await standardRole(provisioned.tenantId, "CASHIER");
+    // The default prefix is the trading name; plain numeric codes share the sequence.
+    await db
+      .prepare("UPDATE users SET employee_code='002' WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, provisioned.userId)
+      .run();
+    expect(await service.nextEmployeeCode(provisioned.tenantId)).toEqual({
+      prefix: "RESTAURANT",
+      code: "RESTAURANT-003",
+    });
+    const first = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "602947"),
+      employeeCode: "",
+      email: "auto.one@example.test",
+      phone: "0700000011",
+    });
+    expect(first.employeeCode).toBe("RESTAURANT-003");
+
+    await expect(service.setEmployeeCodePrefix(owner, "a")).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(await service.setEmployeeCodePrefix(owner, "mona")).toEqual({
+      prefix: "MONA",
+      code: "MONA-004",
+    });
+    const second = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "830275"),
+      idempotencyKey: "employee-create-auto-0000000002",
+      fullName: "Cashier Two",
+      employeeCode: "",
+      email: "auto.two@example.test",
+      phone: "0700000012",
+    });
+    expect(second.employeeCode).toBe("MONA-004");
+    // A typed code is still used as given.
+    const third = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "504913"),
+      idempotencyKey: "employee-create-auto-0000000003",
+      fullName: "Cashier Three",
+      employeeCode: "bar-7",
+      email: "auto.three@example.test",
+      phone: "0700000013",
+    });
+    expect(third.employeeCode).toBe("BAR-7");
+  });
+
   it("reports a code held by an inactive employee as a duplicate", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(
       identity(),
