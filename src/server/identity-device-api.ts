@@ -73,6 +73,13 @@ const employeeUpdateSchema = z
   })
   .strict();
 
+const employmentSchema = z
+  .object({
+    reason: z.enum(["RESIGNED", "DISMISSED", "CONTRACT_ENDED", "OTHER", "REINSTATED"]),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
 const resetPinSchema = z
   .object({
     pin: z.string().regex(/^\d{4}(?:\d{2})?$/),
@@ -216,6 +223,21 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     invalidateAuthoritativeConfiguration(env.SERAMET_DB);
     return Response.json({ ok: true, employee }, { status: 201, headers: noStore() });
   }
+  const employment = /^\/api\/seramet\/employees\/([^/]+)\/(end-employment|reinstate)$/.exec(
+    url.pathname,
+  );
+  if (employment && request.method === "POST") {
+    assertSameOrigin(request, env);
+    const actor = await authenticateSerametRequest(request, env);
+    const body = parse(employmentSchema, await request.json().catch(() => null));
+    const result = await service.setEmploymentEnded(actor, decodeURIComponent(employment[1]!), {
+      ended: employment[2] === "end-employment",
+      reason: body.reason,
+      note: body.note,
+    });
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    return Response.json({ ok: true, ...result }, { headers: noStore() });
+  }
   const employeeRoute = /^\/api\/seramet\/employees\/([^/]+)$/.exec(url.pathname);
   if (employeeRoute && request.method === "PATCH" && employeeRoute[1] !== "creation-attempts") {
     assertSameOrigin(request, env);
@@ -313,7 +335,8 @@ function isHandledPath(pathname: string) {
     /^\/api\/seramet\/employees\/[^/]+\/stations$/.test(pathname) ||
     /^\/api\/seramet\/employees\/creation-attempts\/[^/]+$/.test(pathname) ||
     pathname === "/api/seramet/owners/transfer" ||
-    /^\/api\/seramet\/employees\/[^/]+\/pin-reset$/.test(pathname)
+    /^\/api\/seramet\/employees\/[^/]+\/pin-reset$/.test(pathname) ||
+    /^\/api\/seramet\/employees\/[^/]+\/(end-employment|reinstate)$/.test(pathname)
   );
 }
 

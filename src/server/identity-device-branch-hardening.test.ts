@@ -877,6 +877,47 @@ describe.sequential("employee editing", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
+  it("ends and reinstates employment, keeping the record but blocking sign-in", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const cashier = await standardRole(provisioned.tenantId, "CASHIER");
+    const employee = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "602947"),
+      email: "leaver@example.test",
+      phone: "0700000021",
+    });
+    const row = () =>
+      db
+        .prepare(
+          "SELECT employment_status,active,effective_until FROM users WHERE tenant_id=? AND id=?",
+        )
+        .bind(provisioned.tenantId, employee.id)
+        .first<{ employment_status: string; active: number; effective_until: string | null }>();
+
+    await service.setEmploymentEnded(owner, employee.id, { ended: true, reason: "RESIGNED" });
+    expect(await row()).toMatchObject({ employment_status: "TERMINATED", active: 0 });
+    expect((await row())?.effective_until).toBeTruthy();
+    await expect(
+      service.setEmploymentEnded(owner, employee.id, { ended: true, reason: "RESIGNED" }),
+    ).rejects.toMatchObject({ status: 409 });
+    // Nobody ends the owner's employment, nor their own.
+    await expect(
+      service.setEmploymentEnded(owner, provisioned.userId, { ended: true, reason: "OTHER" }),
+    ).rejects.toMatchObject({ status: 403 });
+    const audits = await db
+      .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=?")
+      .bind(provisioned.tenantId, "EMPLOYEE_EMPLOYMENT_ENDED")
+      .first<{ count: number }>();
+    expect(audits?.count).toBe(1);
+
+    await service.setEmploymentEnded(owner, employee.id, { ended: false, reason: "REINSTATED" });
+    expect(await row()).toEqual({ employment_status: "ACTIVE", active: 1, effective_until: null });
+  });
+
   it("does not let a manager edit someone with more access than they have", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(
       identity(),
