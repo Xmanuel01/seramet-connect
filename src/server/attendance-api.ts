@@ -7,6 +7,7 @@ import {
   type SerametEnv,
 } from "@/lib/seramet-auth";
 import { businessDateForTimestamp } from "@/lib/business-date";
+import { resolvePosTimeZone } from "@/lib/pos-workflow";
 import { evaluateAttendanceGeofence } from "@/lib/attendance-geofence";
 import { permissions } from "@/platform/permissions";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
@@ -83,7 +84,10 @@ const scheduleSchema = z
 
 type BranchRow = {
   id: string;
+  /** The display timezone: a Kenyan branch still stored as UTC resolves to Nairobi. */
   timezone: string;
+  /** The timezone as stored on the branch, before that resolution. */
+  stored_timezone: string;
   business_day_cutoff_minutes: number;
   active: number;
 };
@@ -267,13 +271,38 @@ async function context(
   ) {
     deny(403, "Attendance or assigned-branch permission denied");
   }
-  const branch = await db
+  const row = await db
     .prepare(
-      "SELECT id,timezone,business_day_cutoff_minutes,active FROM branches WHERE tenant_id=? AND id=?",
+      `SELECT b.id,b.timezone,b.business_day_cutoff_minutes,b.active,t.timezone tenant_timezone,
+              t.default_currency,p.country_code
+       FROM branches b JOIN tenants t ON t.id=b.tenant_id
+       LEFT JOIN tenant_onboarding_profiles p ON p.tenant_id=b.tenant_id
+       WHERE b.tenant_id=? AND b.id=?`,
     )
     .bind(actor.tenantId, branchId)
-    .first<BranchRow>();
-  if (!branch || branch.active !== 1) deny(404, "Active branch not found");
+    .first<{
+      id: string;
+      timezone: string;
+      business_day_cutoff_minutes: number;
+      active: number;
+      tenant_timezone: string | null;
+      default_currency: string | null;
+      country_code: string | null;
+    }>();
+  if (!row || row.active !== 1) deny(404, "Active branch not found");
+  // Attendance shows and judges times in the same zone as the rest of the POS.
+  const branch: BranchRow = {
+    id: row.id,
+    timezone: resolvePosTimeZone(
+      row.timezone,
+      row.tenant_timezone ?? undefined,
+      row.country_code ?? undefined,
+      row.default_currency ?? undefined,
+    ),
+    stored_timezone: row.timezone,
+    business_day_cutoff_minutes: row.business_day_cutoff_minutes,
+    active: row.active,
+  };
   return { actor, db, branch };
 }
 async function ensureEmployee(
@@ -743,7 +772,11 @@ async function correctPunch(
   const correctingIn = input.action === "CORRECT_IN";
   const historicalBranch = {
     ...branch,
-    timezone: record.schedule_timezone ?? branch.timezone,
+    // Sessions recorded before the timezone resolution saved the raw branch setting.
+    timezone:
+      record.schedule_timezone && record.schedule_timezone !== branch.stored_timezone
+        ? record.schedule_timezone
+        : branch.timezone,
     business_day_cutoff_minutes:
       record.schedule_cutoff_minutes ?? branch.business_day_cutoff_minutes,
   };

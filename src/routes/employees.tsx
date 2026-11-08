@@ -90,7 +90,22 @@ function Employees() {
   const [editing, setEditing] = useState<EmployeeEdit | null>(null);
   const [editError, setEditError] = useState("");
   const [busy, setBusy] = useState(true);
-  const [notice, setNotice] = useState("");
+  const [notice, setNoticeText] = useState("");
+  // Errors stay until dismissed or replaced; confirmations fade after a few seconds.
+  const [noticeFades, setNoticeFades] = useState(false);
+  const setNotice = useCallback((text: string) => {
+    setNoticeText(text);
+    setNoticeFades(false);
+  }, []);
+  const flash = useCallback((text: string) => {
+    setNoticeText(text);
+    setNoticeFades(true);
+  }, []);
+  useEffect(() => {
+    if (!notice || !noticeFades) return;
+    const timer = window.setTimeout(() => setNoticeText(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice, noticeFades]);
   const [pinVisible, setPinVisible] = useState(false);
   const invitationKeys = useRef(new Map<string, string>());
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
@@ -145,7 +160,7 @@ function Employees() {
     } finally {
       if (activeScope.current === scope) setBusy(false);
     }
-  }, [headers, scope]);
+  }, [headers, scope, setNotice]);
 
   useEffect(() => {
     activeScope.current = scope;
@@ -166,7 +181,7 @@ function Employees() {
     return () => {
       activeScope.current = "";
     };
-  }, [load, scope, branchId]);
+  }, [load, scope, branchId, setNotice]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -200,7 +215,7 @@ function Employees() {
           setPinVisible(false);
           setEmployeeCreateKey(crypto.randomUUID());
           effectiveFrom.current = new Date().toISOString();
-          setNotice("The server confirmed the previous employee creation.");
+          flash("The server confirmed the previous employee creation.");
           await load();
           return;
         }
@@ -232,7 +247,7 @@ function Employees() {
       setAssignedBranchIds([branchId]);
       setPrimaryBranchId(branchId);
       setShowForm(false);
-      setNotice(
+      flash(
         draft.temporaryPin
           ? "Employee created. The temporary PIN must be changed before normal use."
           : "Employee created with the assigned role and branches.",
@@ -273,14 +288,17 @@ function Employees() {
       const result = (await response.json().catch(() => ({}))) as {
         message?: string;
         status?: string;
+        expired?: boolean;
       };
       if (!response.ok) throw Error(result.message ?? "Invitation request was not confirmed.");
       if (activeScope.current !== scopeAtStart) return;
       if (revoke) invitationKeys.current.delete(employee.id);
-      setNotice(
+      flash(
         revoke
-          ? "Outstanding invitation revoked. An already linked account is not revoked by this action."
-          : `Invitation status: ${result.status}. Provider acceptance does not confirm inbox delivery.`,
+          ? `${employee.name}'s invitation was cancelled. If they had already activated their account, it stays active.`
+          : statusOnly
+            ? invitationStatusText(employee.name, result.expired ? "EXPIRED" : result.status)
+            : `Invitation sent to ${employee.email}. Ask ${employee.name} to check their inbox, and spam, for an email from Seramet POS.`,
       );
     } catch (error) {
       if (activeScope.current === scopeAtStart)
@@ -318,7 +336,7 @@ function Employees() {
       };
       if (!response.ok) throw new Error(result.message ?? "Couldn't add the staff roles.");
       await refreshConfiguration();
-      setNotice(
+      flash(
         result.added?.length
           ? "Staff roles added. Choose one for this employee."
           : "The staff roles are already set up.",
@@ -377,7 +395,7 @@ function Employees() {
       if (activeScope.current !== scopeAtStart) return;
       if (!response.ok) throw new Error(result.message ?? "Couldn't save these details.");
       setEditing(null);
-      setNotice(`${details.fullName.trim()} was updated.`);
+      flash(`${details.fullName.trim()} was updated.`);
       await load();
     } catch (error) {
       if (activeScope.current === scopeAtStart)
@@ -613,9 +631,20 @@ function Employees() {
       ) : null}
 
       {notice ? (
-        <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
-          {notice}
-        </p>
+        <div
+          role="status"
+          className="mt-4 flex items-start justify-between gap-3 rounded-md border border-border bg-card px-4 py-3 text-sm"
+        >
+          <span>{notice}</span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => setNoticeText("")}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       ) : null}
 
       <Panel className="mt-4 overflow-x-auto">
@@ -870,4 +899,24 @@ function Field({
       />
     </label>
   );
+}
+
+function invitationStatusText(name: string, status: string | undefined) {
+  switch (status) {
+    case "PENDING":
+      return `${name} has been sent an invitation and hasn't activated their account yet.`;
+    case "ACCEPTED":
+      return `${name} has activated their account.`;
+    case "REVOKED":
+      return `${name}'s invitation was cancelled.`;
+    case "EXPIRED":
+      return `${name}'s invitation has expired. Send a new one.`;
+    case "FAILED":
+      return `${name}'s invitation didn't go out. Send a new one.`;
+    case "PREPARING":
+    case "ACCEPTING":
+      return `${name}'s invitation is still being processed. Check again in a minute.`;
+    default:
+      return `${name} has no invitation yet.`;
+  }
 }
