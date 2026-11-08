@@ -261,16 +261,15 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
-    group: "People",
+    group: "Workforce",
     permission: permissions.staffView,
     items: [
       { label: "Overview", to: "/people", icon: IdCard },
       { label: "Employees", to: "/employees", icon: UserRound },
       { label: "Clock In/Out", to: "/attendance", icon: ClipboardCheck },
-      { label: "Time Tracking", to: "/schedule", icon: CalendarDays },
+      { label: "Attendance", to: "/schedule", icon: CalendarDays },
       { label: "Payroll", to: "/payroll", icon: Wallet, permission: permissions.payrollManage },
       { label: "Leave", to: "/leave", icon: CalendarX },
-      { label: "Performance", to: "/performance", icon: Award },
       { label: "Recruitment", to: "/recruitment", icon: UserPlus },
     ],
   },

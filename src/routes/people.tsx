@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Clock3, ShieldCheck, UserPlus } from "lucide-react";
+import { ArrowRight, Clock3, UserPlus } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -10,10 +10,10 @@ import { permissions } from "@/platform/permissions";
 export const Route = createFileRoute("/people")({
   head: () => ({
     meta: [
-      { title: "People - Seramet" },
+      { title: "Workforce - Seramet" },
       {
         name: "description",
-        content: "Verified attendance and employee administration by branch.",
+        content: "Who is working today and your employee register, by branch.",
       },
     ],
   }),
@@ -107,39 +107,62 @@ function People() {
 
   const records = people?.records ?? [];
   const count = people?.summary?.total ?? 0;
-  const recorded = people?.summary?.recorded ?? 0;
   const working = people?.summary?.working ?? 0;
   const late = people?.summary?.late ?? 0;
+  const notIn = people?.summary?.not_recorded ?? 0;
   const canSeeRoster = people?.canManage ?? false;
+  const zone = people?.branchTimezone ?? "Africa/Nairobi";
+  // Who needs a look first: late, then working, then not in yet, then finished.
+  const today = (people?.employees ?? [])
+    .map((employee) => {
+      const record = records.find((row) => row.employeeId === employee.id);
+      const lateBy = record?.minutesLate ?? 0;
+      const state = !record
+        ? { label: "Not in", rank: 2, tone: "bg-secondary text-muted-foreground" }
+        : record.clockOutAt
+          ? { label: "Done", rank: 3, tone: "bg-secondary text-muted-foreground" }
+          : lateBy > 0
+            ? { label: `Late ${lateBy} min`, rank: 0, tone: "bg-warning-soft text-warning" }
+            : { label: "Working", rank: 1, tone: "bg-success-soft text-success" };
+      return { employee, record, state };
+    })
+    .sort((a, b) => a.state.rank - b.state.rank || a.employee.name.localeCompare(b.employee.name));
   return (
     <AppShell
-      title="People"
-      subtitle={"Employee records and verified timekeeping · " + branchLabel}
+      title="Workforce"
+      subtitle={branchLabel}
       actions={
-        <>
-          <Btn onClick={() => void navigate({ to: "/attendance" })}>
-            <Clock3 className="h-4 w-4" />
-            Attendance
-          </Btn>
+        canSeeRoster ? (
           <Btn variant="primary" onClick={() => void navigate({ to: "/employees" })}>
             <UserPlus className="h-4 w-4" />
-            Add Employee
+            Add employee
           </Btn>
-        </>
+        ) : (
+          <Btn variant="primary" onClick={() => void navigate({ to: "/attendance" })}>
+            <Clock3 className="h-4 w-4" />
+            Clock in or out
+          </Btn>
+        )
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Employees" value={canSeeRoster ? count : "—"} />
-        <Metric label="Recorded today" value={canSeeRoster ? recorded : people?.me ? 1 : 0} />
-        <Metric
-          label="Currently working"
-          value={canSeeRoster ? working : people?.me && !people.me.clockOutAt ? 1 : 0}
-        />
-        <Metric
-          label="Late arrivals"
-          value={canSeeRoster ? late : people?.me && (people.me.minutesLate ?? 0) > 0 ? 1 : 0}
-        />
-      </div>
+      {canSeeRoster ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Metric label="Employees" value={count} />
+          <Metric label="Working now" value={working} />
+          <Metric label="Late today" value={late} invert={late > 0} />
+          <Metric label="Not in yet" value={notIn} />
+        </div>
+      ) : people?.me ? (
+        <p className="rounded-md border border-border bg-card px-4 py-3 text-sm">
+          {people.me.clockOutAt
+            ? `You clocked out at ${renderTime(people.me.clockOutAt, zone)}.`
+            : `You clocked in at ${renderTime(people.me.clockInAt, zone)}.`}
+        </p>
+      ) : people ? (
+        <p className="rounded-md border border-border bg-card px-4 py-3 text-sm">
+          You haven&apos;t clocked in today.
+        </p>
+      ) : null}
       {notice && (
         <p role="status" className="mt-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
           {notice}
@@ -147,97 +170,54 @@ function People() {
       )}
       {!mayRead && (
         <p role="status" className="mt-4 text-sm text-muted-foreground">
-          Attendance access has not been assigned to your account.
+          You don&apos;t have access to attendance. Ask the account owner.
         </p>
       )}
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <Panel>
-          <PanelHead
-            title="Employee management"
-            sub="Active POS identities, assigned branches and PIN credentials"
-            right={<UserPlus className="h-4 w-4 text-primary" />}
-          />
-          <div className="p-4">
-            <p className="text-sm text-muted-foreground">
-              Add employees, assign an authorized role and configure their login credentials.
-              Account owners manage who can create new employee accounts.
-            </p>
-            <Btn className="mt-4" onClick={() => void navigate({ to: "/employees" })}>
-              Open employee register <ArrowRight className="h-4 w-4" />
-            </Btn>
-          </div>
-        </Panel>
-        <Panel>
-          <PanelHead
-            title="Attendance and shifts"
-            sub="Location-verified punches, exceptions and assigned start times"
-            right={<ShieldCheck className="h-4 w-4 text-primary" />}
-          />
-          <div className="p-4">
-            <p className="text-sm text-muted-foreground">
-              Clock in or out from your assigned branch. Supervisors can record exceptions and
-              manage employee scheduled start times with an audit trail.
-            </p>
-            <Btn className="mt-4" onClick={() => void navigate({ to: "/attendance" })}>
-              Open attendance <ArrowRight className="h-4 w-4" />
-            </Btn>
-          </div>
-        </Panel>
-      </div>
       {canSeeRoster && (
         <Panel className="mt-4">
           <PanelHead
-            title="Today's employee register"
-            sub={
-              "Verified attendance for " +
-              people?.businessDate +
-              "; no fabricated schedules or deductions"
+            title="Today"
+            right={
+              <Btn onClick={() => void navigate({ to: "/schedule" })}>
+                Attendance <ArrowRight className="h-4 w-4" />
+              </Btn>
             }
           />
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[650px]">
+            <table className="w-full min-w-[560px]">
               <thead>
                 <tr>
                   <TH>Employee</TH>
-                  <TH>Start time</TH>
-                  <TH>Clock in</TH>
-                  <TH>Clock out</TH>
+                  <TH>Starts</TH>
+                  <TH>In</TH>
+                  <TH>Out</TH>
                   <TH>Status</TH>
                 </tr>
               </thead>
               <tbody>
-                {people?.employees.map((employee) => {
-                  const record = records.find((row) => row.employeeId === employee.id);
-                  const zone = people.branchTimezone;
-                  return (
-                    <tr key={employee.id}>
-                      <TD className="font-semibold">{employee.name}</TD>
-                      <TD>{employee.scheduled_start ?? "Not assigned"}</TD>
-                      <TD>{renderTime(record?.clockInAt, zone)}</TD>
-                      <TD>{renderTime(record?.clockOutAt, zone)}</TD>
-                      <TD>
-                        <Status>
-                          {!record
-                            ? "NOT CLOCKED"
-                            : record.clockOutAt
-                              ? "COMPLETED"
-                              : (record.minutesLate ?? 0) > 0
-                                ? "LATE"
-                                : "PRESENT"}
-                        </Status>
-                      </TD>
-                    </tr>
-                  );
-                })}
+                {today.map(({ employee, record, state }) => (
+                  <tr key={employee.id}>
+                    <TD className="font-semibold">{employee.name}</TD>
+                    <TD>{employee.scheduled_start ?? "—"}</TD>
+                    <TD>{renderTime(record?.clockInAt, zone)}</TD>
+                    <TD>{renderTime(record?.clockOutAt, zone)}</TD>
+                    <TD>
+                      <Status className={state.tone}>{state.label}</Status>
+                    </TD>
+                  </tr>
+                ))}
+                {!today.length && (
+                  <tr>
+                    <TD colSpan={5} className="text-muted-foreground">
+                      No employees in this branch yet.
+                    </TD>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </Panel>
       )}
-      <p className="mt-3 text-xs text-muted-foreground">
-        Verified punches are maintained separately from historical payroll records. Attendance does
-        not automatically deduct wages.
-      </p>
     </AppShell>
   );
 }

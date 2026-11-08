@@ -62,6 +62,7 @@ export function AttendanceClock(props: Props) {
     day: "numeric",
     month: "long",
   }).format(now);
+  const calendarDate = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(now);
   const seconds =
     working && props.clockInAt
       ? Math.max(0, Math.floor((now - Date.parse(props.clockInAt)) / 1000))
@@ -115,7 +116,6 @@ export function AttendanceClock(props: Props) {
               >
                 {time}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">{zone}</p>
             </div>
           </div>
           <dl className="order-3 grid grid-cols-2 gap-4 border-y border-border py-4 md:mt-6 md:py-5">
@@ -132,7 +132,8 @@ export function AttendanceClock(props: Props) {
               </dd>
             </div>
           </dl>
-          {props.businessDate && (
+          {/* Only after midnight, before the cutoff, does the business day differ from today. */}
+          {props.businessDate && props.businessDate !== calendarDate && (
             <p className="order-4 text-xs text-muted-foreground md:mt-3">
               Business date <time dateTime={props.businessDate}>{props.businessDate}</time>
             </p>
@@ -205,7 +206,7 @@ export function AttendanceClock(props: Props) {
                   : locationEnabled
                     ? `Geofence enabled${props.radiusMeters ? ` (${props.radiusMeters} m)` : ""}. Location verified on each punch.`
                     : props.canSetLocation
-                      ? "Set the workplace location in Time Tracking settings."
+                      ? "Set the workplace location in Attendance settings."
                       : "Ask your manager to set up workplace location."}
             </p>
           )}

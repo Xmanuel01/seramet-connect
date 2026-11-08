@@ -26,7 +26,7 @@ function Performance() {
   return (
     <AppShell
       title="Performance"
-      subtitle={`Factual attendance and service metrics - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={<Btn onClick={() => void management.refresh()}>Refresh</Btn>}
     >
       <ManagementReadModelState
