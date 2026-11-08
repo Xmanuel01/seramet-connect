@@ -270,6 +270,8 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   expect(document?.headers()["permissions-policy"]).toBe(
     "camera=(), microphone=(), geolocation=(self), payment=()",
   );
+  await page.goto("/schedule");
+  await page.getByRole("tab", { name: "Settings", exact: true }).click();
   await expect(page.getByText("Workplace location for clock-in")).toBeVisible();
   await page.getByRole("button", { name: "Use my current location" }).click();
   await expect(page.getByLabel("Latitude")).toHaveValue("-1.26");
@@ -284,6 +286,7 @@ test("employee clock-in enforces GPS, supervisor config and immutable server tim
   await page.getByRole("button", { name: "Save location" }).click();
   expect((await saved).status()).toBe(200);
   await expect(page.getByLabel("Require staff to be on site")).toBeChecked();
+  await page.goto("/attendance");
   await expect(page.getByRole("button", { name: "Clock in" })).toBeEnabled();
   // Chromium timestamps its emulated fix when configured, not when requested.
   // Refresh the sensor after cold-start hydration; keep the server age guard intact.

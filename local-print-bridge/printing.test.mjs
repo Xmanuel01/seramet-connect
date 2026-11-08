@@ -123,16 +123,30 @@ test("encoder emits bounded 58/80mm lines, safe text, feed and opted-in cut", ()
     // GS V 66 0: feed to the cutter and cut, never a guessed line count.
     assert.deepEqual([...bytes.subarray(-4)], [29, 86, 66, 0]);
     assert.ok(bytes.includes(Buffer.from("?p malicious")));
-    const columns = paperWidth === "58mm" ? 32 : 42;
+    // 42 template columns plus a 3-character indent fill 80mm's 48 evenly.
+    const columns = paperWidth === "58mm" ? 32 : 48;
     for (const line of bytes.subarray(10, -4).toString("latin1").split("\n"))
       assert.ok(line.replace(/\x1b(E.|3.|2)/g, "").length <= columns, line);
+    // Every printed line, wrapped ones included, starts with exactly the indent
+    // that centres it (none on 58mm).
+    const printed = bytes
+      .subarray(10, -4)
+      .toString("latin1")
+      .split("\n")
+      .slice(0, -1)
+      .map((line) => line.replace(/\x1b(E.|3.|2)/g, ""));
+    assert.ok(printed.length >= 4, "the long line wraps onto several lines");
+    for (const line of printed) {
+      const indent = /^ */.exec(line)[0].length;
+      assert.equal(indent, paperWidth === "80mm" ? 3 : 0, JSON.stringify(line));
+    }
   }
   assert.throws(() => encodeEscPos("x", { ...profile, encoding: "utf8" }), /UNSUPPORTED/);
   assert.throws(() => encodeEscPos("x", { ...profile, ruleStyle: "DOTTED" }), /UNSUPPORTED/);
   const full = encodeEscPos("receipt", { ...profile, cutter: "full" });
   assert.deepEqual([...full.subarray(-4)], [29, 86, 65, 0]);
   const bytes = encodeEscPos("receipt", { ...profile, cutter: "none" });
-  assert.deepEqual([...bytes.subarray(-3)], [27, 100, 3]);
+  assert.deepEqual([...bytes.subarray(-3)], [27, 100, 5]);
 });
 
 test("semantic emphasis highlights totals and allergy instructions without leaking to other rows", () => {

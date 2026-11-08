@@ -100,6 +100,40 @@ describe("enterprise module access registry", () => {
     expect(invoice.actions.SENSITIVE).toBe(false);
   });
 
+  it("preserves attendance management access without granting unrelated People modules", () => {
+    const profile = branchProfile([permissions.staffManage]);
+    expect(canAccessPath(profile, "/schedule")).toBe(true);
+    for (const path of ["/people", "/employees", "/payroll", "/leave"])
+      expect(canAccessPath(profile, path)).toBe(false);
+    const links = getVisibleNavGroups(
+      "Attendance manager",
+      "Westlands",
+      [permissions.staffManage],
+      DEMO_TENANT_ID,
+      profile,
+    ).flatMap((group) => group.items.map((item) => item.to));
+    expect(links).toContain("/schedule");
+    expect(links).not.toContain("/payroll");
+    const readOnly = branchProfile([permissions.staffView]);
+    expect(canAccessPath(readOnly, "/schedule")).toBe(true);
+    expect(moduleDecision(readOnly, "time-tracking")?.actions.EDIT).toBe(false);
+    expect(canAccessPath(branchProfile([permissions.attendanceUse]), "/schedule")).toBe(false);
+  });
+
+  it.each(["staff", "attendance", "time-tracking"] as const)(
+    "keeps %s deny policies effective for attendance management",
+    (key) => {
+      const profile = buildModuleAccessProfile({
+        permissions: [permissions.staffView, permissions.staffManage],
+        organizationalScopes: ["BRANCH"],
+        entitlements: [],
+        entitlementsEnforced: false,
+        policies: { [key]: "DENY" },
+      });
+      expect(canAccessPath(profile, "/schedule")).toBe(false);
+    },
+  );
+
   it("shows waiter operational tabs without exposing finance or HQ", () => {
     const actorPermissions = [
       permissions.posAccess,
