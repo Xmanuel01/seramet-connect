@@ -41,8 +41,12 @@ export type EmployeeCreateInput = {
 
 export type EmployeeUpdateInput = Pick<
   EmployeeCreateInput,
-  "fullName" | "employeeCode" | "jobTitle" | "roleId"
-> & { email: string; phone: string };
+  "fullName" | "employeeCode" | "jobTitle"
+> & {
+  email: string;
+  phone: string;
+  /** Ignored for the account owner, whose role is fixed. */ roleId?: string;
+};
 
 export type OwnershipTransferInput = {
   targetUserId: string;
@@ -406,8 +410,21 @@ export class PosIdentityService {
         owner: number;
       }>();
     if (!current) throw operation("VALIDATION_FAILED", 404, "Employee was not found");
-    if (Number(current.owner) === 1)
-      throw operation("PERMISSION_DENIED", 403, "The account owner's details can't be edited here");
+    // The account owner edits their own name and contact details. Their role and sign-in
+    // email belong to account ownership, so neither changes here.
+    const owner = Number(current.owner) === 1;
+    if (owner && actor.id !== userId)
+      throw operation(
+        "PERMISSION_DENIED",
+        403,
+        "Only the account owner can edit their own details",
+      );
+    if (owner && normalizeEmail(input.email) !== current.normalized_email)
+      throw operation(
+        "VALIDATION_FAILED",
+        400,
+        "The account owner's email is their sign-in and can't be changed here",
+      );
     // Every branch the employee works at must be within the editor's authority.
     if (actor.branchScope.type !== "ALL") {
       const assigned = await this.db
@@ -440,7 +457,9 @@ export class PosIdentityService {
     }
     const currentRoleIds = [...new Set(heldRows.map((row) => row.role_id))];
     // An employee already holding this role keeps every role they have.
-    const roleChanged = !currentRoleIds.includes(input.roleId);
+    if (!owner && !input.roleId) throw operation("VALIDATION_FAILED", 400, "Choose a role");
+    const roleId = input.roleId ?? "";
+    const roleChanged = !owner && !currentRoleIds.includes(roleId);
     if (roleChanged) {
       const rolePermissions = await this.db
         .prepare(
@@ -448,7 +467,7 @@ export class PosIdentityService {
              ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
            WHERE r.tenant_id=? AND r.id=? AND r.active=1 AND r.code<>'ACCOUNT_OWNER'`,
         )
-        .bind(actor.tenantId, input.roleId)
+        .bind(actor.tenantId, roleId)
         .all<{ permission_code: string }>();
       if (!(rolePermissions.results ?? []).length)
         throw operation("VALIDATION_FAILED", 400, "Role is invalid");
@@ -528,12 +547,12 @@ export class PosIdentityService {
           .bind(actor.tenantId, userId),
         this.db
           .prepare("INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)")
-          .bind(actor.tenantId, userId, input.roleId),
+          .bind(actor.tenantId, userId, roleId),
       );
     statements.push(
       audit(this.db, actor, "EMPLOYEE_UPDATED", "USER", userId, {
         employeeCode: normalizeCode(input.employeeCode),
-        ...(roleChanged ? { roleId: input.roleId, previousRoleIds: currentRoleIds } : {}),
+        ...(roleChanged ? { roleId: roleId, previousRoleIds: currentRoleIds } : {}),
       }),
     );
     try {

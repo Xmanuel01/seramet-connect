@@ -20,6 +20,7 @@ import {
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
 import { permissions } from "@/platform/permissions";
+import { randomPin } from "@/lib/random-pin";
 
 export const Route = createFileRoute("/employees")({
   head: () => ({ meta: [{ title: "Employees - Seramet" }] }),
@@ -51,6 +52,8 @@ type EmployeeEdit = {
   email: string;
   phone: string;
   roleId: string;
+  /** The account owner edits their own name and contact details; role and sign-in email stay. */
+  owner: boolean;
 };
 
 const emptyDraft = {
@@ -88,6 +91,7 @@ function Employees() {
   const [editError, setEditError] = useState("");
   const [busy, setBusy] = useState(true);
   const [notice, setNotice] = useState("");
+  const [pinVisible, setPinVisible] = useState(false);
   const invitationKeys = useRef(new Map<string, string>());
   const [employeeCreateKey, setEmployeeCreateKey] = useState(() => crypto.randomUUID());
   const effectiveFrom = useRef(new Date().toISOString());
@@ -147,6 +151,7 @@ function Employees() {
     activeScope.current = scope;
     setEmployees([]);
     setDraft(emptyDraft);
+    setPinVisible(false);
     setShowForm(false);
     setStationEmployee(null);
     setEditing(null);
@@ -192,6 +197,7 @@ function Employees() {
           uncertainPayload.current = null;
           setShowForm(false);
           setDraft(emptyDraft);
+          setPinVisible(false);
           setEmployeeCreateKey(crypto.randomUUID());
           effectiveFrom.current = new Date().toISOString();
           setNotice("The server confirmed the previous employee creation.");
@@ -220,6 +226,7 @@ function Employees() {
       }
       uncertainPayload.current = null;
       setDraft(emptyDraft);
+      setPinVisible(false);
       setEmployeeCreateKey(crypto.randomUUID());
       effectiveFrom.current = new Date().toISOString();
       setAssignedBranchIds([branchId]);
@@ -323,8 +330,17 @@ function Employees() {
       setBusy(false);
     }
   }
+  // Other staff are edited by managers; the owner's own record only by the owner.
+  function canEdit(employee: EmployeeRow) {
+    return canManage && (!employee.account_owner || employee.id === currentUser.id);
+  }
+  function generateTemporaryPin() {
+    const pin = randomPin();
+    setDraft({ ...draft, pin, pinConfirmation: pin });
+    setPinVisible(true);
+  }
   function startEdit(employee: EmployeeRow) {
-    if (!canManage || employee.account_owner) return;
+    if (!canEdit(employee)) return;
     setEditError("");
     setEditing({
       id: employee.id,
@@ -334,6 +350,7 @@ function Employees() {
       email: employee.email ?? "",
       phone: employee.phone ?? "",
       roleId: employee.role_id ?? "",
+      owner: Boolean(employee.account_owner),
     });
   }
   async function saveEdit(event: FormEvent) {
@@ -344,12 +361,13 @@ function Employees() {
     setEditError("");
     const scopeAtStart = scope;
     try {
-      const { id, ...details } = editing;
+      const { id, owner, roleId, ...details } = editing;
       const response = await fetch(`/api/seramet/employees/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: headers(),
         body: JSON.stringify({
           ...details,
+          ...(owner ? {} : { roleId }),
           email: details.email.trim(),
           phone: details.phone.trim(),
         }),
@@ -543,19 +561,33 @@ function Employees() {
                   ))}
               </select>
             </label>
-            <Field
-              label="Temporary PIN"
-              type="password"
-              inputMode="numeric"
-              value={draft.pin}
-              onChange={(value) =>
-                setDraft({ ...draft, pin: value.replace(/\D/g, "").slice(0, 6) })
-              }
-              required
-            />
+            <div className="grid gap-1">
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Field
+                    label="Temporary PIN"
+                    type={pinVisible ? "text" : "password"}
+                    inputMode="numeric"
+                    value={draft.pin}
+                    onChange={(value) =>
+                      setDraft({ ...draft, pin: value.replace(/\D/g, "").slice(0, 6) })
+                    }
+                    required
+                  />
+                </div>
+                <Btn type="button" onClick={generateTemporaryPin}>
+                  Generate
+                </Btn>
+              </div>
+              {pinVisible && draft.pin ? (
+                <span className="text-xs text-muted-foreground">
+                  Give this PIN to the employee now. It isn't shown again after you create them.
+                </span>
+              ) : null}
+            </div>
             <Field
               label="Confirm PIN"
-              type="password"
+              type={pinVisible ? "text" : "password"}
               inputMode="numeric"
               value={draft.pinConfirmation}
               onChange={(value) =>
@@ -611,11 +643,7 @@ function Employees() {
             {employees.map((employee) => (
               <tr
                 key={employee.id}
-                className={
-                  canManage && !employee.account_owner
-                    ? "cursor-pointer hover:bg-secondary/50"
-                    : undefined
-                }
+                className={canEdit(employee) ? "cursor-pointer hover:bg-secondary/50" : undefined}
                 onClick={() => startEdit(employee)}
               >
                 <TD>
@@ -656,7 +684,7 @@ function Employees() {
                         <MoreHorizontal className="h-4 w-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {!employee.account_owner && (
+                        {canEdit(employee) && (
                           <DropdownMenuItem onSelect={() => startEdit(employee)}>
                             Edit details
                           </DropdownMenuItem>
@@ -693,9 +721,11 @@ function Employees() {
       <Dialog open={!!editing} onOpenChange={(open) => !open && !busy && setEditing(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit employee</DialogTitle>
+            <DialogTitle>{editing?.owner ? "Edit your details" : "Edit employee"}</DialogTitle>
             <DialogDescription>
-              Changes, including a new role, apply straight away. Use the PIN reset to change a PIN.
+              {editing?.owner
+                ? "Changes apply straight away. Your role and sign-in email stay as they are."
+                : "Changes, including a new role, apply straight away. Use the PIN reset to change a PIN."}
             </DialogDescription>
           </DialogHeader>
           {editing && (
@@ -718,35 +748,38 @@ function Employees() {
                 onChange={(value) => setEditing({ ...editing, jobTitle: value })}
                 required
               />
-              <label className={labelClass}>
-                Role
-                <select
-                  className={fieldClass}
-                  required
-                  value={editing.roleId}
-                  onChange={(event) => setEditing({ ...editing, roleId: event.target.value })}
-                >
-                  <option value="">Select role</option>
-                  {/* Keep the current role listed even when the editor could not grant it. */}
-                  {[
-                    ...assignableRoles,
-                    ...roleRecords.filter(
-                      (role) =>
-                        role.id === editing.roleId &&
-                        !assignableRoles.some((assignable) => assignable.id === role.id),
-                    ),
-                  ].map((role) => (
-                    <option key={role.id} value={role.id}>
-                      {role.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {!editing.owner && (
+                <label className={labelClass}>
+                  Role
+                  <select
+                    className={fieldClass}
+                    required
+                    value={editing.roleId}
+                    onChange={(event) => setEditing({ ...editing, roleId: event.target.value })}
+                  >
+                    <option value="">Select role</option>
+                    {/* Keep the current role listed even when the editor could not grant it. */}
+                    {[
+                      ...assignableRoles,
+                      ...roleRecords.filter(
+                        (role) =>
+                          role.id === editing.roleId &&
+                          !assignableRoles.some((assignable) => assignable.id === role.id),
+                      ),
+                    ].map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <Field
                 label="Email"
                 type="email"
                 value={editing.email}
                 onChange={(value) => setEditing({ ...editing, email: value })}
+                disabled={editing.owner}
                 required
               />
               <Field
@@ -811,6 +844,7 @@ function Field({
   type = "text",
   inputMode,
   required,
+  disabled,
 }: {
   label: string;
   value: string;
@@ -818,6 +852,7 @@ function Field({
   type?: string;
   inputMode?: "numeric";
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label className={labelClass}>
@@ -827,6 +862,7 @@ function Field({
         type={type}
         inputMode={inputMode}
         required={required}
+        disabled={disabled}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         maxLength={254}
