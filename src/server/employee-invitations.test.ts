@@ -237,6 +237,44 @@ describe("verified employee account invitations", () => {
       authorization: "Bearer eyJdisposable.jwt.key",
     });
   });
+  it("re-invites someone who already has an account with a sign-in link to it", async () => {
+    await invite();
+    await revokeEmployeeInvitation(env, actor, employee);
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        return String(input).includes("/invite")
+          ? Response.json(
+              { msg: "A user with this email address has already been registered" },
+              { status: 422 },
+            )
+          : Response.json({});
+      }),
+    );
+    const again = await invite();
+    expect(again.response.status).toBe(202);
+    expect(calls[1]).toContain("/auth/v1/otp?redirect_to=");
+    expect(calls[1]).toContain(encodeURIComponent(`invitation=${again.body.id}`));
+    const accepted = await acceptEmployeeInvitation(
+      request({
+        invitationId: again.body.id,
+        accessToken: "disposable-verification-token",
+        pin: "602947",
+        pinConfirmation: "602947",
+      }),
+      env,
+    );
+    expect(await accepted.json()).toMatchObject({ pinSet: true });
+  });
+  it("refuses an existing account Seramet never invited", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({}, { status: 422 })),
+    );
+    await expect(invite()).rejects.toThrow(/didn't create/);
+  });
   it("says plainly when Supabase rejects the invitation key", async () => {
     vi.stubGlobal(
       "fetch",
