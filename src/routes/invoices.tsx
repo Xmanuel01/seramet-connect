@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { branchBusinessToday, recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { recordBusinessDate, resolvePosTimeZone } from "@/lib/pos-workflow";
+import { useBusinessToday } from "@/hooks/use-business-today";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
@@ -172,14 +173,16 @@ function Invoices() {
     matchesBranch,
     hasPermission,
     role,
+    timeZone,
   } = useAppContext();
-  // Opens on today's unpaid invoices; clearing the chips shows every day.
-  const [periodDate, setPeriodDate] = useState(() =>
-    branchBusinessToday(
-      branchRecords.find((branch) => branch.id === branchId),
-      activeTimeZone(),
-    ),
+  // Opens on today's unpaid invoices. Until the user picks or clears a date, the date
+  // follows the active branch's current business day, across branch switches and the cutoff.
+  const [chosenDate, setPeriodDate] = useState<string | null>(null);
+  const businessToday = useBusinessToday(
+    branchRecords.find((branch) => branch.id === branchId)?.metadata["businessDayCutoffMinutes"],
+    timeZone,
   );
+  const periodDate = chosenDate ?? businessToday;
   const canSplit = hasPermission(permissions.invoicesManage);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);

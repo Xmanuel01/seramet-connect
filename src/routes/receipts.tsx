@@ -14,7 +14,8 @@ import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate } from "@/lib/date-filters";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { branchBusinessToday, recordBusinessDate } from "@/lib/pos-workflow";
+import { recordBusinessDate } from "@/lib/pos-workflow";
+import { useBusinessToday } from "@/hooks/use-business-today";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
 import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
@@ -54,13 +55,14 @@ function Receipts() {
     matchesBranch,
     timeZone,
   } = useAppContext();
-  // Today's business day at this branch, which runs past midnight until the cutoff.
-  const [periodDate, setPeriodDate] = useState(() =>
-    branchBusinessToday(
-      branchRecords.find((branch) => branch.id === branchId),
-      timeZone,
-    ),
+  // Opens on today. Until the user picks or clears a date, the date follows the active
+  // branch's current business day, across branch switches and the cutoff.
+  const [chosenDate, setPeriodDate] = useState<string | null>(null);
+  const businessToday = useBusinessToday(
+    branchRecords.find((branch) => branch.id === branchId)?.metadata["businessDayCutoffMinutes"],
+    timeZone,
   );
+  const periodDate = chosenDate ?? businessToday;
   const { state, mutate } = useTransactionEngine();
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);
