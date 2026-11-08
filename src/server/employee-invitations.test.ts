@@ -140,7 +140,7 @@ describe("verified employee account invitations", () => {
         actor,
         employee,
       ),
-    ).rejects.toThrow(/not configured/);
+    ).rejects.toThrow(/aren.t set up on this server/);
     expect(fetch).not.toHaveBeenCalled();
     await expect(
       createEmployeeInvitation(

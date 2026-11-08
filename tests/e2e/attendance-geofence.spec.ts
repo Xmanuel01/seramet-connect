@@ -128,6 +128,8 @@ test("chef uses the shared POS PIN login and clocks in without administrator acc
       idempotencyKey: randomUUID(),
       fullName: "Disposable PIN chef",
       employeeCode,
+      email: `${employeeCode.toLowerCase()}@example.test`,
+      phone: "0700000000",
       jobTitle: "Chef",
       roleId: chef!.id,
       assignedBranchIds: [fixture.firstBranchId],
@@ -372,9 +374,13 @@ test("People provides an Add Employee path to the authorized employee register",
   const employeeCode = "STAFF-" + randomUUID().slice(0, 8).toUpperCase();
   await page.getByLabel("Full name", { exact: true }).fill("Disposable attendance employee");
   await page.getByLabel("Employee code", { exact: true }).fill(employeeCode);
+  await page
+    .getByLabel("Email", { exact: true })
+    .fill(`${employeeCode.toLowerCase()}@example.test`);
+  await page.getByLabel("Phone", { exact: true }).fill("0700000000");
   await page.getByLabel("Job title", { exact: true }).fill("Waiter");
   await page
-    .getByRole("combobox", { name: "Operational role", exact: true })
+    .getByRole("combobox", { name: "Role", exact: true })
     .selectOption({ label: "Attendance employee" });
   await page.getByLabel("Temporary PIN", { exact: true }).fill("602947");
   await page.getByLabel("Confirm PIN", { exact: true }).fill("602947");
@@ -385,11 +391,16 @@ test("People provides an Add Employee path to the authorized employee register",
   const response = await created;
   expect(response.status()).toBe(201);
   const request = response.request().postDataJSON() as Record<string, unknown>;
-  expect(request).not.toHaveProperty("email");
-  expect(request).not.toHaveProperty("phone");
+  // Email and phone are required, so both always travel with the request.
+  expect(request).toMatchObject({
+    email: `${employeeCode.toLowerCase()}@example.test`,
+    phone: "0700000000",
+  });
   const body = (await response.json()) as { employee: { id: string } };
   expect(body.employee.id).toBeTruthy();
-  await expect(page.getByText(employeeCode, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(`${employeeCode} · ${employeeCode.toLowerCase()}@example.test`, { exact: true }),
+  ).toBeVisible();
   // The same creation request is acknowledged without duplicating the identity.
   const replay = await context.request.post("/api/seramet/employees", {
     data: request,

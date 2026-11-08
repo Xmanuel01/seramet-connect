@@ -118,7 +118,14 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
   const [customStation, setCustomStation] = useState({ name: "", stationType: "KITCHEN" });
   const [menuItem, setMenuItem] = useState({ name: "", category: "", price: "", station: "" });
   const [team, setTeam] = useState<TeamMember[]>([]);
-  const [member, setMember] = useState({ name: "", role: "cashier", code: "", pin: "", email: "" });
+  const [member, setMember] = useState({
+    name: "",
+    role: "cashier",
+    code: "",
+    pin: "",
+    email: "",
+    phone: "",
+  });
 
   // Business type pre-fills later steps until the owner saves their own answers there.
   useEffect(() => {
@@ -404,6 +411,10 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
       if (member.name.trim().length < 2) throw new Error("Enter the person's full name");
       if (!/^\d{6}$/.test(member.pin))
         throw new Error("Enter a 6-digit temporary PIN they will replace at first sign-in");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(member.email.trim()))
+        throw new Error("Enter the person's email address");
+      if (!/^\+?[0-9][0-9 ()-]{6,19}$/.test(member.phone.trim()))
+        throw new Error("Enter the person's phone number");
       const roleId = await ensureRole(role.label, role.permissions);
       const employeeCode = member.code.trim() || codeFrom(member.name, 3);
       const created = await centre.send<{ employee: { id: string } }>("/api/seramet/employees", {
@@ -418,7 +429,8 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
         pinConfirmation: member.pin,
         effectiveFrom: new Date().toISOString(),
         temporaryPin: true,
-        ...(member.email.trim() ? { email: member.email.trim() } : {}),
+        email: member.email.trim(),
+        phone: member.phone.trim(),
       });
       const stationTypesForRole = kitchenRoles[member.role];
       const stationIds = branchStations
@@ -436,7 +448,7 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
         ...current,
         { name: member.name.trim(), role: role.label, code: employeeCode },
       ]);
-      setMember({ name: "", role: member.role, code: "", pin: "", email: "" });
+      setMember({ name: "", role: member.role, code: "", pin: "", email: "", phone: "" });
     });
 
   async function ensureRole(name: string, permissionCodes: string[]) {
@@ -1090,12 +1102,23 @@ export function OnboardingWizard({ centre }: { centre: Centre }) {
                 </span>
               </label>
               <label className={labelClass}>
-                Email <span className="font-normal text-muted-foreground">(optional)</span>
+                Email
                 <input
                   className={fieldClass}
                   type="email"
+                  required
                   value={member.email}
                   onChange={(event) => setMember({ ...member, email: event.target.value })}
+                />
+              </label>
+              <label className={labelClass}>
+                Phone
+                <input
+                  className={fieldClass}
+                  type="tel"
+                  required
+                  value={member.phone}
+                  onChange={(event) => setMember({ ...member, phone: event.target.value })}
                 />
               </label>
             </div>

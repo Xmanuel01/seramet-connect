@@ -23,7 +23,10 @@ function setup(env: SerametEnv) {
     !env.SERAMET_SUPABASE_URL ||
     !env.SERAMET_PUBLIC_ORIGIN
   )
-    fail(503, "Staff invitations are not configured. No invitation was sent.");
+    fail(
+      503,
+      "Email invitations aren't set up on this server yet, so no invitation was sent. The employee can still sign in at the POS with their code and PIN.",
+    );
   const url = new URL(env.SERAMET_SUPABASE_URL),
     origin = new URL(env.SERAMET_PUBLIC_ORIGIN);
   if (

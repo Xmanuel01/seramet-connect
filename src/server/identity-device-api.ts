@@ -34,13 +34,21 @@ const completePinSchema = z
   })
   .strict();
 
+// Every employee needs an email (to be invited to sign in) and a phone number.
+const employeeContact = {
+  email: z.string().trim().email().max(254),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^\+?[0-9][0-9 ()-]{6,19}$/),
+};
+
 const employeeCreateSchema = z
   .object({
     idempotencyKey: z.string().trim().min(16).max(160),
     fullName: z.string().trim().min(2).max(120),
-    email: z.string().trim().email().max(254).optional(),
     employeeCode: z.string().trim().min(2).max(40),
-    phone: z.string().trim().max(40).optional(),
+    ...employeeContact,
     jobTitle: z.string().trim().min(2).max(100),
     roleId: z.string().trim().min(1).max(120),
     assignedBranchIds: z.array(z.string().trim().min(1).max(120)).min(1).max(100),
@@ -50,6 +58,16 @@ const employeeCreateSchema = z
     effectiveFrom: z.string().datetime({ offset: true }),
     effectiveUntil: z.string().datetime({ offset: true }).optional(),
     temporaryPin: z.boolean().optional(),
+  })
+  .strict();
+
+const employeeUpdateSchema = z
+  .object({
+    fullName: z.string().trim().min(2).max(120),
+    employeeCode: z.string().trim().min(2).max(40),
+    ...employeeContact,
+    jobTitle: z.string().trim().min(2).max(100),
+    roleId: z.string().trim().min(1).max(120),
   })
   .strict();
 
@@ -178,6 +196,19 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     invalidateAuthoritativeConfiguration(env.SERAMET_DB);
     return Response.json({ ok: true, employee }, { status: 201, headers: noStore() });
   }
+  const employeeRoute = /^\/api\/seramet\/employees\/([^/]+)$/.exec(url.pathname);
+  if (employeeRoute && request.method === "PATCH" && employeeRoute[1] !== "creation-attempts") {
+    assertSameOrigin(request, env);
+    const actor = await authenticateSerametRequest(request, env);
+    const body = parse(employeeUpdateSchema, await request.json().catch(() => null));
+    const employee = await service.updateEmployee(
+      actor,
+      decodeURIComponent(employeeRoute[1]!),
+      body,
+    );
+    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    return Response.json({ ok: true, employee }, { headers: noStore() });
+  }
   const creationAttempt = /^\/api\/seramet\/employees\/creation-attempts\/([^/]+)$/.exec(
     url.pathname,
   );
@@ -257,6 +288,7 @@ function isHandledPath(pathname: string) {
     pathname === "/api/seramet/public/employee/logout" ||
     pathname === "/api/seramet/public/employee/change-pin" ||
     pathname === "/api/seramet/employees" ||
+    /^\/api\/seramet\/employees\/[^/]+$/.test(pathname) ||
     /^\/api\/seramet\/employees\/[^/]+\/invitation$/.test(pathname) ||
     /^\/api\/seramet\/employees\/[^/]+\/stations$/.test(pathname) ||
     /^\/api\/seramet\/employees\/creation-attempts\/[^/]+$/.test(pathname) ||
