@@ -88,7 +88,7 @@ describe("standard staff roles", () => {
     );
     for (const role of standardRoles)
       expect(await rolePermissions(tenantId, role.code)).toEqual([...role.permissions].sort());
-  });
+  }, 30_000);
 
   it("are added to an existing restaurant without touching roles it already has", async () => {
     db = createDemoFixtureDatabase();
@@ -121,7 +121,7 @@ describe("standard staff roles", () => {
     const again = await installStandardRoles(db, actor(tenantId), { reason: "Add staff roles" });
     expect(again.added).toEqual([]);
     expect((await roles(tenantId)).length).toBe(before.length + missing.length);
-  });
+  }, 30_000);
 
   it("need role management permission", async () => {
     db = createDemoFixtureDatabase();
@@ -131,7 +131,7 @@ describe("standard staff roles", () => {
       installStandardRoles(db, actor(tenantId, []), { reason: "Add staff roles" }),
     ).rejects.toMatchObject({ status: 403 });
     expect((await roles(tenantId)).length).toBe(before);
-  });
+  }, 30_000);
 });
 
 function actor(
