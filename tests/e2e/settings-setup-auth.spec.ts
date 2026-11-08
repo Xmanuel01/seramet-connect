@@ -271,38 +271,22 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
   await establishSession(page);
   await page.goto("/pos");
   await expect(page.getByLabel(/Connection: Online/)).toBeVisible();
-  const name = `Payroll fixture ${Date.now()}`;
-  const created = await page.evaluate(async (name) => {
-    const snapshot = await (await fetch("/api/seramet/transactions")).json();
-    const idempotencyKey = crypto.randomUUID();
-    const response = await fetch("/api/seramet/transactions/mutate", {
-      method: "POST",
-      headers: { "content-type": "application/json", "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify({
-        action: "addRider",
-        payload: { name },
-        idempotencyKey,
-        expectedRevision: snapshot.revision,
-      }),
-    });
-    return { status: response.status, body: await response.json() };
-  }, name);
-  expect(created.status, JSON.stringify(created.body)).toBe(200);
+  // Payroll lists the Employees register, so the signed-in employee appears on both pages.
+  const name = await page.evaluate(async (userId) => {
+    const response = await fetch("/api/seramet/attendance");
+    if (!response.ok) throw new Error("Attendance fixture unavailable");
+    const body = await response.json();
+    const employee = body.employees.find((row: { id: string }) => row.id === userId);
+    if (!employee?.name) throw new Error("Expected an authenticated employee fixture");
+    return employee.name as string;
+  }, fixture.userId);
 
   for (const path of ["/attendance", "/payroll"]) {
     const endpoint =
-      path === "/attendance" ? "**/api/seramet/attendance?**" : "**/api/seramet/transactions?**";
-    const attendanceName =
       path === "/attendance"
-        ? await page.evaluate(async (userId) => {
-            const response = await fetch("/api/seramet/attendance");
-            if (!response.ok) throw new Error("Attendance fixture unavailable");
-            const body = await response.json();
-            const employee = body.employees.find((row: { id: string }) => row.id === userId);
-            if (!employee?.name) throw new Error("Expected an authenticated employee fixture");
-            return employee.name as string;
-          }, fixture.userId)
-        : name;
+        ? "**/api/seramet/attendance?**"
+        : "**/api/seramet/attendance/payroll?**";
+    const attendanceName = name;
     let release!: () => void;
     const pending = new Promise<void>((resolve) => {
       release = resolve;
@@ -331,12 +315,12 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
       await expect(clock.getByText(attendanceName, { exact: true })).toBeVisible();
       await expect(clock.getByRole("button")).toHaveCount(1);
     } else {
-      await expect(page.getByRole("cell", { name: attendanceName, exact: true })).toBeVisible();
+      await expect(page.getByLabel(`Monthly pay for ${attendanceName}`)).toBeVisible();
     }
     await page.unroute(endpoint);
   }
 
-  const input = page.getByLabel(`Base net pay for ${name}`);
+  const input = page.getByLabel(`Monthly pay for ${name}`);
   await page.route("**/api/seramet/transactions/mutate", (route) =>
     route.fulfill({
       status: 503,
@@ -348,7 +332,7 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
   await input.press("Tab");
   await expect(page.getByText(/Pay persistence unavailable/)).toBeVisible();
   await expect(input).toHaveValue("15000");
-  await expect(page.getByText(`${name}'s base net pay updated.`)).toHaveCount(0);
+  await expect(page.getByText(`${name}'s pay is saved.`)).toHaveCount(0);
   await page.unroute("**/api/seramet/transactions/mutate");
 
   let acknowledge!: () => void;
@@ -361,13 +345,13 @@ test("attendance and payroll tolerate delayed hydration and pay edits wait for a
   });
   await input.focus();
   await input.press("Tab");
-  await expect(page.getByText(/Saving base net pay/)).toBeVisible();
-  await expect(page.getByText(`${name}'s base net pay updated.`)).toHaveCount(0);
+  await expect(page.getByText(/Saving/)).toBeVisible();
+  await expect(page.getByText(`${name}'s pay is saved.`)).toHaveCount(0);
   acknowledge();
-  await expect(page.getByText(`${name}'s base net pay updated.`, { exact: false })).toBeVisible();
+  await expect(page.getByText(`${name}'s pay is saved.`, { exact: false })).toBeVisible();
   await page.unroute("**/api/seramet/transactions/mutate");
   await page.reload();
-  await expect(page.getByLabel(`Base net pay for ${name}`)).toHaveValue("15000");
+  await expect(page.getByLabel(`Monthly pay for ${name}`)).toHaveValue("15000");
   await context.close();
 });
 

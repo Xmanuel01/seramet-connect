@@ -1665,10 +1665,30 @@ export const TransactionEngine = {
     employeeId: string,
     netMonthlyPay: number,
     user: string,
+    // Staff from the Employees register get a pay record the first time their pay is set.
+    profile?: { name: string; role?: string; branchId: string; branch: string },
   ) {
     const next = clone(normalizeTransactionState(state));
-    const employee = next.employees.find((item) => item.id === employeeId);
-    if (!employee || !Number.isFinite(netMonthlyPay) || netMonthlyPay < 0) return next;
+    if (!Number.isFinite(netMonthlyPay) || netMonthlyPay < 0) return next;
+    let employee = next.employees.find((item) => item.id === employeeId);
+    if (!employee && profile?.name.trim() && profile.branchId) {
+      employee = {
+        id: employeeId,
+        tenantId: next.tenantId ?? LOCAL_PILOT_TENANT_ID,
+        branchId: profile.branchId,
+        name: profile.name.trim(),
+        role: profile.role?.trim() || "Staff",
+        department: "",
+        branch: profile.branch,
+        shift: "",
+        netMonthlyPay: 0,
+        monthlyWorkDays: 26,
+        standardDailyHours: 8,
+        active: true,
+      };
+      next.employees.push(employee);
+    }
+    if (!employee) return next;
     const before = employee.netMonthlyPay;
     employee.netMonthlyPay = money(netMonthlyPay);
     audit(next, {

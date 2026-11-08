@@ -15,6 +15,7 @@ import { ServerOperationError } from "@/server/errors";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { attendanceRecords, attendanceCsv } from "@/server/attendance-reporting";
+import { payrollAttendance } from "@/server/payroll-attendance";
 import { attendanceTiming } from "@/lib/attendance-timing";
 import { attendanceWeekStart } from "@/lib/attendance-summary";
 import { handleAttendanceDelays } from "@/server/attendance-delay-api";
@@ -892,6 +893,17 @@ export async function handleAttendanceApi(
       },
       manager(actor),
     );
+  }
+  if (request.method === "GET" && url.pathname === "/api/seramet/attendance/payroll") {
+    return noStore({
+      ok: true,
+      ...(await payrollAttendance(
+        db,
+        actor,
+        url.searchParams.get("branchId") || actor.branchId,
+        url.searchParams.get("month") ?? "",
+      )),
+    });
   }
   if (
     request.method === "GET" &&

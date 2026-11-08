@@ -25,6 +25,8 @@ vi.mock("@/lib/app-context", () => ({
     branch: scope.all ? "All Branches" : "Westlands",
     isAllBranches: scope.all,
     branchLabel: "Render branch",
+    branchRecords: [],
+    timeZone: "Africa/Nairobi",
     currentUser: { id: "render-user", permissions: [] },
     hasPermission: () => false,
   }),
@@ -72,16 +74,17 @@ describe("workforce route initial render without a browser", () => {
     );
     scope.all = true;
     const component = payroll.options.component as () => ReactNode;
-    expect(renderToStaticMarkup(createElement(component))).toContain("Select a single branch");
+    expect(renderToStaticMarkup(createElement(component))).toContain("Pick a single branch");
   });
-  it("renders configured branch payroll without enabling writes for a read-only user", () => {
+  it("renders branch payroll as loading until the staff list arrives", () => {
     setConfigurationRepositoryForTests(
       new ConfigurationRepository(createDefaultDemoPlatformState()),
     );
     scope.populated = true;
     const component = payroll.options.component as () => ReactNode;
     const html = renderToStaticMarkup(createElement(component));
-    expect(html).toContain("Test employee");
-    expect(html).toMatch(/aria-label="Base net pay for Test employee" disabled=""/);
+    // Staff come from the server after mount; nothing is editable before then.
+    expect(html).toContain("Loading");
+    expect(html).not.toContain("Monthly pay for");
   });
 });
