@@ -138,6 +138,109 @@ describe.sequential("authoritative geofenced attendance", () => {
     });
     return { waiting, release };
   }
+  it("returns only the authenticated employee's weekly hours, including overnight work", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T19:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    vi.setSystemTime(new Date("2026-11-06T03:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+    actor.permissions = [permissions.attendanceUse];
+    const report = await handleAttendanceApi(
+      request("/api/seramet/attendance?branchId=" + branchId),
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
+    );
+    expect(await report!.json()).toMatchObject({
+      weekStart: "2026-11-02",
+      canManage: false,
+      records: [],
+      me: {
+        businessDate: "2026-11-05",
+        workedMinutes: 480,
+        clockOutAt: "2026-11-06T03:00:00.000Z",
+      },
+      myWeek: [{ employeeId: actor.id, businessDate: "2026-11-05", workedMinutes: 480 }],
+    });
+    await expect(
+      call(`/api/seramet/attendance/records?branchId=${branchId}&employeeId=someone-else`),
+    ).rejects.toThrow(/own attendance/);
+  });
+  it("exports an authorized PDF and records the access event without changing punches", async () => {
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    const response = await handleAttendanceApi(
+      request(`/api/seramet/attendance/export?branchId=${branchId}&format=pdf`),
+      { SERAMET_DB: db, SERAMET_ENVIRONMENT: "development" } as SerametEnv,
+    );
+    expect(response!.headers.get("content-type")).toBe("application/pdf");
+    const { PDFDocument } = await import("pdf-lib");
+    expect((await PDFDocument.load(await response!.arrayBuffer())).getPageCount()).toBe(1);
+    const event = db.sqlite
+      .prepare(
+        "SELECT details_json FROM attendance_access_events WHERE event_type='TIMESHEET_EXPORT'",
+      )
+      .get() as { details_json: string };
+    expect(JSON.parse(event.details_json)).toMatchObject({ format: "pdf", rows: 1 });
+    expect(
+      db.sqlite.prepare("SELECT COUNT(*) count FROM employee_attendance_sessions").get()?.count,
+    ).toBe(1);
+  });
+  it("flags a missing clock-in from the assigned schedule but not a rest day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T07:00:00Z"));
+    await call("/api/seramet/attendance/schedule", "PUT", {
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: "09:00",
+      scheduledEnd: "17:00",
+      restDay: false,
+      expectedVersion: 0,
+    });
+    let report = await call("/api/seramet/attendance?branchId=" + branchId);
+    expect(report.data.employees.find((employee) => employee.id === actor.id)).toMatchObject({
+      missingClockIn: true,
+    });
+    await call("/api/seramet/attendance/schedule", "PUT", {
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: null,
+      scheduledEnd: null,
+      restDay: true,
+      expectedVersion: 1,
+    });
+    report = await call("/api/seramet/attendance?branchId=" + branchId);
+    expect(report.data.employees.find((employee) => employee.id === actor.id)).toMatchObject({
+      missingClockIn: false,
+    });
+  });
+  it("reports and exports multiple sessions without subtracting the daily schedule twice", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-06T06:00:00Z"));
+    await call("/api/seramet/attendance/schedule", "PUT", {
+      branchId,
+      employeeId: actor.id,
+      scheduledStart: "09:00",
+      scheduledEnd: "17:00",
+      restDay: false,
+      expectedVersion: 0,
+    });
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    vi.setSystemTime(new Date("2026-11-06T10:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+    vi.setSystemTime(new Date("2026-11-06T11:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor());
+    vi.setSystemTime(new Date("2026-11-06T16:00:00Z"));
+    await call("/api/seramet/attendance/supervisor", "POST", supervisor({ action: "OUT" }));
+    const report = await call(`/api/seramet/attendance/records?branchId=${branchId}`);
+    expect(report.data).toMatchObject({
+      summary: { workedMinutes: 540, overtimeMinutes: 60, unassessedDays: 0, sessions: 2 },
+    });
+    const response = await handleAttendanceApi(
+      request(`/api/seramet/attendance/export?branchId=${branchId}`),
+      { SERAMET_DB: db } as SerametEnv,
+    );
+    const csv = await response!.text();
+    expect(csv).toContain("Day overtime over schedule minutes");
+    expect(csv.match(/540,60,Schedule comparison; not payroll/g)).toHaveLength(1);
+  });
   it("acknowledges concurrent duplicate punches once and rejects changed key reuse", async () => {
     const input = supervisor();
     const paused = pauseNextBatch();

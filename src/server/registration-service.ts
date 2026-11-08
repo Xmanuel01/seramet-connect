@@ -1,4 +1,5 @@
-import { allPermissionCodes, permissions } from "@/platform/permissions";
+import { accountOwnerPermissions } from "@/platform/standard-roles";
+import { standardRoleStatements } from "@/server/standard-roles-service";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
 import type { VerifiedExternalIdentity } from "@/server/identity/supabase-identity";
@@ -31,10 +32,6 @@ export type RestaurantRegistrationResult = {
   goLiveState: "SETUP";
   nextPath: "/seramet-setup";
 };
-
-const accountOwnerPermissions = allPermissionCodes.filter(
-  (code) => code !== permissions.platformTenantsProvision && code !== permissions.setupDemoReset,
-);
 
 export class RestaurantRegistrationService {
   constructor(private readonly db: D1Database) {}
@@ -410,6 +407,8 @@ export class RestaurantRegistrationService {
           stamp,
           stamp,
         ),
+      // Staff roles to assign straight away on Employees.
+      ...standardRoleStatements(this.db, tenantId),
     ];
 
     try {

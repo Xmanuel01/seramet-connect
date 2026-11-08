@@ -39,6 +39,11 @@ export type EmployeeCreateInput = {
   temporaryPin?: boolean;
 };
 
+export type EmployeeUpdateInput = Pick<
+  EmployeeCreateInput,
+  "fullName" | "employeeCode" | "jobTitle" | "roleId"
+> & { email: string; phone: string };
+
 export type OwnershipTransferInput = {
   targetUserId: string;
   confirmation: string;
@@ -377,6 +382,171 @@ export class PosIdentityService {
       );
     }
     return response;
+  }
+
+  async updateEmployee(actor: ServerActor, userId: string, input: EmployeeUpdateInput) {
+    requireFullAuthentication(actor);
+    requirePermission(actor, permissions.usersManage);
+    requirePermission(actor, permissions.employeeCredentialsManage);
+    validateEmployeeDetails(input);
+    const current = await this.db
+      .prepare(
+        `SELECT u.id,u.normalized_email,pb.branch_id AS primary_branch_id,
+                CASE WHEN EXISTS (SELECT 1 FROM account_owners o WHERE o.tenant_id=u.tenant_id
+                  AND o.user_id=u.id AND o.status='ACTIVE') THEN 1 ELSE 0 END AS owner
+         FROM users u LEFT JOIN user_primary_branches pb
+           ON pb.tenant_id=u.tenant_id AND pb.user_id=u.id
+         WHERE u.tenant_id=? AND u.id=?`,
+      )
+      .bind(actor.tenantId, userId)
+      .first<{
+        id: string;
+        normalized_email: string | null;
+        primary_branch_id: string | null;
+        owner: number;
+      }>();
+    if (!current) throw operation("VALIDATION_FAILED", 404, "Employee was not found");
+    if (Number(current.owner) === 1)
+      throw operation("PERMISSION_DENIED", 403, "The account owner's details can't be edited here");
+    // Every branch the employee works at must be within the editor's authority.
+    if (actor.branchScope.type !== "ALL") {
+      const assigned = await this.db
+        .prepare("SELECT branch_id FROM user_branches WHERE tenant_id=? AND user_id=?")
+        .bind(actor.tenantId, userId)
+        .all<{ branch_id: string }>();
+      const branchIds = [
+        ...(assigned.results ?? []).map((row) => row.branch_id),
+        ...(current.primary_branch_id ? [current.primary_branch_id] : []),
+      ];
+      if (!branchIds.length || branchIds.some((id) => !actor.assignedBranchIds.includes(id)))
+        throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
+    }
+    // Nobody edits someone whose access goes beyond their own.
+    const held = await this.db
+      .prepare(
+        `SELECT ur.role_id,rp.permission_code FROM user_roles ur LEFT JOIN role_permissions rp
+           ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id
+         WHERE ur.tenant_id=? AND ur.user_id=?`,
+      )
+      .bind(actor.tenantId, userId)
+      .all<{ role_id: string; permission_code: string | null }>();
+    const heldRows = held.results ?? [];
+    if (
+      heldRows.some(
+        (row) => row.permission_code && !actor.permissions.includes(row.permission_code),
+      )
+    ) {
+      throw operation("PERMISSION_DENIED", 403, "This employee has access beyond yours");
+    }
+    const currentRoleIds = [...new Set(heldRows.map((row) => row.role_id))];
+    // An employee already holding this role keeps every role they have.
+    const roleChanged = !currentRoleIds.includes(input.roleId);
+    if (roleChanged) {
+      const rolePermissions = await this.db
+        .prepare(
+          `SELECT rp.permission_code FROM roles r JOIN role_permissions rp
+             ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
+           WHERE r.tenant_id=? AND r.id=? AND r.active=1 AND r.code<>'ACCOUNT_OWNER'`,
+        )
+        .bind(actor.tenantId, input.roleId)
+        .all<{ permission_code: string }>();
+      if (!(rolePermissions.results ?? []).length)
+        throw operation("VALIDATION_FAILED", 400, "Role is invalid");
+      if (
+        (rolePermissions.results ?? []).some(
+          (row) => !actor.permissions.includes(row.permission_code),
+        )
+      )
+        throw operation(
+          "PERMISSION_DENIED",
+          403,
+          "Cannot grant permissions outside your authority",
+        );
+    }
+    const duplicate = await this.db
+      .prepare(
+        `SELECT id FROM users WHERE tenant_id=? AND id<>?
+         AND (normalized_email=? OR employee_code=?) LIMIT 1`,
+      )
+      .bind(actor.tenantId, userId, normalizeEmail(input.email), normalizeCode(input.employeeCode))
+      .first();
+    if (duplicate)
+      throw operation("DUPLICATE", 409, "Another employee already uses that code or email");
+    const stamp = now();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE users SET name=?,email=?,normalized_email=?,phone=?,job_title=?,employee_code=?,
+             updated_at=? WHERE tenant_id=? AND id=?`,
+        )
+        .bind(
+          input.fullName.trim(),
+          input.email.trim(),
+          normalizeEmail(input.email),
+          input.phone.trim(),
+          input.jobTitle.trim(),
+          normalizeCode(input.employeeCode),
+          stamp,
+          actor.tenantId,
+          userId,
+        ),
+    ];
+    // An invitation sent to the old address could never be accepted, so it is cancelled.
+    if (normalizeEmail(input.email) !== current.normalized_email) {
+      const pending = await this.db
+        .prepare(
+          "SELECT id FROM employee_account_invitations WHERE tenant_id=? AND user_id=? AND status IN ('PREPARING','PENDING','ACCEPTING','FAILED')",
+        )
+        .bind(actor.tenantId, userId)
+        .all<{ id: string }>();
+      statements.push(
+        this.db
+          .prepare(
+            "UPDATE employee_account_invitations SET status='REVOKED' WHERE tenant_id=? AND user_id=? AND status IN ('PREPARING','PENDING','ACCEPTING','FAILED')",
+          )
+          .bind(actor.tenantId, userId),
+        ...(pending.results ?? []).map((row) =>
+          this.db
+            .prepare(
+              "INSERT INTO staff_access_events(tenant_id,id,entity_type,entity_id,version,actor_id,branch_id,event_type,at,details_json) VALUES(?,?,'INVITATION',?,4,?,?,'INVITATION_REVOKED',?,'{\"reason\":\"EMAIL_CHANGED\"}') ON CONFLICT DO NOTHING",
+            )
+            .bind(
+              actor.tenantId,
+              crypto.randomUUID(),
+              row.id,
+              actor.id,
+              current.primary_branch_id,
+              stamp,
+            ),
+        ),
+      );
+    }
+    if (roleChanged)
+      statements.push(
+        this.db
+          .prepare("DELETE FROM user_roles WHERE tenant_id=? AND user_id=?")
+          .bind(actor.tenantId, userId),
+        this.db
+          .prepare("INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)")
+          .bind(actor.tenantId, userId, input.roleId),
+      );
+    statements.push(
+      audit(this.db, actor, "EMPLOYEE_UPDATED", "USER", userId, {
+        employeeCode: normalizeCode(input.employeeCode),
+        ...(roleChanged ? { roleId: input.roleId, previousRoleIds: currentRoleIds } : {}),
+      }),
+    );
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      if (
+        (error as { code?: string } | null)?.code === "23505" ||
+        (error instanceof Error && /UNIQUE constraint failed/.test(error.message))
+      )
+        throw operation("DUPLICATE", 409, "Another employee already uses that code or email");
+      throw error;
+    }
+    return { id: userId, employeeCode: normalizeCode(input.employeeCode) };
   }
 
   async resetPin(
@@ -918,6 +1088,10 @@ export class PosIdentityService {
       .prepare(
         `SELECT u.id,u.name,u.email,u.employee_code,u.phone,u.job_title,u.employment_status,u.active,
                 pb.branch_id AS primary_branch_id,c.locked_until,c.must_change,
+                (SELECT MIN(ur.role_id) FROM user_roles ur
+                  WHERE ur.tenant_id=u.tenant_id AND ur.user_id=u.id) AS role_id,
+                CASE WHEN EXISTS (SELECT 1 FROM account_owners o WHERE o.tenant_id=u.tenant_id
+                  AND o.user_id=u.id AND o.status='ACTIVE') THEN 1 ELSE 0 END AS account_owner,
                 CASE WHEN c.user_id IS NULL THEN 0 ELSE 1 END AS credential_configured
          FROM users u LEFT JOIN user_primary_branches pb
            ON pb.tenant_id=u.tenant_id AND pb.user_id=u.id
@@ -1056,6 +1230,14 @@ export function readCookie(request: Request, name: string) {
 }
 
 function validateEmployeeInput(input: EmployeeCreateInput) {
+  validateEmployeeDetails(input);
+  if (!/^\d{4}-\d{2}-\d{2}/.test(input.effectiveFrom))
+    throw operation("VALIDATION_FAILED", 400, "Effective date is invalid");
+}
+
+function validateEmployeeDetails(
+  input: Pick<EmployeeCreateInput, "fullName" | "employeeCode" | "jobTitle" | "email">,
+) {
   if (input.fullName.trim().length < 2 || input.fullName.length > 120)
     throw operation("VALIDATION_FAILED", 400, "Employee name is invalid");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$/.test(input.employeeCode.trim()))
@@ -1064,8 +1246,6 @@ function validateEmployeeInput(input: EmployeeCreateInput) {
     throw operation("VALIDATION_FAILED", 400, "Job title is invalid");
   if (input.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim()))
     throw operation("VALIDATION_FAILED", 400, "Employee email is invalid");
-  if (!/^\d{4}-\d{2}-\d{2}/.test(input.effectiveFrom))
-    throw operation("VALIDATION_FAILED", 400, "Effective date is invalid");
 }
 
 function validatePin(pin: string, confirmation: string, requiredLength: 4 | 6) {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
-import { moduleDecision } from "@/platform/module-access-registry";
+import { canAccessPath, moduleDecision } from "@/platform/module-access-registry";
 import { permissions } from "@/platform/permissions";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
@@ -63,6 +63,15 @@ describe.sequential("server-authoritative module access", () => {
     );
     expect(moduleDecision(profile, "hq-command")?.route).toBe(false);
     expect(moduleDecision(profile, "hq-command")?.reasons).toContain("ORGANIZATIONAL_SCOPE_DENIED");
+  });
+
+  it("returns scoped time-tracking access for an attendance manager without staff-view access", async () => {
+    const profile = await resolveServerModuleAccess(db, actor([permissions.staffManage]));
+    expect(canAccessPath(profile, "/schedule")).toBe(true);
+    expect(canAccessPath(profile, "/payroll")).toBe(false);
+    const employee = await resolveServerModuleAccess(db, actor([permissions.attendanceUse]));
+    expect(canAccessPath(employee, "/attendance")).toBe(true);
+    expect(canAccessPath(employee, "/schedule")).toBe(false);
   });
 
   it("honors active hierarchy assignments but excludes expired temporary access", async () => {

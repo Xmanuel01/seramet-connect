@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LocateFixed, MapPin, RefreshCcw, ShieldCheck } from "lucide-react";
 import { AttendanceClock } from "@/components/app/AttendanceClock";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { Btn, Panel, PanelHead } from "@/components/app/ui";
+import { AttendanceWorkday } from "@/components/app/AttendanceWorkday";
 import { useAppContext } from "@/lib/app-context";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { permissions } from "@/platform/permissions";
@@ -34,6 +35,8 @@ type Session = {
   clockOutSource: string | null;
   version: number;
   workedMinutes: number | null;
+  scheduledMinutes?: number | null;
+  missingClockOut?: boolean;
 };
 type Employee = {
   id: string;
@@ -71,6 +74,7 @@ type Data = {
   geofence: Fence;
   canConfigure: boolean;
   serverNow: string;
+  myWeek?: Session[];
   mySchedule: {
     scheduled_start: string | null;
     scheduled_end: string | null;
@@ -186,6 +190,8 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   });
   const [unknown, setUnknown] = useState(false);
   const [editFence, setEditFence] = useState<Fence | null>(null);
+  const [view, setView] = useState<"Workday" | "Timecards" | "Reports" | "Settings">("Workday");
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   const punchKey = useRef<NonNullable<AttendanceDraft["pending"]> | null>(null);
   const canConfigure =
     hasPermission(permissions.staffManage) && hasPermission(permissions.settingsBranchManage);
@@ -266,6 +272,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
     refreshFlight.current = null;
     supervisorRequest.current = null;
     setBusy(false);
+    setLocating(false);
     setMessage("");
     setReason("");
     setPunchError("");
@@ -278,6 +285,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
     setSelected("");
     setSelectedSession("");
     setCorrectionRecord(null);
+    setCorrectionOpen(false);
     setEditFence(null);
     void refresh();
     const saved = readAttendanceDraft(scope);
@@ -312,14 +320,21 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   }, [scope, draftScope, selected, selectedSession, reason, occurredAt, manualAction, unknown]);
   useEffect(() => {
     let running = false;
-    const timer = window.setInterval(() => {
+    const refreshVisible = () => {
       if (running || operation.current || document.visibilityState !== "visible") return;
       running = true;
       void refresh(true).finally(() => {
         running = false;
       });
-    }, 30000);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(refreshVisible, 30000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
   }, [refresh]);
   const run = async (work: () => Promise<void>, punch = false) => {
     if (operation.current || activeScope.current !== scope) return;
@@ -502,6 +517,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
       writeAttendanceDraft(scope, { ...currentDraft.current, supervisor: undefined });
       setReason("");
       setOccurredAt("");
+      setMessage("Attendance correction recorded.");
     });
   const updateSchedule = () =>
     void run(async () => {
@@ -525,8 +541,10 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
     }
     setLocating(true);
     setMessage("Finding your location…");
+    const generation = scopeGeneration.current;
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        if (activeScope.current !== scope || generation !== scopeGeneration.current) return;
         setLocating(false);
         setEditFence((current) =>
           current
@@ -542,6 +560,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         );
       },
       () => {
+        if (activeScope.current !== scope || generation !== scopeGeneration.current) return;
         setLocating(false);
         setMessage("Location could not be read. Allow location access, or enter the coordinates.");
       },
@@ -569,7 +588,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
   const current = data?.me;
   return (
     <AppShell
-      title={scheduling ? "Schedule" : "Attendance"}
+      title={scheduling ? "Time Tracking" : "Clock In/Out"}
       subtitle={branchLabel}
       actions={
         <Btn onClick={() => void refresh()} disabled={busy}>
@@ -578,53 +597,79 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
         </Btn>
       }
     >
-      {data?.canManage && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Metric label="Recorded today" value={data?.summary?.recorded ?? (current ? 1 : 0)} />
-          <Metric
-            label="Currently working"
-            value={data?.summary?.working ?? (current && !current.clockOutAt ? 1 : 0)}
-          />
-          <Metric
-            label="Late"
-            value={data?.summary?.late ?? ((current?.minutesLate ?? 0) > 0 ? 1 : 0)}
-          />
-          <Metric label="Not recorded" value={data?.summary?.not_recorded ?? 0} />
+      {scheduling && data?.canManage && (
+        <div
+          role="tablist"
+          aria-label="Time tracking views"
+          className="grid grid-cols-4 gap-1 border-b border-border"
+        >
+          {(["Workday", "Timecards", "Reports", "Settings"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={view === tab}
+              onClick={() => {
+                setView(tab);
+                if (tab === "Settings") {
+                  setSchedule(selectedEmployee?.scheduled_start ?? "");
+                  setScheduledEnd(selectedEmployee?.scheduled_end ?? "");
+                  setRestDay(Boolean(selectedEmployee?.rest_day));
+                }
+              }}
+              className={`min-h-11 min-w-0 border-b-2 px-2 text-sm font-medium sm:px-4 ${view === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
+      )}
+      {scheduling && data && !data.canManage && (
+        <p role="alert" className="py-6">
+          Time Tracking requires staff management permission.
+        </p>
       )}
       {message && (
         <p role="status" className="mt-3 rounded-md border border-border bg-card px-4 py-3 text-sm">
           {message}
         </p>
       )}
-      <AttendanceClock
-        name={currentUser.name}
-        branch={branchLabel}
-        businessDate={data?.businessDate}
-        loaded={Boolean(data)}
-        working={Boolean(current && !current.clockOutAt)}
-        completed={Boolean(current?.clockOutAt)}
-        clockIn={readableTime(current?.clockInAt, data?.branchTimezone)}
-        clockOut={readableTime(current?.clockOutAt, data?.branchTimezone)}
-        schedule={
-          data?.mySchedule?.rest_day
-            ? "Day off"
-            : data?.mySchedule?.scheduled_start
-              ? `${data.mySchedule.scheduled_start} - ${data.mySchedule.scheduled_end ?? "Not assigned"}`
-              : "Not assigned"
-        }
-        minutesLate={current?.minutesLate}
-        workedMinutes={current?.workedMinutes}
-        locationEnabled={Boolean(data?.geofence.enabled || data?.tillClock)}
-        tillClock={Boolean(data?.tillClock)}
-        canSetLocation={Boolean(data?.canConfigure && canConfigure)}
-        openElsewhere={Boolean(data?.openElsewhere)}
-        unknown={unknown}
-        busy={busy}
-        onPunch={() =>
-          ownPunch(punchKey.current?.action ?? (current && !current.clockOutAt ? "OUT" : "IN"))
-        }
-      />
+      {!scheduling && (
+        <AttendanceClock
+          name={currentUser.name}
+          branch={branchLabel}
+          businessDate={data?.businessDate}
+          timezone={data?.branchTimezone}
+          serverNow={data?.serverNow}
+          week={data?.myWeek}
+          clockInAt={current?.clockInAt}
+          shiftBusinessDate={current?.businessDate}
+          radiusMeters={data?.geofence.radiusMeters}
+          loaded={Boolean(data)}
+          working={Boolean(current && !current.clockOutAt)}
+          completed={Boolean(current?.clockOutAt)}
+          clockIn={readableTime(current?.clockInAt, data?.branchTimezone)}
+          clockOut={readableTime(current?.clockOutAt, data?.branchTimezone)}
+          schedule={
+            data?.mySchedule?.rest_day
+              ? "Day off"
+              : data?.mySchedule?.scheduled_start
+                ? `${data.mySchedule.scheduled_start} - ${data.mySchedule.scheduled_end ?? "Not assigned"}`
+                : "Not assigned"
+          }
+          minutesLate={current?.minutesLate}
+          workedMinutes={current?.workedMinutes}
+          locationEnabled={Boolean(data?.geofence.enabled || data?.tillClock)}
+          tillClock={Boolean(data?.tillClock)}
+          canSetLocation={Boolean(data?.canConfigure && canConfigure)}
+          openElsewhere={Boolean(data?.openElsewhere)}
+          unknown={unknown}
+          busy={busy}
+          onPunch={() =>
+            ownPunch(punchKey.current?.action ?? (current && !current.clockOutAt ? "OUT" : "IN"))
+          }
+        />
+      )}
       {!scheduling && <AttendanceDelays open={delayOpen} setOpen={setDelayOpen} />}
       <Dialog
         open={!!punchError}
@@ -653,237 +698,250 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
           </div>
         </DialogContent>
       </Dialog>
-      {data?.canManage && (
+      {scheduling && data?.canManage && (
         <>
-          <Panel className="mt-4">
-            <PanelHead
-              title="Supervisor · Live attendance"
-              sub="Every change is recorded in the audit log"
+          {view === "Workday" && (
+            <AttendanceWorkday
+              records={data.records}
+              employees={data.employees}
+              date={data.businessDate}
+              timezone={data.branchTimezone}
+              serverNow={data.serverNow}
+              summary={data.summary}
+              onCorrect={(record, employeeId) => {
+                setSelected(record?.employeeId ?? employeeId ?? "");
+                setSelectedSession(record?.id ?? "");
+                setCorrectionRecord(record ?? null);
+                setManualAction(record ? "EXPLAIN" : "IN");
+                setCorrectionOpen(true);
+              }}
             />
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px]">
-                <thead>
-                  <tr>
-                    <TH>Employee</TH>
-                    <TH>Clock in</TH>
-                    <TH>Clock out</TH>
-                    <TH>Late</TH>
-                    <TH>Source</TH>
-                    <TH>Status</TH>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.employees.map((employee) => {
-                    const record =
-                      data.records.find((r) => r.employeeId === employee.id && !r.clockOutAt) ??
-                      data.records.find((r) => r.employeeId === employee.id);
-                    return (
-                      <tr key={employee.id}>
-                        <TD className="font-semibold">{employee.name}</TD>
-                        <TD>{readableTime(record?.clockInAt, data.branchTimezone)}</TD>
-                        <TD>{readableTime(record?.clockOutAt, data.branchTimezone)}</TD>
-                        <TD>
-                          {record?.minutesLate == null
-                            ? "Not scheduled"
-                            : record.minutesLate + " min"}
-                        </TD>
-                        <TD>{record?.clockInSource ?? "—"}</TD>
-                        <TD>
-                          <Status>
-                            {!record
-                              ? "NOT CLOCKED"
-                              : record.clockOutAt
-                                ? "COMPLETED"
-                                : (record.minutesLate ?? 0) > 0
-                                  ? "LATE"
-                                  : "PRESENT"}
-                          </Status>
-                        </TD>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-          <Panel className="mt-4">
-            <PanelHead
-              title="Supervisor · Attendance exception"
-              sub="When GPS is unavailable or a punch was missed, record the reason and employee"
-            />
-            <div className="grid gap-3 p-4 md:grid-cols-2">
-              <label className="grid gap-1 text-xs font-semibold">
-                Employee
-                <select
-                  className={inputClass}
-                  value={selected}
-                  onChange={(e) => {
-                    setSelected(e.target.value);
-                    setSelectedSession("");
-                    setCorrectionRecord(null);
-                    const employee = data.employees.find((v) => v.id === e.target.value);
-                    setScheduledEnd(employee?.scheduled_end ?? "");
-                    setRestDay(Boolean(employee?.rest_day));
-                    setSchedule(
-                      data.employees.find((v) => v.id === e.target.value)?.scheduled_start ?? "",
-                    );
-                  }}
-                >
-                  <option value="">Choose employee</option>
-                  {data.employees.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="grid gap-1 text-xs font-semibold">
-                Action
-                <select
-                  className={inputClass}
-                  value={manualAction}
-                  onChange={(e) => setManualAction(e.target.value as typeof manualAction)}
-                >
-                  <option value="IN">Clock in now</option>
-                  <option value="OUT">Clock out now</option>
-                  <option value="CORRECT_IN">Correct existing clock-in</option>
-                  <option value="CORRECT_OUT">Correct existing clock-out</option>
-                  <option value="EXPLAIN">Append explanation without changing times</option>
-                </select>
-              </label>
-              {(manualAction.startsWith("CORRECT") || manualAction === "EXPLAIN") && (
-                <label className="grid gap-1 text-xs font-semibold">
-                  Attendance session
-                  <select
-                    className={inputClass}
-                    value={selectedSession}
-                    onChange={(e) => {
-                      setSelectedSession(e.target.value);
-                      setCorrectionRecord(
-                        data.records.find((row) => row.id === e.target.value) ?? null,
-                      );
-                    }}
-                  >
-                    <option value="">Choose exact session</option>
-                    {(correctionRecord && !data.records.some((r) => r.id === correctionRecord.id)
-                      ? [...data.records, correctionRecord]
-                      : data.records
-                    )
-                      .filter((r) => r.employeeId === selected)
-                      .map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.businessDate} · {readableTime(r.clockInAt, data.branchTimezone)} —{" "}
-                          {readableTime(r.clockOutAt, data.branchTimezone)} · revision {r.version}
+          )}
+          <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Attendance correction</DialogTitle>
+                <DialogDescription>
+                  Record the employee, corrected time and reason.
+                </DialogDescription>
+              </DialogHeader>
+              {message && (
+                <p role="status" className="text-sm">
+                  {message}
+                </p>
+              )}
+              <div>
+                <div className="grid gap-3 p-4 md:grid-cols-2">
+                  <label className="grid gap-1 text-xs font-semibold">
+                    Employee
+                    <select
+                      className={inputClass}
+                      value={selected}
+                      onChange={(e) => {
+                        setSelected(e.target.value);
+                        setSelectedSession("");
+                        setCorrectionRecord(null);
+                        const employee = data.employees.find((v) => v.id === e.target.value);
+                        setScheduledEnd(employee?.scheduled_end ?? "");
+                        setRestDay(Boolean(employee?.rest_day));
+                        setSchedule(
+                          data.employees.find((v) => v.id === e.target.value)?.scheduled_start ??
+                            "",
+                        );
+                      }}
+                    >
+                      <option value="">Choose employee</option>
+                      {data.employees.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
                         </option>
                       ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-xs font-semibold">
+                    Action
+                    <select
+                      className={inputClass}
+                      value={manualAction}
+                      onChange={(e) => setManualAction(e.target.value as typeof manualAction)}
+                    >
+                      <option value="IN">Clock in now</option>
+                      <option value="OUT">Clock out now</option>
+                      <option value="CORRECT_IN">Correct existing clock-in</option>
+                      <option value="CORRECT_OUT">Correct existing clock-out</option>
+                      <option value="EXPLAIN">Append explanation without changing times</option>
+                    </select>
+                  </label>
+                  {(manualAction.startsWith("CORRECT") || manualAction === "EXPLAIN") && (
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Attendance session
+                      <select
+                        className={inputClass}
+                        value={selectedSession}
+                        onChange={(e) => {
+                          setSelectedSession(e.target.value);
+                          setCorrectionRecord(
+                            data.records.find((row) => row.id === e.target.value) ?? null,
+                          );
+                        }}
+                      >
+                        <option value="">Choose exact session</option>
+                        {(correctionRecord &&
+                        !data.records.some((r) => r.id === correctionRecord.id)
+                          ? [...data.records, correctionRecord]
+                          : data.records
+                        )
+                          .filter((r) => r.employeeId === selected)
+                          .map((r) => (
+                            <option key={r.id} value={r.id}>
+                              {r.businessDate} · {readableTime(r.clockInAt, data.branchTimezone)} —{" "}
+                              {readableTime(r.clockOutAt, data.branchTimezone)} · revision{" "}
+                              {r.version}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
+                  {manualAction.startsWith("CORRECT") && (
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Corrected date and time ({Intl.DateTimeFormat().resolvedOptions().timeZone},
+                      with explicit conversion to UTC)
+                      <input
+                        className={inputClass}
+                        type="datetime-local"
+                        value={occurredAt}
+                        onChange={(e) => setOccurredAt(e.target.value)}
+                      />
+                    </label>
+                  )}
+                  <label className="grid gap-1 text-xs font-semibold md:col-span-2">
+                    Reason for exception (required)
+                    <textarea
+                      className={inputClass}
+                      rows={2}
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      maxLength={500}
+                      placeholder="Employee arrived late; GPS unavailable inside restaurant"
+                    />
+                  </label>
+                  <div className="md:col-span-2 flex justify-end">
+                    <Btn
+                      variant="primary"
+                      disabled={
+                        busy ||
+                        (!supervisorRequest.current && (!selected || reason.trim().length < 8))
+                      }
+                      onClick={managePunch}
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      {supervisorRequest.current
+                        ? "Check / retry previous exception"
+                        : "Record exception"}
+                    </Btn>
+                  </div>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+          {view === "Settings" && (
+            <Panel className="mt-4">
+              <PanelHead title="Employee schedule" />
+              <div className="p-4">
+                <label className="grid gap-1 text-sm">
+                  Employee
+                  <select
+                    className={inputClass}
+                    value={selected}
+                    onChange={(e) => {
+                      setSelected(e.target.value);
+                      const employee = data.employees.find((row) => row.id === e.target.value);
+                      setSchedule(employee?.scheduled_start ?? "");
+                      setScheduledEnd(employee?.scheduled_end ?? "");
+                      setRestDay(Boolean(employee?.rest_day));
+                    }}
+                  >
+                    <option value="">Choose employee</option>
+                    {data.employees.map((employee) => (
+                      <option key={employee.id} value={employee.id}>
+                        {employee.name}
+                      </option>
+                    ))}
                   </select>
                 </label>
-              )}
-              {manualAction.startsWith("CORRECT") && (
-                <label className="grid gap-1 text-xs font-semibold">
-                  Corrected date and time ({Intl.DateTimeFormat().resolvedOptions().timeZone}, with
-                  explicit conversion to UTC)
-                  <input
-                    className={inputClass}
-                    type="datetime-local"
-                    value={occurredAt}
-                    onChange={(e) => setOccurredAt(e.target.value)}
-                  />
-                </label>
-              )}
-              <label className="grid gap-1 text-xs font-semibold md:col-span-2">
-                Reason for exception (required)
-                <textarea
-                  className={inputClass}
-                  rows={2}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  maxLength={500}
-                  placeholder="Employee arrived late; GPS unavailable inside restaurant"
-                />
-              </label>
-              <div className="md:col-span-2 flex justify-end">
-                <Btn
-                  variant="primary"
-                  disabled={
-                    busy || (!supervisorRequest.current && (!selected || reason.trim().length < 8))
-                  }
-                  onClick={managePunch}
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  {supervisorRequest.current
-                    ? "Check / retry previous exception"
-                    : "Record exception"}
-                </Btn>
-              </div>
-              <div className="md:col-span-2 border-t border-border pt-3 text-sm">
-                <p className="font-semibold">
-                  Scheduled start for {selectedEmployee?.name ?? "selected employee"}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <input
-                    aria-label="Scheduled start"
-                    type="time"
-                    className={inputClass + " max-w-44"}
-                    value={schedule}
-                    disabled={restDay}
-                    onChange={(e) => setSchedule(e.target.value)}
-                  />
-                  <input
-                    aria-label="Scheduled end"
-                    type="time"
-                    className={inputClass + " max-w-44"}
-                    value={scheduledEnd}
-                    disabled={restDay}
-                    onChange={(e) => setScheduledEnd(e.target.value)}
-                  />
-                  <label className="flex items-center gap-2">
+                <div className="mt-4 text-sm">
+                  <p className="font-semibold">
+                    Scheduled start for {selectedEmployee?.name ?? "selected employee"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
                     <input
-                      type="checkbox"
-                      checked={restDay}
-                      onChange={(e) => {
-                        setRestDay(e.target.checked);
-                        if (e.target.checked) {
-                          setSchedule("");
-                          setScheduledEnd("");
-                        }
-                      }}
+                      aria-label="Scheduled start"
+                      type="time"
+                      className={inputClass + " max-w-44"}
+                      value={schedule}
+                      disabled={restDay}
+                      onChange={(e) => setSchedule(e.target.value)}
                     />
-                    OFF / rest day
-                  </label>
-                  <Btn disabled={!selected || busy} onClick={updateSchedule}>
-                    Save schedule
-                  </Btn>
+                    <input
+                      aria-label="Scheduled end"
+                      type="time"
+                      className={inputClass + " max-w-44"}
+                      value={scheduledEnd}
+                      disabled={restDay}
+                      onChange={(e) => setScheduledEnd(e.target.value)}
+                    />
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={restDay}
+                        onChange={(e) => {
+                          setRestDay(e.target.checked);
+                          if (e.target.checked) {
+                            setSchedule("");
+                            setScheduledEnd("");
+                          }
+                        }}
+                      />
+                      OFF / rest day
+                    </label>
+                    <Btn disabled={!selected || busy} onClick={updateSchedule}>
+                      Save schedule
+                    </Btn>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Lateness is calculated only when an employee's start time is assigned. No
+                    automatic pay deductions.
+                  </p>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Lateness is calculated only when an employee's start time is assigned. No
-                  automatic pay deductions.
-                </p>
               </div>
-            </div>
-          </Panel>
+            </Panel>
+          )}
         </>
       )}
-      {data && (
-        <AttendanceHistory
-          revision={historyRevision}
-          key={scope}
-          scope={scope}
-          branchId={branchId}
-          date={data.businessDate}
-          timezone={data.branchTimezone}
-          employees={data.employees}
-          managed={data.canManage}
-          headers={headers}
-          onReview={(record) => {
-            setSelected(record.employeeId);
-            setSelectedSession(record.id);
-            setCorrectionRecord(record);
-            setManualAction("EXPLAIN");
-          }}
-        />
-      )}
-      {data?.canConfigure && canConfigure && editFence && (
+      {data &&
+        (!scheduling || (data.canManage && (view === "Timecards" || view === "Reports"))) && (
+          <AttendanceHistory
+            revision={historyRevision}
+            key={scope}
+            scope={scope}
+            branchId={branchId}
+            date={data.businessDate}
+            timezone={data.branchTimezone}
+            employees={data.employees}
+            managed={scheduling && data.canManage}
+            employeeId={!scheduling ? currentUser.id : undefined}
+            mode={scheduling ? (view === "Reports" ? "reports" : "timecards") : "personal"}
+            headers={headers}
+            onReview={(record) => {
+              setSelected(record.employeeId);
+              setSelectedSession(record.id);
+              setCorrectionRecord(record);
+              setManualAction("EXPLAIN");
+              setCorrectionOpen(true);
+            }}
+          />
+        )}
+      {scheduling && view === "Settings" && data?.canConfigure && canConfigure && editFence && (
         <Panel className="mt-4">
           <PanelHead
             title="Workplace location for clock-in"
@@ -989,7 +1047,7 @@ export function Attendance({ scheduling = false }: { scheduling?: boolean }) {
               />
               Require staff to be on site
             </label>
-            <Btn variant="primary" disabled={busy} onClick={saveFence}>
+            <Btn variant="primary" disabled={busy || locating} onClick={saveFence}>
               Save location
             </Btn>
             <p className="col-span-full text-xs text-muted-foreground">

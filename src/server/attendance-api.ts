@@ -15,6 +15,7 @@ import { requireFullAuthentication } from "@/server/pos-auth-service";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { attendanceRecords, attendanceCsv } from "@/server/attendance-reporting";
 import { attendanceTiming } from "@/lib/attendance-timing";
+import { attendanceWeekStart } from "@/lib/attendance-summary";
 import { handleAttendanceDelays } from "@/server/attendance-delay-api";
 
 const key = z.string().uuid();
@@ -403,8 +404,32 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     branch.business_day_cutoff_minutes,
   );
   const open = await readOpen(db, actor, actor.id);
-  const own =
+  let own =
     open?.branch_id === branch.id ? open : await readSession(db, actor, actor.id, today, branch.id);
+  if (!own) {
+    const closed = await db
+      .prepare(
+        "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND user_id=? AND clock_out_at IS NOT NULL ORDER BY clock_out_at DESC,id DESC LIMIT 1",
+      )
+      .bind(actor.tenantId, branch.id, actor.id)
+      .first<SessionRow>();
+    if (
+      closed?.clock_out_at &&
+      businessDateForTimestamp(
+        closed.clock_out_at,
+        branch.timezone,
+        branch.business_day_cutoff_minutes,
+      ) === today
+    )
+      own = closed;
+  }
+  const weekStart = attendanceWeekStart(today);
+  const ownWeek = await db
+    .prepare(
+      "SELECT * FROM employee_attendance_sessions WHERE tenant_id=? AND branch_id=? AND user_id=? AND business_date>=? AND business_date<=? ORDER BY clock_in_at",
+    )
+    .bind(actor.tenantId, branch.id, actor.id, weekStart, today)
+    .all<SessionRow>();
   const fence = await fenceFor(db, actor, branch.id);
   const till = await tillFor(db, actor, branch.id);
   const canManage = manager(actor);
@@ -425,7 +450,15 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
             "SELECT u.id,u.name,u.employee_code,s.scheduled_start,s.scheduled_end,s.rest_day,s.version AS schedule_version FROM users u JOIN user_branches ub ON ub.tenant_id=u.tenant_id AND ub.user_id=u.id AND ub.branch_id=? LEFT JOIN attendance_shift_assignments s ON s.tenant_id=u.tenant_id AND s.user_id=u.id AND s.branch_id=? WHERE u.tenant_id=? AND u.active=1 AND u.employment_status='ACTIVE' ORDER BY u.name LIMIT 500",
           )
           .bind(branch.id, branch.id, actor.tenantId)
-          .all()
+          .all<{
+            id: string;
+            name: string;
+            employee_code: string | null;
+            scheduled_start: string | null;
+            scheduled_end: string | null;
+            rest_day: number | null;
+            schedule_version: number | null;
+          }>()
       ).results ?? [])
     : [];
   const mySchedule = await db
@@ -456,6 +489,8 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
     businessDate: today,
     branchId: branch.id,
     branchTimezone: branch.timezone,
+    weekStart,
+    myWeek: (ownWeek.results ?? []).map(publicSession),
     me: own ? publicSession(own) : null,
     openElsewhere: Boolean(open && open.branch_id !== branch.id),
     tillClock: Boolean(till),
@@ -484,7 +519,23 @@ async function report(db: D1Database, actor: ServerActor, branch: BranchRow) {
         : {}),
     },
     records: records.map(publicSession),
-    employees: staff,
+    employees: staff.map((employee) => {
+      const clock = localParts(new Date().toISOString(), branch.timezone);
+      const start = employee.scheduled_start
+        ? Number(employee.scheduled_start.slice(0, 2)) * 60 +
+          Number(employee.scheduled_start.slice(3, 5))
+        : null;
+      const scheduled =
+        start === null ? null : start + (start < branch.business_day_cutoff_minutes ? 1440 : 0);
+      return {
+        ...employee,
+        missingClockIn:
+          scheduled !== null &&
+          employee.rest_day !== 1 &&
+          !records.some((row) => row.user_id === employee.id) &&
+          clock.minutes + (clock.date > today ? 1440 : 0) > scheduled + (fence?.grace_minutes ?? 0),
+      };
+    }),
   };
 }
 async function recordPunch(

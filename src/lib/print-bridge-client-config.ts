@@ -7,7 +7,7 @@ export type InstalledPrintBridgeConfig = {
 export const printBridgeConfigStorageKey = "seramet.print-bridge.client.v1";
 
 export const printBridgeDownloadUrl =
-  "https://github.com/Xmanuel01/seramet-connect/releases/download/print-bridge-v3.3.0/SerametPrintBridge.exe";
+  "https://github.com/Xmanuel01/seramet-connect/releases/download/print-bridge-v3.4.0/SerametPrintBridge.exe";
 
 /** The bridge version the download link installs. The release workflow keeps the link and the bridge in step. */
 export const latestPrintBridgeVersion = /print-bridge-v(\d+\.\d+\.\d+)\//.exec(

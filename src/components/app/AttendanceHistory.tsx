@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, History, RefreshCcw } from "lucide-react";
-import { Btn, Panel, PanelHead, TD, TH } from "@/components/app/ui";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  History,
+  RefreshCcw,
+  PencilLine,
+  FileDown,
+} from "lucide-react";
+import { Btn, PanelHead, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { attendanceCollection, attendanceTime } from "@/lib/attendance-display";
+import { attendanceDuration } from "@/lib/attendance-summary";
+import { shiftBusinessDate } from "@/lib/business-date";
+import { AttendanceTimeline } from "@/components/app/AttendanceTimeline";
 
 type Row = {
   id: string;
@@ -18,6 +29,17 @@ type Row = {
   minutesLate: number | null;
   clockInSource: string;
   clockOutSource: string | null;
+  scheduledMinutes?: number | null;
+  overtimeMinutes?: number | null;
+  missingClockOut?: boolean;
+};
+type Summary = {
+  workedMinutes: number;
+  overtimeMinutes: number;
+  unassessedDays: number;
+  sessions: number;
+  late: number;
+  missingClockOut: number;
 };
 type Event = {
   id: string;
@@ -29,7 +51,7 @@ type Event = {
   before_json: string;
   after_json: string;
 };
-const input = "min-h-11 rounded-md border border-input bg-background px-3 text-sm";
+const input = "min-h-11 min-w-0 w-full rounded-md border border-input bg-background px-3 text-sm";
 export function AttendanceHistory({
   scope,
   branchId,
@@ -40,6 +62,8 @@ export function AttendanceHistory({
   headers,
   onReview,
   revision,
+  employeeId,
+  mode = "timecards",
 }: {
   scope: string;
   branchId: string;
@@ -50,6 +74,8 @@ export function AttendanceHistory({
   headers: () => Record<string, string>;
   onReview: (record: Row) => void;
   revision: number;
+  employeeId?: string;
+  mode?: "personal" | "timecards" | "reports";
 }) {
   const [from, setFrom] = useState(date);
   const alive = useRef(true);
@@ -60,14 +86,27 @@ export function AttendanceHistory({
     };
   }, []);
   const [to, setTo] = useState(date);
+  const [period, setPeriod] = useState("today");
+  useEffect(() => {
+    if (period === "custom") return;
+    const days = period === "week" ? 6 : period === "month" ? 29 : period === "yesterday" ? 1 : 0;
+    setFrom(shiftBusinessDate(date, -days));
+    setTo(period === "yesterday" ? shiftBusinessDate(date, -1) : date);
+    setOffset(0);
+  }, [date, period]);
   const [employee, setEmployee] = useState("");
   const [status, setStatus] = useState("ALL");
   const [source, setSource] = useState("ALL");
   const [offset, setOffset] = useState(0);
   const [refresh, setRefresh] = useState(0);
-  const [result, setResult] = useState<{ scope: string; records: Row[]; hasMore: boolean } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    scope: string;
+    query: string;
+    records: Row[];
+    hasMore: boolean;
+    summary: Summary | null;
+    serverNow: string;
+  } | null>(null);
   const [notice, setNotice] = useState("");
   const [history, setHistory] = useState<{ scope: string; events: Event[] } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -78,7 +117,7 @@ export function AttendanceHistory({
     status,
     source,
     offset: String(offset),
-    ...(employee ? { employeeId: employee } : {}),
+    ...(employeeId || employee ? { employeeId: employeeId || employee } : {}),
   }).toString();
   useEffect(() => {
     const controller = new AbortController();
@@ -94,11 +133,16 @@ export function AttendanceHistory({
           records: Row[];
           hasMore: boolean;
           message?: string;
+          summary?: Summary | null;
+          serverNow?: string;
         };
         if (!response.ok) throw new Error(body.message ?? "Attendance history unavailable");
         if (active) {
           setResult({
             scope,
+            query,
+            summary: body.summary ?? null,
+            serverNow: body.serverNow ?? new Date().toISOString(),
             records: attendanceCollection<Row>(body, "records", [
               "id",
               "clockInAt",
@@ -123,15 +167,19 @@ export function AttendanceHistory({
     };
   }, [headers, query, refresh, scope, revision]);
   const time = (at: string | null) => attendanceTime(at, timezone, true);
-  const records = result?.scope === scope ? result.records : [];
-  const download = async () => {
+  const currentResult = result?.scope === scope && result.query === query ? result : null;
+  const records = currentResult?.records ?? [];
+  const download = async (format: "csv" | "pdf") => {
     setBusy(true);
     try {
-      const response = await fetch("/api/seramet/attendance/export?" + query, {
-        headers: headers(),
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      });
+      const response = await fetch(
+        "/api/seramet/attendance/export?" + query + "&format=" + format,
+        {
+          headers: headers(),
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        },
+      );
       if (!response.ok) {
         const error = (await response.json()) as { message?: string };
         throw new Error(error.message ?? "Export unavailable");
@@ -141,7 +189,7 @@ export function AttendanceHistory({
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `seramet-attendance-${from}-${to}.csv`;
+      link.download = `seramet-attendance-${from}-${to}.${format}`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setNotice("Timesheet exported; access recorded in the audit history.");
@@ -152,8 +200,6 @@ export function AttendanceHistory({
     }
   };
   const showHistory = async (id: string) => {
-    const selected = records.find((record) => record.id === id);
-    if (managed && selected) onReview(selected);
     try {
       const response = await fetch(
         `/api/seramet/attendance/sessions/${id}/history?branchId=${encodeURIComponent(branchId)}`,
@@ -186,17 +232,57 @@ export function AttendanceHistory({
     }
   };
   return (
-    <Panel className="mt-4">
+    <section
+      className="mt-4 min-w-0 border-y border-border"
+      aria-label={mode === "reports" ? "Attendance reports" : "Timecards"}
+    >
       <PanelHead
-        title="Timesheets and correction history"
+        title={
+          mode === "reports"
+            ? "Attendance report"
+            : mode === "personal"
+              ? "My timecards"
+              : "Timecards"
+        }
         sub={timezone}
         right={
-          <Btn disabled={busy} onClick={() => void download()} title="Export audited timesheet">
-            <Download className="h-4 w-4" />
-            CSV
-          </Btn>
+          <div className="flex flex-wrap gap-2">
+            <Btn
+              disabled={busy}
+              onClick={() => void download("csv")}
+              title="Export audited timesheet as CSV"
+            >
+              <Download className="h-4 w-4" />
+              CSV
+            </Btn>
+            <Btn
+              disabled={busy}
+              onClick={() => void download("pdf")}
+              title="Export audited timesheet as PDF"
+            >
+              <FileDown className="h-4 w-4" />
+              PDF
+            </Btn>
+          </div>
         }
       />
+      <div className="flex flex-wrap gap-2 px-4 pt-4">
+        <label className="flex items-center gap-2 text-sm">
+          Period
+          <select
+            aria-label="Attendance period"
+            className={input}
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+          >
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="week">Last 7 days</option>
+            <option value="month">Last 30 days</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </label>
+      </div>
       <div className="grid gap-3 border-b border-border p-4 sm:grid-cols-2 lg:grid-cols-6">
         <label className="grid gap-1 text-xs font-semibold">
           From business date
@@ -207,6 +293,7 @@ export function AttendanceHistory({
             onChange={(e) => {
               setOffset(0);
               setFrom(e.target.value);
+              setPeriod("custom");
             }}
           />
         </label>
@@ -219,6 +306,7 @@ export function AttendanceHistory({
             onChange={(e) => {
               setOffset(0);
               setTo(e.target.value);
+              setPeriod("custom");
             }}
           />
         </label>
@@ -233,7 +321,7 @@ export function AttendanceHistory({
                 setEmployee(e.target.value);
               }}
             >
-              <option value="">All assigned employees</option>
+              <option value="">All employees</option>
               {employees.map((person) => (
                 <option key={person.id} value={person.id}>
                   {person.name}
@@ -252,8 +340,16 @@ export function AttendanceHistory({
               setStatus(e.target.value);
             }}
           >
-            {["ALL", "OPEN", "COMPLETED", "LATE", "EXCEPTION"].map((value) => (
-              <option key={value}>{value}</option>
+            {[
+              ["ALL", "All statuses"],
+              ["OPEN", "Working"],
+              ["COMPLETED", "Completed"],
+              ["LATE", "Late arrivals"],
+              ["EXCEPTION", "Exceptions"],
+            ].map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
             ))}
           </select>
         </label>
@@ -267,8 +363,14 @@ export function AttendanceHistory({
               setSource(e.target.value);
             }}
           >
-            {["ALL", "GEOFENCE", "SUPERVISOR"].map((value) => (
-              <option key={value}>{value}</option>
+            {[
+              ["ALL", "All methods"],
+              ["GEOFENCE", "Location verified"],
+              ["SUPERVISOR", "Supervisor exception"],
+            ].map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
             ))}
           </select>
         </label>
@@ -286,6 +388,42 @@ export function AttendanceHistory({
           {notice}
         </p>
       )}
+      {currentResult && (
+        <dl className="grid grid-cols-2 gap-5 border-b border-border p-4 sm:grid-cols-4">
+          {[
+            ["Worked hours", attendanceDuration(currentResult.summary?.workedMinutes)],
+            [
+              "Overtime (over schedule)",
+              attendanceDuration(currentResult.summary?.overtimeMinutes),
+            ],
+            ["Late arrivals", currentResult.summary?.late ?? "--"],
+            ["Missing clock-out", currentResult.summary?.missingClockOut ?? "--"],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-xs text-muted-foreground">{label}</dt>
+              <dd className="mt-2 text-xl font-semibold tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {currentResult?.summary?.unassessedDays ? (
+        <p className="px-4 pt-3 text-xs text-muted-foreground">
+          {currentResult.summary.unassessedDays} employee-days have no comparable schedule. Overtime
+          is not assessed for those days.
+        </p>
+      ) : null}
+      {currentResult && !currentResult.summary && (
+        <p role="status" className="p-4 text-sm">
+          More than 5,000 sessions match. Narrow the period for complete totals and exports.
+        </p>
+      )}
+      {mode !== "reports" && (
+        <AttendanceTimeline
+          rows={records}
+          timezone={timezone}
+          now={Date.parse(currentResult?.serverNow ?? new Date().toISOString())}
+        />
+      )}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px]">
           <thead>
@@ -294,9 +432,9 @@ export function AttendanceHistory({
               <TH>In</TH>
               <TH>Out</TH>
               <TH>Worked</TH>
-              <TH>Early departure</TH>
+              <TH>Late / missing</TH>
               <TH>Source</TH>
-              <TH>History</TH>
+              <TH>Actions</TH>
             </tr>
           </thead>
           <tbody>
@@ -308,11 +446,21 @@ export function AttendanceHistory({
                 </TD>
                 <TD>{time(row.clockInAt)}</TD>
                 <TD>{time(row.clockOutAt)}</TD>
-                <TD>{row.workedMinutes === null ? "In progress" : `${row.workedMinutes} min`}</TD>
                 <TD>
-                  {row.earlyDepartureMinutes === null
-                    ? "Not assessed"
-                    : `${row.earlyDepartureMinutes} min`}
+                  {row.workedMinutes === null
+                    ? "In progress"
+                    : attendanceDuration(row.workedMinutes)}
+                </TD>
+                <TD>
+                  {row.missingClockOut ||
+                  (!row.clockOutAt &&
+                    row.scheduledMinutes == null &&
+                    Date.parse(currentResult?.serverNow ?? "") - Date.parse(row.clockInAt) >=
+                      86400000)
+                    ? "Missing clock-out"
+                    : row.minutesLate == null
+                      ? "--"
+                      : `${row.minutesLate} min late`}
                 </TD>
                 <TD>
                   {row.clockInSource}
@@ -321,9 +469,16 @@ export function AttendanceHistory({
                     : ""}
                 </TD>
                 <TD>
-                  <Btn title="View correction history" onClick={() => void showHistory(row.id)}>
-                    <History className="h-4 w-4" />
-                  </Btn>
+                  <div className="flex gap-1">
+                    <Btn title="View correction history" onClick={() => void showHistory(row.id)}>
+                      <History className="h-4 w-4" />
+                    </Btn>
+                    {managed && (
+                      <Btn title="Correct attendance" onClick={() => onReview(row)}>
+                        <PencilLine className="h-4 w-4" />
+                      </Btn>
+                    )}
+                  </div>
                 </TD>
               </tr>
             ))}
@@ -348,7 +503,7 @@ export function AttendanceHistory({
         <span className="text-xs">Page {Math.floor(offset / 200) + 1}</span>
         <Btn
           title="Next timesheet page"
-          disabled={busy || result?.scope !== scope || !result.hasMore}
+          disabled={busy || !currentResult?.hasMore}
           onClick={() => setOffset((value) => value + 200)}
         >
           <ChevronRight className="h-4 w-4" />
@@ -386,6 +541,6 @@ export function AttendanceHistory({
           </div>
         </DialogContent>
       </Dialog>
-    </Panel>
+    </section>
   );
 }

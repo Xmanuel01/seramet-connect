@@ -4,7 +4,7 @@ import { Attendance } from "@/components/app/AttendancePage";
 export const Route = createFileRoute("/attendance")({
   head: () => ({
     meta: [
-      { title: "Attendance - Seramet" },
+      { title: "Clock In/Out - Seramet" },
       {
         name: "description",
         content: "Secure, location-verified employee clock-in and clock-out.",

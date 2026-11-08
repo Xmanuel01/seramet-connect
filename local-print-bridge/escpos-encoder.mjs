@@ -44,11 +44,14 @@ export function isStrongText(line, index) {
   );
 }
 
-/** Feed to the cutter and cut (GS V 66/65 0), or clear the tear bar when there is none. */
+/**
+ * Feed to the cutter and cut (GS V 66/65 0), or, with no cutter, feed five
+ * lines so the last printed line clears the tear bar.
+ */
 export function finishCommands(cutter) {
   if (cutter === "partial") return Buffer.from([GS, 0x56, 66, 0]);
   if (cutter === "full") return Buffer.from([GS, 0x56, 65, 0]);
-  if (cutter === "none") return Buffer.from([ESC, 0x64, 3]);
+  if (cutter === "none") return Buffer.from([ESC, 0x64, 5]);
   throw new Error("UNSUPPORTED_CUTTER");
 }
 
@@ -59,6 +62,10 @@ export function encodeEscPos(content, profile) {
   if (![undefined, "SOLID", "ASCII"].includes(profile.ruleStyle))
     throw new Error("UNSUPPORTED_RULE_STYLE");
   const columns = profile.paperWidth === "58mm" ? 32 : 42;
+  // Font A fits 48 characters on 80mm paper; templates use 42, so indent by 3
+  // to sit the document in the middle instead of leaving the gap on the right.
+  // 58mm paper fits exactly 32.
+  const indent = profile.paperWidth === "80mm" ? "   " : "";
   const solid = profile.ruleStyle !== "ASCII";
   // User-controlled strings never become device commands. Unsupported glyphs
   // are visible replacement characters, not silently dropped control bytes.
@@ -92,7 +99,13 @@ export function encodeEscPos(content, profile) {
     // Emphasis is chosen from the sanitized ASCII, never from embedded control
     // codes, and covers text only so bold rows keep the same thin borders.
     const strong = profile.emphasis && isStrongText(line.ascii, index);
-    for (const run of line.text.match(/[─-╿]+|[^─-╿]+/g) ?? []) {
+    const runs = line.text.match(/[─-╿]+|[^─-╿]+/g) ?? [""];
+    // The indent joins the first text run, so it never splits a line in two.
+    if (indent) {
+      if (CP437[runs[0][0]] === undefined) runs[0] = indent + runs[0];
+      else buffers.push(Buffer.from(indent, "ascii"));
+    }
+    for (const run of runs) {
       if (CP437[run[0]] !== undefined) {
         buffers.push(Buffer.from([...run].map((glyph) => CP437[glyph])));
       } else if (strong) {

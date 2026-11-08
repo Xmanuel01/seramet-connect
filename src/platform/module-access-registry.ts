@@ -32,6 +32,7 @@ export type ModuleKey =
   | "loyalty"
   | "staff"
   | "attendance"
+  | "time-tracking"
   | "employees"
   | "finance"
   | "accounting"
@@ -489,7 +490,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     ),
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.STAFF",
-    routes: ["/people", "/schedule", "/payroll", "/leave", "/performance", "/recruitment"],
+    routes: ["/people", "/payroll", "/leave", "/performance", "/recruitment"],
   },
   {
     key: "attendance",
@@ -504,6 +505,20 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     supportedScopes: branchScopes,
     policyCode: "MODULE_ACCESS.ATTENDANCE",
     routes: ["/attendance"],
+  },
+  {
+    key: "time-tracking",
+    label: "Time Tracking",
+    navigationPermission: anyOf(permissions.staffView, permissions.staffManage),
+    routePermission: anyOf(permissions.staffView, permissions.staffManage),
+    actionPermissions: actions(
+      anyOf(permissions.staffView, permissions.staffManage),
+      permissions.staffManage,
+      permissions.staffManage,
+    ),
+    supportedScopes: branchScopes,
+    policyCode: "MODULE_ACCESS.TIME_TRACKING",
+    routes: ["/schedule"],
   },
   {
     key: "employees",
@@ -869,8 +884,11 @@ export function evaluateModuleAccess(
   const featureAllowed =
     !definition.featureFlag || context.featureFlags?.[definition.featureFlag] !== false;
   const inheritedDeny =
-    ((definition.key === "attendance" || definition.key === "employees") &&
+    ((definition.key === "attendance" ||
+      definition.key === "time-tracking" ||
+      definition.key === "employees") &&
       context.policies?.staff === "DENY") ||
+    (definition.key === "time-tracking" && context.policies?.attendance === "DENY") ||
     (definition.key === "employees" && context.policies?.users === "DENY") ||
     (definition.key === "requisitions" && context.policies?.procurement === "DENY");
   const policy = inheritedDeny ? "DENY" : (context.policies?.[definition.key] ?? "ALLOW");
