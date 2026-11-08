@@ -82,6 +82,9 @@ function Employees() {
     refreshConfiguration,
   } = useAppContext();
   const [storedEmployees, setEmployees] = useState<EmployeeRow[]>([]);
+  // New employees get the next code with the business's prefix unless one is typed.
+  const [codes, setCodes] = useState({ prefix: "", next: "" });
+  const [prefixDraft, setPrefixDraft] = useState<string | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [assignedBranchIds, setAssignedBranchIds] = useState<string[]>([branchId]);
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
@@ -149,11 +152,14 @@ function Employees() {
       });
       const body = (await response.json().catch(() => ({}))) as {
         employees?: EmployeeRow[];
+        codePrefix?: string;
+        nextCode?: string;
         message?: string;
       };
       if (activeScope.current !== scope) return;
       if (!response.ok) throw new Error(body.message ?? "Employees could not be loaded");
       setEmployees(body.employees ?? []);
+      setCodes({ prefix: body.codePrefix ?? "", next: body.nextCode ?? "" });
     } catch (error) {
       if (activeScope.current === scope)
         setNotice(error instanceof Error ? error.message : "Employees could not be loaded");
@@ -357,6 +363,39 @@ function Employees() {
     setDraft({ ...draft, pin, pinConfirmation: pin });
     setPinVisible(true);
   }
+  async function savePrefix(prefix: string) {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    const scopeAtStart = scope;
+    try {
+      const response = await fetch("/api/seramet/employees/code-prefix", {
+        method: "PUT",
+        headers: headers(),
+        body: JSON.stringify({ prefix }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        codePrefix?: string;
+        nextCode?: string;
+        message?: string;
+      };
+      if (activeScope.current !== scopeAtStart) return;
+      if (!response.ok) throw new Error(result.message ?? "Couldn't save the code prefix.");
+      setCodes({ prefix: result.codePrefix ?? prefix, next: result.nextCode ?? "" });
+      setPrefixDraft(null);
+      setNotice(`New employee codes now start with ${result.codePrefix ?? prefix}.`);
+      void refreshConfiguration();
+    } catch (error) {
+      if (activeScope.current === scopeAtStart)
+        setNotice(error instanceof Error ? error.message : "Couldn't save the code prefix.");
+    } finally {
+      if (activeScope.current === scopeAtStart) {
+        submitting.current = false;
+        setBusy(false);
+      }
+    }
+  }
   function startEdit(employee: EmployeeRow) {
     if (!canEdit(employee)) return;
     setEditError("");
@@ -461,6 +500,52 @@ function Employees() {
             sub="Role and branch access are explicit; the PIN is never displayed after submission"
             right={<ShieldCheck className="h-4 w-4 text-primary" />}
           />
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 text-sm">
+            {prefixDraft === null ? (
+              <>
+                <span className="text-muted-foreground">
+                  Employee codes start with <strong>{codes.prefix || "…"}</strong>
+                  {codes.next ? `, so the next one is ${codes.next}.` : "."}
+                </span>
+                {canManage && (
+                  <button
+                    type="button"
+                    className="font-semibold text-primary"
+                    onClick={() => setPrefixDraft(codes.prefix)}
+                  >
+                    Change
+                  </button>
+                )}
+              </>
+            ) : (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void savePrefix(prefixDraft);
+                }}
+              >
+                <label className="flex items-center gap-2">
+                  Code prefix
+                  <input
+                    className={fieldClass + " w-32"}
+                    value={prefixDraft}
+                    maxLength={10}
+                    required
+                    onChange={(event) =>
+                      setPrefixDraft(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+                    }
+                  />
+                </label>
+                <Btn type="submit" variant="primary" disabled={busy || prefixDraft.length < 2}>
+                  Save
+                </Btn>
+                <Btn type="button" disabled={busy} onClick={() => setPrefixDraft(null)}>
+                  Cancel
+                </Btn>
+              </form>
+            )}
+          </div>
           <form onSubmit={submit} className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
             <Field
               label="Full name"
@@ -471,8 +556,8 @@ function Employees() {
             <Field
               label="Employee code"
               value={draft.employeeCode}
+              placeholder={codes.next ? `Automatic: ${codes.next}` : "Automatic"}
               onChange={(value) => setDraft({ ...draft, employeeCode: value.toUpperCase() })}
-              required
             />
             <Field
               label="Job title"
@@ -874,6 +959,7 @@ function Field({
   inputMode,
   required,
   disabled,
+  placeholder,
 }: {
   label: string;
   value: string;
@@ -882,6 +968,7 @@ function Field({
   inputMode?: "numeric";
   required?: boolean;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   return (
     <label className={labelClass}>
@@ -892,6 +979,7 @@ function Field({
         inputMode={inputMode}
         required={required}
         disabled={disabled}
+        placeholder={placeholder}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         maxLength={254}

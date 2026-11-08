@@ -47,7 +47,8 @@ const employeeCreateSchema = z
   .object({
     idempotencyKey: z.string().trim().min(16).max(160),
     fullName: z.string().trim().min(2).max(120),
-    employeeCode: z.string().trim().min(2).max(40),
+    // Empty means "use the next code with the business's prefix".
+    employeeCode: z.union([z.literal(""), z.string().trim().min(2).max(40)]).default(""),
     ...employeeContact,
     jobTitle: z.string().trim().min(2).max(100),
     roleId: z.string().trim().min(1).max(120),
@@ -179,8 +180,26 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
 
   if (url.pathname === "/api/seramet/employees" && request.method === "GET") {
     const actor = await authenticateSerametRequest(request, env);
+    const [employees, next] = await Promise.all([
+      service.listEmployees(actor),
+      service.nextEmployeeCode(actor.tenantId),
+    ]);
     return Response.json(
-      { ok: true, employees: await service.listEmployees(actor) },
+      { ok: true, employees, codePrefix: next.prefix, nextCode: next.code },
+      { headers: noStore() },
+    );
+  }
+
+  if (url.pathname === "/api/seramet/employees/code-prefix" && request.method === "PUT") {
+    assertSameOrigin(request, env);
+    const actor = await authenticateSerametRequest(request, env);
+    const body = parse(
+      z.object({ prefix: z.string().trim().min(1).max(20) }).strict(),
+      await request.json().catch(() => null),
+    );
+    const next = await service.setEmployeeCodePrefix(actor, body.prefix);
+    return Response.json(
+      { ok: true, codePrefix: next.prefix, nextCode: next.code },
       { headers: noStore() },
     );
   }
