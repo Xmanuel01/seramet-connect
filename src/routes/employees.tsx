@@ -695,7 +695,7 @@ function Employees() {
           <DialogHeader>
             <DialogTitle>Edit employee</DialogTitle>
             <DialogDescription>
-              Changes apply from their next sign-in. Use the PIN reset to change a PIN.
+              Changes, including a new role, apply straight away. Use the PIN reset to change a PIN.
             </DialogDescription>
           </DialogHeader>
           {editing && (

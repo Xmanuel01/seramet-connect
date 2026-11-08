@@ -665,6 +665,127 @@ describe.sequential("employee editing", () => {
     ).rejects.toMatchObject({ status: 403 });
   });
 
+  it("needs credential permission, every branch in scope, and cancels invitations on email change", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const cashier = await standardRole(provisioned.tenantId, "CASHIER");
+    const employee = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "602947"),
+      email: "cashier.one@example.test",
+      phone: "0700000001",
+    });
+    const details = {
+      fullName: "Cashier One",
+      employeeCode: "CASH-01",
+      jobTitle: "Cashier",
+      email: "cashier.one@example.test",
+      phone: "0700000001",
+      roleId: cashier,
+    };
+
+    // Editing needs the same credential permission as creating.
+    await expect(
+      service.updateEmployee(
+        {
+          ...owner,
+          permissions: owner.permissions.filter(
+            (code) => code !== permissions.employeeCredentialsManage,
+          ),
+        },
+        employee.id,
+        details,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // A manager scoped to one branch cannot edit someone who also works at another.
+    await db.batch([
+      db
+        .prepare(
+          "INSERT INTO branches (tenant_id,id,code,name,timezone,active,payload_json) VALUES (?,?,?,?,?,1,'{}')",
+        )
+        .bind(provisioned.tenantId, "branch-second", "SECOND", "Second Branch", "Africa/Nairobi"),
+      db
+        .prepare("INSERT INTO user_branches (tenant_id,user_id,branch_id) VALUES (?,?,?)")
+        .bind(provisioned.tenantId, employee.id, "branch-second"),
+    ]);
+    const scoped = {
+      ...owner,
+      branchScope: { type: "BRANCH" as const, branchId: provisioned.branchId },
+    };
+    await expect(service.updateEmployee(scoped, employee.id, details)).rejects.toMatchObject({
+      status: 403,
+    });
+
+    // A pending invitation to the old address is cancelled when the email changes.
+    await db
+      .prepare(
+        `INSERT INTO employee_account_invitations
+          (tenant_id,id,user_id,actor_id,email,request_key,branches_json,status,created_at,expires_at)
+         VALUES (?,?,?,?,?,?,'{}','PENDING',?,?)`,
+      )
+      .bind(
+        provisioned.tenantId,
+        "invitation-old-email",
+        employee.id,
+        provisioned.userId,
+        "cashier.one@example.test",
+        "invitation-request-1",
+        new Date().toISOString(),
+        new Date(Date.now() + 86_400_000).toISOString(),
+      )
+      .run();
+    await service.updateEmployee(owner, employee.id, {
+      ...details,
+      email: "cashier.new@example.test",
+    });
+    const invitation = await db
+      .prepare("SELECT status FROM employee_account_invitations WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, "invitation-old-email")
+      .first<{ status: string }>();
+    expect(invitation?.status).toBe("REVOKED");
+  });
+
+  it("reports a code held by an inactive employee as a duplicate", async () => {
+    const provisioned = await new RestaurantRegistrationService(db).register(
+      identity(),
+      registration(),
+    );
+    const owner = await ownerActor(provisioned);
+    const service = new PosIdentityService(db);
+    const cashier = await standardRole(provisioned.tenantId, "CASHIER");
+    const employee = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "602947"),
+      email: "cashier.one@example.test",
+      phone: "0700000001",
+    });
+    const former = await service.createEmployee(owner, {
+      ...employeeInput(cashier, provisioned.branchId, "830275"),
+      idempotencyKey: "employee-create-former-00000001",
+      fullName: "Former Cashier",
+      employeeCode: "FORMER-1",
+      email: "former@example.test",
+      phone: "0700000002",
+    });
+    await db
+      .prepare("UPDATE users SET active=0 WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, former.id)
+      .run();
+    await expect(
+      service.updateEmployee(owner, employee.id, {
+        fullName: "Cashier One",
+        employeeCode: "FORMER-1",
+        jobTitle: "Cashier",
+        email: "cashier.one@example.test",
+        phone: "0700000001",
+        roleId: cashier,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("does not let a manager edit someone with more access than they have", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(
       identity(),

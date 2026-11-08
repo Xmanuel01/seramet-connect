@@ -387,10 +387,11 @@ export class PosIdentityService {
   async updateEmployee(actor: ServerActor, userId: string, input: EmployeeUpdateInput) {
     requireFullAuthentication(actor);
     requirePermission(actor, permissions.usersManage);
+    requirePermission(actor, permissions.employeeCredentialsManage);
     validateEmployeeDetails(input);
     const current = await this.db
       .prepare(
-        `SELECT u.id,pb.branch_id AS primary_branch_id,
+        `SELECT u.id,u.normalized_email,pb.branch_id AS primary_branch_id,
                 CASE WHEN EXISTS (SELECT 1 FROM account_owners o WHERE o.tenant_id=u.tenant_id
                   AND o.user_id=u.id AND o.status='ACTIVE') THEN 1 ELSE 0 END AS owner
          FROM users u LEFT JOIN user_primary_branches pb
@@ -398,15 +399,27 @@ export class PosIdentityService {
          WHERE u.tenant_id=? AND u.id=?`,
       )
       .bind(actor.tenantId, userId)
-      .first<{ id: string; primary_branch_id: string | null; owner: number }>();
+      .first<{
+        id: string;
+        normalized_email: string | null;
+        primary_branch_id: string | null;
+        owner: number;
+      }>();
     if (!current) throw operation("VALIDATION_FAILED", 404, "Employee was not found");
     if (Number(current.owner) === 1)
       throw operation("PERMISSION_DENIED", 403, "The account owner's details can't be edited here");
-    if (
-      actor.branchScope.type !== "ALL" &&
-      (!current.primary_branch_id || !actor.assignedBranchIds.includes(current.primary_branch_id))
-    ) {
-      throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
+    // Every branch the employee works at must be within the editor's authority.
+    if (actor.branchScope.type !== "ALL") {
+      const assigned = await this.db
+        .prepare("SELECT branch_id FROM user_branches WHERE tenant_id=? AND user_id=?")
+        .bind(actor.tenantId, userId)
+        .all<{ branch_id: string }>();
+      const branchIds = [
+        ...(assigned.results ?? []).map((row) => row.branch_id),
+        ...(current.primary_branch_id ? [current.primary_branch_id] : []),
+      ];
+      if (!branchIds.length || branchIds.some((id) => !actor.assignedBranchIds.includes(id)))
+        throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
     }
     // Nobody edits someone whose access goes beyond their own.
     const held = await this.db
@@ -452,13 +465,13 @@ export class PosIdentityService {
     }
     const duplicate = await this.db
       .prepare(
-        `SELECT id FROM users WHERE tenant_id=? AND active=1 AND id<>?
+        `SELECT id FROM users WHERE tenant_id=? AND id<>?
          AND (normalized_email=? OR employee_code=?) LIMIT 1`,
       )
       .bind(actor.tenantId, userId, normalizeEmail(input.email), normalizeCode(input.employeeCode))
       .first();
     if (duplicate)
-      throw operation("DUPLICATE", 409, "Another active employee already uses that code or email");
+      throw operation("DUPLICATE", 409, "Another employee already uses that code or email");
     const stamp = now();
     const statements: D1PreparedStatement[] = [
       this.db
@@ -478,6 +491,36 @@ export class PosIdentityService {
           userId,
         ),
     ];
+    // An invitation sent to the old address could never be accepted, so it is cancelled.
+    if (normalizeEmail(input.email) !== current.normalized_email) {
+      const pending = await this.db
+        .prepare(
+          "SELECT id FROM employee_account_invitations WHERE tenant_id=? AND user_id=? AND status IN ('PREPARING','PENDING','ACCEPTING','FAILED')",
+        )
+        .bind(actor.tenantId, userId)
+        .all<{ id: string }>();
+      statements.push(
+        this.db
+          .prepare(
+            "UPDATE employee_account_invitations SET status='REVOKED' WHERE tenant_id=? AND user_id=? AND status IN ('PREPARING','PENDING','ACCEPTING','FAILED')",
+          )
+          .bind(actor.tenantId, userId),
+        ...(pending.results ?? []).map((row) =>
+          this.db
+            .prepare(
+              "INSERT INTO staff_access_events(tenant_id,id,entity_type,entity_id,version,actor_id,branch_id,event_type,at,details_json) VALUES(?,?,'INVITATION',?,4,?,?,'INVITATION_REVOKED',?,'{\"reason\":\"EMAIL_CHANGED\"}') ON CONFLICT DO NOTHING",
+            )
+            .bind(
+              actor.tenantId,
+              crypto.randomUUID(),
+              row.id,
+              actor.id,
+              current.primary_branch_id,
+              stamp,
+            ),
+        ),
+      );
+    }
     if (roleChanged)
       statements.push(
         this.db
