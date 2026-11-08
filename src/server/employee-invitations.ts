@@ -17,7 +17,7 @@ function fail(status: number, message: string): never {
 }
 /**
  * Supabase's newer secret keys (sb_secret_...) go only in the apikey header; the gateway
- * rejects them as a Bearer token. The legacy service_role key is a JWT and goes in both.
+ * rejects them as a Bearer token. The legacy admin key is a JWT and goes in both.
  */
 export function invitationKeyHeaders(rawKey: string): Record<string, string> {
   const key = rawKey.trim();
@@ -178,7 +178,7 @@ export async function createEmployeeInvitation(
     if (provider.status === 401 || provider.status === 403)
       fail(
         502,
-        "Email invitations are set up with a key Supabase rejected, so no invitation was sent. Save the project's service_role or secret key as SERAMET_SUPABASE_INVITATION_SECRET.",
+        "Email invitations are set up with a key Supabase rejected, so no invitation was sent. Save the Supabase project's server-side admin key as SERAMET_SUPABASE_INVITATION_SECRET.",
       );
     if (!provider.ok)
       fail(
