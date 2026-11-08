@@ -67,7 +67,8 @@ const employeeUpdateSchema = z
     employeeCode: z.string().trim().min(2).max(40),
     ...employeeContact,
     jobTitle: z.string().trim().min(2).max(100),
-    roleId: z.string().trim().min(1).max(120),
+    // Optional only so the account owner, whose role is fixed, can edit their own details.
+    roleId: z.string().trim().min(1).max(120).optional(),
   })
   .strict();
 

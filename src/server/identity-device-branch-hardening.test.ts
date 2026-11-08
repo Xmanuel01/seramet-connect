@@ -592,7 +592,7 @@ describe.sequential("employee editing", () => {
     return row!.id;
   }
 
-  it("updates an employee's details and role, and refuses duplicates and the owner", async () => {
+  it("updates an employee's details and role, refuses duplicates, and guards the owner's record", async () => {
     const provisioned = await new RestaurantRegistrationService(db).register(
       identity(),
       registration(),
@@ -660,8 +660,46 @@ describe.sequential("employee editing", () => {
     await expect(service.updateEmployee(owner, employee.id, details)).rejects.toMatchObject({
       status: 409,
     });
+    // The owner edits their own name and contact details, but not their sign-in email or role.
     await expect(
       service.updateEmployee(owner, provisioned.userId, { ...details, employeeCode: "OWNER-1" }),
+    ).rejects.toMatchObject({ status: 400 });
+    const ownerRow = await db
+      .prepare("SELECT email FROM users WHERE tenant_id=? AND id=?")
+      .bind(provisioned.tenantId, provisioned.userId)
+      .first<{ email: string }>();
+    const ownerRolesBefore = await db
+      .prepare("SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=? ORDER BY role_id")
+      .bind(provisioned.tenantId, provisioned.userId)
+      .all();
+    const ownDetails = {
+      fullName: "Owner Renamed",
+      employeeCode: "OWNER-1",
+      jobTitle: "Proprietor",
+      email: ownerRow!.email,
+      phone: "0700000009",
+    };
+    await service.updateEmployee(owner, provisioned.userId, { ...ownDetails, roleId: chef });
+    expect(
+      await db
+        .prepare("SELECT name,employee_code,job_title,phone FROM users WHERE tenant_id=? AND id=?")
+        .bind(provisioned.tenantId, provisioned.userId)
+        .first(),
+    ).toEqual({
+      name: "Owner Renamed",
+      employee_code: "OWNER-1",
+      job_title: "Proprietor",
+      phone: "0700000009",
+    });
+    expect(
+      await db
+        .prepare("SELECT role_id FROM user_roles WHERE tenant_id=? AND user_id=? ORDER BY role_id")
+        .bind(provisioned.tenantId, provisioned.userId)
+        .all(),
+    ).toEqual(ownerRolesBefore);
+    // Nobody else edits the owner's record, even with the same permissions.
+    await expect(
+      service.updateEmployee({ ...owner, id: employee.id }, provisioned.userId, ownDetails),
     ).rejects.toMatchObject({ status: 403 });
   });
 
