@@ -478,7 +478,12 @@ function ConfiguredAppProvider({
       locale: activeTenant?.locale ?? "en",
       timeZone: displayTimeZone,
       theme,
-      branchLabel: isAllBranches ? "All branches" : `${fallbackBranch.name} Branch`,
+      branchLabel: isAllBranches
+        ? "All branches"
+        : // "Pilot Branch A" stays as it is instead of becoming "Pilot Branch A Branch".
+          /\bbranch\b/i.test(fallbackBranch.name)
+          ? fallbackBranch.name
+          : `${fallbackBranch.name} Branch`,
       isAllBranches,
       currentUser,
       canSwitchBranch,

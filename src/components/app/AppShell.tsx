@@ -290,8 +290,11 @@ export function AppShell({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // A boolean, not the permissions array: the array is rebuilt on every session refresh,
+  // which re-ran this effect and fetched diagnostics again on each page.
+  const watchesIntegrations = permissions.includes(permissionCodes.settingsIntegrationManage);
   useEffect(() => {
-    if (!permissions.includes(permissionCodes.settingsIntegrationManage)) return;
+    if (!watchesIntegrations) return;
     let cancelled = false;
     const refreshIntegrationAlerts = async () => {
       try {
@@ -358,7 +361,7 @@ export function AppShell({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeTenantId, currentUser.id, permissions]);
+  }, [activeTenantId, currentUser.id, watchesIntegrations]);
 
   useEffect(() => {
     const onWorkflowAction = (event: Event) => {
