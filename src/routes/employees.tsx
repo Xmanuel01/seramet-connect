@@ -90,6 +90,11 @@ function Employees() {
   const [primaryBranchId, setPrimaryBranchId] = useState(branchId);
   const [showForm, setShowForm] = useState(false);
   const [stationEmployee, setStationEmployee] = useState<EmployeeRow | null>(null);
+  // Leaving staff keep their records; the register hides them unless asked.
+  const [leaving, setLeaving] = useState<EmployeeRow | null>(null);
+  const [leaveReason, setLeaveReason] = useState("RESIGNED");
+  const [leaveNote, setLeaveNote] = useState("");
+  const [showFormer, setShowFormer] = useState(false);
   const [editing, setEditing] = useState<EmployeeEdit | null>(null);
   const [editError, setEditError] = useState("");
   const [busy, setBusy] = useState(true);
@@ -270,6 +275,7 @@ function Employees() {
     }
   };
 
+  const former = employees.filter((employee) => left(employee));
   const active = employees.filter(
     (employee) => employee.active && employee.employment_status === "ACTIVE",
   );
@@ -396,6 +402,46 @@ function Employees() {
       }
     }
   }
+  async function changeEmployment(employee: EmployeeRow, end: boolean) {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    const scopeAtStart = scope;
+    try {
+      const response = await fetch(
+        `/api/seramet/employees/${encodeURIComponent(employee.id)}/${end ? "end-employment" : "reinstate"}`,
+        {
+          method: "POST",
+          headers: headers(),
+          body: JSON.stringify(
+            end
+              ? { reason: leaveReason, ...(leaveNote.trim() ? { note: leaveNote.trim() } : {}) }
+              : { reason: "REINSTATED" },
+          ),
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      const result = (await response.json().catch(() => ({}))) as { message?: string };
+      if (activeScope.current !== scopeAtStart) return;
+      if (!response.ok) throw new Error(result.message ?? "Couldn't update this employee.");
+      setLeaving(null);
+      setLeaveNote("");
+      setNotice(
+        end
+          ? `${employee.name} has left. They can no longer sign in, and their records are kept.`
+          : `${employee.name} is active again. Give them a new PIN or invitation to sign in.`,
+      );
+      await load();
+    } catch (error) {
+      if (activeScope.current === scopeAtStart)
+        setNotice(error instanceof Error ? error.message : "Couldn't update this employee.");
+    } finally {
+      if (activeScope.current === scopeAtStart) {
+        submitting.current = false;
+        setBusy(false);
+      }
+    }
+  }
   function startEdit(employee: EmployeeRow) {
     if (!canEdit(employee)) return;
     setEditError("");
@@ -473,7 +519,7 @@ function Employees() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Employees" value={employees.length} />
+        <Metric label="Employees" value={employees.length - former.length} />
         <Metric label="Active" value={active.length} />
         <Metric label="Locked" value={locked.length} invert={locked.length > 0} />
         <Metric
@@ -737,9 +783,18 @@ function Employees() {
           title="Employee register"
           sub="Everyone who works in this branch"
           right={
-            <Btn onClick={() => void load()} disabled={busy} title="Refresh">
-              <RefreshCcw className="h-4 w-4" />
-            </Btn>
+            <div className="flex items-center gap-2">
+              {former.length ? (
+                <Btn onClick={() => setShowFormer(!showFormer)}>
+                  {showFormer
+                    ? "Hide former employees"
+                    : `Show former employees (${former.length})`}
+                </Btn>
+              ) : null}
+              <Btn onClick={() => void load()} disabled={busy} title="Refresh">
+                <RefreshCcw className="h-4 w-4" />
+              </Btn>
+            </div>
           }
         />
         <table className="w-full min-w-[640px]">
@@ -754,76 +809,102 @@ function Employees() {
             </tr>
           </thead>
           <tbody>
-            {employees.map((employee) => (
-              <tr
-                key={employee.id}
-                className={canEdit(employee) ? "cursor-pointer hover:bg-secondary/50" : undefined}
-                onClick={() => startEdit(employee)}
-              >
-                <TD>
-                  <div className="font-semibold">
-                    {employee.name}
-                    {employee.account_owner ? (
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        Account owner
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {[employee.employee_code, employee.email].filter(Boolean).join(" · ") ||
-                      "No code or email"}
-                  </div>
-                </TD>
-                <TD>{employee.job_title ?? "—"}</TD>
-                <TD>
-                  {branchRecords.find((branch) => branch.id === employee.primary_branch_id)?.name ??
-                    "—"}
-                </TD>
-                <TD>
-                  <Status className={statusTone[pinStatus(employee)]}>{pinStatus(employee)}</Status>
-                </TD>
-                <TD>
-                  <Status className={statusTone[titleCase(employee.employment_status)]}>
-                    {titleCase(employee.employment_status)}
-                  </Status>
-                </TD>
-                {canManage && (
-                  <TD className="text-right" onClick={(event) => event.stopPropagation()}>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        disabled={busy}
-                        aria-label={`Actions for ${employee.name}`}
-                        className="inline-grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary disabled:opacity-50"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canEdit(employee) && (
-                          <DropdownMenuItem onSelect={() => startEdit(employee)}>
-                            Edit details
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem
-                          disabled={!employee.email}
-                          onSelect={() => void invitation(employee)}
-                        >
-                          {employee.email ? "Invite to sign in" : "Invite to sign in (needs email)"}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => void invitation(employee, false, true)}>
-                          Check invitation
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => void invitation(employee, true)}>
-                          Cancel invitation
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => setStationEmployee(employee)}>
-                          Preparation stations
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+            {(showFormer ? employees : employees.filter((employee) => !left(employee))).map(
+              (employee) => (
+                <tr
+                  key={employee.id}
+                  className={canEdit(employee) ? "cursor-pointer hover:bg-secondary/50" : undefined}
+                  onClick={() => startEdit(employee)}
+                >
+                  <TD>
+                    <div className="font-semibold">
+                      {employee.name}
+                      {employee.account_owner ? (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          Account owner
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {[employee.employee_code, employee.email].filter(Boolean).join(" · ") ||
+                        "No code or email"}
+                    </div>
                   </TD>
-                )}
-              </tr>
-            ))}
+                  <TD>{employee.job_title ?? "—"}</TD>
+                  <TD>
+                    {branchRecords.find((branch) => branch.id === employee.primary_branch_id)
+                      ?.name ?? "—"}
+                  </TD>
+                  <TD>
+                    <Status className={statusTone[pinStatus(employee)]}>
+                      {pinStatus(employee)}
+                    </Status>
+                  </TD>
+                  <TD>
+                    <Status className={statusTone[employmentLabel(employee)]}>
+                      {employmentLabel(employee)}
+                    </Status>
+                  </TD>
+                  {canManage && (
+                    <TD className="text-right" onClick={(event) => event.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          disabled={busy}
+                          aria-label={`Actions for ${employee.name}`}
+                          className="inline-grid h-8 w-8 place-items-center rounded-md border border-border hover:bg-secondary disabled:opacity-50"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canEdit(employee) && (
+                            <DropdownMenuItem onSelect={() => startEdit(employee)}>
+                              Edit details
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem
+                            disabled={!employee.email}
+                            onSelect={() => void invitation(employee)}
+                          >
+                            {employee.email
+                              ? "Invite to sign in"
+                              : "Invite to sign in (needs email)"}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void invitation(employee, false, true)}>
+                            Check invitation
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void invitation(employee, true)}>
+                            Cancel invitation
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => setStationEmployee(employee)}>
+                            Preparation stations
+                          </DropdownMenuItem>
+                          {!employee.account_owner && employee.id !== currentUser.id ? (
+                            left(employee) ? (
+                              <DropdownMenuItem
+                                onSelect={() => void changeEmployment(employee, false)}
+                              >
+                                Reinstate
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                className="text-danger"
+                                onSelect={() => {
+                                  setLeaveReason("RESIGNED");
+                                  setLeaveNote("");
+                                  setLeaving(employee);
+                                }}
+                              >
+                                End employment…
+                              </DropdownMenuItem>
+                            )
+                          ) : null}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TD>
+                  )}
+                </tr>
+              ),
+            )}
             {!employees.length && !busy ? (
               <tr>
                 <TD colSpan={canManage ? 6 : 5}>No employees in this branch yet.</TD>
@@ -920,6 +1001,57 @@ function Employees() {
           )}
         </DialogContent>
       </Dialog>
+      <Dialog open={!!leaving} onOpenChange={(open) => !open && !busy && setLeaving(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>End {leaving?.name}&apos;s employment</DialogTitle>
+            <DialogDescription>
+              They won&apos;t be able to sign in or clock in. Their sales, attendance and other
+              records are kept, and you can reinstate them later.
+            </DialogDescription>
+          </DialogHeader>
+          {leaving && (
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void changeEmployment(leaving, true);
+              }}
+            >
+              <label className={labelClass}>
+                Reason
+                <select
+                  className={fieldClass}
+                  value={leaveReason}
+                  onChange={(event) => setLeaveReason(event.target.value)}
+                >
+                  <option value="RESIGNED">Resigned</option>
+                  <option value="DISMISSED">Dismissed</option>
+                  <option value="CONTRACT_ENDED">Contract ended</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </label>
+              <label className={labelClass}>
+                Note (optional)
+                <textarea
+                  className={fieldClass}
+                  maxLength={500}
+                  value={leaveNote}
+                  onChange={(event) => setLeaveNote(event.target.value)}
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <Btn type="button" disabled={busy} onClick={() => setLeaving(null)}>
+                  Cancel
+                </Btn>
+                <Btn type="submit" variant="primary" disabled={busy}>
+                  {busy ? "Saving..." : "End employment"}
+                </Btn>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
       {stationEmployee && canManage && (
         <EmployeeStationAccess
           employeeId={stationEmployee.id}
@@ -942,7 +1074,14 @@ const statusTone: Record<string, string> = {
   "PIN change needed": "bg-warning-soft text-warning",
   Locked: "bg-danger-soft text-danger",
   Active: "bg-success-soft text-success",
+  Left: "bg-secondary text-muted-foreground",
 };
+
+const left = (employee: { employment_status: string }) =>
+  employee.employment_status === "TERMINATED";
+
+const employmentLabel = (employee: { employment_status: string }) =>
+  left(employee) ? "Left" : titleCase(employee.employment_status);
 
 const titleCase = (value: string) =>
   value.charAt(0).toUpperCase() + value.slice(1).toLowerCase().replaceAll("_", " ");

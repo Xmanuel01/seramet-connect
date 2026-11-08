@@ -91,7 +91,7 @@ function PosLoginPage() {
     if (submittingRef.current || entryDisabled) return;
     if (!deviceReady) {
       setPin("");
-      setMessage("Activate this device with an administrator account.");
+      setMessage(NOT_A_TILL);
       administratorLinkRef.current?.focus();
       return;
     }
@@ -422,7 +422,8 @@ function PosLoginPage() {
                   onClick={() => setPin((current) => current.slice(0, -1))}
                 />
               </div>
-              {message && deviceReady ? (
+              {/* On a phone the panel above is off screen, so this reason shows here too. */}
+              {message && (deviceReady || message === NOT_A_TILL) ? (
                 <p
                   role="alert"
                   className="mt-5 rounded-md bg-danger-soft px-3 py-2 text-center text-sm text-danger"
@@ -495,6 +496,9 @@ function ScreenMessage({
     </main>
   );
 }
+
+const NOT_A_TILL =
+  "This phone or computer isn't set up as a till yet, so staff PINs don't work on it. Use the restaurant's POS device, or set this one up with the administrator account.";
 
 function deviceMessage(state: DeviceStartup["state"]) {
   if (state === "LOCKED") return "Device locked. Contact your administrator.";

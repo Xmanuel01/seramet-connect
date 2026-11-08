@@ -1262,6 +1262,105 @@ export class PosIdentityService {
     return this.nextEmployeeCode(actor.tenantId);
   }
 
+  /**
+   * Ends someone's employment (resigned, dismissed, contract ended). Their records stay for
+   * history, but they can no longer sign in: open POS sessions and pending invitations end.
+   * `reinstate` undoes it.
+   */
+  async setEmploymentEnded(
+    actor: ServerActor,
+    userId: string,
+    input: { ended: boolean; reason: string; note?: string },
+  ) {
+    requireFullAuthentication(actor);
+    requirePermission(actor, permissions.usersManage);
+    requirePermission(actor, permissions.employeeCredentialsManage);
+    if (userId === actor.id)
+      throw operation("PERMISSION_DENIED", 403, "You can't end your own employment");
+    const current = await this.db
+      .prepare(
+        `SELECT u.id,u.employment_status,pb.branch_id AS primary_branch_id,
+                CASE WHEN EXISTS (SELECT 1 FROM account_owners o WHERE o.tenant_id=u.tenant_id
+                  AND o.user_id=u.id AND o.status='ACTIVE') THEN 1 ELSE 0 END AS owner
+         FROM users u LEFT JOIN user_primary_branches pb
+           ON pb.tenant_id=u.tenant_id AND pb.user_id=u.id
+         WHERE u.tenant_id=? AND u.id=?`,
+      )
+      .bind(actor.tenantId, userId)
+      .first<{
+        id: string;
+        employment_status: string;
+        primary_branch_id: string | null;
+        owner: number;
+      }>();
+    if (!current) throw operation("VALIDATION_FAILED", 404, "Employee was not found");
+    if (Number(current.owner) === 1)
+      throw operation("PERMISSION_DENIED", 403, "The account owner's employment can't be ended");
+    if (actor.branchScope.type !== "ALL") {
+      const assigned = await this.db
+        .prepare("SELECT branch_id FROM user_branches WHERE tenant_id=? AND user_id=?")
+        .bind(actor.tenantId, userId)
+        .all<{ branch_id: string }>();
+      const branchIds = [
+        ...(assigned.results ?? []).map((row) => row.branch_id),
+        ...(current.primary_branch_id ? [current.primary_branch_id] : []),
+      ];
+      if (!branchIds.length || branchIds.some((id) => !actor.assignedBranchIds.includes(id)))
+        throw operation("PERMISSION_DENIED", 403, "Employee branch is outside your authority");
+    }
+    const held = await this.db
+      .prepare(
+        `SELECT rp.permission_code FROM user_roles ur JOIN role_permissions rp
+           ON rp.tenant_id=ur.tenant_id AND rp.role_id=ur.role_id
+         WHERE ur.tenant_id=? AND ur.user_id=?`,
+      )
+      .bind(actor.tenantId, userId)
+      .all<{ permission_code: string }>();
+    if ((held.results ?? []).some((row) => !actor.permissions.includes(row.permission_code)))
+      throw operation("PERMISSION_DENIED", 403, "This employee has access beyond yours");
+    const alreadyEnded = current.employment_status === "TERMINATED";
+    if (input.ended === alreadyEnded)
+      throw operation(
+        "CONFLICT",
+        409,
+        input.ended ? "This employee has already left" : "This employee is already active",
+      );
+    const stamp = now();
+    const details = { reason: input.reason, ...(input.note ? { note: input.note } : {}) };
+    const statements: D1PreparedStatement[] = input.ended
+      ? [
+          this.db
+            .prepare(
+              `UPDATE users SET employment_status='TERMINATED',active=0,effective_until=?,updated_at=?
+               WHERE tenant_id=? AND id=?`,
+            )
+            .bind(stamp, stamp, actor.tenantId, userId),
+          this.db
+            .prepare(
+              `UPDATE pos_sessions SET revoked_at=?,revoke_reason='EMPLOYMENT_ENDED'
+               WHERE tenant_id=? AND user_id=? AND revoked_at IS NULL`,
+            )
+            .bind(stamp, actor.tenantId, userId),
+          this.db
+            .prepare(
+              "UPDATE employee_account_invitations SET status='REVOKED' WHERE tenant_id=? AND user_id=? AND status IN ('PREPARING','PENDING','ACCEPTING','FAILED')",
+            )
+            .bind(actor.tenantId, userId),
+          audit(this.db, actor, "EMPLOYEE_EMPLOYMENT_ENDED", "USER", userId, details),
+        ]
+      : [
+          this.db
+            .prepare(
+              `UPDATE users SET employment_status='ACTIVE',active=1,effective_until=NULL,updated_at=?
+               WHERE tenant_id=? AND id=?`,
+            )
+            .bind(stamp, actor.tenantId, userId),
+          audit(this.db, actor, "EMPLOYEE_REINSTATED", "USER", userId, details),
+        ];
+    await this.db.batch(statements);
+    return { id: userId, employmentStatus: input.ended ? "TERMINATED" : "ACTIVE" };
+  }
+
   async listEmployees(actor: ServerActor) {
     requirePermission(actor, permissions.usersView);
     const branchPredicate =
