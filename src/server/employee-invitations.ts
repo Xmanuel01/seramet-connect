@@ -163,37 +163,72 @@ export async function createEmployeeInvitation(
     throw error;
   }
   try {
-    const provider = await fetch(
-      `${config.base}/auth/v1/invite?redirect_to=${encodeURIComponent(`${config.origin}/staff-login?invitation=${id}`)}`,
-      {
-        method: "POST",
-        headers: {
-          ...invitationKeyHeaders(env.SERAMET_SUPABASE_INVITATION_SECRET!),
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ email: email.data.toLowerCase() }),
-        signal: AbortSignal.timeout(15000),
-      },
-    );
+    const address = email.data.toLowerCase();
+    const redirect = encodeURIComponent(`${config.origin}/staff-login?invitation=${id}`);
+    const headers = {
+      ...invitationKeyHeaders(env.SERAMET_SUPABASE_INVITATION_SECRET!),
+      "content-type": "application/json",
+    };
+    const provider = await fetch(`${config.base}/auth/v1/invite?redirect_to=${redirect}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ email: address }),
+      signal: AbortSignal.timeout(15000),
+    });
     if (provider.status === 401 || provider.status === 403)
       fail(
         502,
         "Email invitations are set up with a key Supabase rejected, so no invitation was sent. Save the Supabase project's server-side admin key as SERAMET_SUPABASE_INVITATION_SECRET.",
       );
-    if (!provider.ok)
-      fail(
-        502,
-        "The invitation provider did not accept this request. Existing accounts require explicit linking review.",
-      );
-    const user = (await provider.json()) as { id?: string; email?: string };
-    if (!user.id || user.email?.toLowerCase() !== email.data.toLowerCase())
-      fail(502, "The invitation response could not be verified.");
+    let subject: string;
+    if (provider.status === 422) {
+      // Supabase only invites new addresses. Someone invited before already has an account
+      // there, so they get a sign-in link to it instead; the same link opens "Choose your PIN".
+      const earlier = await db
+        .prepare(
+          "SELECT provider_subject FROM employee_account_invitations WHERE email=? AND provider_subject IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(address)
+        .first<{ provider_subject: string }>();
+      if (!earlier)
+        fail(
+          409,
+          "This email already has a sign-in account that Seramet didn't create, so no invitation was sent. Use a different email for this employee.",
+        );
+      const link = await fetch(`${config.base}/auth/v1/otp?redirect_to=${redirect}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ email: address, create_user: false }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (link.status === 429)
+        fail(
+          429,
+          "An email went to this address less than a minute ago. Wait a minute, then send the invitation again.",
+        );
+      if (!link.ok)
+        fail(
+          502,
+          `Supabase didn't send the invitation email (error ${link.status}). Try again shortly.`,
+        );
+      subject = earlier.provider_subject;
+    } else {
+      if (!provider.ok)
+        fail(
+          502,
+          `Supabase didn't send the invitation email (error ${provider.status}). Try again shortly.`,
+        );
+      const user = (await provider.json()) as { id?: string; email?: string };
+      if (!user.id || user.email?.toLowerCase() !== address)
+        fail(502, "The invitation response could not be verified.");
+      subject = user.id;
+    }
     const result = await db.batch([
       db
         .prepare(
           "UPDATE employee_account_invitations SET provider_subject=?,status='PENDING' WHERE tenant_id=? AND id=? AND status='PREPARING'",
         )
-        .bind(user.id, actor.tenantId, id),
+        .bind(subject, actor.tenantId, id),
       db
         .prepare(
           "INSERT INTO staff_access_events(tenant_id,id,entity_type,entity_id,version,actor_id,branch_id,event_type,at,details_json) SELECT ?,?,'INVITATION',?,1,?,?,'INVITATION_PROVIDER_ACCEPTED',?,'{}' WHERE EXISTS(SELECT 1 FROM employee_account_invitations WHERE tenant_id=? AND id=? AND status='PENDING')",
