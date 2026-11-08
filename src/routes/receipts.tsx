@@ -11,10 +11,11 @@ import { ksh } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
-import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
+import { formatFilterDate } from "@/lib/date-filters";
 import { receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { recordBusinessDate } from "@/lib/pos-workflow";
+import { useBusinessToday } from "@/hooks/use-business-today";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
 import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
 
@@ -40,7 +41,6 @@ export const Route = createFileRoute("/receipts")({
 });
 
 function Receipts() {
-  const [periodDate, setPeriodDate] = useState(() => todayInputValue());
   const [printNotice, setPrintNotice] = useState("");
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
@@ -55,6 +55,14 @@ function Receipts() {
     matchesBranch,
     timeZone,
   } = useAppContext();
+  // Opens on today. Until the user picks or clears a date, the date follows the active
+  // branch's current business day, across branch switches and the cutoff.
+  const [chosenDate, setPeriodDate] = useState<string | null>(null);
+  const businessToday = useBusinessToday(
+    branchRecords.find((branch) => branch.id === branchId)?.metadata["businessDayCutoffMinutes"],
+    timeZone,
+  );
+  const periodDate = chosenDate ?? businessToday;
   const { state, mutate } = useTransactionEngine();
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const { configurationError, printCustomerDocument } = useSerametPrintQueue(branchId);

@@ -19,6 +19,7 @@ import {
   formatPosClock,
   invoiceBusinessDate,
   pendingPosOrders,
+  branchBusinessToday,
   recordBusinessDate,
   resolvePosTimeZone,
   acknowledgedKitchenDispatch,
@@ -400,5 +401,29 @@ describe("two-branch concurrent-order source isolation", () => {
     expect(state.bills).toHaveLength(1);
     expect(state.bills[0]?.orderIds).toEqual([westId]);
     expect(state.bills[0]?.branchId).toBe(DEMO_WESTLANDS_BRANCH_ID);
+  });
+});
+
+describe("default date on Invoices and Receipts", () => {
+  // 01:30 and 04:00 in Nairobi on 9 November.
+  const afterMidnight = new Date("2026-11-08T22:30:00Z");
+  const atCutoff = new Date("2026-11-09T01:00:00Z");
+
+  it("is still yesterday's business day after midnight, before the cutoff", () => {
+    expect(branchBusinessToday(240, "Africa/Nairobi", afterMidnight)).toBe("2026-11-08");
+  });
+
+  it("moves to the new day at the cutoff", () => {
+    expect(branchBusinessToday(240, "Africa/Nairobi", atCutoff)).toBe("2026-11-09");
+  });
+
+  it("uses the server's 4am cutoff when the branch has none", () => {
+    expect(branchBusinessToday(undefined, "Africa/Nairobi", afterMidnight)).toBe("2026-11-08");
+  });
+
+  it("falls back instead of failing on a bad cutoff or timezone", () => {
+    expect(branchBusinessToday(5_000, "Africa/Nairobi", afterMidnight)).toBe("2026-11-08");
+    expect(branchBusinessToday("not a number", "Africa/Nairobi", atCutoff)).toBe("2026-11-09");
+    expect(branchBusinessToday(240, "Not/AZone", afterMidnight)).toBe("2026-11-08");
   });
 });
