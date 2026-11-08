@@ -111,9 +111,8 @@ for (const width of [1366, 390]) {
     await page.keyboard.type("23456");
     await expect(entered).toHaveCount(6);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(
-      page.getByText("Activate this device with an administrator account.", { exact: true }),
-    ).toBeVisible();
+    // The reason shows beside the Sign in button, where a phone user is looking.
+    await expect(page.getByRole("alert")).toContainText("isn't set up as a till yet");
     await expect(
       page.getByRole("link", { name: "Use administrator account", exact: true }),
     ).toBeFocused();
