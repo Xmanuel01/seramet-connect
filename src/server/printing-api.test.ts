@@ -447,6 +447,82 @@ it("persists administrator config, edits/disables it and lists only active branc
   expect(other.printers).toEqual([]);
 });
 
+it("deletes a printer from the branch but keeps its record, unless another printer backs onto it", async () => {
+  const save = async (input: unknown) =>
+    (await (await handlePrintingApi(request("printers", input), env(), repository))!.json())
+      .printer as { id: string; name: string };
+  const remove = (id: string) =>
+    handlePrintingApi(
+      new Request(`http://localhost/api/seramet/printing/printers/${id}`, { method: "DELETE" }),
+      env(),
+      repository,
+    );
+  const main = await save(configuration());
+  const backup = await save({
+    ...configuration(),
+    name: "Disposable backup",
+    fallbackPrinterId: main.id,
+  });
+
+  await expect(remove(main.id)).rejects.toMatchObject({
+    status: 409,
+    message: expect.stringContaining("Disposable backup"),
+  });
+
+  // Routes that print to the backup go, and it is cleared as a route fallback everywhere.
+  const route = (routeId: string, primary: string, fallback: string | null) =>
+    db
+      .prepare(
+        "INSERT INTO print_routes (tenant_id,id,branch_id,document_type,primary_device_id,fallback_device_id,payload_json) VALUES (?,?,?,'BILL',?,?,?)",
+      )
+      .bind(
+        actor.tenantId,
+        routeId,
+        branchId,
+        primary,
+        fallback,
+        JSON.stringify(fallback ? { fallbackDeviceId: fallback } : {}),
+      )
+      .run();
+  await route("route-to-backup", backup.id, null);
+  await route("route-with-backup", main.id, backup.id);
+
+  expect((await remove(backup.id))!.status).toBe(200);
+  const listed = await (await handlePrintingApi(request("printers"), env(), repository))!.json();
+  expect(listed.printers.map((printer: { id: string }) => printer.id)).toEqual([main.id]);
+  const stored = await db
+    .prepare("SELECT trust_status,lifecycle_state FROM hardware_devices WHERE tenant_id=? AND id=?")
+    .bind(actor.tenantId, backup.id)
+    .first<{ trust_status: string; lifecycle_state: string }>();
+  // Retired as well as revoked, so device activation cannot bring it back.
+  expect(stored).toEqual({ trust_status: "REVOKED", lifecycle_state: "RETIRED" });
+  const routes = await db
+    .prepare("SELECT id,fallback_device_id,payload_json FROM print_routes WHERE tenant_id=?")
+    .bind(actor.tenantId)
+    .all<{ id: string; fallback_device_id: string | null; payload_json: string }>();
+  expect(routes.results).toEqual([
+    { id: "route-with-backup", fallback_device_id: null, payload_json: "{}" },
+  ]);
+  const audit = await db
+    .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE tenant_id=? AND action=?")
+    .bind(actor.tenantId, "PRINTER_DELETED")
+    .first<{ count: number }>();
+  expect(audit?.count).toBe(1);
+
+  // A stale edit form cannot bring a deleted printer back.
+  await expect(
+    handlePrintingApi(
+      request("printers", { ...configuration(), id: backup.id, name: "Disposable backup" }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 404 });
+  await expect(remove(backup.id)).rejects.toMatchObject({ status: 404 });
+
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(remove(main.id)).rejects.toMatchObject({ status: 403 });
+});
+
 it("denies cashier configuration and cross-branch targets", async () => {
   const input = configuration();
   actor.permissions = [permissions.ordersUpdate];
