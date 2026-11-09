@@ -24,10 +24,15 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
       rows: [
         ["Reference", report.reference],
         ["Business date", snapshot.businessDate],
-        ["Supervisor", report.operatorNames?.[report.supervisorId] ?? report.supervisorId],
+        [
+          "Supervisor",
+          report.provisional
+            ? "Not closed yet"
+            : (report.operatorNames?.[report.supervisorId] ?? report.supervisorId),
+        ],
         ["Closing mode", report.mode.replaceAll("_", " ")],
         [
-          "Closed",
+          report.provisional ? "Prepared" : "Closed",
           new Intl.DateTimeFormat("en-GB", {
             timeZone: report.timeZone,
             dateStyle: "medium",
@@ -249,7 +254,9 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
   const report = snapshot.dailyReport;
   if (!report) throw new Error("Unified closing snapshot is required");
   const pdf = await PDFDocument.create();
-  pdf.setTitle(`Daily Closing Report - ${report.reference}`);
+  pdf.setTitle(
+    `${report.provisional ? "Daily Summary" : "Daily Closing Report"} - ${report.reference}`,
+  );
   pdf.setSubject(report.reference);
   pdf.setCreationDate(new Date(snapshot.closedAt));
   pdf.setModificationDate(new Date(snapshot.closedAt));
@@ -404,7 +411,8 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
   const money = (amount: number) => formatMinor(amount, snapshot.currency);
   const components = summarizeInvoiceComponents(report.invoices, snapshot.currency);
 
-  header("Daily End of Day Report");
+  // An automatic summary of a day nobody closed must never pass for the signed-off close.
+  header(report.provisional ? "Daily Summary (day not closed)" : "Daily End of Day Report");
   heading("Management summary");
   metric(
     "Invoice gross sales",

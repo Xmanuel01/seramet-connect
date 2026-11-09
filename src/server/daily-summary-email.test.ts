@@ -1,0 +1,180 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PDFDocument } from "pdf-lib";
+import {
+  createEmptyTransactionState,
+  normalizeTransactionState,
+  type TransactionState,
+} from "@/lib/transaction-engine";
+import {
+  ConfigurationRepository,
+  setConfigurationRepositoryForTests,
+} from "@/platform/repositories/configuration-repository";
+import {
+  createDefaultDemoPlatformState,
+  DEMO_TENANT_ID,
+  DEMO_WESTLANDS_BRANCH_ID,
+} from "@/platform/demo/default-demo-data";
+import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
+import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
+import { lastEndedBusinessDate, summarizeBusinessDay } from "@/payments/daily-closing";
+import { renderDailyClosingPdf } from "@/server/daily-closing-report";
+
+let state: TransactionState;
+vi.mock("@/server/database/authoritative-transaction-repository", () => ({
+  D1AuthoritativeTransactionRepository: class {
+    async loadState() {
+      return state;
+    }
+  },
+}));
+import { deliverDailySummaryEmail, queueDailySummaryEmails } from "@/server/daily-summary-email";
+
+let db: SqliteD1TestDatabase;
+let recipientId: string;
+const tenantId = DEMO_TENANT_ID;
+const branchId = DEMO_WESTLANDS_BRANCH_ID;
+const env = () => ({
+  SERAMET_DB: db,
+  SERAMET_TRANSACTIONAL_EMAIL_CONFIG: JSON.stringify({
+    [tenantId]: { apiKey: "disposable-brevo-key-not-real", from: "Seramet <reports@example.com>" },
+  }),
+});
+
+function withRecipients(ids: string[]) {
+  const next = normalizeTransactionState(createEmptyTransactionState(tenantId));
+  next.paymentOperations!.closingPolicies = [
+    {
+      id: branchId,
+      tenantId,
+      branchId,
+      mode: "SUPERVISOR_DAILY_CLOSE",
+      materialVarianceMinor: 50_000,
+      recipientUserIds: ids,
+      updatedBy: "owner",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+    },
+  ];
+  return next;
+}
+
+beforeEach(() => {
+  setConfigurationRepositoryForTests(new ConfigurationRepository(createDefaultDemoPlatformState()));
+  db = createDemoFixtureDatabase();
+  // A manager with an email, this branch and report access: who the server will send to.
+  recipientId = "daily-summary-manager";
+  const stamp = "2026-11-01T00:00:00.000Z";
+  db.sqlite
+    .prepare(
+      "INSERT INTO users(tenant_id,id,name,email,employment_status,active,created_at,updated_at) VALUES(?,?,?,?,'ACTIVE',1,?,?)",
+    )
+    .run(tenantId, recipientId, "Report Manager", "manager@example.com", stamp, stamp);
+  db.sqlite.prepare("INSERT INTO user_branches VALUES(?,?,?)").run(tenantId, recipientId, branchId);
+  db.sqlite
+    .prepare("INSERT INTO roles(tenant_id,id,code,name,active) VALUES(?,?,?,?,1)")
+    .run(tenantId, "daily-summary-role", "DAILY_SUMMARY_READER", "Report reader");
+  db.sqlite
+    .prepare("INSERT INTO role_permissions(tenant_id,role_id,permission_code) VALUES(?,?,?)")
+    .run(tenantId, "daily-summary-role", "reconciliation.view");
+  db.sqlite
+    .prepare("INSERT INTO user_roles(tenant_id,user_id,role_id) VALUES(?,?,?)")
+    .run(tenantId, recipientId, "daily-summary-role");
+  state = withRecipients([recipientId]);
+});
+afterEach(() => {
+  db.close();
+  setConfigurationRepositoryForTests();
+  vi.unstubAllGlobals();
+});
+
+describe("automatic end-of-day summary", () => {
+  it("reports an unclosed day as a summary, never as a signed-off close", async () => {
+    const snapshot = summarizeBusinessDay(state, {
+      tenantId,
+      branchId,
+      businessDate: "2026-11-08",
+      recipientUserIds: [recipientId],
+      preparedAt: "2026-11-09T01:07:00.000Z",
+    });
+    expect(snapshot.dailyReport).toMatchObject({ provisional: true, supervisorId: "system" });
+    const pdf = await renderDailyClosingPdf(snapshot);
+    expect((await PDFDocument.load(pdf)).getTitle()).toMatch(/^Daily Summary - /);
+    // A retried send must render the same bytes, or the email layer refuses it.
+    expect(await renderDailyClosingPdf(snapshot)).toEqual(pdf);
+  });
+
+  it("picks the business day that has just ended", () => {
+    const date = lastEndedBusinessDate(tenantId, branchId, new Date("2026-11-09T12:00:00Z"));
+    expect(date).toMatch(/^2026-11-0[78]$/);
+  });
+
+  it("queues one email per recipient per day, however often it runs", async () => {
+    const now = new Date("2026-11-09T12:00:00Z");
+    expect(await queueDailySummaryEmails(env(), tenantId, now)).toEqual({ queued: 1 });
+    expect(await queueDailySummaryEmails(env(), tenantId, now)).toEqual({ queued: 0 });
+    const job = db.sqlite
+      .prepare("SELECT branch_id,payload_json,status FROM worker_jobs WHERE job_type=?")
+      .get("DAILY_SUMMARY_EMAIL") as { branch_id: string; payload_json: string; status: string };
+    expect(job.branch_id).toBe(branchId);
+    expect(JSON.parse(job.payload_json)).toEqual({
+      businessDate: lastEndedBusinessDate(tenantId, branchId, now),
+      recipientUserId: recipientId,
+    });
+    // Nobody chosen: nothing queued.
+    state = withRecipients([]);
+    expect(
+      await queueDailySummaryEmails(env(), tenantId, new Date("2026-11-10T12:00:00Z")),
+    ).toEqual({ queued: 0 });
+  });
+
+  async function runningJob() {
+    await queueDailySummaryEmails(env(), tenantId, new Date("2026-11-09T12:00:00Z"));
+    const job = db.sqlite
+      .prepare("SELECT id,payload_json FROM worker_jobs WHERE job_type='DAILY_SUMMARY_EMAIL'")
+      .get() as { id: string; payload_json: string };
+    db.sqlite
+      .prepare("UPDATE worker_jobs SET status='RUNNING',attempt_count=1 WHERE id=?")
+      .run(job.id);
+    return job;
+  }
+
+  it("emails the PDF summary through Brevo to the chosen person", async () => {
+    const job = await runningJob();
+    const fetch = vi.fn(async () => Response.json({ messageId: "<summary@example.com>" }));
+    vi.stubGlobal("fetch", fetch);
+    await deliverDailySummaryEmail(env(), tenantId, job.id);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.brevo.com/v3/smtp/email");
+    const body = JSON.parse(String(init.body));
+    expect(body.to).toEqual([{ email: "manager@example.com" }]);
+    expect(body.subject).toMatch(/^Daily summary - \d{4}-\d{2}-\d{2} - /);
+    expect(body.attachment[0].name).toMatch(/^daily-summary-\d{4}-\d{2}-\d{2}\.pdf$/);
+    const saved = db.sqlite
+      .prepare("SELECT result_json FROM worker_jobs WHERE id=?")
+      .get(job.id) as {
+      result_json: string;
+    };
+    expect(JSON.parse(saved.result_json)).toMatchObject({ acceptedByProvider: true });
+  });
+
+  it("sends nothing once the day is closed or the person is taken off the list", async () => {
+    const job = await runningJob();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const businessDate = (JSON.parse(job.payload_json) as { businessDate: string }).businessDate;
+    state.paymentOperations!.dayCloses = [
+      {
+        id: "day",
+        tenantId,
+        branchId,
+        businessDate,
+        status: "CLOSED",
+        snapshots: [],
+      } as unknown as NonNullable<TransactionState["paymentOperations"]>["dayCloses"][number],
+    ];
+    await deliverDailySummaryEmail(env(), tenantId, job.id);
+    state = withRecipients([]);
+    await deliverDailySummaryEmail(env(), tenantId, job.id);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});

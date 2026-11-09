@@ -64,6 +64,8 @@ export type DrawerCount = {
 };
 export type DailyClosingReport = {
   reference: string;
+  /** An automatic end-of-day summary of a day nobody has closed yet. */
+  provisional?: boolean;
   mode: ClosingMode;
   restaurant: string;
   branch: string;
@@ -661,4 +663,127 @@ export function closeBusinessDay(
     createdAt: closedAt,
   });
   return next;
+}
+
+/**
+ * The same report a closing produces, for a business day nobody has closed: sent
+ * automatically at the end of the day. It records nothing and changes no state.
+ */
+export function summarizeBusinessDay(
+  state: TransactionState,
+  input: {
+    tenantId: string;
+    branchId: string;
+    businessDate: string;
+    recipientUserIds: string[];
+    preparedAt?: string;
+  },
+): NonNullable<DayClose["snapshot"]> {
+  const accounting = context(input.tenantId, input.branchId);
+  const policy = closingPolicy(state, input.tenantId, input.branchId);
+  const next = normalizeTransactionState(state);
+  const onDay = (explicit: string | undefined, timestamp: string) =>
+    (explicit ??
+      businessDateForTimestamp(
+        timestamp,
+        accounting.timeZone,
+        accounting.businessDayCutoffMinutes,
+      )) === input.businessDate;
+  const drawers = drawersForDay(next, input.tenantId, input.branchId, input.businessDate);
+  const outstanding = next.bills.filter(
+    (b) =>
+      b.branchId === input.branchId &&
+      onDay(b.businessDate, b.issuedAt) &&
+      ["OPEN", "PARTIAL", "PENDING"].includes(b.status) &&
+      !["PAID", "PROVIDER_RECEIVABLE"].includes(b.paymentStatus),
+  );
+  const mpesa = mpesaDaySummary(next, {
+    tenantId: input.tenantId,
+    branchId: input.branchId,
+    businessDate: input.businessDate,
+    timeZone: accounting.timeZone,
+    businessDayCutoffMinutes: accounting.businessDayCutoffMinutes,
+    currency: accounting.tenant.defaultCurrency,
+  });
+  const preparedAt = input.preparedAt ?? new Date().toISOString();
+  const operatorNames = Object.fromEntries(
+    getConfigurationRepository()
+      .snapshot()
+      .users.filter(
+        (user) =>
+          user.tenantId === input.tenantId &&
+          drawers.some((drawer) => drawer.employeeId === user.id),
+      )
+      .map((user) => [user.id, user.name]),
+  );
+  operatorNames["system"] = "Not closed yet";
+  return {
+    ...projectFinancialLifecycle(next, {
+      tenantId: input.tenantId,
+      branchId: input.branchId,
+      businessDate: input.businessDate,
+      currency: accounting.tenant.defaultCurrency,
+      calculatedAt: preparedAt,
+      ...accounting,
+    }),
+    revision: 0,
+    closedBy: "system",
+    closedAt: preparedAt,
+    dailyReport: {
+      reference: `SUMMARY-${input.branchId}-${input.businessDate}`,
+      provisional: true,
+      mode: policy.mode,
+      restaurant: accounting.tenant.tradingName,
+      branch: accounting.branch.name,
+      timeZone: accounting.timeZone,
+      cutoffMinutes: accounting.businessDayCutoffMinutes,
+      supervisorId: "system",
+      operatorNames,
+      drawers: structuredClone(drawers),
+      cashMovements: structuredClone(
+        (next.paymentOperations?.cashMovements ?? []).filter((m) =>
+          drawers.some((d) => d.id === m.drawerSessionId),
+        ),
+      ),
+      outstandingInvoices: outstanding.map((b) => ({
+        id: b.id,
+        balanceMinor: sumMinor([
+          parseMajorAmount(b.total, accounting.tenant.defaultCurrency),
+          -parseMajorAmount(b.paid, accounting.tenant.defaultCurrency),
+        ]),
+      })),
+      nonblocking: [],
+      recipientUserIds: [...input.recipientUserIds],
+      invoices: structuredClone(
+        next.bills.filter(
+          (b) =>
+            b.branchId === input.branchId &&
+            onDay(b.businessDate, b.issuedAt) &&
+            !["VOID", "MERGED", "SPLIT"].includes(b.status),
+        ),
+      ),
+      voidedInvoiceIds: next.bills
+        .filter(
+          (b) =>
+            b.branchId === input.branchId &&
+            b.status === "VOID" &&
+            onDay(b.businessDate, b.issuedAt),
+        )
+        .map((b) => b.id),
+      ...(mpesa ? { mpesa } : {}),
+    },
+  };
+}
+
+/** The business day that most recently ended at this branch (yesterday, by its cutoff). */
+export function lastEndedBusinessDate(tenantId: string, branchId: string, now = new Date()) {
+  const accounting = context(tenantId, branchId);
+  const today = businessDateForTimestamp(
+    now,
+    accounting.timeZone,
+    accounting.businessDayCutoffMinutes,
+  );
+  const previous = new Date(`${today}T12:00:00.000Z`);
+  previous.setUTCDate(previous.getUTCDate() - 1);
+  return previous.toISOString().slice(0, 10);
 }

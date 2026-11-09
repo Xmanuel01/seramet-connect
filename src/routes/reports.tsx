@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
-import { Btn, Chips, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { DailyReportEmail } from "@/components/app/DailyReportEmail";
 import { ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
@@ -43,7 +44,8 @@ const availableReports = [
 function Reports() {
   const { activeTenantId, branch, branchLabel, branchRecords, branchScope, currency, timeZone } =
     useAppContext();
-  const { state, syncFromBackend } = useTransactionEngine();
+  const engine = useTransactionEngine();
+  const { state, syncFromBackend } = engine;
   const selectedBranches =
     branchScope.type === "ALL"
       ? branchRecords
@@ -95,7 +97,7 @@ function Reports() {
           money
         />
         <Metric
-          label="Invoiced"
+          label="Billed"
           value={majorFromMinor(
             scopedPreview.reduce((sum, row) => sum + row.projection.invoicedMinor, 0),
             currency,
@@ -103,7 +105,7 @@ function Reports() {
           money
         />
         <Metric
-          label="Settled"
+          label="Paid bills"
           value={majorFromMinor(
             scopedPreview.reduce((sum, row) => sum + row.projection.settledMinor, 0),
             currency,
@@ -111,7 +113,7 @@ function Reports() {
           money
         />
         <Metric
-          label="Collected"
+          label="Money received"
           value={majorFromMinor(
             scopedPreview.reduce((sum, row) => sum + row.projection.collectedMinor, 0),
             currency,
@@ -131,9 +133,6 @@ function Reports() {
             }
             right={<Btn onClick={() => void syncFromBackend()}>Refresh</Btn>}
           />
-          <div className="border-b border-border px-4 py-3">
-            <Chips items={[`Business date: ${businessDateLabel}`, `Branch: ${branchLabel}`]} />
-          </div>
           <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
             <Metric label="Net sales" value={totalSales} money />
             <Metric label="Orders" value={totalOrders} />
@@ -194,21 +193,24 @@ function Reports() {
           </div>
         </Panel>
 
-        <Panel>
-          <PanelHead title="More reports" />
-          <ul className="divide-y divide-border">
-            {availableReports.map((item) => (
-              <li key={item.to} className="px-4 py-2.5 text-[13px] hover:bg-secondary/50">
-                <Link to={item.to} className="block">
-                  <span className="font-semibold">{item.label}</span>
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                    {item.detail}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Panel>
+        <div className="grid content-start gap-4">
+          <DailyReportEmail engine={engine} />
+          <Panel>
+            <PanelHead title="More reports" />
+            <ul className="divide-y divide-border">
+              {availableReports.map((item) => (
+                <li key={item.to} className="px-4 py-2.5 text-[13px] hover:bg-secondary/50">
+                  <Link to={item.to} className="block">
+                    <span className="font-semibold">{item.label}</span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {item.detail}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </div>
       </div>
     </AppShell>
   );
