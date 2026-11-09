@@ -23,7 +23,7 @@ import {
   summarizeBusinessDay,
 } from "@/payments/daily-closing";
 import type { ServerActor } from "@/lib/seramet-auth";
-import { renderDailyClosingPdf } from "@/server/daily-closing-report";
+import { renderDailyClosingPdf, reportFooter } from "@/server/daily-closing-report";
 
 let state: TransactionState;
 vi.mock("@/server/database/authoritative-transaction-repository", () => ({
@@ -253,6 +253,38 @@ describe("automatic end-of-day summary", () => {
         day: "today",
       }),
     ).rejects.toThrow("DAILY_SUMMARY_RECIPIENTS_INVALID");
+  });
+
+  it("resends a past day from the history, but never a day that hasn't started", async () => {
+    const now = new Date("2026-11-09T09:00:00Z");
+    const input = { tenantId, branchId, requestedBy: "owner", recipientUserIds: [recipientId] };
+    expect(
+      await queueManualDailySummary(
+        env(),
+        { ...input, day: "today", businessDate: "2026-11-02" },
+        now,
+      ),
+    ).toEqual({ queued: 1, businessDate: "2026-11-02" });
+    await expect(
+      queueManualDailySummary(env(), { ...input, day: "today", businessDate: "2026-11-10" }, now),
+    ).rejects.toThrow("DAILY_SUMMARY_DATE_INVALID");
+    await expect(
+      queueManualDailySummary(env(), { ...input, day: "today", businessDate: "9 Nov" }, now),
+    ).rejects.toThrow("DAILY_SUMMARY_DATE_INVALID");
+  });
+
+  it("keeps internal references and job titles out of the summary PDF", async () => {
+    const snapshot = summarizeBusinessDay(state, {
+      tenantId,
+      branchId,
+      businessDate: "2026-11-08",
+      recipientUserIds: [recipientId],
+      preparedAt: "2026-11-09T01:07:00.000Z",
+    });
+    const footer = reportFooter(snapshot);
+    expect(footer).toBe(`Daily summary · ${snapshot.dailyReport!.branch} · 2026-11-08`);
+    expect(footer).not.toContain(snapshot.dailyReport!.reference);
+    await expect(renderDailyClosingPdf(snapshot)).resolves.toBeInstanceOf(Uint8Array);
   });
 
   it("honours a send time between whole hours", () => {

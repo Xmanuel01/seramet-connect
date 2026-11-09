@@ -25,7 +25,7 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
         ["Reference", report.reference],
         ["Business date", snapshot.businessDate],
         [
-          "Supervisor",
+          "Closed by",
           report.provisional
             ? "Not closed yet"
             : (report.operatorNames?.[report.supervisorId] ?? report.supervisorId),
@@ -249,6 +249,12 @@ export const closingPdfLayout = Object.freeze({
   lineHeight: 24,
   pages: 3,
 });
+
+/** Page footer: what the report is, for which branch and day. No internal references. */
+export function reportFooter(snapshot: ClosingSnapshot) {
+  const report = snapshot.dailyReport!;
+  return `${report.provisional ? "Daily summary" : "Closing report"} · ${report.branch} · ${snapshot.businessDate}`;
+}
 
 export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<Uint8Array> {
   const report = snapshot.dailyReport;
@@ -562,10 +568,16 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
   if (components.status !== "COMPLETE")
     note(`${components.missing} invoices lack gross/discount/service detail.`);
   heading("Review sign-off");
-  row("Prepared by", fit(report.operatorNames?.[report.supervisorId] ?? report.supervisorId, 161));
+  row(
+    "Prepared by",
+    report.provisional
+      ? "Seramet (automatic summary)"
+      : fit(report.operatorNames?.[report.supervisorId] ?? report.supervisorId, 161),
+  );
   row("Branch manager", "____________________");
   row("Finance review", "____________________");
 
+  const footer = reportFooter(snapshot);
   const pages = pdf.getPages();
   for (const [index, printed] of pages.entries()) {
     printed.drawLine({
@@ -574,7 +586,7 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
       thickness: 0.5,
       color: rule,
     });
-    printed.drawText(fit(report.reference, usable - 80), {
+    printed.drawText(fit(footer, usable - 80), {
       x: margin,
       y: 44,
       size: bodySize,
@@ -584,13 +596,6 @@ export async function renderDailyClosingPdf(snapshot: ClosingSnapshot): Promise<
     printed.drawText(`${index + 1} / ${pages.length}`, {
       x: width - margin - 32,
       y: 44,
-      size: bodySize,
-      font: regular,
-      color: muted,
-    });
-    printed.drawText("Summary only. Full details and labels remain in the saved closing record.", {
-      x: margin,
-      y: 20,
       size: bodySize,
       font: regular,
       color: muted,
