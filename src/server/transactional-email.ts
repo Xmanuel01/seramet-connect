@@ -168,7 +168,7 @@ export async function deliverPdfEmail(
   try {
     response = await transport("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      redirect: "error",
+      redirect: "manual", // Workers throws on "error"; a 3xx is treated as a rejection.
       signal: AbortSignal.timeout(15000),
       headers: { "api-key": config.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
