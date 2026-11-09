@@ -251,13 +251,6 @@ export const navGroups: NavGroup[] = [
         icon: ClipboardList,
         permission: permissions.crmView,
       },
-      {
-        label: "Campaigns",
-        to: "/campaigns",
-        icon: Megaphone,
-        permission: permissions.marketingManage,
-      },
-      { label: "Segments", to: "/segments", icon: Layers, permission: permissions.marketingManage },
     ],
   },
   {
@@ -361,7 +354,20 @@ export const navGroups: NavGroup[] = [
   {
     group: "Marketing",
     permission: permissions.marketingView,
-    items: [{ label: "Website & Channels", to: "/marketing", icon: Globe2 }],
+    items: [
+      {
+        label: "Campaigns",
+        to: "/campaigns",
+        icon: Megaphone,
+        permission: permissions.marketingManage,
+      },
+      {
+        label: "Customer groups",
+        to: "/segments",
+        icon: Layers,
+        permission: permissions.marketingManage,
+      },
+    ],
   },
   {
     group: "System",

@@ -1109,8 +1109,7 @@ function routeForAction(label: string) {
     ["receipt", "/receipts"],
     ["refund", "/refunds"],
     ["return", "/returns"],
-    ["website", "/marketing"],
-    ["channel", "/marketing"],
+    ["campaign", "/campaigns"],
     ["audit", "/audit-trail"],
   ];
   return entries.find(([key]) => normalized.includes(key))?.[1];

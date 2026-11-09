@@ -222,12 +222,6 @@ export const settingsGroups: readonly SettingsGroup[] = [
     label: "CRM",
     items: [
       {
-        label: "Segments",
-        description: "Groups of customers, like regulars.",
-        kind: "route",
-        to: "/segments",
-      },
-      {
         label: "Loyalty tiers",
         description: "Your loyalty programme and its levels.",
         kind: "route",
@@ -248,19 +242,13 @@ export const settingsGroups: readonly SettingsGroup[] = [
     ],
   },
   {
-    label: "Website and marketing",
+    label: "Marketing",
     items: [
       {
-        label: "Website",
-        description: "Your ordering website.",
+        label: "Customer groups",
+        description: "Groups of customers, like regulars.",
         kind: "route",
-        to: "/marketing",
-      },
-      {
-        label: "Social pages",
-        description: "Your social media pages.",
-        kind: "route",
-        to: "/marketing",
+        to: "/segments",
       },
       {
         label: "WhatsApp",

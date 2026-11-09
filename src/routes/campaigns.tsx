@@ -109,7 +109,7 @@ function Campaigns() {
       const provider = providerId || availableProviders[0]?.id;
       const segment = segmentId || segments.data?.segments[0]?.id;
       if (!provider || !segment) {
-        throw new Error("An active segment and healthy email provider are required.");
+        throw new Error("Choose a customer group and connect email first.");
       }
       await command("/api/seramet/crm/campaigns", {
         name: name.trim(),
@@ -124,7 +124,7 @@ function Campaigns() {
         approvalRequired: true,
       });
       setCreating(false);
-      setNotice("Draft campaign created. Preview and seek approval before delivery.");
+      setNotice("Draft saved. Check who it reaches, then approve it.");
       setName("");
       setObjective("");
       setSubject("");
@@ -159,7 +159,7 @@ function Campaigns() {
   async function approve() {
     if (!canApprove || !selectedRow || !currentPreview || busy) return;
     if (currentPreview.providerReadiness !== "CONFIGURED") {
-      setError("Provider readiness is not confirmed. Do not approve for delivery.");
+      setError("Email isn't connected yet, so this can't be approved.");
       return;
     }
     setBusy("approve");
@@ -172,7 +172,7 @@ function Campaigns() {
           reason: approvalReason.trim(),
         },
       );
-      setNotice("Approval recorded. Delivery is a separate action.");
+      setNotice("Approved. You can send it now.");
       setApprovalReason("");
       setPreview(null);
       rows.refresh();
@@ -186,7 +186,9 @@ function Campaigns() {
   async function queue() {
     if (!canSend || !selectedRow || !currentPreview || busy || sendConfirmation !== "SEND") return;
     if (currentPreview.providerReadiness !== "CONFIGURED" || currentPreview.eligible === 0) {
-      setError("Campaign lacks verified provider readiness or an eligible audience.");
+      setError(
+        "Nobody can receive this yet. Connect email, or pick a group with customers who agreed to messages.",
+      );
       return;
     }
     setBusy("queue");
@@ -198,9 +200,8 @@ function Campaigns() {
       }>("/api/seramet/crm/campaigns/" + encodeURIComponent(selectedRow.id) + "/queue", {});
       setNotice(
         result.campaign.scheduled
-          ? "Campaign remains scheduled; no messages have been sent yet."
-          : result.campaign.queued +
-              " eligible deliveries queued. Provider confirmation is asynchronous.",
+          ? "Scheduled. Nothing has been sent yet."
+          : `Sending to ${result.campaign.queued} customers.`,
       );
       setPreview(null);
       setSendConfirmation("");
@@ -215,7 +216,7 @@ function Campaigns() {
   return (
     <AppShell
       title="Campaigns"
-      subtitle={"Consent-gated, auditable campaign delivery - " + branchLabel}
+      subtitle={branchLabel}
       actions={
         canManage && canViewSegments ? (
           <>
@@ -227,9 +228,7 @@ function Campaigns() {
                   setError("");
                   void command("/api/seramet/crm/campaigns/providers/email", {})
                     .then(() => {
-                      setNotice(
-                        "Email connection configured. Provider acceptance is not confirmed inbox delivery.",
-                      );
+                      setNotice("Email connected.");
                       providers.refresh();
                     })
                     .catch((cause) => setError(crmErrorMessage(cause)))
@@ -240,7 +239,7 @@ function Campaigns() {
               </Btn>
             )}
             <Btn variant="primary" onClick={() => setCreating((value) => !value)}>
-              {creating ? "Cancel draft" : "New email campaign"}
+              {creating ? "Cancel" : "New campaign"}
             </Btn>
           </>
         ) : undefined
@@ -248,7 +247,7 @@ function Campaigns() {
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Access restricted" body="Campaign viewing permission is required." />
+          <CrmEmpty title="No access" body="Ask the owner to give your role access to campaigns." />
         </Panel>
       ) : (
         <>
@@ -264,10 +263,7 @@ function Campaigns() {
           )}
           {creating && canManage && canViewSegments && (
             <Panel className="mb-4">
-              <PanelHead
-                title="Create draft"
-                sub="No dispatch until separate approval and explicit queue confirmation."
-              />
+              <PanelHead title="New campaign" />
               <form onSubmit={create} className="grid gap-3 p-4 md:grid-cols-2">
                 <label className="grid gap-1 text-[12px]">
                   Campaign name
@@ -290,7 +286,7 @@ function Campaigns() {
                   />
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Segment
+                  Send to
                   <select
                     className={crmFieldClass}
                     required
@@ -307,7 +303,7 @@ function Campaigns() {
                   </select>
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Healthy email provider
+                  Send with
                   <select
                     className={crmFieldClass}
                     required
@@ -332,7 +328,7 @@ function Campaigns() {
                   />
                 </label>
                 <label className="grid gap-1 text-[12px] md:col-span-2">
-                  Email template (approved variables only)
+                  Message
                   <textarea
                     className={crmTextAreaClass}
                     required
@@ -344,9 +340,7 @@ function Campaigns() {
                 </label>
                 <div className="md:col-span-2">
                   {availableProviders.length === 0 && (
-                    <p className="mb-2 text-[12px] text-warning">
-                      No healthy email provider is configured. Creation is unavailable.
-                    </p>
+                    <p className="mb-2 text-[12px] text-warning">Connect email first.</p>
                   )}
                   <Btn
                     type="submit"
@@ -365,31 +359,23 @@ function Campaigns() {
           )}
           {!canViewSegments && (
             <p className="mb-3 rounded-md border border-border p-3 text-[12px] text-muted-foreground">
-              CRM overview permission is required to inspect audiences or send campaigns. Existing
-              campaign records remain viewable.
+              You can see campaigns, but not who they go to. Ask the owner for customer access.
             </p>
           )}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Metric label="Campaigns in current scope" value={campaignRows.length} />
+            <Metric label="Campaigns" value={campaignRows.length} />
+            <Metric label="Sent" value={campaignRows.reduce((sum, row) => sum + row.sent, 0)} />
             <Metric
-              label="Provider accepted"
-              value={campaignRows.reduce((sum, row) => sum + row.sent, 0)}
-            />
-            <Metric
-              label="Confirmed deliveries"
+              label="Delivered"
               value={campaignRows.reduce((sum, row) => sum + row.delivered, 0)}
             />
             <Metric
-              label="Requires provider reconciliation"
+              label="Not confirmed"
               value={campaignRows.reduce((sum, row) => sum + row.unknown, 0)}
             />
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Campaign register"
-              sub="Delivery results and audiences for each campaign"
-              right={<Btn onClick={refresh}>Refresh</Btn>}
-            />
+            <PanelHead title="All campaigns" right={<Btn onClick={refresh}>Refresh</Btn>} />
             {rows.status === "loading" ||
             providers.status === "loading" ||
             (canViewSegments && segments.status === "loading") ? (
@@ -400,8 +386,8 @@ function Campaigns() {
               <CrmError message={rows.error || providers.error || segments.error} retry={refresh} />
             ) : campaignRows.length === 0 ? (
               <CrmEmpty
-                title="No campaigns recorded"
-                body="Create a segment and configure a healthy provider before making a draft."
+                title="No campaigns yet"
+                body="Make a customer group, connect email, then create your first campaign."
               />
             ) : (
               <div className="divide-y divide-border">
@@ -413,20 +399,18 @@ function Campaigns() {
                     </div>
                     <p>{row.objective}</p>
                     <p className="text-[12px] text-muted-foreground">
-                      Segment: {row.segment_name} · Provider:{" "}
-                      {row.provider_name || "Not configured"}
-                      {" · "}Scheduled: {shortDate(row.schedule_at)}
+                      To: {row.segment_name} · Via: {row.provider_name || "Not connected"}
+                      {row.schedule_at ? " · Scheduled: " + shortDate(row.schedule_at) : ""}
                     </p>
                     <p className="text-[12px]">
-                      Eligible: {row.eligible} · Provider accepted: {row.sent} · Delivered:{" "}
-                      {row.delivered}
-                      {row.unknown > 0 ? " · Unconfirmed outcomes: " + row.unknown : ""}
+                      Can receive: {row.eligible} · Sent: {row.sent} · Delivered: {row.delivered}
+                      {row.unknown > 0 ? " · Not confirmed: " + row.unknown : ""}
                     </p>
                     <Btn
                       onClick={() => void previewCampaign(row.id)}
                       disabled={busy !== null || !canViewSegments}
                     >
-                      {busy === "preview" ? "Checking..." : "Preview current audience"}
+                      {busy === "preview" ? "Checking…" : "Check who it reaches"}
                     </Btn>
                   </article>
                 ))}
@@ -435,22 +419,24 @@ function Campaigns() {
           </Panel>
           {selectedRow && currentPreview && (
             <Panel className="mt-4">
-              <PanelHead
-                title={"Audience preview: " + selectedRow.name}
-                sub="Fresh snapshot; final sending eligibility is re-evaluated server-side."
-              />
+              <PanelHead title={selectedRow.name} />
               <div className="space-y-3 p-4 text-[13px]">
                 <p>
-                  Eligible: {currentPreview.eligible} · Without consent: {currentPreview.noConsent}
+                  Will receive it: {currentPreview.eligible} · Didn&apos;t agree to messages:{" "}
+                  {currentPreview.noConsent}
                 </p>
-                <p>Evidence: {readableStatus(currentPreview.segment.quality)}</p>
                 <p>
-                  Provider: <Status>{readableStatus(currentPreview.providerReadiness)}</Status>
+                  Email:{" "}
+                  <Status>
+                    {currentPreview.providerReadiness === "CONFIGURED"
+                      ? "Connected"
+                      : "Not connected"}
+                  </Status>
                 </p>
                 {canApprove && selectedRow.status === "DRAFT" && (
                   <div className="space-y-2 border-t border-border pt-3">
                     <label className="grid gap-1 text-[12px]">
-                      Approval reason
+                      Why approve it?
                       <input
                         className={crmFieldClass}
                         minLength={4}
@@ -473,12 +459,9 @@ function Campaigns() {
                 )}
                 {canSend && ["ACTIVE", "SCHEDULED"].includes(selectedRow.status) && (
                   <div className="space-y-2 border-t border-border pt-3">
-                    <p>
-                      Delivery can contact real customers. Review recipients and type SEND to
-                      confirm.
-                    </p>
+                    <p>This emails real customers. Type SEND to confirm.</p>
                     <label className="grid gap-1 text-[12px]">
-                      Confirm delivery
+                      Confirm
                       <input
                         className={crmFieldClass}
                         value={sendConfirmation}
@@ -496,7 +479,7 @@ function Campaigns() {
                         currentPreview.providerReadiness !== "CONFIGURED"
                       }
                     >
-                      Queue eligible deliveries
+                      Send now
                     </Btn>
                   </div>
                 )}
@@ -505,10 +488,9 @@ function Campaigns() {
           )}
           <p className="mt-3 text-[12px] text-muted-foreground">
             <Link className="font-semibold underline" to="/segments">
-              Manage segments
-            </Link>{" "}
-            before targeting. Unapproved, nonconsenting and unsupported channel audiences must never
-            be sent.
+              Manage customer groups
+            </Link>
+            . Only customers who agreed to messages receive campaigns.
           </p>
         </>
       )}
