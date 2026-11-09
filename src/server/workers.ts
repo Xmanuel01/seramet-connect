@@ -355,8 +355,11 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
         type: "SETUP_READINESS_RECALCULATION",
         interval: at.getUTCMinutes() === 30 ? "hour" : null,
       },
-      // End-of-day summary emails; queued per recipient once each branch's day has ended.
-      { type: "DAILY_SUMMARY_DISPATCH", interval: at.getUTCMinutes() === 7 ? "hour" : null },
+      // End-of-day summary emails: checked every 5 minutes against each branch's send time.
+      {
+        type: "DAILY_SUMMARY_DISPATCH",
+        interval: at.getUTCMinutes() % 5 === 2 ? "minute" : null,
+      },
       {
         type: "INTELLIGENCE_SCHEDULED_BRIEFS",
         interval: at.getUTCMinutes() === 40 ? "hour" : null,

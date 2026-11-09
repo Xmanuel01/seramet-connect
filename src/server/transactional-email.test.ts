@@ -139,6 +139,33 @@ describe("Brevo PDF delivery safety", () => {
       "CONFIGURATION_REQUIRED",
     );
   });
+  it("serves every business from one platform setting, with optional per-business overrides", () => {
+    const platform = {
+      SERAMET_TRANSACTIONAL_EMAIL_CONFIG: JSON.stringify({
+        apiKey: "platform-key-for-every-business",
+        from: "Seramet POS <reports@example.com>",
+      }),
+    };
+    // Any business, including one that signed up after the setting was saved.
+    for (const tenant of ["tenant", "brand-new-restaurant"])
+      expect(transactionalEmailConfiguration(platform, tenant)).toMatchObject({
+        apiKey: "platform-key-for-every-business",
+        sender: { email: "reports@example.com", name: "Seramet POS" },
+      });
+    const withOverride = {
+      SERAMET_TRANSACTIONAL_EMAIL_CONFIG: JSON.stringify({
+        apiKey: "platform-key-for-every-business",
+        from: "Seramet POS <reports@example.com>",
+        special: { apiKey: "own-key-for-one-business", from: "Own <own@example.com>" },
+      }),
+    };
+    expect(transactionalEmailConfiguration(withOverride, "special").apiKey).toBe(
+      "own-key-for-one-business",
+    );
+    expect(transactionalEmailConfiguration(withOverride, "other").apiKey).toBe(
+      "platform-key-for-every-business",
+    );
+  });
   it("rejects changed recipients after a rate-limit rejection", async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 429 }));
     await expect(deliverPdfEmail(env(), "tenant", "job", message, pdf, send)).rejects.toThrow(

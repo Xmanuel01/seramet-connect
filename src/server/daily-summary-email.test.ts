@@ -33,7 +33,11 @@ vi.mock("@/server/database/authoritative-transaction-repository", () => ({
     }
   },
 }));
-import { deliverDailySummaryEmail, queueDailySummaryEmails } from "@/server/daily-summary-email";
+import {
+  deliverDailySummaryEmail,
+  queueDailySummaryEmails,
+  queueManualDailySummary,
+} from "@/server/daily-summary-email";
 
 let db: SqliteD1TestDatabase;
 let recipientId: string;
@@ -182,6 +186,79 @@ describe("automatic end-of-day summary", () => {
     // Saving without a time (the closing screen) keeps the chosen one.
     const kept = configureClosing(saved, actor, input);
     expect(kept.paymentOperations!.closingPolicies![0]!.summarySendMinutes).toBe(23 * 60);
+  });
+
+  it("sends now to anyone with report access, even if they aren't on the list", async () => {
+    state = withRecipients([]);
+    const now = new Date("2026-11-09T09:00:00Z"); // 12:00 in Nairobi, mid-day
+    const result = await queueManualDailySummary(
+      env(),
+      { tenantId, branchId, requestedBy: "owner", recipientUserIds: [recipientId], day: "today" },
+      now,
+    );
+    expect(result).toEqual({ queued: 1, businessDate: "2026-11-09" });
+    // A double click in the same minute doesn't send twice.
+    expect(
+      (
+        await queueManualDailySummary(
+          env(),
+          {
+            tenantId,
+            branchId,
+            requestedBy: "owner",
+            recipientUserIds: [recipientId],
+            day: "today",
+          },
+          now,
+        )
+      ).queued,
+    ).toBe(0);
+    const job = db.sqlite
+      .prepare("SELECT id FROM worker_jobs WHERE job_type='DAILY_SUMMARY_EMAIL'")
+      .get() as { id: string };
+    db.sqlite
+      .prepare("UPDATE worker_jobs SET status='RUNNING',attempt_count=1 WHERE id=?")
+      .run(job.id);
+    const fetch = vi.fn(async () => Response.json({ messageId: "<now@example.com>" }));
+    vi.stubGlobal("fetch", fetch);
+    await deliverDailySummaryEmail(env(), tenantId, job.id);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("won't send now to someone without report access or an email", async () => {
+    const stamp = "2026-11-01T00:00:00.000Z";
+    db.sqlite
+      .prepare(
+        "INSERT INTO users(tenant_id,id,name,email,employment_status,active,created_at,updated_at) VALUES(?,?,?,?,'ACTIVE',1,?,?)",
+      )
+      .run(tenantId, "waiter-no-reports", "Waiter", "waiter@example.com", stamp, stamp);
+    db.sqlite
+      .prepare("INSERT INTO user_branches VALUES(?,?,?)")
+      .run(tenantId, "waiter-no-reports", branchId);
+    await expect(
+      queueManualDailySummary(env(), {
+        tenantId,
+        branchId,
+        requestedBy: "owner",
+        recipientUserIds: ["waiter-no-reports"],
+        day: "yesterday",
+      }),
+    ).rejects.toThrow("DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED");
+    await expect(
+      queueManualDailySummary(env(), {
+        tenantId,
+        branchId,
+        requestedBy: "owner",
+        recipientUserIds: [],
+        day: "today",
+      }),
+    ).rejects.toThrow("DAILY_SUMMARY_RECIPIENTS_INVALID");
+  });
+
+  it("honours a send time between whole hours", () => {
+    const at1240 = new Date("2026-11-10T09:40:00Z"); // 12:40 Nairobi
+    expect(dueSummaryDate(tenantId, branchId, 12 * 60 + 45, at1240)).toBeNull();
+    expect(dueSummaryDate(tenantId, branchId, 12 * 60 + 35, at1240)).toBe("2026-11-09");
   });
 
   async function runningJob() {

@@ -788,6 +788,12 @@ export function summarizeBusinessDay(
   };
 }
 
+/** The business day in progress at this branch now. */
+export function currentBusinessDate(tenantId: string, branchId: string, now = new Date()) {
+  const accounting = context(tenantId, branchId);
+  return businessDateForTimestamp(now, accounting.timeZone, accounting.businessDayCutoffMinutes);
+}
+
 /** The business day that most recently ended at this branch (yesterday, by its cutoff). */
 export function lastEndedBusinessDate(tenantId: string, branchId: string, now = new Date()) {
   const accounting = context(tenantId, branchId);
