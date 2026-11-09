@@ -171,8 +171,7 @@ export function IntegrationOperations({
   return (
     <Panel className="mb-4 overflow-hidden">
       <PanelHead
-        title="Integration operations"
-        sub="Live connection health, immutable events, mappings and recovery"
+        title="Connections"
         right={
           <Btn onClick={() => void load()} disabled={loading}>
             <RefreshCw className="h-3.5 w-3.5" /> Refresh
@@ -186,7 +185,7 @@ export function IntegrationOperations({
             onClick={() => setTab(item)}
             className={`h-8 whitespace-nowrap rounded-md px-3 text-[12px] font-semibold ${tab === item ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary"}`}
           >
-            {item.replace("_", " ")}
+            {tabLabel[item]}
             {item === "EVENTS"
               ? ` (${data.events.length})`
               : item === "DEAD_LETTERS"
@@ -269,7 +268,9 @@ export function IntegrationOperations({
               </div>
             );
           })}
-          {!connections.length && <EmptyState text="No integration connections configured" />}
+          {!connections.length && (
+            <EmptyState text="Nothing connected yet. Connect M-Pesa or a delivery app from Setup Centre." />
+          )}
         </div>
       )}
 
@@ -458,7 +459,7 @@ export function IntegrationOperations({
               <Status>{letter.status}</Status>
             </div>
           ))}
-          {!data.deadLetters.length && <EmptyState text="No dead-letter events" />}
+          {!data.deadLetters.length && <EmptyState text="Nothing has failed." />}
         </div>
       )}
 
@@ -497,6 +498,13 @@ export function IntegrationOperations({
     </Panel>
   );
 }
+
+const tabLabel = {
+  OVERVIEW: "Overview",
+  EVENTS: "Activity",
+  MAPPINGS: "Matched items",
+  DEAD_LETTERS: "Failed",
+} as const;
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (

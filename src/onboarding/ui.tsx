@@ -4,8 +4,22 @@ import { Status } from "@/components/app/ui";
 import type { ReadinessStatus, SetupStageStatus } from "@/onboarding/types";
 import { cn } from "@/lib/utils";
 
+const plainStatus: Record<string, string> = {
+  BLOCKED: "Needs attention",
+  FAILED: "Failed",
+  WARNING: "Check",
+  READY: "Ready",
+  COMPLETE: "Done",
+  SUCCESS: "Done",
+  LIVE: "Live",
+  IN_PROGRESS: "In progress",
+  NOT_STARTED: "Not started",
+  DEVICE_OFFLINE: "Device offline",
+};
+
 export function SetupStatus({ value }: { value: ReadinessStatus | SetupStageStatus | string }) {
-  const label = value.replaceAll("_", " ");
+  const words = value.replaceAll("_", " ").toLowerCase();
+  const label = plainStatus[value] ?? words.charAt(0).toUpperCase() + words.slice(1);
   if (value === "READY" || value === "COMPLETE" || value === "SUCCESS" || value === "LIVE") {
     return <Status>{label}</Status>;
   }

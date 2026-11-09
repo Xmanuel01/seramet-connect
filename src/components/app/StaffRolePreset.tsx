@@ -39,7 +39,7 @@ export function StaffRolePreset({ roleId, disabled }: { roleId: string; disabled
         "Role permissions saved. Employee branches and preparation stations are assigned separately.",
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Role update failed.");
+      setMessage(error instanceof Error ? error.message : "Couldn't update the role. Try again.");
     } finally {
       setBusy(false);
     }
@@ -47,7 +47,7 @@ export function StaffRolePreset({ roleId, disabled }: { roleId: string; disabled
   return (
     <div className="my-3 grid gap-2 border-y border-border py-3 text-sm">
       <label className="grid gap-1">
-        Operational preset
+        Start from a template
         <select
           value={preset}
           className="min-h-10 rounded border bg-background px-2"
@@ -71,10 +71,10 @@ export function StaffRolePreset({ roleId, disabled }: { roleId: string; disabled
           disabled={disabled || busy}
           onChange={(e) => setConfirmed(e.target.checked)}
         />
-        Replace the selected role's existing permissions with this preset
+        Replace this role's current permissions
       </label>
       <Btn disabled={disabled || busy || !confirmed} onClick={() => void save()}>
-        Apply operational preset
+        Apply template
       </Btn>
       {message && <p role="status">{message}</p>}
     </div>

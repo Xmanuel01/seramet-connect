@@ -414,8 +414,7 @@ export function PrinterAdministration() {
   return (
     <Panel className="mb-4">
       <PanelHead
-        title="Configured printers"
-        sub="Active branch"
+        title="Printers"
         right={
           <div className="flex gap-2">
             <Btn
@@ -535,9 +534,6 @@ export function PrinterAdministration() {
               <RefreshCw className="h-4 w-4" />
               {discovering ? "Detecting..." : "Detect installed printers"}
             </Btn>
-            {!installedBridge.enabled && (
-              <p className="text-sm text-muted-foreground">Local print bridge is not connected.</p>
-            )}
             {discoveryNotice && (
               <p role="status" className="text-sm">
                 {discoveryNotice}
@@ -592,7 +588,7 @@ export function PrinterAdministration() {
         )}
         <Btn disabled={!bridge.enabled || busy} onClick={() => void inspectQueue()}>
           <RefreshCw className="h-4 w-4" />
-          Inspect bridge queue
+          Check print queue
         </Btn>
         {attempts.length > 0 && (
           <div className="max-h-64 overflow-auto">
@@ -621,7 +617,7 @@ export function PrinterAdministration() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Transport</th>
+                <th>Connection</th>
                 <th>Paper</th>
                 <th>Status</th>
                 <th>Actions</th>

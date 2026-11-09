@@ -177,7 +177,7 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   const methodCode = `E2E_${Date.now()}`;
 
   await page.goto("/settings");
-  await page.getByRole("button", { name: "Finance 4", exact: true }).click();
+  await page.getByRole("button", { name: "Finance", exact: true }).click();
   await page.getByLabel("Display name").fill(methodName);
   await page.getByLabel("Code").fill(methodCode);
   await page.getByLabel("Category").selectOption("CUSTOM");
@@ -198,7 +198,7 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   await expect(page.getByText(methodName, { exact: true })).toBeVisible();
 
   await page.reload();
-  await page.getByRole("button", { name: "Finance 4", exact: true }).click();
+  await page.getByRole("button", { name: "Finance", exact: true }).click();
   await expect(page.getByText(methodName, { exact: true })).toBeVisible();
 
   const methodRow = page
@@ -208,7 +208,7 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   await expect(page.getByText(`${methodName} was disabled.`)).toBeVisible();
   await expect(page.getByText(methodName, { exact: true })).toHaveCount(0);
   await page.reload();
-  await page.getByRole("button", { name: "Finance 4", exact: true }).click();
+  await page.getByRole("button", { name: "Finance", exact: true }).click();
   await expect(page.getByText(methodName, { exact: true })).toHaveCount(0);
 
   await page.route("**/api/seramet/setup/centre**", (route) =>
@@ -220,7 +220,9 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   );
   await page.goto("/seramet-setup?section=BUSINESS_PROFILE");
   await expect(page.getByText("Setup data could not be loaded")).toBeVisible();
-  await expect(page.getByText(/Setup summary is temporarily unavailable/)).toBeVisible();
+  // The server's own wording stays out of the page; the user gets a way forward.
+  await expect(page.getByText(/Setup summary is temporarily unavailable/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await context.close();
 });
 

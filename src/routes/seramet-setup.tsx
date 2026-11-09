@@ -420,18 +420,18 @@ function SetupCentre() {
 
   if (centre.status === "error" && !centre.setup)
     return (
-      <AppShell title="Setup Centre" subtitle="Your setup could not be loaded">
+      <AppShell title="Setup Centre">
         <Panel className="p-5">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
             <div className="min-w-0 flex-1">
               <div className="text-[14px] font-bold">Setup data could not be loaded</div>
               <p className="mt-1 break-words text-[12px] leading-5 text-muted-foreground">
-                {centre.error || "The setup service did not return an authoritative response."}
+                Check your connection and try again. If it keeps happening, contact Seramet support.
               </p>
               <Btn className="mt-4" onClick={() => void centre.refresh()}>
                 <RefreshCcw className="h-4 w-4" />
-                Retry loading
+                Try again
               </Btn>
             </div>
           </div>
@@ -446,7 +446,7 @@ function SetupCentre() {
   return (
     <AppShell
       title="Setup Centre"
-      subtitle={`${centre.setup?.organisationName ?? "Organisation"} · ${centre.setup?.goLiveState.replaceAll("_", " ") ?? "SETUP"}`}
+      subtitle={`${centre.setup?.organisationName ?? "Your business"} · ${centre.setup?.goLiveState === "LIVE" ? "Live" : "Setting up"}`}
       actions={
         <>
           <SetupStatus value={centre.setup?.status ?? "BLOCKED"} />
@@ -459,7 +459,7 @@ function SetupCentre() {
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-6">
         <Metric label="Readiness" value={`${score}%`} />
-        <Metric label="Blockers" value={blockers.length} invert={blockers.length > 0} />
+        <Metric label="To fix" value={blockers.length} invert={blockers.length > 0} />
         <Metric label="Branches" value={centre.setup?.counts.branches ?? 0} />
         <Metric label="Menu items" value={centre.setup?.counts.menuItems ?? 0} />
         <Metric
@@ -501,7 +501,7 @@ function SetupCentre() {
         <div className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] font-semibold text-warning">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span className="min-w-0 break-words">
-            Some setup data is unavailable: {centre.error}
+            Some parts didn&apos;t load ({centre.error}). Refresh to try again.
           </span>
         </div>
       )}
@@ -563,7 +563,7 @@ function SetupCentre() {
           <Panel>
             <PanelHead
               title={sectionStage?.label ?? "Setup"}
-              sub={`${sectionStage?.blockers ?? 0} blockers · ${sectionStage?.warnings ?? 0} warnings`}
+              sub={setupCounts(sectionStage?.blockers ?? 0, sectionStage?.warnings ?? 0)}
               right={<SetupStatus value={sectionStage?.readinessStatus ?? "BLOCKED"} />}
             />
             {sectionResults.length > 0 && (
@@ -591,7 +591,7 @@ function SetupCentre() {
             <Panel>
               <PanelHead
                 title="Business identity"
-                sub="Tenant-level legal, fiscal and document defaults"
+                sub="Your legal details and document defaults"
                 right={<Building2 className="h-4 w-4 text-primary" />}
               />
               <form onSubmit={saveBusiness} className="grid gap-3 p-4 md:grid-cols-2">
@@ -642,7 +642,7 @@ function SetupCentre() {
                     ))}
                   </select>
                   <span className="text-[11px] font-normal text-muted-foreground">
-                    Managed by the controlled currency workflow and locked after financial activity.
+                    Can&apos;t be changed after your first sale.
                   </span>
                 </label>
                 <Field
@@ -2085,4 +2085,13 @@ function parseRateBps(value: string) {
   const bps = Number(match[1]!) * 100 + Number((match[2] ?? "").padEnd(2, "0") || "0");
   if (bps > 10000) throw new Error("Rate cannot exceed 100%");
   return bps;
+}
+
+/** "2 to fix · 1 to check", or "All set" when nothing is outstanding. */
+function setupCounts(blockers: number, warnings: number) {
+  const parts = [
+    ...(blockers ? [`${blockers} to fix`] : []),
+    ...(warnings ? [`${warnings} to check`] : []),
+  ];
+  return parts.length ? parts.join(" · ") : "All set";
 }
