@@ -400,7 +400,6 @@ function SerametPrinters() {
     return (
       <AppShell
         title="Printers & devices"
-        subtitle="Hardware health, document templates, routing and audited reprints"
         actions={
           <select
             value={branch}
@@ -428,8 +427,7 @@ function SerametPrinters() {
               {configurationError ?? "Printing is not configured for this branch."}
             </p>
             <p className="max-w-2xl text-muted-foreground">
-              Configure the document identity, trusted devices, templates and print routes in Setup
-              Centre before running a test or issuing a printed document.
+              Finish printer setup in Setup Centre, then come back to print a test page.
             </p>
             <a
               href="/seramet-setup"
@@ -446,7 +444,6 @@ function SerametPrinters() {
   return (
     <AppShell
       title="Printers & devices"
-      subtitle="Hardware health, document templates, routing and audited reprints"
       actions={
         <>
           <select

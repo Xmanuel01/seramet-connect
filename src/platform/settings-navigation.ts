@@ -49,27 +49,27 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Profile",
-        description: "Trading identity, locale, timezone and controlled base currency.",
+        description: "Your business name, country, timezone and currency.",
         kind: "route",
         to: "/seramet-setup",
         section: "BUSINESS_PROFILE",
       },
       {
         label: "Branches",
-        description: "Review locations and continue to the controlled branch setup workflow.",
+        description: "Your locations, and adding a new one.",
         kind: "route",
         to: "/branches",
       },
       {
         label: "Operating hours",
-        description: "Configure the operating context used by restaurant setup and devices.",
+        description: "When each branch opens and closes.",
         kind: "route",
         to: "/seramet-setup",
         section: "BRANCHES",
       },
       {
         label: "Currencies",
-        description: "Manage the base currency and accepted operational exchange rates.",
+        description: "Your main currency and the exchange rates you accept.",
         kind: "route",
         to: "/seramet-setup",
         section: "BUSINESS_PROFILE",
@@ -81,22 +81,22 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Users",
-        description: "Assign staff to their permitted branches and primary location.",
+        description: "Which branches each person works at.",
         kind: "inline",
       },
       {
         label: "Roles",
-        description: "Create configured roles without relying on hard-coded role names.",
+        description: "Add or remove roles like Cashier or Chef.",
         kind: "inline",
       },
       {
         label: "Permissions",
-        description: "Grant module and action permissions through the access matrix below.",
+        description: "Choose what each role can see and do.",
         kind: "inline",
       },
       {
         label: "Approval limits",
-        description: "Review operational decisions that require authorized approval.",
+        description: "Requests waiting for a manager's OK.",
         kind: "route",
         to: "/approvals",
       },
@@ -107,25 +107,25 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Registers",
-        description: "Configure branch devices and controlled register activation.",
+        description: "Tills and devices at each branch.",
         kind: "route",
         to: "/seramet-setup",
         section: "PRINTERS_DEVICES",
       },
       {
         label: "Tables",
-        description: "Manage the authoritative restaurant table inventory.",
+        description: "Your tables and seating areas.",
         kind: "route",
         to: "/tables",
       },
       {
         label: "Order types",
-        description: "Manage the configured channels available to the POS.",
+        description: "Dine-in, takeaway, delivery and other order types.",
         kind: "inline",
       },
       {
         label: "Receipt templates",
-        description: "Configure receipt identity, print templates and routing.",
+        description: "How receipts and bills look, and which printer they use.",
         kind: "route",
         to: "/seramet-printers",
       },
@@ -136,26 +136,26 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Units",
-        description: "Configure inventory units and conversion foundations.",
+        description: "Units like kg, litre or piece, and how they convert.",
         kind: "route",
         to: "/seramet-setup",
         section: "RECIPES_UOM",
       },
       {
         label: "Categories",
-        description: "Organize the inventory item catalogue.",
+        description: "Groups for your stock items.",
         kind: "route",
         to: "/categories",
       },
       {
         label: "Warehouses",
-        description: "Manage branch stores and inventory locations.",
+        description: "Stores and stock rooms.",
         kind: "route",
         to: "/warehouses",
       },
       {
         label: "PAR rules",
-        description: "Maintain reorder points, safety stock and target levels.",
+        description: "When to reorder each item, and how much.",
         kind: "route",
         to: "/par",
       },
@@ -166,25 +166,25 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "PO numbering",
-        description: "Review purchase orders and their authoritative document identities.",
+        description: "Purchase orders and their numbers.",
         kind: "route",
         to: "/purchase-orders",
       },
       {
         label: "Supplier terms",
-        description: "Maintain supplier records, lead times and commercial terms.",
+        description: "Suppliers, delivery times and payment terms.",
         kind: "route",
         to: "/suppliers",
       },
       {
         label: "Receiving rules",
-        description: "Use the controlled goods-receipt and variance workflow.",
+        description: "Checking deliveries in against the order.",
         kind: "route",
         to: "/receiving",
       },
       {
         label: "Approval routing",
-        description: "Review procurement and operational approval decisions.",
+        description: "Who approves purchases.",
         kind: "route",
         to: "/approvals",
       },
@@ -195,24 +195,24 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Chart of accounts",
-        description: "Open the accounting workspace and configured ledger structure.",
+        description: "Your accounts for bookkeeping.",
         kind: "route",
         to: "/accounting",
       },
       {
         label: "Taxes",
-        description: "Manage tax rules and tax reporting from the Tax Centre.",
+        description: "VAT and other taxes, and tax reports.",
         kind: "route",
         to: "/tax-centre",
       },
       {
         label: "Payment methods",
-        description: "Manage the configured tenders available during settlement.",
+        description: "Cash, M-Pesa, card and other ways customers pay.",
         kind: "inline",
       },
       {
         label: "Payroll",
-        description: "Open payroll controls for authorized staff.",
+        description: "Staff pay and deductions.",
         kind: "route",
         to: "/payroll",
       },
@@ -223,25 +223,25 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Segments",
-        description: "Manage evidence-based customer segments.",
+        description: "Groups of customers, like regulars.",
         kind: "route",
         to: "/segments",
       },
       {
         label: "Loyalty tiers",
-        description: "Configure the loyalty programme and tier rules.",
+        description: "Your loyalty programme and its levels.",
         kind: "route",
         to: "/loyalty",
       },
       {
         label: "Coupons",
-        description: "Manage vouchers and their redemption controls.",
+        description: "Vouchers and discount codes.",
         kind: "route",
         to: "/vouchers",
       },
       {
         label: "Complaint SLAs",
-        description: "Review complaints and customer-service handling.",
+        description: "Customer complaints and how fast you respond.",
         kind: "route",
         to: "/complaints",
       },
@@ -252,25 +252,25 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Website",
-        description: "Manage direct-channel presentation and publishing controls.",
+        description: "Your ordering website.",
         kind: "route",
         to: "/marketing",
       },
       {
         label: "Social pages",
-        description: "Open the marketing workspace for configured social channels.",
+        description: "Your social media pages.",
         kind: "route",
         to: "/marketing",
       },
       {
         label: "WhatsApp",
-        description: "Configure messaging through the provider integration boundary.",
+        description: "Sending customers WhatsApp messages.",
         kind: "route",
         to: "/integrations",
       },
       {
         label: "Campaigns",
-        description: "Create and review permission-controlled customer campaigns.",
+        description: "Offers and messages to your customers.",
         kind: "route",
         to: "/campaigns",
       },
@@ -281,37 +281,37 @@ export const settingsGroups: readonly SettingsGroup[] = [
     items: [
       {
         label: "Integrations",
-        description: "Manage provider adapters and tenant connection references.",
+        description: "M-Pesa, delivery apps and other connections.",
         kind: "route",
         to: "/integrations",
       },
       {
         label: "Notifications",
-        description: "Review operational notifications and delivery outcomes.",
+        description: "Messages Seramet has sent, and whether they arrived.",
         kind: "route",
         to: "/notifications",
       },
       {
         label: "AI",
-        description: "Open the permission-controlled intelligence workspace.",
+        description: "Ask Seramet questions about your business.",
         kind: "route",
         to: "/ai",
       },
       {
         label: "Appearance",
-        description: "Review the shared application design system and theme tokens.",
+        description: "Colours and display.",
         kind: "route",
         to: "/design-system",
       },
       {
         label: "Audit",
-        description: "Inspect immutable configuration and operational audit events.",
+        description: "A record of every change made.",
         kind: "route",
         to: "/audit-trail",
       },
       {
         label: "System",
-        description: "Inspect service readiness and system-health evidence.",
+        description: "Whether Seramet is working normally.",
         kind: "route",
         to: "/system-health",
       },

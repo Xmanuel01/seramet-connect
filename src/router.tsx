@@ -9,6 +9,8 @@ export const getRouter = () => {
     routeTree,
     context: { queryClient },
     scrollRestoration: true,
+    // Start loading a page's code when the pointer rests on its link, so it opens at once.
+    defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
   });
 

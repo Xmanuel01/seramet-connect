@@ -207,7 +207,10 @@ export function useSetupCentre() {
         error?: string;
       };
       if (!response.ok)
-        throw new Error(body.message ?? body.error ?? `Setup request failed (${response.status})`);
+        throw Object.assign(
+          new Error(body.message ?? body.error ?? `Setup request failed (${response.status})`),
+          { status: response.status },
+        );
       return body;
     },
     [headers],
@@ -317,11 +320,14 @@ export function useSetupCentre() {
       ["historical sales migration", historicalSales],
       ["file import capability", importCapability],
     ] as const;
-    const failures = resources.flatMap(([name, result]) =>
-      result.status === "rejected"
-        ? [`${name}: ${failureMessage(result.reason, "unavailable")}`]
-        : [],
+    // A business that hasn't started guided setup has no onboarding record yet: not a fault.
+    const failed = resources.filter(
+      ([name, result]) =>
+        result.status === "rejected" &&
+        !(name === "onboarding" && (result.reason as { status?: number })?.status === 404),
     );
+    // Name what didn't load; the server's wording stays out of the page.
+    const failures = failed.length ? [failed.map(([name]) => name).join(", ")] : [];
     setUnavailableResources(
       resources.flatMap(([name, result]) => (result.status === "rejected" ? [name] : [])),
     );

@@ -110,7 +110,7 @@ test.describe("protected staging authentication", () => {
     await revokeDevice(page, "Prepare protected staging authentication certification");
 
     await page.goto("/seramet-setup");
-    await page.getByRole("button", { name: "Printers / devices" }).click();
+    await page.getByRole("button", { name: "Printers & devices" }).click();
     const deviceRow = page.getByRole("row").filter({ hasText: configuration.deviceName! });
     await expect(deviceRow).toBeVisible();
     await deviceRow.getByRole("button", { name: "Activate" }).click();

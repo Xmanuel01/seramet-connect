@@ -760,7 +760,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       failureReason: "Controlled emulator listener offline; operator review required",
     });
     await manager.reload();
-    await manager.getByRole("button", { name: "Inspect bridge queue", exact: true }).click();
+    await manager.getByRole("button", { name: "Check print queue", exact: true }).click();
     await expect(manager.getByText("NOT_SENT", { exact: true })).toBeVisible();
     await manager.screenshot({ path: join(evidence, "offline-queue.png"), fullPage: true });
     devices[1].listener = await startServer(devices[1].state, devices[1].port);

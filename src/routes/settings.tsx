@@ -35,8 +35,8 @@ export const Route = createFileRoute("/settings")({
 });
 
 const accessColumns = [
-  { key: "navigationPermission", label: "Navigation" },
-  { key: "routePermission", label: "Route" },
+  { key: "navigationPermission", label: "In menu" },
+  { key: "routePermission", label: "Open page" },
   { key: "READ", label: "View" },
   { key: "CREATE", label: "Create" },
   { key: "EDIT", label: "Edit" },
@@ -74,7 +74,7 @@ function Settings() {
   const newChannelRequiresTable = channelRequiresTable ?? channelType === "DINE_IN";
   const [configNotice, setConfigNotice] = useState({
     kind: "info" as "info" | "success" | "error",
-    message: "Configuration changes apply to the active tenant.",
+    message: "",
   });
   const [configSaving, setConfigSaving] = useState("");
   const [selectedAccessRoleId, setSelectedAccessRoleId] = useState(roleRecords[0]?.id ?? "");
@@ -417,7 +417,7 @@ function Settings() {
   return (
     <AppShell
       title="Settings"
-      subtitle={`${tenant?.tradingName ?? "Business"} - ${branches.length} branches - ${platformState.users.filter((user) => user.tenantId === activeTenantId && user.active).length} users`}
+      subtitle={tenant?.tradingName ?? undefined}
       actions={
         !pilotUnavailable["/audit-trail"] && canNavigateToPath(moduleAccess, "/audit-trail") ? (
           <Link
@@ -445,7 +445,6 @@ function Settings() {
                 )}
               >
                 <span>{group.label}</span>
-                <span className="num text-[11px]">{group.items.length}</span>
               </button>
             ))}
           </nav>
@@ -453,10 +452,7 @@ function Settings() {
 
         <div className="grid min-w-0 gap-4">
           <Panel>
-            <PanelHead
-              title={current.label}
-              sub="Open the full page, or make quick changes below"
-            />
+            <PanelHead title={current.label} />
             <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
               {current.items.map((item) =>
                 item.kind === "route" ? (
@@ -485,7 +481,7 @@ function Settings() {
                   <div key={item.label} className="rounded-lg border border-border p-3 text-left">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[13px] font-semibold">{item.label}</span>
-                      <span className="text-[11px] font-semibold text-primary">On this page</span>
+                      <span className="text-[11px] font-semibold text-primary">Below</span>
                     </div>
                     <p className="mt-2 text-[12px] leading-5 text-muted-foreground">
                       {item.description}
@@ -510,10 +506,7 @@ function Settings() {
           {current.label === "Users and access" && (
             <>
               <Panel className="min-w-0">
-                <PanelHead
-                  title="Module and action access"
-                  sub="Configure role defaults; scope, entitlement and policy still constrain effective access"
-                />
+                <PanelHead title="Roles and what they can do" />
                 <div className="p-4">
                   <div className="mb-4 rounded-lg border border-border p-3">
                     <div className="text-[13px] font-bold">Roles</div>
@@ -562,10 +555,7 @@ function Settings() {
                   </div>
                   <div className="mb-3 flex flex-col gap-2 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="text-[13px] font-bold">Module access matrix</div>
-                      <div className="mt-1 text-[12px] text-muted-foreground">
-                        Role permissions are still constrained by scope, entitlement and policy.
-                      </div>
+                      <div className="text-[13px] font-bold">Choose a role to set up</div>
                     </div>
                     <label className="flex items-center gap-2 text-[12px] font-semibold">
                       <span className="text-muted-foreground">Role</span>
@@ -589,81 +579,72 @@ function Settings() {
                       disabled={!canManageRoleAccess || accessSaving}
                     />
                   )}
-                  <div className="overflow-x-auto rounded-lg border border-border">
-                    <table className="w-full min-w-[1240px]">
-                      <thead>
-                        <tr>
-                          <th className="border-b border-border px-3 py-2 text-left text-[11px] font-bold uppercase text-muted-foreground">
-                            Module / authority boundary
-                          </th>
-                          {accessColumns.map((column) => (
-                            <th
-                              key={column.key}
-                              className="border-b border-border px-2 py-2 text-center text-[11px] font-bold uppercase text-muted-foreground"
-                            >
-                              {column.label}
+                  <details className="mt-3 rounded-lg border border-border">
+                    <summary className="cursor-pointer px-3 py-2.5 text-[13px] font-semibold">
+                      Fine-tune permissions
+                    </summary>
+                    <div className="overflow-x-auto border-t border-border">
+                      <table className="w-full min-w-[1100px]">
+                        <thead>
+                          <tr>
+                            <th className="border-b border-border px-3 py-2 text-left text-[11px] font-bold uppercase text-muted-foreground">
+                              Area
                             </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {moduleAccessRegistry.map((module) => (
-                          <tr key={module.key}>
-                            <td className="border-b border-border px-3 py-3 align-top">
-                              <div className="text-[12px] font-semibold">{module.label}</div>
-                              <div className="mt-1 text-[10px] text-muted-foreground">
-                                {module.supportedScopes.join(" / ")}
-                              </div>
-                              <div className="mt-1 font-mono text-[10px] text-muted-foreground">
-                                {module.entitlement ?? "No plan entitlement required"}
-                              </div>
-                            </td>
-                            {accessColumns.map((column) => {
-                              const requirement =
-                                column.key === "navigationPermission" ||
-                                column.key === "routePermission"
-                                  ? module[column.key]
-                                  : module.actionPermissions[column.key];
-                              return (
-                                <td
-                                  key={column.key}
-                                  className="border-b border-border px-2 py-3 align-top"
-                                >
-                                  <AccessPermissionCell
-                                    moduleLabel={module.label}
-                                    columnLabel={column.label}
-                                    requirement={requirement}
-                                    rolePermissions={selectedAccessRole?.permissions ?? []}
-                                    disabled={
-                                      !selectedAccessRole || accessSaving || !canManageRoleAccess
-                                    }
-                                    onToggle={(permission) =>
-                                      selectedAccessRole
-                                        ? void togglePermission(selectedAccessRole.id, permission)
-                                        : undefined
-                                    }
-                                  />
-                                </td>
-                              );
-                            })}
+                            {accessColumns.map((column) => (
+                              <th
+                                key={column.key}
+                                className="border-b border-border px-2 py-2 text-center text-[11px] font-bold uppercase text-muted-foreground"
+                              >
+                                {column.label}
+                              </th>
+                            ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mt-3 rounded-md bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
-                    Role names provide defaults only. Server permission, hierarchy scope, active
-                    entitlement and effective policy are evaluated again for routes, APIs and
-                    actions.
-                  </div>
+                        </thead>
+                        <tbody>
+                          {moduleAccessRegistry.map((module) => (
+                            <tr key={module.key}>
+                              <td className="border-b border-border px-3 py-3 align-top">
+                                <div className="text-[12px] font-semibold">{module.label}</div>
+                              </td>
+                              {accessColumns.map((column) => {
+                                const requirement =
+                                  column.key === "navigationPermission" ||
+                                  column.key === "routePermission"
+                                    ? module[column.key]
+                                    : module.actionPermissions[column.key];
+                                return (
+                                  <td
+                                    key={column.key}
+                                    className="border-b border-border px-2 py-3 align-top"
+                                  >
+                                    <AccessPermissionCell
+                                      moduleLabel={module.label}
+                                      columnLabel={column.label}
+                                      requirement={requirement}
+                                      rolePermissions={selectedAccessRole?.permissions ?? []}
+                                      disabled={
+                                        !selectedAccessRole || accessSaving || !canManageRoleAccess
+                                      }
+                                      onToggle={(permission) =>
+                                        selectedAccessRole
+                                          ? void togglePermission(selectedAccessRole.id, permission)
+                                          : undefined
+                                      }
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
                 </div>
               </Panel>
 
               <Panel className="min-w-0">
-                <PanelHead
-                  title="User branch assignments"
-                  sub="Set the automatic home branch and any additional branches the user may access"
-                />
+                <PanelHead title="Which branches each person works at" />
                 <div className="grid gap-4 p-4 lg:grid-cols-[260px_minmax(0,1fr)]">
                   <div className="space-y-3">
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
@@ -703,8 +684,8 @@ function Settings() {
                     </label>
                     <div className="rounded-md bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
                       {selectedUserCanSwitch
-                        ? "This user's role permits switching among assigned branches."
-                        : "This user is locked to the primary branch. Grant branches.switch in the role matrix to enable switching."}
+                        ? "Can switch between their branches."
+                        : "Works at their home branch only. To let them switch, allow it for their role."}
                     </div>
                   </div>
 
@@ -746,7 +727,7 @@ function Settings() {
                       </div>
                     </div>
                     <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
-                      Transfer / access-change reason
+                      Reason for the change
                       <input
                         value={branchAssignmentReason}
                         disabled={!canManageUserBranches}
@@ -994,23 +975,24 @@ function Settings() {
             </Panel>
           )}
 
-          {(current.label === "Users and access" ||
-            current.label === "POS and restaurant" ||
-            current.label === "Finance") && (
-            <div
-              role="status"
-              className={cn(
-                "rounded-lg border px-4 py-3 text-[12px]",
-                configNotice.kind === "error"
-                  ? "border-danger/30 bg-danger-soft text-danger"
-                  : configNotice.kind === "success"
-                    ? "border-success/30 bg-success-soft text-success"
-                    : "border-border bg-card text-muted-foreground",
-              )}
-            >
-              {configNotice.message}
-            </div>
-          )}
+          {configNotice.message &&
+            (current.label === "Users and access" ||
+              current.label === "POS and restaurant" ||
+              current.label === "Finance") && (
+              <div
+                role="status"
+                className={cn(
+                  "rounded-lg border px-4 py-3 text-[12px]",
+                  configNotice.kind === "error"
+                    ? "border-danger/30 bg-danger-soft text-danger"
+                    : configNotice.kind === "success"
+                      ? "border-success/30 bg-success-soft text-success"
+                      : "border-border bg-card text-muted-foreground",
+                )}
+              >
+                {configNotice.message}
+              </div>
+            )}
         </div>
       </div>
     </AppShell>
@@ -1034,11 +1016,11 @@ function AccessPermissionCell({
 }) {
   const codes = permissionCodes(requirement);
   if (!codes.length) {
-    return <div className="py-1 text-center text-[11px] text-muted-foreground">Not applicable</div>;
+    return <div className="py-1 text-center text-[11px] text-muted-foreground">—</div>;
   }
   const mode =
     typeof requirement === "object" && requirement && "allOf" in requirement
-      ? "All required"
+      ? "Needs all"
       : codes.length > 1
         ? "Any one"
         : undefined;
@@ -1055,13 +1037,13 @@ function AccessPermissionCell({
         >
           <input
             type="checkbox"
-            aria-label={`${moduleLabel} ${columnLabel} ${permission}`}
+            aria-label={`${moduleLabel} ${columnLabel} ${plainPermission(permission)}`}
             checked={rolePermissions.includes(permission)}
             disabled={disabled}
             onChange={() => onToggle(permission)}
             className="h-3.5 w-3.5 shrink-0 accent-primary"
           />
-          <span className="max-w-[86px] truncate font-mono">{compactPermission(permission)}</span>
+          <span className="max-w-[110px] truncate">{plainPermission(permission)}</span>
         </label>
       ))}
     </div>
@@ -1092,7 +1074,11 @@ function ConfigField({
   );
 }
 
-function compactPermission(value: string) {
+/** "orders.create" → "Create orders"; the code itself stays in the cell's tooltip. */
+function plainPermission(value: string) {
   const segments = value.split(".");
-  return segments.slice(Math.max(0, segments.length - 2)).join(".");
+  const verb = (segments.pop() ?? "").replaceAll("_", " ");
+  const noun = segments.join(" ").replaceAll("_", " ").replaceAll("-", " ");
+  const phrase = noun ? `${verb} ${noun}` : verb;
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
