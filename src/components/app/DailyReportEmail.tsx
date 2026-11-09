@@ -8,15 +8,32 @@ import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 
 type Engine = ReturnType<typeof useTransactionEngine>;
-type Delivery = { businessDate: string; recipientUserId: string; status: string };
+type Delivery = {
+  businessDate: string;
+  recipientUserId: string;
+  status: string;
+  updatedAt?: string;
+};
 
+// Plain words only; anything that didn't go out can be resent from the history.
 const statusLabel: Record<string, string> = {
   PROVIDER_ACCEPTED: "Sent",
   QUEUED: "Sending",
-  SKIPPED: "Day closed",
-  CONFIGURATION_REQUIRED: "Not set up",
-  DELIVERY_FAILED: "Failed",
-  RECONCILIATION_REQUIRED: "Check Brevo",
+  SKIPPED: "Skipped, day closed",
+};
+const label = (status: string) => statusLabel[status] ?? "Didn't send";
+const sentTime = (iso?: string) => {
+  if (!iso) return "";
+  const at = new Date(iso);
+  return Number.isFinite(at.getTime())
+    ? at.toLocaleString("en-KE", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      })
+    : "";
 };
 
 const clock = (minutes: number) =>
@@ -37,12 +54,16 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
   const [status, setStatus] = useState<{ emailConfigured: boolean; deliveries: Delivery[] }>();
   const [day, setDay] = useState<"today" | "yesterday">("today");
   const [loaded, setLoaded] = useState(0);
+  const [showHistory, setShowHistory] = useState(false);
   const canEdit = !isAllBranches && hasPermission(permissions.reconciliationApprove);
   const canRead = hasPermission(permissions.reconciliationView);
 
   useEffect(() => {
     setDraft(null);
     setNotice("");
+  }, [activeTenantId, branchId]);
+
+  useEffect(() => {
     if (!canRead || isAllBranches) return;
     const controller = new AbortController();
     const token = getSerametAccessToken();
@@ -61,6 +82,14 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
       .catch(() => undefined);
     return () => controller.abort();
   }, [activeTenantId, branchId, canRead, isAllBranches, loaded]);
+
+  // While something is sending, check again every few seconds until it finishes.
+  const sending = status?.deliveries.some((delivery) => delivery.status === "QUEUED") ?? false;
+  useEffect(() => {
+    if (!sending) return;
+    const timer = setTimeout(() => setLoaded((value) => value + 1), 4_000);
+    return () => clearTimeout(timer);
+  }, [sending, status]);
 
   if (!canRead || isAllBranches) return null;
 
@@ -81,7 +110,10 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
     setDraft({ people, sendAt, ...next });
   const name = (id: string) => eligible.find((user) => user.id === id)?.name ?? "Removed";
 
-  const sendNow = async () => {
+  const sendNow = async (
+    recipientUserIds: string[],
+    when: { day: "today" | "yesterday" } | { businessDate: string },
+  ) => {
     setBusy(true);
     setNotice("");
     try {
@@ -94,12 +126,12 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
           "x-seramet-tenant-id": activeTenantId,
           "x-seramet-branch-id": branchId,
         },
-        body: JSON.stringify({ recipientUserIds: people, day }),
+        body: JSON.stringify({ recipientUserIds, ...when }),
       });
       const body = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(body.message ?? "Couldn't send. Try again.");
       setNotice(
-        `Sending to ${people.length === 1 ? name(people[0]!) : `${people.length} people`}.`,
+        `Sending to ${recipientUserIds.length === 1 ? name(recipientUserIds[0]!) : `${recipientUserIds.length} people`}.`,
       );
       // Show it in the list once the worker has picked it up.
       setTimeout(() => setLoaded((value) => value + 1), 1_500);
@@ -202,26 +234,52 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
               <option value="today">Today so far</option>
               <option value="yesterday">Yesterday</option>
             </select>
-            <Btn disabled={busy} onClick={() => void sendNow()}>
+            <Btn disabled={busy} onClick={() => void sendNow(people, { day })}>
               Send now
             </Btn>
           </div>
         ) : null}
         {notice ? <p role="status">{notice}</p> : null}
         {status?.deliveries.length ? (
-          <ul className="grid gap-1.5 border-t border-border pt-3">
-            {status.deliveries.slice(0, 3).map((delivery) => (
-              <li
-                key={`${delivery.businessDate}:${delivery.recipientUserId}`}
-                className="flex items-center justify-between gap-2"
-              >
-                <span>
-                  {delivery.businessDate} · {name(delivery.recipientUserId)}
-                </span>
-                <Status>{statusLabel[delivery.status] ?? delivery.status}</Status>
-              </li>
-            ))}
-          </ul>
+          <div className="border-t border-border pt-3">
+            <Btn onClick={() => setShowHistory(!showHistory)}>
+              {showHistory ? "Hide sent reports" : "Sent reports"}
+            </Btn>
+            {showHistory ? (
+              <ul className="mt-3 grid gap-2">
+                {status.deliveries.map((delivery, index) => (
+                  <li
+                    key={`${delivery.businessDate}:${delivery.recipientUserId}:${delivery.updatedAt ?? index}`}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block">
+                        {delivery.businessDate} · {name(delivery.recipientUserId)}
+                      </span>
+                      <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted-foreground">
+                        <Status>{label(delivery.status)}</Status>
+                        {sentTime(delivery.updatedAt)}
+                      </span>
+                    </span>
+                    {delivery.status !== "QUEUED" &&
+                    status.emailConfigured &&
+                    eligible.some((user) => user.id === delivery.recipientUserId) ? (
+                      <Btn
+                        disabled={busy}
+                        onClick={() =>
+                          void sendNow([delivery.recipientUserId], {
+                            businessDate: delivery.businessDate,
+                          })
+                        }
+                      >
+                        Resend
+                      </Btn>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </Panel>

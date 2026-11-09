@@ -212,7 +212,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
       setNotice(
         targetShift
           ? "Cashier shift closed. Branch business day remains open."
-          : "Business day closed. The immutable report is available below.",
+          : "Day closed. The report is below.",
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Closing failed");

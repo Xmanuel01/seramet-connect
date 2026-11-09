@@ -87,6 +87,10 @@ export async function handleDailyClosingApi(
       ? body.recipientUserIds.filter((id): id is string => typeof id === "string")
       : [];
     const day = body?.day === "yesterday" ? "yesterday" : "today";
+    const businessDate =
+      typeof (body as { businessDate?: unknown } | null)?.businessDate === "string"
+        ? (body as { businessDate: string }).businessDate
+        : undefined;
     const { queueManualDailySummary } = await import("@/server/daily-summary-email");
     try {
       const result = await queueManualDailySummary(env, {
@@ -95,10 +99,13 @@ export async function handleDailyClosingApi(
         requestedBy: actor.id,
         recipientUserIds: ids,
         day,
+        businessDate,
       });
       return Response.json({ ok: true, ...result });
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
+      if (code === "DAILY_SUMMARY_DATE_INVALID")
+        throw new SerametHttpError(400, "That day can't be sent.");
       if (code === "DAILY_SUMMARY_RECIPIENTS_INVALID")
         throw new SerametHttpError(400, "Choose who should get the report.");
       if (code === "DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED")
@@ -122,7 +129,7 @@ export async function handleDailyClosingApi(
       emailConfigured = false;
     }
     const jobs = await env.SERAMET_DB.prepare(
-      "SELECT status,payload_json,result_json,last_error FROM worker_jobs WHERE tenant_id=? AND branch_id=? AND job_type='DAILY_SUMMARY_EMAIL' ORDER BY created_at DESC LIMIT 10",
+      "SELECT status,payload_json,result_json,last_error,updated_at FROM worker_jobs WHERE tenant_id=? AND branch_id=? AND job_type='DAILY_SUMMARY_EMAIL' ORDER BY created_at DESC LIMIT 10",
     )
       .bind(actor.tenantId, actor.branchId)
       .all<{
@@ -130,6 +137,7 @@ export async function handleDailyClosingApi(
         payload_json: string;
         result_json: string;
         last_error: string | null;
+        updated_at: string;
       }>();
     const deliveries = (jobs.results ?? []).map((job) => {
       const payload = JSON.parse(job.payload_json) as {
@@ -140,6 +148,7 @@ export async function handleDailyClosingApi(
       return {
         businessDate: payload.businessDate,
         recipientUserId: payload.recipientUserId,
+        updatedAt: job.updated_at,
         // A finished job with nothing sent was skipped: the day was closed, or the person
         // was taken off the list after the email was queued.
         status:

@@ -38,6 +38,8 @@ export async function queueManualDailySummary(
     requestedBy: string;
     recipientUserIds: string[];
     day: "today" | "yesterday";
+    /** Resend a past day from the history; never a day that hasn't started. */
+    businessDate?: string;
   },
   now = new Date(),
 ) {
@@ -53,10 +55,15 @@ export async function queueManualDailySummary(
       .first<{ email: string | null }>();
     if (!row?.email) throw new Error("DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED");
   }
+  const today = currentBusinessDate(input.tenantId, input.branchId, now);
+  if (
+    input.businessDate !== undefined &&
+    (!/^\d{4}-\d{2}-\d{2}$/.test(input.businessDate) || input.businessDate > today)
+  )
+    throw new Error("DAILY_SUMMARY_DATE_INVALID");
   const businessDate =
-    input.day === "today"
-      ? currentBusinessDate(input.tenantId, input.branchId, now)
-      : lastEndedBusinessDate(input.tenantId, input.branchId, now);
+    input.businessDate ??
+    (input.day === "today" ? today : lastEndedBusinessDate(input.tenantId, input.branchId, now));
   const stamp = now.toISOString();
   let queued = 0;
   for (const recipientUserId of recipients) {
@@ -195,7 +202,7 @@ export async function deliverDailySummaryEmail(env: SerametEnv, tenantId: string
     {
       to: { email: recipient.email },
       subject: `Daily summary - ${payload.businessDate} - ${branch}`,
-      text: `Here is ${branch}'s summary for ${payload.businessDate}: sales, payments and anything still open. The day hasn't been closed in Seramet; when a supervisor closes it, the official closing report follows.`,
+      text: `Here is ${branch}'s summary for ${payload.businessDate}: sales, payments and anything still open. The day hasn't been closed in Seramet yet; once it is, the closing report follows.`,
       filename: `daily-summary-${payload.businessDate}.pdf`,
       sha256: await pdfDigest(pdf),
     },
