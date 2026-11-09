@@ -14,23 +14,31 @@ export function AttendanceTimeline({
   timezone: string;
   now: number;
 }) {
+  // A corrupt time or timezone gives null: the row is left off the bar chart, and the
+  // table below still shows it as "Invalid recorded time".
   const minute = (at: string) => {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date(at));
-    return (
-      Number(parts.find((p) => p.type === "hour")?.value) * 60 +
-      Number(parts.find((p) => p.type === "minute")?.value)
-    );
+    const instant = new Date(at);
+    if (!Number.isFinite(instant.getTime())) return null;
+    try {
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone,
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(instant);
+      return (
+        Number(parts.find((p) => p.type === "hour")?.value) * 60 +
+        Number(parts.find((p) => p.type === "minute")?.value)
+      );
+    } catch {
+      return null;
+    }
   };
-  const timed = rows.map((row) => ({
-    ...row,
-    start: minute(row.clockInAt),
-    duration: elapsedAttendanceMinutes(row, now),
-  }));
+  const timed = rows.flatMap((row) => {
+    const start = minute(row.clockInAt);
+    const duration = elapsedAttendanceMinutes(row, now);
+    return start === null || !Number.isFinite(duration) ? [] : [{ ...row, start, duration }];
+  });
   const days = Math.max(1, ...timed.map((row) => Math.ceil((row.start + row.duration) / 1440)));
   const end = days * 1440;
   return (
