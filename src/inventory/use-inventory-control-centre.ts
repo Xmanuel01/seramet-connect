@@ -259,6 +259,20 @@ export type InventoryBranchPayload = {
   controlCentre: FoodCostControlData;
 };
 
+/**
+ * Shared across every inventory and procurement page in this tab: the last data per business
+ * and branch selection, and the load in progress. Moving between those pages shows what is
+ * already known at once; a load that is already running is joined, not repeated.
+ */
+type InventoryCacheEntry = {
+  data?: InventoryBranchPayload[];
+  loadedAt: number;
+  inflight?: Promise<InventoryBranchPayload[]>;
+};
+const inventoryCache = new Map<string, InventoryCacheEntry>();
+// Data this recent is shown without asking again; realtime events and saves still refresh.
+const INVENTORY_FRESH_MS = 15_000;
+
 export function useInventoryControlCentre(enabled: boolean) {
   const { activeTenantId, branchId, branchRecords, isAllBranches, currentUser, role } =
     useAppContext();
@@ -267,8 +281,12 @@ export function useInventoryControlCentre(enabled: boolean) {
     [branchId, branchRecords, isAllBranches],
   );
   const branchKey = selectedBranchIds.join("|");
-  const [data, setData] = useState<InventoryBranchPayload[]>([]);
-  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const cacheKey = `${activeTenantId}:${currentUser.id}:${branchKey}`;
+  const known = inventoryCache.get(cacheKey)?.data;
+  const [data, setData] = useState<InventoryBranchPayload[]>(known ?? []);
+  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">(
+    known ? "ready" : "idle",
+  );
   const [error, setError] = useState("");
 
   const headers = useMemo<Record<string, string>>(() => {
@@ -284,92 +302,119 @@ export function useInventoryControlCentre(enabled: boolean) {
     };
   }, [activeTenantId, branchId, currentUser.id, currentUser.name, role]);
 
-  const refresh = useCallback(async () => {
-    if (!enabled) {
-      setStatus("idle");
-      return;
-    }
-    setStatus("loading");
-    setError("");
-    try {
-      const branchIds = branchKey.split("|").filter(Boolean);
-      const next = await Promise.all(
-        branchIds.map(async (selectedBranchId): Promise<InventoryBranchPayload> => {
-          const query = `branchId=${encodeURIComponent(selectedBranchId)}&limit=100`;
-          const [
-            summaryResponse,
-            items,
-            categoriesResponse,
-            warehousesResponse,
-            unitsResponse,
-            procurementResponse,
-            controlResponse,
-          ] = await Promise.all([
-            fetch(
-              `/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`,
-              { headers },
-            ),
-            fetchInventoryItems(headers, selectedBranchId),
-            fetch(
-              `/api/seramet/inventory/categories?branchId=${encodeURIComponent(selectedBranchId)}`,
-              { headers },
-            ),
-            fetch(
-              `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
-              { headers },
-            ),
-            fetch("/api/seramet/inventory/units", { headers }),
-            fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
-            fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
-          ]);
-          for (const [response, resource] of [
-            [summaryResponse, "Inventory summary"],
-            [categoriesResponse, "Inventory categories"],
-            [warehousesResponse, "Inventory locations"],
-            [unitsResponse, "Inventory units"],
-            [procurementResponse, "Procurement overview"],
-            [controlResponse, "Inventory cost control"],
-          ] as const) {
-            await requireInventoryResponse(response, resource);
-          }
-          const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
-          const categoriesBody = (await categoriesResponse.json()) as {
-            categories: InventoryBranchPayload["categories"];
-          };
-          const warehousesBody = (await warehousesResponse.json()) as {
-            warehouses: InventoryBranchPayload["warehouses"];
-          };
-          const unitsBody = (await unitsResponse.json()) as {
-            units: InventoryBranchPayload["units"];
-          };
-          const procurementBody = (await procurementResponse.json()) as {
-            overview: InventoryBranchPayload["procurement"];
-          };
-          const controlBody = (await controlResponse.json()) as {
-            controlCentre: FoodCostControlData;
-          };
-          return {
-            branchId: selectedBranchId,
-            summary: summaryBody.summary,
-            items,
-            categories: categoriesBody.categories,
-            warehouses: warehousesBody.warehouses,
-            units: unitsBody.units,
-            procurement: procurementBody.overview,
-            controlCentre: controlBody.controlCentre,
-          };
-        }),
-      );
-      setData(next);
-      setStatus("ready");
-    } catch (cause) {
-      setError(reportError(cause, "Couldn't load inventory. Try again."));
-      setStatus("error");
-    }
-  }, [branchKey, enabled, headers]);
+  const load = useCallback(async (): Promise<InventoryBranchPayload[]> => {
+    const branchIds = branchKey.split("|").filter(Boolean);
+    return Promise.all(
+      branchIds.map(async (selectedBranchId): Promise<InventoryBranchPayload> => {
+        const query = `branchId=${encodeURIComponent(selectedBranchId)}&limit=100`;
+        const [
+          summaryResponse,
+          items,
+          categoriesResponse,
+          warehousesResponse,
+          unitsResponse,
+          procurementResponse,
+          controlResponse,
+        ] = await Promise.all([
+          fetch(`/api/seramet/inventory/summary?branchId=${encodeURIComponent(selectedBranchId)}`, {
+            headers,
+          }),
+          fetchInventoryItems(headers, selectedBranchId),
+          fetch(
+            `/api/seramet/inventory/categories?branchId=${encodeURIComponent(selectedBranchId)}`,
+            { headers },
+          ),
+          fetch(
+            `/api/seramet/inventory/warehouses?branchId=${encodeURIComponent(selectedBranchId)}`,
+            { headers },
+          ),
+          fetch("/api/seramet/inventory/units", { headers }),
+          fetch(`/api/seramet/procurement/overview?${query}`, { headers }),
+          fetch(`/api/seramet/inventory/control-centre?${query}`, { headers }),
+        ]);
+        for (const [response, resource] of [
+          [summaryResponse, "Inventory summary"],
+          [categoriesResponse, "Inventory categories"],
+          [warehousesResponse, "Inventory locations"],
+          [unitsResponse, "Inventory units"],
+          [procurementResponse, "Procurement overview"],
+          [controlResponse, "Inventory cost control"],
+        ] as const) {
+          await requireInventoryResponse(response, resource);
+        }
+        const summaryBody = (await summaryResponse.json()) as { summary: InventorySummary };
+        const categoriesBody = (await categoriesResponse.json()) as {
+          categories: InventoryBranchPayload["categories"];
+        };
+        const warehousesBody = (await warehousesResponse.json()) as {
+          warehouses: InventoryBranchPayload["warehouses"];
+        };
+        const unitsBody = (await unitsResponse.json()) as {
+          units: InventoryBranchPayload["units"];
+        };
+        const procurementBody = (await procurementResponse.json()) as {
+          overview: InventoryBranchPayload["procurement"];
+        };
+        const controlBody = (await controlResponse.json()) as {
+          controlCentre: FoodCostControlData;
+        };
+        return {
+          branchId: selectedBranchId,
+          summary: summaryBody.summary,
+          items,
+          categories: categoriesBody.categories,
+          warehouses: warehousesBody.warehouses,
+          units: unitsBody.units,
+          procurement: procurementBody.overview,
+          controlCentre: controlBody.controlCentre,
+        };
+      }),
+    );
+  }, [branchKey, headers]);
+
+  const refresh = useCallback(
+    async (options: { ifStale?: boolean } = {}) => {
+      if (!enabled) {
+        setStatus("idle");
+        return;
+      }
+      const entry = inventoryCache.get(cacheKey) ?? { loadedAt: 0 };
+      inventoryCache.set(cacheKey, entry);
+      // An explicit refresh (after an import, a save or the Refresh button) reads afresh.
+      if (!options.ifStale) entry.inflight = undefined;
+      if (entry.data) {
+        setData(entry.data);
+        setStatus("ready");
+        if (options.ifStale && Date.now() - entry.loadedAt < INVENTORY_FRESH_MS) return;
+      } else setStatus("loading");
+      setError("");
+      // Join a load that is already running for the same business and branches.
+      const pending =
+        entry.inflight ??
+        (entry.inflight = load()
+          .then((next) => {
+            entry.data = next;
+            entry.loadedAt = Date.now();
+            return next;
+          })
+          .finally(() => {
+            entry.inflight = undefined;
+          }));
+      try {
+        const next = await pending;
+        setData(next);
+        setStatus("ready");
+      } catch (cause) {
+        setError(reportError(cause, "Couldn't load inventory. Try again."));
+        // Keep showing what was there; only a first load turns into an error screen.
+        if (!entry.data) setStatus("error");
+      }
+    },
+    [cacheKey, enabled, load],
+  );
 
   useEffect(() => {
-    void refresh();
+    void refresh({ ifStale: true });
   }, [refresh]);
 
   const recalculate = useCallback(async () => {
