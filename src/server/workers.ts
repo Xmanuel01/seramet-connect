@@ -355,6 +355,8 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
         type: "SETUP_READINESS_RECALCULATION",
         interval: at.getUTCMinutes() === 30 ? "hour" : null,
       },
+      // End-of-day summary emails; queued per recipient once each branch's day has ended.
+      { type: "DAILY_SUMMARY_DISPATCH", interval: at.getUTCMinutes() === 7 ? "hour" : null },
       {
         type: "INTELLIGENCE_SCHEDULED_BRIEFS",
         interval: at.getUTCMinutes() === 40 ? "hour" : null,
@@ -417,7 +419,7 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
   const pending = await env.SERAMET_DB.prepare(
     `SELECT tenant_id,id,correlation_id FROM worker_jobs
      WHERE (status IN ('PENDING','RETRY_PENDING') AND scheduled_at<=?)
-        OR (job_type IN ('DAILY_CLOSING_EMAIL','CUSTOMER_DOCUMENT_EMAIL') AND status IN ('CLAIMED','RUNNING') AND lease_expires_at<?)
+        OR (job_type IN ('DAILY_CLOSING_EMAIL','DAILY_SUMMARY_EMAIL','CUSTOMER_DOCUMENT_EMAIL') AND status IN ('CLAIMED','RUNNING') AND lease_expires_at<?)
      ORDER BY scheduled_at LIMIT 500`,
   )
     .bind(at.toISOString(), at.toISOString())
@@ -580,6 +582,16 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
     case "DAILY_CLOSING_EMAIL": {
       const { deliverDailyClosingEmail } = await import("@/server/daily-closing-email");
       await deliverDailyClosingEmail(env, job.tenant_id, job.id);
+      return;
+    }
+    case "DAILY_SUMMARY_DISPATCH": {
+      const { queueDailySummaryEmails } = await import("@/server/daily-summary-email");
+      await queueDailySummaryEmails(env, job.tenant_id);
+      return;
+    }
+    case "DAILY_SUMMARY_EMAIL": {
+      const { deliverDailySummaryEmail } = await import("@/server/daily-summary-email");
+      await deliverDailySummaryEmail(env, job.tenant_id, job.id);
       return;
     }
     case "SCHEDULED_ORDER_RELEASE":

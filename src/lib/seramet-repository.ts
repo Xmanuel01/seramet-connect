@@ -189,6 +189,7 @@ export function applyServerMutation(
           mode: ClosingMode;
           materialVarianceMinor: number;
           recipientUserIds: string[];
+          summarySendMinutes?: number;
         },
       );
     case "closeCashierShift":

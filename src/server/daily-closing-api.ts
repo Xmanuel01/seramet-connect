@@ -8,7 +8,7 @@ import type { TransactionRepository } from "@/lib/seramet-repository";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { businessDateForTimestamp } from "@/lib/business-date";
-import { documentEmailStatus } from "@/server/transactional-email";
+import { documentEmailStatus, transactionalEmailConfiguration } from "@/server/transactional-email";
 
 export async function handleDailyClosingApi(
   request: Request,
@@ -64,6 +64,50 @@ export async function handleDailyClosingApi(
     });
     return Response.json(
       { closureStatus: day.status, reportAvailable: !!day.snapshot?.dailyReport, deliveries },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
+  if (new URL(request.url).pathname === "/api/seramet/daily-closing/summary-emails") {
+    if (request.method !== "GET") throw new SerametHttpError(405, "Read-only email status");
+    const actor = await authenticateSerametRequest(request, env);
+    if (!actor.permissions.includes(permissions.reconciliationView))
+      throw new SerametHttpError(403, "Reconciliation view permission is required");
+    if (!env.SERAMET_DB) throw new SerametHttpError(503, "Durable email status is unavailable");
+    let emailConfigured = true;
+    try {
+      transactionalEmailConfiguration(env, actor.tenantId);
+    } catch {
+      emailConfigured = false;
+    }
+    const jobs = await env.SERAMET_DB.prepare(
+      "SELECT status,payload_json,result_json,last_error FROM worker_jobs WHERE tenant_id=? AND branch_id=? AND job_type='DAILY_SUMMARY_EMAIL' ORDER BY created_at DESC LIMIT 10",
+    )
+      .bind(actor.tenantId, actor.branchId)
+      .all<{
+        status: string;
+        payload_json: string;
+        result_json: string;
+        last_error: string | null;
+      }>();
+    const deliveries = (jobs.results ?? []).map((job) => {
+      const payload = JSON.parse(job.payload_json) as {
+        businessDate: string;
+        recipientUserId: string;
+      };
+      const evidence = JSON.parse(job.result_json || "{}") as { acceptedByProvider?: boolean };
+      return {
+        businessDate: payload.businessDate,
+        recipientUserId: payload.recipientUserId,
+        // A finished job with nothing sent was skipped: the day was closed, or the person
+        // was taken off the list after the email was queued.
+        status:
+          job.status === "SUCCEEDED" && !evidence.acceptedByProvider
+            ? "SKIPPED"
+            : documentEmailStatus({ ...job, result_json: job.result_json || "{}" }),
+      };
+    });
+    return Response.json(
+      { emailConfigured, deliveries },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   }

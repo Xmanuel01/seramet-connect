@@ -43,7 +43,7 @@ export const Route = createFileRoute("/ai")({
   component: AskSeramet,
 });
 
-type View = "Ask" | "Morning Brief" | "EOD Brief" | "History" | "Usage";
+type View = "Ask" | "Morning brief" | "End of day" | "History" | "Usage";
 
 function AskSeramet() {
   const {
@@ -61,7 +61,7 @@ function AskSeramet() {
   const suggestions = useMemo(() => suggestedQuestions(userPermissions), [userPermissions]);
   const views: View[] = ["Ask"];
   if (userPermissions.includes(permissions.intelligenceBriefsView)) {
-    views.push("Morning Brief", "EOD Brief");
+    views.push("Morning brief", "End of day");
   }
   views.push("History");
   if (userPermissions.includes(permissions.intelligenceUsageView)) views.push("Usage");
@@ -76,7 +76,7 @@ function AskSeramet() {
   return (
     <AppShell
       title="Ask Seramet"
-      subtitle={`${isAllBranches ? "Authorized branches" : branchLabel} · server-grounded evidence`}
+      subtitle={isAllBranches ? "All your branches" : branchLabel}
       actions={
         <Btn
           onClick={() => void intelligence.refresh()}
@@ -94,7 +94,7 @@ function AskSeramet() {
         <div className="mb-4 flex items-start gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-[13px] text-danger">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <div className="font-semibold">Intelligence unavailable</div>
+            <div className="font-semibold">Ask Seramet isn&apos;t available right now</div>
             <div className="mt-0.5">{intelligence.error}</div>
           </div>
         </div>
@@ -110,7 +110,7 @@ function AskSeramet() {
                   value={question}
                   onChange={(event) => setQuestion(event.target.value)}
                   maxLength={1200}
-                  placeholder="Ask about operations, food cost, inventory, finance, or close readiness"
+                  placeholder="Ask anything about your sales, stock, costs or staff"
                   aria-label="Question for Seramet"
                   className="h-10 min-w-0 flex-1 rounded-md border border-border bg-background px-3 text-[13px] outline-none focus:border-primary"
                 />
@@ -156,11 +156,11 @@ function AskSeramet() {
               <Panel className="grid min-h-[280px] place-items-center p-8 text-center">
                 <div>
                   <MessageSquareText className="mx-auto h-8 w-8 text-muted-foreground" />
-                  <div className="mt-3 text-[14px] font-semibold">No active analysis</div>
+                  <div className="mt-3 text-[14px] font-semibold">Ask a question</div>
                   <div className="mt-1 text-[13px] text-muted-foreground">
                     {intelligence.status === "loading"
-                      ? "Loading authorized intelligence context..."
-                      : "Choose a question or enter one above."}
+                      ? "Getting ready…"
+                      : "Pick one of the suggestions or type your own above."}
                   </div>
                 </div>
               </Panel>
@@ -169,31 +169,19 @@ function AskSeramet() {
 
           <div className="grid content-start gap-4">
             <Panel>
-              <PanelHead title="Scope" sub="Applied before evidence retrieval" />
-              <dl className="grid gap-3 p-4 text-[12px]">
-                <Meta label="Branch scope" value={isAllBranches ? "All authorized" : branchLabel} />
-                <Meta label="Evidence tools" value={String(intelligence.tools.length)} />
-                <Meta
-                  label="Provider"
-                  value={intelligence.response?.provider.displayName ?? "Not invoked"}
-                />
-              </dl>
-            </Panel>
-            <Panel>
-              <PanelHead title="Recent analyses" />
+              <PanelHead title="Recent questions" />
               <div className="divide-y divide-border">
                 {intelligence.sessions.slice(0, 6).map((session) => (
                   <div key={session.id} className="px-4 py-3">
                     <div className="line-clamp-2 text-[12px] font-semibold">{session.title}</div>
                     <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>{session.retention_mode}</span>
                       <span>{formatDate(session.updated_at)}</span>
                     </div>
                   </div>
                 ))}
                 {intelligence.sessions.length === 0 && (
                   <div className="px-4 py-6 text-center text-[12px] text-muted-foreground">
-                    No retained sessions
+                    Nothing asked yet
                   </div>
                 )}
               </div>
@@ -202,10 +190,10 @@ function AskSeramet() {
         </div>
       )}
 
-      {(view === "Morning Brief" || view === "EOD Brief") && (
+      {(view === "Morning brief" || view === "End of day") && (
         <BriefView
           title={view}
-          type={view === "Morning Brief" ? "MORNING" : "EOD"}
+          type={view === "Morning brief" ? "MORNING" : "EOD"}
           briefs={intelligence.briefs}
           loading={intelligence.status === "loading"}
           canGenerate={userPermissions.includes(permissions.intelligenceBriefsManage)}
@@ -430,7 +418,7 @@ function HistoryView({
         ))}
         {sessions.length === 0 && (
           <div className="p-10 text-center text-[13px] text-muted-foreground">
-            No retained analysis history.
+            Nothing asked yet.
           </div>
         )}
       </div>
@@ -873,6 +861,6 @@ function suggestedQuestions(userPermissions: string[]) {
   if (userPermissions.includes(permissions.intelligenceInventory))
     questions.push("Which inventory risks need action?", "What should we purchase next?");
   if (userPermissions.includes(permissions.intelligenceOwner))
-    questions.push("Compare my authorized branches this week.");
+    questions.push("Compare my branches this week.");
   return questions;
 }
