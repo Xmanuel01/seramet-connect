@@ -16,7 +16,13 @@ import {
 } from "@/platform/demo/default-demo-data";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
 import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
-import { lastEndedBusinessDate, summarizeBusinessDay } from "@/payments/daily-closing";
+import {
+  configureClosing,
+  dueSummaryDate,
+  lastEndedBusinessDate,
+  summarizeBusinessDay,
+} from "@/payments/daily-closing";
+import type { ServerActor } from "@/lib/seramet-auth";
 import { renderDailyClosingPdf } from "@/server/daily-closing-report";
 
 let state: TransactionState;
@@ -124,6 +130,58 @@ describe("automatic end-of-day summary", () => {
     expect(
       await queueDailySummaryEmails(env(), tenantId, new Date("2026-11-10T12:00:00Z")),
     ).toEqual({ queued: 0 });
+  });
+
+  it("waits for the chosen send time", async () => {
+    // Demo branch: Africa/Nairobi (UTC+3), business day ends at midnight.
+    state.paymentOperations!.closingPolicies![0]!.summarySendMinutes = 23 * 60;
+    const at22 = new Date("2026-11-10T19:00:00Z"); // 22:00 on 10 Nov in Nairobi
+    const at2330 = new Date("2026-11-10T20:30:00Z"); // 23:30
+    expect(dueSummaryDate(tenantId, branchId, 23 * 60, at22)).toBeNull();
+    expect(dueSummaryDate(tenantId, branchId, 23 * 60, at2330)).toBe("2026-11-09");
+    expect(await queueDailySummaryEmails(env(), tenantId, at22)).toEqual({ queued: 0 });
+    expect(await queueDailySummaryEmails(env(), tenantId, at2330)).toEqual({ queued: 1 });
+    // Without a chosen time it goes as soon as the day ends.
+    expect(dueSummaryDate(tenantId, branchId, undefined, new Date("2026-11-09T21:05:00Z"))).toBe(
+      "2026-11-09",
+    );
+  });
+
+  it("only accepts a send time after the business day ends", () => {
+    const cutoff = Number(
+      createDefaultDemoPlatformState().branches.find((b) => b.id === branchId)!.metadata[
+        "businessDayCutoffMinutes"
+      ] ?? 0,
+    );
+    const actor = {
+      id: "owner",
+      tenantId,
+      branchId,
+      permissions: ["reconciliation.approve"],
+      assignedBranchIds: [branchId],
+      assignedBranches: [{ id: branchId, name: "Branch" }],
+      branchScope: { type: "BRANCH", branchId },
+    } as unknown as ServerActor;
+    const input = {
+      branchId,
+      mode: "SUPERVISOR_DAILY_CLOSE" as const,
+      materialVarianceMinor: 50_000,
+      recipientUserIds: [],
+    };
+    expect(() => configureClosing(state, actor, { ...input, summarySendMinutes: 1_440 })).toThrow(
+      /after the business day ends/,
+    );
+    if (cutoff > 0)
+      expect(() =>
+        configureClosing(state, actor, { ...input, summarySendMinutes: cutoff - 1 }),
+      ).toThrow(/after the business day ends/);
+    const saved = configureClosing(state, actor, { ...input, summarySendMinutes: 23 * 60 });
+    expect(saved.paymentOperations!.closingPolicies![0]).toMatchObject({
+      summarySendMinutes: 23 * 60,
+    });
+    // Saving without a time (the closing screen) keeps the chosen one.
+    const kept = configureClosing(saved, actor, input);
+    expect(kept.paymentOperations!.closingPolicies![0]!.summarySendMinutes).toBe(23 * 60);
   });
 
   async function runningJob() {

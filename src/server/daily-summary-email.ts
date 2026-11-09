@@ -2,11 +2,7 @@ import type { SerametEnv } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
-import {
-  closingPolicy,
-  lastEndedBusinessDate,
-  summarizeBusinessDay,
-} from "@/payments/daily-closing";
+import { closingPolicy, dueSummaryDate, summarizeBusinessDay } from "@/payments/daily-closing";
 import { deliverPdfEmail, pdfDigest, TransactionalEmailError } from "@/server/transactional-email";
 
 export const DAILY_SUMMARY_EMAIL = "DAILY_SUMMARY_EMAIL";
@@ -30,9 +26,11 @@ export async function queueDailySummaryEmails(env: SerametEnv, tenantId: string,
   const stamp = now.toISOString();
   let queued = 0;
   for (const branch of branches) {
-    const recipients = closingPolicy(state, tenantId, branch.id).recipientUserIds;
+    const policy = closingPolicy(state, tenantId, branch.id);
+    const recipients = policy.recipientUserIds;
     if (!recipients.length) continue;
-    const businessDate = lastEndedBusinessDate(tenantId, branch.id, now);
+    const businessDate = dueSummaryDate(tenantId, branch.id, policy.summarySendMinutes, now);
+    if (!businessDate) continue; // Not the chosen send time yet.
     for (const recipientUserId of new Set(recipients)) {
       const key = `daily-summary:${branch.id}:${businessDate}:${recipientUserId}`;
       const result = await db

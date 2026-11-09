@@ -54,6 +54,8 @@ export type ClosingPolicy = {
   mode: ClosingMode;
   materialVarianceMinor: number;
   recipientUserIds: string[];
+  /** Local time (minutes after midnight) the daily summary goes out; defaults to the day's end. */
+  summarySendMinutes?: number;
   updatedBy: string;
   updatedAt: string;
 };
@@ -148,6 +150,7 @@ export function configureClosing(
     mode: ClosingMode;
     materialVarianceMinor: number;
     recipientUserIds: string[];
+    summarySendMinutes?: number;
   },
 ) {
   if (state.tenantId !== actor.tenantId)
@@ -187,13 +190,23 @@ export function configureClosing(
       );
     }
   }
+  // Settings that don't send a send time keep the one already chosen.
+  const sendMinutes = input.summarySendMinutes ?? prior.summarySendMinutes;
+  if (sendMinutes !== undefined) {
+    const cutoff = context(actor.tenantId, input.branchId).businessDayCutoffMinutes;
+    if (!Number.isInteger(sendMinutes) || sendMinutes < cutoff || sendMinutes >= 1_440)
+      throw new DailyClosingError("Pick a send time after the business day ends", 400);
+  }
   operations.closingPolicies = [
     ...(operations.closingPolicies ?? []).filter((p) => p.branchId !== input.branchId),
     {
-      ...input,
       id: input.branchId,
-      recipientUserIds: ids,
       tenantId: actor.tenantId,
+      branchId: input.branchId,
+      mode: input.mode,
+      materialVarianceMinor: input.materialVarianceMinor,
+      recipientUserIds: ids,
+      ...(sendMinutes !== undefined ? { summarySendMinutes: sendMinutes } : {}),
       updatedBy: actor.id,
       updatedAt: new Date().toISOString(),
     },
@@ -786,4 +799,36 @@ export function lastEndedBusinessDate(tenantId: string, branchId: string, now = 
   const previous = new Date(`${today}T12:00:00.000Z`);
   previous.setUTCDate(previous.getUTCDate() - 1);
   return previous.toISOString().slice(0, 10);
+}
+
+/**
+ * The ended business day whose summary is due now, or null while it isn't. The summary goes
+ * at the chosen local time on the day after that business date (by default, when it ends).
+ */
+export function dueSummaryDate(
+  tenantId: string,
+  branchId: string,
+  sendMinutes: number | undefined,
+  now = new Date(),
+) {
+  const accounting = context(tenantId, branchId);
+  const businessDate = lastEndedBusinessDate(tenantId, branchId, now);
+  const send = sendMinutes ?? accounting.businessDayCutoffMinutes;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: accounting.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? "00";
+  const localDate = `${part("year")}-${part("month")}-${part("day")}`;
+  const localMinutes = Number(part("hour")) * 60 + Number(part("minute"));
+  const nextDay = new Date(`${businessDate}T12:00:00.000Z`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const sendDate = nextDay.toISOString().slice(0, 10);
+  if (localDate > sendDate || (localDate === sendDate && localMinutes >= send)) return businessDate;
+  return null;
 }
