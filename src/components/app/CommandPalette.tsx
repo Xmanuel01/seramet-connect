@@ -48,7 +48,7 @@ const goto: { label: string; to: string }[] = [
   { label: "Open Expenses", to: "/expenses" },
   { label: "Open Period Close", to: "/period-close" },
   { label: "Open Prime Cost", to: "/prime-cost" },
-  { label: "Go to Command Centre", to: "/command-centre" },
+  { label: "Go to Management overview", to: "/command-centre" },
   { label: "Open Pending Decisions", to: "/decisions" },
   { label: "Open Branches", to: "/branches" },
   { label: "Go to Approvals", to: "/approvals" },

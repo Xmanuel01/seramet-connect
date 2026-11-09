@@ -307,7 +307,7 @@ export const navGroups: NavGroup[] = [
     group: "Management",
     items: [
       {
-        label: "Command Centre",
+        label: "Overview",
         to: "/command-centre",
         icon: Gauge,
         permission: permissions.dashboardView,

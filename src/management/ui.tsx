@@ -8,10 +8,14 @@ export function ManagementReadModelState({
   status,
   error,
   empty,
+  emptyTitle = "No figures for this period yet",
+  emptyText = "Figures appear here once there are sales and stock movements for this period.",
 }: {
   status: "idle" | "loading" | "ready" | "error";
   error: string;
   empty?: boolean;
+  emptyTitle?: string;
+  emptyText?: string;
 }) {
   if (status === "ready" && !empty) return null;
   const loading = status === "loading" || status === "idle";
@@ -31,14 +35,10 @@ export function ManagementReadModelState({
               ? "Loading figures"
               : status === "error"
                 ? "Couldn't load these figures"
-                : "No figures for this period yet"}
+                : emptyTitle}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            {status === "error"
-              ? error
-              : loading
-                ? "This takes a moment."
-                : "Figures appear here once there are sales and stock movements for this period."}
+            {status === "error" ? error : loading ? "This takes a moment." : emptyText}
           </p>
         </div>
       </div>
@@ -47,8 +47,10 @@ export function ManagementReadModelState({
 }
 
 export function QualityStatus({ quality }: { quality: AnalyticsQuality | FinancialQuality }) {
+  if (quality === "HIGH" || quality === "COMPLETE") return <Status>Healthy</Status>;
+  if (quality === "INSUFFICIENT_DATA") return <Status>Not enough data yet</Status>;
   const label = quality.replaceAll("_", " ").toLowerCase();
-  return <Status>{quality === "HIGH" || quality === "COMPLETE" ? "Healthy" : label}</Status>;
+  return <Status>{label.charAt(0).toUpperCase() + label.slice(1)}</Status>;
 }
 
 export function formatMinor(amountMinor: number, currency: string) {
