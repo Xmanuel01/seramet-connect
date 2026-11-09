@@ -48,7 +48,7 @@ describe("server-only tenant-scoped campaign email", () => {
     expect(await adapter.send(message)).toEqual({ status: "SENT", providerMessageId: acceptedId });
     const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://api.brevo.com/v3/smtp/email");
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(new Headers(init.headers).has("api-key")).toBe(true);
     expect(new Headers(init.headers).has("Authorization")).toBe(false);

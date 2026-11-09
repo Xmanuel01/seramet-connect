@@ -47,7 +47,7 @@ describe("Brevo PDF delivery safety", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(send.mock.calls[0]![0]).toBe("https://api.brevo.com/v3/smtp/email");
     const init = send.mock.calls[0]![1]!;
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     expect(init.headers).toMatchObject({ "api-key": "disposable-api-key-not-real" });
     const body = JSON.parse(init.body as string);
     expect(body.to).toEqual([message.to]);
@@ -62,6 +62,17 @@ describe("Brevo PDF delivery safety", () => {
       acceptedByProvider: true,
       email: { provider: "BREVO", outcome: "ACCEPTED" },
     });
+  });
+  it("never asks the Workers runtime for an unsupported redirect mode", async () => {
+    // Workers throws on redirect "error" before sending (unlike Node), so a send would
+    // silently never leave the server. Keep it out of every server-side fetch.
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const offenders = readdirSync("src/server", { recursive: true, encoding: "utf8" })
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+      .filter((file) =>
+        /redirect:\s*["']error["']/.test(readFileSync(`src/server/${file}`, "utf8")),
+      );
+    expect(offenders).toEqual([]);
   });
   it("has one sending winner under concurrent direct calls", async () => {
     const send = vi.fn<typeof fetch>().mockResolvedValue(accepted());

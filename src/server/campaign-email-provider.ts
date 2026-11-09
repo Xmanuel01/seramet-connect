@@ -141,7 +141,7 @@ class BrevoCampaignProvider implements CampaignProviderAdapter {
     try {
       response = await this.transport("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
-        redirect: "error",
+        redirect: "manual", // Workers throws on "error"; a 3xx is treated as a rejection.
         signal: AbortSignal.timeout(15000),
         headers: {
           "api-key": config.apiKey,
