@@ -2,7 +2,13 @@ import type { SerametEnv } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
-import { closingPolicy, dueSummaryDate, summarizeBusinessDay } from "@/payments/daily-closing";
+import {
+  closingPolicy,
+  currentBusinessDate,
+  dueSummaryDate,
+  lastEndedBusinessDate,
+  summarizeBusinessDay,
+} from "@/payments/daily-closing";
 import { deliverPdfEmail, pdfDigest, TransactionalEmailError } from "@/server/transactional-email";
 
 export const DAILY_SUMMARY_EMAIL = "DAILY_SUMMARY_EMAIL";
@@ -14,9 +20,77 @@ async function sha256(value: string) {
   ).join("");
 }
 
+const RECIPIENT_SQL = `SELECT u.email,u.name FROM users u JOIN user_branches b ON b.tenant_id=u.tenant_id AND b.user_id=u.id
+       WHERE u.tenant_id=? AND u.id=? AND u.active=1 AND b.branch_id=? AND EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
+         JOIN role_permissions rp ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
+         WHERE ur.tenant_id=u.tenant_id AND ur.user_id=u.id AND rp.permission_code=?)`;
+
 /**
- * Runs hourly. For each branch whose business day has ended, queues one email per chosen
- * recipient for that day. The idempotency key makes this safe to run any number of times.
+ * "Send now": queues the summary for today so far (or yesterday) to people with report
+ * access at this branch. The worker picks it up within a minute.
+ */
+export async function queueManualDailySummary(
+  env: SerametEnv,
+  input: {
+    tenantId: string;
+    branchId: string;
+    requestedBy: string;
+    recipientUserIds: string[];
+    day: "today" | "yesterday";
+  },
+  now = new Date(),
+) {
+  const db = env.SERAMET_DB;
+  if (!db) throw new Error("DAILY_SUMMARY_DATABASE_REQUIRED");
+  const recipients = [...new Set(input.recipientUserIds)];
+  if (!recipients.length || recipients.length > 20)
+    throw new Error("DAILY_SUMMARY_RECIPIENTS_INVALID");
+  for (const id of recipients) {
+    const row = await db
+      .prepare(RECIPIENT_SQL)
+      .bind(input.tenantId, id, input.branchId, permissions.reconciliationView)
+      .first<{ email: string | null }>();
+    if (!row?.email) throw new Error("DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED");
+  }
+  const businessDate =
+    input.day === "today"
+      ? currentBusinessDate(input.tenantId, input.branchId, now)
+      : lastEndedBusinessDate(input.tenantId, input.branchId, now);
+  const stamp = now.toISOString();
+  let queued = 0;
+  for (const recipientUserId of recipients) {
+    // One per person per minute, so a double click doesn't send twice.
+    const key = `daily-summary-now:${input.branchId}:${businessDate}:${recipientUserId}:${stamp.slice(0, 16)}`;
+    const result = await db
+      .prepare(
+        `INSERT INTO worker_jobs
+          (tenant_id,id,branch_id,job_type,payload_json,idempotency_key,correlation_id,status,
+           attempt_count,max_attempts,scheduled_at,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,'PENDING',0,8,?,?,?)
+         ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,
+      )
+      .bind(
+        input.tenantId,
+        `daily-summary-${await sha256(key)}`,
+        input.branchId,
+        DAILY_SUMMARY_EMAIL,
+        JSON.stringify({ businessDate, recipientUserId, requestedBy: input.requestedBy }),
+        key,
+        crypto.randomUUID(),
+        stamp,
+        stamp,
+        stamp,
+      )
+      .run();
+    queued += result.meta?.changes ?? 0;
+  }
+  return { queued, businessDate };
+}
+
+/**
+ * Runs every few minutes. For each branch whose send time has passed, queues one email per
+ * chosen recipient for the ended day. The idempotency key makes repeated runs harmless.
  */
 export async function queueDailySummaryEmails(env: SerametEnv, tenantId: string, now = new Date()) {
   const db = env.SERAMET_DB;
@@ -74,37 +148,35 @@ export async function deliverDailySummaryEmail(env: SerametEnv, tenantId: string
   const payload = JSON.parse(job.payload_json) as {
     businessDate: string;
     recipientUserId: string;
+    requestedBy?: string;
   };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.businessDate))
     throw new TransactionalEmailError("DAILY_SUMMARY_DATE_INVALID");
   // Same rule as the closing report: an active user with this branch and report access.
   const recipient = await db
-    .prepare(
-      `SELECT u.email,u.name FROM users u JOIN user_branches b ON b.tenant_id=u.tenant_id AND b.user_id=u.id
-       WHERE u.tenant_id=? AND u.id=? AND u.active=1 AND b.branch_id=? AND EXISTS (
-         SELECT 1 FROM user_roles ur JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
-         JOIN role_permissions rp ON rp.tenant_id=r.tenant_id AND rp.role_id=r.id
-         WHERE ur.tenant_id=u.tenant_id AND ur.user_id=u.id AND rp.permission_code=?)`,
-    )
+    .prepare(RECIPIENT_SQL)
     .bind(tenantId, payload.recipientUserId, job.branch_id, permissions.reconciliationView)
     .first<{ email: string | null; name: string | null }>();
   if (!recipient?.email || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(recipient.email))
     throw new TransactionalEmailError("DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED");
   const state = await new D1AuthoritativeTransactionRepository(db).loadState(tenantId);
-  if (
-    !closingPolicy(state, tenantId, job.branch_id).recipientUserIds.includes(
-      payload.recipientUserId,
+  // A "send now" request goes regardless; the automatic one respects the list and the close.
+  if (!payload.requestedBy) {
+    if (
+      !closingPolicy(state, tenantId, job.branch_id).recipientUserIds.includes(
+        payload.recipientUserId,
+      )
     )
-  )
-    return; // Removed from the list since the email was queued: send nothing.
-  const closed = state.paymentOperations?.dayCloses.some(
-    (day) =>
-      day.tenantId === tenantId &&
-      day.branchId === job.branch_id &&
-      day.businessDate === payload.businessDate &&
-      day.status === "CLOSED",
-  );
-  if (closed) return; // The official closing report has already gone to the same people.
+      return; // Removed from the list since the email was queued: send nothing.
+    const closed = state.paymentOperations?.dayCloses.some(
+      (day) =>
+        day.tenantId === tenantId &&
+        day.branchId === job.branch_id &&
+        day.businessDate === payload.businessDate &&
+        day.status === "CLOSED",
+    );
+    if (closed) return; // The official closing report has already gone to the same people.
+  }
   const snapshot = summarizeBusinessDay(state, {
     tenantId,
     branchId: job.branch_id,

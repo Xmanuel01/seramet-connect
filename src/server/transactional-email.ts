@@ -30,7 +30,14 @@ export class TransactionalEmailError extends Error {
 export function transactionalEmailConfiguration(env: SerametEnv, tenantId: string) {
   try {
     const values = JSON.parse(env.SERAMET_TRANSACTIONAL_EMAIL_CONFIG ?? "{}");
-    const config = Object.hasOwn(values, tenantId) ? values[tenantId] : null;
+    // {apiKey, from} serves every business on the platform. A business id key can
+    // override it for one business; nothing has to be added when a restaurant signs up.
+    const config =
+      values && Object.hasOwn(values, tenantId)
+        ? values[tenantId]
+        : typeof values?.apiKey === "string"
+          ? values
+          : null;
     if (
       typeof config?.apiKey !== "string" ||
       config.apiKey.length < 16 ||

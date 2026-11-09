@@ -67,6 +67,48 @@ export async function handleDailyClosingApi(
       { headers: { "Cache-Control": "private, no-store" } },
     );
   }
+  if (new URL(request.url).pathname === "/api/seramet/daily-closing/summary-emails/send") {
+    if (request.method !== "POST") throw new SerametHttpError(405, "Send uses POST");
+    const actor = await authenticateSerametRequest(request, env);
+    if (!actor.permissions.includes(permissions.reconciliationView))
+      throw new SerametHttpError(403, "Report access is required");
+    authorizeBranchRead(actor, actor.tenantId, actor.branchId);
+    if (!env.SERAMET_DB) throw new SerametHttpError(503, "Email is unavailable right now");
+    try {
+      transactionalEmailConfiguration(env, actor.tenantId);
+    } catch {
+      throw new SerametHttpError(503, "Email isn't set up yet. Contact Seramet support.");
+    }
+    const body = (await request.json().catch(() => null)) as {
+      recipientUserIds?: unknown;
+      day?: unknown;
+    } | null;
+    const ids = Array.isArray(body?.recipientUserIds)
+      ? body.recipientUserIds.filter((id): id is string => typeof id === "string")
+      : [];
+    const day = body?.day === "yesterday" ? "yesterday" : "today";
+    const { queueManualDailySummary } = await import("@/server/daily-summary-email");
+    try {
+      const result = await queueManualDailySummary(env, {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        requestedBy: actor.id,
+        recipientUserIds: ids,
+        day,
+      });
+      return Response.json({ ok: true, ...result });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (code === "DAILY_SUMMARY_RECIPIENTS_INVALID")
+        throw new SerametHttpError(400, "Choose who should get the report.");
+      if (code === "DAILY_SUMMARY_RECIPIENT_NOT_AUTHORIZED")
+        throw new SerametHttpError(
+          400,
+          "Someone you chose has no email or no report access at this branch.",
+        );
+      throw error;
+    }
+  }
   if (new URL(request.url).pathname === "/api/seramet/daily-closing/summary-emails") {
     if (request.method !== "GET") throw new SerametHttpError(405, "Read-only email status");
     const actor = await authenticateSerametRequest(request, env);

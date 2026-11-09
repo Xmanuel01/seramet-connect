@@ -21,6 +21,10 @@ const statusLabel: Record<string, string> = {
 
 const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+const minutesOf = (value: string) => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+};
 
 /** Who gets the daily summary, and when. A closed day sends the closing report instead. */
 export function DailyReportEmail({ engine }: { engine: Engine }) {
@@ -31,6 +35,8 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [status, setStatus] = useState<{ emailConfigured: boolean; deliveries: Delivery[] }>();
+  const [day, setDay] = useState<"today" | "yesterday">("today");
+  const [loaded, setLoaded] = useState(0);
   const canEdit = !isAllBranches && hasPermission(permissions.reconciliationApprove);
   const canRead = hasPermission(permissions.reconciliationView);
 
@@ -54,17 +60,12 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [activeTenantId, branchId, canRead, isAllBranches]);
+  }, [activeTenantId, branchId, canRead, isAllBranches, loaded]);
 
   if (!canRead || isAllBranches) return null;
 
   const branch = repository.getBranch(activeTenantId, branchId);
   const cutoff = Number(branch.metadata["businessDayCutoffMinutes"] ?? 0);
-  // Any whole hour after the business day ends, plus the end itself.
-  const times = [
-    cutoff,
-    ...Array.from({ length: 24 }, (_, hour) => hour * 60).filter((minutes) => minutes > cutoff),
-  ];
   // The rule the server checks: an email address, this branch, and report access.
   const eligible = repository.snapshot().users.filter((user) => {
     if (user.tenantId !== activeTenantId || !user.active || !user.email) return false;
@@ -79,6 +80,35 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
   const edit = (next: Partial<{ people: string[]; sendAt: number }>) =>
     setDraft({ people, sendAt, ...next });
   const name = (id: string) => eligible.find((user) => user.id === id)?.name ?? "Removed";
+
+  const sendNow = async () => {
+    setBusy(true);
+    setNotice("");
+    try {
+      const token = getSerametAccessToken();
+      const response = await fetch("/api/seramet/daily-closing/summary-emails/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "x-seramet-tenant-id": activeTenantId,
+          "x-seramet-branch-id": branchId,
+        },
+        body: JSON.stringify({ recipientUserIds: people, day }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) throw new Error(body.message ?? "Couldn't send. Try again.");
+      setNotice(
+        `Sending to ${people.length === 1 ? name(people[0]!) : `${people.length} people`}.`,
+      );
+      // Show it in the list once the worker has picked it up.
+      setTimeout(() => setLoaded((value) => value + 1), 1_500);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't send. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -113,18 +143,18 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
       <div className="grid gap-3 p-4 text-[13px]">
         <label className="flex items-center justify-between gap-3">
           Send at
-          <select
+          <input
+            type="time"
+            step={300}
             className="h-8 rounded-md border border-border bg-card px-2"
             disabled={!canEdit || busy}
-            value={sendAt}
-            onChange={(event) => edit({ sendAt: Number(event.target.value) })}
-          >
-            {times.map((minutes) => (
-              <option key={minutes} value={minutes}>
-                {clock(minutes)}
-              </option>
-            ))}
-          </select>
+            value={clock(sendAt)}
+            min={clock(cutoff)}
+            onChange={(event) => {
+              const minutes = minutesOf(event.target.value);
+              if (event.target.value && minutes >= cutoff) edit({ sendAt: minutes });
+            }}
+          />
         </label>
         {eligible.length ? (
           <fieldset className="grid gap-1.5">
@@ -157,6 +187,23 @@ export function DailyReportEmail({ engine }: { engine: Engine }) {
             </Btn>
             <Btn disabled={busy} onClick={() => setDraft(null)}>
               Cancel
+            </Btn>
+          </div>
+        ) : null}
+        {people.length && status?.emailConfigured ? (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <select
+              aria-label="Which day"
+              className="h-8 rounded-md border border-border bg-card px-2"
+              disabled={busy}
+              value={day}
+              onChange={(event) => setDay(event.target.value as "today" | "yesterday")}
+            >
+              <option value="today">Today so far</option>
+              <option value="yesterday">Yesterday</option>
+            </select>
+            <Btn disabled={busy} onClick={() => void sendNow()}>
+              Send now
             </Btn>
           </div>
         ) : null}
