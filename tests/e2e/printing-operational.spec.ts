@@ -1117,9 +1117,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     const closeResult = await closeResponse;
     expect(closeResult.ok(), await closeResult.text()).toBe(true);
     await expect(closingDialog).not.toBeVisible();
-    await expect(
-      manager.getByRole("status").filter({ hasText: "Day closed." }),
-    ).toBeVisible();
+    await expect(manager.getByRole("status").filter({ hasText: "Day closed." })).toBeVisible();
     state = (await snapshot()).state;
     const day = state.paymentOperations.dayCloses.find(
       (row: { branchId: string; status: string }) =>
