@@ -452,32 +452,42 @@ export function useSetupCentre() {
   }, [branchId, get, isAllBranches, catalogGuard, scopeKey]);
 
   useEffect(() => {
-    setSetup(null);
-    setMenuCatalog([]);
-    setIntegrations([]);
-    setDevices([]);
-    setMappings([]);
-    setOpeningStock([]);
-    setDiagnostics(null);
-    setProviders([]);
-    setStructure({ brands: [], branches: [] });
-    setProfile(null);
-    setOptions({
-      accounts: [],
-      roles: [],
-      warehouses: [],
-      stations: [],
-      documentTemplates: [],
-      inventoryItems: [],
-      units: [],
-      taxRules: [],
-    });
-    setOnboarding(null);
-    setHistoricalSalesState(null);
-    setFileImportCapability({
-      available: false,
-      reason: "Checking file-import security configuration",
-    });
+    // On a scope change, show that scope's last data if this tab has seen it; else start empty.
+    const known = lastSnapshot.get(scopeKey);
+    setSetup(known?.setup ?? null);
+    setMenuCatalog(known?.menuCatalog ?? []);
+    setIntegrations(known?.integrations ?? []);
+    setDevices(known?.devices ?? []);
+    setMappings(known?.mappings ?? []);
+    setOpeningStock(known?.openingStock ?? []);
+    setDiagnostics(known?.diagnostics ?? null);
+    setProviders(known?.providers ?? []);
+    setStructure(known?.structure ?? { brands: [], branches: [] });
+    setProfile(known?.profile ?? null);
+    setOptions(
+      known?.options ?? {
+        accounts: [],
+        roles: [],
+        warehouses: [],
+        stations: [],
+        documentTemplates: [],
+        inventoryItems: [],
+        units: [],
+        taxRules: [],
+      },
+    );
+    setOnboarding(known?.onboarding ?? null);
+    setCountries(known?.countries ?? []);
+    setCurrencies(known?.currencies ?? []);
+    setHistoricalSalesState(known?.historicalSalesState ?? null);
+    setFileImportCapability(
+      known?.fileImportCapability ?? {
+        available: false,
+        reason: "Checking file-import security configuration",
+      },
+    );
+    setStatus(known ? "ready" : "loading");
+    setMenuCatalogStatus(known ? "ready" : "loading");
     void refresh();
     return () => {
       readGuard.cancel();
@@ -488,6 +498,7 @@ export function useSetupCentre() {
     };
   }, [
     refresh,
+    scopeKey,
     readGuard,
     catalogGuard,
     onboardingGuard,
