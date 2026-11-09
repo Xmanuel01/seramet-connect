@@ -54,7 +54,7 @@ export async function deliverDailyClosingEmail(
     {
       to: { email: recipient.email },
       subject: `Daily Closing Report - ${snapshot.businessDate} - ${snapshot.dailyReport.branch}`,
-      text: `The business day has closed. Attached is immutable report ${snapshot.dailyReport.reference}. Financial closure is independent of email delivery.`,
+      text: `${snapshot.dailyReport.branch}'s day for ${snapshot.businessDate} has been closed. The closing report is attached.`,
       filename: `daily-closing-${snapshot.businessDate}-r${snapshot.revision}.pdf`,
       sha256: await pdfDigest(pdf),
     },

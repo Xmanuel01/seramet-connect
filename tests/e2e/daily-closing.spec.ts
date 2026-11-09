@@ -90,9 +90,7 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
   await dialog.getByRole("button", { name: "Confirm & Close Business Day", exact: true }).click();
   try {
     await expect(dialog).not.toBeVisible();
-    await expect(
-      page.getByText("Business day closed. The immutable report is available below."),
-    ).toBeVisible();
+    await expect(page.getByText("Day closed. The report is below.")).toBeVisible();
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download PDF", exact: true }).click();
     const report = await download;
