@@ -133,6 +133,8 @@ test("attendance survives corrupt history, incomplete responses and a transient 
     }),
   );
   await page.goto("/attendance");
+  // History opens on request since the Workforce tidy-up.
+  await page.getByRole("button", { name: "My timecards", exact: true }).click();
   await expect(page.getByText("Invalid recorded time", { exact: true })).toBeVisible();
   await expect(page.getByText("This page didn't load", { exact: true })).toBeHidden();
   await page.route("**/api/seramet/attendance?**", (route) =>
@@ -193,18 +195,18 @@ test("Sales through Finance routes load without page exceptions or API 5xx", asy
 }) => {
   test.setTimeout(600_000);
   await signIn(context, page);
-  const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Accounting"')[0]!;
+  const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Finance"')[0]!;
   const paths = [...new Set([...nav.matchAll(/to: "([^"]+)"/g)].map((match) => match[1]!))];
   await scanPages(page, paths, "routes");
 });
 
-test("remaining Accounting, Management, Intelligence, Marketing and System pages load without crashes", async ({
+test("remaining Finance, Management, Intelligence, Marketing and System pages load without crashes", async ({
   context,
   page,
 }) => {
   test.setTimeout(600_000);
   await signIn(context, page);
-  const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Accounting"')[1]!;
+  const nav = readFileSync("src/components/app/nav.ts", "utf8").split('group: "Finance"')[1]!;
   const paths = [...new Set([...nav.matchAll(/to: "([^"]+)"/g)].map((match) => match[1]!))];
   expect(paths.length).toBeGreaterThan(0);
   await scanPages(page, paths, "remaining-routes");

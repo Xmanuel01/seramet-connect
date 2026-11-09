@@ -68,7 +68,7 @@ function Segments() {
       setEditing(false);
       setName("");
       setCode("");
-      setMessage("Segment created. Build its branch snapshot to see members.");
+      setMessage("Group created. Press Count customers to see who's in it.");
       list.refresh();
     } catch (cause) {
       setError(crmErrorMessage(cause));
@@ -90,12 +90,7 @@ function Segments() {
           encodeURIComponent(branchId),
         {},
       );
-      setMessage(
-        "Snapshot recorded: " +
-          response.snapshot.customerCount +
-          " matched customers. Evidence: " +
-          readableStatus(response.snapshot.quality),
-      );
+      setMessage(`${response.snapshot.customerCount} customers in this group.`);
       list.refresh();
     } catch (cause) {
       setError(crmErrorMessage(cause));
@@ -106,19 +101,19 @@ function Segments() {
 
   return (
     <AppShell
-      title="Customer segments"
-      subtitle={"Auditable, rule-based segments from completed orders - " + branchLabel}
+      title="Customer groups"
+      subtitle={branchLabel}
       actions={
         canManage ? (
           <Btn variant="primary" onClick={() => setEditing((value) => !value)}>
-            {editing ? "Cancel" : "Create segment"}
+            {editing ? "Cancel" : "New group"}
           </Btn>
         ) : undefined
       }
     >
       {!canView ? (
         <Panel className="p-5">
-          <CrmEmpty title="Access restricted" body="CRM viewing permission is required." />
+          <CrmEmpty title="No access" body="Ask the owner to give your role access to customers." />
         </Panel>
       ) : (
         <>
@@ -134,13 +129,10 @@ function Segments() {
           )}
           {editing && canManage && (
             <Panel className="mb-4">
-              <PanelHead
-                title="New segment"
-                sub="Only transparent behavior-based rules; monetary and protected-trait filters are excluded."
-              />
+              <PanelHead title="New group" />
               <form className="grid gap-3 p-4 md:grid-cols-2" onSubmit={create}>
                 <label className="grid gap-1 text-[12px]">
-                  Segment code
+                  Short code
                   <input
                     className={crmFieldClass}
                     required
@@ -150,7 +142,7 @@ function Segments() {
                   />
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Segment name
+                  Name
                   <input
                     className={crmFieldClass}
                     required
@@ -160,7 +152,7 @@ function Segments() {
                   />
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Condition
+                  Customers whose
                   <select
                     className={crmFieldClass}
                     value={field}
@@ -174,7 +166,7 @@ function Segments() {
                   </select>
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Comparison
+                  Is
                   <select
                     className={crmFieldClass}
                     value={operator}
@@ -188,7 +180,7 @@ function Segments() {
                   </select>
                 </label>
                 <label className="grid gap-1 text-[12px]">
-                  Threshold
+                  Number
                   <input
                     className={crmFieldClass}
                     type="number"
@@ -201,34 +193,29 @@ function Segments() {
                 </label>
                 <div className="md:col-span-2">
                   <Btn variant="primary" type="submit" disabled={busy !== null}>
-                    {busy ? "Saving..." : "Create"}
+                    {busy ? "Saving…" : "Create group"}
                   </Btn>
                 </div>
               </form>
             </Panel>
           )}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Metric label="Configured segments" value={rows.length} />
+          <div className="grid grid-cols-2 gap-3">
+            <Metric label="Groups" value={rows.length} />
             <Metric
-              label="Segments with snapshots"
+              label="Counted"
               value={rows.filter((row) => row.latest_count !== null).length}
             />
-            <Metric label="Snapshot coverage" value="Branch-specific" />
           </div>
           <Panel className="mt-4">
-            <PanelHead
-              title="Current segments"
-              sub="Snapshot counts are only from the selected branch; they are not live audience guarantees."
-              right={<Btn onClick={list.refresh}>Refresh</Btn>}
-            />
+            <PanelHead title="All groups" right={<Btn onClick={list.refresh}>Refresh</Btn>} />
             {list.status === "loading" ? (
               <CrmLoading />
             ) : list.status === "error" ? (
               <CrmError message={list.error} retry={list.refresh} />
             ) : rows.length === 0 ? (
               <CrmEmpty
-                title="No segments configured"
-                body="Create a rule and build an evidence snapshot before scheduling a campaign."
+                title="No groups yet"
+                body="Create a group, like customers with 5 or more orders, to send them a campaign."
               />
             ) : (
               <div className="divide-y divide-border">
@@ -239,17 +226,15 @@ function Segments() {
                       <Status>{readableStatus(row.status)}</Status>
                     </div>
                     <p className="text-[12px] text-muted-foreground">
-                      {row.description || row.definition_json}
+                      {row.description || describeRule(row.definition_json)}
                     </p>
                     <p>
-                      Last branch snapshot:{" "}
                       {row.latest_count === null
-                        ? "Not calculated"
-                        : row.latest_count + " customers"}
-                      {" · "}Evidence: {readableStatus(row.latest_quality)}
+                        ? "Not counted yet"
+                        : row.latest_count + " customers at this branch"}
                     </p>
                     <Btn onClick={() => void snapshot(row.id)} disabled={busy !== null}>
-                      {busy === row.id ? "Calculating..." : "Rebuild branch snapshot"}
+                      {busy === row.id ? "Counting…" : "Count customers"}
                     </Btn>
                   </article>
                 ))}
@@ -259,11 +244,36 @@ function Segments() {
               <Link to="/campaigns" className="font-semibold underline">
                 Campaigns
               </Link>{" "}
-              only send to customers with recorded consent and eligible provider channels.
+              only go to customers who agreed to messages.
             </p>
           </Panel>
         </>
       )}
     </AppShell>
   );
+}
+
+const operatorWords: Record<string, string> = {
+  GTE: "at least",
+  LTE: "at most",
+  GT: "more than",
+  LT: "less than",
+  EQ: "exactly",
+};
+
+function describeRule(json: string) {
+  try {
+    const rules = (
+      JSON.parse(json) as { all?: { field: string; operator: string; value: number }[] }
+    ).all;
+    if (!rules?.length) return "";
+    return rules
+      .map(
+        (rule) =>
+          `${fieldLabels[rule.field as NumericField] ?? rule.field} ${operatorWords[rule.operator] ?? rule.operator} ${rule.value}`,
+      )
+      .join(" and ");
+  } catch {
+    return "";
+  }
 }
