@@ -138,6 +138,30 @@ export type HistoricalSalesMigrationState = {
 
 export type FileImportCapability = { available: boolean; reason: string | null };
 
+/**
+ * The last data seen per scope (business, branch, user), kept for this tab only. Reopening
+ * Setup Centre shows it at once while a refresh runs; nothing is stored on the device.
+ */
+type SetupSnapshot = {
+  setup: SetupSummary | null;
+  integrations: IntegrationHealthRow[];
+  devices: DeviceHealthRow[];
+  providers: SetupProviderDefinition[];
+  structure: SetupStructure;
+  profile: SetupBusinessProfile | null;
+  options: SetupOptions;
+  mappings: Array<Record<string, unknown>>;
+  openingStock: Array<Record<string, unknown>>;
+  menuCatalog: SetupMenuCatalogItem[];
+  diagnostics: SetupDiagnostics | null;
+  onboarding: OnboardingWizardState | null;
+  countries: CountryReference[];
+  currencies: CurrencyReference[];
+  historicalSalesState: HistoricalSalesMigrationState | null;
+  fileImportCapability: FileImportCapability;
+};
+const lastSnapshot = new Map<string, SetupSnapshot>();
+
 export function useSetupCentre() {
   const { activeTenantId, branchId, currentUser, isAllBranches, role } = useAppContext();
   const scopeKey = `${activeTenantId}:${branchId}:${currentUser.id}:${role}:${isAllBranches}`;
@@ -162,40 +186,55 @@ export function useSetupCentre() {
       ...(isAllBranches ? { "x-seramet-branch-scope": "ALL" } : {}),
     };
   }, [activeTenantId, branchId, currentUser.id, currentUser.name, isAllBranches, role]);
-  const [setup, setSetup] = useState<SetupSummary | null>(null);
-  const [integrations, setIntegrations] = useState<IntegrationHealthRow[]>([]);
-  const [devices, setDevices] = useState<DeviceHealthRow[]>([]);
-  const [providers, setProviders] = useState<SetupProviderDefinition[]>([]);
-  const [structure, setStructure] = useState<SetupStructure>({ brands: [], branches: [] });
-  const [profile, setProfile] = useState<SetupBusinessProfile | null>(null);
-  const [options, setOptions] = useState<SetupOptions>({
-    accounts: [],
-    roles: [],
-    warehouses: [],
-    stations: [],
-    documentTemplates: [],
-    inventoryItems: [],
-    units: [],
-    taxRules: [],
-  });
-  const [mappings, setMappings] = useState<Array<Record<string, unknown>>>([]);
-  const [openingStock, setOpeningStock] = useState<Array<Record<string, unknown>>>([]);
-  const [menuCatalog, setMenuCatalog] = useState<SetupMenuCatalogItem[]>([]);
+  const cached = lastSnapshot.get(scopeKey);
+  const [setup, setSetup] = useState<SetupSummary | null>(cached?.setup ?? null);
+  const [integrations, setIntegrations] = useState<IntegrationHealthRow[]>(
+    cached?.integrations ?? [],
+  );
+  const [devices, setDevices] = useState<DeviceHealthRow[]>(cached?.devices ?? []);
+  const [providers, setProviders] = useState<SetupProviderDefinition[]>(cached?.providers ?? []);
+  const [structure, setStructure] = useState<SetupStructure>(
+    cached?.structure ?? { brands: [], branches: [] },
+  );
+  const [profile, setProfile] = useState<SetupBusinessProfile | null>(cached?.profile ?? null);
+  const [options, setOptions] = useState<SetupOptions>(
+    cached?.options ?? {
+      accounts: [],
+      roles: [],
+      warehouses: [],
+      stations: [],
+      documentTemplates: [],
+      inventoryItems: [],
+      units: [],
+      taxRules: [],
+    },
+  );
+  const [mappings, setMappings] = useState<Array<Record<string, unknown>>>(cached?.mappings ?? []);
+  const [openingStock, setOpeningStock] = useState<Array<Record<string, unknown>>>(
+    cached?.openingStock ?? [],
+  );
+  const [menuCatalog, setMenuCatalog] = useState<SetupMenuCatalogItem[]>(cached?.menuCatalog ?? []);
   const [menuCatalogStatus, setMenuCatalogStatus] = useState<"loading" | "ready" | "error">(
-    "loading",
+    cached ? "ready" : "loading",
   );
   const [menuCatalogError, setMenuCatalogError] = useState("");
-  const [diagnostics, setDiagnostics] = useState<SetupDiagnostics | null>(null);
-  const [onboarding, setOnboarding] = useState<OnboardingWizardState | null>(null);
-  const [countries, setCountries] = useState<CountryReference[]>([]);
-  const [currencies, setCurrencies] = useState<CurrencyReference[]>([]);
+  const [diagnostics, setDiagnostics] = useState<SetupDiagnostics | null>(
+    cached?.diagnostics ?? null,
+  );
+  const [onboarding, setOnboarding] = useState<OnboardingWizardState | null>(
+    cached?.onboarding ?? null,
+  );
+  const [countries, setCountries] = useState<CountryReference[]>(cached?.countries ?? []);
+  const [currencies, setCurrencies] = useState<CurrencyReference[]>(cached?.currencies ?? []);
   const [historicalSalesState, setHistoricalSalesState] =
-    useState<HistoricalSalesMigrationState | null>(null);
-  const [fileImportCapability, setFileImportCapability] = useState<FileImportCapability>({
-    available: false,
-    reason: "Checking file-import security configuration",
-  });
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+    useState<HistoricalSalesMigrationState | null>(cached?.historicalSalesState ?? null);
+  const [fileImportCapability, setFileImportCapability] = useState<FileImportCapability>(
+    cached?.fileImportCapability ?? {
+      available: false,
+      reason: "Checking file-import security configuration",
+    },
+  );
+  const [status, setStatus] = useState<"loading" | "ready" | "error">(cached ? "ready" : "loading");
   const [error, setError] = useState("");
   const [unavailableResources, setUnavailableResources] = useState<string[]>([]);
 
@@ -221,10 +260,18 @@ export function useSetupCentre() {
     const read = readGuard.begin(scopeKey);
     const catalogRead = catalogGuard.begin(scopeKey);
     const readGet = <T>(path: string) => get<T>(path, read.signal);
-    setStatus("loading");
+    const warm = lastSnapshot.has(scopeKey);
+    if (!warm) {
+      setStatus("loading");
+      setMenuCatalogStatus("loading");
+    }
     setError("");
-    setMenuCatalogStatus("loading");
     setMenuCatalogError("");
+    // The page can draw once the summary, structure and options are in; the rest fills in.
+    let essentials = 0;
+    const essential = () => {
+      if (++essentials === 3 && read.isCurrent()) setStatus("ready");
+    };
     const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
     const [
       summary,
@@ -243,13 +290,30 @@ export function useSetupCentre() {
       historicalSales,
       importCapability,
     ] = await Promise.allSettled([
-      readGet<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`),
+      readGet<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`).then((value) => {
+        if (read.isCurrent()) setSetup(value.setup);
+        essential();
+        return value;
+      }),
       readGet<{ integrations: IntegrationHealthRow[] }>("/api/seramet/setup/integration-health"),
       readGet<{ devices: DeviceHealthRow[] }>("/api/seramet/setup/device-health"),
       readGet<{ providers: SetupProviderDefinition[] }>("/api/seramet/setup/providers"),
-      readGet<SetupStructure>("/api/seramet/setup/organisation-structure"),
-      readGet<{ profile: SetupBusinessProfile }>("/api/seramet/setup/business-profile"),
-      readGet<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`),
+      readGet<SetupStructure>("/api/seramet/setup/organisation-structure").then((value) => {
+        if (read.isCurrent()) setStructure({ brands: value.brands, branches: value.branches });
+        essential();
+        return value;
+      }),
+      readGet<{ profile: SetupBusinessProfile }>("/api/seramet/setup/business-profile").then(
+        (value) => {
+          if (read.isCurrent()) setProfile(value.profile);
+          return value;
+        },
+      ),
+      readGet<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`).then((value) => {
+        if (read.isCurrent()) setOptions(value.options);
+        essential();
+        return value;
+      }),
       readGet<{ mappings: Array<Record<string, unknown>> }>("/api/seramet/setup/provider-mappings"),
       readGet<{ batches: Array<Record<string, unknown>> }>(
         `/api/seramet/setup/opening-stock${query}`,
@@ -336,6 +400,33 @@ export function useSetupCentre() {
       (result) => result.status === "rejected",
     );
     setStatus(criticalFailure ? "error" : "ready");
+    const value = <T>(result: PromiseSettledResult<T>) =>
+      result.status === "fulfilled" ? result.value : undefined;
+    if (!criticalFailure)
+      lastSnapshot.set(scopeKey, {
+        setup: value(summary)?.setup ?? null,
+        integrations: value(providerHealth)?.integrations ?? [],
+        devices: value(deviceHealth)?.devices ?? [],
+        providers: value(providerDefinitions)?.providers ?? [],
+        structure: {
+          brands: value(organisation)?.brands ?? [],
+          branches: value(organisation)?.branches ?? [],
+        },
+        profile: value(business)?.profile ?? null,
+        options: value(setupOptions)!.options,
+        mappings: value(providerMappings)?.mappings ?? [],
+        openingStock: value(opening)?.batches ?? [],
+        menuCatalog: value(catalog)?.items ?? [],
+        diagnostics: value(diagnosticState)?.diagnostics ?? null,
+        onboarding: value(onboardingState)?.onboarding ?? null,
+        countries: value(referenceState)?.countries ?? [],
+        currencies: value(referenceState)?.currencies ?? [],
+        historicalSalesState: value(historicalSales)?.state ?? null,
+        fileImportCapability: value(importCapability)?.capability ?? {
+          available: false,
+          reason: "File-import security configuration could not be verified",
+        },
+      });
   }, [branchId, get, isAllBranches, readGuard, catalogGuard, scopeKey]);
 
   /** Refresh only the item catalogue after a verified import. */
