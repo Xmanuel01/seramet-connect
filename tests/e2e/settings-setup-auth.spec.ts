@@ -421,6 +421,46 @@ test("a delayed Setup Centre response cannot replace the selected branch", async
   await context.close();
 });
 
+test("returning to Setup Centre shows the last data at once while it refreshes", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  await authorize(context);
+  const page = await context.newPage();
+  await establishSession(page);
+  let returning = false;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/seramet/setup/centre?**", async (route) => {
+    const holding = returning;
+    const response = await route.fetch({
+      headers: {
+        ...route.request().headers(),
+        authorization: `Bearer ${fixture.managerAccessToken}`,
+      },
+    });
+    const payload = await response.json();
+    payload.setup.organisationName = holding ? "Refreshed later" : "Seen on first visit";
+    // Once returning, the summary is held back: the page must not wait for it.
+    if (holding) await held;
+    await route.fulfill({ response, json: payload });
+  });
+  await page.goto("/seramet-setup");
+  await expect(page.getByText(/Seen on first visit/)).toBeVisible();
+  // Let the first visit's remaining reads finish so it is remembered.
+  await page.waitForLoadState("networkidle");
+  await page.locator('a[href="/settings"]').first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Settings" })).toBeVisible();
+  returning = true;
+  await page.locator('a[href="/seramet-setup"]').first().click();
+  await expect(page.getByText(/Seen on first visit/)).toBeVisible({ timeout: 2_000 });
+  release();
+  await expect(page.getByText(/Refreshed later/)).toBeVisible();
+  await context.close();
+});
+
 const registrationDraft = {
   name: "Autofill browser test",
   email: "autofill-browser@example.test",
