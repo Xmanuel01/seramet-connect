@@ -196,7 +196,6 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Supplier Bills", to: "/supplier-bills", icon: ReceiptText },
       { label: "Suppliers", to: "/suppliers", icon: Building2 },
-      { label: "Supplier Performance", to: "/supplier-performance", icon: BarChart3 },
     ],
   },
   {
