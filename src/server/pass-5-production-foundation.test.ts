@@ -9,7 +9,11 @@ import {
 } from "@/server/database/sqlite-test-adapter";
 import { handleOfflineSyncApi } from "@/server/offline-sync-api";
 import { DocumentNumberingService } from "@/server/database/document-numbering";
-import { handleWorkerQueue, type SerametWorkerMessage } from "@/server/workers";
+import {
+  handleWorkerQueue,
+  pruneOperationalHistory,
+  type SerametWorkerMessage,
+} from "@/server/workers";
 import { SnapshotMigrationService } from "@/server/migrations/snapshot-import";
 import { validateImportFile } from "@/server/file-import-security";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
@@ -987,7 +991,7 @@ describe.sequential("Pass 5 production foundation", () => {
     },
   );
 
-  it("commits worker completion and its management refresh event together", async () => {
+  it("completes a worker job without publishing a real-time notice", async () => {
     const stamp = new Date().toISOString();
     await database
       .prepare(
@@ -1039,8 +1043,73 @@ describe.sequential("Pass 5 production foundation", () => {
       .bind(tenantA, "worker-success")
       .first<{ event_type: string }>();
     expect(job?.status).toBe("SUCCEEDED");
-    expect(event?.event_type).toBe("EOD_AGGREGATION_COMPLETED");
+    // No screen listens to worker notices; writing one per job only filled the database.
+    expect(event).toBeNull();
     expect(acknowledged).toBe(true);
+  });
+
+  it("prunes succeeded maintenance jobs after a day and real-time notices once expired", async () => {
+    const now = new Date("2026-11-10T12:07:00.000Z");
+    const old = "2026-11-08T12:00:00.000Z";
+    const recent = "2026-11-10T11:00:00.000Z";
+    const job = (id: string, type: string, status: string, created: string) =>
+      database
+        .prepare(
+          `INSERT INTO worker_jobs (tenant_id,id,job_type,payload_json,idempotency_key,
+           correlation_id,status,attempt_count,max_attempts,scheduled_at,created_at,updated_at)
+           VALUES (?,?,?,'{}',?,?,?,1,3,?,?,?)`,
+        )
+        .bind(
+          tenantA,
+          id,
+          type,
+          `${id}-key`,
+          `${id}-correlation`,
+          status,
+          created,
+          created,
+          created,
+        )
+        .run();
+    await job("old-maintenance", "CRM_CAMPAIGN_DISPATCH", "SUCCEEDED", old);
+    await job("recent-maintenance", "CRM_CAMPAIGN_DISPATCH", "SUCCEEDED", recent);
+    await job("old-failed", "CRM_CAMPAIGN_DISPATCH", "DEAD_LETTER", old);
+    await job("old-email", "DAILY_SUMMARY_EMAIL", "SUCCEEDED", old);
+    const event = (id: string, expiresAt: string | null) =>
+      database
+        .prepare(
+          `INSERT INTO realtime_events (tenant_id,id,branch_id,topic,entity_type,entity_id,
+           event_type,correlation_id,payload_json,created_at,expires_at)
+           VALUES (?,?,NULL,'transactions','TRANSACTION_COMMAND',?,'X',?,'{}',?,?)`,
+        )
+        .bind(tenantA, id, id, id, old, expiresAt)
+        .run();
+    await event("expired-event", "2026-11-09T12:00:00.000Z");
+    await event("live-event", "2026-11-11T12:00:00.000Z");
+    await event("permanent-event", null);
+
+    expect(await pruneOperationalHistory(database, now)).toEqual({ jobs: 1, events: 1 });
+    const jobs = await database
+      .prepare("SELECT id FROM worker_jobs WHERE tenant_id=? AND id IN (?,?,?,?) ORDER BY id")
+      .bind(tenantA, "old-maintenance", "recent-maintenance", "old-failed", "old-email")
+      .all<{ id: string }>();
+    expect(jobs.results?.map((row) => row.id)).toEqual([
+      "old-email",
+      "old-failed",
+      "recent-maintenance",
+    ]);
+    const events = await database
+      .prepare("SELECT id FROM realtime_events WHERE tenant_id=? AND id IN (?,?,?) ORDER BY id")
+      .bind(tenantA, "expired-event", "live-event", "permanent-event")
+      .all<{ id: string }>();
+    expect(events.results?.map((row) => row.id)).toEqual(["live-event", "permanent-event"]);
+    // An event without an expiry stays protected by the database itself.
+    await expect(
+      database
+        .prepare("DELETE FROM realtime_events WHERE tenant_id=? AND id=?")
+        .bind(tenantA, "permanent-event")
+        .run(),
+    ).rejects.toThrow("append-only");
   });
 
   it("previews and idempotently imports a mapped legacy snapshot with reconciled totals", async () => {

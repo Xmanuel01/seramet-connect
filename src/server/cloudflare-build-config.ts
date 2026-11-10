@@ -54,7 +54,9 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
         ? [
             {
               queue: "seramet-production-live-work",
-              max_batch_size: 10,
+              // Each batch reloads configuration once, so a minute's timed jobs share one batch.
+              max_batch_size: 50,
+              max_batch_timeout: 5,
               max_retries: 5,
               max_concurrency: 2,
               dead_letter_queue: "seramet-production-live-dlq",
