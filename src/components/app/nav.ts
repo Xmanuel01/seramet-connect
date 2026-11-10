@@ -169,7 +169,6 @@ export const navGroups: NavGroup[] = [
       { label: "Overview", to: "/inventory", icon: Boxes },
       { label: "Items", to: "/inventory-items", icon: Boxes },
       { label: "Categories", to: "/categories", icon: Tags },
-      { label: "Stock Detail", to: "/stock-detail", icon: Boxes },
       { label: "Stores", to: "/warehouses", icon: Warehouse },
       { label: "Stock Counts", to: "/stock-count", icon: ClipboardCheck },
       {
@@ -178,25 +177,8 @@ export const navGroups: NavGroup[] = [
         icon: PackageCheck,
         permission: permissions.inventoryAdjust,
       },
-      {
-        label: "Adjustments",
-        to: "/adjustments",
-        icon: Scale,
-        permission: permissions.inventoryAdjust,
-      },
-      {
-        label: "Wastage",
-        to: "/wastage",
-        icon: ClipboardList,
-        permission: permissions.wasteRecord,
-      },
-      {
-        label: "Breakages",
-        to: "/breakages",
-        icon: ClipboardList,
-        permission: permissions.wasteRecord,
-      },
-      { label: "Reorder Levels", to: "/par", icon: ClipboardList },
+      // Wastage, breakages and corrections: one page, a tab each (shown by permission).
+      { label: "Losses & Corrections", to: "/stock-losses", icon: Scale },
     ],
   },
   {
