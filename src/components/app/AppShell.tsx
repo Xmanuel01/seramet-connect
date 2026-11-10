@@ -873,8 +873,8 @@ export function AppShell({
               <button
                 onClick={() => window.location.reload()}
                 className="hidden h-9 w-9 place-items-center rounded-md hover:bg-secondary sm:grid"
-                title="Refresh"
-                aria-label="Refresh"
+                title="Reload page"
+                aria-label="Reload page"
               >
                 <RefreshCw className="h-[18px] w-[18px]" />
               </button>
