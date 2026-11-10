@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { customerSearchPath } from "@/crm/customer-360-model";
+import { customerCreatePayload, customerSearchPath } from "@/crm/customer-360-model";
 import type { PosCustomerIdentity } from "@/crm/pos-customer-link";
 import type { CustomerSummary } from "@/crm/types";
 import { useCrmApi } from "@/crm/use-crm";
@@ -9,6 +9,10 @@ import { permissions } from "@/platform/permissions";
 type SearchResponse = {
   ok: boolean;
   customers: CustomerSummary[];
+};
+type CreateResponse = {
+  ok: boolean;
+  customer: { id: string; customerCode: string; displayName: string };
 };
 
 export function PosCustomerPicker({
@@ -23,8 +27,14 @@ export function PosCustomerPicker({
   compact?: boolean;
 }) {
   const { activeTenantId, branchId, hasPermission } = useAppContext();
-  const { request } = useCrmApi();
+  const { request, command } = useCrmApi();
   const canSearch = hasPermission(permissions.crmCustomerView);
+  const canCreate = hasPermission(permissions.crmCustomerManage);
+  // Not found? Add them here and link them to the order in one step.
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CustomerSummary[]>([]);
@@ -68,6 +78,54 @@ export function PosCustomerPicker({
       });
     return () => controller.abort();
   }, [branchId, canSearch, disabled, open, request, scope, searchRevision, submitted]);
+
+  const choose = (customer: { id: string; customerCode: string; displayName: string }) => {
+    onSelect({
+      id: customer.id,
+      customerCode: customer.customerCode,
+      displayName: customer.displayName,
+    });
+    setOpen(false);
+    setQuery("");
+    setResults([]);
+    setSubmitted(null);
+    setStatus("idle");
+    setAdding(false);
+  };
+
+  const startAdding = () => {
+    const term = (submitted ?? query).trim();
+    // A search for a number is most likely a phone; anything else, a name.
+    const looksLikePhone = /^[+0-9\s-]{6,}$/.test(term);
+    setNewName(looksLikePhone ? "" : term);
+    setNewPhone(looksLikePhone ? term.replace(/[^+0-9]/g, "") : "");
+    setMessage("");
+    setAdding(true);
+  };
+
+  const addCustomer = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const payload = customerCreatePayload({
+        displayName: newName,
+        phone: newPhone,
+        email: "",
+        accountType: "INDIVIDUAL",
+        companyName: "",
+        branchId,
+        isAllBranches: false,
+      });
+      const result = await command<CreateResponse>("/api/seramet/crm/customers", payload);
+      choose(result.customer);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "Couldn't add the customer. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const search = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -163,8 +221,8 @@ export function PosCustomerPicker({
               {message}
             </p>
           )}
-          {status === "ready" && visibleResults.length === 0 && (
-            <p className="mt-2 text-muted-foreground">No matching customer accounts.</p>
+          {status === "ready" && visibleResults.length === 0 && !adding && (
+            <p className="mt-2 text-muted-foreground">No customer found.</p>
           )}
           {visibleResults.length > 0 && (
             <ul className="mt-2 max-h-44 space-y-1 overflow-y-auto">
@@ -173,18 +231,7 @@ export function PosCustomerPicker({
                   <button
                     type="button"
                     className="w-full rounded-md border border-border px-3 py-2 text-left hover:bg-secondary"
-                    onClick={() => {
-                      onSelect({
-                        id: customer.id,
-                        customerCode: customer.customerCode,
-                        displayName: customer.displayName,
-                      });
-                      setOpen(false);
-                      setQuery("");
-                      setResults([]);
-                      setSubmitted(null);
-                      setStatus("idle");
-                    }}
+                    onClick={() => choose(customer)}
                   >
                     <span className="font-semibold">{customer.displayName}</span>
                     <span className="ml-2 text-muted-foreground">{customer.customerCode}</span>
@@ -192,6 +239,60 @@ export function PosCustomerPicker({
                 </li>
               ))}
             </ul>
+          )}
+          {canCreate && !adding && (
+            <button
+              type="button"
+              onClick={startAdding}
+              className="mt-2 font-semibold text-primary hover:underline"
+            >
+              {status === "ready" && visibleResults.length === 0
+                ? "Add as new customer"
+                : "+ New customer"}
+            </button>
+          )}
+          {canCreate && adding && (
+            <form onSubmit={addCustomer} className="mt-2 grid gap-2 border-t border-border pt-2">
+              <input
+                aria-label="New customer name"
+                required
+                maxLength={160}
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                placeholder="Name"
+                className="h-9 rounded-md border border-border bg-background px-2"
+              />
+              <input
+                aria-label="New customer phone"
+                inputMode="tel"
+                maxLength={20}
+                value={newPhone}
+                onChange={(event) => setNewPhone(event.target.value.replace(/[^+0-9]/g, ""))}
+                placeholder="Phone (optional)"
+                className="h-9 rounded-md border border-border bg-background px-2"
+              />
+              {message && (
+                <p role="alert" className="text-danger">
+                  {message}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={saving || !newName.trim()}
+                  className="rounded-md bg-primary px-3 py-1.5 font-semibold text-primary-foreground disabled:opacity-50"
+                >
+                  {saving ? "Adding…" : "Add and use"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdding(false)}
+                  className="rounded-md border border-border px-3 py-1.5 font-semibold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
           )}
         </div>
       )}

@@ -116,6 +116,7 @@ export const migrationFiles = [
   "0029_attendance_workforce_completion.sql",
   "0030_staff_pilot_workflows.sql",
   "0031_document_date_indexes.sql",
+  "0032_manually_confirmed_payments.sql",
 ] as const;
 
 export function applyPendingMigrations(database: SqliteD1TestDatabase) {

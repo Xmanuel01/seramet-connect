@@ -436,6 +436,29 @@ export class PaymentOrchestrator {
     return next;
   }
 
+  /**
+   * A payment the cashier confirms with the customer's reference (an M-Pesa code, a bank
+   * transfer reference). It counts as paid now; the reference is kept so the owner can match
+   * it against the M-Pesa or bank statement later. No provider integration is required.
+   */
+  recordReferencedPayment(
+    state: TransactionState,
+    input: Omit<ConfirmCollectionInput, "status" | "providerTransactionId">,
+  ) {
+    const reference = input.customerReference?.trim();
+    if (!reference) throw new Error("Payment reference is required");
+    const operations = requiredOperations(normalizeTransactionState(state));
+    const method = this.method(input.tenantId, input.paymentMethodId);
+    // The same M-Pesa code or bank reference can't pay twice.
+    this.assertUniqueReference(operations, method.providerConnectionId, reference);
+    return this.recordConfirmedCollection(state, {
+      ...input,
+      customerReference: reference,
+      status: "MANUALLY_CONFIRMED",
+      metadata: { ...input.metadata, confirmedByReference: true },
+    });
+  }
+
   recordManualTerminalPayment(
     state: TransactionState,
     input: Omit<ConfirmCollectionInput, "status" | "providerTransactionId"> & {
