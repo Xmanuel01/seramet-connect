@@ -19,6 +19,7 @@ import {
   Menu,
   Moon,
   Package,
+  RefreshCw,
   PanelLeft,
   PanelLeftClose,
   Plus,
@@ -89,29 +90,34 @@ function branchIdentityColor(branchId: string, configuredColor: unknown) {
 
 const initialNotifications: AppNotification[] = emptyRecords();
 
+// Quick actions under Create: the tasks people start most, each opening its page directly.
 const quickCreateOptions: {
   id: string;
   label: string;
   to: string;
   icon: IconType;
   permission: PermissionCode;
-  fields: string[];
 }[] = [
   {
     id: "sale",
-    label: "New Sale",
+    label: "New sale",
     to: "/pos",
     icon: ReceiptText,
     permission: permissionCodes.ordersCreate,
-    fields: ["Table or customer", "Order channel", "Server"],
   },
   {
-    id: "po",
-    label: "Purchase Order",
-    to: "/procurement",
-    icon: Truck,
-    permission: permissionCodes.procurementCreate,
-    fields: ["Supplier", "Needed by", "Branch"],
+    id: "stock-request",
+    label: "Stock request",
+    to: "/requisitions",
+    icon: ClipboardList,
+    permission: permissionCodes.procurementRequisitionCreate,
+  },
+  {
+    id: "waste",
+    label: "Record waste",
+    to: "/stock-losses",
+    icon: Trash2,
+    permission: permissionCodes.wasteRecord,
   },
   {
     id: "expense",
@@ -119,15 +125,13 @@ const quickCreateOptions: {
     to: "/expenses",
     icon: WalletCards,
     permission: permissionCodes.financeManage,
-    fields: ["Vendor", "Amount", "Receipt reference"],
   },
   {
-    id: "transfer",
-    label: "Stock Transfer",
-    to: "/transfers",
-    icon: Package,
-    permission: permissionCodes.inventoryAdjust,
-    fields: ["From store", "To store", "Item"],
+    id: "po",
+    label: "Purchase order",
+    to: "/purchase-orders",
+    icon: Truck,
+    permission: permissionCodes.procurementCreate,
   },
   {
     id: "customer",
@@ -135,15 +139,13 @@ const quickCreateOptions: {
     to: "/customers",
     icon: Users,
     permission: permissionCodes.ordersCreate,
-    fields: ["Name", "Phone", "Segment"],
   },
   {
-    id: "waste",
-    label: "Waste Entry",
-    to: "/wastage",
-    icon: Trash2,
-    permission: permissionCodes.wasteRecord,
-    fields: ["Item", "Quantity", "Reason"],
+    id: "transfer",
+    label: "Stock transfer",
+    to: "/transfers",
+    icon: Package,
+    permission: permissionCodes.inventoryAdjust,
   },
   {
     id: "task",
@@ -151,7 +153,6 @@ const quickCreateOptions: {
     to: "/tasks",
     icon: ClipboardList,
     permission: permissionCodes.ordersUpdate,
-    fields: ["Title", "Owner", "Due date"],
   },
 ];
 
@@ -191,11 +192,6 @@ export function AppShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifications, setNotifications] = useState(initialNotifications);
   const [mutedCategories, setMutedCategories] = useState<string[]>([]);
-  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
-  const [quickCreateId, setQuickCreateId] = useState(quickCreateOptions[0]?.id ?? "");
-  const [createdRecords, setCreatedRecords] = useState<
-    { id: string; label: string; branch: string }[]
-  >([]);
   const [workflowAction, setWorkflowAction] = useState<WorkflowAction | null>(null);
   const {
     activeTenantId,
@@ -296,8 +292,6 @@ export function AppShell({
       ),
     [activeTenantId, branch, moduleAccess, permissions, role],
   );
-  const activeQuickCreate =
-    availableQuickCreate.find((item) => item.id === quickCreateId) ?? availableQuickCreate[0];
   const operatorName = lockedContext?.userName ?? currentUser.name;
   const operatorInitials = operatorName
     .split(" ")
@@ -306,16 +300,6 @@ export function AppShell({
     .map((part) => part[0])
     .join("")
     .toUpperCase();
-
-  useEffect(() => {
-    if (
-      availableQuickCreate.length > 0 &&
-      !availableQuickCreate.some((item) => item.id === quickCreateId)
-    ) {
-      const firstAvailable = availableQuickCreate[0];
-      if (firstAvailable) setQuickCreateId(firstAvailable.id);
-    }
-  }, [availableQuickCreate, quickCreateId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -432,18 +416,6 @@ export function AppShell({
         ? current.filter((item) => item !== category)
         : [...current, category],
     );
-  };
-
-  const createRecord = () => {
-    if (!activeQuickCreate) return;
-    setCreatedRecords((current) =>
-      [
-        { id: `${activeQuickCreate.id}-${Date.now()}`, label: activeQuickCreate.label, branch },
-        ...current,
-      ].slice(0, 4),
-    );
-    setQuickCreateOpen(false);
-    navigate({ to: activeQuickCreate.to as never });
   };
 
   const runWorkflowAction = (label: string) => {
@@ -688,90 +660,6 @@ export function AppShell({
   return (
     <div className="flex min-h-screen w-full bg-background">
       {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
-      <Sheet open={quickCreateOpen} onOpenChange={setQuickCreateOpen}>
-        <SheetContent className="w-full overflow-y-auto border-border bg-card p-0 sm:max-w-[420px]">
-          <SheetHeader className="border-b border-border px-4 py-4 text-left">
-            <SheetTitle className="flex items-center gap-2 text-[16px]">
-              <Plus className="h-4 w-4 text-primary" />
-              Quick create
-            </SheetTitle>
-            <SheetDescription>
-              {role} - {branch}
-            </SheetDescription>
-          </SheetHeader>
-          <div className="space-y-4 p-4">
-            {availableQuickCreate.length === 0 ? (
-              <div className="rounded-lg bg-warning-soft p-3 text-[13px] font-semibold text-warning">
-                This role has no quick-create actions.
-              </div>
-            ) : (
-              <>
-                <div className="grid gap-2">
-                  {availableQuickCreate.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setQuickCreateId(item.id)}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md border px-3 py-2 text-left text-[13px] font-semibold",
-                          activeQuickCreate?.id === item.id
-                            ? "border-primary bg-accent text-accent-foreground"
-                            : "border-border hover:bg-secondary",
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                        {item.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {activeQuickCreate && (
-                  <div className="rounded-lg border border-border p-3">
-                    <div className="text-[12px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
-                      Required fields
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      {activeQuickCreate.fields.map((field) => (
-                        <label
-                          key={field}
-                          className="grid gap-1 text-[12px] font-semibold text-muted-foreground"
-                        >
-                          {field}
-                          <input className="h-9 rounded-md border border-border bg-card px-3 text-[13px] text-foreground outline-none" />
-                        </label>
-                      ))}
-                    </div>
-                    <div className="mt-3 rounded-md bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
-                      Created records inherit the active branch context and open the source module
-                      immediately.
-                    </div>
-                  </div>
-                )}
-                {createdRecords.length > 0 && (
-                  <div className="grid gap-2 text-[12px]">
-                    {createdRecords.map((record) => (
-                      <div
-                        key={record.id}
-                        className="flex items-center justify-between rounded-md bg-secondary/60 px-3 py-2"
-                      >
-                        <span className="font-semibold">{record.label}</span>
-                        <span className="text-muted-foreground">{record.branch}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex justify-end gap-2 border-t border-border pt-4">
-                  <Btn onClick={() => setQuickCreateOpen(false)}>Cancel</Btn>
-                  <Btn variant="primary" onClick={createRecord}>
-                    Create
-                  </Btn>
-                </div>
-              </>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
       <Sheet open={aiOpen} onOpenChange={setAiOpen}>
         <SheetContent className="w-full overflow-y-auto border-border bg-card p-0 sm:max-w-[420px]">
           <SheetHeader className="border-b border-border px-4 py-4 text-left">
@@ -963,17 +851,14 @@ export function AppShell({
                   <Plus className="h-4 w-4" /> <span className="hidden sm:inline">Create</span>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>{role} actions</DropdownMenuLabel>
+                  <DropdownMenuLabel>Quick actions</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   {availableQuickCreate.map((item) => {
                     const Icon = item.icon;
                     return (
                       <DropdownMenuItem
                         key={item.id}
-                        onClick={() => {
-                          setQuickCreateId(item.id);
-                          setQuickCreateOpen(true);
-                        }}
+                        onClick={() => void navigate({ to: item.to as never })}
                       >
                         <Icon className="mr-2 h-4 w-4" />
                         {item.label}
@@ -984,6 +869,16 @@ export function AppShell({
               </DropdownMenu>
             )}
 
+            {!bare && (
+              <button
+                onClick={() => window.location.reload()}
+                className="hidden h-9 w-9 place-items-center rounded-md hover:bg-secondary sm:grid"
+                title="Refresh"
+                aria-label="Refresh"
+              >
+                <RefreshCw className="h-[18px] w-[18px]" />
+              </button>
+            )}
             <button
               onClick={() => setAiOpen(true)}
               className="hidden h-9 w-9 place-items-center rounded-md hover:bg-secondary sm:grid"

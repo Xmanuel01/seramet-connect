@@ -48,6 +48,8 @@ export const customerCreateSchema = z
     companyName: z.string().trim().max(200).optional(),
     billingContact: z.string().trim().max(160).optional(),
     taxIdentifier: z.string().trim().max(80).optional(),
+    // Where the customer is (area, building); kept with the customer for delivery and contact.
+    location: z.string().trim().max(200).optional(),
     invoiceTermsDays: z.number().int().min(0).max(3650).optional(),
     accountReference: z.string().trim().max(80).optional(),
     createdSource: z.string().trim().min(1).max(80),
