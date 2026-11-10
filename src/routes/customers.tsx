@@ -33,6 +33,8 @@ type CustomerForm = {
   companyName: string;
   phone: string;
   email: string;
+  taxPin: string;
+  location: string;
 };
 type ListState = {
   path: string;
@@ -52,6 +54,8 @@ const emptyForm: CustomerForm = {
   companyName: "",
   phone: "",
   email: "",
+  taxPin: "",
+  location: "",
 };
 
 function errorMessage(cause: unknown) {
@@ -292,6 +296,30 @@ function Customers() {
                     onChange={(event) =>
                       setForm((value) => ({ ...value, phone: event.target.value }))
                     }
+                    className="h-10 rounded-md border border-border bg-background px-3 text-[13px]"
+                  />
+                </label>
+                <label className="grid gap-1 text-[12px] font-medium">
+                  KRA PIN (optional)
+                  <input
+                    maxLength={20}
+                    value={form.taxPin}
+                    onChange={(event) =>
+                      setForm((value) => ({ ...value, taxPin: event.target.value.toUpperCase() }))
+                    }
+                    placeholder="A000000000X"
+                    className="h-10 rounded-md border border-border bg-background px-3 text-[13px] uppercase"
+                  />
+                </label>
+                <label className="grid gap-1 text-[12px] font-medium">
+                  Location (optional)
+                  <input
+                    maxLength={200}
+                    value={form.location}
+                    onChange={(event) =>
+                      setForm((value) => ({ ...value, location: event.target.value }))
+                    }
+                    placeholder="Area, building"
                     className="h-10 rounded-md border border-border bg-background px-3 text-[13px]"
                   />
                 </label>

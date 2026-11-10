@@ -110,6 +110,7 @@ export type CustomerCreateInput = {
   companyName?: string;
   billingContact?: string;
   taxIdentifier?: string;
+  location?: string;
   invoiceTermsDays?: number;
   accountReference?: string;
   createdSource: string;

@@ -115,6 +115,26 @@ describe("CRM route regressions on disposable databases only", () => {
     }
   });
 
+  it("keeps a new customer's KRA PIN and location", async () => {
+    const db = createDemoFixtureDatabase();
+    try {
+      const crm = new CrmService(db, actor);
+      const customer = await crm.createCustomer({
+        displayName: "Amina Otieno",
+        taxIdentifier: "A012345678Z",
+        location: "Kilimani, Rose Avenue",
+        createdSource: "DISPOSABLE_TEST",
+      });
+      const row = db.sqlite
+        .prepare("SELECT tax_identifier,payload_json FROM customers WHERE tenant_id=? AND id=?")
+        .get(actor.tenantId, customer.id) as { tax_identifier: string; payload_json: string };
+      expect(row.tax_identifier).toBe("A012345678Z");
+      expect(JSON.parse(row.payload_json)).toEqual({ location: "Kilimani, Rose Avenue" });
+    } finally {
+      db.close();
+    }
+  });
+
   it("does not advertise a healthy email provider when no production adapter is registered", async () => {
     const db = createDemoFixtureDatabase();
     try {
