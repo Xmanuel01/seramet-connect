@@ -144,28 +144,13 @@ export const navGroups: NavGroup[] = [
   {
     group: "Kitchen",
     permission: permissions.kitchenView,
+    // Kitchen work only, in the order a shift uses it. Costs live in Finance, menu import in
+    // System. Stock requests is also in Procurement, for staff who can request but not buy.
     items: [
       { label: "Kitchen Display", to: "/kitchen", icon: ChefHat },
-      { label: "Production", to: "/production", icon: ChefHat },
       { label: "Bar", to: "/bar", icon: Martini },
-      {
-        label: "Cost Control",
-        to: "/cost-control",
-        icon: Calculator,
-        permission: permissions.inventoryCostControlView,
-      },
-      {
-        label: "Prime Cost",
-        to: "/prime-cost",
-        icon: Calculator,
-        permission: permissions.accountingView,
-      },
-      {
-        label: "Menu Import",
-        to: "/menu-import",
-        icon: FileSpreadsheet,
-        permission: permissions.settingsOrganisationManage,
-      },
+      { label: "Prep", to: "/prep", icon: ChefHat, permission: permissions.productionView },
+      { label: "Production", to: "/production", icon: ChefHat },
       { label: "Recipes", to: "/recipes", icon: ChefHat, permission: permissions.productionView },
       { label: "Cookbook", to: "/cookbook", icon: BookOpen, permission: permissions.cookbookView },
       {
@@ -174,8 +159,7 @@ export const navGroups: NavGroup[] = [
         icon: ClipboardList,
         permission: permissions.procurementRequisitionCreate,
       },
-      { label: "Prep", to: "/prep", icon: ChefHat, permission: permissions.productionView },
-      { label: "Kitchen Analytics", to: "/kitchen-analytics", icon: ChefHat },
+      { label: "Analytics", to: "/kitchen-analytics", icon: ChefHat },
     ],
   },
   {
@@ -186,7 +170,7 @@ export const navGroups: NavGroup[] = [
       { label: "Items", to: "/inventory-items", icon: Boxes },
       { label: "Categories", to: "/categories", icon: Tags },
       { label: "Stock Detail", to: "/stock-detail", icon: Boxes },
-      { label: "Warehouses", to: "/warehouses", icon: Warehouse },
+      { label: "Stores", to: "/warehouses", icon: Warehouse },
       { label: "Stock Counts", to: "/stock-count", icon: ClipboardCheck },
       {
         label: "Transfers",
@@ -212,7 +196,7 @@ export const navGroups: NavGroup[] = [
         icon: ClipboardList,
         permission: permissions.wasteRecord,
       },
-      { label: "PAR Levels", to: "/par", icon: ClipboardList },
+      { label: "Reorder Levels", to: "/par", icon: ClipboardList },
     ],
   },
   {
@@ -220,7 +204,7 @@ export const navGroups: NavGroup[] = [
     permission: permissions.procurementView,
     items: [
       { label: "Overview", to: "/procurement", icon: Truck },
-      { label: "Requisitions", to: "/requisitions", icon: ClipboardList },
+      { label: "Stock Requests", to: "/requisitions", icon: ClipboardList },
       { label: "Purchase Orders", to: "/purchase-orders", icon: Truck },
       {
         label: "Receiving",
@@ -228,8 +212,8 @@ export const navGroups: NavGroup[] = [
         icon: PackageCheck,
         permission: permissions.procurementReceive,
       },
-      { label: "Suppliers", to: "/suppliers", icon: Building2 },
       { label: "Supplier Bills", to: "/supplier-bills", icon: ReceiptText },
+      { label: "Suppliers", to: "/suppliers", icon: Building2 },
       { label: "Supplier Performance", to: "/supplier-performance", icon: BarChart3 },
     ],
   },
@@ -288,6 +272,18 @@ export const navGroups: NavGroup[] = [
       { label: "Receivables", to: "/receivables", icon: BadgeDollarSign },
       { label: "Payables", to: "/payables", icon: Wallet },
       { label: "Expenses", to: "/expenses", icon: ReceiptText },
+      {
+        label: "Food Cost",
+        to: "/cost-control",
+        icon: Calculator,
+        permission: permissions.inventoryCostControlView,
+      },
+      {
+        label: "Prime Cost",
+        to: "/prime-cost",
+        icon: Calculator,
+        permission: permissions.accountingView,
+      },
       {
         label: "Period Close",
         to: "/period-close",
@@ -379,6 +375,12 @@ export const navGroups: NavGroup[] = [
         to: "/seramet-setup",
         icon: ClipboardCheck,
         permission: permissions.setupView,
+      },
+      {
+        label: "Menu Import",
+        to: "/menu-import",
+        icon: FileSpreadsheet,
+        permission: permissions.settingsOrganisationManage,
       },
       {
         label: "Printers & Devices",

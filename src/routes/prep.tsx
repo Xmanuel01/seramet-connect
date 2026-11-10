@@ -90,7 +90,7 @@ function Prep() {
   return (
     <AppShell
       title="Prep list"
-      subtitle={"Forecast → recipe → Cookbook → production · " + branchLabel}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn disabled={!tasks.length} onClick={() => printPrepSheet(prep.data, branchLabel)}>
@@ -105,12 +105,7 @@ function Prep() {
           <Btn
             variant="primary"
             disabled={!canPlan || busy}
-            onClick={() =>
-              void run(
-                () => prep.regenerate(),
-                "Prep recalculation queued and the latest recommendations reloaded.",
-              )
-            }
+            onClick={() => void run(() => prep.regenerate(), "Prep list updated.")}
           >
             <RefreshCw className="h-4 w-4" /> Regenerate
           </Btn>
@@ -130,7 +125,7 @@ function Prep() {
           {notice ||
             prep.error ||
             (!authoritative
-              ? "Prep execution requires the authoritative Seramet server."
+              ? "Can't reach Seramet right now. Check your connection, then refresh."
               : "Select one branch to execute a prep plan.")}
         </div>
       )}
@@ -570,7 +565,7 @@ function AdjustDialog({
             />
           </Field>
           <div className="rounded-md bg-secondary/50 p-3 text-[12px] text-muted-foreground">
-            Ingredient quantities will be rescaled automatically from the authoritative recipe.
+            Ingredient amounts adjust to the quantity you choose.
           </div>
           <DialogActions busy={busy} onClose={onClose} submitLabel="Save adjustment" />
         </form>

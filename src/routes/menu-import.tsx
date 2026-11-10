@@ -241,7 +241,7 @@ function MenuImport() {
           setCompletionOpen(true);
           window.sessionStorage.removeItem(pendingImportKey);
         } else if (restored.publishStatus === "PUBLISHED") {
-          setNotice("Menu import published and verified in the authoritative catalogue.");
+          setNotice("Menu imported. Your items are ready.");
           setNoticeTone("success");
           window.sessionStorage.removeItem(pendingImportKey);
         } else if (restored.status === "FAILED" || restored.rowCount === 0) {
@@ -313,7 +313,7 @@ function MenuImport() {
           if (!active) return;
           setPreview(published);
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Menu import published and verified in the authoritative catalogue.");
+          setNotice("Menu imported. Your items are ready.");
           setNoticeTone("success");
           void refreshMenuCatalog();
         } else if (stage === "PUBLISHING") {
@@ -355,9 +355,7 @@ function MenuImport() {
           );
           setNoticeTone("warning");
         } else {
-          setNotice(
-            "Commit result is still uncertain. Do not retry until the existing server request is resolved.",
-          );
+          setNotice("Still finishing the last import. Wait a moment before trying again.");
           setNoticeTone("warning");
         }
       } catch {
@@ -385,9 +383,7 @@ function MenuImport() {
     preview?.status,
   ]);
 
-  const invalidatePreview = (
-    message = "Import settings changed. Run preview again before commit.",
-  ) => {
+  const invalidatePreview = (message = "Settings changed. Preview again before importing.") => {
     if (preview) setNotice(message);
     setNoticeTone("warning");
     setPreview(null);
@@ -480,9 +476,7 @@ function MenuImport() {
       .then((response) => {
         if (response.result.queued) {
           setPreview({ ...pending, status: "COMMITTING", canCommit: false });
-          setNotice(
-            `Menu import queued as ${response.result.jobId ?? "a durable worker job"}. Its status will update automatically.`,
-          );
+          setNotice("Importing your menu. This updates by itself.");
           return;
         }
         if (response.result.verification?.status !== "VERIFIED") {
@@ -542,9 +536,7 @@ function MenuImport() {
     if (!preview?.publishKey || preview.publishStatus !== "READY" || busy) return;
     const staged = preview;
     setBusy(true);
-    setNotice(
-      "Verifying the immutable plan in bounded batches before atomic menu activation. Completed rows will not be replayed.",
-    );
+    setNotice("Adding your menu. This can take a minute for large menus.");
     setNoticeTone("warning");
     window.sessionStorage.setItem(pendingImportKey, staged.id);
     void publishImport(staged)
@@ -553,15 +545,13 @@ function MenuImport() {
         if (response.result?.status === "PUBLISHED") {
           setPreview({ ...staged, publishStatus: "PUBLISHED" });
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Menu import published and verified in the authoritative catalogue.");
+          setNotice("Menu imported. Your items are ready.");
           setNoticeTone("success");
           void refreshMenuCatalog();
           return;
         }
         setPreview({ ...staged, publishStatus: "PUBLISHING" });
-        setNotice(
-          `Menu publication queued as ${response.result?.jobId ?? "a durable worker job"}.`,
-        );
+        setNotice("Your menu is being added. It will appear shortly.");
       })
       .catch((error: unknown) => {
         setNotice(error instanceof Error ? error.message : "Menu publication failed");
@@ -595,7 +585,6 @@ function MenuImport() {
   return (
     <AppShell
       title="Menu import"
-      subtitle="Secure preview, validation and explicit server commit"
       actions={
         <>
           <Btn onClick={() => setManualOpen(true)} disabled={!canManageMenu || busy}>
@@ -657,7 +646,7 @@ function MenuImport() {
         <Panel className="mt-4">
           <PanelHead
             title="Existing menu imports"
-            sub="Resume or inspect an existing preview. Never re-upload a file just to check a pending commit."
+            sub="Open an earlier preview to continue it."
             right={<History className="h-4 w-4 text-primary" />}
           />
           {recentError && (
@@ -696,10 +685,10 @@ function MenuImport() {
         <div className="grid min-w-0 gap-4">
           <Panel>
             <PanelHead
-              title="Authoritative catalog"
+              title="Your menu"
               sub={
                 isAllBranches
-                  ? "Committed tenant-master records; branch activation is shown in branch context"
+                  ? "Items on your menu"
                   : "Committed records explicitly activated for the current branch"
               }
               right={<Status>{centre.menuCatalogStatus}</Status>}
@@ -807,7 +796,7 @@ function MenuImport() {
                         {catalogQuery
                           ? "No catalogue items match this search."
                           : isAllBranches
-                            ? "No committed tenant-master menu items exist yet."
+                            ? "No menu items yet."
                             : "No menu items are activated for this branch."}
                       </TD>
                     </tr>
@@ -822,7 +811,7 @@ function MenuImport() {
 
       <Panel className="mt-4">
         <PanelHead
-          title="Previous POS sales migration"
+          title="Past sales from your old POS"
           sub="Optional, one-time transfer of historical sales; it does not replay kitchen, stock, payment or journal activity"
           right={<History className="h-4 w-4 text-primary" />}
         />
@@ -963,8 +952,7 @@ function MenuImport() {
           <DialogHeader>
             <DialogTitle>Import menu</DialogTitle>
             <DialogDescription>
-              Set the target, choose a CSV or Excel file, review server validation and explicitly
-              confirm. No changes are saved at the preview stage.
+              Choose a CSV or Excel file and check the preview. Nothing is saved until you confirm.
             </DialogDescription>
           </DialogHeader>
           <Panel className="h-fit">
@@ -1046,7 +1034,7 @@ function MenuImport() {
                 ) : (
                   <Upload className="h-5 w-5 text-primary" />
                 )}
-                {busy ? "Validating on server..." : "Choose menu file"}
+                {busy ? "Checking…" : "Choose menu file"}
                 <span className="text-[11px] font-normal text-muted-foreground">
                   File size, type, workbook shape and row limits are enforced.
                 </span>
@@ -1058,9 +1046,8 @@ function MenuImport() {
                 />
               </label>
               <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] leading-5 text-muted-foreground">
-                Required: item code, name, category and base price. Tenant-master items do not
-                appear in POS until explicitly activated for a branch. Station, recipe, tax and
-                channel references are validated against authoritative configuration.
+                Needed for each item: code, name, category and price. Items show on the POS once
+                they are turned on for a branch.
               </div>
               <div className="rounded-md border border-border p-3">
                 <Btn
@@ -1096,7 +1083,7 @@ function MenuImport() {
                               [field]: event.target.value,
                             }));
                             invalidatePreview(
-                              "Column mappings changed. Revalidate the original file before committing.",
+                              "Columns changed. Check the file again before importing.",
                             );
                           }}
                           className="h-9 rounded-md border border-border bg-card px-2"
@@ -1171,7 +1158,7 @@ function MenuImport() {
                 sub={
                   preview?.status === "COMMITTING"
                     ? "Server-side import in progress. Do not re-submit the same preview."
-                    : "Nothing is persisted until Commit import is selected"
+                    : "Nothing is saved until you press Import"
                 }
                 right={
                   preview ? (
@@ -1199,7 +1186,7 @@ function MenuImport() {
                       {progressSummary.stage === "QUEUED"
                         ? "Waiting for the import worker"
                         : progressSummary.stage === "VERIFYING"
-                          ? "Verifying the committed menu"
+                          ? "Checking your menu"
                           : "Importing menu items"}
                     </span>
                     <span className="tabular-nums">{progressSummary.percent}%</span>
@@ -1274,7 +1261,7 @@ function MenuImport() {
                         <TD colSpan={8} className="py-10 text-center text-muted-foreground">
                           {preview && preview.rowCount === 0
                             ? "This file has no item rows. Put the headings in the first row of the first sheet, or upload the CSV template."
-                            : "Upload a file to create a server-side preview."}
+                            : "Choose a file to see a preview."}
                         </TD>
                       </tr>
                     )}
@@ -1298,7 +1285,7 @@ function MenuImport() {
           )}
           {preview && (
             <div className="space-y-2 rounded-md border border-border p-3 text-[12px]">
-              <p className="font-semibold">Activation targets before committing</p>
+              <p className="font-semibold">Where these items will be available</p>
               {preview.targetMode === "TENANT_MASTER" ? (
                 <label className="flex items-start gap-2 text-warning">
                   <input
@@ -1353,7 +1340,7 @@ function MenuImport() {
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              Commit import
+              Import
             </Btn>
           </DialogFooter>
         </DialogContent>
@@ -1361,10 +1348,10 @@ function MenuImport() {
       <Dialog open={completionOpen} onOpenChange={setCompletionOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Publish verified menu import</DialogTitle>
+            <DialogTitle>Add to your menu</DialogTitle>
             <DialogDescription>
-              The immutable plan is verified in bounded server-side batches. Final menu and branch
-              activation is atomic, so a partially verified plan cannot become orderable.
+              Items are checked first, then added all at once, so a half-finished import never shows
+              on the POS.
             </DialogDescription>
           </DialogHeader>
           {progressSummary && (
@@ -1409,7 +1396,7 @@ function MenuImport() {
         }))}
         createItem={centre.createManualMenuItem}
         onCommitted={() => {
-          setNotice("Menu item saved and verified. Check the authoritative catalogue.");
+          setNotice("Menu item saved.");
           setNoticeTone("success");
         }}
       />

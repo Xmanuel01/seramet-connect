@@ -115,7 +115,7 @@ function Production() {
   return (
     <AppShell
       title="Production"
-      subtitle={`Kitchen batch control - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn
@@ -149,7 +149,7 @@ function Production() {
           {notice ||
             control.error ||
             (!authoritative
-              ? "Production posting requires the authoritative Seramet server."
+              ? "Can't reach Seramet right now. Check your connection, then refresh."
               : "All branches is read-only for production actions. Select one branch to plan a batch.")}
         </div>
       )}

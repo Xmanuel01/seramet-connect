@@ -159,7 +159,7 @@ test("chef PIN session operates KDS Start, Ready and Served with persisted state
     expect((await login).ok()).toBe(true);
     await expect(page).toHaveURL(/\/attendance$/);
     await page.goto("/kitchen");
-    await expect(page.getByRole("heading", { name: "Seramet Kitchen" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Kitchen display" })).toBeVisible();
     const ticket = page.getByRole("article").filter({ hasText: order!.id });
     const unassigned = await staff.request.get("/api/seramet/transactions");
     expect(unassigned.ok()).toBe(true);
@@ -262,7 +262,7 @@ test("chef PIN session operates KDS Start, Ready and Served with persisted state
         (item: { id: string }) => item.id === order!.id,
       );
       expect(refreshedOrder?.lines[0]?.productionStatus).toBe(status);
-      await expect(page.getByRole("heading", { name: "Seramet Kitchen" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Kitchen display" })).toBeVisible();
       if (status === "SERVED") await expect(ticket).toHaveCount(0);
       else await expect(ticket).toHaveCount(1);
     }

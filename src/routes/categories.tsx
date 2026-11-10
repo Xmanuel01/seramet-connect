@@ -107,7 +107,7 @@ function Categories() {
   return (
     <AppShell
       title="Inventory categories"
-      subtitle={`${branchLabel} - category health, stock value and low-stock concentration`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"
@@ -120,7 +120,7 @@ function Categories() {
     >
       {(notice || control.error || control.status === "loading") && (
         <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice || control.error || "Loading authoritative inventory categories..."}
+          {notice || control.error || "Loading inventory categories…"}
         </div>
       )}
 
@@ -151,10 +151,7 @@ function Categories() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Category table"
-          sub="Tenant-wide category master with branch-aware inventory health"
-        />
+        <PanelHead title="Category table" sub="Stock value and low stock by category" />
         <EnterpriseTable
           rows={rows}
           columns={columns}
@@ -181,10 +178,7 @@ function CreateCategory({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Add inventory category"
-        sub="Categories are shared across the tenant and used by inventory item master data"
-      />
+      <PanelHead title="Add inventory category" sub="Shared by all your branches" />
       <div className="grid gap-3 p-4 md:grid-cols-3">
         <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
           Category name

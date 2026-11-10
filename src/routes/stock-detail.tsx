@@ -145,12 +145,12 @@ function StockDetail() {
   return (
     <AppShell
       title="Stock detail"
-      subtitle={`${branchLabel} - warehouse balances, valuation and PAR position`}
+      subtitle={branchLabel}
       actions={<Btn onClick={() => exportStock(filtered)}>Export</Btn>}
     >
       {(error || status === "loading" || control.error) && (
         <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {error || control.error || "Loading authoritative stock detail..."}
+          {error || control.error || "Loading stock detail…"}
         </div>
       )}
 
@@ -222,7 +222,7 @@ function StockDetail() {
                 <TH className="text-right">Reserved</TH>
                 <TH className="text-right">Available</TH>
                 <TH className="text-right">Reorder</TH>
-                <TH className="text-right">PAR</TH>
+                <TH className="text-right">Reorder target</TH>
                 <TH className="text-right">Unit cost</TH>
                 <TH className="text-right">Value</TH>
                 <TH>Status</TH>

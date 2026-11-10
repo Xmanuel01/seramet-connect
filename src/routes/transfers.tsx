@@ -127,7 +127,7 @@ function Transfers() {
   return (
     <AppShell
       title="Stock transfers"
-      subtitle={`${branchLabel} - request, approve, dispatch and receive stock between stores or branches`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"

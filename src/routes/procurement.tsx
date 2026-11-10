@@ -100,7 +100,7 @@ function Procurement() {
   return (
     <AppShell
       title="Procurement"
-      subtitle={`${branchLabel} purchase-to-pay control  -  ${openOrders.length} open purchase orders`}
+      subtitle={branchLabel}
       actions={
         <>
           <InventoryActionLink to="/receiving">
@@ -123,7 +123,7 @@ function Procurement() {
             ).length
           }
         />
-        <Metric label="Open commitments (recent)" value={commitmentAmount} />
+        <Metric label="On order (value)" value={commitmentAmount} />
         <Metric label="Suppliers" value={suppliers.length} />
         <Metric label="Recent receipts" value={serverData?.procurement.receipts.length ?? 0} />
       </div>
@@ -131,7 +131,7 @@ function Procurement() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Procurement requires the authoritative server database. Backend: ${backendStatus}.`
+            ? "Can't reach Seramet right now. Check your connection, then refresh."
             : notice || control.error}
         </div>
       )}

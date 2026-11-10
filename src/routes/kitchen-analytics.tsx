@@ -42,9 +42,7 @@ function KitchenAnalytics() {
     <AppShell
       title="Kitchen analytics"
       subtitle={
-        overview
-          ? `${overview.periodStart} → ${overview.periodEnd} · ${branchLabel}`
-          : `Kitchen execution intelligence · ${branchLabel}`
+        overview ? `${overview.periodStart} → ${overview.periodEnd} · ${branchLabel}` : branchLabel
       }
       actions={
         <>
@@ -78,7 +76,7 @@ function KitchenAnalytics() {
         <div className="mb-4 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {analytics.error ||
             (!authoritative
-              ? "Kitchen Analytics requires the authoritative Seramet server."
+              ? "Can't reach Seramet right now. Check your connection, then refresh."
               : "Select one branch to view Kitchen Analytics.")}
         </div>
       )}
@@ -86,7 +84,7 @@ function KitchenAnalytics() {
       {analytics.status === "loading" && !overview ? (
         <Panel>
           <div className="p-10 text-center text-[12px] text-muted-foreground">
-            Loading authoritative kitchen metrics…
+            Loading kitchen metrics…
           </div>
         </Panel>
       ) : null}

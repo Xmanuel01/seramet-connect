@@ -11,7 +11,7 @@ import { ksh } from "@/lib/currency";
 export const Route = createFileRoute("/par")({
   head: () => ({
     meta: [
-      { title: "PAR Levels - Seramet" },
+      { title: "Reorder Levels - Seramet" },
       {
         name: "description",
         content: "Authoritative PAR, reorder, safety and maximum stock policies by warehouse.",
@@ -40,7 +40,7 @@ function Par() {
     try {
       await operations.control.recalculate();
       await operations.refresh();
-      setNotice("Inventory recommendations recalculation queued.");
+      setNotice("Updating suggestions…");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Recalculation failed");
     }
@@ -48,8 +48,8 @@ function Par() {
 
   return (
     <AppShell
-      title="PAR levels"
-      subtitle={`${branchLabel} - replenishment thresholds and order recommendations`}
+      title="Reorder levels"
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={() => void recalculate()}>Recalculate recommendations</Btn>
@@ -58,7 +58,7 @@ function Par() {
             disabled={!authoritative || operations.control.status !== "ready"}
             onClick={() => setShowForm((value) => !value)}
           >
-            {showForm ? "Close form" : "Edit PAR"}
+            {showForm ? "Close" : "Set levels"}
           </Btn>
         </>
       }
@@ -75,10 +75,10 @@ function Par() {
           onSubmit={async (body) => {
             try {
               await operations.command("/api/seramet/inventory/par-policies", body);
-              setNotice("PAR policy saved.");
+              setNotice("Reorder levels saved.");
               setShowForm(false);
             } catch (error) {
-              setNotice(error instanceof Error ? error.message : "PAR policy could not be saved");
+              setNotice(error instanceof Error ? error.message : "Couldn't save. Try again.");
             }
           }}
         />
@@ -86,14 +86,14 @@ function Par() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Stock positions" value={rows.length} />
-        <Metric label="Below PAR" value={belowPar} invert={belowPar > 0} />
+        <Metric label="Below target" value={belowPar} invert={belowPar > 0} />
         <Metric label="Critical" value={critical} invert={critical > 0} />
         <Metric label="Suggested order value" value={suggestedValue / 100} money />
       </div>
 
       <Panel className="mt-4">
         <PanelHead
-          title="PAR table"
+          title="Reorder levels"
           sub="Suggested quantity is target stock less currently available stock"
         />
         <DataTable
@@ -102,7 +102,7 @@ function Par() {
             "Warehouse",
             { l: "Available", r: true },
             { l: "Reorder", r: true },
-            { l: "PAR target", r: true },
+            { l: "Target", r: true },
             { l: "Max", r: true },
             { l: "Suggested", r: true },
             { l: "Value", r: true },
@@ -196,7 +196,7 @@ function ParForm({
 
   return (
     <Panel className="mb-4">
-      <PanelHead title="Set PAR policy" sub="All quantities are entered in the item's base unit" />
+      <PanelHead title="Set reorder levels" sub="Quantities are in the item's base unit" />
       <div className="grid gap-3 p-4 md:grid-cols-4">
         <Field label="Branch">
           <select
@@ -268,7 +268,7 @@ function ParForm({
             onChange={(event) => setReorder(event.target.value)}
           />
         </Field>
-        <Field label="PAR target">
+        <Field label="Target">
           <input
             className={inputClass}
             type="number"

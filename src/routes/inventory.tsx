@@ -90,7 +90,7 @@ function InventoryOverview() {
   return (
     <AppShell
       title="Inventory overview"
-      subtitle={`${branchLabel} - stock levels, value and items needing attention`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn onClick={() => void navigate({ to: "/inventory-items" })}>Items</Btn>
@@ -106,14 +106,14 @@ function InventoryOverview() {
     >
       {!authoritative && (
         <div className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-[12px]">
-          Inventory control requires authoritative persistence. Connect the server database to use
-          live balances, valuation and stock exceptions.
+          Can't reach Seramet right now, so stock levels may be out of date. Check your connection,
+          then refresh.
         </div>
       )}
 
       {(control.error || control.status === "loading") && (
         <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {control.error || "Loading authoritative inventory..."}
+          {control.error || "Loading inventory…"}
         </div>
       )}
 
@@ -199,7 +199,7 @@ function InventoryOverview() {
         </Panel>
 
         <Panel>
-          <PanelHead title="Recent movement" sub="Latest immutable inventory ledger activity" />
+          <PanelHead title="Recent movement" />
           <ul className="divide-y divide-border">
             {movements.map((movement) => (
               <li key={String(movement["id"])} className="px-4 py-3">

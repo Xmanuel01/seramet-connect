@@ -54,9 +54,7 @@ function SupplierPerformance() {
   return (
     <AppShell
       title="Supplier performance"
-      subtitle={`Receipt, quality, variance and payable evidence - ${branchLabel}${
-        businessDate ? ` - ${businessDate}` : ""
-      }`}
+      subtitle={`${branchLabel}${businessDate ? ` · ${businessDate}` : ""}`}
       actions={
         <>
           <Link to="/suppliers">
@@ -145,10 +143,7 @@ function SupplierPerformance() {
           )}
 
           <Panel className="mt-4 overflow-x-auto">
-            <PanelHead
-              title="Supplier evidence"
-              sub="Operational evidence only; Seramet does not auto-select or auto-replace suppliers"
-            />
+            <PanelHead title="How suppliers are doing" />
             <table className="w-full min-w-[1220px]">
               <thead>
                 <tr>
@@ -211,18 +206,15 @@ function SupplierPerformance() {
           </Panel>
 
           <Panel className="mt-4">
-            <PanelHead
-              title="Metric scope"
-              sub="How to interpret the supplier evidence shown above"
-            />
+            <PanelHead title="Metric scope" sub="What these numbers mean" />
             <div className="grid gap-3 p-4 md:grid-cols-3">
               <ScopeNote
                 title="Daily operational metrics"
                 text="Purchase value, order count, rejected quantity, price variance and returns use the selected management business date."
               />
               <ScopeNote
-                title="Delivery evidence"
-                text="Lead time and on-time delivery use authoritative purchase-order and goods-receipt timestamps for the branch."
+                title="Deliveries"
+                text="Lead time and on-time delivery come from when orders were placed and received."
               />
               <ScopeNote
                 title="Payables and matching"

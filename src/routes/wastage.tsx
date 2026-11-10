@@ -61,7 +61,7 @@ function Wastage() {
   return (
     <AppShell
       title="Wastage"
-      subtitle={`${branchLabel} - food and inventory loss with manager approval`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"
@@ -106,10 +106,7 @@ function Wastage() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Wastage register"
-          sub="Approved entries post a costed WASTAGE movement; pending entries do not touch stock"
-        />
+        <PanelHead title="Wastage register" sub="Stock changes only after a manager approves." />
         <DataTable
           cols={[
             "Item",
@@ -279,7 +276,7 @@ function WastageForm({
           </div>
         </div>
         <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground md:col-span-3">
-          Notes / evidence reference
+          Notes
           <textarea
             className="min-h-20 rounded-md border border-border bg-background px-3 py-2 text-[12px] text-foreground outline-none focus:border-primary"
             value={notes}

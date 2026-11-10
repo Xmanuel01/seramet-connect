@@ -115,13 +115,8 @@ function KDS() {
     profile?.kitchenMode === "KDS_AND_PRINTER" ||
     profile?.kitchenMode === "NO_DEDICATED_KITCHEN_SYSTEM";
   const canRecall = hasPermission(permissions.productionAdjust);
-  const modeSummary = profile
-    ? hasKdsWorkflow
-      ? "KDS production status is authoritative; configured print recovery remains available."
-      : profile.kitchenMode === "PRINTER_ONLY"
-        ? "Printer-only branch: KOT recovery uses the installed Seramet print bridge."
-        : "Production copies route through the configured POS/front printer."
-    : "Kitchen hardware configuration is incomplete.";
+  // Only worth saying when the kitchen isn't set up; otherwise the tickets speak for themselves.
+  const modeSummary = profile ? "" : "Set up your kitchen in Setup Centre to see tickets here.";
 
   const counts = useMemo(
     () => ({
@@ -178,14 +173,14 @@ function KDS() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[16px] font-extrabold tracking-tight">Seramet Kitchen</h1>
-              <Status>
-                {profile?.kitchenMode.replaceAll("_", " ") ?? "Configuration required"}
-              </Status>
-              <Status>{backendStatus === "synced" ? "Healthy" : backendStatus}</Status>
+              <h1 className="text-[16px] font-extrabold tracking-tight">Kitchen display</h1>
+              {backendStatus === "offline" || backendStatus === "error" ? (
+                <Status className="bg-warning-soft text-warning">Offline</Status>
+              ) : null}
             </div>
             <p className="mt-1 text-[12px] text-muted-foreground">
-              {branchLabel} - {visibleRows.length} active station tickets - {modeSummary}
+              {branchLabel} · {visibleRows.length} open tickets
+              {modeSummary ? ` · ${modeSummary}` : ""}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-[12px] font-semibold">
@@ -216,7 +211,10 @@ function KDS() {
 
       {(notice || configurationError) && (
         <div className="mx-3 mt-3 rounded-md border border-border bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice || configurationError}
+          {notice ||
+            (configurationError === "Kitchen operating mode is not configured"
+              ? "Choose how your kitchen works in Setup Centre → Kitchen stations & screens."
+              : configurationError)}
         </div>
       )}
 
@@ -478,7 +476,7 @@ function StationFilter({
 function EmptyQueue() {
   return (
     <div className="rounded-lg border border-dashed border-border p-4 text-center text-[12px] text-muted-foreground">
-      No tickets in this queue.
+      No tickets right now.
     </div>
   );
 }
