@@ -3,6 +3,7 @@ import type { SerametEnv } from "@/lib/seramet-auth";
 import type { DurableQueueBatch, DurableQueueMessage } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
 import { TransactionalEmailError } from "@/server/transactional-email";
+import type { D1Database } from "@/server/database/d1";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import type { ServerActor } from "@/lib/seramet-auth";
@@ -330,7 +331,7 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
   if (!env.SERAMET_DB || !env.SERAMET_WORK_QUEUE) {
     throw new Error("Scheduled work requires authoritative database and durable queue");
   }
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
+  if (at.getUTCMinutes() % 10 === 7) await pruneOperationalHistory(env.SERAMET_DB, at);
   const tenants = await env.SERAMET_DB.prepare("SELECT id FROM tenants WHERE active = 1").all<{
     id: string;
   }>();
@@ -2286,35 +2287,71 @@ async function aggregateEod(env: SerametEnv, tenantId: string) {
 
 async function completeWorkerJob(env: SerametEnv, job: WorkerJobRow, durationMs: number) {
   const stamp = new Date().toISOString();
-  await env.SERAMET_DB!.batch([
-    env
-      .SERAMET_DB!.prepare(
-        `UPDATE worker_jobs SET status = 'SUCCEEDED', finished_at = ?, duration_ms = ?,
-         lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-         WHERE tenant_id = ? AND id = ? AND status = 'RUNNING'`,
+  await env
+    .SERAMET_DB!.prepare(
+      `UPDATE worker_jobs SET status = 'SUCCEEDED', finished_at = ?, duration_ms = ?,
+       lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND status = 'RUNNING'`,
+    )
+    .bind(stamp, durationMs, stamp, job.tenant_id, job.id)
+    .run();
+}
+
+/** Jobs the scheduler starts on a timer. Once they succeed, their rows are only history. */
+export const scheduledMaintenanceJobTypes = [
+  "SCHEDULED_ORDER_RELEASE",
+  "INTEGRATION_OUTBOX_RECOVERY",
+  "PAYMENT_PROMPT_STATUS_CHECK",
+  "EOD_AGGREGATION",
+  "INVENTORY_INTELLIGENCE_RECALCULATION",
+  "MANAGEMENT_INTELLIGENCE_RECALCULATION",
+  "SETUP_READINESS_RECALCULATION",
+  "DAILY_SUMMARY_DISPATCH",
+  "INTELLIGENCE_SCHEDULED_BRIEFS",
+  "INTELLIGENCE_RETENTION",
+  "CRM_METRICS_RECALCULATION",
+  "CRM_CAMPAIGN_DISPATCH",
+  "GUEST_LIFECYCLE_MAINTENANCE",
+  "GUEST_NOTIFICATION_DISPATCH",
+  "ENTERPRISE_READINESS_RECALCULATION",
+  "ENTERPRISE_POLICY_MAINTENANCE",
+  "ENTERPRISE_FRANCHISE_COMPLIANCE_RECALCULATION",
+  "CRM_LOYALTY_MAINTENANCE",
+  "CRM_STORED_VALUE_EXPIRY",
+  "INVENTORY_EXPIRY_ALERTS",
+] as const;
+
+const pruneBatchSize = 20_000;
+
+/**
+ * Removes routine history so timed maintenance doesn't fill the database: succeeded
+ * maintenance jobs after a day, and real-time notices once they expire. Email jobs, failed
+ * jobs and business records are never touched. Each run removes at most one batch per table.
+ */
+export async function pruneOperationalHistory(db: D1Database, at = new Date()) {
+  const dayAgo = new Date(at.getTime() - 24 * 60 * 60 * 1_000).toISOString();
+  const types = scheduledMaintenanceJobTypes.map(() => "?").join(",");
+  const [jobs, events] = await Promise.all([
+    db
+      .prepare(
+        `DELETE FROM worker_jobs WHERE (tenant_id,id) IN (
+           SELECT tenant_id,id FROM worker_jobs
+           WHERE status='SUCCEEDED' AND created_at<? AND job_type IN (${types})
+           LIMIT ${pruneBatchSize})`,
       )
-      .bind(stamp, durationMs, stamp, job.tenant_id, job.id),
-    env
-      .SERAMET_DB!.prepare(
-        `INSERT INTO realtime_events
-          (tenant_id,id,branch_id,topic,entity_type,entity_id,event_type,correlation_id,
-           payload_json,created_at,expires_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      .bind(dayAgo, ...scheduledMaintenanceJobTypes)
+      .run(),
+    db
+      .prepare(
+        `DELETE FROM realtime_events WHERE (tenant_id,id) IN (
+           SELECT tenant_id,id FROM realtime_events
+           WHERE expires_at IS NOT NULL AND expires_at<?
+           LIMIT ${pruneBatchSize})`,
       )
-      .bind(
-        job.tenant_id,
-        crypto.randomUUID(),
-        job.branch_id,
-        "workers",
-        "WORKER_JOB",
-        job.id,
-        `${job.job_type}_COMPLETED`,
-        job.correlation_id,
-        JSON.stringify({ durationMs }),
-        stamp,
-        new Date(Date.parse(stamp) + 24 * 60 * 60 * 1_000).toISOString(),
-      ),
+      .bind(at.toISOString())
+      .run(),
   ]);
+  return { jobs: jobs.meta?.changes ?? 0, events: events.meta?.changes ?? 0 };
 }
 
 async function recordWorkerFailure(env: SerametEnv, body: SerametWorkerMessage, error: unknown) {
