@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { InventoryActionLink } from "@/inventory/inventory-action-link";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link2, Pencil, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
+import { SupplierPerformancePanel } from "@/procurement/SupplierPerformancePanel";
+import { cn } from "@/lib/utils";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -14,7 +15,16 @@ import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { formatNumber, ksh } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
+type SuppliersView = "list" | "performance";
+const supplierViews: { id: SuppliersView; label: string }[] = [
+  { id: "list", label: "Suppliers" },
+  { id: "performance", label: "Performance" },
+];
+
 export const Route = createFileRoute("/suppliers")({
+  validateSearch: (search: Record<string, unknown>): { view?: SuppliersView } => ({
+    view: search.view === "performance" ? "performance" : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Suppliers - Seramet" },
@@ -33,7 +43,50 @@ type SupplierView = ProcurementSupplierRow & {
 };
 
 function Suppliers() {
-  const { branchLabel, currency } = useAppContext();
+  const { branchLabel } = useAppContext();
+  const navigate = useNavigate({ from: "/suppliers" });
+  const view = Route.useSearch().view ?? "list";
+  return (
+    <AppShell title="Suppliers" subtitle={branchLabel}>
+      <div
+        role="tablist"
+        aria-label="View"
+        className="mb-4 flex flex-wrap items-center gap-1 border-b border-border"
+      >
+        {supplierViews.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={item.id === view}
+            onClick={() =>
+              void navigate({
+                search: item.id === "list" ? {} : { view: item.id },
+                replace: true,
+              })
+            }
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors",
+              item.id === view
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {/* The list stays mounted while Performance is open, so a supplier still being saved
+          keeps its in-progress guard and can't be submitted twice by switching tabs. */}
+      <div hidden={view !== "list"}>
+        <SupplierList />
+      </div>
+      {view === "performance" && <SupplierPerformancePanel />}
+    </AppShell>
+  );
+}
+
+function SupplierList() {
+  const { currency } = useAppContext();
   const { persistenceMode, backendStatus } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
@@ -129,12 +182,9 @@ function Suppliers() {
   };
 
   return (
-    <AppShell
-      title="Suppliers"
-      subtitle={branchLabel}
-      actions={
+    <>
+      <div className="mb-3 flex flex-wrap justify-end gap-2">
         <>
-          <InventoryActionLink to="/supplier-performance">Supplier performance</InventoryActionLink>
           <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
             <RefreshCw className="h-4 w-4" /> Refresh
           </Btn>
@@ -146,8 +196,7 @@ function Suppliers() {
             <Plus className="h-4 w-4" /> New supplier
           </Btn>
         </>
-      }
-    >
+      </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Metric label="Suppliers" value={suppliers.length} />
         <Metric label="Outstanding" value={Math.round(outstandingMinor / 100)} money />
@@ -383,7 +432,7 @@ function Suppliers() {
           })
         }
       />
-    </AppShell>
+    </>
   );
 }
 

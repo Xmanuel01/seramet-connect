@@ -196,7 +196,6 @@ export const navGroups: NavGroup[] = [
       },
       { label: "Supplier Bills", to: "/supplier-bills", icon: ReceiptText },
       { label: "Suppliers", to: "/suppliers", icon: Building2 },
-      { label: "Supplier Performance", to: "/supplier-performance", icon: BarChart3 },
     ],
   },
   {
@@ -421,6 +420,19 @@ export function getVisibleNavGroups(
     .filter((group) => group.items.length > 0);
 }
 
+/**
+ * Pages that became a tab or view of another page. Their old addresses still work (they
+ * redirect), so shortcuts to them are allowed whenever the page they moved into is.
+ */
+export const movedPaths: Record<string, string> = {
+  "/stock-detail": "/inventory-items",
+  "/par": "/inventory-items",
+  "/wastage": "/stock-losses",
+  "/breakages": "/stock-losses",
+  "/adjustments": "/stock-losses",
+  "/supplier-performance": "/suppliers",
+};
+
 export function roleCanAccessPath(
   role: AppRole,
   path: string,
@@ -429,8 +441,9 @@ export function roleCanAccessPath(
   tenantId = LOCAL_PILOT_TENANT_ID,
   moduleAccess?: ModuleAccessProfile,
 ) {
+  const target = movedPaths[path] ?? path;
   return getVisibleNavGroups(role, branch, grantedPermissions, tenantId, moduleAccess).some(
-    (group) => group.items.some((item) => item.to === path),
+    (group) => group.items.some((item) => item.to === target),
   );
 }
 
