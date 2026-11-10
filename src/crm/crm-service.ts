@@ -98,7 +98,7 @@ export class CrmService extends CrmServiceBase {
              email_display,preferred_language,preferred_branch_id,brand_id,company_name,billing_contact,
              tax_identifier,invoice_terms_days,account_reference,status,created_source,created_by,
              last_activity_at,payload_json,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACTIVE',?,?,NULL,'{}',?,?)`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ACTIVE',?,?,NULL,?,?,?)`,
         )
         .bind(
           this.actor.tenantId,
@@ -120,6 +120,7 @@ export class CrmService extends CrmServiceBase {
           input.accountReference?.trim() ?? null,
           input.createdSource,
           this.actor.id,
+          JSON.stringify(input.location?.trim() ? { location: input.location.trim() } : {}),
           stamp,
           stamp,
         ),

@@ -25,6 +25,9 @@ export function customerCreatePayload(input: {
   companyName: string;
   branchId: string;
   isAllBranches: boolean;
+  /** KRA PIN (or another tax number); optional. */
+  taxPin?: string;
+  location?: string;
 }): CustomerCreateInput {
   const displayName = input.displayName.trim();
   const companyName = input.companyName.trim();
@@ -42,6 +45,8 @@ export function customerCreatePayload(input: {
     accountType: input.accountType,
     ...(input.phone.trim() ? { phone: input.phone.trim() } : {}),
     ...(input.email.trim() ? { email: input.email.trim() } : {}),
+    ...(input.taxPin?.trim() ? { taxIdentifier: input.taxPin.trim().toUpperCase() } : {}),
+    ...(input.location?.trim() ? { location: input.location.trim() } : {}),
     ...(input.accountType === "CORPORATE" ? { companyName } : {}),
     ...(!input.isAllBranches ? { preferredBranchId: input.branchId } : {}),
     createdSource: "SERAMET_CRM_UI",
