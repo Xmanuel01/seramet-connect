@@ -11,7 +11,7 @@ import { ksh } from "@/lib/currency";
 export const Route = createFileRoute("/warehouses")({
   head: () => ({
     meta: [
-      { title: "Warehouses - Seramet" },
+      { title: "Stores - Seramet" },
       {
         name: "description",
         content: "Authoritative branch warehouse configuration with archive safety controls.",

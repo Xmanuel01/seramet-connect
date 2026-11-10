@@ -254,14 +254,17 @@ export function AppShell({
   const navigate = useNavigate();
 
   useEffect(() => {
-    const activeGroup = visibleNavGroups.find(
-      (group) => group.group && group.items.some((item) => navItemMatchesPath(item, path)),
-    )?.group;
+    const matching = visibleNavGroups
+      .filter((group) => group.group && group.items.some((item) => navItemMatchesPath(item, path)))
+      .map((group) => group.group);
     // Only when the page changes: a section the user opens by hand stays open until then.
-    if (!activeGroup || openedForPath.current === path) return;
+    if (!matching.length || openedForPath.current === path) return;
     openedForPath.current = path;
+    // A page listed in two sections (Stock Requests) keeps whichever of them is open.
     setOpenNavGroups((current) =>
-      current.size === 1 && current.has(activeGroup) ? current : new Set([activeGroup]),
+      matching.some((group) => current.has(group)) && current.size === 1
+        ? current
+        : new Set([matching[0]!]),
     );
   }, [path, visibleNavGroups]);
 
@@ -269,9 +272,15 @@ export function AppShell({
     rememberedNavGroup = [...openNavGroups][0] ?? null;
   }, [openNavGroups]);
 
+  // Restore the menu's position once the page's section has opened, so a shorter menu
+  // doesn't clamp it; runs again whenever the menu is shown (expand, mobile open).
   useLayoutEffect(() => {
     if (navScrollRef.current) navScrollRef.current.scrollTop = rememberedNavScroll;
-  }, []);
+  }, [openNavGroups]);
+  const attachNavScroll = (element: HTMLElement | null) => {
+    navScrollRef.current = element;
+    if (element) element.scrollTop = rememberedNavScroll;
+  };
 
   const visibleNotifications = notifications.filter(
     (item) => !mutedCategories.includes(item.category),
@@ -535,7 +544,11 @@ export function AppShell({
             >
               {GroupIcon && <GroupIcon className="h-4 w-4" />}
             </PopoverTrigger>
-            <PopoverContent side="right" align="start" className="w-56 border-border bg-card p-1.5 shadow-lg">
+            <PopoverContent
+              side="right"
+              align="start"
+              className="w-56 border-border bg-card p-1.5 shadow-lg"
+            >
               <div className="px-2.5 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {g.group}
               </div>
@@ -571,14 +584,10 @@ export function AppShell({
       collapsedNav()
     ) : (
       <nav
-        ref={onNavigate ? undefined : navScrollRef}
-        onScroll={
-          onNavigate
-            ? undefined
-            : (event) => {
-                rememberedNavScroll = event.currentTarget.scrollTop;
-              }
-        }
+        ref={attachNavScroll}
+        onScroll={(event) => {
+          rememberedNavScroll = event.currentTarget.scrollTop;
+        }}
         className="flex-1 overflow-y-auto px-2 py-3"
         aria-label="Main navigation"
       >
