@@ -140,7 +140,7 @@ export async function handleConfigurationApi(
       permissionCodes: body.permissions,
       reason: body.reason,
     });
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     await hydrateAuthoritativeConfiguration(db, env, true);
     return json({ ok: true, role: result });
   }
@@ -160,7 +160,7 @@ export async function handleConfigurationApi(
       primaryBranchId: body.primaryBranchId,
       reason: body.reason,
     });
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     await hydrateAuthoritativeConfiguration(db, env, true);
     return json({ ok: true, assignment: result });
   }
@@ -217,7 +217,7 @@ export async function handleConfigurationApi(
     if (body.mode === "PREVIEW") return json({ ok: true, preview });
     assertRolePermissionChangesDelegable(current, next, actor);
     await persistConfiguration(db, next, actor);
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     await hydrateAuthoritativeConfiguration(db, env, true);
     return json({ ok: true, applied: true, preview });
   }
@@ -236,7 +236,7 @@ async function settingsMutationActor(request: Request, env: SerametEnv, bucket: 
 }
 
 async function refreshConfiguration(db: D1Database, env: SerametEnv) {
-  invalidateAuthoritativeConfiguration(db);
+  await invalidateAuthoritativeConfiguration(db);
   await hydrateAuthoritativeConfiguration(db, env, true);
 }
 

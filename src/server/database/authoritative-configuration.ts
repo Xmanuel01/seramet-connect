@@ -27,7 +27,12 @@ import type { D1Database } from "@/server/database/d1";
 
 type Row = Record<string, unknown>;
 
-type CachedConfiguration = { repository: ConfigurationRepository; loadedAt: number };
+type CachedConfiguration = {
+  repository: ConfigurationRepository;
+  loadedAt: number;
+  /** The shared configuration revision read just before this copy was loaded. */
+  revision: number | undefined;
+};
 const cache = new WeakMap<object, CachedConfiguration>();
 // Production opens a new database pool per request, so the configuration (plain data) is cached
 // by the database it came from; otherwise every request reloaded it with twenty queries.
@@ -35,7 +40,23 @@ const sharedCache = new Map<string, CachedConfiguration>();
 // Bumped on every refresh or invalidation, so a load that started earlier cannot replace newer
 // configuration when it finishes.
 const generations = new Map<string, number>();
+// Without a shared revision a cached copy is trusted for 15 seconds. With one, a copy stays
+// valid until any server records a configuration change, refreshed at least every 5 minutes
+// in case something changed configuration outside the API.
 const cacheLifetimeMs = 15_000;
+const revisionedLifetimeMs = 5 * 60_000;
+
+/** The shared configuration revision, or undefined where the table doesn't exist yet. */
+async function configurationRevision(db: D1Database) {
+  try {
+    const row = await db
+      .prepare("SELECT revision FROM configuration_revisions WHERE scope='platform'")
+      .first<{ revision: number }>();
+    return row ? Number(row.revision) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function cacheIdentity(db: D1Database) {
   const identity = (db as { cacheIdentity?: unknown }).cacheIdentity;
@@ -49,7 +70,14 @@ export async function hydrateAuthoritativeConfiguration(
 ) {
   const identity = cacheIdentity(db);
   const cached = identity ? sharedCache.get(identity) : cache.get(db as object);
-  if (!force && cached && Date.now() - cached.loadedAt < cacheLifetimeMs) {
+  // Read before loading, so a change that lands during the load makes the next request reload.
+  const revision = await configurationRevision(db);
+  const age = cached ? Date.now() - cached.loadedAt : Infinity;
+  const current =
+    revision !== undefined
+      ? cached?.revision === revision && age < revisionedLifetimeMs
+      : age < cacheLifetimeMs;
+  if (!force && cached && current) {
     setConfigurationRepository(cached.repository);
     return cached.repository;
   }
@@ -57,7 +85,7 @@ export async function hydrateAuthoritativeConfiguration(
   const generation = identity ? (generations.get(identity) ?? 0) : 0;
   const state = await loadAuthoritativePlatformState(db, env);
   const repository = new ConfigurationRepository(state, { persistBrowser: false });
-  const entry = { repository, loadedAt: Date.now() };
+  const entry = { repository, loadedAt: Date.now(), revision };
   if (identity) {
     if ((generations.get(identity) ?? 0) === generation) sharedCache.set(identity, entry);
   } else cache.set(db as object, entry);
@@ -65,12 +93,24 @@ export async function hydrateAuthoritativeConfiguration(
   return repository;
 }
 
-export function invalidateAuthoritativeConfiguration(db: D1Database) {
+/**
+ * Records a configuration change: drops this server's copy and bumps the shared revision so
+ * every other server reloads on its next request. A failed bump only delays other servers
+ * until their copy expires; it never fails the change itself.
+ */
+export async function invalidateAuthoritativeConfiguration(db: D1Database) {
   const identity = cacheIdentity(db);
   if (identity) {
     sharedCache.delete(identity);
     generations.set(identity, (generations.get(identity) ?? 0) + 1);
   } else cache.delete(db as object);
+  await db
+    .prepare(
+      "UPDATE configuration_revisions SET revision=revision+1,updated_at=? WHERE scope='platform'",
+    )
+    .bind(new Date().toISOString())
+    .run()
+    .catch(() => undefined);
 }
 
 export async function loadAuthoritativePlatformState(

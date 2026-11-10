@@ -95,28 +95,44 @@ type SnapshotReplaceRequest = {
   idempotencyKey?: string;
 };
 
-// Requests that change sales, payments or sign-in state do not touch restaurant configuration.
-const configurationNeutralPrefixes = [
-  "/api/seramet/transactions",
-  "/api/seramet/payments",
-  "/api/seramet/webhooks",
-  "/api/seramet/integrations/webhooks",
-  "/api/seramet/public/",
-  "/api/seramet/offline",
+// Requests that can change restaurant configuration (branches, stations, tables, payment
+// methods, channels, devices, print routes, templates, roles, users and their access). Sales,
+// kitchen, stock, printing jobs and attendance don't, so they never make servers reload it.
+// Printing, devices, tables and onboarding also record their own changes explicitly.
+const configurationChangingPrefixes = [
+  "/api/seramet/configuration",
+  "/api/seramet/setup",
+  "/api/seramet/access",
+  "/api/seramet/employees",
+  "/api/seramet/owners",
+  "/api/seramet/enterprise",
+  "/api/seramet/auth",
+  "/api/seramet/devices",
+  "/api/seramet/tables",
+  "/api/seramet/inventory/warehouses",
 ];
+const configurationNeutralPrefixes = ["/api/seramet/integrations/webhooks"];
+
+function changesConfiguration(path: string) {
+  if (configurationNeutralPrefixes.some((prefix) => path.startsWith(prefix))) return false;
+  return (
+    path.startsWith("/api/seramet/integrations") ||
+    configurationChangingPrefixes.some((prefix) => path.startsWith(prefix))
+  );
+}
 
 export async function handleSerametApiRequest(request: Request, env: SerametEnv) {
   const response = await routeSerametApiRequest(request, env);
-  // Configuration is cached for a few seconds between requests; any successful change clears
-  // this server's copy so the next request reads it fresh.
+  // Every server caches configuration until the shared revision moves; a successful change
+  // bumps it so all of them read it fresh on their next request.
   const path = new URL(request.url).pathname;
   if (
     env?.SERAMET_DB &&
     request.method !== "GET" &&
     response.status < 400 &&
-    !configurationNeutralPrefixes.some((prefix) => path.startsWith(prefix))
+    changesConfiguration(path)
   )
-    invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
   return response;
 }
 
@@ -237,11 +253,9 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     const repo = createTransactionRepository(env.SERAMET_DB, env);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
-    // Reads may use configuration cached for a few seconds. Anything that changes state (a
-    // sale, a payment, a provider callback, a setting) loads it fresh, because another server
-    // may still cache a payment method or permission that was just disabled.
-    if (env.SERAMET_DB)
-      await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, request.method !== "GET");
+    // Uses the cached configuration unless the shared revision says it changed, so a payment
+    // method or permission disabled on another server is honoured on the very next request.
+    if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
     const closingReportResponse = await handleDailyClosingApi(request, env, repo);
     if (closingReportResponse) return closingReportResponse;
     const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
