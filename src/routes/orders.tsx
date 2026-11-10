@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatTime, ksh } from "@/lib/currency";
+import { formatTime, formatMoney } from "@/lib/currency";
 import { businessDateForTimestamp } from "@/lib/business-date";
 import { ordersDashboardFinancials } from "@/lib/orders-dashboard-financials";
 import { invoiceCandidatesForOrder, orderBusinessDate } from "@/lib/orders-interface";
@@ -232,7 +232,7 @@ function Orders() {
                     {order.customer} - {order.channel}
                   </div>
                 </div>
-                <div className="num shrink-0 text-[14px] font-bold">{ksh(order.total)}</div>
+                <div className="num shrink-0 text-[14px] font-bold">{formatMoney(order.total)}</div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
                 <div className="rounded-md bg-secondary/60 px-2 py-1.5">
@@ -314,7 +314,7 @@ function Orders() {
                   <TD className="font-medium">{order.customer}</TD>
                   <TD className="text-muted-foreground">{order.channel}</TD>
                   <TD className="text-muted-foreground">{order.cashier}</TD>
-                  <TD className="num text-right font-semibold">{ksh(order.total)}</TD>
+                  <TD className="num text-right font-semibold">{formatMoney(order.total)}</TD>
                   <TD>
                     <Status>{order.paymentStatus}</Status>
                   </TD>
@@ -388,14 +388,14 @@ function Orders() {
                     <span>
                       {line.quantity} × {line.name}
                     </span>
-                    <span className="num">{ksh(line.quantity * line.unitPrice)}</span>
+                    <span className="num">{formatMoney(line.quantity * line.unitPrice)}</span>
                   </div>
                 ))}
                 {detailsOrder.lines.length === 0 && <p>No line items recorded.</p>}
               </div>
               <div className="flex justify-between border-t border-border pt-2 font-semibold">
                 <span>Order total (not necessarily received)</span>
-                <span className="num">{ksh(detailsOrder.total)}</span>
+                <span className="num">{formatMoney(detailsOrder.total)}</span>
               </div>
               {detailsOrder.cancellation && (
                 <p>Cancellation reason: {detailsOrder.cancellation.reason}</p>

@@ -137,7 +137,7 @@ export function recordBusinessDate(
  * The branch's business day right now. Until the branch cutoff it is still the previous
  * date, so documents made after midnight stay under "today". Pass the resolved branch
  * timezone (the app context's). A missing or invalid cutoff uses the server's 4am default,
- * and an invalid timezone falls back to Nairobi, so a bad setting never breaks a page.
+ * and an invalid timezone falls back to UTC, so a bad setting never breaks a page.
  */
 export function branchBusinessToday(
   cutoffMinutes: unknown,
@@ -147,7 +147,7 @@ export function branchBusinessToday(
   const cutoff = Number(cutoffMinutes ?? DEFAULT_BUSINESS_DAY_CUTOFF_MINUTES);
   return businessDateForTimestamp(
     now,
-    validTimeZone(resolvedTimeZone) ? resolvedTimeZone : "Africa/Nairobi",
+    validTimeZone(resolvedTimeZone) ? resolvedTimeZone : "UTC",
     Number.isInteger(cutoff) && cutoff >= 0 && cutoff < 1_440
       ? cutoff
       : DEFAULT_BUSINESS_DAY_CUTOFF_MINUTES,

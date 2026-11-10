@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 import { useEffect, useState } from "react";
 import { ArrowRight, Check, Clock3, LoaderCircle, LogOut, MapPin, ShieldCheck } from "lucide-react";
 import { Btn } from "@/components/app/ui";
@@ -48,15 +49,15 @@ export function AttendanceClock(props: Props) {
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [props.serverNow]);
-  const zone = props.timezone ?? "Africa/Nairobi";
-  const time = new Intl.DateTimeFormat("en-KE", {
+  const zone = props.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const time = new Intl.DateTimeFormat(activeLocale(), {
     timeZone: zone,
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: false,
   }).format(now);
-  const date = new Intl.DateTimeFormat("en-KE", {
+  const date = new Intl.DateTimeFormat(activeLocale(), {
     timeZone: zone,
     weekday: "long",
     day: "numeric",

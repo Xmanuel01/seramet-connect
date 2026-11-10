@@ -4,7 +4,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
@@ -177,7 +177,7 @@ function InventoryOverview() {
                     <TD className="num text-right text-muted-foreground">
                       {formatQuantity(row.reorder)} {row.unit}
                     </TD>
-                    <TD className="num text-right font-semibold">{ksh(row.value)}</TD>
+                    <TD className="num text-right font-semibold">{formatMoney(row.value)}</TD>
                     <TD>
                       <Status>{row.status}</Status>
                     </TD>

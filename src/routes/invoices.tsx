@@ -11,7 +11,7 @@ import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } 
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { activeLocale, activeTimeZone, ksh } from "@/lib/currency";
+import { activeLocale, activeTimeZone, formatMoney } from "@/lib/currency";
 import { formatMinor, parseMajorAmount } from "@/payments/money";
 import type { AcceptedCurrency, FxPaymentQuote } from "@/onboarding/location-currency-types";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
@@ -544,7 +544,9 @@ function Invoices() {
     const total = rows.reduce((sum, row) => sum + row.amount, 0);
     if (rows.length < 1) return;
     if (total > outstanding + 0.001) {
-      setWarning(`The parts add up to ${ksh(total)}, more than the ${ksh(outstanding)} owed.`);
+      setWarning(
+        `The parts add up to ${formatMoney(total)}, more than the ${formatMoney(outstanding)} owed.`,
+      );
       return;
     }
     for (const row of rows) {
@@ -578,7 +580,7 @@ function Invoices() {
     } catch (error) {
       setWarning(
         recorded > 0
-          ? `${ksh(recorded)} was recorded; the rest wasn't. Settle the remaining ${ksh(
+          ? `${formatMoney(recorded)} was recorded; the rest wasn't. Settle the remaining ${formatMoney(
               outstanding - recorded,
             )} again.`
           : reportError(error, "Couldn't record the payment. Try again."),
@@ -592,7 +594,9 @@ function Invoices() {
       setChangeGiven("");
       setReceiptPrompt(settleInvoice);
     } else {
-      setWarning(`${ksh(recorded)} recorded. ${ksh(outstanding - recorded)} is still owed.`);
+      setWarning(
+        `${formatMoney(recorded)} recorded. ${formatMoney(outstanding - recorded)} is still owed.`,
+      );
     }
     setSettleInvoice(null);
   };
@@ -687,7 +691,7 @@ function Invoices() {
       return;
     }
     if (disposition === "CONFIRMED") {
-      setChangeGiven(change > 0 ? ksh(change) : "");
+      setChangeGiven(change > 0 ? formatMoney(change) : "");
       setReceiptPrompt(settleInvoice);
     } else if (disposition === "AWAITING_VERIFICATION") {
       setWarning("Payment reference recorded for verification. No paid receipt was generated.");
@@ -757,7 +761,7 @@ function Invoices() {
                 onDateChange: setPeriodDate,
                 onClear: () => setPeriodDate(""),
               },
-              { label: "Overdue exposure", value: ksh(overdue) },
+              { label: "Overdue exposure", value: formatMoney(overdue) },
               {
                 label: "",
                 value: `${selectedIds.length} selected`,
@@ -808,8 +812,10 @@ function Invoices() {
                 </TD>
                 <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
                 <TD>{row.customer}</TD>
-                <TD className="num text-right">{ksh(row.total)}</TD>
-                <TD className="num text-right font-semibold">{ksh(row.total - row.paid)}</TD>
+                <TD className="num text-right">{formatMoney(row.total)}</TD>
+                <TD className="num text-right font-semibold">
+                  {formatMoney(row.total - row.paid)}
+                </TD>
                 <TD>
                   <Status>{row.status}</Status>
                 </TD>
@@ -866,11 +872,11 @@ function Invoices() {
               <div className="grid grid-cols-2 gap-3 text-[12px]">
                 <div>
                   <span className="block text-muted-foreground">Amount</span>
-                  <span className="num font-semibold">{ksh(row.total)}</span>
+                  <span className="num font-semibold">{formatMoney(row.total)}</span>
                 </div>
                 <div className="text-right">
                   <span className="block text-muted-foreground">Outstanding</span>
-                  <span className="num font-bold">{ksh(row.total - row.paid)}</span>
+                  <span className="num font-bold">{formatMoney(row.total - row.paid)}</span>
                 </div>
                 <div className="col-span-2 min-w-0">
                   <span className="block text-muted-foreground">Orders</span>
@@ -963,7 +969,7 @@ function Invoices() {
                 <div className="flex items-center justify-between text-[13px]">
                   <span className="text-muted-foreground">Outstanding</span>
                   <span className="num text-[20px] font-extrabold">
-                    {ksh(settleInvoice.total - settleInvoice.paid)}
+                    {formatMoney(settleInvoice.total - settleInvoice.paid)}
                   </span>
                 </div>
               </div>
@@ -1089,9 +1095,9 @@ function Invoices() {
                           className={`num font-semibold ${left < -0.001 ? "text-danger" : left > 0.001 ? "text-warning" : "text-success"}`}
                         >
                           {left > 0.001
-                            ? `${ksh(left)} left to pay`
+                            ? `${formatMoney(left)} left to pay`
                             : left < -0.001
-                              ? `${ksh(-left)} too much`
+                              ? `${formatMoney(-left)} too much`
                               : "Fully covered"}
                         </span>
                       );
@@ -1198,7 +1204,9 @@ function Invoices() {
                 settlementAmount >= settleInvoice.total - settleInvoice.paid && (
                   <div className="flex items-center justify-between rounded-md bg-success-soft px-3 py-2 text-[13px] font-semibold text-success">
                     <span>Change due</span>
-                    <span className="num text-[16px]">{ksh(cashReceived - settlementAmount)}</span>
+                    <span className="num text-[16px]">
+                      {formatMoney(cashReceived - settlementAmount)}
+                    </span>
                   </div>
                 )}
               {selectedSettlementMethod?.category === "CREDIT" && (

@@ -13,7 +13,7 @@ import {
 } from "@/components/app/ui";
 import { SearchInput } from "@/components/app/Tabs";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/design-system")({
   head: () => ({
@@ -74,7 +74,7 @@ function DS() {
             <p className="text-[13px] text-muted-foreground">
               Body text used across tables and panels.
             </p>
-            <p className="num text-[20px] font-bold">{ksh(0)}</p>
+            <p className="num text-[20px] font-bold">{formatMoney(0)}</p>
           </div>
         </Panel>
         <Panel>

@@ -6,7 +6,7 @@ import { DataTable, Tabs } from "@/components/app/Tabs";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useInventoryItemDetail } from "@/inventory/use-inventory-item-detail";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/items/$sku")({
   head: () => ({
@@ -159,7 +159,7 @@ function ItemDetail() {
                         <TD className="num text-right">
                           {movement.total_cost_minor == null
                             ? "—"
-                            : ksh(movement.total_cost_minor / 100)}
+                            : formatMoney(movement.total_cost_minor / 100)}
                         </TD>
                         <TD className="num text-muted-foreground">
                           {movement.source_type}:{movement.source_id}
@@ -271,10 +271,10 @@ function ItemDetail() {
                             {formatQuantity(Number(row.target_quantity_minor ?? 0))} {unit}
                           </TD>
                           <TD className="num text-right">
-                            {ksh(row.average_unit_cost_minor / 100)}
+                            {formatMoney(row.average_unit_cost_minor / 100)}
                           </TD>
                           <TD className="num text-right font-semibold">
-                            {ksh(row.total_value_minor / 100)}
+                            {formatMoney(row.total_value_minor / 100)}
                           </TD>
                           <TD>
                             <Status>{status}</Status>

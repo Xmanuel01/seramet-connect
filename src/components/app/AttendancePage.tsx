@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LocateFixed, MapPin, RefreshCcw, ShieldCheck } from "lucide-react";
 import { AttendanceClock } from "@/components/app/AttendanceClock";
@@ -90,10 +91,13 @@ type Data = {
     not_recorded: number;
   } | null;
 };
-const readableTime = (value: string | null | undefined, zone = "Africa/Nairobi") => {
+const readableTime = (
+  value: string | null | undefined,
+  zone = Intl.DateTimeFormat().resolvedOptions().timeZone,
+) => {
   if (!value) return "—";
   try {
-    return new Intl.DateTimeFormat("en-KE", {
+    return new Intl.DateTimeFormat(activeLocale(), {
       timeZone: zone,
       hour: "2-digit",
       minute: "2-digit",

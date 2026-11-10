@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PackageCheck, RefreshCw, RotateCcw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
-import { formatDate, formatNumber, ksh } from "@/lib/currency";
+import { formatDate, formatNumber, formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
@@ -95,9 +95,12 @@ function Receiving() {
     );
   };
 
+  // Start a fresh draft only when a different purchase order (or a new revision of it) is
+  // chosen; re-running on every render would wipe what the receiver has typed.
   useEffect(() => {
     resetDraft();
     setIdempotencyKey(crypto.randomUUID());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [po?.id, poRevision]);
 
   const worksheet =
@@ -239,8 +242,8 @@ function Receiving() {
       }
     >
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Metric label="Expected remaining" value={ksh(expectedMinor / 100, po?.currency)} />
-        <Metric label="Accepted now" value={ksh(acceptedMinor / 100, po?.currency)} />
+        <Metric label="Expected remaining" value={formatMoney(expectedMinor / 100, po?.currency)} />
+        <Metric label="Accepted now" value={formatMoney(acceptedMinor / 100, po?.currency)} />
         <Metric label="Rejected lines" value={rejectedLines} invert={rejectedLines > 0} />
         <Metric
           label="Lines ready"
@@ -372,7 +375,7 @@ function Receiving() {
                           {Math.abs(line.priceVariance) > 0.001 && (
                             <div className="mt-1 text-[10px] text-warning">
                               {line.priceVariance > 0 ? "+" : ""}
-                              {ksh(line.priceVariance, po.currency)}
+                              {formatMoney(line.priceVariance, po.currency)}
                             </div>
                           )}
                         </TD>
@@ -428,7 +431,7 @@ function Receiving() {
                   Accepted value
                 </div>
                 <div className="num text-[18px] font-bold">
-                  {ksh(acceptedMinor / 100, po.currency)}
+                  {formatMoney(acceptedMinor / 100, po.currency)}
                 </div>
               </div>
             </div>
@@ -465,7 +468,7 @@ function Receiving() {
                     <TD className="text-muted-foreground">{formatDate(receipt.business_date)}</TD>
                     <TD className="num text-right">{Number(receipt.line_count)}</TD>
                     <TD className="num text-right font-semibold">
-                      {ksh(Number(receipt.total_minor) / 100, receipt.currency)}
+                      {formatMoney(Number(receipt.total_minor) / 100, receipt.currency)}
                     </TD>
                     <TD>
                       <Status>{displayStatus(receipt.status)}</Status>

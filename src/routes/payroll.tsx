@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, RefreshCcw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { getSerametAccessToken } from "@/lib/access-token";
@@ -297,9 +297,9 @@ function Payroll() {
                     <TD
                       className={`num text-right ${row.lateDeduction ? "text-danger" : "text-muted-foreground"}`}
                     >
-                      {row.lateDeduction ? ksh(row.lateDeduction) : "—"}
+                      {row.lateDeduction ? formatMoney(row.lateDeduction) : "—"}
                     </TD>
-                    <TD className="num text-right font-semibold">{ksh(row.netPay)}</TD>
+                    <TD className="num text-right font-semibold">{formatMoney(row.netPay)}</TD>
                   </tr>
                 ))}
                 {!rows.length && (

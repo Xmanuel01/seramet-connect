@@ -4,7 +4,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
 
@@ -109,7 +109,7 @@ function Returns() {
               <TD className="text-muted-foreground">{r.reason}</TD>
               <TD className="text-muted-foreground">{r.branch}</TD>
               <TD>{r.by}</TD>
-              <TD className="num text-right font-semibold">{ksh(r.value)}</TD>
+              <TD className="num text-right font-semibold">{formatMoney(r.value)}</TD>
               <TD>{r.restock}</TD>
               <TD>
                 <Status>{r.status}</Status>

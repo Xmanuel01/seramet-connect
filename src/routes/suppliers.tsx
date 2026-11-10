@@ -7,12 +7,13 @@ import { cn } from "@/lib/utils";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
+  type InventoryBranchPayload,
   type ProcurementSupplierItemRow,
   type ProcurementSupplierRow,
   useInventoryControlCentre,
 } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { formatNumber, ksh } from "@/lib/currency";
+import { formatNumber, formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 
 type SuppliersView = "list" | "performance";
@@ -133,7 +134,7 @@ function SupplierList() {
   }, [control.data]);
 
   const items = useMemo(() => {
-    const byId = new Map<string, (typeof control.data)[number]["items"][number]>();
+    const byId = new Map<string, InventoryBranchPayload["items"][number]>();
     for (const branch of control.data) {
       for (const item of branch.items) {
         if (!byId.has(item.id)) byId.set(item.id, item);
@@ -143,7 +144,7 @@ function SupplierList() {
   }, [control.data]);
 
   const units = useMemo(() => {
-    const byId = new Map<string, (typeof control.data)[number]["units"][number]>();
+    const byId = new Map<string, InventoryBranchPayload["units"][number]>();
     for (const branch of control.data) {
       for (const unit of branch.units) {
         if (!byId.has(unit.id)) byId.set(unit.id, unit);
@@ -234,7 +235,7 @@ function SupplierList() {
                   {Number(supplier.order_count) === 1 ? "" : "s"}
                 </div>
                 <div className="num mt-1 text-[12px] font-semibold">
-                  {ksh(Number(supplier.ordered_minor) / 100)} purchased
+                  {formatMoney(Number(supplier.ordered_minor) / 100)} purchased
                 </div>
               </button>
             ))}
@@ -280,7 +281,7 @@ function SupplierList() {
                   label="Minimum order"
                   value={
                     Number(selected.minimum_order_minor) > 0
-                      ? ksh(Number(selected.minimum_order_minor) / 100)
+                      ? formatMoney(Number(selected.minimum_order_minor) / 100)
                       : "Not set"
                   }
                 />
@@ -348,7 +349,7 @@ function SupplierList() {
                           <TD className="num text-right">
                             {row.contract_price_minor === null
                               ? "—"
-                              : ksh(Number(row.contract_price_minor) / 100)}
+                              : formatMoney(Number(row.contract_price_minor) / 100)}
                           </TD>
                           <TD className="num text-right">
                             {row.minimum_quantity_minor === null

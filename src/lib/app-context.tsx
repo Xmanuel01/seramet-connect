@@ -518,7 +518,6 @@ function ConfiguredAppProvider({
     activeTenantId,
     activeTenant?.defaultCurrency,
     activeTenant?.locale,
-    activeTenant?.timezone,
     displayTimeZone,
     actor?.moduleAccess,
     actor?.authLevel,

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, Status } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { emptyRecords } from "@/lib/empty-records";
 
 export const Route = createFileRoute("/decisions")({
@@ -52,7 +52,9 @@ function Decisions() {
                 <h3 className="text-[14px] font-semibold leading-snug">{decision.title}</h3>
                 <p className="mt-1 text-[12px] text-muted-foreground">{decision.ctx}</p>
               </div>
-              <span className="num shrink-0 text-[16px] font-bold">{ksh(decision.value)}</span>
+              <span className="num shrink-0 text-[16px] font-bold">
+                {formatMoney(decision.value)}
+              </span>
             </div>
             <p className="mt-3 rounded-md bg-secondary/60 px-3 py-2 text-[12px]">
               {decision.reason}

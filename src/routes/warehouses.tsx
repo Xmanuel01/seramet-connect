@@ -6,7 +6,7 @@ import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/warehouses")({
   head: () => ({
@@ -128,7 +128,7 @@ function Warehouses() {
               <TD>{row.location_type}</TD>
               <TD className="num text-right">{Number(row.stocked_item_count ?? 0)}</TD>
               <TD className="num text-right font-semibold">
-                {ksh(Number(row.stock_value_minor ?? 0) / 100)}
+                {formatMoney(Number(row.stock_value_minor ?? 0) / 100)}
               </TD>
               <TD>
                 <Status>{Number(row.active) === 1 ? "Active" : "Archived"}</Status>

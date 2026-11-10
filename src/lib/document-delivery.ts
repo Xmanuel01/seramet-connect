@@ -1,4 +1,4 @@
-import { formatDateTime, ksh } from "@/lib/currency";
+import { formatDateTime, formatMoney } from "@/lib/currency";
 import { SerametPrintService } from "@/lib/seramet-print-service";
 
 export type InvoiceLine = {
@@ -61,9 +61,9 @@ export function createInvoicePdfBytes(invoice: InvoiceDeliveryRecord) {
     `0 -15 Td (${pdfText(`Branch: ${invoice.branch}`)}) Tj`,
     `-250 -30 Td (${pdfText("QTY  DESCRIPTION                         UNIT PRICE     AMOUNT")}) Tj`,
     ...lines.map((line) => `0 -16 Td (${pdfText(line)}) Tj`),
-    `0 -24 Td (${pdfText(`SUBTOTAL                                      ${ksh(invoice.amount)}`)}) Tj`,
-    `0 -16 Td (${pdfText(`PAID                                          ${ksh(invoice.paid)}`)}) Tj`,
-    `0 -16 Td (${pdfText(`OUTSTANDING                                   ${ksh(outstanding)}`)}) Tj`,
+    `0 -24 Td (${pdfText(`SUBTOTAL                                      ${formatMoney(invoice.amount)}`)}) Tj`,
+    `0 -16 Td (${pdfText(`PAID                                          ${formatMoney(invoice.paid)}`)}) Tj`,
+    `0 -16 Td (${pdfText(`OUTSTANDING                                   ${formatMoney(outstanding)}`)}) Tj`,
     `0 -16 Td (${pdfText(`STATUS                                        ${invoice.status}`)}) Tj`,
     `0 -28 Td (${pdfText("PAYMENT INFORMATION")}) Tj`,
     ...identity.paymentInstructions.map((instruction) => `0 -15 Td (${pdfText(instruction)}) Tj`),
@@ -99,8 +99,8 @@ export function invoiceDeliveryMessage(
     `Invoice: ${invoice.id}`,
     `Customer: ${invoice.customer}`,
     `Branch: ${invoice.branch}`,
-    `Amount: ${ksh(invoice.amount)}`,
-    `Outstanding: ${ksh(outstanding)}`,
+    `Amount: ${formatMoney(invoice.amount)}`,
+    `Outstanding: ${formatMoney(outstanding)}`,
     `Due: ${invoice.due}`,
     "PDF copy can be downloaded from Seramet.",
   ].join("\n");
@@ -127,8 +127,8 @@ function renderInvoiceLines(invoice: InvoiceDeliveryRecord) {
     : defaultLines.map((line) => ({ ...line, unitPrice: invoice.amount }));
   return sourceLines.map((line) => {
     const description = `${line.quantity}    ${line.description}`.padEnd(38);
-    const unit = ksh(line.unitPrice).padStart(12);
-    const amount = ksh(line.quantity * line.unitPrice).padStart(12);
+    const unit = formatMoney(line.unitPrice).padStart(12);
+    const amount = formatMoney(line.quantity * line.unitPrice).padStart(12);
     return `${description}${unit}${amount}`;
   });
 }

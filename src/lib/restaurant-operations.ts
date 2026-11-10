@@ -1,4 +1,4 @@
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import {
   SerametPrintService,
   type BranchHardwareProfile,
@@ -188,7 +188,7 @@ export function deriveBranchOperations(
       title: `${drawersNeedingAttention.length} till variance${drawersNeedingAttention.length === 1 ? "" : "s"} require review`,
       detail:
         variance > 0
-          ? `Unresolved cash variance: ${ksh(variance)}.`
+          ? `Unresolved cash variance: ${formatMoney(variance)}.`
           : "Cash close-out is awaiting supervisor review.",
       branch: displayBranch(branch),
       time: "Live",
@@ -217,7 +217,7 @@ export function deriveBranchOperations(
       id: "refund-approval",
       sev: "warning",
       title: `${requestedRefunds.length} refund request${requestedRefunds.length === 1 ? "" : "s"} awaiting approval`,
-      detail: `Value: ${ksh(requestedRefunds.reduce((sum, refund) => sum + refund.amount, 0))}.`,
+      detail: `Value: ${formatMoney(requestedRefunds.reduce((sum, refund) => sum + refund.amount, 0))}.`,
       branch: displayBranch(branch),
       time: "Live",
       action: "Review refunds",
