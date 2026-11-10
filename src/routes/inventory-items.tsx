@@ -66,7 +66,7 @@ function InventoryItems() {
   return (
     <AppShell
       title="Inventory items"
-      subtitle={`${branchLabel} - your stock items and quantities on hand`}
+      subtitle={branchLabel}
       actions={
         <>
           {authoritative && <InventoryImport onPublished={() => void control.refresh()} />}
@@ -196,7 +196,7 @@ function InventoryItems() {
                 <TH>Supplier</TH>
                 <TH className="text-right">On hand</TH>
                 <TH className="text-right">Available</TH>
-                <TH className="text-right">PAR target</TH>
+                <TH className="text-right">Reorder target</TH>
                 <TH className="text-right">Unit cost</TH>
                 <TH className="text-right">Value</TH>
                 <TH className="text-right">Warehouses</TH>
@@ -297,10 +297,7 @@ function CreateItemPanel({
 
   return (
     <Panel className="mb-4">
-      <PanelHead
-        title="Add inventory item"
-        sub="Create tenant-wide item master data before receiving stock"
-      />
+      <PanelHead title="Add inventory item" sub="Items you buy and keep in stock" />
       <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
         <Field label="Item name">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />

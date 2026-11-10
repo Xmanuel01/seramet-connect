@@ -59,7 +59,7 @@ function Adjustments() {
   return (
     <AppShell
       title="Stock adjustments"
-      subtitle={`${branchLabel} - controlled corrections with approval before ledger posting`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"
@@ -100,10 +100,7 @@ function Adjustments() {
       </div>
 
       <Panel className="mt-4">
-        <PanelHead
-          title="Adjustment register"
-          sub="Pending requests do not affect stock. Approval posts one immutable movement."
-        />
+        <PanelHead title="Adjustment register" sub="Stock changes only after a manager approves." />
         <DataTable
           cols={[
             "Item",

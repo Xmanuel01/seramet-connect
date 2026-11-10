@@ -233,7 +233,7 @@ function Receiving() {
             }
             onClick={() => void postReceipt()}
           >
-            <PackageCheck className="h-4 w-4" /> Post receipt
+            <PackageCheck className="h-4 w-4" /> Save delivery
           </Btn>
         </>
       }
@@ -252,7 +252,7 @@ function Receiving() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Receiving requires the authoritative server database. Backend: ${backendStatus}.`
+            ? "Can't reach Seramet right now. Check your connection, then refresh."
             : notice || control.error}
         </div>
       )}
@@ -260,7 +260,7 @@ function Receiving() {
       <Panel className="mt-4">
         <PanelHead
           title="Receiving worksheet"
-          sub="Record the physical delivery, rejected quantity, actual supplier price and traceability before posting"
+          sub="What arrived, what was rejected and the price you paid"
           right={
             available.length > 1 ? (
               <select

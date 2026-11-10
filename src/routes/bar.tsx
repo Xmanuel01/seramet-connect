@@ -161,12 +161,12 @@ function BarModule() {
   };
 
   return (
-    <AppShell title="Bar" subtitle={`Live production queue - ${branchLabel}`}>
+    <AppShell title="Bar" subtitle={branchLabel}>
       {(notice || configurationError || !barModuleEnabled) && (
         <div className="mb-4 rounded-md border border-border bg-secondary/60 px-3 py-2 text-[12px] text-muted-foreground">
           {notice ||
             configurationError ||
-            "The Bar module is disabled for this branch. Enable BAR_MODULE in branch hardware/capabilities before operating this queue."}
+            "The bar screen is off for this branch. Turn it on in Settings → Printers & devices."}
         </div>
       )}
 
@@ -181,7 +181,7 @@ function BarModule() {
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel>
           <PanelHead
-            title="Bar production queue"
+            title="Bar orders"
             sub={`Payment-independent drink tickets - backend ${backendStatus}`}
             right={<Martini className="h-4 w-4 text-primary" />}
           />

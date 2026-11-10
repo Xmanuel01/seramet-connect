@@ -42,21 +42,19 @@ test("authenticated manager completes scan, staging, recovery, publication and P
   });
 
   await expect(dialog.getByText("Browser imported 01", { exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Commit import" })).toBeEnabled();
-  await dialog.getByRole("button", { name: "Commit import" }).click();
-  await expect(dialog.getByText(/Menu import queued as/)).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.getByText(/Importing your menu/)).toBeVisible();
 
   // Simulate navigation interruption. Recovery must inspect the same import instead of re-uploading.
   await page.reload();
-  const publishDialog = page.getByRole("dialog", { name: "Publish verified menu import" });
+  const publishDialog = page.getByRole("dialog", { name: "Add to your menu" });
   const publishButton = publishDialog.getByRole("button", { name: "Publish menu" });
   await expect(publishButton).toBeEnabled({
     timeout: 45_000,
   });
   await publishButton.click();
-  await expect(
-    page.getByText("Menu import published and verified in the authoritative catalogue."),
-  ).toBeVisible({
+  await expect(page.getByText("Menu imported. Your items are ready.")).toBeVisible({
     timeout: 45_000,
   });
 

@@ -112,7 +112,7 @@ function PurchaseOrders() {
   return (
     <AppShell
       title="Purchase orders"
-      subtitle={`Purchase order approvals, commitments and deliveries - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <InventoryActionLink to="/requisitions">Requisitions</InventoryActionLink>
@@ -136,13 +136,13 @@ function PurchaseOrders() {
         <Metric label="Open POs" value={openRows.length} />
         <Metric label="Awaiting approval" value={submitted} invert={submitted > 0} />
         <Metric label="Deliveries expected" value={expected} />
-        <Metric label="Open commitments (recent)" value={commitmentValue} />
+        <Metric label="On order (value)" value={commitmentValue} />
       </div>
 
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Purchase order writes require the authoritative server database. Backend: ${backendStatus}.`
+            ? "Can't reach Seramet right now. Check your connection, then refresh."
             : notice || control.error}
         </div>
       )}
@@ -650,8 +650,8 @@ function CreatePurchaseOrderDialog({
                   <div className="md:col-span-6 text-[11px] text-muted-foreground">
                     Requisition quantity was requested in{" "}
                     {selectedRequisition.lines[index]!.unit_symbol ?? "another unit"}. Enter the
-                    supplier purchase quantity in {purchaseUnitSymbol(data, line.itemId)}; Seramet
-                    will use the configured item conversion when posting the PO.
+                    quantity to buy in {purchaseUnitSymbol(data, line.itemId)}; Seramet converts it
+                    for you.
                   </div>
                 )}
             </div>

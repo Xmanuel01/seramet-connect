@@ -11,6 +11,7 @@ it("lists restaurant administration in System, most used first, without the UI k
   expect(systemItems(allPermissionCodes)).toEqual([
     ["Settings", "/settings"],
     ["Setup Centre", "/seramet-setup"],
+    ["Menu Import", "/menu-import"],
     ["Printers & Devices", "/seramet-printers"],
     ["Integrations", "/integrations"],
     ["System Health", "/system-health"],

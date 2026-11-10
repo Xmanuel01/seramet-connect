@@ -95,8 +95,8 @@ function Requisitions() {
 
   return (
     <AppShell
-      title="Requisitions"
-      subtitle={`Internal purchase requests before PO creation - ${branchLabel}`}
+      title="Stock requests"
+      subtitle={branchLabel}
       actions={
         <>
           <Btn disabled={!authoritative} onClick={() => void control.refresh()}>
@@ -131,14 +131,14 @@ function Requisitions() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Requisition writes require the authoritative server database. Backend: ${backendStatus}.`
+            ? "Can't reach Seramet right now. Check your connection, then refresh."
             : notice || control.error}
         </div>
       )}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
         <Panel className="self-start">
-          <PanelHead title="Requisition queue" sub={`${rows.length} recent requests`} />
+          <PanelHead title="Requests" sub={`${rows.length} recent`} />
           <div className="divide-y divide-border">
             {rows.map((row) => (
               <button
@@ -254,8 +254,7 @@ function Requisitions() {
             </>
           ) : (
             <div className="p-8 text-center text-[13px] text-muted-foreground">
-              Requisitions created here will enter the approval queue before a purchase order is
-              raised.
+              No stock requests yet. A manager approves each request before it is ordered.
             </div>
           )}
         </Panel>

@@ -58,7 +58,7 @@ function Breakages() {
   return (
     <AppShell
       title="Breakages"
-      subtitle={`${branchLabel} - assets, smallwares and service-item damage register`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"
@@ -277,7 +277,7 @@ function BreakageForm({
           />
         </Field>
         <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground md:col-span-2">
-          Notes / evidence reference
+          Notes
           <input
             className={inputClass}
             value={notes}

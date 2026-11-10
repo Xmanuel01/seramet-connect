@@ -324,7 +324,7 @@ function StockCount() {
   return (
     <AppShell
       title="Stock count"
-      subtitle={`${branchLabel} - stock counts and approving differences`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"
@@ -337,7 +337,7 @@ function StockCount() {
     >
       {(notice || control.error || loading) && (
         <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
-          {notice || control.error || "Loading authoritative stock counts..."}
+          {notice || control.error || "Loading stock counts…"}
         </div>
       )}
       {isAllBranches && (
@@ -695,8 +695,7 @@ function StockCount() {
 
               {selectedSummary?.status === "POSTED" && (
                 <div className="border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
-                  This session is posted and immutable. Corrections must be made through a new stock
-                  count or an authorized inventory adjustment.
+                  This count is final. To correct it, start a new count or record a correction.
                 </div>
               )}
             </>

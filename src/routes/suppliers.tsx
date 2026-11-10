@@ -131,7 +131,7 @@ function Suppliers() {
   return (
     <AppShell
       title="Suppliers"
-      subtitle={`Supplier master, purchasing terms and item relationships - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <InventoryActionLink to="/supplier-performance">Supplier performance</InventoryActionLink>
@@ -158,7 +158,7 @@ function Suppliers() {
       {(!authoritative || notice || control.error) && (
         <div className="mt-3 rounded-md border border-border bg-secondary/50 px-3 py-2 text-[12px] text-muted-foreground">
           {!authoritative
-            ? `Supplier changes require the authoritative server database. Backend: ${backendStatus}.`
+            ? "Can't reach Seramet right now. Check your connection, then refresh."
             : notice || control.error}
         </div>
       )}
@@ -237,7 +237,7 @@ function Suppliers() {
                 />
                 <Info label="On-time receipts" value={onTimeLabel(selected)} />
                 <Info
-                  label="Branch evidence"
+                  label="This branch"
                   value={`${selected.branchIds.length} branch${selected.branchIds.length === 1 ? "" : "es"}`}
                 />
               </div>

@@ -81,7 +81,7 @@ function Cookbook() {
   return (
     <AppShell
       title="Cookbook"
-      subtitle={`Kitchen methods and standards - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <Btn
           disabled={!authoritative || busy || isAllBranches}
@@ -116,7 +116,7 @@ function Cookbook() {
             cookbook.error ||
             (isAllBranches
               ? "Select a branch to view and manage the operational cookbook."
-              : "Cookbook requires the authoritative Seramet server.")}
+              : "Can't reach Seramet right now. Check your connection, then refresh.")}
         </div>
       )}
 

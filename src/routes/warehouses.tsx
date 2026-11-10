@@ -58,7 +58,7 @@ function Warehouses() {
   return (
     <AppShell
       title="Warehouses & stores"
-      subtitle={`${branchLabel} - where your stock is stored`}
+      subtitle={branchLabel}
       actions={
         <Btn
           variant="primary"

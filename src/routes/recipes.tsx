@@ -124,7 +124,7 @@ function Recipes() {
   return (
     <AppShell
       title="Recipes"
-      subtitle={`Costing, versioning and portion control - ${branchLabel}`}
+      subtitle={branchLabel}
       actions={
         <>
           <Btn disabled={!canManage || busy} onClick={() => setImportOpen(true)}>
@@ -163,7 +163,7 @@ function Recipes() {
           {notice ||
             control.error ||
             (!authoritative
-              ? "Recipe management requires the authoritative Seramet server."
+              ? "Can't reach Seramet right now. Check your connection, then refresh."
               : "All branches is read-only. Select a branch to create, edit or import recipes.")}
         </div>
       )}
@@ -239,7 +239,7 @@ function Recipes() {
               <tr>
                 <TD colSpan={8} className="py-10 text-center text-muted-foreground">
                   {control.status === "loading"
-                    ? "Loading authoritative recipes…"
+                    ? "Loading recipes…"
                     : search
                       ? "No recipes match this search."
                       : "No recipes have been configured for this branch."}
@@ -363,7 +363,7 @@ function Recipes() {
                 setEditor(null);
               },
               editor.recipe
-                ? "New immutable recipe version saved."
+                ? "Recipe saved as a new version."
                 : "Recipe created with its first costed version.",
             )
           }
@@ -402,7 +402,7 @@ function Recipes() {
                 );
               }
               setImportOpen(false);
-            }, `${preview.recipeCount} recipes imported as authoritative recipe versions.`)
+            }, `${preview.recipeCount} recipes imported.`)
           }
         />
       )}
@@ -746,7 +746,7 @@ function RecipeEditorDialog({
         )}
         <div className="mt-4 rounded-md bg-secondary/50 p-3 text-[12px] text-muted-foreground">
           {recipe
-            ? "Saving creates a new immutable recipe version. Historical production and costing keep their original version."
+            ? "Saving creates a new version. Past production and costs keep the version they used."
             : "The first version becomes active immediately. Production uses only the active version."}
         </div>
         <div className="mt-4 flex justify-end gap-2">
