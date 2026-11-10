@@ -710,7 +710,38 @@ export class OnboardingService {
       .bind(this.actor.tenantId)
       .first<{ id: string; slug: string; created_at: string }>();
     if (!tenant) throw notFound("Tenant not found");
+    // Sign-up creates the first branch before the owner chooses a country, so it starts on
+    // placeholder values (UTC, no currency). Until someone sets that branch's own values, it
+    // follows the business: otherwise every page would count the day in UTC.
+    const bootstrap = await this.db
+      .prepare(
+        "SELECT id,timezone,payload_json FROM branches WHERE tenant_id=? AND is_bootstrap=1 AND active=1",
+      )
+      .bind(this.actor.tenantId)
+      .all<{ id: string; timezone: string; payload_json: string }>();
+    const branchUpdates = (bootstrap.results ?? []).flatMap((branch) => {
+      const payload = JSON.parse(branch.payload_json || "{}") as { currency?: string };
+      const placeholderZone = branch.timezone === "UTC" && input.timezone !== "UTC";
+      const placeholderCurrency = !payload.currency || payload.currency === "XXX";
+      if (!placeholderZone && !placeholderCurrency) return [];
+      return [
+        this.db
+          .prepare(
+            "UPDATE branches SET timezone=?,payload_json=?,version=version+1 WHERE tenant_id=? AND id=?",
+          )
+          .bind(
+            placeholderZone ? input.timezone : branch.timezone,
+            json({
+              ...payload,
+              ...(placeholderCurrency ? { currency: input.defaultCurrency } : {}),
+            }),
+            this.actor.tenantId,
+            branch.id,
+          ),
+      ];
+    });
     await this.db.batch([
+      ...branchUpdates,
       this.db
         .prepare(
           `UPDATE tenants SET legal_name=?,trading_name=?,default_currency=?,timezone=?,locale=?,
