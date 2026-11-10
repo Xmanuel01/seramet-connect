@@ -30,7 +30,6 @@ import {
   resolvePosTimeZone,
 } from "@/lib/pos-workflow";
 import { activeKitchenPrintBypass } from "@/lib/kitchen-print-bypass";
-import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { permissions } from "@/platform/permissions";
 import { connectionPresentation, syncActivityLabel } from "@/lib/pos-sync-status";
 import { shouldHydratePosOrder } from "@/lib/transaction-refresh-coordinator";
@@ -317,10 +316,6 @@ function POS() {
     printCustomerDocument,
   } = useSerametPrintQueue(branchId);
 
-  const unresolvedKitchenTickets = kitchenPrintRecoveryItems(
-    transactionState.kitchenPrintObligations ?? [],
-    branchId,
-  );
   const selectedChannel =
     orderChannels.find((channel) => channel.id === orderSource) ?? orderChannels[0];
   const connectivity = connectionPresentation(backendStatus);
@@ -1337,538 +1332,763 @@ function POS() {
         userName: currentUser.name,
       }}
     >
-      <div className="flex flex-col gap-3 border-b border-border bg-card px-4 py-3 sm:flex-row sm:items-center">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
-            Seramet POS
-          </span>
-          <Status>{workflowState}</Status>
-          <span className="text-[13px] text-muted-foreground">
-            {branch} - {role} {currentUser.name}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <button
-            type="button"
-            disabled={!selectedChannel?.requiresTable}
-            onClick={() => setTablePickerOpen(true)}
-            className={cn(
-              "rounded-md border px-2 py-1 text-[12px] font-semibold transition-colors",
-              orderTable
-                ? "border-primary/30 bg-accent text-accent-foreground"
-                : "border-border bg-secondary",
-              !selectedChannel?.requiresTable && "cursor-default opacity-70",
-            )}
-          >
-            {selectedChannel?.requiresTable
-              ? orderTable
-                ? `Table ${orderTable}`
-                : "Select table"
-              : "No table required"}
-          </button>
-          <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
-            {selectedChannel?.displayName ?? "No channel configured"}
-          </span>
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-[12px] font-medium",
-              connectivity.health === "online" ? "text-emerald-700" : "text-amber-700",
-            )}
-            aria-label={`Connection: ${connectivity.label}`}
-          >
-            {connectivity.health === "online" ? (
-              <Wifi className="h-3.5 w-3.5" />
-            ) : connectivity.health === "offline" || connectivity.health === "warning" ? (
-              <WifiOff className="h-3.5 w-3.5" />
-            ) : (
-              <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
-            )}
-            {connectivity.label}
-          </span>
-          {syncActivity && (
-            <span
-              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
-              aria-live="polite"
-              title={syncActivity}
-            >
-              {(offlineReplayInProgress || activeMutationCount > 0) && (
-                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
-              )}
-              {syncActivity}
+      {/* On wide screens the POS fills the space under the top bar exactly, so the order
+          panel's buttons stay on screen whatever notices appear above the columns. */}
+      <div className="lg:flex lg:h-[calc(100dvh-4rem)] lg:flex-col">
+        <div className="flex flex-col gap-3 border-b border-border bg-card px-4 py-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="text-[13px] font-extrabold uppercase tracking-[0.14em]">
+              Seramet POS
             </span>
-          )}
-          <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" />
-            <PosClock locale={tenant.locale || activeLocale()} timeZone={clockTimeZone} />
-          </span>
-        </div>
-      </div>
-
-      {printBypass && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-foreground"
-        >
-          <Printer className="h-4 w-4 shrink-0 text-warning" />
-          <div className="min-w-0 flex-1">
-            <span className="font-bold">
-              Printer bypass is on until{" "}
-              {formatBypassEnd(printBypass.until, tenant.locale, clockTimeZone)}.
-            </span>{" "}
-            Orders go to the kitchen without printed tickets; tell the kitchen by hand.
+            <Status>{workflowState}</Status>
+            <span className="text-[13px] text-muted-foreground">
+              {branch} - {role} {currentUser.name}
+            </span>
           </div>
-          {hasPermission(permissions.settingsHardwareView) && (
-            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Printers</Btn>
-          )}
-        </div>
-      )}
-      {unresolvedKitchenTickets.length > 0 && (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-foreground"
-        >
-          <Printer className="h-4 w-4 shrink-0 text-warning" />
-          <div className="min-w-0 flex-1">
-            <span className="font-bold">
-              {unresolvedKitchenTickets.length} kitchen print obligation(s) require attention.
-            </span>{" "}
-            Orders are saved, but ticket delivery is pending or uncertain. Check the actual kitchen
-            output before any retry.
-          </div>
-          {hasPermission(permissions.settingsHardwareView) ? (
-            <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Review tickets</Btn>
-          ) : (
-            <span className="font-semibold">Notify a manager to review Printers & Devices.</span>
-          )}
-        </div>
-      )}
-
-      <div className="grid gap-0 lg:grid-cols-[132px_minmax(0,1fr)_360px]">
-        <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-[calc(100vh-8rem)] lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
-          {posCategories.map((c) => (
-            <button
-              key={c}
-              onClick={() => {
-                setCat(c);
-                setMenuLimit(INITIAL_POS_MENU_ITEMS);
-              }}
-              className={cn(
-                "shrink-0 rounded-lg px-3 py-2.5 text-left text-[13px] font-semibold transition-colors lg:w-full",
-                cat === c
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-secondary/60 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <span className="block truncate">{c}</span>
-              <span className="mt-0.5 block text-[10px] font-medium opacity-70">
-                {c === "All items"
-                  ? branchMenu.length
-                  : branchMenu.filter((item) => item.category === c).length}{" "}
-                items
-              </span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="min-w-0 p-4">
-          <div className="relative mb-2 flex flex-wrap gap-1.5 overflow-visible rounded-lg bg-card p-1.5">
-            {orderChannels.map((source) => (
-              <button
-                key={source.id}
-                onClick={() => {
-                  chooseChannel(source.id);
-                }}
-                disabled={channelLocked && orderSource !== source.id}
-                title={channelLocked ? "Order channel is locked after kitchen send" : undefined}
-                className={cn(
-                  "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-                  orderSource === source.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                )}
-              >
-                {source.displayName}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             <button
               type="button"
-              onClick={() => setActiveOrdersOpen((open) => !open)}
+              disabled={!selectedChannel?.requiresTable}
+              onClick={() => setTablePickerOpen(true)}
               className={cn(
-                "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
-                activeOrdersOpen
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-secondary text-foreground hover:bg-secondary/80",
+                "rounded-md border px-2 py-1 text-[12px] font-semibold transition-colors",
+                orderTable
+                  ? "border-primary/30 bg-accent text-accent-foreground"
+                  : "border-border bg-secondary",
+                !selectedChannel?.requiresTable && "cursor-default opacity-70",
               )}
             >
-              <Plus className="h-4 w-4" />
-              Orders
-              <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px]">
-                {activePosOrders.length}
-              </span>
+              {selectedChannel?.requiresTable
+                ? orderTable
+                  ? `Table ${orderTable}`
+                  : "Select table"
+                : "No table required"}
             </button>
-            {activeOrdersOpen && (
-              <div className="absolute right-1 top-12 z-30 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-border bg-card p-2 shadow-xl">
-                <div className="px-2 py-1 text-[12px] font-bold">Active orders</div>
-                <div className="max-h-80 space-y-1 overflow-y-auto">
-                  {activePosOrders.length === 0 && (
-                    <div className="rounded-md border border-dashed border-border px-3 py-4 text-[12px] text-muted-foreground">
-                      No held or kitchen orders waiting in POS.
-                    </div>
+            <span className="rounded-md bg-secondary px-2 py-1 text-[12px] font-semibold">
+              {selectedChannel?.displayName ?? "No channel configured"}
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-[12px] font-medium",
+                connectivity.health === "online" ? "text-emerald-700" : "text-amber-700",
+              )}
+              aria-label={`Connection: ${connectivity.label}`}
+            >
+              {connectivity.health === "online" ? (
+                <Wifi className="h-3.5 w-3.5" />
+              ) : connectivity.health === "offline" || connectivity.health === "warning" ? (
+                <WifiOff className="h-3.5 w-3.5" />
+              ) : (
+                <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+              )}
+              {connectivity.label}
+            </span>
+            {syncActivity && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
+                aria-live="polite"
+                title={syncActivity}
+              >
+                {(offlineReplayInProgress || activeMutationCount > 0) && (
+                  <RefreshCcw className="h-3.5 w-3.5 animate-spin" />
+                )}
+                {syncActivity}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" />
+              <PosClock locale={tenant.locale || activeLocale()} timeZone={clockTimeZone} />
+            </span>
+          </div>
+        </div>
+
+        {printBypass && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-3 border-b border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-foreground"
+          >
+            <Printer className="h-4 w-4 shrink-0 text-warning" />
+            <div className="min-w-0 flex-1">
+              <span className="font-bold">
+                Printer bypass is on until{" "}
+                {formatBypassEnd(printBypass.until, tenant.locale, clockTimeZone)}.
+              </span>{" "}
+              Orders go to the kitchen without printed tickets; tell the kitchen by hand.
+            </div>
+            {hasPermission(permissions.settingsHardwareView) && (
+              <Btn onClick={() => void navigate({ to: "/seramet-printers" })}>Printers</Btn>
+            )}
+          </div>
+        )}
+        <div className="grid gap-0 lg:min-h-0 lg:flex-1 lg:grid-cols-[132px_minmax(0,1fr)_360px]">
+          <nav className="flex gap-1.5 overflow-x-auto border-b border-border bg-card p-2 lg:h-full lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
+            {posCategories.map((c) => (
+              <button
+                key={c}
+                onClick={() => {
+                  setCat(c);
+                  setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                }}
+                className={cn(
+                  "shrink-0 rounded-lg px-3 py-2.5 text-left text-[13px] font-semibold transition-colors lg:w-full",
+                  cat === c
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary/60 text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <span className="block truncate">{c}</span>
+                <span className="mt-0.5 block text-[10px] font-medium opacity-70">
+                  {c === "All items"
+                    ? branchMenu.length
+                    : branchMenu.filter((item) => item.category === c).length}{" "}
+                  items
+                </span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="min-w-0 p-4 lg:h-full lg:overflow-y-auto">
+            <div className="relative mb-2 flex flex-wrap gap-1.5 overflow-visible rounded-lg bg-card p-1.5">
+              {orderChannels.map((source) => (
+                <button
+                  key={source.id}
+                  onClick={() => {
+                    chooseChannel(source.id);
+                  }}
+                  disabled={channelLocked && orderSource !== source.id}
+                  title={channelLocked ? "Order channel is locked after kitchen send" : undefined}
+                  className={cn(
+                    "min-h-9 shrink-0 rounded-md px-3 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                    orderSource === source.id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
-                  {activePosOrders.map((order) => (
-                    <button
-                      key={order.id}
-                      type="button"
+                >
+                  {source.displayName}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setActiveOrdersOpen((open) => !open)}
+                className={cn(
+                  "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
+                  activeOrdersOpen
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-foreground hover:bg-secondary/80",
+                )}
+              >
+                <Plus className="h-4 w-4" />
+                Orders
+                <span className="rounded bg-primary-foreground/20 px-1.5 py-0.5 text-[10px]">
+                  {activePosOrders.length}
+                </span>
+              </button>
+              {activeOrdersOpen && (
+                <div className="absolute right-1 top-12 z-30 w-[min(360px,calc(100vw-2rem))] rounded-lg border border-border bg-card p-2 shadow-xl">
+                  <div className="px-2 py-1 text-[12px] font-bold">Active orders</div>
+                  <div className="max-h-80 space-y-1 overflow-y-auto">
+                    {activePosOrders.length === 0 && (
+                      <div className="rounded-md border border-dashed border-border px-3 py-4 text-[12px] text-muted-foreground">
+                        No held or kitchen orders waiting in POS.
+                      </div>
+                    )}
+                    {activePosOrders.map((order) => (
+                      <button
+                        key={order.id}
+                        type="button"
+                        onClick={() => {
+                          hydratedOrderIdRef.current = null;
+                          setActiveOrderId(order.id);
+                          setActiveOrdersOpen(false);
+                        }}
+                        className={cn(
+                          "w-full rounded-md border px-3 py-2 text-left transition-colors hover:bg-secondary",
+                          activeOrderId === order.id ? "border-primary bg-accent" : "border-border",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="num text-[12px] font-bold">{order.id}</span>
+                          <Status>{order.status.replaceAll("_", " ")}</Status>
+                        </div>
+                        <div className="mt-1 truncate text-[12px] text-muted-foreground">
+                          {order.table ? `Table ${order.table}` : order.channel} - {order.customer}{" "}
+                          - {order.lines.length} lines - {ksh(order.total)}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="mb-3 flex min-w-0 items-center gap-2">
+              <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <input
+                  value={searchQuery}
+                  onChange={(event) => {
+                    setSearchQuery(event.target.value);
+                    setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    const exact = branchMenu.find((product) =>
+                      [product.barcode, product.sku, product.itemCode].some(
+                        (value) =>
+                          value?.trim().toLocaleLowerCase() ===
+                          searchQuery.trim().toLocaleLowerCase(),
+                      ),
+                    );
+                    if (!exact || exact.out) return;
+                    event.preventDefault();
+                    bump(exact.id, 1);
+                    setSearchQuery("");
+                    setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                  }}
+                  placeholder="Search dishes or scan barcode"
+                  className="w-full bg-transparent text-[13px] outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setMenuLimit(INITIAL_POS_MENU_ITEMS);
+                    }}
+                    className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <PosCustomerPicker
+                compact
+                value={linkedCustomer}
+                disabled={
+                  backendStatus !== "synced" ||
+                  Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
+                }
+                onSelect={(customer) => {
+                  setRecoverCustomerId(null);
+                  setCustomerSelection({
+                    tenantId: activeTenantId,
+                    branchId,
+                    orderId: activeOrder?.id ?? null,
+                    customer,
+                  });
+                }}
+              />
+            </div>
+            {isOnlineSource && (
+              <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
+                {selectedChannel?.displayName} selected: menu cards now use online prices and
+                settlement defaults to partner credit where required.
+              </div>
+            )}
+            {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                {selectedChannel.requiresCustomer && !linkedCustomer && (
+                  <label className="grid gap-1 text-xs font-semibold">
+                    Customer name
+                    <input
+                      value={recipientName}
+                      onChange={(event) => setRecipientName(event.target.value)}
+                      maxLength={120}
+                      disabled={
+                        channelLocked && Boolean(activeOrder?.delivery?.recipientName?.trim())
+                      }
+                      autoComplete="off"
+                      className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                    />
+                  </label>
+                )}
+                {selectedChannel.requiresAddress && (
+                  <label className="grid gap-1 text-xs font-semibold">
+                    Delivery address
+                    <input
+                      value={deliveryAddress}
+                      onChange={(event) => setDeliveryAddress(event.target.value)}
+                      maxLength={500}
+                      disabled={channelLocked && Boolean(activeOrder?.delivery?.address?.trim())}
+                      autoComplete="off"
+                      className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+            {operationalMenu.status === "error" && (
+              <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
+                Authoritative menu unavailable: {operationalMenu.error}
+              </div>
+            )}
+            {operationalMenu.status === "ready" && branchMenu.length === 0 && (
+              <div className="mb-3 rounded-lg border border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
+                No sellable menu items are configured for this branch. Use Setup Centre or Menu
+                Import before taking orders.
+              </div>
+            )}
+            {branchMenu.length > 0 && visible.length === 0 && (
+              <div className="mb-3 rounded-lg border border-dashed border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
+                No menu items match “{searchQuery}” in {cat}.
+              </div>
+            )}
+            <div
+              aria-label="Scrollable POS menu"
+              className="relative max-h-[min(76vh,980px)] overflow-y-auto overscroll-contain rounded-lg"
+              onScroll={(event) => {
+                if (
+                  shouldLoadNextPosMenuPage({
+                    scrollTop: event.currentTarget.scrollTop,
+                    scrollHeight: event.currentTarget.scrollHeight,
+                    clientHeight: event.currentTarget.clientHeight,
+                    displayed: renderedMenu.length,
+                    total: visible.length,
+                  })
+                )
+                  setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE);
+              }}
+            >
+              <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 xl:grid-cols-4">
+                {renderedMenu.map((p) => {
+                  const qty = lines[p.id] ?? 0;
+                  const imageSrc = productImageSource(p);
+
+                  return (
+                    <article
+                      key={p.id}
+                      role="button"
+                      tabIndex={p.out ? -1 : 0}
+                      aria-disabled={p.out}
+                      aria-label={`Add ${p.name} to order`}
                       onClick={() => {
-                        hydratedOrderIdRef.current = null;
-                        setActiveOrderId(order.id);
-                        setActiveOrdersOpen(false);
+                        if (!p.out) bump(p.id, 1);
+                      }}
+                      onKeyDown={(event) => {
+                        if (p.out || (event.key !== "Enter" && event.key !== " ")) return;
+                        event.preventDefault();
+                        bump(p.id, 1);
                       }}
                       className={cn(
-                        "w-full rounded-md border px-3 py-2 text-left transition-colors hover:bg-secondary",
-                        activeOrderId === order.id ? "border-primary bg-accent" : "border-border",
+                        "group rounded-xl border border-border bg-card p-2.5 text-left shadow-card transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
+                        p.out
+                          ? "opacity-50"
+                          : "cursor-pointer hover:-translate-y-0.5 hover:border-primary",
+                        qty ? "border-primary ring-1 ring-primary/25" : "",
                       )}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="num text-[12px] font-bold">{order.id}</span>
-                        <Status>{order.status.replaceAll("_", " ")}</Status>
+                      <div className="relative mb-2 overflow-hidden rounded-lg border border-border bg-secondary/60 aspect-[1.45/1]">
+                        <div
+                          className={cn(
+                            "absolute inset-0 grid place-items-center",
+                            productFallbackTone(p.category),
+                          )}
+                        >
+                          <div className="grid h-14 w-14 place-items-center rounded-full border border-card/80 bg-card/85 text-[13px] font-extrabold shadow-sm">
+                            {productInitials(p.name)}
+                          </div>
+                        </div>
+                        {imageSrc && (
+                          <img
+                            src={imageSrc}
+                            alt={p.name}
+                            loading="lazy"
+                            className="relative z-10 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                            onError={(event) => {
+                              event.currentTarget.style.display = "none";
+                            }}
+                          />
+                        )}
+                        {p.popular && (
+                          <span className="absolute right-2 top-2 z-20 grid h-6 w-6 place-items-center rounded-full border border-border bg-card/90 shadow-sm">
+                            <Flame className="h-3.5 w-3.5 text-warning" />
+                          </span>
+                        )}
                       </div>
-                      <div className="mt-1 truncate text-[12px] text-muted-foreground">
-                        {order.table ? `Table ${order.table}` : order.channel} - {order.customer} -{" "}
-                        {order.lines.length} lines - {ksh(order.total)}
+                      <div className="min-w-0 px-0.5">
+                        <div className="truncate text-[11px] text-muted-foreground">
+                          {p.category}
+                        </div>
+                        <div className="mt-0.5 truncate text-[13px] font-bold">{p.name}</div>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className="num text-[13px] font-extrabold">{ksh(p.price)}</span>
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            {p.out
+                              ? "86'd"
+                              : p.availabilityPortions !== undefined && p.availabilityPortions <= 5
+                                ? `${p.availabilityPortions} left`
+                                : `${p.prep} min`}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="truncate text-[10px] text-muted-foreground">
+                            {p.productionStation ?? "NONE"}
+                          </span>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                bump(p.id, -1);
+                              }}
+                              className="grid h-6 w-6 place-items-center rounded-full border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-secondary disabled:opacity-40"
+                              aria-label={`Remove ${p.name}`}
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <span className="num w-4 text-center text-[12px] font-bold">{qty}</span>
+                            <button
+                              type="button"
+                              disabled={p.out}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                bump(p.id, 1);
+                              }}
+                              className="grid h-6 w-6 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
+                              aria-label={`Add ${p.name}`}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {visible.length > renderedMenu.length && (
+                <div className="sticky bottom-0 flex justify-center bg-gradient-to-t from-card via-card/95 to-transparent px-2 pb-2 pt-9">
+                  <Btn onClick={() => setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE)}>
+                    Show next {Math.min(POS_MENU_PAGE_SIZE, visible.length - renderedMenu.length)}{" "}
+                    of {visible.length}
+                  </Btn>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <aside className="flex flex-col border-t border-border bg-card lg:h-full lg:min-h-0 lg:border-l lg:border-t-0">
+            <div className="border-b border-border px-4 py-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[14px] font-bold">Order {currentOrderNumber}</div>
+                  <div className="text-[12px] text-muted-foreground">{orderContextLabel}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Status>{activeOrder?.status.replaceAll("_", " ") ?? "New"}</Status>
+                  {activeOrder && !hasUnsentItems && (
+                    <button
+                      type="button"
+                      onClick={() => clearCurrentOrder()}
+                      aria-label={`Close ${activeOrder.id}`}
+                      className="rounded-md p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex-1 divide-y divide-border overflow-y-auto">
+              {items.length === 0 && (
+                <p className="p-6 text-center text-[13px] text-muted-foreground">
+                  Tap a dish to start the order.
+                </p>
+              )}
+              {items.map((l) => {
+                const sentQuantity = sentQuantities[l.p.id] ?? 0;
+                return (
+                  <div key={l.p.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-[13px] font-semibold">{l.p.name}</div>
+                      <div className="text-[11px] text-muted-foreground">{ksh(l.p.price)} each</div>
+                      {sentQuantity > 0 && (
+                        <div className="mt-1 text-[10px] font-semibold uppercase text-primary">
+                          {sentQuantity} sent / {Math.max(0, l.qty - sentQuantity)} unsent
+                        </div>
+                      )}
+                      <input
+                        value={itemNotes[l.p.id] ?? ""}
+                        onChange={(event) =>
+                          setItemNotes((current) => ({ ...current, [l.p.id]: event.target.value }))
+                        }
+                        placeholder="Item note"
+                        disabled={l.qty <= sentQuantity}
+                        className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-[12px] outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => bump(l.p.id, -1)}
+                        disabled={l.qty <= sentQuantity}
+                        className="grid h-7 w-7 place-items-center rounded-md border border-border disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="num w-5 text-center text-[13px] font-bold">{l.qty}</span>
+                      <button
+                        onClick={() => bump(l.p.id, 1)}
+                        className="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                      <span className="num w-16 text-right text-[13px] font-bold">
+                        {ksh(l.p.price * l.qty)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="border-t border-border p-4">
+              <textarea
+                value={kitchenNote}
+                onChange={(event) => setKitchenNote(event.target.value)}
+                placeholder="Special request for kitchen or bar"
+                rows={2}
+                className="mb-3 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-[12px] outline-none focus:border-primary"
+              />
+              <dl className="space-y-1.5 text-[13px]">
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Subtotal</dt>
+                  <dd className="num">{ksh(subtotal)}</dd>
+                </div>
+                <div className="flex justify-between text-muted-foreground">
+                  <dt>Tax and service</dt>
+                  <dd className="num">{ksh(tax)}</dd>
+                </div>
+                <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
+                  <dt>Total</dt>
+                  <dd className="num">{ksh(total)}</dd>
+                </div>
+              </dl>
+              {/* Place Order sends new items to the kitchen; Bill turns a sent order
+                into an unpaid invoice. */}
+              <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+                <Btn
+                  className="h-12"
+                  onClick={holdOrder}
+                  disabled={
+                    orderActionBusy ||
+                    selectedOrderUnavailable ||
+                    !items.length ||
+                    activeOrderHasSentLines
+                  }
+                >
+                  Hold
+                </Btn>
+                {/* Stays available after sending: it also re-confirms a kitchen ticket
+                  whose delivery is uncertain, without printing a duplicate. */}
+                <Btn
+                  variant={billReady ? undefined : "primary"}
+                  className="h-12 text-[15px]"
+                  onClick={queueKitchenTickets}
+                  disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
+                >
+                  {orderActionBusy ? "Working..." : "Place Order"}
+                </Btn>
+                <Btn
+                  variant={billReady ? "primary" : undefined}
+                  className="h-12 text-[15px]"
+                  onClick={() => setBillConfirmOpen(true)}
+                  disabled={orderActionBusy || selectedOrderUnavailable || !billReady}
+                  title={billReady ? undefined : "Open a sent order from Orders to bill it."}
+                >
+                  Bill {ksh(total)}
+                </Btn>
+              </div>
+              {(printNotice !== IDLE_PRINT_NOTICE || trackedPrint || configurationError) && (
+                <div
+                  className={cn(
+                    "mt-3 rounded-lg border p-3",
+                    printNoticeType === "success"
+                      ? "border-success/30 bg-success-soft text-success"
+                      : printNoticeType === "warning"
+                        ? "border-warning/30 bg-warning-soft text-warning"
+                        : "border-border bg-secondary/40 text-muted-foreground",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    {printNoticeType === "success" ? (
+                      <CheckCircle2 className="h-5 w-5 shrink-0" />
+                    ) : (
+                      <Printer className="h-4 w-4 shrink-0 text-primary" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
+                      <div className="mt-0.5 text-[11px]">
+                        {trackedPrint
+                          ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
+                          : "Operational feedback and printing state appear here."}
+                      </div>
+                      {(configurationError ||
+                        (printNoticeType === "warning" && /printer/i.test(printNotice))) && (
+                        <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+                          <Link to="/seramet-printers" className="underline">
+                            Check printers and kitchen routes
+                          </Link>
+                          <Link
+                            to="/seramet-setup"
+                            search={{ section: "DOCUMENTS" }}
+                            className="underline"
+                          >
+                            Review document settings
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+        <Dialog open={tablePickerOpen} onOpenChange={setTablePickerOpen}>
+          <DialogContent className="max-w-[920px] border-border bg-card">
+            <DialogHeader>
+              <DialogTitle>Select table</DialogTitle>
+              <DialogDescription>
+                Choose a free table for this order, or open the existing order on an occupied table.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <div>
+                <div className="mb-3 flex flex-wrap gap-3 text-[12px] text-muted-foreground">
+                  {Object.keys(tableStateStyle).map((state) => (
+                    <span key={state} className="inline-flex items-center gap-1.5">
+                      <span className={cn("h-3 w-3 rounded border", tableStateStyle[state])} />{" "}
+                      {state}
+                    </span>
+                  ))}
+                </div>
+                {floorTables.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-border p-6 text-sm">
+                    <p className="font-semibold">No tables are set up for this branch yet.</p>
+                    <p className="mt-1 text-muted-foreground">
+                      Add your tables once and they will appear here for every dine-in order.
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <AddTableDialog
+                        branchLabel={branchLabel}
+                        existingCount={0}
+                        areas={branchServiceAreas.map((area) => ({ id: area.id, name: area.name }))}
+                        onCreated={() => undefined}
+                      />
+                      <Link to="/tables" className="text-[13px] font-semibold underline">
+                        Manage tables and dining areas
+                      </Link>
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  {floorTables.map((table) => (
+                    <button
+                      key={table.no}
+                      type="button"
+                      disabled={table.state === "Unavailable"}
+                      onClick={() => selectOrOpenTable(table)}
+                      className={cn(
+                        "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
+                        tableStateStyle[table.state],
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-[15px] font-extrabold">Table {table.no}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {table.seats} seats
+                        </span>
+                      </div>
+                      <div className="mt-2">
+                        <Status>{table.state}</Status>
+                      </div>
+                      <div className="mt-2.5 space-y-1 text-[12px] text-muted-foreground">
+                        <div className="flex justify-between">
+                          <span>Area</span>
+                          <span className="font-semibold text-foreground">{table.area}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Guests</span>
+                          <span className="num font-semibold text-foreground">
+                            {table.guests ?? 0}
+                          </span>
+                        </div>
+                        {table.orderId && (
+                          <div className="flex justify-between gap-2">
+                            <span>Order</span>
+                            <span className="num truncate font-semibold text-foreground">
+                              {table.orderId}
+                            </span>
+                          </div>
+                        )}
+                        {table.orderStatus && (
+                          <div className="flex justify-between gap-2">
+                            <span>Status</span>
+                            <span className="font-semibold text-foreground">
+                              {table.orderStatus.replaceAll("_", " ")}
+                            </span>
+                          </div>
+                        )}
+                        {table.amount !== undefined && (
+                          <div className="flex justify-between">
+                            <span>Open value</span>
+                            <span className="num font-semibold text-foreground">
+                              {ksh(table.amount)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </button>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
-          <div className="mb-3 flex min-w-0 items-center gap-2">
-            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3">
-              <Search className="h-4 w-4 text-muted-foreground" />
-              <input
-                value={searchQuery}
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setMenuLimit(INITIAL_POS_MENU_ITEMS);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  const exact = branchMenu.find((product) =>
-                    [product.barcode, product.sku, product.itemCode].some(
-                      (value) =>
-                        value?.trim().toLocaleLowerCase() ===
-                        searchQuery.trim().toLocaleLowerCase(),
-                    ),
-                  );
-                  if (!exact || exact.out) return;
-                  event.preventDefault();
-                  bump(exact.id, 1);
-                  setSearchQuery("");
-                  setMenuLimit(INITIAL_POS_MENU_ITEMS);
-                }}
-                placeholder="Search dishes or scan barcode"
-                className="w-full bg-transparent text-[13px] outline-none"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setMenuLimit(INITIAL_POS_MENU_ITEMS);
-                  }}
-                  className="text-[11px] font-semibold text-muted-foreground hover:text-foreground"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <PosCustomerPicker
-              compact
-              value={linkedCustomer}
-              disabled={
-                backendStatus !== "synced" ||
-                Boolean(activeOrder && billedOrderIds.has(activeOrder.id))
-              }
-              onSelect={(customer) => {
-                setRecoverCustomerId(null);
-                setCustomerSelection({
-                  tenantId: activeTenantId,
-                  branchId,
-                  orderId: activeOrder?.id ?? null,
-                  customer,
-                });
-              }}
-            />
-          </div>
-          {isOnlineSource && (
-            <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-              {selectedChannel?.displayName} selected: menu cards now use online prices and
-              settlement defaults to partner credit where required.
-            </div>
-          )}
-          {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
-            <div className="mb-3 grid gap-2 sm:grid-cols-2">
-              {selectedChannel.requiresCustomer && !linkedCustomer && (
-                <label className="grid gap-1 text-xs font-semibold">
-                  Customer name
-                  <input
-                    value={recipientName}
-                    onChange={(event) => setRecipientName(event.target.value)}
-                    maxLength={120}
-                    disabled={
-                      channelLocked && Boolean(activeOrder?.delivery?.recipientName?.trim())
-                    }
-                    autoComplete="off"
-                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
-                  />
-                </label>
-              )}
-              {selectedChannel.requiresAddress && (
-                <label className="grid gap-1 text-xs font-semibold">
-                  Delivery address
-                  <input
-                    value={deliveryAddress}
-                    onChange={(event) => setDeliveryAddress(event.target.value)}
-                    maxLength={500}
-                    disabled={channelLocked && Boolean(activeOrder?.delivery?.address?.trim())}
-                    autoComplete="off"
-                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
-                  />
-                </label>
-              )}
-            </div>
-          )}
-          {operationalMenu.status === "error" && (
-            <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
-              Authoritative menu unavailable: {operationalMenu.error}
-            </div>
-          )}
-          {operationalMenu.status === "ready" && branchMenu.length === 0 && (
-            <div className="mb-3 rounded-lg border border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
-              No sellable menu items are configured for this branch. Use Setup Centre or Menu Import
-              before taking orders.
-            </div>
-          )}
-          {branchMenu.length > 0 && visible.length === 0 && (
-            <div className="mb-3 rounded-lg border border-dashed border-border bg-card px-3 py-4 text-[12px] text-muted-foreground">
-              No menu items match “{searchQuery}” in {cat}.
-            </div>
-          )}
-          <div
-            aria-label="Scrollable POS menu"
-            className="relative max-h-[min(76vh,980px)] overflow-y-auto overscroll-contain rounded-lg"
-            onScroll={(event) => {
-              if (
-                shouldLoadNextPosMenuPage({
-                  scrollTop: event.currentTarget.scrollTop,
-                  scrollHeight: event.currentTarget.scrollHeight,
-                  clientHeight: event.currentTarget.clientHeight,
-                  displayed: renderedMenu.length,
-                  total: visible.length,
-                })
-              )
-                setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE);
-            }}
-          >
-            <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 xl:grid-cols-4">
-              {renderedMenu.map((p) => {
-                const qty = lines[p.id] ?? 0;
-                const imageSrc = productImageSource(p);
-
-                return (
-                  <article
-                    key={p.id}
-                    role="button"
-                    tabIndex={p.out ? -1 : 0}
-                    aria-disabled={p.out}
-                    aria-label={`Add ${p.name} to order`}
-                    onClick={() => {
-                      if (!p.out) bump(p.id, 1);
-                    }}
-                    onKeyDown={(event) => {
-                      if (p.out || (event.key !== "Enter" && event.key !== " ")) return;
-                      event.preventDefault();
-                      bump(p.id, 1);
-                    }}
-                    className={cn(
-                      "group rounded-xl border border-border bg-card p-2.5 text-left shadow-card transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
-                      p.out
-                        ? "opacity-50"
-                        : "cursor-pointer hover:-translate-y-0.5 hover:border-primary",
-                      qty ? "border-primary ring-1 ring-primary/25" : "",
-                    )}
-                  >
-                    <div className="relative mb-2 overflow-hidden rounded-lg border border-border bg-secondary/60 aspect-[1.45/1]">
-                      <div
-                        className={cn(
-                          "absolute inset-0 grid place-items-center",
-                          productFallbackTone(p.category),
-                        )}
-                      >
-                        <div className="grid h-14 w-14 place-items-center rounded-full border border-card/80 bg-card/85 text-[13px] font-extrabold shadow-sm">
-                          {productInitials(p.name)}
-                        </div>
-                      </div>
-                      {imageSrc && (
-                        <img
-                          src={imageSrc}
-                          alt={p.name}
-                          loading="lazy"
-                          className="relative z-10 h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                          onError={(event) => {
-                            event.currentTarget.style.display = "none";
-                          }}
-                        />
-                      )}
-                      {p.popular && (
-                        <span className="absolute right-2 top-2 z-20 grid h-6 w-6 place-items-center rounded-full border border-border bg-card/90 shadow-sm">
-                          <Flame className="h-3.5 w-3.5 text-warning" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0 px-0.5">
-                      <div className="truncate text-[11px] text-muted-foreground">{p.category}</div>
-                      <div className="mt-0.5 truncate text-[13px] font-bold">{p.name}</div>
-                      <div className="mt-1 flex items-center justify-between gap-2">
-                        <span className="num text-[13px] font-extrabold">{ksh(p.price)}</span>
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          {p.out
-                            ? "86'd"
-                            : p.availabilityPortions !== undefined && p.availabilityPortions <= 5
-                              ? `${p.availabilityPortions} left`
-                              : `${p.prep} min`}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="truncate text-[10px] text-muted-foreground">
-                          {p.productionStation ?? "NONE"}
-                        </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={p.out || qty <= (sentQuantities[p.id] ?? 0)}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              bump(p.id, -1);
-                            }}
-                            className="grid h-6 w-6 place-items-center rounded-full border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-secondary disabled:opacity-40"
-                            aria-label={`Remove ${p.name}`}
-                          >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="num w-4 text-center text-[12px] font-bold">{qty}</span>
-                          <button
-                            type="button"
-                            disabled={p.out}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              bump(p.id, 1);
-                            }}
-                            className="grid h-6 w-6 place-items-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:opacity-40"
-                            aria-label={`Add ${p.name}`}
-                          >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-            {visible.length > renderedMenu.length && (
-              <div className="sticky bottom-0 flex justify-center bg-gradient-to-t from-card via-card/95 to-transparent px-2 pb-2 pt-9">
-                <Btn onClick={() => setMenuLimit((limit) => limit + POS_MENU_PAGE_SIZE)}>
-                  Show next {Math.min(POS_MENU_PAGE_SIZE, visible.length - renderedMenu.length)} of{" "}
-                  {visible.length}
-                </Btn>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <aside className="flex flex-col border-t border-border bg-card lg:h-[calc(100vh-8rem)] lg:border-l lg:border-t-0">
-          <div className="border-b border-border px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[14px] font-bold">Order {currentOrderNumber}</div>
-                <div className="text-[12px] text-muted-foreground">{orderContextLabel}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Status>{activeOrder?.status.replaceAll("_", " ") ?? "New"}</Status>
-                {activeOrder && !hasUnsentItems && (
-                  <button
-                    type="button"
-                    onClick={() => clearCurrentOrder()}
-                    aria-label={`Close ${activeOrder.id}`}
-                    className="rounded-md p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="flex-1 divide-y divide-border overflow-y-auto">
-            {items.length === 0 && (
-              <p className="p-6 text-center text-[13px] text-muted-foreground">
-                Tap a dish to start the order.
-              </p>
-            )}
-            {items.map((l) => {
-              const sentQuantity = sentQuantities[l.p.id] ?? 0;
-              return (
-                <div key={l.p.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-[13px] font-semibold">{l.p.name}</div>
-                    <div className="text-[11px] text-muted-foreground">{ksh(l.p.price)} each</div>
-                    {sentQuantity > 0 && (
-                      <div className="mt-1 text-[10px] font-semibold uppercase text-primary">
-                        {sentQuantity} sent / {Math.max(0, l.qty - sentQuantity)} unsent
-                      </div>
-                    )}
-                    <input
-                      value={itemNotes[l.p.id] ?? ""}
-                      onChange={(event) =>
-                        setItemNotes((current) => ({ ...current, [l.p.id]: event.target.value }))
-                      }
-                      placeholder="Item note"
-                      disabled={l.qty <= sentQuantity}
-                      className="mt-2 h-8 w-full rounded-md border border-border bg-background px-2 text-[12px] outline-none focus:border-primary"
-                    />
+              <aside className="rounded-xl border border-border bg-secondary/40 p-4">
+                <div className="text-[13px] font-bold">Order summary</div>
+                <dl className="mt-3 space-y-2 text-[12px]">
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Items</dt>
+                    <dd className="num font-semibold">
+                      {items.reduce((sum, item) => sum + item.qty, 0)}
+                    </dd>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => bump(l.p.id, -1)}
-                      disabled={l.qty <= sentQuantity}
-                      className="grid h-7 w-7 place-items-center rounded-md border border-border disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="num w-5 text-center text-[13px] font-bold">{l.qty}</span>
-                    <button
-                      onClick={() => bump(l.p.id, 1)}
-                      className="grid h-7 w-7 place-items-center rounded-md bg-primary text-primary-foreground"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="num w-16 text-right text-[13px] font-bold">
-                      {ksh(l.p.price * l.qty)}
-                    </span>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Subtotal</dt>
+                    <dd className="num font-semibold">{ksh(subtotal)}</dd>
                   </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Tax and service</dt>
+                    <dd className="num font-semibold">{ksh(tax)}</dd>
+                  </div>
+                  <div className="flex justify-between border-t border-border pt-2">
+                    <dt className="font-semibold">Total</dt>
+                    <dd className="num font-bold">{ksh(total)}</dd>
+                  </div>
+                </dl>
+                <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
+                  Selecting a free table does not send the order automatically. Review the order,
+                  then press Send kitchen. Occupied tables open their existing order instead of
+                  creating a duplicate.
                 </div>
-              );
-            })}
-          </div>
-          <div className="border-t border-border p-4">
-            <textarea
-              value={kitchenNote}
-              onChange={(event) => setKitchenNote(event.target.value)}
-              placeholder="Special request for kitchen or bar"
-              rows={2}
-              className="mb-3 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-[12px] outline-none focus:border-primary"
-            />
+              </aside>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={billConfirmOpen} onOpenChange={setBillConfirmOpen}>
+          <DialogContent className="max-w-[440px] border-border bg-card">
+            <DialogHeader>
+              <DialogTitle>Bill {currentOrderNumber}</DialogTitle>
+              <DialogDescription>{orderContextLabel}</DialogDescription>
+            </DialogHeader>
+            <div className="max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border">
+              {items.map((line) => (
+                <div key={line.p.id} className="flex justify-between gap-3 px-3 py-2 text-[13px]">
+                  <span className="min-w-0 truncate">
+                    {line.qty} x {line.p.name}
+                  </span>
+                  <span className="num shrink-0">{ksh(line.p.price * line.qty)}</span>
+                </div>
+              ))}
+            </div>
             <dl className="space-y-1.5 text-[13px]">
               <div className="flex justify-between text-muted-foreground">
                 <dt>Subtotal</dt>
@@ -1883,260 +2103,22 @@ function POS() {
                 <dd className="num">{ksh(total)}</dd>
               </div>
             </dl>
-            {/* Place Order sends new items to the kitchen; Bill turns a sent order
-                into an unpaid invoice. */}
-            <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] gap-2">
-              <Btn
-                className="h-12"
-                onClick={holdOrder}
-                disabled={
-                  orderActionBusy ||
-                  selectedOrderUnavailable ||
-                  !items.length ||
-                  activeOrderHasSentLines
-                }
-              >
-                Hold
-              </Btn>
-              {/* Stays available after sending: it also re-confirms a kitchen ticket
-                  whose delivery is uncertain, without printing a duplicate. */}
-              <Btn
-                variant={billReady ? undefined : "primary"}
-                className="h-12 text-[15px]"
-                onClick={queueKitchenTickets}
-                disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
-              >
-                {orderActionBusy ? "Working..." : "Place Order"}
+            <div className="flex justify-end gap-2 border-t border-border pt-4">
+              <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
+                Don't print bill
               </Btn>
               <Btn
-                variant={billReady ? "primary" : undefined}
-                className="h-12 text-[15px]"
-                onClick={() => setBillConfirmOpen(true)}
-                disabled={orderActionBusy || selectedOrderUnavailable || !billReady}
-                title={billReady ? undefined : "Open a sent order from Orders to bill it."}
+                variant="primary"
+                onClick={() => void moveOrderToInvoice(true)}
+                disabled={orderActionBusy}
               >
-                Bill {ksh(total)}
+                <Printer className="h-4 w-4" />
+                Print bill
               </Btn>
             </div>
-            {(printNotice !== IDLE_PRINT_NOTICE || trackedPrint || configurationError) && (
-              <div
-                className={cn(
-                  "mt-3 rounded-lg border p-3",
-                  printNoticeType === "success"
-                    ? "border-success/30 bg-success-soft text-success"
-                    : printNoticeType === "warning"
-                      ? "border-warning/30 bg-warning-soft text-warning"
-                      : "border-border bg-secondary/40 text-muted-foreground",
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {printNoticeType === "success" ? (
-                    <CheckCircle2 className="h-5 w-5 shrink-0" />
-                  ) : (
-                    <Printer className="h-4 w-4 shrink-0 text-primary" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
-                    <div className="mt-0.5 text-[11px]">
-                      {trackedPrint
-                        ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
-                        : "Operational feedback and printing state appear here."}
-                    </div>
-                    {(configurationError ||
-                      (printNoticeType === "warning" && /printer/i.test(printNotice))) && (
-                      <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
-                        <Link to="/seramet-printers" className="underline">
-                          Check printers and kitchen routes
-                        </Link>
-                        <Link
-                          to="/seramet-setup"
-                          search={{ section: "DOCUMENTS" }}
-                          className="underline"
-                        >
-                          Review document settings
-                        </Link>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </aside>
+          </DialogContent>
+        </Dialog>
       </div>
-      <Dialog open={tablePickerOpen} onOpenChange={setTablePickerOpen}>
-        <DialogContent className="max-w-[920px] border-border bg-card">
-          <DialogHeader>
-            <DialogTitle>Select table</DialogTitle>
-            <DialogDescription>
-              Choose a free table for this order, or open the existing order on an occupied table.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
-            <div>
-              <div className="mb-3 flex flex-wrap gap-3 text-[12px] text-muted-foreground">
-                {Object.keys(tableStateStyle).map((state) => (
-                  <span key={state} className="inline-flex items-center gap-1.5">
-                    <span className={cn("h-3 w-3 rounded border", tableStateStyle[state])} />{" "}
-                    {state}
-                  </span>
-                ))}
-              </div>
-              {floorTables.length === 0 && (
-                <div className="rounded-xl border border-dashed border-border p-6 text-sm">
-                  <p className="font-semibold">No tables are set up for this branch yet.</p>
-                  <p className="mt-1 text-muted-foreground">
-                    Add your tables once and they will appear here for every dine-in order.
-                  </p>
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <AddTableDialog
-                      branchLabel={branchLabel}
-                      existingCount={0}
-                      areas={branchServiceAreas.map((area) => ({ id: area.id, name: area.name }))}
-                      onCreated={() => undefined}
-                    />
-                    <Link to="/tables" className="text-[13px] font-semibold underline">
-                      Manage tables and dining areas
-                    </Link>
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {floorTables.map((table) => (
-                  <button
-                    key={table.no}
-                    type="button"
-                    disabled={table.state === "Unavailable"}
-                    onClick={() => selectOrOpenTable(table)}
-                    className={cn(
-                      "rounded-xl border p-3 text-left transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed",
-                      tableStateStyle[table.state],
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-[15px] font-extrabold">Table {table.no}</span>
-                      <span className="text-[11px] text-muted-foreground">{table.seats} seats</span>
-                    </div>
-                    <div className="mt-2">
-                      <Status>{table.state}</Status>
-                    </div>
-                    <div className="mt-2.5 space-y-1 text-[12px] text-muted-foreground">
-                      <div className="flex justify-between">
-                        <span>Area</span>
-                        <span className="font-semibold text-foreground">{table.area}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Guests</span>
-                        <span className="num font-semibold text-foreground">
-                          {table.guests ?? 0}
-                        </span>
-                      </div>
-                      {table.orderId && (
-                        <div className="flex justify-between gap-2">
-                          <span>Order</span>
-                          <span className="num truncate font-semibold text-foreground">
-                            {table.orderId}
-                          </span>
-                        </div>
-                      )}
-                      {table.orderStatus && (
-                        <div className="flex justify-between gap-2">
-                          <span>Status</span>
-                          <span className="font-semibold text-foreground">
-                            {table.orderStatus.replaceAll("_", " ")}
-                          </span>
-                        </div>
-                      )}
-                      {table.amount !== undefined && (
-                        <div className="flex justify-between">
-                          <span>Open value</span>
-                          <span className="num font-semibold text-foreground">
-                            {ksh(table.amount)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <aside className="rounded-xl border border-border bg-secondary/40 p-4">
-              <div className="text-[13px] font-bold">Order summary</div>
-              <dl className="mt-3 space-y-2 text-[12px]">
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Items</dt>
-                  <dd className="num font-semibold">
-                    {items.reduce((sum, item) => sum + item.qty, 0)}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Subtotal</dt>
-                  <dd className="num font-semibold">{ksh(subtotal)}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Tax and service</dt>
-                  <dd className="num font-semibold">{ksh(tax)}</dd>
-                </div>
-                <div className="flex justify-between border-t border-border pt-2">
-                  <dt className="font-semibold">Total</dt>
-                  <dd className="num font-bold">{ksh(total)}</dd>
-                </div>
-              </dl>
-              <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                Selecting a free table does not send the order automatically. Review the order, then
-                press Send kitchen. Occupied tables open their existing order instead of creating a
-                duplicate.
-              </div>
-            </aside>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={billConfirmOpen} onOpenChange={setBillConfirmOpen}>
-        <DialogContent className="max-w-[440px] border-border bg-card">
-          <DialogHeader>
-            <DialogTitle>Bill {currentOrderNumber}</DialogTitle>
-            <DialogDescription>{orderContextLabel}</DialogDescription>
-          </DialogHeader>
-          <div className="max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border">
-            {items.map((line) => (
-              <div key={line.p.id} className="flex justify-between gap-3 px-3 py-2 text-[13px]">
-                <span className="min-w-0 truncate">
-                  {line.qty} x {line.p.name}
-                </span>
-                <span className="num shrink-0">{ksh(line.p.price * line.qty)}</span>
-              </div>
-            ))}
-          </div>
-          <dl className="space-y-1.5 text-[13px]">
-            <div className="flex justify-between text-muted-foreground">
-              <dt>Subtotal</dt>
-              <dd className="num">{ksh(subtotal)}</dd>
-            </div>
-            <div className="flex justify-between text-muted-foreground">
-              <dt>Tax and service</dt>
-              <dd className="num">{ksh(tax)}</dd>
-            </div>
-            <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
-              <dt>Total</dt>
-              <dd className="num">{ksh(total)}</dd>
-            </div>
-          </dl>
-          <div className="flex justify-end gap-2 border-t border-border pt-4">
-            <Btn onClick={() => void moveOrderToInvoice(false)} disabled={orderActionBusy}>
-              Don't print bill
-            </Btn>
-            <Btn
-              variant="primary"
-              onClick={() => void moveOrderToInvoice(true)}
-              disabled={orderActionBusy}
-            >
-              <Printer className="h-4 w-4" />
-              Print bill
-            </Btn>
-          </div>
-        </DialogContent>
-      </Dialog>
     </AppShell>
   );
 }

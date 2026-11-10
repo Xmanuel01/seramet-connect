@@ -107,6 +107,44 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await auditCount(db, "BUSINESS_PROFILE_UPDATED")).toBe(1);
   });
 
+  it("moves the sign-up branch off its UTC / no-currency placeholders when the profile is saved", async () => {
+    db.sqlite.prepare("UPDATE branches SET is_bootstrap=0 WHERE tenant_id=?").run(tenantId);
+    db.sqlite
+      .prepare(
+        "UPDATE branches SET is_bootstrap=1,timezone='UTC',payload_json=? WHERE tenant_id=? AND id=?",
+      )
+      .run(
+        JSON.stringify({ currency: "XXX", metadata: { kitchenMode: "PRINTER_ONLY" } }),
+        tenantId,
+        branchId,
+      );
+    // A branch the owner set on purpose keeps its own zone.
+    db.sqlite
+      .prepare("UPDATE branches SET timezone='Europe/London' WHERE tenant_id=? AND id=?")
+      .run(tenantId, secondBranchId);
+    await service.updateBusinessProfile({
+      legalName: "Configured Legal Entity",
+      tradingName: "Configured Restaurant",
+      countryCode: "KE",
+      defaultCurrency: "KES",
+      timezone: "Africa/Nairobi",
+      locale: "en-KE",
+      accountingMode: "PERPETUAL",
+    });
+    const first = db.sqlite
+      .prepare("SELECT timezone,payload_json FROM branches WHERE tenant_id=? AND id=?")
+      .get(tenantId, branchId) as { timezone: string; payload_json: string };
+    expect(first.timezone).toBe("Africa/Nairobi");
+    expect(JSON.parse(first.payload_json)).toMatchObject({
+      currency: "KES",
+      metadata: { kitchenMode: "PRINTER_ONLY" },
+    });
+    const second = db.sqlite
+      .prepare("SELECT timezone FROM branches WHERE tenant_id=? AND id=?")
+      .get(tenantId, secondBranchId) as { timezone: string };
+    expect(second.timezone).toBe("Europe/London");
+  });
+
   it("creates brands, branches, warehouse policy and audit without display-name logic", async () => {
     const brand = await service.createBrand({ code: "SECOND", name: "Second configured brand" });
     const result = await service.createBranch({

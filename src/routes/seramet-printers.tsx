@@ -9,6 +9,7 @@ import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { permissions } from "@/platform/permissions";
 import type { KitchenPrintObligation } from "@/lib/transaction-engine";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
 import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
@@ -98,6 +99,7 @@ function SerametPrinters() {
     canSwitchBranch,
     currentUser,
     switchableBranchRecords,
+    timeZone,
   } = useAppContext();
   const [branch, setBranch] = useState(activeBranch);
   const branchOptions = switchableBranchRecords.map((item) => item.name);
@@ -119,9 +121,19 @@ function SerametPrinters() {
   const kotActionRef = useRef(false);
   const [kotRecoveryReason, setKotRecoveryReason] = useState("");
   const { state: transactions, mutate: mutateTransaction } = useTransactionEngine();
+  const selectedBranchRecord = switchableBranchRecords.find((item) => item.id === selectedBranchId);
+  // Only tickets for orders still open in the kitchen today need a manager's attention.
   const recoveryItems = kitchenPrintRecoveryItems(
     transactions.kitchenPrintObligations ?? [],
     selectedBranchId,
+    {
+      orders: transactions.orders,
+      today: businessDateForTimestamp(
+        new Date(),
+        selectedBranchRecord?.timezone ?? timeZone,
+        Number(selectedBranchRecord?.metadata["businessDayCutoffMinutes"] ?? 0),
+      ),
+    },
   );
   const recentlyAccepted = (transactions.kitchenPrintObligations ?? [])
     .filter((item) => item.branchId === selectedBranchId && item.status === "BRIDGE_ACCEPTED")
