@@ -11,7 +11,7 @@ import {
   shortDate,
 } from "@/crm/crm-ui";
 import { useCrmApi, useCrmQuery } from "@/crm/use-crm";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import {
@@ -209,10 +209,10 @@ function GiftCards() {
                           <TD className="num font-semibold">Ending {card.token_last_four}</TD>
                           <TD>{shortDate(card.issued_at)}</TD>
                           <TD className="num text-right">
-                            {ksh(minorToMajor(card.original_value_minor))}
+                            {formatMoney(minorToMajor(card.original_value_minor))}
                           </TD>
                           <TD className="num text-right font-semibold">
-                            {ksh(minorToMajor(card.balance_minor))}
+                            {formatMoney(minorToMajor(card.balance_minor))}
                           </TD>
                           <TD>{shortDate(card.expires_at)}</TD>
                           <TD>
@@ -253,7 +253,7 @@ function GiftCards() {
                       Available balance
                     </div>
                     <div className="num mt-1 text-[24px] font-bold">
-                      {ksh(minorToMajor(balanceResult.balanceMinor))}
+                      {formatMoney(minorToMajor(balanceResult.balanceMinor))}
                     </div>
                     <Status>{readableStatus(balanceResult.status)}</Status>
                   </div>

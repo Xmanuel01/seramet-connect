@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
@@ -559,7 +559,7 @@ function StockCount() {
                         <TD className="num text-right">
                           {hideExpected || valueImpact === null || valueImpact === 0
                             ? "—"
-                            : ksh(Math.round(valueImpact))}
+                            : formatMoney(Math.round(valueImpact))}
                         </TD>
                         <TD>
                           {editable ? (

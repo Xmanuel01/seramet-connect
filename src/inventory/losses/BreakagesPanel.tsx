@@ -3,7 +3,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export function BreakagesPanel() {
   const { persistenceMode } = useTransactionEngine();
@@ -108,7 +108,7 @@ export function BreakagesPanel() {
               </TD>
               <TD className="text-muted-foreground">{row.reason_code ?? "-"}</TD>
               <TD className="num text-right font-semibold">
-                {ksh(Number(row.estimated_value_minor ?? 0) / 100)}
+                {formatMoney(Number(row.estimated_value_minor ?? 0) / 100)}
               </TD>
               <TD>
                 <Status>{row.status}</Status>

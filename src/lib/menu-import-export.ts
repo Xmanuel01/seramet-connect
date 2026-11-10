@@ -471,7 +471,9 @@ function normalizeStation(value?: string) {
 }
 
 function parseMoney(value?: string) {
-  const cleaned = clean(value).replace(/ksh/gi, "").replace(/,/g, "");
+  const cleaned = clean(value)
+    .replace(/formatMoney/gi, "")
+    .replace(/,/g, "");
   if (!cleaned) return null;
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : null;

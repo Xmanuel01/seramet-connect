@@ -457,7 +457,7 @@ function CookbookEditor({
                 className={inputClass}
                 value={sourceDocument}
                 onChange={(event) => setSourceDocument(event.target.value)}
-                placeholder="Mona Cookbook v1"
+                placeholder="Kitchen cookbook v1"
               />
             </Field>
           </div>

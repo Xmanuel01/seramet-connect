@@ -1,10 +1,16 @@
+/**
+ * Formats an amount in the business's currency (set per tenant). Whole amounts show no
+ * decimals (Ksh 1,000); amounts with cents show the currency's usual decimals ($12.50).
+ */
 export function formatMoney(amount: number, currency = activeCurrency(), locale = activeLocale()) {
+  const value = Number.isFinite(amount) ? amount : 0;
+  const whole = Math.abs(value - Math.round(value)) < 0.005;
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,
     currencyDisplay: "narrowSymbol",
-    maximumFractionDigits: 0,
-  }).format(Number.isFinite(amount) ? amount : 0);
+    ...(whole ? { maximumFractionDigits: 0 } : {}),
+  }).format(value);
 }
 
 export function activeCurrency() {
@@ -76,4 +82,3 @@ export function currentDateKey(value = new Date(), timeZone = activeTimeZone()) 
 }
 
 /** Compatibility alias for existing screens while currency is resolved from tenant context. */
-export const ksh = formatMoney;

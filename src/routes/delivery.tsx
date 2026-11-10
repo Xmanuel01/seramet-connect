@@ -13,7 +13,7 @@ import {
   riderOutstandingForOrder,
   type DeliveryFulfilment,
 } from "@/delivery/delivery-model";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import type { TransactionOrder } from "@/lib/transaction-engine";
@@ -284,7 +284,9 @@ function Delivery() {
       return;
     }
     if (amount > cashDueRemaining(state, row.orderRecord)) {
-      setNotice(`Only ${ksh(cashDueRemaining(state, row.orderRecord))} remains to be collected.`);
+      setNotice(
+        `Only ${formatMoney(cashDueRemaining(state, row.orderRecord))} remains to be collected.`,
+      );
       return;
     }
     let amountMinor: number;
@@ -336,8 +338,8 @@ function Delivery() {
       });
       setNotice(
         draft.method === "COMPANY_TILL"
-          ? `${ksh(amount)} recorded directly to the company collection path for ${row.orderId}.`
-          : `${ksh(amount)} recorded in ${row.rider}'s custody for ${row.orderId}.`,
+          ? `${formatMoney(amount)} recorded directly to the company collection path for ${row.orderId}.`
+          : `${formatMoney(amount)} recorded in ${row.rider}'s custody for ${row.orderId}.`,
       );
     } catch (error) {
       setNotice(
@@ -358,7 +360,7 @@ function Delivery() {
       label: "Order value",
       align: "right",
       sortable: true,
-      render: (row) => <span className="num font-semibold">{ksh(row.value)}</span>,
+      render: (row) => <span className="num font-semibold">{formatMoney(row.value)}</span>,
     },
     {
       key: "fundsStatus",
@@ -521,19 +523,19 @@ function Delivery() {
                     <div className="text-[10px] font-semibold uppercase text-muted-foreground">
                       Customer recorded
                     </div>
-                    <div className="num mt-1 font-bold">{ksh(recorded)}</div>
+                    <div className="num mt-1 font-bold">{formatMoney(recorded)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] font-semibold uppercase text-muted-foreground">
                       Rider collected
                     </div>
-                    <div className="num mt-1 font-bold">{ksh(row.riderCollected)}</div>
+                    <div className="num mt-1 font-bold">{formatMoney(row.riderCollected)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] font-semibold uppercase text-muted-foreground">
                       To remit
                     </div>
-                    <div className="num mt-1 font-bold">{ksh(row.toRemit)}</div>
+                    <div className="num mt-1 font-bold">{formatMoney(row.toRemit)}</div>
                   </div>
                   <div>
                     <div className="text-[10px] font-semibold uppercase text-muted-foreground">

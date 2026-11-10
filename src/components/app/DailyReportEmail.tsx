@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 import { useEffect, useState } from "react";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { useAppContext } from "@/lib/app-context";
@@ -26,7 +27,7 @@ const sentTime = (iso?: string) => {
   if (!iso) return "";
   const at = new Date(iso);
   return Number.isFinite(at.getTime())
-    ? at.toLocaleString("en-KE", {
+    ? at.toLocaleString(activeLocale(), {
         day: "numeric",
         month: "short",
         hour: "2-digit",

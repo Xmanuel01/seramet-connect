@@ -6,7 +6,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { currentDateKey, formatDate, ksh } from "@/lib/currency";
+import { currentDateKey, formatDate, formatMoney } from "@/lib/currency";
 import { formatMinor, majorFromMinor, parseMajorAmount } from "@/payments/money";
 import { useAppContext } from "@/lib/app-context";
 import { reportError } from "@/lib/user-facing-error";
@@ -272,16 +272,21 @@ function EnterSupplierBillDialog({
     setReceiptId((current) => current || receipt.id);
   }, [open, receipt]);
 
+  // Prefill the amount when a different delivery is picked, not on every render, so an
+  // amount the user has typed isn't overwritten.
   useEffect(() => {
     if (!receipt) return;
     setSubtotal(String(majorFromMinor(Number(receipt.total_minor), invoiceCurrency)));
     setTax("0");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [receipt?.id]);
 
   useEffect(() => {
     if (!invoiceDate || !supplier) return;
     const terms = Math.max(0, Number(supplier.payment_terms_days) || 0);
     setDueDate(addDays(invoiceDate, terms));
+    // Only the supplier's terms matter here, not the whole supplier object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceDate, supplier?.id, supplier?.payment_terms_days]);
 
   useEffect(() => {

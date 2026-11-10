@@ -1,4 +1,5 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { downloadCsv } from "@/lib/csv-download";
 import { useMemo, useState } from "react";
 import {
   Area,
@@ -16,7 +17,7 @@ import {
 } from "recharts";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Segmented, Status, TD, TH } from "@/components/app/ui";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
@@ -152,7 +153,24 @@ function Home() {
             value={period}
             onChange={setPeriod}
           />
-          <Btn>Export</Btn>
+          <Btn
+            disabled={scopedBranches.length === 0}
+            onClick={() =>
+              downloadCsv(`branch-performance-${period.toLowerCase()}.csv`, [
+                ["Branch", "Sales", "Orders", "Margin %", "Food cost %", "Status"],
+                ...scopedBranches.map((b) => [
+                  b.branch,
+                  b.sales,
+                  b.orders,
+                  b.margin,
+                  b.foodCost,
+                  b.status,
+                ]),
+              ])
+            }
+          >
+            Export
+          </Btn>
           <Link to="/pos">
             <Btn variant="primary">Open POS</Btn>
           </Link>
@@ -198,7 +216,7 @@ function Home() {
                     stroke="var(--color-muted-foreground)"
                   />
                   <Tooltip
-                    formatter={(v: number) => ksh(v)}
+                    formatter={(v: number) => formatMoney(v)}
                     contentStyle={{
                       borderRadius: 10,
                       border: "1px solid var(--color-border)",
@@ -252,7 +270,7 @@ function Home() {
                       stroke="var(--color-muted-foreground)"
                     />
                     <Tooltip
-                      formatter={(v: number) => ksh(v)}
+                      formatter={(v: number) => formatMoney(v)}
                       contentStyle={{ borderRadius: 10, fontSize: 12 }}
                     />
                     <Bar
@@ -284,7 +302,7 @@ function Home() {
                         ))}
                       </Pie>
                       <Tooltip
-                        formatter={(v: number) => ksh(v)}
+                        formatter={(v: number) => formatMoney(v)}
                         contentStyle={{ borderRadius: 10, fontSize: 12 }}
                       />
                     </PieChart>
@@ -300,7 +318,7 @@ function Home() {
                       <span className="min-w-0 flex-1 truncate text-muted-foreground">
                         {c.name}
                       </span>
-                      <span className="num font-semibold">{ksh(c.value)}</span>
+                      <span className="num font-semibold">{formatMoney(c.value)}</span>
                     </li>
                   ))}
                 </ul>
@@ -309,11 +327,7 @@ function Home() {
           </div>
 
           <Panel>
-            <PanelHead
-              title="Branch performance"
-              sub={`${period} - branch totals`}
-              right={<Btn>Compare</Btn>}
-            />
+            <PanelHead title="Branch performance" sub={`${period} - branch totals`} />
             <div className="grid gap-3 p-3 md:hidden">
               {scopedBranches.map((b) => (
                 <article
@@ -323,7 +337,7 @@ function Home() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[13px] font-bold">{b.branch}</div>
-                      <div className="num mt-1 text-[16px] font-bold">{ksh(b.sales)}</div>
+                      <div className="num mt-1 text-[16px] font-bold">{formatMoney(b.sales)}</div>
                     </div>
                     <Status>{b.status}</Status>
                   </div>
@@ -360,7 +374,7 @@ function Home() {
                   {scopedBranches.map((b) => (
                     <tr key={b.branch} className="hover:bg-secondary/50">
                       <TD className="font-semibold">{b.branch}</TD>
-                      <TD className="num text-right font-semibold">{ksh(b.sales)}</TD>
+                      <TD className="num text-right font-semibold">{formatMoney(b.sales)}</TD>
                       <TD className="num text-right">{b.orders}</TD>
                       <TD className="num text-right">{b.margin}%</TD>
                       <TD className="num text-right">{b.foodCost}%</TD>

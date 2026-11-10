@@ -11,7 +11,7 @@ import {
   shortDate,
 } from "@/crm/crm-ui";
 import { useCrmApi, useCrmQuery } from "@/crm/use-crm";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import {
   Dialog,
@@ -204,7 +204,7 @@ function Vouchers() {
                         </TD>
                         <TD>
                           {voucher.discount_type === "FIXED_MINOR"
-                            ? ksh(minorToMajor(voucher.discount_value))
+                            ? formatMoney(minorToMajor(voucher.discount_value))
                             : voucher.discount_type === "PERCENT_BPS"
                               ? `${(voucher.discount_value / 100).toFixed(1)}%`
                               : readableStatus(voucher.discount_type)}

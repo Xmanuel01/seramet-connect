@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import type {
   MarketplaceSyncPreview,
   NormalizedMarketplaceMenu,
@@ -377,7 +377,7 @@ function MarketplaceControlCentre() {
                     </TD>
                     <TD className="num font-semibold">{order.id}</TD>
                     <TD>{order.customer}</TD>
-                    <TD className="num text-right font-semibold">{ksh(order.total)}</TD>
+                    <TD className="num text-right font-semibold">{formatMoney(order.total)}</TD>
                     <TD>{relativeAge(order.ageMinutes)}</TD>
                     <TD className={order.slaWarning ? "font-semibold text-warning" : ""}>
                       {order.ageMinutes} min
@@ -418,7 +418,7 @@ function MarketplaceControlCentre() {
                     <Status>{statusGroup(order.status)}</Status>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
-                    <Mini label="Amount" value={ksh(order.total)} />
+                    <Mini label="Amount" value={formatMoney(order.total)} />
                     <Mini
                       label="Prep"
                       value={`${order.ageMinutes} min`}
