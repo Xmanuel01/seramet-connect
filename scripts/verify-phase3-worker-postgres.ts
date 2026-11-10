@@ -73,11 +73,13 @@ async function state(jobId: string) {
       lease_expires_at: string | null;
     }>();
 }
+// Completion is recorded on the job row itself (workers no longer publish a notice). A second
+// completion would rewrite finished_at, which the unchanged-state checks after redelivery catch.
 async function completionCount(jobId: string) {
   return Number(
     await db
       .prepare(
-        "SELECT COUNT(*) AS count FROM realtime_events WHERE tenant_id=? AND entity_type='WORKER_JOB' AND entity_id=?",
+        "SELECT COUNT(*) AS count FROM worker_jobs WHERE tenant_id=? AND id=? AND status='SUCCEEDED' AND finished_at IS NOT NULL",
       )
       .bind(tenantId, jobId)
       .first("count"),
