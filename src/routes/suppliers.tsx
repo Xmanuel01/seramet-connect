@@ -75,7 +75,12 @@ function Suppliers() {
           </button>
         ))}
       </div>
-      {view === "list" ? <SupplierList /> : <SupplierPerformancePanel />}
+      {/* The list stays mounted while Performance is open, so a supplier still being saved
+          keeps its in-progress guard and can't be submitted twice by switching tabs. */}
+      <div hidden={view !== "list"}>
+        <SupplierList />
+      </div>
+      {view === "performance" && <SupplierPerformancePanel />}
     </AppShell>
   );
 }
