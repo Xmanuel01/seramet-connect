@@ -84,6 +84,23 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     expect((await usService.getOnboardingState()).suggestedCurrency?.code).toBe("USD");
   });
 
+  it("moves the sign-up branch off its UTC and XXX placeholders during onboarding", async () => {
+    const provisioned = await register("placeholder-branch", "Placeholder Branch Restaurant");
+    const branch = () =>
+      db
+        .prepare("SELECT timezone,payload_json FROM branches WHERE tenant_id=? AND id=?")
+        .bind(provisioned.tenantId, provisioned.branchId)
+        .first<{ timezone: string; payload_json: string }>();
+    const before = await branch();
+    expect(before?.timezone).toBe("UTC");
+    expect(JSON.parse(before?.payload_json ?? "{}").currency ?? "XXX").toBe("XXX");
+
+    await configureKenyanCurrency(new LocationCurrencyService(db, actor(provisioned)));
+    const after = await branch();
+    expect(after?.timezone).toBe("Africa/Nairobi");
+    expect(JSON.parse(after?.payload_json ?? "{}").currency).toBe("KES");
+  });
+
   it("settles a KES invoice in USD with immutable FX and currency drawer evidence", async () => {
     const provisioned = await register("fx-payment", "FX Payment Restaurant");
     const authenticated = actor(provisioned);

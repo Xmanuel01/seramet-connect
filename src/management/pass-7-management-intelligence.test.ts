@@ -327,6 +327,46 @@ describe.sequential("Pass 7 management intelligence and restaurant finance", () 
     expect(await count(db, "journal_entries")).toBe(journalsBefore);
   });
 
+  it("blocks close only for failed jobs that affect the books and haven't been re-run", async () => {
+    seedDailyFacts(db);
+    const job = (id: string, type: string, status: string, createdAt: string) =>
+      db.sqlite
+        .prepare(
+          `INSERT INTO worker_jobs (tenant_id,id,branch_id,job_type,payload_json,idempotency_key,
+             correlation_id,status,attempt_count,max_attempts,scheduled_at,created_at,updated_at)
+           VALUES (?,?,?,?,'{}',?,?,?,8,8,?,?,?)`,
+        )
+        .run(
+          tenantId,
+          id,
+          branchId,
+          type,
+          `${id}-key`,
+          `${id}-c`,
+          status,
+          createdAt,
+          createdAt,
+          createdAt,
+        );
+    // An email or menu-import failure is shown in System health but never blocks closing.
+    job("failed-email", "DAILY_SUMMARY_EMAIL", "DEAD_LETTER", "2026-08-14T08:00:00.000Z");
+    job("failed-import", "SETUP_IMPORT_COMMIT", "DEAD_LETTER", "2026-08-14T08:00:00.000Z");
+    // A failed day aggregation blocks until a later run of it succeeds.
+    job("failed-eod", "EOD_AGGREGATION", "DEAD_LETTER", "2026-08-14T09:00:00.000Z");
+    await service.recalculateTenant(branchId, businessDate);
+    let control = await service.controlCentre({ branchId, periodEnd: businessDate });
+    expect(control.closeReadiness?.blockers).toContainEqual(
+      expect.objectContaining({ code: "FAILED_DURABLE_JOB", count: 1 }),
+    );
+
+    job("later-eod", "EOD_AGGREGATION", "SUCCEEDED", "2026-08-14T10:00:00.000Z");
+    await service.recalculateTenant(branchId, businessDate);
+    control = await service.controlCentre({ branchId, periodEnd: businessDate });
+    expect(control.closeReadiness?.blockers).not.toContainEqual(
+      expect.objectContaining({ code: "FAILED_DURABLE_JOB" }),
+    );
+  });
+
   it("aggregates approvals without duplicating source approval records", async () => {
     seedSupplierApproval(db);
     await service.recalculateTenant(branchId, businessDate);

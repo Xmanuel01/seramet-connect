@@ -2391,7 +2391,7 @@ async function recordWorkerFailure(env: SerametEnv, body: SerametWorkerMessage, 
       )
       .bind(body.tenantId, body.jobId)
       .first<{ job_type: string; payload_json: string }>();
-    const payload = parsePayload<{ exportId?: string; briefId?: string }>(
+    const payload = parsePayload<{ exportId?: string; briefId?: string; importId?: string }>(
       job?.payload_json ?? "{}",
     );
     const message =
@@ -2412,6 +2412,32 @@ async function recordWorkerFailure(env: SerametEnv, body: SerametWorkerMessage, 
          WHERE tenant_id=? AND id=?`,
         )
         .bind(JSON.stringify({ error: message }), stamp, body.tenantId, payload.exportId)
+        .run();
+    }
+    // A commit that gave up must not leave the import "committing" forever; mark it failed so
+    // the owner is offered a fresh preview. Nothing was committed: commits are atomic.
+    if (payload.importId && job?.job_type === "SETUP_IMPORT_COMMIT") {
+      await env
+        .SERAMET_DB!.prepare(
+          `UPDATE setup_imports SET status='FAILED',pipeline_state='COMMIT_FAILED',
+             verification_status='FAILED',verification_json=?,updated_at=?
+           WHERE tenant_id=? AND id=? AND status='COMMITTING'`,
+        )
+        .bind(
+          JSON.stringify({
+            status: "FAILED",
+            created: 0,
+            updated: 0,
+            skipped: 0,
+            failed: 0,
+            branchSettings: 0,
+            catalogueVerified: false,
+            warnings: [message],
+          }),
+          stamp,
+          body.tenantId,
+          payload.importId,
+        )
         .run();
     }
     if (payload.briefId && job?.job_type === "INTELLIGENCE_BRIEF_GENERATION") {

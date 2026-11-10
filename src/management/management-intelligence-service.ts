@@ -1600,9 +1600,16 @@ export class ManagementIntelligenceService {
           [this.actor.tenantId, branch.id],
         ),
         this.count(
-          `SELECT COUNT(*) AS count FROM worker_jobs WHERE tenant_id=? AND (branch_id=? OR branch_id IS NULL)
-           AND status IN ('FAILED','DEAD_LETTER')`,
-          [this.actor.tenantId, branch.id],
+          `SELECT COUNT(*) AS count FROM worker_jobs w
+           WHERE w.tenant_id=? AND (w.branch_id=? OR w.branch_id IS NULL)
+             AND w.status IN ('FAILED','DEAD_LETTER')
+             AND w.job_type IN (${closeBlockingJobTypes.map(() => "?").join(",")})
+             AND NOT EXISTS (
+               SELECT 1 FROM worker_jobs s
+               WHERE s.tenant_id=w.tenant_id AND s.job_type=w.job_type
+                 AND (s.branch_id IS NULL OR s.branch_id=w.branch_id OR w.branch_id IS NULL)
+                 AND s.status='SUCCEEDED' AND s.created_at>w.created_at)`,
+          [this.actor.tenantId, branch.id, ...closeBlockingJobTypes],
         ),
       ]);
     const blockerCandidates: CloseReadiness["blockers"] = [
@@ -2473,7 +2480,10 @@ export class ManagementIntelligenceService {
       .map((branch) => ({
         id: branch.id,
         name: branch.name,
-        currency: String(parseJson(branch.payload_json)["currency"] ?? branch.default_currency),
+        currency: branchCurrency(
+          parseJson(branch.payload_json)["currency"],
+          branch.default_currency,
+        ),
       }))
       .filter((branch) => {
         if (branchId) return branch.id === branchId;
@@ -3046,3 +3056,18 @@ function mondayOfWeek(date: string) {
   value.setUTCDate(value.getUTCDate() - day + 1);
   return isoDate(value);
 }
+
+/** A branch's own currency, or the business's when the branch is still on the XXX placeholder. */
+function branchCurrency(own: unknown, businessDefault: string) {
+  return typeof own === "string" && /^[A-Z]{3}$/.test(own) && own !== "XXX" ? own : businessDefault;
+}
+
+/** Background jobs whose failure can leave the day's sales, payments or stock figures wrong. */
+const closeBlockingJobTypes = [
+  "EOD_AGGREGATION",
+  "PAYMENT_PROMPT_STATUS_CHECK",
+  "SCHEDULED_ORDER_RELEASE",
+  "INTEGRATION_OUTBOX_RECOVERY",
+  "INVENTORY_INTELLIGENCE_RECALCULATION",
+  "ENTERPRISE_FRANCHISE_FEE_RECALCULATION",
+];

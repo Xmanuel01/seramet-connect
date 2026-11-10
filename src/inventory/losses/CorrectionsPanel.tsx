@@ -4,6 +4,7 @@ import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { formatMoney } from "@/lib/currency";
+import { useReasonPrompt } from "@/components/app/ReasonDialog";
 
 export function CorrectionsPanel() {
   const { persistenceMode } = useTransactionEngine();
@@ -11,6 +12,7 @@ export function CorrectionsPanel() {
   const operations = useInventoryOperations(authoritative);
   const [showForm, setShowForm] = useState(false);
   const [notice, setNotice] = useState("");
+  const [askReason, reasonDialog] = useReasonPrompt();
 
   const rows = useMemo(
     () => operations.data.flatMap((branch) => branch.adjustments),
@@ -22,11 +24,13 @@ export function CorrectionsPanel() {
   const netImpact = approved.reduce((sum, row) => sum + Number(row.estimated_value_minor ?? 0), 0);
 
   const decide = async (id: string, action: "approve" | "reject") => {
-    const reason = window.prompt(
-      action === "approve" ? "Approval reason" : "Rejection reason",
-      action === "approve" ? "Reviewed and confirmed" : "",
-    );
-    if (!reason?.trim()) return;
+    const reason = await askReason({
+      title: action === "approve" ? "Approve correction" : "Reject correction",
+      defaultValue: action === "approve" ? "Reviewed and confirmed" : "",
+      confirmLabel: action === "approve" ? "Approve" : "Reject",
+      destructive: action === "reject",
+    });
+    if (!reason) return;
     setNotice("");
     try {
       await operations.command(
@@ -41,6 +45,7 @@ export function CorrectionsPanel() {
 
   return (
     <>
+      {reasonDialog}
       <div className="mb-3 flex justify-end">
         <Btn
           variant="primary"
