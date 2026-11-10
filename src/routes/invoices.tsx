@@ -152,6 +152,11 @@ function Invoices() {
   const [settlementReference, setSettlementReference] = useState("");
   const [settlementCustomerPhone, setSettlementCustomerPhone] = useState("");
   const [settlementAmount, setSettlementAmount] = useState(0);
+  // Split payment: part of the bill in one method, the rest in others (e.g. cash + M-Pesa).
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitRows, setSplitRows] = useState<
+    { methodId: string; amount: number; reference: string }[]
+  >([]);
   const [cashReceived, setCashReceived] = useState(0);
   // Change to hand back, already formatted in the currency it is given in.
   const [changeGiven, setChangeGiven] = useState("");
@@ -294,9 +299,8 @@ function Invoices() {
     .filter((row) => !periodDate || invoiceDay(row) === periodDate)
     .filter((row) => {
       if (statusFilter === "Paid") return row.paymentStatus === "PAID";
-      if (statusFilter === "Unpaid") return row.paid < row.total;
-      if (statusFilter === "Pending")
-        return row.status === "PENDING" || row.paymentStatus === "UNPAID";
+      if (statusFilter === "Unpaid") return row.paid < row.total && row.status !== "PENDING";
+      if (statusFilter === "Pending") return row.status === "PENDING";
       return true;
     });
   const outstanding = activeRows.reduce((sum, row) => sum + row.total - row.paid, 0);
@@ -441,6 +445,8 @@ function Invoices() {
     setFxQuote(null);
     setSettlementReference("");
     setSettlementCustomerPhone("");
+    setSplitMode(false);
+    setSplitRows([]);
   };
 
   const fxHeaders = () => {
@@ -519,8 +525,84 @@ function Invoices() {
     }
   };
 
+  const splitMethods = settlementMethods.filter((method) => !method.metadata["providerOperation"]);
+  const startSplit = () => {
+    if (!settleInvoice) return;
+    const outstanding = settleInvoice.total - settleInvoice.paid;
+    const first = splitMethods[0]?.id ?? "";
+    const second = splitMethods.find((method) => method.id !== first)?.id ?? first;
+    setSplitRows([
+      { methodId: first, amount: outstanding, reference: "" },
+      { methodId: second, amount: 0, reference: "" },
+    ]);
+    setSplitMode(true);
+  };
+  const confirmSplit = async () => {
+    if (!settleInvoice) return;
+    const outstanding = settleInvoice.total - settleInvoice.paid;
+    const rows = splitRows.filter((row) => row.amount > 0);
+    const total = rows.reduce((sum, row) => sum + row.amount, 0);
+    if (rows.length < 1) return;
+    if (total > outstanding + 0.001) {
+      setWarning(`The parts add up to ${ksh(total)}, more than the ${ksh(outstanding)} owed.`);
+      return;
+    }
+    for (const row of rows) {
+      const method = splitMethods.find((item) => item.id === row.methodId);
+      if (!method) return;
+      if (method.requiresReference && method.category !== "CARD" && !row.reference.trim()) {
+        setWarning(`Enter the ${method.displayName} reference.`);
+        return;
+      }
+    }
+    setSettling(true);
+    let recorded = 0;
+    try {
+      // One payment per part, in order. If one fails, the parts before it stay recorded and
+      // the invoice stays open for the rest, so nothing is charged twice.
+      for (const [index, row] of rows.entries()) {
+        await mutate("settleInvoice", {
+          input: {
+            tenantId: activeTenantId,
+            invoiceId: settleInvoice.id,
+            paymentMethodId: row.methodId,
+            amount: row.amount,
+            reference:
+              row.reference.trim() ||
+              `SPLIT-${settleInvoice.id}-${index + 1}-${Date.now().toString(36).toUpperCase()}`,
+            cashier: currentUser.name,
+          },
+        });
+        recorded += row.amount;
+      }
+    } catch (error) {
+      setWarning(
+        recorded > 0
+          ? `${ksh(recorded)} was recorded; the rest wasn't. Settle the remaining ${ksh(
+              outstanding - recorded,
+            )} again.`
+          : reportError(error, "Couldn't record the payment. Try again."),
+      );
+      setSettling(false);
+      setSettleInvoice(null);
+      return;
+    }
+    setSettling(false);
+    if (recorded >= outstanding - 0.001) {
+      setChangeGiven("");
+      setReceiptPrompt(settleInvoice);
+    } else {
+      setWarning(`${ksh(recorded)} recorded. ${ksh(outstanding - recorded)} is still owed.`);
+    }
+    setSettleInvoice(null);
+  };
+
   const confirmSettlement = async () => {
     if (!settleInvoice) return;
+    if (splitMode) {
+      await confirmSplit();
+      return;
+    }
     if (settlementMethod === "PENDING") {
       await mutate("markBillPending", { invoiceId: settleInvoice.id, module: "Invoices" });
       setSettleInvoice(null);
@@ -906,8 +988,118 @@ function Invoices() {
                     Pending
                   </button>
                 </div>
+                {splitMethods.length > 1 && (
+                  <button
+                    type="button"
+                    className="mt-2 text-[12px] font-semibold text-primary underline-offset-2 hover:underline"
+                    onClick={() => (splitMode ? setSplitMode(false) : startSplit())}
+                  >
+                    {splitMode
+                      ? "Pay with one method"
+                      : "Split payment (e.g. part cash, part M-Pesa)"}
+                  </button>
+                )}
               </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+              {splitMode && (
+                <div className="space-y-2">
+                  {splitRows.map((row, index) => {
+                    const method = splitMethods.find((item) => item.id === row.methodId);
+                    const update = (patch: Partial<typeof row>) =>
+                      setSplitRows((rows) =>
+                        rows.map((item, at) => (at === index ? { ...item, ...patch } : item)),
+                      );
+                    return (
+                      <div
+                        key={index}
+                        className="grid grid-cols-[minmax(0,1fr)_110px_auto] items-center gap-2"
+                      >
+                        <select
+                          aria-label={`Part ${index + 1} method`}
+                          value={row.methodId}
+                          onChange={(event) =>
+                            update({ methodId: event.target.value, reference: "" })
+                          }
+                          className="h-10 rounded-md border border-border bg-card px-2 text-[13px]"
+                        >
+                          {splitMethods.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.displayName}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          aria-label={`Part ${index + 1} amount`}
+                          type="number"
+                          min={0}
+                          value={row.amount || ""}
+                          onChange={(event) => update({ amount: Number(event.target.value) })}
+                          className="h-10 rounded-md border border-border bg-card px-2 text-right text-[13px]"
+                        />
+                        <button
+                          type="button"
+                          aria-label={`Remove part ${index + 1}`}
+                          disabled={splitRows.length <= 2}
+                          onClick={() =>
+                            setSplitRows((rows) => rows.filter((_, at) => at !== index))
+                          }
+                          className="h-10 rounded-md px-2 text-[16px] text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        >
+                          ×
+                        </button>
+                        {method?.requiresReference && (
+                          <input
+                            aria-label={`Part ${index + 1} reference`}
+                            maxLength={64}
+                            value={row.reference}
+                            placeholder={settlementReferenceLabel(method)}
+                            onChange={(event) =>
+                              update({
+                                reference: event.target.value
+                                  .replace(/[^a-z0-9._/-]/gi, "")
+                                  .toUpperCase()
+                                  .slice(0, 64),
+                              })
+                            }
+                            className="col-span-3 h-10 rounded-md border border-border bg-card px-3 text-[13px] uppercase"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center justify-between text-[12px]">
+                    <button
+                      type="button"
+                      className="font-semibold text-primary hover:underline"
+                      onClick={() =>
+                        setSplitRows((rows) => [
+                          ...rows,
+                          { methodId: splitMethods[0]?.id ?? "", amount: 0, reference: "" },
+                        ])
+                      }
+                    >
+                      + Add another method
+                    </button>
+                    {(() => {
+                      const left =
+                        settleInvoice.total -
+                        settleInvoice.paid -
+                        splitRows.reduce((sum, row) => sum + (row.amount || 0), 0);
+                      return (
+                        <span
+                          className={`num font-semibold ${left < -0.001 ? "text-danger" : left > 0.001 ? "text-warning" : "text-success"}`}
+                        >
+                          {left > 0.001
+                            ? `${ksh(left)} left to pay`
+                            : left < -0.001
+                              ? `${ksh(-left)} too much`
+                              : "Fully covered"}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+              <div className={splitMode ? "hidden" : "grid gap-3 sm:grid-cols-2"}>
                 <label className="grid gap-1 text-[12px] font-semibold text-muted-foreground">
                   Amount
                   <input
@@ -1022,12 +1214,14 @@ function Invoices() {
               )}
               <div className="flex justify-end gap-2 border-t border-border pt-4">
                 <Btn onClick={() => setSettleInvoice(null)}>Cancel</Btn>
-                <Btn variant="primary" onClick={confirmSettlement}>
-                  {settlementMethod === "PENDING"
-                    ? "Mark pending"
-                    : foreignTender && !fxQuote
-                      ? `Get ${tender} amount`
-                      : "Settle invoice"}
+                <Btn variant="primary" disabled={settling} onClick={confirmSettlement}>
+                  {splitMode
+                    ? "Record payments"
+                    : settlementMethod === "PENDING"
+                      ? "Mark pending"
+                      : foreignTender && !fxQuote
+                        ? `Get ${tender} amount`
+                        : "Settle invoice"}
                 </Btn>
               </div>
             </div>

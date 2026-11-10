@@ -48,7 +48,7 @@ SET LOCAL statement_timeout='3min';
 SELECT pg_advisory_xact_lock(32478965233706356::bigint);
 DO $guard$ BEGIN
  IF current_database() NOT IN (${isolated ? "'seramet_test','seramet_restore'" : "'postgres'"}) THEN RAISE EXCEPTION 'Wrong staging/isolated database'; END IF;
- IF (SELECT max(version) FROM public.schema_migrations)<>31 THEN RAISE EXCEPTION 'Current schema required'; END IF;
+ IF (SELECT max(version) FROM public.schema_migrations)<>32 THEN RAISE EXCEPTION 'Current schema required'; END IF;
  IF CURRENT_TIMESTAMP-${quote(cutoff)}::timestamptz<interval '20 minutes' THEN RAISE EXCEPTION 'Hold cutoff is too recent for an abandoned invocation'; END IF;
 END $guard$;
 DO $lock$ BEGIN PERFORM 1 FROM public.worker_jobs WHERE ${target} FOR UPDATE; END $lock$;

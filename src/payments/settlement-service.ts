@@ -67,7 +67,13 @@ export class SettlementService {
 
   disposition(method: PaymentMethodDefinition): SettlementDisposition {
     if (method.metadata["providerOperation"]) return "PROVIDER_INITIATION_REQUIRED";
-    if (method.category === "CASH" || method.category === "CARD") return "CONFIRMED";
+    if (
+      method.category === "CASH" ||
+      method.category === "CARD" ||
+      method.category === "DIGITAL_WALLET" ||
+      method.category === "BANK_TRANSFER"
+    )
+      return "CONFIRMED";
     if (method.category === "CREDIT") return "ON_ACCOUNT";
     return "AWAITING_VERIFICATION";
   }
@@ -86,7 +92,8 @@ export class SettlementService {
     if (input.amount <= 0) {
       throw new PlatformConfigurationError("Settlement amount must be positive");
     }
-    if (method.requiresReference && !input.reference?.trim()) {
+    // Card machines in Kenya rarely print a reference, so it's optional for cards.
+    if (method.requiresReference && method.category !== "CARD" && !input.reference?.trim()) {
       throw new PlatformConfigurationError(`${method.displayName} requires a reference`);
     }
     if (method.metadata["providerOperation"]) {
@@ -149,13 +156,15 @@ export class SettlementService {
         allocations: allocation,
         actor: input.cashier,
         deviceId,
-        terminalReference: deviceId,
+        // Each card payment needs its own reference: the till's ID is shared by every payment,
+        // so a second card payment on the same bill was taken for a duplicate and dropped.
+        terminalReference: reference,
         authorizationCode: reference,
       });
     }
 
     if (method.category === "BANK_TRANSFER") {
-      return paymentOrchestrator.recordBankTransferPending(next, {
+      return paymentOrchestrator.recordReferencedPayment(next, {
         tenantId: input.tenantId,
         branchId: branch.id,
         paymentMethodId: method.id,
@@ -173,7 +182,7 @@ export class SettlementService {
     }
 
     if (method.category === "DIGITAL_WALLET") {
-      return paymentOrchestrator.submitManualReference(next, {
+      return paymentOrchestrator.recordReferencedPayment(next, {
         tenantId: input.tenantId,
         branchId: branch.id,
         paymentMethodId: method.id,
@@ -217,4 +226,4 @@ export class SettlementService {
 }
 
 export const settlementReferenceLabel = (method: PaymentMethodDefinition) =>
-  `${method.displayName} reference`;
+  `${method.displayName} reference${method.category === "CARD" ? " (optional)" : ""}`;

@@ -32,7 +32,7 @@ function fixture() {
 test("current complete ledger passes while historical version 27 is rejected", () => {
   const ledger = expectedCertificationLedger();
   const tables = fixture();
-  assert.equal(ledger.at(-1).version, 31);
+  assert.equal(ledger.at(-1).version, 32);
   assert.equal(tables.length, 18);
   assert.doesNotThrow(() => assertCertificationSchema(ledger, tables));
   assert.throws(() => assertCertificationSchema(ledger.slice(0, 27), tables), /Migration ledger/);
@@ -45,7 +45,7 @@ test("ledger name, checksum, gap and extra migration drift fail closed", () => {
     ledger.map((row, index) => (index === 26 ? { ...row, checksum: "stale-marker" } : row)),
     ledger.map((row, index) => (index === 28 ? { ...row, name: "wrong-name" } : row)),
     ledger.filter((row) => row.version !== 28),
-    [...ledger, { version: 31, name: "unknown", checksum: "unknown" }],
+    [...ledger, { version: 33, name: "unknown", checksum: "unknown" }],
   ])
     assert.throws(() => assertCertificationSchema(invalid, tables), /Migration ledger/);
 });

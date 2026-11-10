@@ -33,6 +33,16 @@ $$;
 
 export function compileSqliteMigrationForPostgres(source: string): CompiledPostgresMigration {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
+  // PostgreSQL drops a trigger by name *and table*; SQLite by name only. Find each trigger's
+  // table from its CREATE TRIGGER in the same migration.
+  const triggerTables = new Map(
+    Array.from(
+      source.matchAll(
+        /CREATE\s+TRIGGER\s+([a-zA-Z0-9_]+)\s+(?:BEFORE|AFTER)\s+(?:INSERT|DELETE|UPDATE(?:\s+OF\s+[a-zA-Z0-9_]+)?)\s+ON\s+([a-zA-Z0-9_]+)/gi,
+      ),
+      (match) => [match[1]!, match[2]!] as const,
+    ),
+  );
   const output: string[] = [];
   let triggerCount = 0;
   for (let index = 0; index < lines.length; index += 1) {
@@ -43,6 +53,16 @@ export function compileSqliteMigrationForPostgres(source: string): CompiledPostg
       continue;
     }
     if (/^\s*PRAGMA\s+/i.test(line)) continue;
+    const dropTrigger = /^\s*DROP\s+TRIGGER\s+IF\s+EXISTS\s+([a-zA-Z0-9_]+)\s*;\s*$/i.exec(line);
+    if (dropTrigger) {
+      const table = triggerTables.get(dropTrigger[1]!);
+      if (!table)
+        throw new Error(
+          `DROP TRIGGER ${dropTrigger[1]} needs a matching CREATE TRIGGER to find its table`,
+        );
+      output.push(`DROP TRIGGER IF EXISTS ${dropTrigger[1]} ON ${table};`);
+      continue;
+    }
     if (!/^\s*CREATE\s+TRIGGER\b/i.test(line)) {
       output.push(line);
       continue;

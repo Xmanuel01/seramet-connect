@@ -223,6 +223,16 @@ function POS() {
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
+  const [printToastOpen, setPrintToastOpen] = useState(false);
+  useEffect(() => {
+    if (printNotice === IDLE_PRINT_NOTICE) return;
+    setPrintToastOpen(true);
+    const timer = window.setTimeout(
+      () => setPrintToastOpen(false),
+      printNoticeType === "warning" ? 12_000 : 5_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [printNotice, printNoticeType]);
   const [kitchenNote, setKitchenNote] = useState(recoveredDraft?.kitchenNote ?? "");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>(
     recoveredDraft?.itemNotes ?? {},
@@ -514,12 +524,6 @@ function POS() {
   useEffect(() => {
     if (!posCategories.includes(cat)) setCat("All items");
   }, [cat, posCategories]);
-
-  useEffect(() => {
-    if (!configurationError) return;
-    setPrintNotice(`Printing unavailable: ${configurationError}`);
-    setPrintNoticeType("warning");
-  }, [configurationError]);
 
   useEffect(() => {
     const stored = window.sessionStorage.getItem(channelPreferenceKey);
@@ -1395,6 +1399,16 @@ function POS() {
                 {syncActivity}
               </span>
             )}
+            {configurationError && (
+              <Link
+                to="/seramet-printers"
+                title={configurationError}
+                className="inline-flex items-center gap-1 rounded-md bg-warning-soft px-2 py-1 text-[11px] font-semibold text-warning"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                Printing off
+              </Link>
+            )}
             <span className="inline-flex items-center gap-1 text-[12px] text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               <PosClock locale={tenant.locale || activeLocale()} timeZone={clockTimeZone} />
@@ -1471,7 +1485,7 @@ function POS() {
                 type="button"
                 onClick={() => setActiveOrdersOpen((open) => !open)}
                 className={cn(
-                  "inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
+                  "ml-auto inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md px-3 text-[12px] font-bold transition-colors",
                   activeOrdersOpen
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-foreground hover:bg-secondary/80",
@@ -1897,52 +1911,49 @@ function POS() {
                   Bill {ksh(total)}
                 </Btn>
               </div>
-              {(printNotice !== IDLE_PRINT_NOTICE || trackedPrint || configurationError) && (
-                <div
-                  className={cn(
-                    "mt-3 rounded-lg border p-3",
-                    printNoticeType === "success"
-                      ? "border-success/30 bg-success-soft text-success"
-                      : printNoticeType === "warning"
-                        ? "border-warning/30 bg-warning-soft text-warning"
-                        : "border-border bg-secondary/40 text-muted-foreground",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    {printNoticeType === "success" ? (
-                      <CheckCircle2 className="h-5 w-5 shrink-0" />
-                    ) : (
-                      <Printer className="h-4 w-4 shrink-0 text-primary" />
-                    )}
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-bold text-foreground">{printNotice}</div>
-                      <div className="mt-0.5 text-[11px]">
-                        {trackedPrint
-                          ? `${trackedPrint.label} status is tracked here until confirmed or failed.`
-                          : "Operational feedback and printing state appear here."}
-                      </div>
-                      {(configurationError ||
-                        (printNoticeType === "warning" && /printer/i.test(printNotice))) && (
-                        <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
-                          <Link to="/seramet-printers" className="underline">
-                            Check printers and kitchen routes
-                          </Link>
-                          <Link
-                            to="/seramet-setup"
-                            search={{ section: "DOCUMENTS" }}
-                            className="underline"
-                          >
-                            Review document settings
-                          </Link>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </aside>
         </div>
+        {printToastOpen && printNotice !== IDLE_PRINT_NOTICE && (
+          <div
+            role="status"
+            className={cn(
+              "fixed bottom-4 right-4 z-50 flex max-w-sm items-start gap-2 rounded-lg border bg-card p-3 text-[12px] shadow-lg",
+              printNoticeType === "warning"
+                ? "border-warning/40"
+                : printNoticeType === "success"
+                  ? "border-success/40"
+                  : "border-border",
+            )}
+          >
+            {printNoticeType === "success" ? (
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            ) : (
+              <Printer
+                className={cn(
+                  "mt-0.5 h-4 w-4 shrink-0",
+                  printNoticeType === "warning" ? "text-warning" : "text-primary",
+                )}
+              />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-foreground">{printNotice}</div>
+              {printNoticeType === "warning" && (
+                <Link to="/seramet-printers" className="mt-1 inline-block underline">
+                  Check printers and kitchen routes
+                </Link>
+              )}
+            </div>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setPrintToastOpen(false)}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <Dialog open={tablePickerOpen} onOpenChange={setTablePickerOpen}>
           <DialogContent className="max-w-[920px] border-border bg-card">
             <DialogHeader>
