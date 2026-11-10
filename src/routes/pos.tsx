@@ -22,7 +22,7 @@ import {
   type PosCustomerSelection,
 } from "@/crm/pos-customer-link";
 import { Btn, Status } from "@/components/app/ui";
-import { activeLocale, ksh } from "@/lib/currency";
+import { activeLocale, formatMoney } from "@/lib/currency";
 import {
   acknowledgedKitchenDispatch,
   formatPosClock,
@@ -1526,7 +1526,7 @@ function POS() {
                         </div>
                         <div className="mt-1 truncate text-[12px] text-muted-foreground">
                           {order.table ? `Table ${order.table}` : order.channel} - {order.customer}{" "}
-                          - {order.lines.length} lines - {ksh(order.total)}
+                          - {order.lines.length} lines - {formatMoney(order.total)}
                         </div>
                       </button>
                     ))}
@@ -1724,7 +1724,9 @@ function POS() {
                         </div>
                         <div className="mt-0.5 truncate text-[13px] font-bold">{p.name}</div>
                         <div className="mt-1 flex items-center justify-between gap-2">
-                          <span className="num text-[13px] font-extrabold">{ksh(p.price)}</span>
+                          <span className="num text-[13px] font-extrabold">
+                            {formatMoney(p.price)}
+                          </span>
                           <span className="shrink-0 text-[10px] text-muted-foreground">
                             {p.out
                               ? "86'd"
@@ -1815,7 +1817,9 @@ function POS() {
                   <div key={l.p.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3">
                     <div className="min-w-0">
                       <div className="truncate text-[13px] font-semibold">{l.p.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{ksh(l.p.price)} each</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {formatMoney(l.p.price)} each
+                      </div>
                       {sentQuantity > 0 && (
                         <div className="mt-1 text-[10px] font-semibold uppercase text-primary">
                           {sentQuantity} sent / {Math.max(0, l.qty - sentQuantity)} unsent
@@ -1847,7 +1851,7 @@ function POS() {
                         <Plus className="h-3.5 w-3.5" />
                       </button>
                       <span className="num w-16 text-right text-[13px] font-bold">
-                        {ksh(l.p.price * l.qty)}
+                        {formatMoney(l.p.price * l.qty)}
                       </span>
                     </div>
                   </div>
@@ -1865,15 +1869,15 @@ function POS() {
               <dl className="space-y-1.5 text-[13px]">
                 <div className="flex justify-between text-muted-foreground">
                   <dt>Subtotal</dt>
-                  <dd className="num">{ksh(subtotal)}</dd>
+                  <dd className="num">{formatMoney(subtotal)}</dd>
                 </div>
                 <div className="flex justify-between text-muted-foreground">
                   <dt>Tax and service</dt>
-                  <dd className="num">{ksh(tax)}</dd>
+                  <dd className="num">{formatMoney(tax)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
                   <dt>Total</dt>
-                  <dd className="num">{ksh(total)}</dd>
+                  <dd className="num">{formatMoney(total)}</dd>
                 </div>
               </dl>
               {/* Place Order sends new items to the kitchen; Bill turns a sent order
@@ -1908,7 +1912,7 @@ function POS() {
                   disabled={orderActionBusy || selectedOrderUnavailable || !billReady}
                   title={billReady ? undefined : "Open a sent order from Orders to bill it."}
                 >
-                  Bill {ksh(total)}
+                  Bill {formatMoney(total)}
                 </Btn>
               </div>
             </div>
@@ -2043,7 +2047,7 @@ function POS() {
                           <div className="flex justify-between">
                             <span>Open value</span>
                             <span className="num font-semibold text-foreground">
-                              {ksh(table.amount)}
+                              {formatMoney(table.amount)}
                             </span>
                           </div>
                         )}
@@ -2063,15 +2067,15 @@ function POS() {
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-muted-foreground">Subtotal</dt>
-                    <dd className="num font-semibold">{ksh(subtotal)}</dd>
+                    <dd className="num font-semibold">{formatMoney(subtotal)}</dd>
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-muted-foreground">Tax and service</dt>
-                    <dd className="num font-semibold">{ksh(tax)}</dd>
+                    <dd className="num font-semibold">{formatMoney(tax)}</dd>
                   </div>
                   <div className="flex justify-between border-t border-border pt-2">
                     <dt className="font-semibold">Total</dt>
-                    <dd className="num font-bold">{ksh(total)}</dd>
+                    <dd className="num font-bold">{formatMoney(total)}</dd>
                   </div>
                 </dl>
                 <div className="mt-4 rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
@@ -2096,22 +2100,22 @@ function POS() {
                   <span className="min-w-0 truncate">
                     {line.qty} x {line.p.name}
                   </span>
-                  <span className="num shrink-0">{ksh(line.p.price * line.qty)}</span>
+                  <span className="num shrink-0">{formatMoney(line.p.price * line.qty)}</span>
                 </div>
               ))}
             </div>
             <dl className="space-y-1.5 text-[13px]">
               <div className="flex justify-between text-muted-foreground">
                 <dt>Subtotal</dt>
-                <dd className="num">{ksh(subtotal)}</dd>
+                <dd className="num">{formatMoney(subtotal)}</dd>
               </div>
               <div className="flex justify-between text-muted-foreground">
                 <dt>Tax and service</dt>
-                <dd className="num">{ksh(tax)}</dd>
+                <dd className="num">{formatMoney(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-border pt-2 text-[16px] font-bold">
                 <dt>Total</dt>
-                <dd className="num">{ksh(total)}</dd>
+                <dd className="num">{formatMoney(total)}</dd>
               </div>
             </dl>
             <div className="flex justify-end gap-2 border-t border-border pt-4">

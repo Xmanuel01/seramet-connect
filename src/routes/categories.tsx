@@ -6,7 +6,7 @@ import { Btn, Metric, Panel, PanelHead, Status } from "@/components/app/ui";
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 type CategoryRow = {
   id: string;
@@ -43,7 +43,7 @@ const columns: EnterpriseColumn<CategoryRow>[] = [
     label: "Stock value",
     align: "right",
     sortable: true,
-    render: (row) => <span className="num font-semibold">{ksh(row.stockValue)}</span>,
+    render: (row) => <span className="num font-semibold">{formatMoney(row.stockValue)}</span>,
   },
   { key: "lowStock", label: "Low stock", align: "right", sortable: true },
   { key: "outOfStock", label: "Out of stock", align: "right", sortable: true },

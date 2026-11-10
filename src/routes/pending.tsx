@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate, todayInputValue } from "@/lib/date-filters";
@@ -291,7 +291,7 @@ function PendingInvoices() {
               <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
               <TD>{row.customer}</TD>
               <TD className="text-muted-foreground">{billBusinessDate(row)}</TD>
-              <TD className="num text-right font-semibold">{ksh(row.total - row.paid)}</TD>
+              <TD className="num text-right font-semibold">{formatMoney(row.total - row.paid)}</TD>
               <TD>
                 <Status>{settlementLabel(row)}</Status>
               </TD>
@@ -330,7 +330,7 @@ function PendingInvoices() {
                 <div className="flex items-center justify-between text-[13px]">
                   <span className="text-muted-foreground">Outstanding</span>
                   <span className="num text-[20px] font-extrabold">
-                    {ksh(settleInvoice.total - settleInvoice.paid)}
+                    {formatMoney(settleInvoice.total - settleInvoice.paid)}
                   </span>
                 </div>
               </div>

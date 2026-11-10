@@ -8,7 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatFilterDate } from "@/lib/date-filters";
@@ -283,7 +283,7 @@ export function RefundsWorkspace() {
                 <TD>{row.receiptId ?? "Not recorded"}</TD>
                 <TD>{row.invoiceId}</TD>
                 <TD>{methodLabel(row.method)}</TD>
-                <TD className="text-right">{ksh(row.amount)}</TD>
+                <TD className="text-right">{formatMoney(row.amount)}</TD>
                 <TD>
                   <Status>{humanize(row.status)}</Status>
                 </TD>
@@ -301,7 +301,7 @@ export function RefundsWorkspace() {
             title={selected?.id ?? "Refund detail"}
             sub={
               selected
-                ? `${selected.receiptId ?? "No receipt"} - ${ksh(selected.amount)}`
+                ? `${selected.receiptId ?? "No receipt"} - ${formatMoney(selected.amount)}`
                 : "No refund selected"
             }
           />
@@ -385,7 +385,7 @@ export function RefundsWorkspace() {
                     <option value="">Choose receipt</option>
                     {receipts.map((row) => (
                       <option key={row.id} value={row.id}>
-                        {row.id} - {row.customer} - {ksh(row.paidAmount)}
+                        {row.id} - {row.customer} - {formatMoney(row.paidAmount)}
                       </option>
                     ))}
                   </select>
@@ -412,7 +412,7 @@ export function RefundsWorkspace() {
                   </select>
                 </label>
                 <p className="text-sm">
-                  Can still be refunded: {ksh(majorFromMinor(remaining, currency))}
+                  Can still be refunded: {formatMoney(majorFromMinor(remaining, currency))}
                 </p>
                 <label className="grid gap-1 text-sm">
                   Refund amount ({currency})
@@ -450,7 +450,7 @@ export function RefundsWorkspace() {
                     {pending.id} - Receipt {pending.receiptId} - Invoice {pending.invoiceId}
                   </p>
                   <p>
-                    {ksh(pending.amount)} via {methodLabel(pending.method)}
+                    {formatMoney(pending.amount)} via {methodLabel(pending.method)}
                   </p>
                   <p>{pending.reason}</p>
                 </div>

@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 // A corrupt historical value must not bring down timekeeping or imply a new instant.
 export function attendanceTime(
   value: string | null | undefined,
@@ -8,7 +9,7 @@ export function attendanceTime(
   const instant = new Date(value);
   if (!Number.isFinite(instant.getTime())) return "Invalid recorded time";
   try {
-    return new Intl.DateTimeFormat("en-KE", {
+    return new Intl.DateTimeFormat(activeLocale(), {
       timeZone,
       ...(withDate
         ? { dateStyle: "short" as const, timeStyle: "short" as const }

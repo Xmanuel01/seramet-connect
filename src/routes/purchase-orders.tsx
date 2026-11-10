@@ -5,7 +5,7 @@ import { ClipboardCheck, Download, PackageCheck, Plus, RefreshCw, Trash2 } from 
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { formatDate, formatNumber, ksh } from "@/lib/currency";
+import { formatDate, formatNumber, formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
@@ -34,7 +34,7 @@ function PurchaseOrders() {
   const authoritative = persistenceMode === "authoritative";
   const control = useInventoryControlCentre(authoritative);
   const data = control.data.find((row) => row.branchId === branchId);
-  const rows = data?.procurement.purchaseOrders ?? [];
+  const rows = useMemo(() => data?.procurement.purchaseOrders ?? [], [data]);
 
   const [selectedId, setSelectedId] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -56,7 +56,7 @@ function PurchaseOrders() {
   const commitmentValue =
     commitmentCurrencies.length > 1
       ? "Multiple currencies"
-      : ksh(
+      : formatMoney(
           openRows.reduce((sum, row) => sum + Number(row.total_minor), 0) / 100,
           commitmentCurrencies[0] ?? currency,
         );
@@ -169,7 +169,7 @@ function PurchaseOrders() {
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <span className="num text-[12px] font-semibold">
-                    {ksh(Number(row.total_minor) / 100, row.currency)}
+                    {formatMoney(Number(row.total_minor) / 100, row.currency)}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     {receivedPercent(row).toFixed(0)}% received
@@ -260,10 +260,10 @@ function PurchaseOrders() {
                           </TD>
                           <TD className="num text-right">{progress.toFixed(0)}%</TD>
                           <TD className="num text-right">
-                            {ksh(Number(line.unit_price_minor) / 100, selected.currency)}
+                            {formatMoney(Number(line.unit_price_minor) / 100, selected.currency)}
                           </TD>
                           <TD className="num text-right font-semibold">
-                            {ksh(Number(line.line_total_minor) / 100, selected.currency)}
+                            {formatMoney(Number(line.line_total_minor) / 100, selected.currency)}
                           </TD>
                         </tr>
                       );
@@ -278,7 +278,7 @@ function PurchaseOrders() {
                     Order total
                   </div>
                   <div className="num text-[18px] font-bold">
-                    {ksh(Number(selected.total_minor) / 100, selected.currency)}
+                    {formatMoney(Number(selected.total_minor) / 100, selected.currency)}
                   </div>
                   {selected.approval_reason && (
                     <div className="mt-1 text-[11px] text-muted-foreground">

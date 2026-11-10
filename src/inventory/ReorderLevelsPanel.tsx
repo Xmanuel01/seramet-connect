@@ -3,7 +3,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export function ReorderLevelsPanel() {
   const { persistenceMode } = useTransactionEngine();
@@ -124,7 +124,7 @@ export function ReorderLevelsPanel() {
                   {quantity(row.suggested_quantity_minor)}
                 </TD>
                 <TD className="num text-right">
-                  {ksh(Number(row.suggested_value_minor ?? 0) / 100)}
+                  {formatMoney(Number(row.suggested_value_minor ?? 0) / 100)}
                 </TD>
                 <TD className="text-muted-foreground">{row.preferred_supplier_name ?? "-"}</TD>
                 <TD className="text-muted-foreground">{row.recommendation_mode}</TD>

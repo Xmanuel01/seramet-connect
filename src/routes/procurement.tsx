@@ -5,7 +5,7 @@ import { ClipboardCheck, PackageCheck, Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { formatDate, formatNumber, ksh } from "@/lib/currency";
+import { formatDate, formatNumber, formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import {
   type ProcurementOrderRow,
@@ -77,7 +77,7 @@ function Procurement() {
   const commitmentAmount =
     commitmentsByCurrency.size > 1
       ? "Multiple currencies"
-      : ksh(
+      : formatMoney(
           [...commitmentsByCurrency.values()][0] ?? 0,
           [...commitmentsByCurrency.keys()][0] ?? currency,
         );
@@ -163,7 +163,7 @@ function Procurement() {
                     {order.supplier}
                   </div>
                   <div className="num mt-1 text-[12px] font-semibold">
-                    {ksh(order.totalMinor / 100, order.currency)}
+                    {formatMoney(order.totalMinor / 100, order.currency)}
                   </div>
                 </button>
               </li>
@@ -210,10 +210,10 @@ function Procurement() {
                           {formatQuantity(line.receivedMicro)} {line.unit}
                         </TD>
                         <TD className="num text-right">
-                          {ksh(line.unitPriceMinor / 100, selected.currency)}
+                          {formatMoney(line.unitPriceMinor / 100, selected.currency)}
                         </TD>
                         <TD className="num text-right font-semibold">
-                          {ksh(line.totalMinor / 100, selected.currency)}
+                          {formatMoney(line.totalMinor / 100, selected.currency)}
                         </TD>
                       </tr>
                     ))}
@@ -224,7 +224,7 @@ function Procurement() {
                 <div className="text-[13px] text-muted-foreground">
                   Total{" "}
                   <span className="num text-[16px] font-bold text-foreground">
-                    {ksh(selected.totalMinor / 100, selected.currency)}
+                    {formatMoney(selected.totalMinor / 100, selected.currency)}
                   </span>
                 </div>
                 <div className="flex gap-2">

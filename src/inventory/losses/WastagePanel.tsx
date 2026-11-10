@@ -3,7 +3,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export function WastagePanel() {
   const { persistenceMode } = useTransactionEngine();
@@ -113,7 +113,7 @@ export function WastagePanel() {
               </TD>
               <TD className="text-muted-foreground">{row.reason_code ?? "-"}</TD>
               <TD className="num text-right font-semibold">
-                {ksh(Number(row.estimated_cost_minor ?? 0) / 100)}
+                {formatMoney(Number(row.estimated_cost_minor ?? 0) / 100)}
               </TD>
               <TD className="num text-muted-foreground">{row.business_date ?? "-"}</TD>
               <TD>
@@ -251,7 +251,7 @@ function WastageForm({
         <div className="grid gap-1 text-[11px] font-semibold text-muted-foreground">
           Estimated cost
           <div className="flex h-9 items-center rounded-md border border-border bg-secondary/40 px-3 text-[12px] text-foreground">
-            {ksh(estimatedCost)}
+            {formatMoney(estimatedCost)}
           </div>
         </div>
         <label className="grid gap-1 text-[11px] font-semibold text-muted-foreground md:col-span-3">

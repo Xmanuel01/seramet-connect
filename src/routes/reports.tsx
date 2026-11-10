@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { DailyReportEmail } from "@/components/app/DailyReportEmail";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { deriveBranchOperations } from "@/lib/restaurant-operations";
@@ -148,7 +148,7 @@ function Reports() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-[13px] font-bold">{r.branch}</div>
-                    <div className="num mt-1 text-[16px] font-bold">{ksh(r.sales)}</div>
+                    <div className="num mt-1 text-[16px] font-bold">{formatMoney(r.sales)}</div>
                   </div>
                   <Status>{r.state}</Status>
                 </div>
@@ -180,7 +180,7 @@ function Reports() {
                 {scopedPreview.map((r) => (
                   <tr key={r.branch} className="hover:bg-secondary/50">
                     <TD className="font-semibold">{r.branch}</TD>
-                    <TD className="num text-right font-semibold">{ksh(r.sales)}</TD>
+                    <TD className="num text-right font-semibold">{formatMoney(r.sales)}</TD>
                     <TD className="num text-right">{r.orders}</TD>
                     <TD className="num text-right">{r.paidRate}%</TD>
                     <TD>

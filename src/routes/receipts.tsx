@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Chips, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable, SearchInput } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
 import { useAppContext } from "@/lib/app-context";
@@ -242,7 +242,7 @@ function Receipts() {
               <TD className="num text-muted-foreground">{receipt.invoiceId}</TD>
               <TD className="text-muted-foreground">{receipt.issuedAt.slice(11, 16)}</TD>
               <TD>{receipt.cashier}</TD>
-              <TD className="num text-right font-semibold">{ksh(receipt.paidAmount)}</TD>
+              <TD className="num text-right font-semibold">{formatMoney(receipt.paidAmount)}</TD>
               <TD>
                 {receipt.paymentBreakdown
                   .map((payment) => payment.method.replaceAll("_", " "))

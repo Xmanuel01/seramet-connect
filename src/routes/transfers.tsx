@@ -6,7 +6,7 @@ import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations, type TransferRow } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 export const Route = createFileRoute("/transfers")({
   head: () => ({
@@ -207,7 +207,7 @@ function Transfers() {
                 </TD>
                 <TD className="num text-right">{Number(row.line_count ?? 0)}</TD>
                 <TD className="num text-right font-semibold">
-                  {ksh(Number(row.sent_value_minor ?? 0) / 100)}
+                  {formatMoney(Number(row.sent_value_minor ?? 0) / 100)}
                 </TD>
                 <TD>
                   <Status>{row.status}</Status>

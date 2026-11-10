@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowRight, Clock3, UserPlus } from "lucide-react";
@@ -51,7 +52,7 @@ type VerifiedPeople = {
 };
 const renderTime = (value: string | null | undefined, zone: string) =>
   value
-    ? new Intl.DateTimeFormat("en-KE", {
+    ? new Intl.DateTimeFormat(activeLocale(), {
         timeZone: zone,
         hour: "2-digit",
         minute: "2-digit",
@@ -111,7 +112,7 @@ function People() {
   const late = people?.summary?.late ?? 0;
   const notIn = people?.summary?.not_recorded ?? 0;
   const canSeeRoster = people?.canManage ?? false;
-  const zone = people?.branchTimezone ?? "Africa/Nairobi";
+  const zone = people?.branchTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   // Who needs a look first: late, then working, then not in yet, then finished.
   const today = (people?.employees ?? [])
     .map((employee) => {

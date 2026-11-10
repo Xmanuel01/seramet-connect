@@ -12,7 +12,7 @@ import {
 } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { InventoryImport } from "@/inventory/InventoryImport";
 
 type ItemsView = "items" | "stores" | "reorder";
@@ -226,8 +226,8 @@ function ItemsList() {
                   label="Available"
                   value={formatQuantity(row.quantity_available_minor / 1_000_000)}
                 />
-                <Info label="Unit cost" value={ksh(row.average_unit_cost_minor / 100)} />
-                <Info label="Value" value={ksh(row.total_value_minor / 100)} />
+                <Info label="Unit cost" value={formatMoney(row.average_unit_cost_minor / 100)} />
+                <Info label="Value" value={formatMoney(row.total_value_minor / 100)} />
               </div>
               <div className="mt-3 text-[11px] text-muted-foreground">
                 {row.preferred_supplier_name || "No preferred supplier"} · {row.warehouse_count}{" "}
@@ -281,9 +281,11 @@ function ItemsList() {
                   <TD className="num text-right text-muted-foreground">
                     {formatQuantity((row.target_quantity_minor ?? 0) / 1_000_000)} {row.unit}
                   </TD>
-                  <TD className="num text-right">{ksh(row.average_unit_cost_minor / 100)}</TD>
+                  <TD className="num text-right">
+                    {formatMoney(row.average_unit_cost_minor / 100)}
+                  </TD>
                   <TD className="num text-right font-semibold">
-                    {ksh(row.total_value_minor / 100)}
+                    {formatMoney(row.total_value_minor / 100)}
                   </TD>
                   <TD className="num text-right">{row.warehouse_count}</TD>
                   <TD>

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
@@ -133,7 +133,7 @@ function OnlineOrders() {
                 <TD className="num text-muted-foreground">{order.createdAt.slice(11, 16)}</TD>
                 <TD>{order.customer}</TD>
                 <TD>{order.partner}</TD>
-                <TD className="num text-right font-semibold">{ksh(order.total)}</TD>
+                <TD className="num text-right font-semibold">{formatMoney(order.total)}</TD>
                 <TD>
                   <Status>{order.settlement}</Status>
                 </TD>
@@ -165,7 +165,7 @@ function OnlineOrders() {
                 <Status>{order.status.replaceAll("_", " ")}</Status>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                <OrderDetail label="Online price" value={ksh(order.total)} />
+                <OrderDetail label="Online price" value={formatMoney(order.total)} />
                 <OrderDetail label="Received" value={order.createdAt.slice(11, 16)} />
                 <OrderDetail label="Settlement" value={order.settlement} />
                 <OrderDetail label="Account" value={order.account} />

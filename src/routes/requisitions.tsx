@@ -46,7 +46,7 @@ function Requisitions() {
   const [busy, setBusy] = useState(false);
 
   const data = control.data.find((row) => row.branchId === branchId);
-  const rows = data?.procurement.requisitions ?? [];
+  const rows = useMemo(() => data?.procurement.requisitions ?? [], [data]);
   const selected = rows.find((row) => row.id === selectedId) ?? rows[0];
 
   useEffect(() => {

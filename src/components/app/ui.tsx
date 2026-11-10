@@ -1,6 +1,6 @@
 import { Children, isValidElement, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 
 export function Panel({ className, children }: { className?: string; children: ReactNode }) {
@@ -120,7 +120,8 @@ export function Metric({
   note?: string;
 }) {
   const good = delta === undefined ? true : invert ? delta < 0 : delta >= 0;
-  const display = typeof value === "number" ? (money ? ksh(value) : value.toLocaleString()) : value;
+  const display =
+    typeof value === "number" ? (money ? formatMoney(value) : value.toLocaleString()) : value;
   return (
     <div className="rounded-xl border border-border bg-card p-3.5 shadow-card">
       <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">

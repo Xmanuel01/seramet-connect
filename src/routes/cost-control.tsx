@@ -16,7 +16,7 @@ import { DataTable } from "@/components/app/Tabs";
 import { Btn, Chips, Metric, Panel, PanelHead, Segmented, Status, TD } from "@/components/app/ui";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { formatDate, formatNumber, ksh } from "@/lib/currency";
+import { formatDate, formatNumber, formatMoney } from "@/lib/currency";
 import { branchMetric, useAppContext } from "@/lib/app-context";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
@@ -584,7 +584,7 @@ function AuthoritativeVarianceView({ rows }: { rows: Array<Record<string, unknow
             <TD className="num text-right">{formatMicro(row["theoretical_quantity_minor"])}</TD>
             <TD className="num text-right">{formatMicro(row["unexplained_quantity_minor"])}</TD>
             <TD className="num text-right font-semibold">
-              {ksh(Number(row["variance_value_minor"] ?? 0) / 100)}
+              {formatMoney(Number(row["variance_value_minor"] ?? 0) / 100)}
             </TD>
             <TD>
               <Status>{String(row["quality"] ?? "INSUFFICIENT_DATA")}</Status>
@@ -735,7 +735,10 @@ function RawMaterialsView({ materials, onAdd }: { materials: Material[]; onAdd: 
                 <Status>{materialStatus(item)}</Status>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
-                <InfoTile label="Edible cost" value={`${ksh(edibleUnitCost(item))}/${item.unit}`} />
+                <InfoTile
+                  label="Edible cost"
+                  value={`${formatMoney(edibleUnitCost(item))}/${item.unit}`}
+                />
                 <InfoTile label="Total stock" value={`${stockQty(item)} ${item.unit}`} />
                 <InfoTile label="Yield" value={`${item.yieldPct}%`} />
                 <InfoTile label="PAR" value={`${item.par} ${item.unit}`} />
@@ -753,7 +756,7 @@ function RawMaterialsView({ materials, onAdd }: { materials: Material[]; onAdd: 
               </TD>
               <TD className="text-muted-foreground">{item.category}</TD>
               <TD className="num">{item.unit}</TD>
-              <TD className="num text-right font-semibold">{ksh(edibleUnitCost(item))}</TD>
+              <TD className="num text-right font-semibold">{formatMoney(edibleUnitCost(item))}</TD>
               <TD className="num text-right">
                 {item.mainStore} {item.unit}
               </TD>
@@ -787,7 +790,7 @@ function RawMaterialsView({ materials, onAdd }: { materials: Material[]; onAdd: 
                 </div>
                 <p className="mt-1 text-[12px] text-muted-foreground">
                   {stockQty(item)} {item.unit} on hand against PAR {item.par} {item.unit}. Latest
-                  edible cost is {ksh(edibleUnitCost(item))}/{item.unit}.
+                  edible cost is {formatMoney(edibleUnitCost(item))}/{item.unit}.
                 </p>
               </div>
             ))}
@@ -858,10 +861,10 @@ function RecipeBomView({
             >
               <TD className="font-semibold">{row.dish}</TD>
               <TD className="text-muted-foreground">{row.station}</TD>
-              <TD className="num text-right">{ksh(row.cost)}</TD>
-              <TD className="num text-right">{ksh(row.price)}</TD>
+              <TD className="num text-right">{formatMoney(row.cost)}</TD>
+              <TD className="num text-right">{formatMoney(row.price)}</TD>
               <TD className="num text-right font-semibold">{row.foodCostPct.toFixed(1)}%</TD>
-              <TD className="num text-right">{ksh(row.suggestedPrice)}</TD>
+              <TD className="num text-right">{formatMoney(row.suggestedPrice)}</TD>
               <TD>
                 <Status>{row.status}</Status>
               </TD>
@@ -877,10 +880,10 @@ function RecipeBomView({
         />
         <div className="space-y-3 p-4">
           <div className="grid grid-cols-2 gap-2 text-[12px]">
-            <InfoTile label="Recipe cost" value={ksh(selectedSummary.cost)} />
+            <InfoTile label="Recipe cost" value={formatMoney(selectedSummary.cost)} />
             <InfoTile label="Gross margin" value={`${selectedSummary.marginPct.toFixed(1)}%`} />
-            <InfoTile label="Selling price" value={ksh(selectedSummary.price)} />
-            <InfoTile label="Suggested" value={ksh(selectedSummary.suggestedPrice)} />
+            <InfoTile label="Selling price" value={formatMoney(selectedSummary.price)} />
+            <InfoTile label="Suggested" value={formatMoney(selectedSummary.suggestedPrice)} />
           </div>
           <div className="rounded-lg border border-border">
             {selectedRecipe.lines.map((line) => {
@@ -898,7 +901,7 @@ function RecipeBomView({
                     </div>
                   </div>
                   <div className="num text-right text-[13px] font-semibold">
-                    {ksh(lineCost(line, material))}
+                    {formatMoney(lineCost(line, material))}
                   </div>
                 </div>
               );
@@ -1010,15 +1013,15 @@ function VarianceView({ rows }: { rows: ReturnType<typeof recipeSummary>[] }) {
             <tr key={row.productId} className="hover:bg-secondary/50">
               <TD className="font-semibold">{row.dish}</TD>
               <TD className="num text-right">{row.expectedSales}</TD>
-              <TD className="num text-right">{ksh(row.cost * row.expectedSales)}</TD>
-              <TD className="num text-right">{ksh(row.actualCost)}</TD>
+              <TD className="num text-right">{formatMoney(row.cost * row.expectedSales)}</TD>
+              <TD className="num text-right">{formatMoney(row.actualCost)}</TD>
               <TD
                 className={cn(
                   "num text-right font-semibold",
                   row.variance > 0 ? "text-danger" : "text-success",
                 )}
               >
-                {ksh(row.variance)}
+                {formatMoney(row.variance)}
               </TD>
               <TD>
                 <Status>{row.variancePct > 2 ? "Variance_review" : "Healthy"}</Status>

@@ -5,7 +5,7 @@ import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/
 import { useInventoryControlCentre } from "@/inventory/use-inventory-control-centre";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
-import { ksh } from "@/lib/currency";
+import { formatMoney } from "@/lib/currency";
 
 type StockRow = {
   branchId: string;
@@ -253,9 +253,11 @@ export function StockByStorePanel() {
                   <TD className="num text-right text-muted-foreground">
                     {quantity(row.target_quantity_minor)}
                   </TD>
-                  <TD className="num text-right">{ksh(row.average_unit_cost_minor / 100)}</TD>
+                  <TD className="num text-right">
+                    {formatMoney(row.average_unit_cost_minor / 100)}
+                  </TD>
                   <TD className="num text-right font-semibold">
-                    {ksh(row.total_value_minor / 100)}
+                    {formatMoney(row.total_value_minor / 100)}
                   </TD>
                   <TD>
                     <Status>{stockState(row)}</Status>

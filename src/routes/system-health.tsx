@@ -1,3 +1,4 @@
+import { activeLocale } from "@/lib/currency";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, RefreshCcw } from "lucide-react";
@@ -68,7 +69,7 @@ function SystemHealthPage() {
     failed === 0;
   const date = (value?: string | null) =>
     value
-      ? new Intl.DateTimeFormat("en-KE", { dateStyle: "medium", timeStyle: "short" }).format(
+      ? new Intl.DateTimeFormat(activeLocale(), { dateStyle: "medium", timeStyle: "short" }).format(
           new Date(value),
         )
       : "Not recorded";
