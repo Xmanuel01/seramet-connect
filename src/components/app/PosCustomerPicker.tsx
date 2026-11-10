@@ -34,6 +34,8 @@ export function PosCustomerPicker({
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [newLocation, setNewLocation] = useState("");
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -117,6 +119,8 @@ export function PosCustomerPicker({
         companyName: "",
         branchId,
         isAllBranches: false,
+        taxPin: newPin,
+        location: newLocation,
       });
       const result = await command<CreateResponse>("/api/seramet/crm/customers", payload);
       choose(result.customer);
@@ -269,6 +273,22 @@ export function PosCustomerPicker({
                 value={newPhone}
                 onChange={(event) => setNewPhone(event.target.value.replace(/[^+0-9]/g, ""))}
                 placeholder="Phone (optional)"
+                className="h-9 rounded-md border border-border bg-background px-2"
+              />
+              <input
+                aria-label="New customer KRA PIN"
+                maxLength={20}
+                value={newPin}
+                onChange={(event) => setNewPin(event.target.value.toUpperCase())}
+                placeholder="KRA PIN (optional)"
+                className="h-9 rounded-md border border-border bg-background px-2 uppercase"
+              />
+              <input
+                aria-label="New customer location"
+                maxLength={200}
+                value={newLocation}
+                onChange={(event) => setNewLocation(event.target.value)}
+                placeholder="Location (optional)"
                 className="h-9 rounded-md border border-border bg-background px-2"
               />
               {message && (
