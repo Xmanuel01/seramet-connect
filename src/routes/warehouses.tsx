@@ -57,7 +57,7 @@ function Warehouses() {
 
   return (
     <AppShell
-      title="Warehouses & stores"
+      title="Stores"
       subtitle={branchLabel}
       actions={
         <Btn

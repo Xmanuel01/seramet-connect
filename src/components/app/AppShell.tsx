@@ -3,7 +3,8 @@ import { emptyRecords } from "@/lib/empty-records";
 import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { useAttendanceDelays } from "@/hooks/use-attendance-delays";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Bell,
   AlertTriangle,
@@ -154,6 +155,11 @@ const quickCreateOptions: {
   },
 ];
 
+// The sidebar is rebuilt on every page; keep its open section and scroll position for the
+// tab so moving between pages doesn't snap groups shut or jump the menu back to the top.
+let rememberedNavGroup: string | null = null;
+let rememberedNavScroll = 0;
+
 export function AppShell({
   title,
   subtitle,
@@ -175,7 +181,11 @@ export function AppShell({
   };
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const [openNavGroups, setOpenNavGroups] = useState<Set<string>>(() => new Set());
+  const [openNavGroups, setOpenNavGroups] = useState<Set<string>>(
+    () => new Set(rememberedNavGroup ? [rememberedNavGroup] : []),
+  );
+  const navScrollRef = useRef<HTMLElement | null>(null);
+  const openedForPath = useRef<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -247,12 +257,21 @@ export function AppShell({
     const activeGroup = visibleNavGroups.find(
       (group) => group.group && group.items.some((item) => navItemMatchesPath(item, path)),
     )?.group;
-    if (!activeGroup) return;
-    setOpenNavGroups((current) => {
-      if (current.has(activeGroup)) return current;
-      return new Set([...current, activeGroup]);
-    });
+    // Only when the page changes: a section the user opens by hand stays open until then.
+    if (!activeGroup || openedForPath.current === path) return;
+    openedForPath.current = path;
+    setOpenNavGroups((current) =>
+      current.size === 1 && current.has(activeGroup) ? current : new Set([activeGroup]),
+    );
   }, [path, visibleNavGroups]);
+
+  useEffect(() => {
+    rememberedNavGroup = [...openNavGroups][0] ?? null;
+  }, [openNavGroups]);
+
+  useLayoutEffect(() => {
+    if (navScrollRef.current) navScrollRef.current.scrollTop = rememberedNavScroll;
+  }, []);
 
   const visibleNotifications = notifications.filter(
     (item) => !mutedCategories.includes(item.category),
@@ -469,108 +488,193 @@ export function AppShell({
     window.dispatchEvent(new CustomEvent("seramet:workflow-action", { detail: { label } }));
   };
 
+  // Accordion: opening a section closes the one that was open.
   const toggleNavGroup = (group: string) => {
-    setOpenNavGroups((current) => {
-      const next = new Set(current);
-      if (next.has(group)) next.delete(group);
-      else next.add(group);
-      return next;
-    });
+    setOpenNavGroups((current) => (current.has(group) ? new Set() : new Set([group])));
   };
 
-  const navContent = (isCollapsed = false, onNavigate?: () => void) => (
+  const collapsedNav = () => (
     <nav className="flex-1 overflow-y-auto px-2 py-3" aria-label="Main navigation">
       {visibleNavGroups.map((g) => {
         const hasActiveItem = g.items.some((item) => navItemMatchesPath(item, path));
-        const isOpen = !g.group || isCollapsed || openNavGroups.has(g.group);
-        const GroupIcon = g.items.find((item) => item.icon)?.icon;
-        const groupId = `nav-group-${g.group.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-
-        return (
-          <div key={g.group || "primary"} className="mb-1">
-            {g.group && !isCollapsed && (
-              <button
-                type="button"
+        if (!g.group) {
+          return g.items.map((item) => {
+            const Icon = item.icon;
+            const active = navItemMatchesPath(item, path);
+            return item.to ? (
+              <Link
+                key={item.label + item.to}
+                to={item.to}
+                title={item.label}
+                aria-label={item.label}
+                aria-current={active ? "page" : undefined}
                 className={cn(
-                  "group flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left text-[12px] font-semibold transition-colors",
-                  hasActiveItem || isOpen
-                    ? "bg-secondary/70 text-foreground"
-                    : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  "mb-1 flex min-h-10 items-center justify-center rounded-md transition-colors",
+                  active
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                 )}
-                aria-expanded={isOpen}
-                aria-controls={groupId}
-                onClick={() => toggleNavGroup(g.group)}
               >
-                {GroupIcon && (
-                  <GroupIcon
-                    className={cn(
-                      "h-4 w-4 shrink-0",
-                      hasActiveItem ? "text-primary" : "text-muted-foreground",
-                    )}
-                    strokeWidth={1.9}
-                  />
-                )}
-                <span className="min-w-0 flex-1 truncate">{g.group}</span>
-                <span className="min-w-5 rounded bg-background/80 px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums text-muted-foreground">
-                  {g.items.length}
-                </span>
-                <ChevronDown
-                  className={cn(
-                    "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
-                    isOpen && "rotate-180",
-                  )}
-                />
-              </button>
-            )}
-            <div
-              id={g.group ? groupId : undefined}
+                {Icon && <Icon className="h-4 w-4" />}
+              </Link>
+            ) : null;
+          });
+        }
+        const GroupIcon = g.items.find((item) => item.icon)?.icon;
+        return (
+          <Popover key={g.group}>
+            <PopoverTrigger
+              title={g.group}
+              aria-label={g.group}
               className={cn(
-                "space-y-0.5",
-                g.group && !isCollapsed && "ml-4 mt-1 border-l border-border/80 pl-2",
-                !isOpen && "hidden",
+                "mb-1 flex min-h-10 w-full items-center justify-center rounded-md transition-colors",
+                hasActiveItem
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
-              {g.items.map((item, idx, items) => {
-                const active =
-                  navItemMatchesPath(item, path) &&
-                  items.findIndex((candidate) => candidate.to === item.to) === idx;
+              {GroupIcon && <GroupIcon className="h-4 w-4" />}
+            </PopoverTrigger>
+            <PopoverContent side="right" align="start" className="w-56 border-border bg-card p-1.5 shadow-lg">
+              <div className="px-2.5 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {g.group}
+              </div>
+              {g.items.map((item) => {
+                const active = navItemMatchesPath(item, path);
                 const Icon = item.icon;
-                const content = (
-                  <span
-                    className={cn(
-                      "group flex min-h-9 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
-                      active
-                        ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-border/70"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                      isCollapsed && "justify-center px-0",
-                    )}
-                  >
-                    {Icon && <Icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.2 : 1.8} />}
-                    {!isCollapsed && <span className="truncate">{item.label}</span>}
-                  </span>
-                );
                 return item.to ? (
                   <Link
                     key={item.label + item.to}
                     to={item.to}
-                    title={item.label}
                     aria-current={active ? "page" : undefined}
-                    onClick={onNavigate}
+                    className={cn(
+                      "flex min-h-9 items-center gap-2.5 rounded-md px-2.5 text-[13px] transition-colors",
+                      active
+                        ? "bg-accent font-semibold text-accent-foreground"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                    )}
                   >
-                    {content}
+                    {Icon && <Icon className="h-4 w-4 shrink-0" />}
+                    <span className="truncate">{item.label}</span>
                   </Link>
-                ) : (
-                  <div key={item.label} className="cursor-default opacity-70">
-                    {content}
-                  </div>
-                );
+                ) : null;
               })}
-            </div>
-          </div>
+            </PopoverContent>
+          </Popover>
         );
       })}
     </nav>
   );
+
+  const navContent = (isCollapsed = false, onNavigate?: () => void) =>
+    isCollapsed ? (
+      collapsedNav()
+    ) : (
+      <nav
+        ref={onNavigate ? undefined : navScrollRef}
+        onScroll={
+          onNavigate
+            ? undefined
+            : (event) => {
+                rememberedNavScroll = event.currentTarget.scrollTop;
+              }
+        }
+        className="flex-1 overflow-y-auto px-2 py-3"
+        aria-label="Main navigation"
+      >
+        {visibleNavGroups.map((g) => {
+          const hasActiveItem = g.items.some((item) => navItemMatchesPath(item, path));
+          const isOpen = !g.group || isCollapsed || openNavGroups.has(g.group);
+          const GroupIcon = g.items.find((item) => item.icon)?.icon;
+          const groupId = `nav-group-${g.group.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+
+          return (
+            <div key={g.group || "primary"} className="mb-1">
+              {g.group && !isCollapsed && (
+                <button
+                  type="button"
+                  className={cn(
+                    "group flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left text-[12px] font-semibold transition-colors",
+                    hasActiveItem || isOpen
+                      ? "bg-secondary/70 text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                  )}
+                  aria-expanded={isOpen}
+                  aria-controls={groupId}
+                  onClick={() => toggleNavGroup(g.group)}
+                >
+                  {GroupIcon && (
+                    <GroupIcon
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        hasActiveItem ? "text-primary" : "text-muted-foreground",
+                      )}
+                      strokeWidth={1.9}
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{g.group}</span>
+                  <span className="min-w-5 rounded bg-background/80 px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums text-muted-foreground">
+                    {g.items.length}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+                      isOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+              )}
+              <div
+                id={g.group ? groupId : undefined}
+                className={cn(
+                  "space-y-0.5",
+                  g.group && !isCollapsed && "ml-4 mt-1 border-l border-border/80 pl-2",
+                  !isOpen && "hidden",
+                )}
+              >
+                {g.items.map((item, idx, items) => {
+                  const active =
+                    navItemMatchesPath(item, path) &&
+                    items.findIndex((candidate) => candidate.to === item.to) === idx;
+                  const Icon = item.icon;
+                  const content = (
+                    <span
+                      className={cn(
+                        "group flex min-h-9 items-center gap-2.5 rounded-md px-3 py-2 text-[13px] font-medium transition-colors",
+                        active
+                          ? "bg-accent text-accent-foreground shadow-sm ring-1 ring-border/70"
+                          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        isCollapsed && "justify-center px-0",
+                      )}
+                    >
+                      {Icon && (
+                        <Icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.2 : 1.8} />
+                      )}
+                      {!isCollapsed && <span className="truncate">{item.label}</span>}
+                    </span>
+                  );
+                  return item.to ? (
+                    <Link
+                      key={item.label + item.to}
+                      to={item.to}
+                      title={item.label}
+                      aria-current={active ? "page" : undefined}
+                      onClick={onNavigate}
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <div key={item.label} className="cursor-default opacity-70">
+                      {content}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </nav>
+    );
 
   return (
     <div className="flex min-h-screen w-full bg-background">
