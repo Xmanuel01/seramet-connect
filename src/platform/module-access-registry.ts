@@ -347,6 +347,7 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
       "/categories",
       "/stock-detail",
       "/stock-count",
+      "/stock-losses",
       "/adjustments",
       "/wastage",
       "/breakages",

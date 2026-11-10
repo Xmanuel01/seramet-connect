@@ -1,7 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
+import { ReorderLevelsPanel } from "@/inventory/ReorderLevelsPanel";
+import { StockByStorePanel } from "@/inventory/StockByStorePanel";
+import { cn } from "@/lib/utils";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import {
   useInventoryControlCentre,
@@ -12,7 +15,19 @@ import { useAppContext } from "@/lib/app-context";
 import { ksh } from "@/lib/currency";
 import { InventoryImport } from "@/inventory/InventoryImport";
 
+type ItemsView = "items" | "stores" | "reorder";
+const itemViews: { id: ItemsView; label: string }[] = [
+  { id: "items", label: "All items" },
+  { id: "stores", label: "By store" },
+  { id: "reorder", label: "Reorder levels" },
+];
+
 export const Route = createFileRoute("/inventory-items")({
+  validateSearch: (search: Record<string, unknown>): { view?: ItemsView } => ({
+    view: itemViews.some((item) => item.id === search.view)
+      ? (search.view as ItemsView)
+      : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Inventory Items - Seramet" },
@@ -33,6 +48,46 @@ type ItemView = InventoryListRow & {
 };
 
 function InventoryItems() {
+  const { branchLabel } = useAppContext();
+  const navigate = useNavigate({ from: "/inventory-items" });
+  const view = Route.useSearch().view ?? "items";
+  return (
+    <AppShell title="Inventory items" subtitle={branchLabel}>
+      <div
+        role="tablist"
+        aria-label="View"
+        className="mb-4 flex flex-wrap items-center gap-1 border-b border-border"
+      >
+        {itemViews.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={item.id === view}
+            onClick={() =>
+              void navigate({
+                search: item.id === "items" ? {} : { view: item.id },
+                replace: true,
+              })
+            }
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors",
+              item.id === view
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {view === "items" && <ItemsList />}
+      {view === "stores" && <StockByStorePanel />}
+      {view === "reorder" && <ReorderLevelsPanel />}
+    </AppShell>
+  );
+}
+
+function ItemsList() {
   const { branchLabel, isAllBranches } = useAppContext();
   const { persistenceMode } = useTransactionEngine();
   const authoritative = persistenceMode === "authoritative";
@@ -64,10 +119,8 @@ function InventoryItems() {
   const attentionCount = rows.filter((row) => row.status !== "Healthy").length;
 
   return (
-    <AppShell
-      title="Inventory items"
-      subtitle={branchLabel}
-      actions={
+    <>
+      <div className="mb-3 flex flex-wrap justify-end gap-2">
         <>
           {authoritative && <InventoryImport onPublished={() => void control.refresh()} />}
           <Btn onClick={() => exportRows(filtered)}>Export</Btn>
@@ -79,8 +132,7 @@ function InventoryItems() {
             {showCreate ? "Close form" : "Add item"}
           </Btn>
         </>
-      }
-    >
+      </div>
       {(notice || control.error) && (
         <div className="mb-4 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-muted-foreground">
           {notice || control.error}
@@ -259,7 +311,7 @@ function InventoryItems() {
           </div>
         </div>
       </Panel>
-    </AppShell>
+    </>
   );
 }
 
