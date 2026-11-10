@@ -85,3 +85,26 @@ export function createManualMenuCsv(input: ManualMenuItemInput) {
     menuImportHeaders.map((header) => csvCell(row[header])).join(","),
   ].join("\n");
 }
+
+/**
+ * Changes to an existing menu item. The item code and currency stay fixed. `branch` carries the
+ * settings of one branch (its price, availability and kitchen station); leave it out to change
+ * only the item itself.
+ */
+export type MenuItemUpdateInput = {
+  name: string;
+  categoryCode: string;
+  description?: string;
+  basePrice: string;
+  /** Price on online channels; empty clears it so online orders use the normal price. */
+  onlinePrice?: string;
+  sku?: string;
+  taxRuleId?: string;
+  unitOfMeasure?: string;
+  recipeReference?: string;
+  serviceChargeApplicable: boolean;
+  sellable: boolean;
+  /** An uploaded public image to show for the item, or null to remove the current one. */
+  imageObjectId?: string | null;
+  branch?: { branchId: string; price?: string; available: boolean; stationId?: string };
+};

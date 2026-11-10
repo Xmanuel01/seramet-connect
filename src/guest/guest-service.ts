@@ -3682,8 +3682,19 @@ function guestOrderAcceptancePolicy(profile: ProfileScope) {
     : "AUTO_ACCEPT";
 }
 
+// Orders placed online. Table QR and kiosk orders are in the restaurant and keep the normal price.
+const onlineServiceModes = new Set<GuestServiceMode>(["PICKUP", "DIRECT_DELIVERY", "WEB_ORDER"]);
+
 function menuItemFromRow(row: Row, serviceMode?: GuestServiceMode): PublicMenuItem {
   const payload = safeJson<Record<string, unknown>>(String(row["payload_json"] ?? "{}"), {});
+  const onlinePriceMinor = payload["onlinePriceMinor"];
+  const priceMinor =
+    serviceMode &&
+    onlineServiceModes.has(serviceMode) &&
+    Number.isSafeInteger(onlinePriceMinor) &&
+    Number(onlinePriceMinor) >= 0
+      ? Number(onlinePriceMinor)
+      : Number(row["effective_price_minor"]);
   const channel = safeJson<Record<string, boolean>>(
     String(row["channel_availability_json"] ?? "{}"),
     {},
@@ -3727,7 +3738,7 @@ function menuItemFromRow(row: Row, serviceMode?: GuestServiceMode): PublicMenuIt
     categoryCode: String(row["category_code"]),
     ...(row["description"] ? { description: String(row["description"]) } : {}),
     ...(typeof payload["imageUrl"] === "string" ? { imageUrl: payload["imageUrl"] } : {}),
-    priceMinor: Number(row["effective_price_minor"]),
+    priceMinor,
     currency: String(row["currency"]),
     available: configuredAvailable && channelAvailable,
     ...(!configuredAvailable ? { soldOutReason: "SOLD_OUT" } : {}),

@@ -171,6 +171,46 @@ export const importCommitRequestSchema = z
   .object({ idempotencyKey: z.string().trim().min(8).max(200) })
   .strict();
 
+const optionalMoney = z
+  .string()
+  .trim()
+  .regex(/^(\d+(?:\.\d{1,3})?)?$/)
+  .optional();
+
+export const menuItemUpdateRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(160),
+    categoryCode: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    description: z.string().trim().max(1000).optional(),
+    basePrice: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,3})?$/),
+    onlinePrice: optionalMoney,
+    sku: z.string().trim().max(80).optional(),
+    taxRuleId: z.string().trim().max(120).optional(),
+    unitOfMeasure: z.string().trim().max(40).optional(),
+    recipeReference: z.string().trim().max(120).optional(),
+    serviceChargeApplicable: z.boolean(),
+    sellable: z.boolean(),
+    imageObjectId: z.string().trim().min(1).max(120).nullable().optional(),
+    branch: z
+      .object({
+        branchId: z.string().trim().min(1).max(120),
+        price: optionalMoney,
+        available: z.boolean(),
+        stationId: z.string().trim().max(120).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const manualMenuItemRequestSchema = z
   .object({
     branchId: z.string().trim().min(1).max(120),

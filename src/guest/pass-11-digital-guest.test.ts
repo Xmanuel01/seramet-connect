@@ -135,6 +135,27 @@ describe("Pass 11 digital guest experience", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 
+  it("charges an item's online price on online orders and the normal price at the table", async () => {
+    await db
+      .prepare(
+        "UPDATE menu_catalog_items SET payload_json=? WHERE tenant_id=? AND id='menu-demo-biryani'",
+      )
+      .bind(JSON.stringify({ onlinePriceMinor: 120_000 }), tenantId)
+      .run();
+    const priceIn = async (mode: "PICKUP" | "QR_TABLE") =>
+      (await service.publicMenu(restaurantSlug, branchSlug, mode)).items.find(
+        (item) => item.id === "menu-demo-biryani",
+      )?.priceMinor;
+    expect(await priceIn("PICKUP")).toBe(120_000);
+    expect(await priceIn("QR_TABLE")).toBe(100_000);
+    const session = await webSession();
+    const quote = await service.createQuote(session.token, {
+      serviceMode: "PICKUP",
+      items: [{ itemId: "menu-demo-biryani", quantity: 2 }],
+    });
+    expect(quote.subtotalMinor).toBe(240_000);
+  });
+
   it("rejects forged tax/payment state and guest-to-staff privilege escalation", async () => {
     const session = await webSession();
     const forgedTax = await api(

@@ -1,5 +1,5 @@
 import type { ServerActor, SerametEnv } from "@/lib/seramet-auth";
-import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
+import type { ManualMenuItemCreateInput, MenuItemUpdateInput } from "@/onboarding/manual-menu-item";
 import { isCurrentFlow, onboardingStepNumber } from "@/onboarding/onboarding-steps";
 import { parseCsvRows, parseXlsxRows } from "@/lib/menu-import-export";
 import { getProviderRegistry } from "@/integrations/provider-registry";
@@ -642,7 +642,8 @@ export class OnboardingService {
       .prepare(
         `SELECT m.id,m.code,m.sku,m.name,m.category_code,m.description,m.selling_price_minor,
                 m.currency,COALESCE(bs.station_id,m.station_id) station_id,
-                m.recipe_reference,m.sellable,m.active,
+                m.recipe_reference,m.sellable,m.active,m.tax_rule_id,
+                m.service_charge_applicable,m.payload_json,
                 bs.selling_price_minor branch_price_minor,bs.available,
                 CASE WHEN bs.menu_item_id IS NULL THEN 0 ELSE 1 END branch_activated
          FROM menu_catalog_items m
@@ -668,8 +669,22 @@ export class OnboardingService {
         branch_price_minor: number | null;
         available: number | null;
         branch_activated: number;
+        tax_rule_id: string | null;
+        service_charge_applicable: number;
+        payload_json: string | null;
       }>();
-    return rows.results ?? [];
+    // Send the few payload fields the menu screens use, not the whole import payload.
+    return (rows.results ?? []).map(({ payload_json, ...row }) => {
+      const payload = parseJson<Record<string, unknown>>(payload_json ?? "{}", {});
+      return {
+        ...row,
+        online_price_minor:
+          typeof payload["onlinePriceMinor"] === "number" ? payload["onlinePriceMinor"] : null,
+        image_url: typeof payload["imageUrl"] === "string" ? payload["imageUrl"] : null,
+        unit_of_measure:
+          typeof payload["unitOfMeasure"] === "string" ? payload["unitOfMeasure"] : null,
+      };
+    });
   }
 
   async listOpeningStock(branchId?: string) {
@@ -1449,6 +1464,157 @@ export class OnboardingService {
       }),
     ]);
     return result;
+  }
+
+  /**
+   * Edits one menu item in place. Only the columns shown in the item editor change; anything an
+   * import set that the editor doesn't show (barcode, modifier groups, channel rules, printer
+   * group) is kept as it is.
+   */
+  async updateMenuItem(itemId: string, input: MenuItemUpdateInput) {
+    this.require(permissions.setupImport);
+    const item = await this.db
+      .prepare(
+        `SELECT id,code,currency,payload_json FROM menu_catalog_items
+         WHERE tenant_id=? AND id=? AND active=1`,
+      )
+      .bind(this.actor.tenantId, itemId)
+      .first<{ id: string; code: string; currency: string; payload_json: string | null }>();
+    if (!item) throw notFound("Menu item not found");
+    const money = (label: string, value: string) => {
+      const minor = parseMenuMoney(value.trim(), item.currency);
+      if (!Number.isSafeInteger(minor) || minor < 0) {
+        throw validation(`${label} must be valid non-negative money`);
+      }
+      return minor;
+    };
+    const sellingPriceMinor = money("Selling price", input.basePrice);
+    const onlinePriceMinor = input.onlinePrice?.trim()
+      ? money("Online price", input.onlinePrice)
+      : undefined;
+    const sku = input.sku?.trim() || item.code;
+    const skuOwner = await this.db
+      .prepare(
+        "SELECT id FROM menu_catalog_items WHERE tenant_id=? AND UPPER(sku)=UPPER(?) AND id<>?",
+      )
+      .bind(this.actor.tenantId, sku, item.id)
+      .first<{ id: string }>();
+    if (skuOwner) throw validation("That SKU belongs to another menu item");
+    const taxRuleId = input.taxRuleId?.trim() || null;
+    if (taxRuleId) {
+      const tax = await this.db
+        .prepare(
+          "SELECT id FROM tax_service_rules WHERE tenant_id=? AND id=? AND rule_type='TAX' AND active=1",
+        )
+        .bind(this.actor.tenantId, taxRuleId)
+        .first();
+      if (!tax) throw validation("Choose an active tax rule");
+    }
+    const recipeReference = input.recipeReference?.trim() || null;
+    const recipe = recipeReference
+      ? await this.db
+          .prepare("SELECT id FROM recipes WHERE tenant_id=? AND id=? AND active=1")
+          .bind(this.actor.tenantId, recipeReference)
+          .first()
+      : null;
+
+    const payload = parseJson<Record<string, unknown>>(item.payload_json ?? "{}", {});
+    if (onlinePriceMinor === undefined) delete payload["onlinePriceMinor"];
+    else payload["onlinePriceMinor"] = onlinePriceMinor;
+    if (input.unitOfMeasure?.trim()) payload["unitOfMeasure"] = input.unitOfMeasure.trim();
+    else delete payload["unitOfMeasure"];
+    payload["recipePending"] = Boolean(recipeReference && !recipe);
+    if (input.imageObjectId === null) {
+      delete payload["imageUrl"];
+      delete payload["imageObjectId"];
+    } else if (input.imageObjectId) {
+      // Only an image this restaurant uploaded as a public asset can be shown on its menu.
+      const image = await this.db
+        .prepare(
+          `SELECT o.id,t.slug FROM stored_objects o JOIN tenants t ON t.id=o.tenant_id
+           WHERE o.tenant_id=? AND o.id=? AND o.object_class='PUBLIC_ASSET'
+             AND o.status='ACTIVE' AND o.content_type LIKE 'image/%'`,
+        )
+        .bind(this.actor.tenantId, input.imageObjectId)
+        .first<{ id: string; slug: string }>();
+      if (!image) throw validation("The image upload wasn't found; choose the photo again");
+      payload["imageObjectId"] = image.id;
+      payload["imageUrl"] =
+        `/api/seramet/public/assets/${encodeURIComponent(image.slug)}/${encodeURIComponent(image.id)}`;
+    }
+
+    const stamp = now();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `UPDATE menu_catalog_items SET
+             name=?,category_code=?,description=?,selling_price_minor=?,sku=?,tax_rule_id=?,
+             service_charge_applicable=?,recipe_reference=?,sellable=?,payload_json=?,updated_at=?
+           WHERE tenant_id=? AND id=?`,
+        )
+        .bind(
+          input.name.trim(),
+          input.categoryCode.trim().toUpperCase(),
+          input.description?.trim() || null,
+          sellingPriceMinor,
+          sku,
+          taxRuleId,
+          bool(input.serviceChargeApplicable),
+          recipeReference,
+          bool(input.sellable),
+          json(payload),
+          stamp,
+          this.actor.tenantId,
+          item.id,
+        ),
+    ];
+    if (input.branch) {
+      const { branchId } = input.branch;
+      await this.assertImportBranch(branchId);
+      const stationId = input.branch.stationId?.trim() || null;
+      if (stationId) {
+        const station = await this.db
+          .prepare(
+            "SELECT id FROM stations WHERE tenant_id=? AND id=? AND branch_id=? AND active=1",
+          )
+          .bind(this.actor.tenantId, stationId, branchId)
+          .first();
+        if (!station) throw validation("Choose a kitchen or bar station from this branch");
+      }
+      const branchPriceMinor = input.branch.price?.trim()
+        ? money("Branch price", input.branch.price)
+        : null;
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO menu_item_branch_settings
+              (tenant_id,branch_id,menu_item_id,selling_price_minor,available,
+               channel_availability_json,updated_at,station_id,payload_json)
+             VALUES (?,?,?,?,?,'{}',?,?,'{}')
+             ON CONFLICT(tenant_id,branch_id,menu_item_id) DO UPDATE SET
+               selling_price_minor=excluded.selling_price_minor,available=excluded.available,
+               station_id=excluded.station_id,updated_at=excluded.updated_at`,
+          )
+          .bind(
+            this.actor.tenantId,
+            branchId,
+            item.id,
+            branchPriceMinor,
+            bool(input.branch.available),
+            stamp,
+            stationId,
+          ),
+      );
+    }
+    statements.push(
+      this.audit("MENU_ITEM_UPDATED", "MENU", item.id, {
+        code: item.code,
+        ...(input.branch ? { branchId: input.branch.branchId } : {}),
+        imageChanged: input.imageObjectId !== undefined,
+      }),
+    );
+    await this.db.batch(statements);
+    return { id: item.id, code: item.code };
   }
 
   async previewImport(
