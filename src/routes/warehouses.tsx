@@ -7,6 +7,7 @@ import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatMoney } from "@/lib/currency";
+import { useReasonPrompt } from "@/components/app/ReasonDialog";
 
 export const Route = createFileRoute("/warehouses")({
   head: () => ({
@@ -28,6 +29,7 @@ function Warehouses() {
   const operations = useInventoryOperations(authoritative);
   const [showForm, setShowForm] = useState(false);
   const [notice, setNotice] = useState("");
+  const [askReason, reasonDialog] = useReasonPrompt();
 
   const rows = useMemo(
     () =>
@@ -39,11 +41,13 @@ function Warehouses() {
   const totalValue = rows.reduce((sum, row) => sum + Number(row.stock_value_minor ?? 0), 0);
 
   const archive = async (id: string, name: string) => {
-    const reason = window.prompt(
-      `Archive ${name}? Enter the reason. This is blocked if stock or active workflows still reference the location.`,
-      "",
-    );
-    if (!reason?.trim()) return;
+    const reason = await askReason({
+      title: `Archive ${name}?`,
+      description: "Archiving is blocked while stock or open workflows still use this location.",
+      confirmLabel: "Archive",
+      destructive: true,
+    });
+    if (!reason) return;
     try {
       await operations.command(
         `/api/seramet/inventory/warehouses/${encodeURIComponent(id)}/archive`,
@@ -150,6 +154,7 @@ function Warehouses() {
           ))}
         </DataTable>
       </Panel>
+      {reasonDialog}
     </AppShell>
   );
 }

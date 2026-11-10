@@ -810,7 +810,42 @@ export class LocationCurrencyService {
           "UPDATE tenant_onboarding_profiles SET country_code=?,updated_by=?,updated_at=? WHERE tenant_id=?",
         )
         .bind(countryCode, this.actor.id, stamp, this.actor.tenantId),
+      ...(await this.placeholderBranchStatements({ timezone: text(country["default_timezone"]) })),
     ];
+  }
+
+  /**
+   * Sign-up creates the first branch before the owner picks a country, so it starts on
+   * placeholders (UTC, currency XXX). Until the branch is given its own values it follows the
+   * business; otherwise its days are counted in UTC and its figures show "XXX".
+   */
+  private async placeholderBranchStatements(values: { timezone?: string; currency?: string }) {
+    const branches = await this.db
+      .prepare(
+        "SELECT id,timezone,payload_json FROM branches WHERE tenant_id=? AND is_bootstrap=1 AND active=1",
+      )
+      .bind(this.actor.tenantId)
+      .all<DbRow>();
+    return (branches.results ?? []).flatMap((branch) => {
+      const payload = parseObject(text(branch["payload_json"]));
+      const currency = text(payload["currency"]);
+      const setZone = Boolean(values.timezone) && text(branch["timezone"]) === "UTC";
+      const setCurrency = Boolean(values.currency) && (!currency || currency === "XXX");
+      if (!setZone && !setCurrency) return [];
+      if (setCurrency) payload["currency"] = values.currency;
+      return [
+        this.db
+          .prepare(
+            "UPDATE branches SET timezone=?,payload_json=?,version=version+1 WHERE tenant_id=? AND id=?",
+          )
+          .bind(
+            setZone ? values.timezone : text(branch["timezone"]),
+            JSON.stringify(payload),
+            this.actor.tenantId,
+            text(branch["id"]),
+          ),
+      ];
+    });
   }
 
   private async currencyStatements(response: Record<string, unknown>) {
@@ -844,6 +879,7 @@ export class LocationCurrencyService {
       this.db
         .prepare("UPDATE tenants SET default_currency=?,updated_at=? WHERE id=?")
         .bind(baseCurrency, stamp, this.actor.tenantId),
+      ...(await this.placeholderBranchStatements({ currency: baseCurrency })),
       this.db
         .prepare(
           "UPDATE legal_entities SET base_currency=?,updated_by=?,updated_at=? WHERE tenant_id=?",

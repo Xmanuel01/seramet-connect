@@ -4,6 +4,7 @@ import { DataTable } from "@/components/app/Tabs";
 import { useInventoryOperations } from "@/inventory/use-inventory-operations";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { formatMoney } from "@/lib/currency";
+import { useReasonPrompt } from "@/components/app/ReasonDialog";
 
 export function WastagePanel() {
   const { persistenceMode } = useTransactionEngine();
@@ -11,6 +12,7 @@ export function WastagePanel() {
   const operations = useInventoryOperations(authoritative);
   const [showForm, setShowForm] = useState(false);
   const [notice, setNotice] = useState("");
+  const [askReason, reasonDialog] = useReasonPrompt();
 
   const rows = useMemo(() => operations.data.flatMap((row) => row.wastage), [operations.data]);
   const approved = rows.filter((row) => row.status === "APPROVED");
@@ -22,11 +24,13 @@ export function WastagePanel() {
   );
 
   const decide = async (id: string, action: "approve" | "reject") => {
-    const reason = window.prompt(
-      action === "approve" ? "Approval reason" : "Rejection reason",
-      action === "approve" ? "Verified wastage incident" : "",
-    );
-    if (!reason?.trim()) return;
+    const reason = await askReason({
+      title: action === "approve" ? "Approve wastage" : "Reject wastage",
+      defaultValue: action === "approve" ? "Verified wastage incident" : "",
+      confirmLabel: action === "approve" ? "Approve" : "Reject",
+      destructive: action === "reject",
+    });
+    if (!reason) return;
     try {
       await operations.command(
         `/api/seramet/inventory/wastage/${encodeURIComponent(id)}/${action}`,
@@ -42,6 +46,7 @@ export function WastagePanel() {
 
   return (
     <>
+      {reasonDialog}
       <div className="mb-3 flex justify-end">
         <Btn
           variant="primary"

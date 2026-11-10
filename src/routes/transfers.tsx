@@ -7,6 +7,7 @@ import { useInventoryOperations, type TransferRow } from "@/inventory/use-invent
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { formatMoney } from "@/lib/currency";
+import { useReasonPrompt } from "@/components/app/ReasonDialog";
 
 export const Route = createFileRoute("/transfers")({
   head: () => ({
@@ -53,6 +54,7 @@ function Transfers() {
   const [detail, setDetail] = useState<TransferDetail | null>(null);
   const [showReceipt, setShowReceipt] = useState(false);
   const [notice, setNotice] = useState("");
+  const [askReason, reasonDialog] = useReasonPrompt();
 
   const rows = useMemo(() => {
     const unique = new Map<string, TransferRow>();
@@ -104,11 +106,13 @@ function Transfers() {
         );
         setNotice("Transfer dispatched. Source stock has moved out and is now in transit.");
       } else {
-        const reason = window.prompt(
-          action === "approve" ? "Approval reason" : "Cancellation reason",
-          action === "approve" ? "Transfer verified" : "",
-        );
-        if (!reason?.trim()) return;
+        const reason = await askReason({
+          title: action === "approve" ? "Approve transfer" : "Cancel transfer",
+          defaultValue: action === "approve" ? "Transfer verified" : "",
+          confirmLabel: action === "approve" ? "Approve" : "Cancel transfer",
+          destructive: action !== "approve",
+        });
+        if (!reason) return;
         await operations.command(
           `/api/seramet/inventory/transfers/${encodeURIComponent(row.id)}/${action}`,
           { reason: reason.trim() },
@@ -313,6 +317,7 @@ function Transfers() {
           )}
         </Panel>
       </div>
+      {reasonDialog}
     </AppShell>
   );
 }

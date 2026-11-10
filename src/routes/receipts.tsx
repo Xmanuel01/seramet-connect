@@ -18,6 +18,7 @@ import { recordBusinessDate } from "@/lib/pos-workflow";
 import { useBusinessToday } from "@/hooks/use-business-today";
 import { UserFacingError, reportError } from "@/lib/user-facing-error";
 import { mergeDocuments, useDocumentList } from "@/lib/use-document-list";
+import { useReasonPrompt } from "@/components/app/ReasonDialog";
 
 export const Route = createFileRoute("/receipts")({
   head: () => ({
@@ -42,6 +43,7 @@ export const Route = createFileRoute("/receipts")({
 
 function Receipts() {
   const [printNotice, setPrintNotice] = useState("");
+  const [askReason, reasonDialog] = useReasonPrompt();
   const [emailReceipt, setEmailReceipt] = useState<{ id: string; scope: string } | null>(null);
   const [preview, setPreview] = useState<{ id: string; scope: string; content: string } | null>(
     null,
@@ -86,12 +88,19 @@ function Receipts() {
   const value = rows.reduce((sum, receipt) => sum + receipt.paidAmount, 0);
   const reprints = rows.reduce((sum, receipt) => sum + receipt.reprints.length, 0);
 
-  const printReceipt = (receiptId: string, _suggestion = "Receipt register print") => {
-    const reason = window.prompt("Specific reason for this receipt copy")?.trim();
-    if (!reason || reason.length < 12) {
-      setPrintNotice("A specific reprint reason of at least 12 characters is required.");
-      return;
-    }
+  const printReceipt = async (receiptId: string) => {
+    const reason = await askReason({
+      title: "Print a copy of this receipt",
+      description: "Copies are logged with their reason.",
+      minLength: 12,
+      suggestions: [
+        "Customer asked for a copy",
+        "Original receipt was lost",
+        "Printer jammed or faded",
+      ],
+      confirmLabel: "Print copy",
+    });
+    if (!reason) return;
     const receipt = rows.find((item) => item.id === receiptId);
     if (!receipt) return;
     const order = receiptRecordToPrintOrder(receipt, state);
@@ -164,7 +173,7 @@ function Receipts() {
   const reprintFirst = () => {
     const receipt = rows[0];
     if (!receipt) return;
-    printReceipt(receipt.id, "Customer requested duplicate copy");
+    void printReceipt(receipt.id);
   };
 
   return (
@@ -264,7 +273,7 @@ function Receipts() {
                   >
                     Preview
                   </button>
-                  <button onClick={() => printReceipt(receipt.id)}>Print</button>
+                  <button onClick={() => void printReceipt(receipt.id)}>Print</button>
                   <button onClick={() => sendWhatsApp(receipt.id)}>WhatsApp</button>
                   <button onClick={() => sendEmail(receipt.id)}>Email</button>
                 </div>
@@ -300,6 +309,7 @@ function Receipts() {
           close={() => setEmailReceipt(null)}
         />
       )}
+      {reasonDialog}
     </AppShell>
   );
 }
