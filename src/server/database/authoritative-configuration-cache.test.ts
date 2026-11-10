@@ -23,14 +23,50 @@ describe("configuration cache across per-request database pools", () => {
 
     const second = perRequest();
     expect(await hydrateAuthoritativeConfiguration(second.db)).toBe(loaded);
-    expect(second.prepare).not.toHaveBeenCalled();
+    // Only the one-row revision check, not the twenty configuration queries.
+    expect(second.prepare).toHaveBeenCalledTimes(1);
+    expect(second.prepare.mock.calls[0]?.[0]).toContain("configuration_revisions");
 
-    invalidateAuthoritativeConfiguration(second.db);
+    await invalidateAuthoritativeConfiguration(second.db);
     const third = perRequest();
     expect(await hydrateAuthoritativeConfiguration(third.db)).not.toBe(loaded);
     expect(third.prepare).toHaveBeenCalled();
     sqlite.close();
     // Creating the migrated test database is slow when other suites share the machine.
+  }, 30_000);
+
+  it("keeps a copy while the shared revision is unchanged and reloads once another server bumps it", async () => {
+    const sqlite = createMigratedTestDatabase();
+    const now = vi.spyOn(Date, "now");
+    try {
+      const server = (identity: string) => {
+        const prepare = vi.fn((query: string) => sqlite.prepare(query));
+        return {
+          db: { ...sqlite, prepare, batch: sqlite.batch.bind(sqlite), cacheIdentity: identity },
+          prepare,
+        } as { db: D1Database; prepare: typeof prepare };
+      };
+      now.mockReturnValue(1_000_000);
+      const a = server("server-a");
+      const loaded = await hydrateAuthoritativeConfiguration(a.db);
+      // A minute later the copy is still current: the revision hasn't moved.
+      now.mockReturnValue(1_060_000);
+      const again = server("server-a");
+      expect(await hydrateAuthoritativeConfiguration(again.db)).toBe(loaded);
+      expect(again.prepare).toHaveBeenCalledTimes(1);
+      // Another server records a change; this one reloads on its next request.
+      await invalidateAuthoritativeConfiguration(server("server-b").db);
+      const after = server("server-a");
+      expect(await hydrateAuthoritativeConfiguration(after.db)).not.toBe(loaded);
+      expect(after.prepare.mock.calls.length).toBeGreaterThan(1);
+      // Even with no change, a copy is refreshed after five minutes.
+      const refreshed = await hydrateAuthoritativeConfiguration(server("server-a").db);
+      now.mockReturnValue(1_060_000 + 5 * 60_000 + 1);
+      expect(await hydrateAuthoritativeConfiguration(server("server-a").db)).not.toBe(refreshed);
+    } finally {
+      now.mockRestore();
+      sqlite.close();
+    }
   }, 30_000);
 
   it("does not let a load that started before a change replace the newer configuration", async () => {
@@ -69,7 +105,7 @@ describe("configuration cache across per-request database pools", () => {
       batch: sqlite.batch.bind(sqlite),
     } as unknown as D1Database;
     const stale = hydrateAuthoritativeConfiguration(slow, {}, true);
-    invalidateAuthoritativeConfiguration(fast);
+    await invalidateAuthoritativeConfiguration(fast);
     const fresh = await hydrateAuthoritativeConfiguration(fast, {}, true);
     release();
     await stale;

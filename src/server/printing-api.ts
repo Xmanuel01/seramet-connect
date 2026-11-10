@@ -609,7 +609,7 @@ export async function handlePrintingApi(
     // A printer deleted between the checks above and this write is left as it was.
     if (written[0]?.meta?.changes === 0)
       throw new SerametHttpError(404, "This printer was deleted. Add it again as a new printer.");
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     return respond({ printer: saved }, 201);
   }
   const printerRoute = /^\/api\/seramet\/printing\/printers\/([^/]+)$/.exec(url.pathname);
@@ -678,7 +678,7 @@ export async function handlePrintingApi(
     ]);
     if (deleted[0]?.meta?.changes === 0)
       throw new SerametHttpError(404, "Printer not found in this branch");
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     return respond({ deleted: id });
   }
   if (url.pathname === "/api/seramet/printing/dispatch-bypass") {
@@ -730,7 +730,7 @@ export async function handlePrintingApi(
         after: activeKitchenPrintBypass(next),
       }),
     ]);
-    invalidateAuthoritativeConfiguration(db);
+    await invalidateAuthoritativeConfiguration(db);
     return respond(
       { bypass: activeKitchenPrintBypass(next) },
       request.method === "POST" ? 201 : 200,

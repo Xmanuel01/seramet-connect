@@ -57,8 +57,9 @@ export async function handleWorkerQueue(
   env: SerametEnv,
 ) {
   if (!env.SERAMET_DB) throw new Error("Durable worker requires authoritative database");
-  // Jobs act on payments and messages, so they never use a cached copy of configuration.
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
+  // Jobs act on payments and messages: they use the cached copy only while the shared
+  // configuration revision confirms it is current.
+  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
   for (const message of batch.messages) {
     try {
       await processMessage(message, env);

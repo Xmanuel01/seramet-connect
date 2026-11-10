@@ -271,7 +271,7 @@ export async function handleTableManagementApi(
     : isCreateArea
       ? { area: await createServiceArea(env.SERAMET_DB, actor, raw) }
       : { table: await createConfiguredTable(env.SERAMET_DB, actor, raw) };
-  invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+  await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
   await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
   return new Response(JSON.stringify({ ok: true, ...response }), {
     status: tableEdit ? 200 : 201,
