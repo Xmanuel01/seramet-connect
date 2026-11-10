@@ -92,3 +92,35 @@ export async function compressMenuImage(file: File, maxSize = 720, quality = 0.8
     bytes: Math.round((dataUrl.length * 3) / 4),
   };
 }
+
+const uploadExtensions: Record<string, string> = {
+  "image/webp": "webp",
+  "image/jpeg": "jpg",
+  "image/png": "png",
+};
+
+/**
+ * Shrinks a photo for the menu (longest side `maxSize` px) and returns it as a file ready to
+ * upload. Browsers that can't encode WebP fall back to PNG; the file name follows the real type.
+ */
+export async function menuImageUploadFile(file: File, maxSize = 720, quality = 0.82) {
+  let image: ImageBitmap;
+  try {
+    image = await createImageBitmap(file);
+  } catch {
+    throw new Error("That photo couldn't be read. Choose a JPG, PNG or WebP image.");
+  }
+  const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare the photo");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/webp", quality),
+  );
+  const extension = blob ? uploadExtensions[blob.type] : undefined;
+  if (!blob || !extension) throw new Error("Could not prepare the photo");
+  return new File([blob], `menu-item.${extension}`, { type: blob.type });
+}

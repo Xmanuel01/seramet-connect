@@ -23,6 +23,8 @@ import {
   type PersistedImportProgress,
 } from "@/onboarding/menu-import-progress";
 import { ManualMenuItemDialog } from "@/components/app/ManualMenuItemDialog";
+import { MenuItemEditDialog } from "@/components/app/MenuItemEditDialog";
+import type { SetupMenuCatalogItem } from "@/onboarding/use-setup-centre";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +76,7 @@ function MenuImport() {
   const canImport = canManageMenu && centre.fileImportCapability.available;
   const [importOpen, setImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<SetupMenuCatalogItem | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [strategy, setStrategy] = useState<DuplicateStrategy>("ERROR");
@@ -758,6 +761,9 @@ function MenuImport() {
               <table className="w-full min-w-[700px]">
                 <thead>
                   <tr>
+                    <TH className="w-12">
+                      <span className="sr-only">Photo</span>
+                    </TH>
                     <TH>Code</TH>
                     <TH>Item</TH>
                     <TH>Category</TH>
@@ -768,7 +774,31 @@ function MenuImport() {
                 </thead>
                 <tbody>
                   {visibleCatalog.map((item) => (
-                    <tr key={item.id} className="hover:bg-secondary/40">
+                    <tr
+                      key={item.id}
+                      tabIndex={0}
+                      aria-label={`Edit ${item.name}`}
+                      onClick={() => setEditingItem(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setEditingItem(item);
+                        }
+                      }}
+                      className="cursor-pointer hover:bg-secondary/40 focus-visible:bg-secondary/40 focus-visible:outline-none"
+                    >
+                      <TD>
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt=""
+                            loading="lazy"
+                            className="h-9 w-9 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 rounded-md bg-secondary" />
+                        )}
+                      </TD>
                       <TD className="font-semibold">{item.code}</TD>
                       <TD>{item.name}</TD>
                       <TD>{item.category_code}</TD>
@@ -792,7 +822,7 @@ function MenuImport() {
                   ))}
                   {!visibleCatalog.length && centre.menuCatalogStatus !== "error" && (
                     <tr>
-                      <TD colSpan={6} className="py-10 text-center text-muted-foreground">
+                      <TD colSpan={7} className="py-10 text-center text-muted-foreground">
                         {catalogQuery
                           ? "No catalogue items match this search."
                           : isAllBranches
@@ -1376,6 +1406,40 @@ function MenuImport() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <MenuItemEditDialog
+        item={editingItem}
+        onClose={() => setEditingItem(null)}
+        branchId={isAllBranches ? "" : branchId}
+        branchName={
+          centre.structure.branches.find((branch) => branch.id === branchId)?.name ?? "this branch"
+        }
+        categoryCodes={categoryCodes}
+        stations={centre.options.stations
+          .filter((station) => !isAllBranches && stringValue(station["branch_id"]) === branchId)
+          .map((station) => ({
+            id: stringValue(station["id"]),
+            label: stringValue(station["name"]) || stringValue(station["code"]),
+          }))}
+        taxRules={centre.options.taxRules
+          .filter(
+            (rule) =>
+              stringValue(rule["rule_type"]) === "TAX" &&
+              (!stringValue(rule["branch_id"]) ||
+                isAllBranches ||
+                stringValue(rule["branch_id"]) === branchId),
+          )
+          .map((rule) => ({
+            id: stringValue(rule["id"]),
+            label: stringValue(rule["name"]) || stringValue(rule["code"]),
+          }))}
+        canEdit={canManageMenu}
+        saveItem={centre.updateMenuItem}
+        uploadImage={centre.uploadMenuImage}
+        onSaved={(name) => {
+          setNotice(`${name} saved.`);
+          setNoticeTone("success");
+        }}
+      />
       <ManualMenuItemDialog
         open={manualOpen}
         onOpenChange={setManualOpen}

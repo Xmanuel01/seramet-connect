@@ -19,6 +19,7 @@ type CatalogRow = {
   service_charge_applicable: number;
   station_code: string | null;
   available: number;
+  image_url?: string | null;
 };
 
 export type OperationalPricingRule = {
@@ -114,6 +115,7 @@ export function useOperationalMenu(input: {
           prep: 0,
           out: !row.available,
           productionStation: row.station_code ?? "NONE",
+          ...(row.image_url ? { imageUrl: row.image_url } : {}),
           importSource: "menu-import",
         }));
         const value = { items, pricingRules: body.pricingRules ?? [] };

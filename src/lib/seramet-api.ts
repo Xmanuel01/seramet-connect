@@ -788,7 +788,7 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
             m.currency,m.tax_rule_id,m.service_charge_applicable,bs.station_id,
             s.code AS station_code,m.sellable,
             COALESCE(bs.selling_price_minor,m.selling_price_minor) AS effective_price_minor,
-            bs.available AS available
+            bs.available AS available,m.payload_json
      FROM menu_catalog_items m
      JOIN menu_item_branch_settings bs ON bs.tenant_id=m.tenant_id
        AND bs.menu_item_id=m.id AND bs.branch_id=?
@@ -799,11 +799,16 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   )
     .bind(branchId, branchId, actor.tenantId)
     .all<Record<string, unknown>>();
+  // The till only needs the item photo from the import payload, not the rest of it.
+  const items = (rows.results ?? []).map(({ payload_json, ...row }) => ({
+    ...row,
+    image_url: menuImageUrl(payload_json),
+  }));
   if (!actor.permissions.includes(permissions.ordersCreate)) {
     return json({
       ok: true,
       branchId,
-      items: (rows.results ?? []).map((row) => ({ ...row, effective_price_minor: 0 })),
+      items: items.map((row) => ({ ...row, effective_price_minor: 0 })),
       pricingRules: [],
     });
   }
@@ -816,7 +821,17 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   )
     .bind(actor.tenantId, branchId, new Date().toISOString(), new Date().toISOString(), branchId)
     .all();
-  return json({ ok: true, branchId, items: rows.results ?? [], pricingRules: rules.results ?? [] });
+  return json({ ok: true, branchId, items, pricingRules: rules.results ?? [] });
+}
+
+function menuImageUrl(payloadJson: unknown) {
+  if (typeof payloadJson !== "string" || !payloadJson.includes("imageUrl")) return null;
+  try {
+    const value = (JSON.parse(payloadJson) as Record<string, unknown>)["imageUrl"];
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 async function getTransactions(request: Request, env: SerametEnv, repo: TransactionRepository) {

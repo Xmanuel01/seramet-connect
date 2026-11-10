@@ -21,6 +21,7 @@ import {
   importCommitRequestSchema,
   importPreviewRequestSchema,
   manualMenuItemRequestSchema,
+  menuItemUpdateRequestSchema,
   historicalSalesPreviewRequestSchema,
   historicalSalesSkipRequestSchema,
   openingStockSchema,
@@ -33,7 +34,7 @@ import {
   subscriptionLifecycleSchema,
   taxServiceRuleSchema,
 } from "@/onboarding/schemas";
-import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
+import type { ManualMenuItemCreateInput, MenuItemUpdateInput } from "@/onboarding/manual-menu-item";
 import type { ManualFxRateInput, OnboardingStepInput } from "@/onboarding/location-currency-types";
 import type {
   AccountingMappingInput,
@@ -221,6 +222,20 @@ export async function handleOnboardingApi(
       },
       201,
     );
+  }
+  const menuItemUpdate = /^\/api\/seramet\/setup\/menu-items\/([^/]+)$/.exec(url.pathname);
+  if (menuItemUpdate && request.method === "PATCH") {
+    await new DatabaseRateLimiter(env.SERAMET_DB).consume(
+      `menu-item-update:${actor.tenantId}:${actor.id}`,
+      sensitiveRateLimits.configuration,
+    );
+    return json({
+      ok: true,
+      item: await service.updateMenuItem(
+        decodeURIComponent(menuItemUpdate[1]!),
+        await parse<MenuItemUpdateInput>(request, menuItemUpdateRequestSchema),
+      ),
+    });
   }
   if (url.pathname === "/api/seramet/setup/imports/uploads" && request.method === "POST") {
     await new DatabaseRateLimiter(env.SERAMET_DB).consume(

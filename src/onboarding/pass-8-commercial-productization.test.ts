@@ -617,6 +617,101 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     expect(await service.listMenuCatalog(secondBranchId)).toHaveLength(0);
   });
 
+  it("edits one menu item in place, keeping import-only fields, with a tenant-owned photo", async () => {
+    const created = await service.createManualMenuItem({
+      branchId,
+      requestKey: "manual-item-chips-001",
+      code: "CHIPS-001",
+      name: "Chips",
+      categoryCode: "SIDES",
+      basePrice: "200",
+      currency: "KES",
+      stationCode: "MAIN",
+    });
+    const id = String((created as { id: string }).id);
+    // Fields an import can set but the editor doesn't show must survive an edit.
+    await db
+      .prepare(
+        `UPDATE menu_catalog_items SET barcode='600100', modifier_group_reference='SAUCES',
+           payload_json='{"dietaryTags":["VEGAN"]}' WHERE tenant_id=? AND id=?`,
+      )
+      .bind(tenantId, id)
+      .run();
+    const insertImage = (objectId: string, objectTenant: string, objectClass: string) =>
+      db
+        .prepare(
+          `INSERT INTO stored_objects (tenant_id,id,object_key,object_class,content_type,size_bytes,
+             checksum_sha256,status,created_by,created_at)
+           VALUES (?,?,?,?, 'image/webp',10,'sum','ACTIVE','user-owner',?)`,
+        )
+        .bind(objectTenant, objectId, `${objectTenant}/${objectId}.webp`, objectClass, stamp)
+        .run();
+    insertImage("photo-public", tenantId, "PUBLIC_ASSET");
+    insertImage("photo-private", tenantId, "PRIVATE_DOCUMENT");
+    insertImage("photo-other-tenant", secondTenantId, "PUBLIC_ASSET");
+
+    const edit = {
+      name: "Masala chips",
+      categoryCode: "sides",
+      description: "Spiced fries",
+      basePrice: "250",
+      onlinePrice: "280",
+      sku: "",
+      serviceChargeApplicable: true,
+      sellable: true,
+      imageObjectId: "photo-public",
+      branch: { branchId, price: "240", available: false, stationId: "" },
+    };
+    await service.updateMenuItem(id, edit);
+    const [row] = (await service.listMenuCatalog(branchId)).filter((item) => item.id === id);
+    const slug = await db
+      .prepare("SELECT slug FROM tenants WHERE id=?")
+      .bind(tenantId)
+      .first("slug");
+    expect(row).toMatchObject({
+      name: "Masala chips",
+      category_code: "SIDES",
+      description: "Spiced fries",
+      selling_price_minor: 25_000,
+      online_price_minor: 28_000,
+      branch_price_minor: 24_000,
+      available: 0,
+      station_id: null,
+      service_charge_applicable: 1,
+      image_url: `/api/seramet/public/assets/${slug}/photo-public`,
+    });
+    const stored = await db
+      .prepare(
+        "SELECT barcode,modifier_group_reference,payload_json FROM menu_catalog_items WHERE tenant_id=? AND id=?",
+      )
+      .bind(tenantId, id)
+      .first<{ barcode: string; modifier_group_reference: string; payload_json: string }>();
+    expect(stored).toMatchObject({ barcode: "600100", modifier_group_reference: "SAUCES" });
+    expect(JSON.parse(stored!.payload_json)).toMatchObject({ dietaryTags: ["VEGAN"] });
+
+    // Clearing the online price and removing the photo take them off the item.
+    await service.updateMenuItem(id, { ...edit, onlinePrice: "", imageObjectId: null });
+    const [cleared] = (await service.listMenuCatalog(branchId)).filter((item) => item.id === id);
+    expect(cleared).toMatchObject({ online_price_minor: null, image_url: null });
+
+    for (const objectId of ["photo-private", "photo-other-tenant", "missing"]) {
+      await expect(
+        service.updateMenuItem(id, { ...edit, imageObjectId: objectId }),
+      ).rejects.toThrow("image upload wasn't found");
+    }
+    await expect(
+      service.updateMenuItem(id, {
+        ...edit,
+        branch: { ...edit.branch, stationId: "station-main-b" },
+      }),
+    ).rejects.toThrow("station from this branch");
+    await expect(service.updateMenuItem(id, { ...edit, basePrice: "abc" })).rejects.toThrow(
+      "Selling price",
+    );
+    const otherTenant = new OnboardingService(db, { ...actor(), tenantId: secondTenantId }, env);
+    await expect(otherTenant.updateMenuItem(id, edit)).rejects.toThrow("Menu item not found");
+  });
+
   it("imports an actual Excel workbook into the authoritative branch catalogue", async () => {
     const workbook = createXlsx([
       [

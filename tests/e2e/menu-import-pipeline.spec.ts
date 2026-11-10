@@ -125,6 +125,52 @@ test("authenticated manager completes scan, staging, recovery, publication and P
   await manager.close();
 });
 
+test("clicking a menu item opens its editor; prices and the photo save and reach the POS", async ({
+  browser,
+}) => {
+  const manager = await browser.newContext();
+  await authorize(manager, fixture.userId, fixture.managerAccessToken, fixture.firstBranchId);
+  const page = await manager.newPage();
+  await establishSession(page, fixture.userId, fixture.firstBranchId);
+  await page.goto("/menu-import");
+  await page.getByRole("row", { name: "Edit Browser imported 01" }).click();
+
+  const editor = page.getByRole("dialog", { name: "Browser imported 01" });
+  await expect(editor.getByLabel("Price *")).toHaveValue("125");
+  await editor.getByLabel("Online price").fill("150");
+  await editor.getByLabel(/^Price at /).fill("130");
+  await editor.getByLabel("Description").fill("Edited in the item popup");
+  await editor.locator('input[type="file"]').setInputFiles({
+    name: "dish.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(onePixelPng, "base64"),
+  });
+  await expect(editor.getByText("Change photo")).toBeVisible();
+  if (process.env.SERAMET_E2E_SCREENSHOT_DIR) {
+    await editor.screenshot({
+      path: `${process.env.SERAMET_E2E_SCREENSHOT_DIR}/menu-item-editor.png`,
+    });
+  }
+  await editor.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText("Browser imported 01 saved.")).toBeVisible();
+  await expect(editor).toBeHidden();
+
+  await page.getByRole("row", { name: "Edit Browser imported 01" }).click();
+  await expect(editor.getByLabel("Online price")).toHaveValue("150");
+  await expect(editor.getByLabel(/^Price at /)).toHaveValue("130");
+  await expect(editor.getByLabel("Description")).toHaveValue("Edited in the item popup");
+  const photo = editor.getByRole("img", { name: "Browser imported 01" });
+  await expect(photo).toBeVisible();
+  // The saved photo is served from the restaurant's public assets and actually loads.
+  expect(await photo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await editor.getByRole("button", { name: "Cancel" }).click();
+
+  await page.goto("/pos");
+  const tile = page.getByRole("button", { name: "Add Browser imported 01 to order" });
+  await expect(tile.getByRole("img", { name: "Browser imported 01" })).toBeVisible();
+  await manager.close();
+});
+
 test("scanner failures remain quarantined and never create a parsed preview", async ({
   browser,
 }) => {
@@ -318,3 +364,7 @@ function menuCsv(rows: number) {
     ),
   ].join("\n");
 }
+
+// A valid 1x1 PNG, so the browser can decode, resize and upload it like a real photo.
+const onePixelPng =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";

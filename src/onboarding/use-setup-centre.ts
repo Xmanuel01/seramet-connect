@@ -20,7 +20,8 @@ import type {
   OnboardingWizardState,
 } from "@/onboarding/location-currency-types";
 import type { HistoricalSalesPreview } from "@/onboarding/historical-sales-migration-service";
-import type { ManualMenuItemCreateInput } from "@/onboarding/manual-menu-item";
+import type { ManualMenuItemCreateInput, MenuItemUpdateInput } from "@/onboarding/manual-menu-item";
+import { menuImageUploadFile } from "@/lib/menu-image-mapping";
 import { onboardingStep } from "@/onboarding/onboarding-steps";
 
 export type RecentMenuImport = {
@@ -115,6 +116,11 @@ export type SetupMenuCatalogItem = {
   branch_price_minor: number | null;
   available: number | null;
   branch_activated: number;
+  tax_rule_id: string | null;
+  service_charge_applicable: number;
+  online_price_minor: number | null;
+  image_url: string | null;
+  unit_of_measure: string | null;
 };
 
 export type SetupDiagnostics = {
@@ -819,6 +825,45 @@ export function useSetupCentre() {
     [command, refreshMenuCatalog],
   );
 
+  const updateMenuItem = useCallback(
+    async (itemId: string, input: MenuItemUpdateInput) => {
+      const result = await send<{ item: { id: string; code: string } }>(
+        `/api/seramet/setup/menu-items/${encodeURIComponent(itemId)}`,
+        input,
+        "PATCH",
+      );
+      await refreshMenuCatalog();
+      return result.item;
+    },
+    [refreshMenuCatalog, send],
+  );
+
+  /** Resizes and uploads a menu photo; returns the stored object id to save on the item. */
+  const uploadMenuImage = useCallback(
+    async (file: File) => {
+      const form = new FormData();
+      form.set("file", await menuImageUploadFile(file));
+      form.set("objectClass", "PUBLIC_ASSET");
+      // The browser sets the multipart Content-Type (with its boundary) itself.
+      const { "Content-Type": _json, ...uploadHeaders } = headers;
+      const response = await authenticatedFetch("/api/seramet/files", {
+        method: "POST",
+        headers: uploadHeaders,
+        body: form,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        object?: { id: string };
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.object) {
+        throw new Error(payload.message ?? payload.error ?? "The photo couldn't be uploaded");
+      }
+      return payload.object.id;
+    },
+    [headers],
+  );
+
   const runTest = useCallback(
     (input: { testType: TestRun["testType"]; targetType: string; targetId?: string }) =>
       command<{ test: TestRun }>("/api/seramet/setup/tests", {
@@ -906,6 +951,8 @@ export function useSetupCentre() {
     commitImport,
     publishImport,
     createManualMenuItem,
+    updateMenuItem,
+    uploadMenuImage,
     runTest,
     transitionGoLive,
     previewHistoricalSales,
