@@ -57,4 +57,42 @@ CREATE TABLE secure_records (id TEXT PRIMARY KEY);
     expect(compiled.sql).toContain("ALTER TABLE secure_records ENABLE ROW LEVEL SECURITY;");
     expect(compiled.sql).not.toContain("POSTGRES_ONLY");
   });
+
+  it("pins the search_path of compiled trigger functions", () => {
+    const compiled = compileSqliteMigrationForPostgres(`
+CREATE TRIGGER pinned_no_delete BEFORE DELETE ON pinned_records
+BEGIN SELECT RAISE(ABORT,'pinned records are immutable'); END;
+`);
+    expect(compiled.sql).toContain(
+      "FUNCTION seramet_trigger_pinned_no_delete() RETURNS trigger\nLANGUAGE plpgsql SET search_path = public, pg_temp AS $$",
+    );
+  });
+});
+
+describe("Row level security in migrations", () => {
+  // Migrations 0001-0026 predate per-migration RLS; their tables were locked down together
+  // (ops/sql/staging-public-schema-lockdown.sql). Every table created from 0027 on must turn
+  // RLS on in a migration, or Supabase's Data API could expose it.
+  it("turns RLS on for every table created from migration 0027 on", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    const { migrationFiles } = await import("@/server/database/sqlite-test-adapter");
+    const created = new Map<string, string>();
+    const secured = new Set<string>();
+    for (const file of migrationFiles) {
+      const source = await readFile(resolve(process.cwd(), "migrations", file), "utf8");
+      if (Number(file.slice(0, 4)) >= 27) {
+        for (const match of source.matchAll(
+          /^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_]+)/gim,
+        ))
+          created.set(match[1]!.toLowerCase(), file);
+      }
+      for (const match of source.matchAll(
+        /^\s*--\s*POSTGRES_ONLY:\s*ALTER\s+TABLE\s+([a-z0-9_]+)\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/gim,
+      ))
+        secured.add(match[1]!.toLowerCase());
+    }
+    const missing = [...created].filter(([table]) => !secured.has(table));
+    expect(missing).toEqual([]);
+  });
 });

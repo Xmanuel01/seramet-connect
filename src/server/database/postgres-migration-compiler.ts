@@ -118,8 +118,11 @@ function compileTrigger(source: string) {
   ]
     .filter(Boolean)
     .join("\n");
+  // A pinned search_path keeps the body from resolving tables through the caller's path
+  // (Supabase advisor 0011 function_search_path_mutable). Migration 0035 applied the same
+  // setting to the trigger functions that existed before it.
   return `CREATE OR REPLACE FUNCTION ${functionName}() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
 ${indent(guardedBody, 2)}
 END;
