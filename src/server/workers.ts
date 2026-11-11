@@ -329,6 +329,155 @@ async function dispatchGuestNotifications(env: SerametEnv, tenantId: string) {
   }
 }
 
+/**
+ * The sweeps that run every minute (and the five-minute summary check). Most minutes most
+ * restaurants have nothing for them, so the scheduler first asks the database, once for all
+ * restaurants, which ones do, and writes a job only for those.
+ */
+export const probedSweepJobTypes = [
+  "SCHEDULED_ORDER_RELEASE",
+  "INTEGRATION_OUTBOX_RECOVERY",
+  "PAYMENT_PROMPT_STATUS_CHECK",
+  "CRM_CAMPAIGN_DISPATCH",
+  "GUEST_LIFECYCLE_MAINTENANCE",
+  "GUEST_NOTIFICATION_DISPATCH",
+  "DAILY_SUMMARY_DISPATCH",
+] as const;
+type SweepJobType = (typeof probedSweepJobTypes)[number];
+type TenantSet = { has(tenantId: string): boolean };
+const everyTenant: TenantSet = { has: () => true };
+
+// Bounds the large records table to active restaurants so the lookup uses its primary key.
+const activeTenantFilter = "tenant_id IN (SELECT id FROM tenants WHERE active = 1)";
+
+/**
+ * Each check matches at least everything its job would act on (it may match a little more),
+ * so a skipped minute never skips real work. A check that fails falls back to scheduling the
+ * job for every restaurant, as before.
+ */
+export async function findTenantsWithSweepWork(
+  db: D1Database,
+  at: Date,
+  options: { dailySummary?: boolean; environment?: string } = {},
+): Promise<Record<SweepJobType, TenantSet>> {
+  const now = at.toISOString();
+  const recentlyChanged = new Date(at.getTime() - 5 * 60_000).toISOString();
+  const reminderStart = new Date(at.getTime() + 23 * 3_600_000).toISOString();
+  const reminderEnd = new Date(at.getTime() + 25 * 3_600_000).toISOString();
+  const tenants = async (sql: string, values: unknown[] = []) => {
+    const rows = await db
+      .prepare(sql)
+      .bind(...values)
+      .all<{ tenant_id: string }>();
+    return new Set((rows.results ?? []).map((row) => row.tenant_id));
+  };
+  const probes: Record<SweepJobType, () => Promise<TenantSet>> = {
+    // Held marketplace orders waiting for their release time.
+    SCHEDULED_ORDER_RELEASE: () =>
+      tenants(
+        `SELECT DISTINCT tenant_id FROM authoritative_records
+         WHERE ${activeTenantFilter} AND entity_type = 'state:orders' AND status = 'HELD'
+           AND payload_json LIKE '%scheduledReleaseAt%'`,
+      ),
+    INTEGRATION_OUTBOX_RECOVERY: () =>
+      tenants(
+        `SELECT DISTINCT tenant_id FROM integration_outbox
+         WHERE status IN ('PENDING', 'RETRY_PENDING') AND next_attempt_at <= ?`,
+        [now],
+      ),
+    // M-Pesa prompts the customer hasn't answered yet.
+    PAYMENT_PROMPT_STATUS_CHECK: () =>
+      tenants(
+        `SELECT DISTINCT tenant_id FROM authoritative_records
+         WHERE ${activeTenantFilter} AND entity_type = 'payments:intents'
+           AND status IN ('PENDING','AWAITING_CUSTOMER','PROCESSING')`,
+      ),
+    CRM_CAMPAIGN_DISPATCH: () =>
+      tenants(
+        `SELECT DISTINCT tenant_id FROM campaigns
+         WHERE status IN ('SCHEDULED','ACTIVE')
+           AND (schedule_at IS NULL OR schedule_at <= ?)
+           AND (starts_at IS NULL OR starts_at <= ?)
+           AND (ends_at IS NULL OR ends_at > ?)`,
+        [now, now, now],
+      ),
+    // Anything due to expire, and unpaid deposits (their window is checked by the job).
+    GUEST_LIFECYCLE_MAINTENANCE: () =>
+      tenants(
+        `SELECT tenant_id FROM reservation_holds WHERE status = 'ACTIVE' AND expires_at <= ?
+         UNION SELECT tenant_id FROM reservation_capacity_locks
+           WHERE owner_type = 'HOLD' AND expires_at IS NOT NULL AND expires_at <= ?
+         UNION SELECT tenant_id FROM guest_sessions WHERE status = 'ACTIVE' AND expires_at <= ?
+         UNION SELECT tenant_id FROM waitlist_entries
+           WHERE status IN ('WAITING','NOTIFIED') AND expires_at IS NOT NULL AND expires_at <= ?
+         UNION SELECT r.tenant_id FROM reservations r
+           JOIN reservation_deposits d ON d.tenant_id = r.tenant_id AND d.reservation_id = r.id
+           JOIN reservation_policies p
+             ON p.tenant_id = r.tenant_id AND p.branch_id = r.branch_id AND p.active = 1
+           WHERE r.status = 'PENDING' AND d.status IN ('REQUIRED','PENDING','FAILED')`,
+        [now, now, now, now],
+      ),
+    // Due notifications a configured provider can send, or a confirmed reservation that is
+    // still missing its confirmation or its reminder.
+    GUEST_NOTIFICATION_DISPATCH: () =>
+      tenants(
+        `SELECT n.tenant_id FROM guest_notification_events n
+         WHERE n.status IN ('QUEUED','FAILED') AND n.scheduled_at <= ?
+           AND EXISTS (SELECT 1 FROM communication_provider_configs c
+                       WHERE c.tenant_id = n.tenant_id AND c.status = 'CONFIGURED')
+         UNION SELECT r.tenant_id FROM reservations r
+         WHERE r.status = 'CONFIRMED'
+           AND (r.contact_email IS NOT NULL OR r.contact_phone IS NOT NULL)
+           AND (r.updated_at >= ? OR r.starts_at BETWEEN ? AND ?)
+           AND (NOT EXISTS (SELECT 1 FROM guest_notification_events e
+                            WHERE e.tenant_id = r.tenant_id
+                              AND e.idempotency_key = 'reservation-confirmation:' || r.id)
+                OR (r.starts_at >= ? AND NOT EXISTS (
+                     SELECT 1 FROM guest_notification_events e
+                     WHERE e.tenant_id = r.tenant_id
+                       AND e.idempotency_key =
+                         'reservation-reminder:' || r.id || ':' || r.starts_at)))`,
+        [now, recentlyChanged, reminderStart, reminderEnd, reminderStart],
+      ),
+    // Restaurants with someone chosen to receive the end-of-day summary.
+    DAILY_SUMMARY_DISPATCH: async () => {
+      if (!options.dailySummary) return new Set<string>();
+      const rows = await db
+        .prepare(
+          `SELECT tenant_id, payload_json FROM authoritative_records
+           WHERE ${activeTenantFilter} AND entity_type = 'payments:closingPolicies'`,
+        )
+        .all<{ tenant_id: string; payload_json: string }>();
+      return new Set(
+        (rows.results ?? [])
+          .filter(
+            (row) =>
+              (parsePayload<{ recipientUserIds?: unknown[] }>(row.payload_json).recipientUserIds
+                ?.length ?? 0) > 0,
+          )
+          .map((row) => row.tenant_id),
+      );
+    },
+  };
+  const entries = await Promise.all(
+    probedSweepJobTypes.map(async (type) => {
+      try {
+        return [type, await probes[type]()] as const;
+      } catch (error) {
+        structuredServerLog({
+          environment: options.environment ?? "production",
+          operation: `worker:sweep-check:${type}`,
+          result: "failed",
+          correlationId: crypto.randomUUID(),
+          metadata: { error: error instanceof Error ? error.message : String(error) },
+        });
+        return [type, everyTenant] as const;
+      }
+    }),
+  );
+  return Object.fromEntries(entries) as Record<SweepJobType, TenantSet>;
+}
+
 export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
   if (!env.SERAMET_DB || !env.SERAMET_WORK_QUEUE) {
     throw new Error("Scheduled work requires authoritative database and durable queue");
@@ -338,6 +487,10 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
     id: string;
   }>();
   const minute = at.toISOString().slice(0, 16);
+  const sweepWork = await findTenantsWithSweepWork(env.SERAMET_DB, at, {
+    dailySummary: at.getUTCMinutes() % 5 === 2,
+    environment: env.SERAMET_ENVIRONMENT,
+  });
   const messages: Array<{ body: SerametWorkerMessage; contentType: "json" }> = [];
   for (const tenant of tenants.results ?? []) {
     const jobs = [
@@ -399,7 +552,12 @@ export async function scheduleDurableWork(env: SerametEnv, at = new Date()) {
         interval: minute.endsWith("00:50") ? "day" : null,
       },
       { type: "INVENTORY_EXPIRY_ALERTS", interval: minute.endsWith("00:15") ? "day" : null },
-    ].filter((job) => job.interval);
+    ].filter(
+      (job) =>
+        job.interval &&
+        // A frequent sweep with nothing to do for this restaurant writes no job row.
+        (!(job.type in sweepWork) || sweepWork[job.type as SweepJobType].has(tenant.id)),
+    );
     for (const job of jobs) {
       const idempotencyKey = `${job.type}:${tenant.id}:${job.interval === "hour" ? minute.slice(0, 13) : minute}`;
       const jobId = crypto.randomUUID();
