@@ -153,9 +153,18 @@ matches the original To address, which Cloudflare preserves.
 - Messages over Cloudflare's size limit (25 MiB) are rejected.
 - Keep the catch-all disabled so unused addresses bounce instead of collecting spam.
 
-## 6. Brevo sender verification (awaiting external configuration)
+## 6. Brevo sender verification (done 11 November 2026)
 
 The domain seramet.co.ke is already authenticated in Brevo (code TXT + DKIM `brevo1/brevo2`).
+
+All 13 departmental senders were added with the owner's approval and Brevo verified each one
+immediately, because the domain is authenticated. Brevo shows 15 verified senders in total,
+including the existing `Seramet <admin@seramet.co.ke>` (left unchanged) and
+`Seramet <seramet.inc@gmail.com>` (not used by the app). Brevo's "branded tracking subdomain"
+offer was skipped, so no DNS changed. The app still sends nothing from them until they are listed
+in `SERAMET_EMAIL_ACTIVE_SENDERS` after deploy (§9). The delivery webhook is not added yet.
+
+The steps below are kept for adding senders later.
 
 1. Brevo → Senders, Domains & Dedicated IPs → **Senders** → Add a sender.
 2. From name and email exactly as in §3 (e.g. `Seramet Reports`, `reports@seramet.co.ke`).
@@ -258,11 +267,12 @@ Never switch several identities at once without a successful test of each.
 
 ## 11. Manual actions for the owner
 
-1. **Reconcile the 4 daily summaries dead-lettered on 9 Nov** (unknown outcome): check Brevo →
-   Transactional → Logs for 9 Nov around 09:00 UTC from admin@. Do not resend them blindly.
-2. Send a test email to one or two new addresses (e.g. support@, reports@) from an outside
-   account and confirm they arrive in Gmail; then set `SERAMET_EMAIL_REPLY_ROUTES` (§5).
-3. Verify the departmental senders in Brevo (§6) and add the delivery webhook.
+1. ~~Reconcile the 4 daily summaries dead-lettered on 9 Nov.~~ Done 11 Nov: Brevo's logs show the
+   first three (08:57, 09:12, 09:14 UTC) never reached Brevo. The fourth (09:36 UTC) was
+   delivered at 09:38 UTC and opened. Nothing to resend.
+2. ~~Test forwarding.~~ Done 11 Nov: the owner confirmed mail to the new addresses arrives in
+   Gmail. Set `SERAMET_EMAIL_REPLY_ROUTES` at deploy (§5).
+3. Add the Brevo delivery webhook (§6). The departmental senders are already verified.
 4. Set `SERAMET_BREVO_WEBHOOK_TOKEN` and `SERAMET_PLATFORM_ADMINS`.
 5. Optionally apply the branded Supabase Auth templates (§8).
 6. Add the Gmail filters (§5).
