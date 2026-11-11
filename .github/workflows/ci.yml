@@ -49,6 +49,7 @@ jobs:
       - run: node --test scripts/staging-worker-hold-plan.test.mjs
       - run: node --test scripts/verify-certification-schema-postgres.test.mjs
       - run: node --test scripts/staging-menu-reconciliation-plan.test.mjs
+      - run: node --test scripts/staging-app-recovery-guards.test.mjs
       - run: node --test scripts/staging-management-backlog-plan.test.mjs
       - run: node --test scripts/staging-recovery-cli-args.test.mjs
       - run: node --test scripts/staging-full-recovery-core.test.mjs scripts/staging-full-recovery-sql.test.mjs scripts/staging-recovery-envelope.test.mjs scripts/staging-object-recovery.test.mjs
@@ -90,6 +91,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Check CIDR-safe restore identity against disposable real PostgreSQL
+        run: node --test scripts/staging-app-recovery-identity-postgres.test.mjs
       - name: Apply every historical migration on disposable real PostgreSQL
         run: npm run migrate:postgres
       - name: Assert the CRM schema, JSON compatibility and immutable audit triggers
