@@ -28,6 +28,7 @@ export type ModuleKey =
   | "transfers"
   | "procurement"
   | "requisitions"
+  | "store-issues"
   | "crm"
   | "loyalty"
   | "staff"
@@ -386,6 +387,34 @@ export const moduleAccessRegistry: readonly ModuleAccessDefinition[] = [
     supportedScopes: stockScopes,
     policyCode: "MODULE_ACCESS.TRANSFERS",
     routes: ["/transfers"],
+  },
+  {
+    key: "store-issues",
+    label: "Store Issues",
+    navigationPermission: anyOf(
+      permissions.inventoryIssueRequest,
+      permissions.inventoryIssueApprove,
+      permissions.inventoryIssueView,
+    ),
+    routePermission: anyOf(
+      permissions.inventoryIssueRequest,
+      permissions.inventoryIssueApprove,
+      permissions.inventoryIssueView,
+    ),
+    actionPermissions: actions(
+      anyOf(
+        permissions.inventoryIssueRequest,
+        permissions.inventoryIssueApprove,
+        permissions.inventoryIssueView,
+      ),
+      permissions.inventoryIssueRequest,
+      null,
+      permissions.inventoryIssueApprove,
+      permissions.inventoryIssueApprove,
+    ),
+    supportedScopes: stockScopes,
+    policyCode: "MODULE_ACCESS.STORE_ISSUES",
+    routes: ["/store-issues"],
   },
   {
     key: "procurement",
@@ -891,7 +920,8 @@ export function evaluateModuleAccess(
       context.policies?.staff === "DENY") ||
     (definition.key === "time-tracking" && context.policies?.attendance === "DENY") ||
     (definition.key === "employees" && context.policies?.users === "DENY") ||
-    (definition.key === "requisitions" && context.policies?.procurement === "DENY");
+    (definition.key === "requisitions" && context.policies?.procurement === "DENY") ||
+    (definition.key === "store-issues" && context.policies?.inventory === "DENY");
   const policy = inheritedDeny ? "DENY" : (context.policies?.[definition.key] ?? "ALLOW");
   const baseAllowed = scopeAllowed && entitlementAllowed && featureAllowed && policy === "ALLOW";
   const route = baseAllowed && hasPermission(context.permissions, definition.routePermission);

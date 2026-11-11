@@ -72,6 +72,42 @@ export const inventoryDecisionSchema = z
   })
   .strict();
 
+export const storeIssueRequestSchema = z
+  .object({
+    id: id.optional(),
+    branchId: id,
+    warehouseId: id,
+    kind: z.enum(["REQUEST", "DIRECT"]),
+    departmentId: id.optional(),
+    departmentCode: code.optional(),
+    departmentName: z.string().trim().min(1).max(160).optional(),
+    reason: z.string().trim().min(1).max(160),
+    notes: z.string().trim().max(500).optional(),
+    idempotencyKey: id,
+    lines: z
+      .array(z.object({ inventoryItemId: id, quantityMicro: positiveInteger }).strict())
+      .min(1)
+      .max(100),
+  })
+  .strict()
+  .refine((value) => value.departmentId || value.departmentCode, {
+    message: "Choose the department receiving the items",
+    path: ["departmentCode"],
+  });
+
+const storeIssueLineQuantities = z
+  .array(z.object({ lineId: id, quantityMicro: nonNegativeInteger }).strict())
+  .max(100)
+  .optional();
+
+export const storeIssueApproveSchema = z
+  .object({ reason: z.string().trim().min(1).max(160), lines: storeIssueLineQuantities })
+  .strict();
+
+export const storeIssueIssueSchema = z
+  .object({ reason: z.string().trim().max(160).optional(), lines: storeIssueLineQuantities })
+  .strict();
+
 export const inventoryWastageRequestSchema = z
   .object({
     id: id.optional(),
