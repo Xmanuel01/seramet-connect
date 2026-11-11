@@ -1088,7 +1088,7 @@ describe.sequential("Pass 5 production foundation", () => {
     await event("live-event", "2026-11-11T12:00:00.000Z");
     await event("permanent-event", null);
 
-    expect(await pruneOperationalHistory(database, now)).toEqual({ jobs: 1, events: 1 });
+    expect(await pruneOperationalHistory(database, now)).toEqual({ jobs: 1, events: 1, emails: 0 });
     const jobs = await database
       .prepare("SELECT id FROM worker_jobs WHERE tenant_id=? AND id IN (?,?,?,?) ORDER BY id")
       .bind(tenantA, "old-maintenance", "recent-maintenance", "old-failed", "old-email")

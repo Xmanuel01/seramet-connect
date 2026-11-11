@@ -1812,7 +1812,16 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
         .prepare("SELECT COUNT(*) count FROM role_permissions WHERE tenant_id=?")
         .bind(result.tenantId)
         .first("count"),
-    ).toBe(allPermissionCodes.length);
+    ).toBe(allPermissionCodes.length - 1);
+    // Platform-wide email records are never part of a restaurant administrator's role.
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) count FROM role_permissions WHERE tenant_id=? AND permission_code=?",
+        )
+        .bind(result.tenantId, "platform.email.view")
+        .first("count"),
+    ).toBe(0);
     expect(
       await db
         .prepare("SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=?")
