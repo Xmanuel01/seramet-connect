@@ -462,7 +462,9 @@ function serverMovementEntry(row: Record<string, unknown>): StockEntry {
       ? "Receive"
       : ["WASTAGE", "BREAKAGE", "EXPIRY"].includes(movementType)
         ? "Waste"
-        : movementType === "RETURN_TO_SUPPLIER" || movementType === "CUSTOMER_RETURN"
+        : movementType === "RETURN_TO_SUPPLIER" ||
+            movementType === "CUSTOMER_RETURN" ||
+            movementType === "STORE_ISSUE_REVERSAL"
           ? "Return to store"
           : "Issue to kitchen";
   return {

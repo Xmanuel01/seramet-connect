@@ -3,7 +3,13 @@ import type { PermissionCode } from "@/platform/types";
 export const staffRolePresets: Record<string, { label: string; permissions: PermissionCode[] }> = {
   chef: {
     label: "Chef",
-    permissions: [p.attendanceUse, p.cookbookView, p.kitchenView, p.kitchenOperate],
+    permissions: [
+      p.attendanceUse,
+      p.cookbookView,
+      p.kitchenView,
+      p.kitchenOperate,
+      p.inventoryIssueRequest,
+    ],
   },
   headChef: {
     label: "Head chef",
@@ -19,6 +25,7 @@ export const staffRolePresets: Record<string, { label: string; permissions: Perm
       p.productionStart,
       p.productionComplete,
       p.procurementRequisitionCreate,
+      p.inventoryIssueRequest,
     ],
   },
   bartender: {
@@ -29,6 +36,7 @@ export const staffRolePresets: Record<string, { label: string; permissions: Perm
       p.kitchenView,
       p.kitchenOperate,
       p.procurementRequisitionCreate,
+      p.inventoryIssueRequest,
     ],
   },
   cashier: {
@@ -64,6 +72,7 @@ export const staffRolePresets: Record<string, { label: string; permissions: Perm
       p.kitchenOperate,
       p.procurementView,
       p.procurementRequisitionCreate,
+      p.inventoryIssueRequest,
     ],
   },
 };

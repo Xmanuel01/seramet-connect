@@ -33,6 +33,7 @@ import type {
   StagedTransferDispatchInput,
   StagedTransferReceiptInput,
   StockCountInput,
+  StoreIssueInput,
   SupplierInput,
   SupplierReturnInput,
   UnitDefinitionInput,
@@ -74,6 +75,7 @@ type AccountMappingRow = {
   wastage_account_id: string;
   variance_account_id: string;
   recoverable_tax_account_id: string | null;
+  store_issue_account_id: string | null;
   accounting_mode: "PERPETUAL" | "PERIODIC";
 };
 
@@ -83,6 +85,7 @@ const incomingMovementTypes = new Set([
   "PRODUCTION_OUTPUT",
   "TRANSFER_IN",
   "CUSTOMER_RETURN",
+  "STORE_ISSUE_REVERSAL",
 ]);
 const outgoingMovementTypes = new Set([
   "SALE_CONSUMPTION",
@@ -92,7 +95,15 @@ const outgoingMovementTypes = new Set([
   "BREAKAGE",
   "RETURN_TO_SUPPLIER",
   "EXPIRY",
+  "STORE_ISSUE",
 ]);
+
+/** Anyone allowed to ask for, hand over or look at store issues. */
+const storeIssuePermissions = [
+  permissions.inventoryIssueRequest,
+  permissions.inventoryIssueApprove,
+  permissions.inventoryIssueView,
+];
 
 export class InventoryIntelligenceService {
   constructor(
@@ -5304,6 +5315,756 @@ export class InventoryIntelligenceService {
     return { id, duplicate: false, status: "REJECTED" as const };
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // Store issues: stock leaving a store to a department. A REQUEST moves stock only when it is
+  // issued; a DIRECT issue (items already taken) moves stock at once and is reviewed afterwards.
+  // Every issued line is one STORE_ISSUE movement at the store's weighted average cost, posted
+  // through movementAccountingStatements like every other inventory movement.
+  // ---------------------------------------------------------------------------------------------
+
+  async storeIssueWorkspace(branchId: string) {
+    this.requireAnyPermission(storeIssuePermissions);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const [warehouses, items, balances, departments] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT id,name,location_type FROM warehouses
+            WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY name,id`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<{ id: string; name: string; location_type: string }>(),
+      this.db
+        .prepare(
+          `SELECT i.id,i.code,i.sku,i.name,u.symbol AS unit_symbol
+             FROM inventory_items i
+             LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+            WHERE i.tenant_id=? AND i.active=1 ORDER BY i.name,i.id LIMIT 5000`,
+        )
+        .bind(this.actor.tenantId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT warehouse_id,item_id,quantity_minor,average_unit_cost_minor
+             FROM inventory_balances WHERE tenant_id=? AND branch_id=?`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<Record<string, unknown>>(),
+      this.db
+        .prepare(
+          `SELECT id,code,name FROM departments
+            WHERE tenant_id=? AND active=1 AND (branch_id IS NULL OR branch_id=?)
+            ORDER BY name,id`,
+        )
+        .bind(this.actor.tenantId, branchId)
+        .all<{ id: string; code: string; name: string }>(),
+    ]);
+    return {
+      warehouses: warehouses.results ?? [],
+      items: items.results ?? [],
+      balances: balances.results ?? [],
+      departments: departments.results ?? [],
+      canApprove: this.actor.permissions.includes(permissions.inventoryIssueApprove),
+      canViewAll: this.canViewAllStoreIssues(),
+    };
+  }
+
+  async listStoreIssues(branchId: string, limit = 100) {
+    this.requireAnyPermission(storeIssuePermissions);
+    authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
+    const viewAll = this.canViewAllStoreIssues();
+    const issues = await this.db
+      .prepare(
+        `SELECT s.id,s.branch_id,s.warehouse_id,w.name AS warehouse_name,s.issue_number,s.kind,
+                s.status,s.department_id,s.department_code,s.department_name,s.reason,s.notes,
+                s.requested_by,s.approved_by,s.issued_by,s.reviewed_by,s.rejected_by,
+                s.cancelled_by,s.decision_reason,s.total_cost_minor,s.business_date,s.created_at,
+                s.updated_at,s.approved_at,s.issued_at,s.decided_at
+           FROM store_issues s
+           LEFT JOIN warehouses w ON w.tenant_id=s.tenant_id AND w.id=s.warehouse_id
+          WHERE s.tenant_id=? AND s.branch_id=? AND (?=1 OR s.requested_by=?)
+          ORDER BY s.created_at DESC,s.id DESC LIMIT ?`,
+      )
+      .bind(
+        this.actor.tenantId,
+        branchId,
+        viewAll ? 1 : 0,
+        this.actor.id,
+        Math.min(200, Math.max(1, limit)),
+      )
+      .all<Record<string, unknown>>();
+    const rows = issues.results ?? [];
+    if (!rows.length) return [];
+    const ids = rows.map((row) => String(row.id));
+    const lines = await this.db
+      .prepare(
+        `SELECT l.id,l.store_issue_id,l.line_number,l.inventory_item_id,i.code,i.sku,
+                i.name AS item_name,u.symbol AS unit_symbol,l.requested_quantity_minor,
+                l.approved_quantity_minor,l.issued_quantity_minor,l.unit_cost_minor,
+                l.total_cost_minor,l.movement_id,l.reversal_movement_id
+           FROM store_issue_lines l
+           JOIN inventory_items i ON i.tenant_id=l.tenant_id AND i.id=l.inventory_item_id
+           LEFT JOIN unit_definitions u ON u.tenant_id=i.tenant_id AND u.id=i.base_unit_id
+          WHERE l.tenant_id=? AND l.store_issue_id IN (${ids.map(() => "?").join(",")})
+          ORDER BY l.store_issue_id,l.line_number`,
+      )
+      .bind(this.actor.tenantId, ...ids)
+      .all<Record<string, unknown>>();
+    const byIssue = new Map<string, Record<string, unknown>[]>();
+    for (const line of lines.results ?? []) {
+      const key = String(line.store_issue_id);
+      byIssue.set(key, [...(byIssue.get(key) ?? []), line]);
+    }
+    return rows.map((row): Record<string, unknown> & { lines: Record<string, unknown>[] } => ({
+      ...row,
+      lines: byIssue.get(String(row.id)) ?? [],
+    }));
+  }
+
+  async createStoreIssue(input: StoreIssueInput) {
+    this.requirePermission(permissions.inventoryIssueRequest);
+    authorizeBranchRead(this.actor, this.actor.tenantId, input.branchId);
+    const duplicate = await this.db
+      .prepare("SELECT id,status FROM store_issues WHERE tenant_id=? AND idempotency_key=?")
+      .bind(this.actor.tenantId, input.idempotencyKey)
+      .first<{ id: string; status: string }>();
+    if (duplicate) return { id: duplicate.id, duplicate: true, status: duplicate.status };
+    await this.assertWarehouseBranch(input.branchId, input.warehouseId);
+    await this.assertBusinessDateOpen(input.branchId, input.businessDate, input.reason);
+    const reason = requiredText(input.reason, "store issue reason");
+    const department = await this.storeIssueDepartment(input);
+    if (!input.lines.length || input.lines.length > 100) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "A store issue needs between 1 and 100 items",
+      );
+    }
+    const seen = new Set<string>();
+    for (const line of input.lines) {
+      if (!Number.isSafeInteger(line.quantityMicro) || line.quantityMicro <= 0) {
+        throw new ServerOperationError("VALIDATION_FAILED", 400, "Quantities must be positive");
+      }
+      if (seen.has(line.inventoryItemId)) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Each item can appear only once in a store issue",
+        );
+      }
+      seen.add(line.inventoryItemId);
+    }
+    const known = await this.db
+      .prepare(
+        `SELECT id FROM inventory_items WHERE tenant_id=? AND active=1
+           AND id IN (${input.lines.map(() => "?").join(",")})`,
+      )
+      .bind(this.actor.tenantId, ...input.lines.map((line) => line.inventoryItemId))
+      .all<{ id: string }>();
+    if ((known.results ?? []).length !== input.lines.length) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Every item must be an active inventory item",
+      );
+    }
+    const id = input.id ?? crypto.randomUUID();
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const direct = input.kind === "DIRECT";
+    const lines = input.lines.map((line, index) => ({
+      id: crypto.randomUUID(),
+      lineNumber: index + 1,
+      inventoryItemId: line.inventoryItemId,
+      quantityMicro: line.quantityMicro,
+    }));
+    const issue: StoreIssuePostingContext = {
+      id,
+      branchId: input.branchId,
+      warehouseId: input.warehouseId,
+      issueNumber: input.issueNumber,
+      departmentId: department.id,
+      departmentCode: department.code,
+      departmentName: department.name,
+      issueAccountId: department.issueAccountId,
+    };
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO store_issues
+            (tenant_id,id,branch_id,warehouse_id,issue_number,kind,status,department_id,
+             department_code,department_name,reason,notes,idempotency_key,requested_by,
+             issued_by,business_date,created_at,updated_at,issued_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .bind(
+          this.actor.tenantId,
+          id,
+          input.branchId,
+          input.warehouseId,
+          input.issueNumber,
+          direct ? "DIRECT" : "REQUEST",
+          direct ? "PENDING_REVIEW" : "REQUESTED",
+          department.id,
+          department.code,
+          department.name,
+          reason,
+          input.notes?.trim() || null,
+          input.idempotencyKey,
+          this.actor.id,
+          direct ? this.actor.id : null,
+          input.businessDate,
+          stamp,
+          stamp,
+          direct ? stamp : null,
+        ),
+    ];
+    let totalCostMinor = 0;
+    for (const line of lines) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO store_issue_lines
+              (tenant_id,id,store_issue_id,line_number,inventory_item_id,requested_quantity_minor)
+             VALUES (?,?,?,?,?,?)`,
+          )
+          .bind(
+            this.actor.tenantId,
+            line.id,
+            id,
+            line.lineNumber,
+            line.inventoryItemId,
+            line.quantityMicro,
+          ),
+      );
+      if (direct) {
+        const posted = await this.storeIssueLinePosting(
+          issue,
+          { id: line.id, inventoryItemId: line.inventoryItemId },
+          line.quantityMicro,
+          input.businessDate,
+          stamp,
+          correlationId,
+        );
+        totalCostMinor += posted.costMinor;
+        statements.push(...posted.statements);
+      }
+    }
+    if (direct) {
+      statements.push(
+        this.db
+          .prepare(`UPDATE store_issues SET total_cost_minor=? WHERE tenant_id=? AND id=?`)
+          .bind(totalCostMinor, this.actor.tenantId, id),
+      );
+    }
+    statements.push(
+      this.auditStatement(
+        direct ? "STORE_ISSUE_RECORDED" : "STORE_ISSUE_REQUESTED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        correlationId,
+        input.branchId,
+      ),
+    );
+    await this.runStoreIssueBatch(statements);
+    return {
+      id,
+      duplicate: false,
+      status: direct ? ("PENDING_REVIEW" as const) : ("REQUESTED" as const),
+      issueNumber: input.issueNumber,
+      totalCostMinor,
+    };
+  }
+
+  async approveStoreIssue(
+    id: string,
+    input: { reason: string; lines?: { lineId: string; quantityMicro: number }[] },
+  ) {
+    this.requirePermission(permissions.inventoryIssueApprove);
+    const issue = await this.storeIssueForAction(id);
+    if (issue.status === "APPROVED") return { id, duplicate: true, status: "APPROVED" as const };
+    if (issue.status !== "REQUESTED")
+      throw invalidTransition("Store issue", issue.status, "APPROVED");
+    const reason = requiredText(input.reason, "approval reason");
+    const lines = await this.storeIssueLines(id);
+    const overrides = quantityOverrides(input.lines, lines);
+    const stamp = new Date().toISOString();
+    const statements: D1PreparedStatement[] = lines.map((line) => {
+      const approved = overrides.get(line.id) ?? line.requested_quantity_minor;
+      if (approved > line.requested_quantity_minor) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Approved quantity cannot exceed the requested quantity",
+        );
+      }
+      return this.db
+        .prepare(
+          `UPDATE store_issue_lines SET approved_quantity_minor=? WHERE tenant_id=? AND id=?`,
+        )
+        .bind(approved, this.actor.tenantId, line.id);
+    });
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE store_issues SET status='APPROVED',approved_by=?,approved_at=?,
+                  decision_reason=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='REQUESTED'`,
+        )
+        .bind(this.actor.id, stamp, reason, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "STORE_ISSUE_APPROVED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        issue.branch_id,
+      ),
+    );
+    await this.db.batch(statements);
+    return { id, duplicate: false, status: "APPROVED" as const };
+  }
+
+  /** Hands the items over: stock leaves the store at its current average cost. */
+  async issueStoreIssue(
+    id: string,
+    input: {
+      businessDate: string;
+      reason?: string;
+      lines?: { lineId: string; quantityMicro: number }[];
+    },
+  ) {
+    this.requirePermission(permissions.inventoryIssueApprove);
+    const issue = await this.storeIssueForAction(id);
+    if (issue.status === "ISSUED") {
+      return {
+        id,
+        duplicate: true,
+        status: "ISSUED" as const,
+        totalCostMinor: issue.total_cost_minor,
+      };
+    }
+    if (issue.status !== "REQUESTED" && issue.status !== "APPROVED") {
+      throw invalidTransition("Store issue", issue.status, "ISSUED");
+    }
+    await this.assertBusinessDateOpen(issue.branch_id, input.businessDate, input.reason);
+    const lines = await this.storeIssueLines(id);
+    const overrides = quantityOverrides(input.lines, lines);
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const context = await this.storeIssuePostingContext(issue);
+    const statements: D1PreparedStatement[] = [];
+    let totalCostMinor = 0;
+    let issuedLines = 0;
+    for (const line of lines) {
+      const limit = line.approved_quantity_minor ?? line.requested_quantity_minor;
+      const quantity = overrides.get(line.id) ?? limit;
+      if (quantity > limit) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          issue.status === "APPROVED"
+            ? "Issued quantity cannot exceed the approved quantity"
+            : "Issued quantity cannot exceed the requested quantity",
+        );
+      }
+      if (quantity === 0) continue;
+      const posted = await this.storeIssueLinePosting(
+        context,
+        { id: line.id, inventoryItemId: line.inventory_item_id },
+        quantity,
+        input.businessDate,
+        stamp,
+        correlationId,
+      );
+      totalCostMinor += posted.costMinor;
+      issuedLines++;
+      statements.push(...posted.statements);
+    }
+    if (!issuedLines) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Issue at least one item, or reject the request instead",
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE store_issues
+              SET status='ISSUED',issued_by=?,issued_at=?,total_cost_minor=?,updated_at=?,
+                  approved_by=COALESCE(approved_by,?),approved_at=COALESCE(approved_at,?),
+                  decision_reason=COALESCE(?,decision_reason)
+            WHERE tenant_id=? AND id=? AND status IN ('REQUESTED','APPROVED')`,
+        )
+        .bind(
+          this.actor.id,
+          stamp,
+          totalCostMinor,
+          stamp,
+          this.actor.id,
+          stamp,
+          input.reason?.trim() || null,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "STORE_ISSUE_ISSUED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        correlationId,
+        issue.branch_id,
+      ),
+    );
+    await this.runStoreIssueBatch(statements);
+    return { id, duplicate: false, status: "ISSUED" as const, totalCostMinor };
+  }
+
+  /** Confirms a direct issue someone recorded after taking the items. */
+  async reviewStoreIssue(id: string, reason: string) {
+    this.requirePermission(permissions.inventoryIssueApprove);
+    const issue = await this.storeIssueForAction(id);
+    if (issue.status === "REVIEWED") return { id, duplicate: true, status: "REVIEWED" as const };
+    if (issue.status !== "PENDING_REVIEW") {
+      throw invalidTransition("Store issue", issue.status, "REVIEWED");
+    }
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE store_issues SET status='REVIEWED',reviewed_by=?,decision_reason=?,
+                  decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='PENDING_REVIEW'`,
+        )
+        .bind(
+          this.actor.id,
+          requiredText(reason, "review note"),
+          stamp,
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "STORE_ISSUE_REVIEWED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        issue.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "REVIEWED" as const };
+  }
+
+  /**
+   * Rejects a request before anything is issued, or a direct issue under review. A rejected
+   * direct issue puts its stock back at the cost it left with and reverses its journal.
+   */
+  async rejectStoreIssue(id: string, input: { reason: string; businessDate: string }) {
+    this.requirePermission(permissions.inventoryIssueApprove);
+    const issue = await this.storeIssueForAction(id);
+    if (issue.status === "REJECTED") return { id, duplicate: true, status: "REJECTED" as const };
+    if (!["REQUESTED", "APPROVED", "PENDING_REVIEW"].includes(issue.status)) {
+      throw invalidTransition("Store issue", issue.status, "REJECTED");
+    }
+    const reason = requiredText(input.reason, "rejection reason");
+    const stamp = new Date().toISOString();
+    const correlationId = crypto.randomUUID();
+    const statements: D1PreparedStatement[] = [];
+    if (issue.status === "PENDING_REVIEW") {
+      await this.assertBusinessDateOpen(issue.branch_id, input.businessDate, reason);
+      const context = await this.storeIssuePostingContext(issue);
+      for (const line of await this.storeIssueLines(id)) {
+        if (!line.movement_id || line.issued_quantity_minor <= 0) continue;
+        const movementId = crypto.randomUUID();
+        const movement = {
+          id: movementId,
+          branchId: issue.branch_id,
+          warehouseId: issue.warehouse_id,
+          inventoryItemId: line.inventory_item_id,
+          movementType: "STORE_ISSUE_REVERSAL" as const,
+          quantityBaseMicro: line.issued_quantity_minor,
+          unitCostMinor: line.unit_cost_minor ?? 0,
+          totalCostMinor: Math.abs(line.total_cost_minor),
+          sourceType: "STORE_ISSUE",
+          sourceId: id,
+          idempotencyKey: `store-issue-reversal:${line.id}`,
+          businessDate: input.businessDate,
+          occurredAt: stamp,
+          reason: "STORE_ISSUE_REJECTED",
+          metadata: storeIssueMetadata(context, line.id, reason),
+        };
+        statements.push(
+          this.movementStatement(movement, correlationId),
+          this.db
+            .prepare(
+              `UPDATE store_issue_lines SET reversal_movement_id=? WHERE tenant_id=? AND id=?`,
+            )
+            .bind(movementId, this.actor.tenantId, line.id),
+          this.recalculationEventStatement(
+            issue.branch_id,
+            "STORE_ISSUE_REVERSED",
+            "INVENTORY_ITEM",
+            line.inventory_item_id,
+            `store-issue-reversal:${line.id}`,
+            stamp,
+            correlationId,
+          ),
+          ...(await this.movementAccountingStatements(movement, correlationId)),
+        );
+      }
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE store_issues SET status='REJECTED',rejected_by=?,decision_reason=?,
+                  decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status IN ('REQUESTED','APPROVED','PENDING_REVIEW')`,
+        )
+        .bind(this.actor.id, reason, stamp, stamp, this.actor.tenantId, id),
+      this.auditStatement(
+        "STORE_ISSUE_REJECTED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        correlationId,
+        issue.branch_id,
+      ),
+    );
+    await this.runStoreIssueBatch(statements);
+    return { id, duplicate: false, status: "REJECTED" as const };
+  }
+
+  /** The requester (or an approver) withdraws a request that has not been approved yet. */
+  async cancelStoreIssue(id: string, reason: string) {
+    this.requireAnyPermission([
+      permissions.inventoryIssueRequest,
+      permissions.inventoryIssueApprove,
+    ]);
+    const issue = await this.storeIssueForAction(id);
+    if (issue.status === "CANCELLED") return { id, duplicate: true, status: "CANCELLED" as const };
+    if (
+      issue.requested_by !== this.actor.id &&
+      !this.actor.permissions.includes(permissions.inventoryIssueApprove)
+    ) {
+      throw new ServerOperationError(
+        "PERMISSION_DENIED",
+        403,
+        "Only the requester or a store approver can cancel this request",
+      );
+    }
+    if (issue.status !== "REQUESTED")
+      throw invalidTransition("Store issue", issue.status, "CANCELLED");
+    const stamp = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE store_issues SET status='CANCELLED',cancelled_by=?,decision_reason=?,
+                  decided_at=?,updated_at=?
+            WHERE tenant_id=? AND id=? AND status='REQUESTED'`,
+        )
+        .bind(
+          this.actor.id,
+          requiredText(reason, "cancellation reason"),
+          stamp,
+          stamp,
+          this.actor.tenantId,
+          id,
+        ),
+      this.auditStatement(
+        "STORE_ISSUE_CANCELLED",
+        "STORE_ISSUE",
+        id,
+        stamp,
+        crypto.randomUUID(),
+        issue.branch_id,
+      ),
+    ]);
+    return { id, duplicate: false, status: "CANCELLED" as const };
+  }
+
+  private canViewAllStoreIssues() {
+    return (
+      this.actor.permissions.includes(permissions.inventoryIssueView) ||
+      this.actor.permissions.includes(permissions.inventoryIssueApprove)
+    );
+  }
+
+  private async storeIssueForAction(id: string) {
+    const issue = await this.db
+      .prepare(
+        `SELECT id,branch_id,warehouse_id,issue_number,status,department_id,department_code,
+                department_name,requested_by,total_cost_minor
+           FROM store_issues WHERE tenant_id=? AND id=?`,
+      )
+      .bind(this.actor.tenantId, id)
+      .first<StoreIssueRow>();
+    if (!issue) throw new ServerOperationError("VALIDATION_FAILED", 404, "Store issue not found");
+    authorizeBranchRead(this.actor, this.actor.tenantId, issue.branch_id);
+    return issue;
+  }
+
+  private async storeIssueLines(id: string) {
+    const lines = await this.db
+      .prepare(
+        `SELECT id,inventory_item_id,requested_quantity_minor,approved_quantity_minor,
+                issued_quantity_minor,unit_cost_minor,total_cost_minor,movement_id
+           FROM store_issue_lines WHERE tenant_id=? AND store_issue_id=? ORDER BY line_number`,
+      )
+      .bind(this.actor.tenantId, id)
+      .all<StoreIssueLineRow>();
+    return lines.results ?? [];
+  }
+
+  private async storeIssueDepartment(input: StoreIssueInput) {
+    if (input.departmentId) {
+      const row = await this.db
+        .prepare(
+          `SELECT id,code,name,payload_json FROM departments
+            WHERE tenant_id=? AND id=? AND active=1 AND (branch_id IS NULL OR branch_id=?)`,
+        )
+        .bind(this.actor.tenantId, input.departmentId, input.branchId)
+        .first<{ id: string; code: string; name: string; payload_json: string | null }>();
+      if (!row) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          400,
+          "Department is not available in this branch",
+        );
+      }
+      return {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        issueAccountId: departmentIssueAccount(row.payload_json),
+      };
+    }
+    if (!input.departmentCode) {
+      throw new ServerOperationError(
+        "VALIDATION_FAILED",
+        400,
+        "Choose the department receiving the items",
+      );
+    }
+    const code = requiredCode(input.departmentCode, "department");
+    return {
+      id: null,
+      code,
+      name: input.departmentName?.trim() ? requiredText(input.departmentName, "department") : code,
+      issueAccountId: null,
+    };
+  }
+
+  private async storeIssuePostingContext(issue: StoreIssueRow): Promise<StoreIssuePostingContext> {
+    let issueAccountId: string | null = null;
+    if (issue.department_id) {
+      const row = await this.db
+        .prepare("SELECT payload_json FROM departments WHERE tenant_id=? AND id=?")
+        .bind(this.actor.tenantId, issue.department_id)
+        .first<{ payload_json: string | null }>();
+      issueAccountId = departmentIssueAccount(row?.payload_json ?? null);
+    }
+    return {
+      id: issue.id,
+      branchId: issue.branch_id,
+      warehouseId: issue.warehouse_id,
+      issueNumber: issue.issue_number,
+      departmentId: issue.department_id,
+      departmentCode: issue.department_code,
+      departmentName: issue.department_name,
+      issueAccountId,
+    };
+  }
+
+  /** One issued line: the movement, its journal, the line update and a recalculation event. */
+  private async storeIssueLinePosting(
+    issue: StoreIssuePostingContext,
+    line: { id: string; inventoryItemId: string },
+    quantityMicro: number,
+    businessDate: string,
+    stamp: string,
+    correlationId: string,
+  ) {
+    const balance = await this.balance(issue.branchId, issue.warehouseId, line.inventoryItemId);
+    const costing = createInventoryValuationStrategy("WEIGHTED_AVERAGE").movementCost({
+      quantityBaseMicro: -quantityMicro,
+      currentAverageUnitCostMinor: balance.average_unit_cost_minor,
+    });
+    const movementId = crypto.randomUUID();
+    const movement = {
+      id: movementId,
+      branchId: issue.branchId,
+      warehouseId: issue.warehouseId,
+      inventoryItemId: line.inventoryItemId,
+      movementType: "STORE_ISSUE" as const,
+      quantityBaseMicro: -quantityMicro,
+      unitCostMinor: costing.unitCostMinor,
+      totalCostMinor: costing.totalCostMinor,
+      sourceType: "STORE_ISSUE",
+      sourceId: issue.id,
+      idempotencyKey: `store-issue:${line.id}`,
+      businessDate,
+      occurredAt: stamp,
+      reason: `STORE_ISSUE:${issue.departmentCode}`,
+      metadata: storeIssueMetadata(issue, line.id),
+    };
+    const costMinor = Math.abs(costing.totalCostMinor);
+    return {
+      costMinor,
+      statements: [
+        this.movementStatement(movement, correlationId),
+        this.db
+          .prepare(
+            `UPDATE store_issue_lines
+                SET issued_quantity_minor=?,unit_cost_minor=?,total_cost_minor=?,movement_id=?
+              WHERE tenant_id=? AND id=?`,
+          )
+          .bind(
+            quantityMicro,
+            costing.unitCostMinor,
+            costMinor,
+            movementId,
+            this.actor.tenantId,
+            line.id,
+          ),
+        this.recalculationEventStatement(
+          issue.branchId,
+          "STORE_ISSUE",
+          "INVENTORY_ITEM",
+          line.inventoryItemId,
+          `store-issue:${line.id}`,
+          stamp,
+          correlationId,
+        ),
+        ...(await this.movementAccountingStatements(movement, correlationId)),
+      ],
+    };
+  }
+
+  private async runStoreIssueBatch(statements: D1PreparedStatement[]) {
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("NEGATIVE_INVENTORY_BLOCKED")) {
+        throw new ServerOperationError(
+          "VALIDATION_FAILED",
+          409,
+          "Not enough stock in this store for one of the items, and the store does not allow negative stock",
+        );
+      }
+      if (/unique|duplicate|idempotency/i.test(message)) {
+        throw new ServerOperationError(
+          "INVALID_STATE_TRANSITION",
+          409,
+          "This store issue was changed by someone else. Refresh and try again.",
+        );
+      }
+      throw error;
+    }
+  }
+
   async listParPolicies(branchId: string) {
     this.requirePermission(permissions.inventoryView);
     authorizeBranchRead(this.actor, this.actor.tenantId, branchId);
@@ -7697,6 +8458,10 @@ export class InventoryIntelligenceService {
   private async recalculateBranch(branchId: string) {
     const stamp = new Date().toISOString();
     const date = stamp.slice(0, 10);
+    // Computed here rather than with SQLite's date(), which Postgres does not have.
+    const usageFromDate = new Date(`${date}T00:00:00.000Z`);
+    usageFromDate.setUTCDate(usageFromDate.getUTCDate() - 28);
+    const usageFrom = usageFromDate.toISOString().slice(0, 10);
     const balances = await this.db
       .prepare(
         `SELECT b.warehouse_id,b.item_id,b.quantity_minor,
@@ -7739,15 +8504,16 @@ export class InventoryIntelligenceService {
         .prepare(
           `SELECT business_date,ABS(SUM(quantity_minor)) AS quantity
            FROM inventory_movements WHERE tenant_id=? AND branch_id=? AND warehouse_id=?
-             AND item_id=? AND movement_type IN ('SALE_CONSUMPTION','PRODUCTION_INPUT')
-             AND business_date>=date(?,'-28 day')
-           GROUP BY business_date ORDER BY business_date`,
+             AND item_id=?
+             AND movement_type IN ('SALE_CONSUMPTION','PRODUCTION_INPUT','STORE_ISSUE','STORE_ISSUE_REVERSAL')
+             AND business_date>=?
+           GROUP BY business_date HAVING SUM(quantity_minor)<0 ORDER BY business_date`,
         )
-        .bind(this.actor.tenantId, branchId, balance.warehouse_id, balance.item_id, date)
+        .bind(this.actor.tenantId, branchId, balance.warehouse_id, balance.item_id, usageFrom)
         .all<{ business_date: string; quantity: number }>();
       const forecast = deterministicForecast({
         method: "WEIGHTED_MOVING_AVERAGE",
-        samples: (usage.results ?? []).map((row) => row.quantity),
+        samples: (usage.results ?? []).map((row) => Number(row.quantity)),
       });
       const forecastId = crypto.randomUUID();
       statements.push(
@@ -7788,10 +8554,11 @@ export class InventoryIntelligenceService {
           balance.item_id,
         );
         const recommendation = buildPurchaseRecommendation({
-          forecastConsumptionMicro: forecast.quantityMicro * Math.max(1, balance.lead_time_days),
-          safetyStockMicro: balance.safety_stock_minor,
-          targetClosingStockMicro: balance.target_quantity_minor,
-          onHandMicro: balance.quantity_minor,
+          forecastConsumptionMicro:
+            forecast.quantityMicro * Math.max(1, Number(balance.lead_time_days)),
+          safetyStockMicro: Number(balance.safety_stock_minor),
+          targetClosingStockMicro: Number(balance.target_quantity_minor),
+          onHandMicro: Number(balance.quantity_minor),
           incomingConfirmedMicro: incoming,
           purchaseConversionNumerator: conversion.numerator,
           purchaseConversionDenominator: conversion.denominator,
@@ -7882,7 +8649,11 @@ export class InventoryIntelligenceService {
         `SELECT warehouse_id,item_id,
            ABS(COALESCE(SUM(CASE WHEN movement_type IN
              ('SALE_CONSUMPTION','PRODUCTION_INPUT','WASTAGE','BREAKAGE','EXPIRY','MANUAL_ADJUSTMENT')
-             AND quantity_minor<0 THEN quantity_minor ELSE 0 END),0)) AS actual,
+             AND quantity_minor<0 THEN quantity_minor ELSE 0 END),0))
+           + CASE WHEN COALESCE(SUM(CASE WHEN movement_type IN ('STORE_ISSUE','STORE_ISSUE_REVERSAL')
+               THEN quantity_minor ELSE 0 END),0)<0
+             THEN -COALESCE(SUM(CASE WHEN movement_type IN ('STORE_ISSUE','STORE_ISSUE_REVERSAL')
+               THEN quantity_minor ELSE 0 END),0) ELSE 0 END AS actual,
            ABS(COALESCE(SUM(CASE WHEN movement_type='WASTAGE' AND quantity_minor<0
              THEN quantity_minor ELSE 0 END),0)) AS wastage,
            ABS(COALESCE(SUM(CASE WHEN movement_type='BREAKAGE' AND quantity_minor<0
@@ -8608,7 +9379,9 @@ export class InventoryIntelligenceService {
       .prepare(
         `SELECT
            COALESCE(SUM(CASE WHEN movement_type IN ('SALE_CONSUMPTION','PRODUCTION_INPUT','WASTAGE','EXPIRY')
-             THEN ABS(COALESCE(total_cost_minor,0)) ELSE 0 END),0) AS actual,
+             THEN ABS(COALESCE(total_cost_minor,0)) ELSE 0 END),0)
+           - COALESCE(SUM(CASE WHEN movement_type IN ('STORE_ISSUE','STORE_ISSUE_REVERSAL')
+             THEN COALESCE(total_cost_minor,0) ELSE 0 END),0) AS actual,
            COALESCE(SUM(CASE WHEN movement_type='SALE_CONSUMPTION'
              THEN ABS(COALESCE(total_cost_minor,0)) ELSE 0 END),0) AS theoretical
          FROM inventory_movements WHERE tenant_id=? AND branch_id=?`,
@@ -8916,7 +9689,8 @@ export class InventoryIntelligenceService {
       )
       .bind(this.actor.tenantId, branchId, warehouseId, itemId)
       .first<{ incoming: number }>();
-    return row?.incoming ?? 0;
+    // Postgres returns SUM() as a numeric string.
+    return Number(row?.incoming ?? 0);
   }
 
   private async productionItemForRecipe(recipeId: string | null) {
@@ -8960,7 +9734,8 @@ export class InventoryIntelligenceService {
     const mapping = await this.db
       .prepare(
         `SELECT inventory_account_id,opening_balance_account_id,accounts_payable_account_id,cogs_account_id,
-                wastage_account_id,variance_account_id,recoverable_tax_account_id,accounting_mode
+                wastage_account_id,variance_account_id,recoverable_tax_account_id,
+                store_issue_account_id,accounting_mode
          FROM inventory_account_mappings WHERE tenant_id=? AND active=1
            AND (branch_id=? OR branch_id IS NULL)
          ORDER BY CASE WHEN branch_id=? THEN 0 ELSE 1 END LIMIT 1`,
@@ -9005,6 +9780,20 @@ export class InventoryIntelligenceService {
         debitAccount = mapping.wastage_account_id;
         creditAccount = mapping.inventory_account_id;
         break;
+      case "STORE_ISSUE":
+      case "STORE_ISSUE_REVERSAL": {
+        // Issued stock is the receiving department's cost: its own account when the department
+        // names one, else the mapping's store-issue account, else COGS.
+        const issueAccount =
+          storeIssueAccountFromMetadata(input.metadata) ??
+          mapping.store_issue_account_id ??
+          mapping.cogs_account_id;
+        debitAccount =
+          input.movementType === "STORE_ISSUE" ? issueAccount : mapping.inventory_account_id;
+        creditAccount =
+          input.movementType === "STORE_ISSUE" ? mapping.inventory_account_id : issueAccount;
+        break;
+      }
       case "STOCK_COUNT_ADJUSTMENT":
       case "MANUAL_ADJUSTMENT":
         if (input.quantityBaseMicro > 0) {
@@ -9025,13 +9814,17 @@ export class InventoryIntelligenceService {
     if (!tenant?.default_currency) throw new Error("Tenant default currency is not configured");
     const journalId = `inventory:${input.id}`;
     const stamp = input.occurredAt;
+    // Store issues carry the receiving department on the entry and on the expense line, so
+    // expense reports can be split by department without a second ledger.
+    const attribution = storeIssueAttribution(input);
+    const expenseLine = input.movementType === "STORE_ISSUE" ? 1 : 2;
     return [
       this.db
         .prepare(
           `INSERT INTO journal_entries
             (tenant_id,id,branch_id,source_type,source_id,business_date,status,description,
              correlation_id,payload_json,created_at)
-           VALUES (?,?,?,?,?,?,'DRAFT',?,?,'{}',?)`,
+           VALUES (?,?,?,?,?,?,'DRAFT',?,?,?,?)`,
         )
         .bind(
           this.actor.tenantId,
@@ -9040,8 +9833,11 @@ export class InventoryIntelligenceService {
           "INVENTORY_MOVEMENT",
           input.id,
           input.businessDate,
-          `${input.movementType} inventory posting`,
+          attribution
+            ? `${input.movementType === "STORE_ISSUE" ? "Store issue" : "Store issue reversal"} ${attribution.issueNumber} - ${attribution.departmentName}`
+            : `${input.movementType} inventory posting`,
           correlationId,
+          attribution ? JSON.stringify(attribution) : "{}",
           stamp,
         ),
       journalLine(
@@ -9053,6 +9849,7 @@ export class InventoryIntelligenceService {
         valueMinor,
         0,
         tenant.default_currency,
+        attribution && expenseLine === 1 ? attribution : undefined,
       ),
       journalLine(
         this.db,
@@ -9063,6 +9860,7 @@ export class InventoryIntelligenceService {
         0,
         valueMinor,
         tenant.default_currency,
+        attribution && expenseLine === 2 ? attribution : undefined,
       ),
       this.db
         .prepare(
@@ -9182,14 +9980,120 @@ function journalLine(
   debitMinor: number,
   creditMinor: number,
   currency: string,
+  payload?: Record<string, unknown>,
 ) {
   return db
     .prepare(
       `INSERT INTO journal_lines
         (tenant_id,journal_entry_id,line_number,account_id,debit_minor,credit_minor,currency,payload_json)
-       VALUES (?,?,?,?,?,?,?,'{}')`,
+       VALUES (?,?,?,?,?,?,?,?)`,
     )
-    .bind(tenantId, journalId, lineNumber, accountId, debitMinor, creditMinor, currency);
+    .bind(
+      tenantId,
+      journalId,
+      lineNumber,
+      accountId,
+      debitMinor,
+      creditMinor,
+      currency,
+      payload ? JSON.stringify(payload) : "{}",
+    );
+}
+
+type StoreIssueRow = {
+  id: string;
+  branch_id: string;
+  warehouse_id: string;
+  issue_number: string;
+  status: string;
+  department_id: string | null;
+  department_code: string;
+  department_name: string;
+  requested_by: string;
+  total_cost_minor: number;
+};
+
+type StoreIssueLineRow = {
+  id: string;
+  inventory_item_id: string;
+  requested_quantity_minor: number;
+  approved_quantity_minor: number | null;
+  issued_quantity_minor: number;
+  unit_cost_minor: number | null;
+  total_cost_minor: number;
+  movement_id: string | null;
+};
+
+type StoreIssuePostingContext = {
+  id: string;
+  branchId: string;
+  warehouseId: string;
+  issueNumber: string;
+  departmentId: string | null;
+  departmentCode: string;
+  departmentName: string;
+  issueAccountId: string | null;
+};
+
+function storeIssueMetadata(issue: StoreIssuePostingContext, lineId: string, note?: string) {
+  return {
+    storeIssueId: issue.id,
+    storeIssueLineId: lineId,
+    issueNumber: issue.issueNumber,
+    departmentId: issue.departmentId,
+    departmentCode: issue.departmentCode,
+    departmentName: issue.departmentName,
+    ...(issue.issueAccountId ? { issueAccountId: issue.issueAccountId } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+function storeIssueAttribution(input: InventoryMovementInput) {
+  if (input.movementType !== "STORE_ISSUE" && input.movementType !== "STORE_ISSUE_REVERSAL") {
+    return null;
+  }
+  const metadata = input.metadata ?? {};
+  return {
+    storeIssueId: String(metadata["storeIssueId"] ?? input.sourceId),
+    issueNumber: String(metadata["issueNumber"] ?? ""),
+    departmentId: (metadata["departmentId"] as string | null | undefined) ?? null,
+    departmentCode: String(metadata["departmentCode"] ?? ""),
+    departmentName: String(metadata["departmentName"] ?? metadata["departmentCode"] ?? ""),
+  };
+}
+
+function storeIssueAccountFromMetadata(metadata: InventoryMovementInput["metadata"]) {
+  const value = metadata?.["issueAccountId"];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** A department may name its own expense account for issued stock in its settings. */
+function departmentIssueAccount(payloadJson: string | null) {
+  if (!payloadJson) return null;
+  try {
+    const value = (JSON.parse(payloadJson) as Record<string, unknown>)["storeIssueAccountId"];
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function quantityOverrides(
+  requested: { lineId: string; quantityMicro: number }[] | undefined,
+  lines: { id: string }[],
+) {
+  const known = new Set(lines.map((line) => line.id));
+  const overrides = new Map<string, number>();
+  for (const row of requested ?? []) {
+    if (!known.has(row.lineId)) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Unknown store issue line");
+    }
+    if (!Number.isSafeInteger(row.quantityMicro) || row.quantityMicro < 0) {
+      throw new ServerOperationError("VALIDATION_FAILED", 400, "Quantities cannot be negative");
+    }
+    overrides.set(row.lineId, row.quantityMicro);
+  }
+  return overrides;
 }
 
 function assertMovementSign(type: string, quantity: number) {

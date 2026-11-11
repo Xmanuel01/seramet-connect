@@ -43,6 +43,9 @@ import {
   stockCountSchema,
   stockCountStartSchema,
   stockTransferRequestSchema,
+  storeIssueApproveSchema,
+  storeIssueIssueSchema,
+  storeIssueRequestSchema,
   stagedTransferDispatchSchema,
   stagedTransferReceiptSchema,
   supplierInvoiceSchema,
@@ -230,6 +233,17 @@ export async function handleInventoryApi(
       ok: true,
       adjustments: await service.listInventoryAdjustments(branchId, boundedLimit(url)),
     });
+  }
+  if (
+    url.pathname === "/api/seramet/inventory/store-issues/workspace" &&
+    request.method === "GET"
+  ) {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, workspace: await service.storeIssueWorkspace(branchId) });
+  }
+  if (url.pathname === "/api/seramet/inventory/store-issues" && request.method === "GET") {
+    const branchId = requiredQuery(url, "branchId");
+    return json({ ok: true, issues: await service.listStoreIssues(branchId, boundedLimit(url)) });
   }
   if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "GET") {
     const branchId = requiredQuery(url, "branchId");
@@ -753,6 +767,79 @@ export async function handleInventoryApi(
       201,
     );
   }
+  if (url.pathname === "/api/seramet/inventory/store-issues" && request.method === "POST") {
+    const body = await parse<z.infer<typeof storeIssueRequestSchema>>(
+      request,
+      storeIssueRequestSchema,
+    );
+    if (!actor.permissions.includes(permissions.inventoryIssueRequest))
+      throw new SerametHttpError(
+        403,
+        `${permissions.inventoryIssueRequest} permission is required`,
+      );
+    authorizeBranchRead(actor, actor.tenantId, body.branchId);
+    const context = await branchOperationContext(env.SERAMET_DB, actor.tenantId, body.branchId);
+    const issueNumber = await nextDocumentNumber(env.SERAMET_DB, {
+      tenantId: actor.tenantId,
+      branchId: body.branchId,
+      branchCode: context.branchCode,
+      businessDate: context.businessDate,
+      documentType: "STORE_ISSUE",
+      prefix: "SIV",
+    });
+    return json(
+      {
+        ok: true,
+        issue: await service.createStoreIssue({
+          ...body,
+          issueNumber,
+          businessDate: context.businessDate,
+        }),
+      },
+      201,
+    );
+  }
+  const storeIssueRoute =
+    /^\/api\/seramet\/inventory\/store-issues\/([^/]+)\/(approve|issue|review|reject|cancel)$/.exec(
+      url.pathname,
+    );
+  if (storeIssueRoute && request.method === "POST") {
+    const id = decodeURIComponent(storeIssueRoute[1]!);
+    const action = storeIssueRoute[2]!;
+    if (action === "approve") {
+      const body = await parse<z.infer<typeof storeIssueApproveSchema>>(
+        request,
+        storeIssueApproveSchema,
+      );
+      return json({ ok: true, issue: await service.approveStoreIssue(id, body) });
+    }
+    if (action === "issue") {
+      const body = await parse<z.infer<typeof storeIssueIssueSchema>>(
+        request,
+        storeIssueIssueSchema,
+      );
+      const businessDate = await storeIssueBusinessDate(env.SERAMET_DB, actor.tenantId, id);
+      return json({
+        ok: true,
+        issue: await service.issueStoreIssue(id, { ...body, businessDate }),
+      });
+    }
+    const body = await parse<z.infer<typeof inventoryDecisionSchema>>(
+      request,
+      inventoryDecisionSchema,
+    );
+    if (action === "review") {
+      return json({ ok: true, issue: await service.reviewStoreIssue(id, body.reason) });
+    }
+    if (action === "cancel") {
+      return json({ ok: true, issue: await service.cancelStoreIssue(id, body.reason) });
+    }
+    const businessDate = await storeIssueBusinessDate(env.SERAMET_DB, actor.tenantId, id);
+    return json({
+      ok: true,
+      issue: await service.rejectStoreIssue(id, { reason: body.reason, businessDate }),
+    });
+  }
   if (url.pathname === "/api/seramet/inventory/wastage" && request.method === "POST") {
     const body = await parse<z.infer<typeof inventoryWastageRequestSchema>>(
       request,
@@ -1128,6 +1215,16 @@ async function branchOperationContext(db: D1Database, tenantId: string, branchId
       cutoffMinutes: Number(branch.business_day_cutoff_minutes),
     }),
   };
+}
+
+/** Today's business date for the branch a store issue belongs to (movements post on it). */
+async function storeIssueBusinessDate(db: D1Database, tenantId: string, id: string) {
+  const issue = await db
+    .prepare("SELECT branch_id FROM store_issues WHERE tenant_id=? AND id=?")
+    .bind(tenantId, id)
+    .first<{ branch_id: string }>();
+  if (!issue) throw new ServerOperationError("VALIDATION_FAILED", 404, "Store issue not found");
+  return (await branchOperationContext(db, tenantId, issue.branch_id)).businessDate;
 }
 
 async function nextDocumentNumber(

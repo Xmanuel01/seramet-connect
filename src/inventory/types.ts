@@ -13,6 +13,8 @@ export type InventoryMovementType =
   | "CUSTOMER_RETURN"
   | "MANUAL_ADJUSTMENT"
   | "EXPIRY"
+  | "STORE_ISSUE"
+  | "STORE_ISSUE_REVERSAL"
   | "OTHER";
 
 export type AnalyticsQuality = "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT_DATA";
@@ -373,4 +375,22 @@ export type InventorySummary = {
   quality: AnalyticsQuality;
   dataQualityIssues: number;
   generatedAt: string;
+};
+
+export type StoreIssueKind = "REQUEST" | "DIRECT";
+
+export type StoreIssueInput = {
+  id?: string;
+  branchId: string;
+  warehouseId: string;
+  kind: StoreIssueKind;
+  issueNumber: string;
+  departmentId?: string;
+  departmentCode?: string;
+  departmentName?: string;
+  reason: string;
+  notes?: string;
+  idempotencyKey: string;
+  businessDate: string;
+  lines: { inventoryItemId: string; quantityMicro: number }[];
 };
