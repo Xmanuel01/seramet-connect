@@ -62,6 +62,7 @@ import { handleFinanceApi } from "@/server/finance-api";
 import { handleDocumentsApi } from "@/server/documents-api";
 import { handleDailyClosingApi } from "@/server/daily-closing-api";
 import { handleDocumentEmailApi } from "@/server/document-email-api";
+import { handleEmailApi } from "@/server/email/email-api";
 import {
   closingMutationActions,
   closingStateForReader,
@@ -261,6 +262,8 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     if (closingReportResponse) return closingReportResponse;
     const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
     if (documentEmailResponse) return documentEmailResponse;
+    const emailResponse = await handleEmailApi(request, env);
+    if (emailResponse) return emailResponse;
     const printingResponse = await handlePrintingApi(request, env, repo);
     if (printingResponse) return printingResponse;
 

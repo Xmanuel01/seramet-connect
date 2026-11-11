@@ -32,7 +32,7 @@ function fixture() {
 test("current complete ledger passes while historical version 27 is rejected", () => {
   const ledger = expectedCertificationLedger();
   const tables = fixture();
-  assert.equal(ledger.at(-1).version, 34);
+  assert.equal(ledger.at(-1).version, 36);
   assert.equal(tables.length, 18);
   assert.doesNotThrow(() => assertCertificationSchema(ledger, tables));
   assert.throws(() => assertCertificationSchema(ledger.slice(0, 27), tables), /Migration ledger/);

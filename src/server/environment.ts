@@ -71,6 +71,15 @@ export type ProductionRuntimeEnv = {
   SERAMET_TRANSACTIONAL_EMAIL_CONFIG?: string;
   // Protected server secret: tenant-id -> { apiKey, from, unsubscribeSecret }.
   SERAMET_CAMPAIGN_EMAIL_CONFIG?: string;
+  // Plain variable: departmental sender identities verified in Brevo, e.g. "REPORTS,BILLING".
+  SERAMET_EMAIL_ACTIVE_SENDERS?: string;
+  // Plain variable: identities with a working Cloudflare forwarding rule, used as reply-to.
+  SERAMET_EMAIL_REPLY_ROUTES?: string;
+  // Protected server secret: bearer token Brevo sends with delivery webhooks.
+  SERAMET_BREVO_WEBHOOK_TOKEN?: string;
+  // Plain variable: Seramet platform administrators as "tenantId:userId", comma separated.
+  // Platform-wide email records need both this and the platform.email.view permission.
+  SERAMET_PLATFORM_ADMINS?: string;
   SERAMET_MALWARE_SCANNER?: MalwareScannerBinding;
   SERAMET_SCANNER_EVIDENCE_SECRET?: string;
   SERAMET_DATABASE_PROVIDER?: string;
