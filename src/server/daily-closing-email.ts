@@ -2,6 +2,11 @@ import type { SerametEnv } from "@/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import { permissions } from "@/platform/permissions";
 import { deliverPdfEmail, pdfDigest, TransactionalEmailError } from "@/server/transactional-email";
+import {
+  closingReportEmail,
+  emailContext,
+  reportFactsFromSnapshot,
+} from "@/server/email/templates";
 
 // The shared worker owns the lease; permissions and immutable snapshot scope are rechecked on each attempt.
 export async function deliverDailyClosingEmail(
@@ -47,14 +52,17 @@ export async function deliverDailyClosingEmail(
     throw new TransactionalEmailError("CLOSING_EMAIL_PERIOD_REOPENED");
   const { renderDailyClosingPdf } = await import("@/server/daily-closing-report");
   const pdf = await renderDailyClosingPdf(snapshot);
+  const email = closingReportEmail(reportFactsFromSnapshot(snapshot), emailContext(env));
   await deliverPdfEmail(
     env,
     tenantId,
     jobId,
     {
       to: { email: recipient.email },
-      subject: `Daily Closing Report - ${snapshot.businessDate} - ${snapshot.dailyReport.branch}`,
-      text: `${snapshot.dailyReport.branch}'s day for ${snapshot.businessDate} has been closed. The closing report is attached.`,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      category: email.category,
       filename: `daily-closing-${snapshot.businessDate}-r${snapshot.revision}.pdf`,
       sha256: await pdfDigest(pdf),
     },

@@ -10,6 +10,7 @@ import {
   summarizeBusinessDay,
 } from "@/payments/daily-closing";
 import { deliverPdfEmail, pdfDigest, TransactionalEmailError } from "@/server/transactional-email";
+import { dailySummaryEmail, emailContext, reportFactsFromSnapshot } from "@/server/email/templates";
 
 export const DAILY_SUMMARY_EMAIL = "DAILY_SUMMARY_EMAIL";
 
@@ -194,15 +195,20 @@ export async function deliverDailySummaryEmail(env: SerametEnv, tenantId: string
   });
   const { renderDailyClosingPdf } = await import("@/server/daily-closing-report");
   const pdf = await renderDailyClosingPdf(snapshot);
-  const branch = snapshot.dailyReport!.branch;
+  const email = dailySummaryEmail(
+    reportFactsFromSnapshot(snapshot, recipient.name),
+    emailContext(env),
+  );
   await deliverPdfEmail(
     env,
     tenantId,
     jobId,
     {
       to: { email: recipient.email },
-      subject: `Daily summary - ${payload.businessDate} - ${branch}`,
-      text: `Here is ${branch}'s summary for ${payload.businessDate}: sales, payments and anything still open. The day hasn't been closed in Seramet yet; once it is, the closing report follows.`,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      category: email.category,
       filename: `daily-summary-${payload.businessDate}.pdf`,
       sha256: await pdfDigest(pdf),
     },

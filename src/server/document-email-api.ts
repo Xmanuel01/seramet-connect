@@ -11,6 +11,9 @@ import { SerametPrintService } from "@/lib/seramet-print-service";
 import { billingDocumentToPrintOrder, receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
 import { DatabaseRateLimiter } from "@/server/rate-limit";
 import { validateDocumentRecipient } from "@/lib/document-email";
+import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { isSafeMailbox } from "@/server/email/senders";
+import { emailContext, merchantDocumentEmail } from "@/server/email/templates";
 import {
   deliverPdfEmail,
   pdfDigest,
@@ -22,6 +25,23 @@ import {
 } from "@/server/transactional-email";
 
 export { documentEmailStatus } from "@/server/transactional-email";
+
+function merchantIdentity(tenantId: string, branchId: string) {
+  const configuration = getConfigurationRepository();
+  let name: string | undefined, replyTo: string | undefined;
+  try {
+    name = configuration.getTenant(tenantId).tradingName?.trim() || undefined;
+  } catch {
+    name = undefined;
+  }
+  try {
+    const email = configuration.getBranch(tenantId, branchId).email?.trim();
+    replyTo = email && isSafeMailbox({ email }) ? email : undefined;
+  } catch {
+    replyTo = undefined;
+  }
+  return { ...(name ? { name } : {}), ...(replyTo ? { replyTo } : {}) };
+}
 
 const inputSchema = z
   .object({
@@ -204,6 +224,17 @@ export async function handleDocumentEmailApi(
     throw new SerametHttpError(413, "The document is too large for email");
   const jobId = crypto.randomUUID(),
     stamp = new Date().toISOString();
+  // The restaurant's own document: its name on the email, replies to its branch address.
+  const merchant = merchantIdentity(actor.tenantId, actor.branchId);
+  const email = merchantDocumentEmail(
+    {
+      businessName: merchant.name ?? "Your restaurant",
+      recipientName: recipient.name,
+      documentType: input.documentType,
+      documentNumber: record.id,
+    },
+    emailContext(env),
+  );
   const payload: Payload = {
     actorId: actor.id,
     documentType: input.documentType,
@@ -212,8 +243,11 @@ export async function handleDocumentEmailApi(
     pdf: pdfBase64(pdf),
     message: {
       to: recipient,
-      subject: `${input.documentType === "INVOICE" ? "Invoice" : "Receipt"} ${record.id}`,
-      text: `Hello ${recipient.name},\n\nYour ${input.documentType.toLowerCase()} ${record.id} is attached as a PDF.\n\nThank you.`,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+      category: email.category,
+      merchant,
       filename: `${input.documentType.toLowerCase()}-${record.id.replace(/[^\w.-]/g, "-")}.pdf`,
       sha256: await pdfDigest(pdf),
     },

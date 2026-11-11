@@ -107,4 +107,4 @@ WHERE permission_code IN ('inventory.view','inventory.adjust.approve','inventory
 ON CONFLICT DO NOTHING;
 
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES(35,'store_issues','store-issues-0035-v1',CURRENT_TIMESTAMP);
+VALUES(36,'store_issues','store-issues-0036-v1',CURRENT_TIMESTAMP);
