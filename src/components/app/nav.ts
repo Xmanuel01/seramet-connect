@@ -171,6 +171,7 @@ export const navGroups: NavGroup[] = [
       { label: "Categories", to: "/categories", icon: Tags },
       { label: "Stores", to: "/warehouses", icon: Warehouse },
       { label: "Stock Counts", to: "/stock-count", icon: ClipboardCheck },
+      { label: "Store Issues", to: "/store-issues", icon: ClipboardList },
       {
         label: "Transfers",
         to: "/transfers",
