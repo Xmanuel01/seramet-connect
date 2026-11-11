@@ -173,6 +173,7 @@ export const permissions = {
   setupDemoReset: "setup.demo.reset",
   setupDiagnosticsView: "setup.diagnostics.view",
   platformTenantsProvision: "platform.tenants.provision",
+  platformEmailView: "platform.email.view",
   marketingManage: "marketing.manage",
   staffManage: "staff.manage",
   auditView: "audit.view",

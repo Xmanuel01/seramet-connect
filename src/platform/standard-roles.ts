@@ -4,7 +4,10 @@ import type { PermissionCode } from "@/platform/types";
 
 /** Everything an account owner holds: all permissions except platform administration. */
 export const accountOwnerPermissions: PermissionCode[] = allPermissionCodes.filter(
-  (code) => code !== permissions.platformTenantsProvision && code !== permissions.setupDemoReset,
+  (code) =>
+    code !== permissions.platformTenantsProvision &&
+    code !== permissions.platformEmailView &&
+    code !== permissions.setupDemoReset,
 );
 
 export type StandardRole = { code: string; name: string; permissions: PermissionCode[] };

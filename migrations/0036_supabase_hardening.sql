@@ -17,4 +17,4 @@ DROP INDEX IF EXISTS idx_setup_import_status_created;
 -- POSTGRES_ONLY: DO $$ DECLARE fn regprocedure; BEGIN FOR fn IN SELECT p.oid::regprocedure FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f' AND p.prorettype = 'trigger'::regtype AND p.proname LIKE 'seramet\_trigger\_%' AND pg_get_userbyid(p.proowner) = current_user AND p.proconfig IS NULL LOOP EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', fn); END LOOP; END $$;
 
 INSERT INTO schema_migrations(version,name,checksum,applied_at)
-VALUES(35,'supabase_hardening','supabase-hardening-0035-v1',CURRENT_TIMESTAMP);
+VALUES(36,'supabase_hardening','supabase-hardening-0036-v1',CURRENT_TIMESTAMP);
