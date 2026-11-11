@@ -104,6 +104,7 @@ import { Route as StatementsRouteImport } from './routes/statements'
 import { Route as StockCountRouteImport } from './routes/stock-count'
 import { Route as StockDetailRouteImport } from './routes/stock-detail'
 import { Route as StockLossesRouteImport } from './routes/stock-losses'
+import { Route as StoreIssuesRouteImport } from './routes/store-issues'
 import { Route as SupplierBillsRouteImport } from './routes/supplier-bills'
 import { Route as SupplierPerformanceRouteImport } from './routes/supplier-performance'
 import { Route as SuppliersRouteImport } from './routes/suppliers'
@@ -601,6 +602,11 @@ const StockLossesRoute = StockLossesRouteImport.update({
   path: '/stock-losses',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StoreIssuesRoute = StoreIssuesRouteImport.update({
+  id: '/store-issues',
+  path: '/store-issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SupplierBillsRoute = SupplierBillsRouteImport.update({
   id: '/supplier-bills',
   path: '/supplier-bills',
@@ -805,6 +811,7 @@ export interface FileRoutesByFullPath {
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/stock-losses': typeof StockLossesRoute
+  '/store-issues': typeof StoreIssuesRoute
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
@@ -923,6 +930,7 @@ export interface FileRoutesByTo {
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/stock-losses': typeof StockLossesRoute
+  '/store-issues': typeof StoreIssuesRoute
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
@@ -1041,6 +1049,7 @@ export interface FileRoutesById {
   '/stock-count': typeof StockCountRoute
   '/stock-detail': typeof StockDetailRoute
   '/stock-losses': typeof StockLossesRoute
+  '/store-issues': typeof StoreIssuesRoute
   '/supplier-bills': typeof SupplierBillsRoute
   '/supplier-performance': typeof SupplierPerformanceRoute
   '/suppliers': typeof SuppliersRoute
@@ -1161,6 +1170,7 @@ export interface FileRouteTypes {
     | '/stock-count'
     | '/stock-detail'
     | '/stock-losses'
+    | '/store-issues'
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
@@ -1279,6 +1289,7 @@ export interface FileRouteTypes {
     | '/stock-count'
     | '/stock-detail'
     | '/stock-losses'
+    | '/store-issues'
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
@@ -1396,6 +1407,7 @@ export interface FileRouteTypes {
     | '/stock-count'
     | '/stock-detail'
     | '/stock-losses'
+    | '/store-issues'
     | '/supplier-bills'
     | '/supplier-performance'
     | '/suppliers'
@@ -1515,6 +1527,7 @@ export interface RootRouteChildren {
   StockCountRoute: typeof StockCountRoute
   StockDetailRoute: typeof StockDetailRoute
   StockLossesRoute: typeof StockLossesRoute
+  StoreIssuesRoute: typeof StoreIssuesRoute
   SupplierBillsRoute: typeof SupplierBillsRoute
   SupplierPerformanceRoute: typeof SupplierPerformanceRoute
   SuppliersRoute: typeof SuppliersRoute
@@ -2199,6 +2212,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StockLossesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/store-issues': {
+      id: '/store-issues'
+      path: '/store-issues'
+      fullPath: '/store-issues'
+      preLoaderRoute: typeof StoreIssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/supplier-bills': {
       id: '/supplier-bills'
       path: '/supplier-bills'
@@ -2467,6 +2487,7 @@ const rootRouteChildren: RootRouteChildren = {
   StockCountRoute: StockCountRoute,
   StockDetailRoute: StockDetailRoute,
   StockLossesRoute: StockLossesRoute,
+  StoreIssuesRoute: StoreIssuesRoute,
   SupplierBillsRoute: SupplierBillsRoute,
   SupplierPerformanceRoute: SupplierPerformanceRoute,
   SuppliersRoute: SuppliersRoute,

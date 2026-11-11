@@ -32,6 +32,7 @@ const allowed = new Set([
   "tests/e2e/attendance-geofence.spec.ts",
   "tests/e2e/attendance-design.spec.ts",
   "tests/e2e/staff-pilot.spec.ts",
+  "tests/e2e/store-issues.spec.ts",
   "tests/e2e/printing-admin.spec.ts",
   "tests/e2e/pos-stability.spec.ts",
   "tests/e2e/pos-startup.spec.ts",

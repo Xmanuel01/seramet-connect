@@ -314,6 +314,9 @@
     "src/routes/stock-losses.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },
+    "src/routes/store-issues.tsx": {
+      "directBrowser": "NOT_VERIFIED"
+    },
     "src/routes/supplier-bills.tsx": {
       "directBrowser": "NOT_VERIFIED"
     },
