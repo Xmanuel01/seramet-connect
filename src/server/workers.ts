@@ -4,7 +4,7 @@ import type { DurableQueueBatch, DurableQueueMessage } from "@/server/environmen
 import { structuredServerLog } from "@/server/logging";
 import { TransactionalEmailError } from "@/server/transactional-email";
 import type { D1Database } from "@/server/database/d1";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateTenantConfiguration } from "@/server/database/authoritative-configuration";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { ManagementIntelligenceService } from "@/management/management-intelligence-service";
@@ -57,11 +57,11 @@ export async function handleWorkerQueue(
   env: SerametEnv,
 ) {
   if (!env.SERAMET_DB) throw new Error("Durable worker requires authoritative database");
-  // Jobs act on payments and messages: they use the cached copy only while the shared
-  // configuration revision confirms it is current.
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
   for (const message of batch.messages) {
     try {
+      // Jobs act on payments and messages: they load their restaurant's configuration, using
+      // the cached copy only while the shared configuration revision confirms it is current.
+      await hydrateTenantConfiguration(env.SERAMET_DB, env, message.body.tenantId);
       await processMessage(message, env);
     } catch (error) {
       structuredServerLog({

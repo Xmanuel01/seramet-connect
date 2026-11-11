@@ -5,7 +5,7 @@ import { LocationCurrencyService } from "@/onboarding/location-currency-service"
 import { paymentOrchestrator } from "@/payments/payment-orchestrator";
 import { allPermissionCodes } from "@/platform/permissions";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import {
   createMigratedTestDatabase,
@@ -107,7 +107,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const service = new LocationCurrencyService(db, authenticated);
     await configureKenyanCurrency(service);
     seedCashConfiguration(provisioned);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
 
     await service.saveManualRate({
       baseCurrency: "KES",
@@ -256,7 +256,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const authenticated = actor(provisioned);
     await configureKenyanCurrency(new LocationCurrencyService(db, authenticated));
     seedCashConfiguration(provisioned);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
 
     let state = createEmptyTransactionState(provisioned.tenantId);
     state = TransactionEngine.createOrder(
@@ -339,7 +339,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const service = new LocationCurrencyService(db, authenticated);
     await configureKenyanCurrency(service);
     seedCashConfiguration(provisioned);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
     const state = createReadyCashBill(provisioned, 5_000);
     const invoice = state.bills[0]!;
     const repository = new D1AuthoritativeTransactionRepository(db);
@@ -404,7 +404,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const otherService = new LocationCurrencyService(db, otherActor);
     await configureKenyanCurrency(otherService);
     seedCashConfiguration(other);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
     const otherState = createReadyCashBill(other, 5_000);
     const otherRepository = new D1AuthoritativeTransactionRepository(db);
     await otherRepository.saveState(otherState, otherActor, "Other tenant FX state");
@@ -433,7 +433,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const service = new LocationCurrencyService(db, authenticated);
     await configureKenyanCurrency(service);
     seedCashConfiguration(provisioned);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
     await saveCurrentUsdRate(service, "current-rate-cash-control-0001");
     const state = createReadyCashBill(provisioned, 5_000);
     const invoice = state.bills[0]!;
@@ -548,7 +548,7 @@ describe.sequential("guided onboarding and multi-currency settlement", () => {
     const service = new LocationCurrencyService(db, authenticated);
     await configureKenyanCurrency(service);
     seedCashConfiguration(provisioned);
-    await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+    await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
     await saveCurrentUsdRate(service, "current-rate-split-0001");
     const state = createReadyCashBill(provisioned, 12_950);
     const invoice = state.bills[0]!;

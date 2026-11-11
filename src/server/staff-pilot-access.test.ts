@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
 import { createEmptyTransactionState, type TransactionOrder } from "@/lib/transaction-engine";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
@@ -39,7 +39,7 @@ describe("staff role/device HTTP boundaries", () => {
       branchScope: { type: "BRANCH", branchId: branch },
       salesTerminal: true,
     };
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     const stamp = new Date().toISOString();
     const station = db.sqlite
       .prepare("SELECT code FROM stations WHERE tenant_id=? AND branch_id=? LIMIT 1")

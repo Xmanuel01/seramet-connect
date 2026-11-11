@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
-import { hydrateAuthoritativeConfiguration } from "./authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { createMigratedTestDatabase, type SqliteD1TestDatabase } from "./sqlite-test-adapter";
 import { D1AuthoritativeTransactionRepository } from "./authoritative-transaction-repository";
 
@@ -22,7 +22,7 @@ beforeEach(async () => {
     )
     .bind(tenantId)
     .run();
-  await hydrateAuthoritativeConfiguration(db, {}, true);
+  await hydrateSeededTenantsForTests(db, {});
   const record = db.prepare(
     "INSERT INTO authoritative_records (tenant_id,entity_type,entity_id,payload_json,version,created_at,updated_at) VALUES (?,?,?,?,1,?,?)",
   );

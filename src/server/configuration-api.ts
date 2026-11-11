@@ -8,7 +8,7 @@ import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { ConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { PlatformState } from "@/platform/types";
 import {
-  hydrateAuthoritativeConfiguration,
+  hydrateTenantConfiguration,
   invalidateAuthoritativeConfiguration,
 } from "@/server/database/authoritative-configuration";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
@@ -45,7 +45,7 @@ export async function handleConfigurationApi(
       actor,
       await readSettingsBody(request, createRoleInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   if (url.pathname === "/api/seramet/configuration/roles/standard" && request.method === "POST") {
@@ -55,7 +55,7 @@ export async function handleConfigurationApi(
       actor,
       await readSettingsBody(request, installStandardRolesInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   const disableRoleRoute = /^\/api\/seramet\/configuration\/roles\/([^/]+)\/disable$/.exec(
@@ -70,7 +70,7 @@ export async function handleConfigurationApi(
       decodeURIComponent(disableRoleRoute[1]!),
       body,
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   if (url.pathname === "/api/seramet/configuration/payment-methods" && request.method === "POST") {
@@ -80,7 +80,7 @@ export async function handleConfigurationApi(
       actor,
       await readSettingsBody(request, createPaymentMethodInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   const paymentMethodRoute = /^\/api\/seramet\/configuration\/payment-methods\/([^/]+)$/.exec(
@@ -94,7 +94,7 @@ export async function handleConfigurationApi(
       decodeURIComponent(paymentMethodRoute[1]!),
       await readSettingsBody(request, updatePaymentMethodInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   if (url.pathname === "/api/seramet/configuration/order-channels" && request.method === "POST") {
@@ -104,7 +104,7 @@ export async function handleConfigurationApi(
       actor,
       await readSettingsBody(request, createOrderChannelInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   const orderChannelRoute = /^\/api\/seramet\/configuration\/order-channels\/([^/]+)$/.exec(
@@ -118,7 +118,7 @@ export async function handleConfigurationApi(
       decodeURIComponent(orderChannelRoute[1]!),
       await readSettingsBody(request, updateOrderChannelInputSchema),
     );
-    await refreshConfiguration(requireDatabase(env), env);
+    await refreshConfiguration(requireDatabase(env), env, actor.tenantId);
     return json({ ok: true, ...result });
   }
   const rolePermissionsRoute = /^\/api\/seramet\/access\/roles\/([^/]+)\/permissions$/.exec(
@@ -140,8 +140,7 @@ export async function handleConfigurationApi(
       permissionCodes: body.permissions,
       reason: body.reason,
     });
-    await invalidateAuthoritativeConfiguration(db);
-    await hydrateAuthoritativeConfiguration(db, env, true);
+    await refreshConfiguration(db, env, actor.tenantId);
     return json({ ok: true, role: result });
   }
   const userBranchesRoute = /^\/api\/seramet\/access\/users\/([^/]+)\/branches$/.exec(url.pathname);
@@ -160,8 +159,7 @@ export async function handleConfigurationApi(
       primaryBranchId: body.primaryBranchId,
       reason: body.reason,
     });
-    await invalidateAuthoritativeConfiguration(db);
-    await hydrateAuthoritativeConfiguration(db, env, true);
+    await refreshConfiguration(db, env, actor.tenantId);
     return json({ ok: true, assignment: result });
   }
   const isRead =
@@ -172,7 +170,7 @@ export async function handleConfigurationApi(
     const db = requireDatabase(env);
     // The app reads this after its own changes, so it always reflects the database; other
     // requests may use configuration cached for a few seconds.
-    const repository = await hydrateAuthoritativeConfiguration(db, env, true);
+    const repository = await hydrateTenantConfiguration(db, env, actor.tenantId, true);
     const state = scopeState(repository.snapshot(), actor.tenantId);
     if (url.pathname.endsWith("/export")) {
       requireAny(actor, [permissions.settingsOrganisationManage, permissions.auditView]);
@@ -210,15 +208,14 @@ export async function handleConfigurationApi(
     assertImportSafe(next, actor.tenantId);
     new ConfigurationRepository(next, { persistBrowser: false });
     const current = scopeState(
-      (await hydrateAuthoritativeConfiguration(db, env)).snapshot(),
+      (await hydrateTenantConfiguration(db, env, actor.tenantId)).snapshot(),
       actor.tenantId,
     );
     const preview = buildPreview(current, next);
     if (body.mode === "PREVIEW") return json({ ok: true, preview });
     assertRolePermissionChangesDelegable(current, next, actor);
     await persistConfiguration(db, next, actor);
-    await invalidateAuthoritativeConfiguration(db);
-    await hydrateAuthoritativeConfiguration(db, env, true);
+    await refreshConfiguration(db, env, actor.tenantId);
     return json({ ok: true, applied: true, preview });
   }
   return null;
@@ -235,9 +232,9 @@ async function settingsMutationActor(request: Request, env: SerametEnv, bucket: 
   return actor;
 }
 
-async function refreshConfiguration(db: D1Database, env: SerametEnv) {
+async function refreshConfiguration(db: D1Database, env: SerametEnv, tenantId: string) {
   await invalidateAuthoritativeConfiguration(db);
-  await hydrateAuthoritativeConfiguration(db, env, true);
+  await hydrateTenantConfiguration(db, env, tenantId, true);
 }
 
 async function readSettingsBody<T>(request: Request, schema: z.ZodType<T>): Promise<T> {

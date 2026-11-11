@@ -6,6 +6,7 @@ import { majorFromMinor, parseMajorAmount } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
+import { hydrateTenantConfiguration } from "@/server/database/authoritative-configuration";
 import { authoritativeBusinessDate } from "@/server/business-date";
 import {
   createCapabilityToken,
@@ -516,6 +517,7 @@ export class GuestExperienceService {
       .bind(hash)
       .first<Row>();
     if (!submission) throw new GuestDomainError("NOT_FOUND", 404, "Order tracking link is invalid");
+    await this.useTenant(String(submission["tenant_id"]));
     const state = await this.transactions.loadState(String(submission["tenant_id"]));
     const order = state.orders.find(
       (candidate) =>
@@ -2588,6 +2590,7 @@ export class GuestExperienceService {
       .bind(hash)
       .first<Pick<GuestSessionRow, "tenant_id" | "id" | "branch_id" | "session_type" | "status">>();
     if (!session) throw new GuestDomainError("FORBIDDEN", 403, "Kiosk session is invalid");
+    await this.useTenant(session.tenant_id);
     if (session.session_type !== "KIOSK") {
       throw new GuestDomainError("FORBIDDEN", 403, "Only kiosk sessions can use kiosk reset");
     }
@@ -3044,7 +3047,16 @@ export class GuestExperienceService {
       .bind(normalizeSlug(restaurantSlug), normalizeSlug(branchSlug))
       .first<Row>();
     if (!row) throw new GuestDomainError("NOT_FOUND", 404, "Public branch was not found");
+    await this.useTenant(String(row["tenant_id"]));
     return profileFromRow(row);
+  }
+
+  /**
+   * Loads the restaurant's configuration once a public link has said which restaurant it is;
+   * guests are not authenticated, so this is where their requests learn it.
+   */
+  private async useTenant(tenantId: string) {
+    await hydrateTenantConfiguration(this.db, {}, tenantId);
   }
 
   private async profileByScope(tenantId: string, branchId: string) {
@@ -3057,6 +3069,7 @@ export class GuestExperienceService {
       .bind(tenantId, branchId)
       .first<Row>();
     if (!row) throw new GuestDomainError("NOT_FOUND", 404, "Public branch was not found");
+    await this.useTenant(tenantId);
     return profileFromRow(row);
   }
 
@@ -3071,6 +3084,7 @@ export class GuestExperienceService {
       .bind(hash)
       .first<GuestSessionRow>();
     if (!session) throw new GuestDomainError("FORBIDDEN", 403, "Guest session is invalid");
+    await this.useTenant(session.tenant_id);
     if (session.status !== "ACTIVE" || Date.parse(session.expires_at) <= Date.now()) {
       throw new GuestDomainError("EXPIRED", 410, "Guest session expired");
     }
@@ -3359,6 +3373,7 @@ export class GuestExperienceService {
       .bind(hash)
       .first<{ tenant_id: string; id: string; branch_id: string; status: ReservationStatus }>();
     if (!reservation) throw new GuestDomainError("NOT_FOUND", 404, "Reservation link is invalid");
+    await this.useTenant(reservation.tenant_id);
     return reservation;
   }
 

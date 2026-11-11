@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { authenticateSerametRequest, type SerametEnv, type ServerActor } from "@/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import {
   createMigratedTestDatabase,
   SqliteD1TestDatabase,
@@ -41,7 +41,7 @@ describe.sequential("Pass 5 production foundation", () => {
     database = createMigratedTestDatabase();
     await seedTenant(database, tenantA, branchA, userA);
     await seedTenant(database, tenantB, "branch-b", "user-b");
-    await hydrateAuthoritativeConfiguration(database, testEnv(), true);
+    await hydrateSeededTenantsForTests(database, testEnv());
   });
 
   afterEach(() => {
@@ -79,7 +79,7 @@ describe.sequential("Pass 5 production foundation", () => {
       )
       .run();
 
-    await hydrateAuthoritativeConfiguration(database, testEnv(), true);
+    await hydrateSeededTenantsForTests(database, testEnv());
     expect(getConfigurationRepository().getBranch(tenantA, branchA).metadata).toMatchObject({
       businessDayCutoffMinutes: 315,
     });

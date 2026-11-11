@@ -8,7 +8,7 @@ import {
 import { permissions } from "@/platform/permissions";
 import type { D1Database } from "@/server/database/d1";
 import {
-  hydrateAuthoritativeConfiguration,
+  hydrateTenantConfiguration,
   invalidateAuthoritativeConfiguration,
 } from "@/server/database/authoritative-configuration";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
@@ -272,7 +272,7 @@ export async function handleTableManagementApi(
       ? { area: await createServiceArea(env.SERAMET_DB, actor, raw) }
       : { table: await createConfiguredTable(env.SERAMET_DB, actor, raw) };
   await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
-  await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env, true);
+  await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId, true);
   return new Response(JSON.stringify({ ok: true, ...response }), {
     status: tableEdit ? 200 : 201,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
