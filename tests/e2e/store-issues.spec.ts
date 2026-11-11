@@ -56,7 +56,15 @@ test.beforeAll(() => {
     db.prepare(
       `INSERT INTO warehouses (tenant_id,id,branch_id,code,name,active,payload_json,location_type,created_at,updated_at)
        VALUES (?,?,?,?,?,1,'{}','MAIN',?,?)`,
-    ).run(t, warehouseId, fixture.firstBranchId, `SI-${suffix}`, `Dry store ${suffix}`, stamp, stamp);
+    ).run(
+      t,
+      warehouseId,
+      fixture.firstBranchId,
+      `SI-${suffix}`,
+      `Dry store ${suffix}`,
+      stamp,
+      stamp,
+    );
     const unit = db
       .prepare(`SELECT id FROM unit_definitions WHERE tenant_id=? AND symbol='kg' LIMIT 1`)
       .get(t) as { id: string } | undefined;
@@ -69,7 +77,16 @@ test.beforeAll(() => {
     db.prepare(
       `INSERT INTO inventory_items (tenant_id,id,sku,name,unit,active,payload_json,code,base_unit_id,purchase_unit_id,default_warehouse_id)
        VALUES (?,?,?,?,'kg',1,'{}',?,?,?,?)`,
-    ).run(t, itemId, `FLOUR-${suffix}`, `Flour ${suffix}`, `FLOUR-${suffix}`, unitId, unitId, warehouseId);
+    ).run(
+      t,
+      itemId,
+      `FLOUR-${suffix}`,
+      `Flour ${suffix}`,
+      `FLOUR-${suffix}`,
+      unitId,
+      unitId,
+      warehouseId,
+    );
     // 20 kg at 150.00/kg.
     db.prepare(
       `INSERT INTO inventory_movements
