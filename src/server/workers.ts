@@ -3,6 +3,7 @@ import type { SerametEnv } from "@/lib/seramet-auth";
 import type { DurableQueueBatch, DurableQueueMessage } from "@/server/environment";
 import { structuredServerLog } from "@/server/logging";
 import { TransactionalEmailError } from "@/server/transactional-email";
+import { pruneEmailDeliveryLog } from "@/server/email/delivery-log";
 import type { D1Database } from "@/server/database/d1";
 import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
@@ -2352,7 +2353,9 @@ export async function pruneOperationalHistory(db: D1Database, at = new Date()) {
       .bind(at.toISOString())
       .run(),
   ]);
-  return { jobs: jobs.meta?.changes ?? 0, events: events.meta?.changes ?? 0 };
+  // Email delivery records are kept 400 days for diagnosis, then removed.
+  const emails = await pruneEmailDeliveryLog(db, at).catch(() => 0);
+  return { jobs: jobs.meta?.changes ?? 0, events: events.meta?.changes ?? 0, emails };
 }
 
 async function recordWorkerFailure(env: SerametEnv, body: SerametWorkerMessage, error: unknown) {

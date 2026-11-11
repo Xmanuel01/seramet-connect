@@ -349,7 +349,8 @@ export class OnboardingService {
         .prepare("INSERT INTO user_roles (tenant_id,user_id,role_id) VALUES (?,?,?)")
         .bind(tenantId, this.actor.id, roleId),
     ];
-    for (const code of allPermissionCodes) {
+    // Platform-wide email records are never part of a restaurant administrator's role.
+    for (const code of allPermissionCodes.filter((c) => c !== permissions.platformEmailView)) {
       statements.push(
         this.db
           .prepare(
