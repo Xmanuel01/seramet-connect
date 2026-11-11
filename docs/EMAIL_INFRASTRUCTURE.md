@@ -116,10 +116,13 @@ Rules enforced in code (**implemented and tested**):
 
 Set secrets with `wrangler secret put <NAME>` (never in `wrangler.jsonc`, git or chat).
 
-## 5. Cloudflare Email Routing (awaiting your approval)
+## 5. Cloudflare Email Routing (done 11 November 2026)
 
-Nothing has been changed in Cloudflare. MX and DNS stay as they are. The existing admin@ rule
-is kept.
+All 13 departmental rules were added with the owner's approval and show **Active**, each
+forwarding to `seramet.inc@gmail.com`. The admin@ rule is unchanged, the catch-all stays
+disabled (drop), and MX and DNS were not touched. An end-to-end test (sending to a new address
+from an outside account) is still to be done. The steps below are kept for adding addresses or
+changing destinations later.
 
 **Add the departmental rules** (Cloudflare dashboard → seramet.co.ke → Email → Email Routing →
 Routing rules → Create address). For each of support, billing, sales, security, operations,
@@ -257,7 +260,8 @@ Never switch several identities at once without a successful test of each.
 
 1. **Reconcile the 4 daily summaries dead-lettered on 9 Nov** (unknown outcome): check Brevo →
    Transactional → Logs for 9 Nov around 09:00 UTC from admin@. Do not resend them blindly.
-2. Approve the Cloudflare routing rules (§5).
+2. Send a test email to one or two new addresses (e.g. support@, reports@) from an outside
+   account and confirm they arrive in Gmail; then set `SERAMET_EMAIL_REPLY_ROUTES` (§5).
 3. Verify the departmental senders in Brevo (§6) and add the delivery webhook.
 4. Set `SERAMET_BREVO_WEBHOOK_TOKEN` and `SERAMET_PLATFORM_ADMINS`.
 5. Optionally apply the branded Supabase Auth templates (§8).
