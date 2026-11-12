@@ -247,8 +247,12 @@ const requiredAccountMappings = [
   "OPENING_BALANCE",
 ] as const;
 
-/** How long one worker run keeps saving import batches before handing over to the queue. */
-const importRunBudgetMs = 20_000;
+/**
+ * How long one worker run keeps saving import batches before handing over to the queue. It
+ * stays well under the two-minute job lease, so a second consumer never picks the job up
+ * while the first is still saving.
+ */
+const defaultImportRunBudgetMs = 20_000;
 
 export class OnboardingService {
   constructor(
@@ -1831,11 +1835,19 @@ export class OnboardingService {
     idempotencyKey: string,
     options: { worker?: boolean; autoPublish?: boolean } = {},
   ) {
-    const deadline = Date.now() + importRunBudgetMs;
+    const deadline = Date.now() + this.importRunBudgetMs();
     for (;;) {
       const step = await this.commitImportStep(importId, idempotencyKey, { ...options, deadline });
       if (!("continueRun" in step)) return step;
     }
+  }
+
+  private importRunBudgetMs() {
+    const configured = this.env.SERAMET_IMPORT_RUN_BUDGET_MS;
+    const value = configured === undefined || configured === "" ? NaN : Number(configured);
+    return Number.isFinite(value) && value >= 0
+      ? Math.min(value, defaultImportRunBudgetMs)
+      : defaultImportRunBudgetMs;
   }
 
   private async commitImportStep(
@@ -2581,7 +2593,7 @@ export class OnboardingService {
     idempotencyKey: string,
     options: { worker?: boolean } = {},
   ) {
-    const deadline = Date.now() + importRunBudgetMs;
+    const deadline = Date.now() + this.importRunBudgetMs();
     for (;;) {
       const step = await this.publishImportStep(importId, idempotencyKey, { ...options, deadline });
       if (!("continueRun" in step)) return step;
