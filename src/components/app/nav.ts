@@ -359,7 +359,7 @@ export const navGroups: NavGroup[] = [
         permission: permissions.setupView,
       },
       {
-        label: "Menu Import",
+        label: "Imports",
         to: "/menu-import",
         icon: FileSpreadsheet,
         permission: permissions.settingsOrganisationManage,

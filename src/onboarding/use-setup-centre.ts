@@ -755,7 +755,7 @@ export function useSetupCentre() {
         {
           method: "POST",
           headers,
-          body: JSON.stringify({ idempotencyKey: preview.commitKey }),
+          body: JSON.stringify({ idempotencyKey: preview.commitKey, publishWhenVerified: true }),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as {

@@ -59,6 +59,8 @@ export type FileScanQueueMessage = {
 
 export type ProductionRuntimeEnv = {
   SERAMET_ENVIRONMENT?: string;
+  /** How long one worker run keeps saving import batches (ms); "0" saves one batch per run. */
+  SERAMET_IMPORT_RUN_BUDGET_MS?: string;
   NODE_ENV?: string;
   SERAMET_DB?: D1Database;
   SERAMET_HYPERDRIVE?: HyperdriveBinding;
