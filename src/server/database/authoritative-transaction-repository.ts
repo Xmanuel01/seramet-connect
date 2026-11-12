@@ -102,6 +102,8 @@ type AuthoritativeRow = {
 
 type RevisionRow = { revision: number };
 
+type StateSnapshot = { revision: number; rows: AuthoritativeRow[] };
+
 type PersistedEntity = {
   entityType: string;
   entityId: string;
@@ -116,6 +118,11 @@ type PersistedEntity = {
 export class D1AuthoritativeTransactionRepository implements TransactionRepository {
   readonly authoritative = true;
   private readonly verifiedTenants = new Set<string>();
+  // The tenant's state rows as last read in this request, with the revision read just before
+  // them. Every write to state rows goes through persistState, which bumps the revision in the
+  // same transaction, so while a fresh revision read still returns that number the rows are
+  // exactly the rows at that revision and need not be read again.
+  private readonly snapshots = new Map<string, StateSnapshot>();
 
   constructor(
     private readonly db: D1Database,
@@ -149,8 +156,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
 
   async loadState(tenantId: string) {
     await this.assertTenant(tenantId);
-    const rows = await this.loadRows(tenantId);
-    return reconstructState(tenantId, rows);
+    const snapshot = await this.currentSnapshot(tenantId);
+    return reconstructState(tenantId, snapshot.rows);
   }
 
   async saveState(state: TransactionState, actor: ServerActor, reason: string) {
@@ -185,9 +192,11 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       return { state: cached.state, revision: cached.revision, duplicate: true };
     }
 
-    const { state: current, revision: baseRevision } = await this.loadStateAtStableRevision(
-      input.actor.tenantId,
-    );
+    const {
+      state: current,
+      rows: currentRows,
+      revision: baseRevision,
+    } = await this.loadStateAtStableRevision(input.actor.tenantId);
     if (input.expectedRevision !== undefined && input.expectedRevision !== baseRevision) {
       throw new ServerOperationError(
         "CONFLICT",
@@ -209,6 +218,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         correlationId: input.correlationId,
         reason: `Mutation ${input.action}`,
         requiredBaseRevision: baseRevision,
+        currentRows,
         ...(input.deviceId ? { deviceId: input.deviceId } : {}),
       });
       return { state: next, revision, duplicate: false };
@@ -298,13 +308,19 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     requestHash: string;
     correlationId: string;
     requiredBaseRevision?: number;
+    // Rows already read at requiredBaseRevision; the revision check below proves they are
+    // still current, and the batch's unique base revision rejects a commit that lands after it.
+    currentRows?: AuthoritativeRow[];
     deviceId?: string;
     reason: string;
   }) {
     await this.assertTenant(input.actor.tenantId);
     const tenantId = input.actor.tenantId;
+    if (input.currentRows && input.requiredBaseRevision === undefined) {
+      throw new Error("Preloaded state rows need the revision they were read at");
+    }
     const [currentRows, observedRevision] = await Promise.all([
-      this.loadRows(tenantId),
+      input.currentRows ?? this.loadRows(tenantId),
       this.revision(tenantId),
     ]);
     const baseRevision = input.requiredBaseRevision ?? observedRevision;
@@ -486,18 +502,36 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         ),
     );
 
+    // Whether the batch commits or fails, the rows read before it are no longer known current.
+    this.snapshots.delete(tenantId);
     await this.db.batch(statements);
     // Committed: push the event to the restaurant's open devices (the row is the catch-up log).
     await notifyRealtimeHub(this.options.realtimeHub, tenantId, [realtimeEvent]);
     return newRevision;
   }
 
+  /** The tenant's state rows at the current revision, read from the database at most once. */
+  private async currentSnapshot(tenantId: string): Promise<StateSnapshot> {
+    const revision = await this.revision(tenantId);
+    const cached = this.snapshots.get(tenantId);
+    if (cached?.revision === revision) return cached;
+    // The revision is read before the rows: a commit landing in between makes the next
+    // revision read differ from it, so these rows are never reused as an older revision's.
+    const snapshot = { revision, rows: await this.loadRows(tenantId) };
+    this.snapshots.set(tenantId, snapshot);
+    return snapshot;
+  }
+
   private async loadStateAtStableRevision(tenantId: string) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const before = await this.revision(tenantId);
-      const state = await this.loadState(tenantId);
+      const snapshot = await this.currentSnapshot(tenantId);
       const after = await this.revision(tenantId);
-      if (before === after) return { state, revision: after };
+      if (snapshot.revision === after)
+        return {
+          state: reconstructState(tenantId, snapshot.rows),
+          rows: snapshot.rows,
+          revision: after,
+        };
     }
     throw new ServerOperationError(
       "CONFLICT",
