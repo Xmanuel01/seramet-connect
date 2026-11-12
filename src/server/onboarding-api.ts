@@ -376,10 +376,19 @@ export async function handleOnboardingApi(
       `setup-import-commit:${actor.tenantId}:${actor.id}`,
       sensitiveRateLimits.configuration,
     );
-    const body = await parse<{ idempotencyKey: string }>(request, importCommitRequestSchema);
+    const body = await parse<{ idempotencyKey: string; publishWhenVerified?: boolean }>(
+      request,
+      importCommitRequestSchema,
+    );
     return json({
       ok: true,
-      result: await service.commitImport(decodeURIComponent(commitImport[1]!), body.idempotencyKey),
+      result: await service.commitImport(
+        decodeURIComponent(commitImport[1]!),
+        body.idempotencyKey,
+        {
+          autoPublish: body.publishWhenVerified === true,
+        },
+      ),
     });
   }
   const publishImport = /^\/api\/seramet\/setup\/imports\/([^/]+)\/publish$/.exec(url.pathname);

@@ -1487,7 +1487,9 @@ async function resetDemoTenant(env: SerametEnv, job: WorkerJobRow) {
 }
 
 async function commitSetupImport(env: SerametEnv, job: WorkerJobRow) {
-  const payload = parsePayload<{ importId?: string; commitKey?: string }>(job.payload_json);
+  const payload = parsePayload<{ importId?: string; commitKey?: string; autoPublish?: boolean }>(
+    job.payload_json,
+  );
   if (!payload.importId || !payload.commitKey) {
     throw new Error("Setup import worker is missing its import identity");
   }
@@ -1496,7 +1498,19 @@ async function commitSetupImport(env: SerametEnv, job: WorkerJobRow) {
     systemSetupActor(job.tenant_id, job.branch_id ?? undefined),
     env,
   );
-  return service.commitImport(payload.importId, payload.commitKey, { worker: true });
+  const result = await service.commitImport(payload.importId, payload.commitKey, {
+    worker: true,
+    autoPublish: payload.autoPublish === true,
+  });
+  // The person already reviewed the preview and asked for the items to go on the menu, so a
+  // saved import that passed its checks is added without a second confirmation.
+  if (payload.autoPublish === true && result.status === "COMMITTED" && !result.queued) {
+    const staged = await service.inspectImport(payload.importId);
+    if (staged.publishStatus === "READY" && staged.publishKey) {
+      await service.publishImport(staged.id, staged.publishKey);
+    }
+  }
+  return result;
 }
 
 async function prepareSetupImport(env: SerametEnv, job: WorkerJobRow) {

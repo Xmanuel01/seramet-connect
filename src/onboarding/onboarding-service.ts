@@ -247,6 +247,9 @@ const requiredAccountMappings = [
   "OPENING_BALANCE",
 ] as const;
 
+/** How long one worker run keeps saving import batches before handing over to the queue. */
+const importRunBudgetMs = 20_000;
+
 export class OnboardingService {
   constructor(
     private readonly db: D1Database,
@@ -1819,8 +1822,29 @@ export class OnboardingService {
     return this.getImport(id);
   }
 
-  async commitImport(importId: string, idempotencyKey: string, options: { worker?: boolean } = {}) {
+  /**
+   * A worker keeps saving batches in the same run for a short while, instead of waiting in the
+   * queue between every batch; a large menu then takes seconds rather than minutes.
+   */
+  async commitImport(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; autoPublish?: boolean } = {},
+  ) {
+    const deadline = Date.now() + importRunBudgetMs;
+    for (;;) {
+      const step = await this.commitImportStep(importId, idempotencyKey, { ...options, deadline });
+      if (!("continueRun" in step)) return step;
+    }
+  }
+
+  private async commitImportStep(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; autoPublish?: boolean; deadline: number },
+  ) {
     this.require(permissions.setupImport);
+    const deadline = options.deadline;
     const record = await this.db
       .prepare(
         `SELECT i.branch_id,i.import_kind,i.duplicate_strategy,i.status,i.idempotency_key,i.row_count,
@@ -1944,6 +1968,7 @@ export class OnboardingService {
           importId,
           commitKey: idempotencyKey,
           planDigest,
+          autoPublish: options.autoPublish === true,
         }),
         this.audit("SETUP_IMPORT_PLAN_APPROVED", "SETUP_IMPORT", importId, {
           rows: record.row_count,
@@ -2132,6 +2157,14 @@ export class OnboardingService {
       );
       if (remaining > 0) {
         const processed = record.row_count - remaining;
+        if (options.worker && Date.now() < deadline) {
+          await this.audit("SETUP_IMPORT_BATCH_COMMITTED", "SETUP_IMPORT", importId, {
+            processed,
+            remaining,
+            batchSize: rows.results?.length ?? 0,
+          }).run();
+          return { continueRun: true as const };
+        }
         const nextKey = `setup-import-commit:${importId}:${processed}`;
         const correlationId = crypto.randomUUID();
         await this.db.batch([
@@ -2139,6 +2172,7 @@ export class OnboardingService {
             importId,
             commitKey: idempotencyKey,
             planDigest: record.approved_plan_digest,
+            autoPublish: options.autoPublish === true,
           }),
           this.audit("SETUP_IMPORT_BATCH_COMMITTED", "SETUP_IMPORT", importId, {
             processed,
@@ -2547,7 +2581,20 @@ export class OnboardingService {
     idempotencyKey: string,
     options: { worker?: boolean } = {},
   ) {
+    const deadline = Date.now() + importRunBudgetMs;
+    for (;;) {
+      const step = await this.publishImportStep(importId, idempotencyKey, { ...options, deadline });
+      if (!("continueRun" in step)) return step;
+    }
+  }
+
+  private async publishImportStep(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; deadline: number },
+  ) {
     this.require(permissions.setupImport);
+    const deadline = options.deadline;
     const kind = await this.db
       .prepare("SELECT import_kind FROM setup_imports WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, importId)
@@ -2693,6 +2740,13 @@ export class OnboardingService {
         this.actor.tenantId,
         importId,
       );
+      if (options.worker && Date.now() < deadline) {
+        await this.audit("SETUP_IMPORT_PUBLISH_BATCH_COMPLETED", "SETUP_IMPORT", importId, {
+          published,
+          remaining,
+        }).run();
+        return { continueRun: true as const };
+      }
       const key = `setup-import-publish:${importId}:${published}`;
       const correlationId = crypto.randomUUID();
       await this.db.batch([

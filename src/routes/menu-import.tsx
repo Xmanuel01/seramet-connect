@@ -33,7 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
+import { Btn, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import type { DuplicateStrategy, ImportPreview, ImportTargetMode } from "@/onboarding/types";
 import { createCanonicalMenuTemplate } from "@/onboarding/menu-import-schema";
 import { createHistoricalSalesTemplate } from "@/onboarding/historical-sales-import-schema";
@@ -48,10 +48,10 @@ import { permissions } from "@/platform/permissions";
 export const Route = createFileRoute("/menu-import")({
   head: () => ({
     meta: [
-      { title: "Menu Import - Seramet" },
+      { title: "Imports - Seramet" },
       {
         name: "description",
-        content: "Validate, preview and commit menu data to the authoritative tenant catalog.",
+        content: "Bring your menu and past sales into Seramet from a spreadsheet.",
       },
     ],
   }),
@@ -59,6 +59,63 @@ export const Route = createFileRoute("/menu-import")({
 });
 
 const PAGE_SIZE = 50;
+
+/** One page for every kind of import; each kind is a section. */
+const importSections = ["Menu", "Past sales"] as const;
+type ImportSection = (typeof importSections)[number];
+
+/** Saved and checked, waiting only to be put on the menu. */
+function isReadyForMenu(preview: ImportPreview) {
+  return (
+    preview.status === "COMMITTED" &&
+    preview.verification?.status === "VERIFIED" &&
+    preview.publishStatus === "READY"
+  );
+}
+
+function importStatusLabel(status: string) {
+  switch (status) {
+    case "VALIDATED":
+      return "Ready to import";
+    case "COMMITTING":
+      return "Importing";
+    case "COMMITTED":
+      return "Imported";
+    case "FAILED":
+      return "Did not finish";
+    default:
+      return "Needs fixing";
+  }
+}
+
+function rowChangeLabel(action: string | undefined) {
+  switch (action) {
+    case "CREATE":
+      return "New item";
+    case "UPDATE":
+      return "Update";
+    case "SKIP":
+    case "NO_CHANGE":
+      return "No change";
+    default:
+      return "";
+  }
+}
+
+function rowStatusLabel(status: string) {
+  switch (status) {
+    case "VALID":
+      return "Ready";
+    case "WARNING":
+      return "Check";
+    case "COMMITTED":
+      return "Imported";
+    case "SKIPPED":
+      return "Skipped";
+    default:
+      return "Fix";
+  }
+}
 
 function MenuImport() {
   const centre = useSetupCentre();
@@ -96,12 +153,14 @@ function MenuImport() {
   const [notice, setNotice] = useState("");
   const [progress, setProgress] = useState<PersistedImportProgress | null>(null);
   const [recent, setRecent] = useState<RecentMenuImport[]>([]);
-  const [recentError, setRecentError] = useState("");
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const lastProgressSample = useRef<ImportProgressSnapshot | null>(null);
   const lastImportedCount = useRef(0);
   const currentProgressImport = useRef<string | null>(null);
-  const [completionOpen, setCompletionOpen] = useState(false);
+  const [section, setSection] = useState<ImportSection>("Menu");
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  // Imports already added to the menu from this page, so each is only sent once.
+  const addedToMenu = useRef(new Set<string>());
   const [noticeTone, setNoticeTone] = useState<"success" | "warning">("warning");
   const [historicalPreview, setHistoricalPreview] = useState<HistoricalSalesPreview | null>(null);
   const [previousPosName, setPreviousPosName] = useState("");
@@ -178,9 +237,7 @@ function MenuImport() {
       .then((items) => {
         if (active) setRecent(items);
       })
-      .catch(() => {
-        if (active) setRecentError("Import history cannot be retrieved. Do not re-upload yet.");
-      });
+      .catch(() => undefined);
     return () => {
       active = false;
     };
@@ -199,24 +256,11 @@ function MenuImport() {
       if (restored.status === "COMMITTING") {
         window.sessionStorage.setItem(pendingImportKey, restored.id);
       }
-      if (
-        restored.status === "COMMITTED" &&
-        restored.verification?.status === "VERIFIED" &&
-        restored.publishStatus === "READY"
-      ) {
-        setImportOpen(false);
-        setCompletionOpen(true);
-        setNotice("Verified import recovered without uploading or creating a new commit.");
-      } else {
-        setNotice("Existing import recovered without uploading or creating a new commit.");
-      }
+      if (isReadyForMenu(restored)) addToMenu(restored);
+      else setNotice("");
       setNoticeTone("success");
     } catch (error) {
-      setNotice(
-        error instanceof Error
-          ? error.message
-          : "Existing import is unavailable. No import was restarted.",
-      );
+      setNotice(error instanceof Error ? error.message : "That import can't be opened right now.");
       setNoticeTone("warning");
     } finally {
       setBusy(false);
@@ -233,16 +277,8 @@ function MenuImport() {
         if (!active) return;
         setPreview((current) => current ?? restored);
         setImportOpen(true);
-        if (
-          restored.status === "COMMITTED" &&
-          restored.verification?.status === "VERIFIED" &&
-          restored.publishStatus === "READY"
-        ) {
-          setNotice("Import plan is verified and staged. Review it, then publish explicitly.");
-          setNoticeTone("success");
-          setImportOpen(false);
-          setCompletionOpen(true);
-          window.sessionStorage.removeItem(pendingImportKey);
+        if (isReadyForMenu(restored)) {
+          addToMenu(restored);
         } else if (restored.publishStatus === "PUBLISHED") {
           setNotice("Menu imported. Your items are ready.");
           setNoticeTone("success");
@@ -254,15 +290,15 @@ function MenuImport() {
       })
       .catch(() => {
         if (active) {
-          setNotice(
-            "A previous import needs checking, but its server status could not be retrieved. Do not upload it again.",
-          );
+          setNotice("Your last import is still being checked. This page will update.");
           setNoticeTone("warning");
         }
       });
     return () => {
       active = false;
     };
+    // Runs once per import to pick up where the page left off.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspectImport, pendingImportKey]);
 
   useEffect(() => {
@@ -318,52 +354,39 @@ function MenuImport() {
           window.sessionStorage.removeItem(pendingImportKey);
           setNotice("Menu imported. Your items are ready.");
           setNoticeTone("success");
+          setImportOpen(false);
           void refreshMenuCatalog();
         } else if (stage === "PUBLISHING") {
-          setNotice("Menu publication is being verified. Do not submit it again.");
+          setPreview((current) =>
+            current?.id === importId
+              ? { ...current, status: "COMMITTED", publishStatus: "PUBLISHING" }
+              : current,
+          );
+          setNotice("Adding your items to the menu…");
           setNoticeTone("warning");
         } else if (stage === "STAGED") {
+          // Saved and checked: add the items to the menu without a second confirmation.
           const staged = await inspectImport(importId);
           if (!active) return;
-          setPreview(staged);
-          setNotice("Import plan is verified and staged. Review it, then publish explicitly.");
-          setNoticeTone("success");
-          setImportOpen(false);
-          setCompletionOpen(true);
+          addToMenu(staged);
         } else if (result.status === "FAILED" || result.worker?.status === "DEAD_LETTER") {
           setPreview((current) =>
             current?.id === importId ? { ...current, status: "FAILED", canCommit: false } : current,
           );
           window.sessionStorage.removeItem(pendingImportKey);
           setNotice(
-            "Import failed or exhausted worker retries. Check worker logs and the import audit before starting another import.",
-          );
-          setNoticeTone("warning");
-        } else if (result.status === "COMMITTING") {
-          if (!result.worker && Date.now() - Date.parse(result.updatedAt) > 120_000) {
-            setNotice(
-              "The earlier synchronous import is still marked COMMITTING without a worker job. It may have been interrupted. Do not retry until its committed rows are audited.",
-            );
-          } else {
-            setNotice(
-              result.worker
-                ? `Import is processing safely in the background (worker: ${result.worker.status}, attempts: ${result.worker.attempts}).`
-                : "Server is still processing the existing import. Do not submit it again.",
-            );
-          }
-          setNoticeTone("warning");
-        } else if (result.status === "COMMITTED") {
-          setNotice(
-            "Server shows COMMITTED but its independent verification is unavailable. Review the import audit before proceeding.",
+            "The import did not finish, so nothing was added to your menu. Check the file and try again.",
           );
           setNoticeTone("warning");
         } else {
-          setNotice("Still finishing the last import. Wait a moment before trying again.");
+          setNotice("Importing your menu. You can keep working; this finishes by itself.");
           setNoticeTone("warning");
         }
       } catch {
         if (active) {
-          setNotice("Cannot check the import status right now. Do not re-upload or retry it.");
+          setNotice(
+            "Can't check the import right now. It keeps running and this page will update.",
+          );
           setNoticeTone("warning");
         }
       } finally {
@@ -371,11 +394,13 @@ function MenuImport() {
       }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 5_000);
+    const timer = window.setInterval(() => void check(), 2_000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
+    // addToMenu only reads refs and stable callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     importStatus,
     inspectImport,
@@ -386,7 +411,9 @@ function MenuImport() {
     preview?.status,
   ]);
 
-  const invalidatePreview = (message = "Settings changed. Preview again before importing.") => {
+  const invalidatePreview = (
+    message = "Options changed. Choose the file again to re-check it.",
+  ) => {
     if (preview) setNotice(message);
     setNoticeTone("warning");
     setPreview(null);
@@ -411,7 +438,7 @@ function MenuImport() {
 
   const runPreview = async (file: File) => {
     if (targetMode === "SELECTED_BRANCHES" && !targetBranchIds.length) {
-      throw new Error("Select at least one branch or choose Tenant master only.");
+      throw new Error("Choose at least one branch for these items.");
     }
     setMasterOnlyAcknowledged(false);
     const result = await centre.previewImport(file, "MENU", strategy, {
@@ -458,16 +485,12 @@ function MenuImport() {
     if (!preview?.canCommit || busy) return;
     if (preview.targetMode === "TENANT_MASTER" && !masterOnlyAcknowledged) {
       setNoticeTone("warning");
-      setNotice(
-        "Explicitly confirm master-only imports will not activate products in any branch POS.",
-      );
+      setNotice("Tick the box to confirm these items won't show at any branch yet.");
       return;
     }
     const pending = preview;
     setBusy(true);
-    setNotice(
-      "Submitting the existing preview once. You can track its status without repeating it.",
-    );
+    setNotice("Importing your menu…");
     setNoticeTone("warning");
     currentProgressImport.current = pending.id;
     lastProgressSample.current = null;
@@ -479,89 +502,57 @@ function MenuImport() {
       .then((response) => {
         if (response.result.queued) {
           setPreview({ ...pending, status: "COMMITTING", canCommit: false });
-          setNotice("Importing your menu. This updates by itself.");
+          setNotice("Importing your menu. You can keep working; this finishes by itself.");
           return;
         }
-        if (response.result.verification?.status !== "VERIFIED") {
-          throw new Error(
-            "Commit returned without verified catalogue confirmation. Inspect the existing import before retrying.",
-          );
-        }
-        setPreview({
-          ...pending,
-          status: "COMMITTED",
-          canCommit: false,
-          verification: response.result.verification,
-        });
-        setNotice("Menu import plan committed and verified in staging. Publish it explicitly.");
-        setNoticeTone("success");
-        setImportOpen(false);
-        setCompletionOpen(true);
+        // Already saved by an earlier attempt: carry on from where it stopped.
+        setPreview({ ...pending, status: "COMMITTING", canCommit: false });
       })
       .catch(async (error: unknown) => {
         const result = await importStatus(pending.id).catch(() => null);
-        if (result?.status === "COMMITTED" && result.verification?.status === "VERIFIED") {
-          setPreview({
-            ...pending,
-            status: "COMMITTED",
-            canCommit: false,
-            verification: result.verification,
-          });
-          setNotice("Menu import plan was verified despite a lost commit response.");
-          setNoticeTone("success");
-          setImportOpen(false);
-          setCompletionOpen(true);
-          return;
-        }
         if (result?.status === "FAILED") {
           setPreview({ ...pending, status: "FAILED", canCommit: false });
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Import failed. Review the failure before revalidating or retrying the file.");
-        } else if (!result || result.status === "COMMITTING") {
-          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
           setNotice(
-            "Commit response was interrupted. Checking the existing import; do not submit it again.",
+            "The import did not finish, so nothing was added to your menu. Check the file and try again.",
           );
+        } else if (!result || result.status === "COMMITTING" || result.status === "COMMITTED") {
+          // The request was cut off but the import carried on: keep following it.
+          setPreview({ ...pending, status: "COMMITTING", canCommit: false });
+          setNotice("Importing your menu. You can keep working; this finishes by itself.");
         } else {
           setPreview({ ...pending, canCommit: false });
           window.sessionStorage.removeItem(pendingImportKey);
-          setNotice(
-            (error instanceof Error ? error.message : "Import request failed") +
-              " Revalidate the existing file only after reviewing this result.",
-          );
+          setNotice(error instanceof Error ? error.message : "The import could not start.");
         }
         setNoticeTone("warning");
       })
       .finally(() => setBusy(false));
   };
 
-  const publish = () => {
-    if (!preview?.publishKey || preview.publishStatus !== "READY" || busy) return;
-    const staged = preview;
-    setBusy(true);
-    setNotice("Adding your menu. This can take a minute for large menus.");
+  // A saved, checked import goes onto the menu by itself; the server does the same after a
+  // fresh import, and repeating the request is harmless.
+  function addToMenu(staged: ImportPreview) {
+    setPreview({ ...staged, publishStatus: "PUBLISHING" });
+    setNotice("Adding your items to the menu…");
     setNoticeTone("warning");
     window.sessionStorage.setItem(pendingImportKey, staged.id);
+    if (!staged.publishKey || addedToMenu.current.has(staged.id)) return;
+    addedToMenu.current.add(staged.id);
     void publishImport(staged)
       .then((response) => {
-        setCompletionOpen(false);
-        if (response.result?.status === "PUBLISHED") {
-          setPreview({ ...staged, publishStatus: "PUBLISHED" });
-          window.sessionStorage.removeItem(pendingImportKey);
-          setNotice("Menu imported. Your items are ready.");
-          setNoticeTone("success");
-          void refreshMenuCatalog();
-          return;
-        }
-        setPreview({ ...staged, publishStatus: "PUBLISHING" });
-        setNotice("Your menu is being added. It will appear shortly.");
+        if (response.result?.status !== "PUBLISHED") return;
+        setPreview({ ...staged, publishStatus: "PUBLISHED" });
+        window.sessionStorage.removeItem(pendingImportKey);
+        setNotice("Menu imported. Your items are ready.");
+        setNoticeTone("success");
+        setImportOpen(false);
+        void refreshMenuCatalog();
       })
-      .catch((error: unknown) => {
-        setNotice(error instanceof Error ? error.message : "Menu publication failed");
-        setNoticeTone("warning");
-      })
-      .finally(() => setBusy(false));
-  };
+      .catch(() => {
+        // The status check keeps following the import and reports how it ends.
+      });
+  }
 
   const uploadHistoricalSales = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -574,7 +565,7 @@ function MenuImport() {
     }
     await run(async () => {
       setHistoricalPreview(await centre.previewHistoricalSales(file, previousPosName));
-    }, "Previous POS sales preview is ready. Nothing has been imported yet.");
+    }, "Check the preview, then import. Nothing has been saved yet.");
   };
 
   const commitHistoricalSales = () => {
@@ -582,12 +573,12 @@ function MenuImport() {
     void run(async () => {
       await centre.commitHistoricalSales(historicalPreview);
       setHistoricalPreview({ ...historicalPreview, status: "COMMITTED", canCommit: false });
-    }, "Previous POS sales were imported as read-only historical records.");
+    }, "Past sales imported. They show in your reports.");
   };
 
   return (
     <AppShell
-      title="Menu import"
+      title="Imports"
       actions={
         <>
           <Btn onClick={() => setManualOpen(true)} disabled={!canManageMenu || busy}>
@@ -604,22 +595,26 @@ function MenuImport() {
             <Download className="h-4 w-4" />
             Template
           </Btn>
-          <Btn onClick={() => void centre.refresh()} disabled={busy} title="Refresh catalog">
-            <RefreshCcw className={cn("h-4 w-4", busy && "animate-spin")} />
-            Refresh
-          </Btn>
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Metric
-          label="Catalog items"
-          value={centre.menuCatalogStatus === "ready" ? committedCount : "Unavailable"}
-        />
-        <Metric label="Rows read" value={preview?.rowCount ?? 0} />
-        <Metric label="Valid" value={preview?.validCount ?? 0} />
-        <Metric label="Warnings" value={preview?.warningCount ?? 0} />
-        <Metric label="Errors" value={preview?.errorCount ?? 0} />
+      <div className="flex flex-wrap items-center gap-1 border-b border-border" role="tablist">
+        {importSections.map((name) => (
+          <button
+            key={name}
+            role="tab"
+            aria-selected={section === name}
+            onClick={() => setSection(name)}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors",
+              section === name
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {name}
+          </button>
+        ))}
       </div>
 
       {!canImport && (
@@ -629,11 +624,12 @@ function MenuImport() {
         >
           {canManageMenu
             ? centre.fileImportCapability.reason
-            : "Your current role cannot create or import menu items. An authorized account owner must grant the menu import permission; do not use a different employee login to bypass it."}
+            : "Your role can't import or add menu items. Ask the account owner for access."}
         </p>
       )}
-      {notice && (
+      {notice && !importOpen && (
         <div
+          role="status"
           className={cn(
             "mt-4 rounded-md border px-4 py-3 text-[13px] font-medium",
             noticeTone === "success"
@@ -645,23 +641,10 @@ function MenuImport() {
         </div>
       )}
 
-      {canImport && (
+      {section === "Menu" && canImport && recent.length > 0 && (
         <Panel className="mt-4">
-          <PanelHead
-            title="Existing menu imports"
-            sub="Open an earlier preview to continue it."
-            right={<History className="h-4 w-4 text-primary" />}
-          />
-          {recentError && (
-            <p className="px-4 py-2 text-[12px] text-warning" role="alert">
-              {recentError}
-            </p>
-          )}
-          {recent.length === 0 && !recentError ? (
-            <p className="px-4 py-3 text-[12px] text-muted-foreground">
-              No recent menu imports found.
-            </p>
-          ) : (
+          <PanelHead title="Recent imports" right={<History className="h-4 w-4 text-primary" />} />
+          {
             <div className="divide-y divide-border">
               {recent.map((item) => (
                 <div
@@ -671,36 +654,29 @@ function MenuImport() {
                   <div className="min-w-0 text-[12px]">
                     <p className="truncate font-semibold">{item.originalName}</p>
                     <p className="text-muted-foreground">
-                      {item.rowCount} rows · v{item.templateVersion} · {item.status} ·{" "}
-                      {item.duplicateStrategy}
+                      {item.rowCount} items · {importStatusLabel(item.status)}
                     </p>
                   </div>
                   <Btn disabled={busy} onClick={() => void inspectPreviousImport(item.id)}>
-                    {item.status === "COMMITTING" ? "Track existing job" : "Inspect"}
+                    Open
                   </Btn>
                 </div>
               ))}
             </div>
-          )}
+          }
         </Panel>
       )}
-      <div className="mt-4 grid gap-4">
+      <div className={cn("mt-4 grid gap-4", section !== "Menu" && "hidden")}>
         <div className="grid min-w-0 gap-4">
           <Panel>
             <PanelHead
               title="Your menu"
               sub={
-                isAllBranches
-                  ? "Items on your menu"
-                  : "Committed records explicitly activated for the current branch"
+                centre.menuCatalogStatus === "ready"
+                  ? `${filteredCatalog.length} of ${committedCount} items${isAllBranches ? "" : " at this branch"}`
+                  : "Loading your menu…"
               }
-              right={<Status>{centre.menuCatalogStatus}</Status>}
             />
-            <p className="border-b border-border px-3 py-2 text-[11px] text-muted-foreground">
-              {centre.menuCatalogStatus === "ready"
-                ? filteredCatalog.length + " authorized catalog items match the selected filters."
-                : "The catalogue is not yet available; no item total can be verified."}
-            </p>
             <div className="flex flex-wrap items-end gap-3 border-b border-border p-3">
               <label className="relative block min-w-48 flex-1 sm:max-w-sm">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -751,9 +727,9 @@ function MenuImport() {
             </div>
             {centre.menuCatalogStatus === "error" && (
               <div className="border-b border-danger/30 bg-danger-soft px-4 py-3 text-[12px] font-medium text-danger">
-                Catalogue could not be loaded: {centre.menuCatalogError}
+                Your menu could not be loaded.
                 <Btn className="ml-3" onClick={() => void centre.refresh()} disabled={busy}>
-                  Retry loading
+                  Try again
                 </Btn>
               </div>
             )}
@@ -824,10 +800,10 @@ function MenuImport() {
                     <tr>
                       <TD colSpan={7} className="py-10 text-center text-muted-foreground">
                         {catalogQuery
-                          ? "No catalogue items match this search."
+                          ? "No items match this search."
                           : isAllBranches
-                            ? "No menu items yet."
-                            : "No menu items are activated for this branch."}
+                            ? "No menu items yet. Import a file or add an item."
+                            : "No menu items at this branch yet. Import a file or add an item."}
                       </TD>
                     </tr>
                   )}
@@ -839,17 +815,17 @@ function MenuImport() {
         </div>
       </div>
 
-      <Panel className="mt-4">
+      <Panel className={cn("mt-4", section !== "Past sales" && "hidden")}>
         <PanelHead
           title="Past sales from your old POS"
-          sub="Optional, one-time transfer of historical sales; it does not replay kitchen, stock, payment or journal activity"
+          sub="Optional and done once. Past sales appear in reports only; stock and accounts are not changed."
           right={<History className="h-4 w-4 text-primary" />}
         />
         <div className="grid gap-4 p-4 lg:grid-cols-[320px_minmax(0,1fr)]">
           <div className="space-y-3">
             {centre.historicalSalesState?.completed ? (
               <div className="rounded-md border border-success/30 bg-success-soft p-3 text-[12px] font-medium text-success">
-                Previous POS sales migration is complete and locked against a second import.
+                Your past sales are already imported.
               </div>
             ) : (
               <>
@@ -907,7 +883,7 @@ function MenuImport() {
                     onClick={() =>
                       void run(
                         () => centre.skipHistoricalSales("No previous POS sales to migrate"),
-                        "Previous POS sales migration skipped. You can return before importing later.",
+                        "Skipped. You can import past sales later from this page.",
                       )
                     }
                     disabled={busy}
@@ -922,7 +898,7 @@ function MenuImport() {
                   disabled={!historicalPreview?.canCommit || busy}
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  Import historical sales once
+                  Import past sales
                 </Btn>
               </>
             )}
@@ -982,91 +958,25 @@ function MenuImport() {
           <DialogHeader>
             <DialogTitle>Import menu</DialogTitle>
             <DialogDescription>
-              Choose a CSV or Excel file and check the preview. Nothing is saved until you confirm.
+              Choose a CSV or Excel file, check the preview, then import.
             </DialogDescription>
           </DialogHeader>
           <Panel className="h-fit">
-            <PanelHead
-              title="Import source"
-              sub="CSV or XLSX; files are validated before any data changes"
-              right={<FileSpreadsheet className="h-4 w-4 text-primary" />}
-            />
             <div className="space-y-4 p-4">
-              <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
-                Existing-code policy
-                <select
-                  value={strategy}
-                  onChange={(event) => {
-                    setStrategy(event.target.value as DuplicateStrategy);
-                    invalidatePreview();
-                  }}
-                  className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
-                >
-                  <option value="ERROR">Stop on duplicate</option>
-                  <option value="UPDATE">Update existing only</option>
-                  <option value="SKIP">Skip existing</option>
-                  <option value="CREATE">Create new</option>
-                </select>
-              </label>
-              <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
-                Import target
-                <select
-                  value={targetMode}
-                  onChange={(event) => {
-                    setTargetMode(event.target.value as ImportTargetMode);
-                    setMasterOnlyAcknowledged(false);
-                    invalidatePreview();
-                  }}
-                  className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
-                >
-                  <option value="TENANT_MASTER">Tenant master only</option>
-                  <option value="SELECTED_BRANCHES">Selected branches</option>
-                  <option value="ROW_BRANCHES">Branch code in each row</option>
-                </select>
-              </label>
-              {targetMode === "SELECTED_BRANCHES" && (
-                <fieldset className="grid gap-2 rounded-md border border-border p-3">
-                  <legend className="px-1 text-[12px] font-semibold text-muted-foreground">
-                    Activate for branches
-                  </legend>
-                  {centre.structure.branches.map((branch) => (
-                    <label
-                      key={branch.id}
-                      className="flex items-center gap-2 text-[12px] font-medium"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={targetBranchIds.includes(branch.id)}
-                        onChange={(event) => {
-                          setTargetBranchIds((current) =>
-                            event.target.checked
-                              ? [...new Set([...current, branch.id])]
-                              : current.filter((id) => id !== branch.id),
-                          );
-                          invalidatePreview();
-                        }}
-                        className="h-4 w-4 accent-primary"
-                      />
-                      {branch.name}
-                      <span className="text-muted-foreground">({branch.code})</span>
-                    </label>
-                  ))}
-                </fieldset>
-              )}
               <label
                 className={cn(
-                  "flex min-h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-6 text-center text-[13px] font-semibold hover:bg-secondary/60",
+                  "flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-6 text-center text-[13px] font-semibold hover:bg-secondary/60",
                   busy && "pointer-events-none opacity-60",
                 )}
               >
                 {busy ? (
                   <Loader2 className="h-5 w-5 animate-spin text-primary" />
                 ) : (
-                  <Upload className="h-5 w-5 text-primary" />
+                  <FileSpreadsheet className="h-5 w-5 text-primary" />
                 )}
-                {busy ? "Checking…" : "Choose menu file"}
+                {busy ? "Checking…" : preview ? "Choose a different file" : "Choose menu file"}
                 <span className="text-[11px] font-normal text-muted-foreground">
-                  File size, type, workbook shape and row limits are enforced.
+                  CSV or Excel (.xlsx). Each item needs a code, name, category and price.
                 </span>
                 <input
                   type="file"
@@ -1075,57 +985,118 @@ function MenuImport() {
                   className="hidden"
                 />
               </label>
-              <div className="rounded-md border border-border bg-secondary/40 p-3 text-[12px] leading-5 text-muted-foreground">
-                Needed for each item: code, name, category and price. Items show on the POS once
-                they are turned on for a branch.
-              </div>
-              <div className="rounded-md border border-border p-3">
-                <Btn
-                  onClick={() => setMappingOpen((previous) => !previous)}
-                  title="Map another POS export to Seramet menu fields"
-                >
-                  {mappingOpen ? "Hide column mapping" : "Match file columns"}
-                </Btn>
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  For exports from another POS, enter their exact spreadsheet headings. Seramet
-                  already recognizes common names such as Name, Category and Price.
-                </p>
-                {mappingOpen && (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {[
-                      ["itemCode", "Item code / SKU"],
-                      ["name", "Item name"],
-                      ["categoryCode", "Category"],
-                      ["basePrice", "Selling price"],
-                      ["stationCode", "Kitchen / bar station"],
-                      ["branchCode", "Location / branch"],
-                      ["onlinePrice", "Online price"],
-                      ["description", "Description"],
-                    ].map(([field, label]) => (
-                      <label key={field} className="grid gap-1 text-[12px] font-semibold">
-                        {label}
+              <Btn onClick={() => setOptionsOpen((previous) => !previous)}>
+                {optionsOpen ? "Hide options" : "More options"}
+              </Btn>
+              <div className={cn("space-y-4", !optionsOpen && "hidden")}>
+                <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
+                  If an item is already on your menu
+                  <select
+                    value={strategy}
+                    onChange={(event) => {
+                      setStrategy(event.target.value as DuplicateStrategy);
+                      invalidatePreview();
+                    }}
+                    className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
+                  >
+                    <option value="ERROR">Show it as a problem</option>
+                    <option value="UPDATE">Update it</option>
+                    <option value="SKIP">Leave it as it is</option>
+                    <option value="CREATE">Add it as a new item</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-[12px] font-semibold text-muted-foreground">
+                  Where the items go
+                  <select
+                    value={targetMode}
+                    onChange={(event) => {
+                      setTargetMode(event.target.value as ImportTargetMode);
+                      setMasterOnlyAcknowledged(false);
+                      invalidatePreview();
+                    }}
+                    className="h-10 rounded-md border border-border bg-card px-3 text-[13px] text-foreground"
+                  >
+                    <option value="SELECTED_BRANCHES">The branches I choose</option>
+                    <option value="ROW_BRANCHES">The branch named in each row of the file</option>
+                    <option value="TENANT_MASTER">Save only, don't show at any branch yet</option>
+                  </select>
+                </label>
+                {targetMode === "SELECTED_BRANCHES" && (
+                  <fieldset className="grid gap-2 rounded-md border border-border p-3">
+                    <legend className="px-1 text-[12px] font-semibold text-muted-foreground">
+                      Branches
+                    </legend>
+                    {centre.structure.branches.map((branch) => (
+                      <label
+                        key={branch.id}
+                        className="flex items-center gap-2 text-[12px] font-medium"
+                      >
                         <input
-                          value={columnMap[field] ?? ""}
-                          placeholder="Heading in source file"
+                          type="checkbox"
+                          checked={targetBranchIds.includes(branch.id)}
                           onChange={(event) => {
-                            setColumnMap((previous) => ({
-                              ...previous,
-                              [field]: event.target.value,
-                            }));
-                            invalidatePreview(
-                              "Columns changed. Check the file again before importing.",
+                            setTargetBranchIds((current) =>
+                              event.target.checked
+                                ? [...new Set([...current, branch.id])]
+                                : current.filter((id) => id !== branch.id),
                             );
+                            invalidatePreview();
                           }}
-                          className="h-9 rounded-md border border-border bg-card px-2"
+                          className="h-4 w-4 accent-primary"
                         />
+                        {branch.name}
+                        <span className="text-muted-foreground">({branch.code})</span>
                       </label>
                     ))}
-                  </div>
+                  </fieldset>
                 )}
+                <div className="rounded-md border border-border p-3">
+                  <Btn onClick={() => setMappingOpen((previous) => !previous)}>
+                    {mappingOpen ? "Hide column names" : "My file uses different column names"}
+                  </Btn>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Only needed for files from another POS. Common names such as Name, Category and
+                    Price are recognised already.
+                  </p>
+                  {mappingOpen && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {[
+                        ["itemCode", "Item code / SKU"],
+                        ["name", "Item name"],
+                        ["categoryCode", "Category"],
+                        ["basePrice", "Selling price"],
+                        ["stationCode", "Kitchen / bar station"],
+                        ["branchCode", "Location / branch"],
+                        ["onlinePrice", "Online price"],
+                        ["description", "Description"],
+                      ].map(([field, label]) => (
+                        <label key={field} className="grid gap-1 text-[12px] font-semibold">
+                          {label}
+                          <input
+                            value={columnMap[field] ?? ""}
+                            placeholder="Column name in your file"
+                            onChange={(event) => {
+                              setColumnMap((previous) => ({
+                                ...previous,
+                                [field]: event.target.value,
+                              }));
+                              invalidatePreview(
+                                "Columns changed. Check the file again before importing.",
+                              );
+                            }}
+                            className="h-9 rounded-md border border-border bg-card px-2"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               {stationReferences.length > 0 && (
                 <div className="grid gap-3 rounded-md border border-warning/30 bg-warning-soft p-3">
-                  <div className="text-[12px] font-semibold text-warning">Map unknown stations</div>
+                  <div className="text-[12px] font-semibold text-warning">
+                    Choose the kitchen or bar station for these names in your file
+                  </div>
                   {stationReferences.map((source) => (
                     <label key={source} className="grid gap-1 text-[11px] text-muted-foreground">
                       {source}
@@ -1136,13 +1107,11 @@ function MenuImport() {
                             ...current,
                             [source]: event.target.value,
                           }));
-                          invalidatePreview(
-                            "Station mapping changed. Run preview again to validate it.",
-                          );
+                          invalidatePreview("Station chosen. Check the file again.");
                         }}
                         className="h-9 rounded-md border border-border bg-card px-2 text-[12px] text-foreground"
                       >
-                        <option value="">Choose configured station</option>
+                        <option value="">Choose a station</option>
                         {stationOptions.map((station) => (
                           <option
                             key={stringValue(station["id"])}
@@ -1157,12 +1126,12 @@ function MenuImport() {
                   <Btn
                     onClick={() =>
                       sourceFile &&
-                      void run(async () => runPreview(sourceFile), "Preview refreshed.")
+                      void run(async () => runPreview(sourceFile), "File checked again.")
                     }
                     disabled={!sourceFile || busy}
                   >
                     <RefreshCcw className="h-4 w-4" />
-                    Run preview again
+                    Check again
                   </Btn>
                 </div>
               )}
@@ -1170,13 +1139,13 @@ function MenuImport() {
                 <div className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
                   <div className="min-w-0">
                     <div className="truncate text-[12px] font-semibold">{preview.originalName}</div>
-                    <div className="text-[11px] text-muted-foreground">Preview {preview.id}</div>
                     <div className="text-[11px] text-muted-foreground">
-                      Template v{preview.templateVersion ?? 1} |{" "}
-                      {preview.targetMode ?? "TENANT_MASTER"}
+                      {preview.validCount} of {preview.rowCount} items ready
+                      {preview.errorCount ? ` · ${preview.errorCount} to fix` : ""}
+                      {preview.warningCount ? ` · ${preview.warningCount} to check` : ""}
                     </div>
                   </div>
-                  <SetupStatus value={preview.status} />
+                  <Status>{importStatusLabel(preview.status)}</Status>
                 </div>
               )}
             </div>
@@ -1184,37 +1153,26 @@ function MenuImport() {
           {preview && (
             <Panel>
               <PanelHead
-                title="Import preview"
+                title="Preview"
                 sub={
-                  preview?.status === "COMMITTING"
-                    ? "Server-side import in progress. Do not re-submit the same preview."
-                    : "Nothing is saved until you press Import"
-                }
-                right={
-                  preview ? (
-                    <SetupStatus
-                      value={
-                        preview.status === "COMMITTING"
-                          ? "COMMITTING"
-                          : preview.canCommit
-                            ? "READY"
-                            : "BLOCKED"
-                      }
-                    />
-                  ) : (
-                    <Status>Pending</Status>
-                  )
+                  preview.status === "COMMITTING" || preview.publishStatus === "PUBLISHING"
+                    ? "Importing…"
+                    : preview.publishStatus === "PUBLISHED"
+                      ? "Imported"
+                      : preview.canCommit
+                        ? "Nothing is saved until you press Import"
+                        : "Fix the rows marked below, then choose the file again"
                 }
               />
               {preview.status === "COMMITTING" && progressSummary && (
                 <section
-                  aria-label="Authoritative import progress"
+                  aria-label="Import progress"
                   className="space-y-2 border-b border-border px-4 py-3"
                 >
                   <div className="flex items-center justify-between text-[12px] font-medium">
                     <span>
                       {progressSummary.stage === "QUEUED"
-                        ? "Waiting for the import worker"
+                        ? "Starting…"
                         : progressSummary.stage === "VERIFYING"
                           ? "Checking your menu"
                           : "Importing menu items"}
@@ -1228,22 +1186,14 @@ function MenuImport() {
                   />
                   <div className="flex flex-wrap justify-between gap-2 text-[11px] text-muted-foreground">
                     <span className="tabular-nums">
-                      {progressSummary.processed}/{progressSummary.total} processed ·{" "}
-                      {progress?.created} created · {progress?.updated} updated ·{" "}
-                      {progress?.skipped} skipped · {progress?.failed} failed
+                      {progressSummary.processed} of {progressSummary.total} items
                     </span>
                     <span>
                       {progress?.workerStatus === "RUNNING" && progressSummary.pending > 0
                         ? estimatedTime
-                        : progressSummary.stage === "QUEUED"
-                          ? "Waiting for worker; ETA unavailable"
-                          : "Awaiting verified completion"}
+                        : "You can close this and keep working"}
                     </span>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    You can continue in the background. The progress shown is based on rows recorded
-                    in the database, not an estimated animation.
-                  </p>
                 </section>
               )}
               <div className="overflow-x-auto">
@@ -1255,9 +1205,9 @@ function MenuImport() {
                       <TH>Name</TH>
                       <TH>Category</TH>
                       <TH className="text-right">Price</TH>
-                      <TH>Action</TH>
+                      <TH>Change</TH>
                       <TH>Status</TH>
-                      <TH>Validation</TH>
+                      <TH>Notes</TH>
                     </tr>
                   </thead>
                   <tbody>
@@ -1273,16 +1223,14 @@ function MenuImport() {
                             stringValue(row.normalized["currency"]),
                           )}
                         </TD>
+                        <TD>{rowChangeLabel(row.action)}</TD>
                         <TD>
-                          <Status>{row.action ?? "Review"}</Status>
-                        </TD>
-                        <TD>
-                          <SetupStatus value={row.status} />
+                          <Status>{rowStatusLabel(row.status)}</Status>
                         </TD>
                         <TD className="max-w-80 text-[11px] text-muted-foreground">
                           {[...row.errors, ...row.warnings]
                             .map((issue) => issue.message)
-                            .join("; ") || "Validated"}
+                            .join("; ")}
                         </TD>
                       </tr>
                     ))}
@@ -1315,7 +1263,7 @@ function MenuImport() {
           )}
           {preview && (
             <div className="space-y-2 rounded-md border border-border p-3 text-[12px]">
-              <p className="font-semibold">Where these items will be available</p>
+              <p className="font-semibold">Where these items will show</p>
               {preview.targetMode === "TENANT_MASTER" ? (
                 <label className="flex items-start gap-2 text-warning">
                   <input
@@ -1324,36 +1272,26 @@ function MenuImport() {
                     onChange={(event) => setMasterOnlyAcknowledged(event.target.checked)}
                     className="mt-0.5 h-4 w-4 accent-primary"
                   />
-                  I understand master-only items will NOT appear in branch POS until explicitly
-                  activated.
+                  These items are saved but won't show at any branch until I turn them on.
                 </label>
               ) : preview.targetMode === "SELECTED_BRANCHES" ? (
                 <p>
-                  POS activation targets:{" "}
                   {(preview.targetBranchIds ?? [])
                     .map(
                       (id) =>
                         centre.structure.branches.find((branch) => branch.id === id)?.name ??
                         "Unknown branch",
                     )
-                    .join(", ") || "NONE — choose branches and revalidate"}
+                    .join(", ") || "No branch chosen. Choose a branch under More options."}
                 </p>
               ) : (
-                <p>Row-level activation requires each row to specify a validated branch code.</p>
+                <p>At the branch named in each row of your file.</p>
               )}
             </div>
           )}
           <DialogFooter className="gap-2">
             <Btn disabled={busy} onClick={() => setImportOpen(false)}>
-              {preview?.status === "COMMITTING" ? "Continue in background" : "Close"}
-            </Btn>
-            <Btn
-              disabled={!sourceFile || busy}
-              onClick={() =>
-                sourceFile && void run(() => runPreview(sourceFile), "Server preview refreshed.")
-              }
-            >
-              Revalidate
+              Close
             </Btn>
             <Btn
               variant="primary"
@@ -1370,38 +1308,7 @@ function MenuImport() {
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              Import
-            </Btn>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={completionOpen} onOpenChange={setCompletionOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add to your menu</DialogTitle>
-            <DialogDescription>
-              Items are checked first, then added all at once, so a half-finished import never shows
-              on the POS.
-            </DialogDescription>
-          </DialogHeader>
-          {progressSummary && (
-            <p className="text-[13px] tabular-nums" role="status">
-              {progressSummary.processed} of {progressSummary.total} processed. {progress?.created}{" "}
-              created, {progress?.updated} updated and {progress?.skipped} skipped.
-            </p>
-          )}
-          <DialogFooter>
-            <Btn
-              variant="primary"
-              onClick={publish}
-              disabled={busy || preview?.publishStatus !== "READY" || !preview?.publishKey}
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-4 w-4" />
-              )}
-              Publish menu
+              {preview?.canCommit ? `Import ${preview.validCount} items` : "Import"}
             </Btn>
           </DialogFooter>
         </DialogContent>

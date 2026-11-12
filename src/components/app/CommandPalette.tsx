@@ -17,7 +17,7 @@ const goto: { label: string; to: string }[] = [
   { label: "Go to Seramet POS", to: "/pos" },
   { label: "Go to Tables", to: "/tables" },
   { label: "Go to Kitchen Display", to: "/kitchen" },
-  { label: "Open Menu Import", to: "/menu-import" },
+  { label: "Open Imports", to: "/menu-import" },
   { label: "Go to Inventory", to: "/inventory" },
   { label: "Open Inventory Categories", to: "/categories" },
   { label: "Open Stock by Store", to: "/stock-detail" },

@@ -1072,6 +1072,47 @@ describe.sequential("Pass 8 commercial productization and onboarding", () => {
     ).toBe(1);
   });
 
+  it("puts a confirmed menu on the POS in one step, without a queue hop per batch", async () => {
+    const csv = [
+      "templateVersion,itemCode,name,categoryCode,basePrice,currency,stationCode,available",
+      ...Array.from(
+        { length: 343 },
+        (_, index) => `2,ONESTEP-${index + 1},One step item ${index + 1},MAIN,350,KES,MAIN,true`,
+      ),
+    ].join("\n");
+    const preview = await service.previewImport({
+      targetMode: "SELECTED_BRANCHES",
+      targetBranchIds: [branchId],
+      kind: "MENU",
+      originalName: "one-step-menu.csv",
+      mimeType: "text/csv",
+      bytes: new TextEncoder().encode(csv),
+      duplicateStrategy: "CREATE",
+      idempotencyKey: "one-step-menu-preview",
+    });
+    expect(preview).toMatchObject({ rowCount: 343, validCount: 343, errorCount: 0 });
+    await service.commitImport(preview.id, preview.commitKey, { autoPublish: true });
+    const jobs = (type: string) =>
+      db
+        .prepare(
+          `SELECT COUNT(*) count FROM worker_jobs WHERE tenant_id=? AND job_type=?
+             AND idempotency_key LIKE ?`,
+        )
+        .bind(tenantId, type, `setup-import-%:${preview.id}:%`)
+        .first("count");
+    // Saving runs every batch in one worker run, then starts adding to the menu by itself.
+    await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_COMMIT");
+    expect(await jobs("SETUP_IMPORT_COMMIT")).toBe(1);
+    expect(await service.importStatus(preview.id)).toMatchObject({
+      status: "COMMITTED",
+      publishStatus: "PUBLISHING",
+    });
+    await drainImportJobs(db, env, preview.id, "SETUP_IMPORT_PUBLISH");
+    expect(await jobs("SETUP_IMPORT_PUBLISH")).toBe(1);
+    expect(await service.importStatus(preview.id)).toMatchObject({ publishStatus: "PUBLISHED" });
+    expect(await createMenuCatalogReader(db)(tenantId, branchId)).toHaveLength(343);
+  });
+
   it("rejects expired and catalogue-stale previews before mutation", async () => {
     const expired = await previewCsv(
       service,
