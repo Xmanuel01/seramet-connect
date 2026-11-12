@@ -1,5 +1,6 @@
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
+import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { PaymentOperationsState } from "@/payments/types";
 import {
@@ -253,7 +254,14 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
 
     if (runtime.productionLike) assertProductionOperationalReady(env);
     const repo = createTransactionRepository(env.SERAMET_DB, env);
-    if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
+    // Checked once per server instance (re-checked every minute), not on every request; the
+    // health probes above still read the version each time.
+    if (env.SERAMET_DB)
+      await withCachedSchemaCheck(
+        env.SERAMET_DB,
+        runtime.productionLike ? "exact" : "at-least",
+        () => (runtime.productionLike ? assertCurrentSchema(env.SERAMET_DB!) : repo.migrate()),
+      );
     else await repo.migrate();
     // Configuration is loaded per restaurant once a request knows which one it acts for
     // (authentication, a public restaurant link, a webhook connection), each time checking the
