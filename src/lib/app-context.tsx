@@ -619,6 +619,7 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     // event seen lets the server replay exactly what was missed.
     let cursor: string | undefined;
     let failedOpens = 0;
+    let everOpened = false;
     let retryDelay = 1_000;
     let reconnectTimer: number | undefined;
     const startWebSocket = () => {
@@ -636,6 +637,11 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }
       let opened = false;
       let lastMessageAt = Date.now();
+      // A server that never answers the upgrade (an old proxy, a dev server) must not leave
+      // the tab without updates: give up on this attempt after a few seconds.
+      const openTimer = window.setTimeout(() => {
+        if (!opened) socket.close();
+      }, 5_000);
       const heartbeat = window.setInterval(() => {
         if (socket.readyState !== WebSocket.OPEN) return;
         // A dead connection (sleeping laptop, dropped Wi-Fi) is noticed within a minute.
@@ -647,6 +653,8 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       }, 30_000);
       socket.onopen = () => {
         opened = true;
+        everOpened = true;
+        window.clearTimeout(openTimer);
         failedOpens = 0;
         retryDelay = 1_000;
         transportHealthy = true;
@@ -674,11 +682,13 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       };
       socket.onclose = () => {
         window.clearInterval(heartbeat);
+        window.clearTimeout(openTimer);
         transportHealthy = false;
         if (stopped) return;
         if (!opened) failedOpens += 1;
-        // The upgrade is refused (no push on this server, old proxy): use the SSE stream.
-        if (failedOpens >= 2) {
+        // The upgrade is refused (no push on this server, old proxy): use the SSE stream at
+        // once if push never worked in this tab, or after repeated failures if it did.
+        if ((!everOpened && failedOpens >= 1) || failedOpens >= 3) {
           startEventSource();
           return;
         }
@@ -688,6 +698,7 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       };
       closeTransport = () => {
         window.clearInterval(heartbeat);
+        window.clearTimeout(openTimer);
         socket.onclose = null;
         socket.close();
       };
