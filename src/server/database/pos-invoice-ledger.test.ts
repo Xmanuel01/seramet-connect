@@ -3,7 +3,7 @@ import { createEmptyTransactionState, type BillingRecord } from "@/lib/transacti
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes } from "@/platform/permissions";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
-import { hydrateAuthoritativeConfiguration } from "./authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { createMigratedTestDatabase, type SqliteD1TestDatabase } from "./sqlite-test-adapter";
 import { D1AuthoritativeTransactionRepository } from "./authoritative-transaction-repository";
 import { createTransactionRepository } from "./create-transaction-repository";
@@ -114,7 +114,7 @@ beforeEach(async () => {
     )
     .bind(tenantId)
     .run();
-  await hydrateAuthoritativeConfiguration(db, {}, true);
+  await hydrateSeededTenantsForTests(db, {});
   repo = new D1AuthoritativeTransactionRepository(db, { requireInvoiceLedger: true });
 });
 
@@ -251,7 +251,7 @@ describe("authoritative invoice recognition", () => {
         )
         .run();
     }
-    const configuration = await hydrateAuthoritativeConfiguration(db, {}, true);
+    const configuration = await hydrateSeededTenantsForTests(db, {});
     const methods = configuration.listPaymentMethods(tenantId, false);
     expect(methods.find((row) => row.id === "onboarded-mpesa")).toMatchObject({
       receivableAccountId: "receivable",

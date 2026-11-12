@@ -15,7 +15,7 @@ import { MemoryTransactionRepository } from "@/lib/seramet-repository";
 import { permissions } from "@/platform/permissions";
 import { printerConfigurationSchema } from "@/printing/printer-configuration";
 import { createEmptyTransactionState } from "@/lib/transaction-engine";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 
 vi.mock("@/lib/seramet-auth", async (original) => ({
   ...(await original<object>()),
@@ -309,7 +309,7 @@ it("records one authoritative receipt reprint across separate terminals", async 
     reprints: [],
   });
   await repository.saveState(state, actor, "Disposable receipt acceptance");
-  await hydrateAuthoritativeConfiguration(db, env(), true);
+  await hydrateSeededTenantsForTests(db, env());
   const input = {
     printerId: printer.id,
     documentType: "RECEIPT",
@@ -380,7 +380,7 @@ it("binds bill reprint identity and reason across terminals before signing", asy
     paid: 0,
   });
   await repository.saveState(state, actor, "Disposable bill reprint acceptance");
-  await hydrateAuthoritativeConfiguration(db, env(), true);
+  await hydrateSeededTenantsForTests(db, env());
   const input = {
     printerId: printer.id,
     documentType: "BILL",
@@ -745,7 +745,7 @@ it("authorizes only the exact claimed immutable station obligation and renders i
     },
   ];
   await repository.saveState(state, actor, "Disposable print acceptance");
-  await hydrateAuthoritativeConfiguration(db, env(), true);
+  await hydrateSeededTenantsForTests(db, env());
   const input = {
     printerId: printer.id,
     documentType: "FOOD_KOT",

@@ -23,23 +23,40 @@ import type {
   UserDefinition,
   Warehouse,
 } from "@/platform/types";
+import { createEmptyPlatformState } from "@/platform/empty-platform-state";
 import type { D1Database } from "@/server/database/d1";
 
 type Row = Record<string, unknown>;
 
-type CachedConfiguration = {
-  repository: ConfigurationRepository;
+/** One restaurant's configuration, as loaded from its own rows. */
+type TenantSlice = {
+  state: PlatformState;
   loadedAt: number;
   /** The shared configuration revision read just before this copy was loaded. */
   revision: number | undefined;
 };
-const cache = new WeakMap<object, CachedConfiguration>();
+
+/**
+ * What one server holds for one database: a slice per restaurant it has served, loaded on
+ * demand, and the repository built from them. Restaurants this server never serves are never
+ * read, so a load costs one restaurant's rows rather than every restaurant's.
+ */
+type DatabaseCache = {
+  slices: Map<string, TenantSlice>;
+  /** Bumped per restaurant on a forced refresh, so an older load cannot replace a newer one. */
+  generations: Map<string, number>;
+  /** Bumped on every invalidation, which discards every restaurant's slice. */
+  epoch: number;
+  repository: ConfigurationRepository | undefined;
+  /** Provider definitions are platform-wide; they come from the server environment. */
+  providers: PlatformState["providers"] | undefined;
+  providersFromEnvironment: boolean;
+};
+
+const cache = new WeakMap<object, DatabaseCache>();
 // Production opens a new database pool per request, so the configuration (plain data) is cached
-// by the database it came from; otherwise every request reloaded it with twenty queries.
-const sharedCache = new Map<string, CachedConfiguration>();
-// Bumped on every refresh or invalidation, so a load that started earlier cannot replace newer
-// configuration when it finishes.
-const generations = new Map<string, number>();
+// by the database it came from; otherwise every request reloaded it.
+const sharedCache = new Map<string, DatabaseCache>();
 // Without a shared revision a cached copy is trusted for 15 seconds. With one, a copy stays
 // valid until any server records a configuration change, refreshed at least every 5 minutes
 // in case something changed configuration outside the API.
@@ -63,47 +80,178 @@ function cacheIdentity(db: D1Database) {
   return typeof identity === "string" ? identity : undefined;
 }
 
-export async function hydrateAuthoritativeConfiguration(
-  db: D1Database,
-  env: SerametEnv = {},
-  force = false,
-) {
+function databaseCache(db: D1Database) {
   const identity = cacheIdentity(db);
-  const cached = identity ? sharedCache.get(identity) : cache.get(db as object);
-  // Read before loading, so a change that lands during the load makes the next request reload.
-  const revision = await configurationRevision(db);
-  const age = cached ? Date.now() - cached.loadedAt : Infinity;
-  const current =
-    revision !== undefined
-      ? cached?.revision === revision && age < revisionedLifetimeMs
-      : age < cacheLifetimeMs;
-  if (!force && cached && current) {
-    setConfigurationRepository(cached.repository);
-    return cached.repository;
+  const existing = identity ? sharedCache.get(identity) : cache.get(db as object);
+  if (existing) return existing;
+  const created: DatabaseCache = {
+    slices: new Map(),
+    generations: new Map(),
+    epoch: 0,
+    repository: undefined,
+    providers: undefined,
+    providersFromEnvironment: false,
+  };
+  if (identity) sharedCache.set(identity, created);
+  else cache.set(db as object, created);
+  return created;
+}
+
+function isCurrent(slice: TenantSlice | undefined, revision: number | undefined) {
+  if (!slice) return false;
+  const age = Date.now() - slice.loadedAt;
+  return revision !== undefined
+    ? slice.revision === revision && age < revisionedLifetimeMs
+    : age < cacheLifetimeMs;
+}
+
+/** Drops slices the shared revision (or their age) says are out of date. */
+function dropStaleSlices(entry: DatabaseCache, revision: number | undefined) {
+  let dropped = false;
+  for (const [tenantId, slice] of entry.slices) {
+    if (isCurrent(slice, revision)) continue;
+    entry.slices.delete(tenantId);
+    dropped = true;
   }
-  if (identity && force) generations.set(identity, (generations.get(identity) ?? 0) + 1);
-  const generation = identity ? (generations.get(identity) ?? 0) : 0;
-  const state = await loadAuthoritativePlatformState(db, env);
-  const repository = new ConfigurationRepository(state, { persistBrowser: false });
-  const entry = { repository, loadedAt: Date.now(), revision };
-  if (identity) {
-    if ((generations.get(identity) ?? 0) === generation) sharedCache.set(identity, entry);
-  } else cache.set(db as object, entry);
+  if (dropped) entry.repository = undefined;
+}
+
+function combine(
+  slices: Iterable<PlatformState>,
+  providers: PlatformState["providers"],
+): PlatformState {
+  const state = createEmptyPlatformState();
+  for (const slice of slices) {
+    for (const key of tenantCollections) {
+      (state[key] as unknown[]).push(...(slice[key] as unknown[]));
+    }
+  }
+  state.providers = providers;
+  state.updatedAt = new Date().toISOString();
+  return state;
+}
+
+function providerDefinitions(env: SerametEnv) {
+  return createDefaultProviderRegistry(env)
+    .list()
+    .map((adapter) => adapter.definition);
+}
+
+/**
+ * Takes provider definitions from the first caller that passes the server environment (it is
+ * the same for every request); callers without one get defaults until then.
+ */
+function rememberProviders(entry: DatabaseCache, env: SerametEnv) {
+  const fromEnvironment = Object.keys(env).length > 0;
+  if (entry.providers && (entry.providersFromEnvironment || !fromEnvironment)) return;
+  entry.providers = providerDefinitions(env);
+  entry.providersFromEnvironment = fromEnvironment;
+  entry.repository = undefined;
+}
+
+const tenantCollections = [
+  "tenants",
+  "brands",
+  "branches",
+  "warehouses",
+  "departments",
+  "stations",
+  "serviceAreas",
+  "tables",
+  "paymentMethods",
+  "orderChannels",
+  "connections",
+  "devices",
+  "printRoutes",
+  "documentIdentities",
+  "documentTemplates",
+  "roles",
+  "users",
+] as const satisfies ReadonlyArray<keyof PlatformState>;
+
+/** Publishes the configuration of every restaurant this server currently holds. */
+function publish(entry: DatabaseCache, override?: { tenantId: string; state: PlatformState }) {
+  if (!override && entry.repository) {
+    setConfigurationRepository(entry.repository);
+    return entry.repository;
+  }
+  const slices = new Map([...entry.slices].map(([tenantId, slice]) => [tenantId, slice.state]));
+  if (override) slices.set(override.tenantId, override.state);
+  const repository = new ConfigurationRepository(
+    combine(slices.values(), entry.providers ?? providerDefinitions({})),
+    {
+      persistBrowser: false,
+    },
+  );
+  if (!override) entry.repository = repository;
   setConfigurationRepository(repository);
   return repository;
 }
 
 /**
- * Records a configuration change: drops this server's copy and bumps the shared revision so
+ * Makes one restaurant's configuration available to this request. It is read from that
+ * restaurant's rows only, and cached until the shared revision says configuration changed.
+ * Call it wherever a request first learns which restaurant it acts for (authentication, a
+ * public restaurant link, a webhook connection, a queued job).
+ */
+export async function hydrateTenantConfiguration(
+  db: D1Database,
+  env: SerametEnv,
+  tenantId: string,
+  force = false,
+) {
+  const entry = databaseCache(db);
+  rememberProviders(entry, env);
+  // Read before loading, so a change that lands during the load makes the next request reload.
+  const revision = await configurationRevision(db);
+  dropStaleSlices(entry, revision);
+  if (!force && entry.slices.has(tenantId)) return publish(entry);
+  if (force) entry.generations.set(tenantId, (entry.generations.get(tenantId) ?? 0) + 1);
+  const generation = entry.generations.get(tenantId) ?? 0;
+  const epoch = entry.epoch;
+  const state = await loadTenantConfigurationState(db, env, tenantId);
+  if (entry.epoch !== epoch || (entry.generations.get(tenantId) ?? 0) !== generation) {
+    // A change was recorded while this was loading: serve it to this request only.
+    return publish(entry, { tenantId, state });
+  }
+  entry.slices.set(tenantId, { state, loadedAt: Date.now(), revision });
+  entry.repository = undefined;
+  return publish(entry);
+}
+
+/**
+ * Revalidates the restaurants this server already holds: slices the shared revision says
+ * changed are dropped (and reloaded on demand), and `force` reloads every held restaurant from
+ * its own rows. It never loads a restaurant this server has not served.
+ */
+export async function hydrateAuthoritativeConfiguration(
+  db: D1Database,
+  env: SerametEnv = {},
+  force = false,
+) {
+  const entry = databaseCache(db);
+  rememberProviders(entry, env);
+  if (!force) {
+    dropStaleSlices(entry, await configurationRevision(db));
+    return publish(entry);
+  }
+  let repository = publish(entry);
+  for (const tenantId of [...entry.slices.keys()]) {
+    repository = await hydrateTenantConfiguration(db, env, tenantId, true);
+  }
+  return repository;
+}
+
+/**
+ * Records a configuration change: drops this server's copies and bumps the shared revision so
  * every other server reloads on its next request. A failed bump only delays other servers
  * until their copy expires; it never fails the change itself.
  */
 export async function invalidateAuthoritativeConfiguration(db: D1Database) {
-  const identity = cacheIdentity(db);
-  if (identity) {
-    sharedCache.delete(identity);
-    generations.set(identity, (generations.get(identity) ?? 0) + 1);
-  } else cache.delete(db as object);
+  const entry = databaseCache(db);
+  entry.slices.clear();
+  entry.repository = undefined;
+  entry.epoch += 1;
   await db
     .prepare(
       "UPDATE configuration_revisions SET revision=revision+1,updated_at=? WHERE scope='platform'",
@@ -113,10 +261,13 @@ export async function invalidateAuthoritativeConfiguration(db: D1Database) {
     .catch(() => undefined);
 }
 
-export async function loadAuthoritativePlatformState(
+/** One restaurant's configuration: every query is filtered by its tenant. */
+export async function loadTenantConfigurationState(
   db: D1Database,
-  env: SerametEnv = {},
+  env: SerametEnv,
+  tenantId: string,
 ): Promise<PlatformState> {
+  const rows = (query: string) => all(db, query, tenantId);
   const [
     tenants,
     brands,
@@ -140,42 +291,40 @@ export async function loadAuthoritativePlatformState(
     userBranches,
     accountMappings,
   ] = await Promise.all([
-    all(
-      db,
+    rows(
       `SELECT t.*,p.country_code FROM tenants t
-       LEFT JOIN tenant_onboarding_profiles p ON p.tenant_id=t.id WHERE t.active = 1`,
+       LEFT JOIN tenant_onboarding_profiles p ON p.tenant_id=t.id WHERE t.id=? AND t.active = 1`,
     ),
-    all(db, "SELECT * FROM brands WHERE active = 1"),
-    all(db, "SELECT * FROM branches WHERE active = 1"),
-    all(db, "SELECT * FROM warehouses WHERE active = 1"),
-    all(db, "SELECT * FROM departments WHERE active = 1"),
-    all(db, "SELECT * FROM stations WHERE active = 1"),
-    all(db, "SELECT * FROM service_areas WHERE active = 1"),
-    all(db, "SELECT * FROM restaurant_tables WHERE active = 1"),
-    all(db, "SELECT * FROM payment_methods WHERE active = 1"),
-    all(db, "SELECT * FROM order_channels WHERE active = 1"),
-    all(db, "SELECT * FROM provider_connections"),
-    all(db, "SELECT * FROM hardware_devices WHERE trust_status != 'REVOKED'"),
-    all(db, "SELECT * FROM print_routes"),
-    all(db, "SELECT * FROM document_identities"),
-    all(db, "SELECT * FROM document_templates WHERE active = 1"),
-    all(db, "SELECT * FROM roles WHERE active = 1"),
-    all(db, "SELECT * FROM role_permissions"),
-    all(db, "SELECT * FROM users WHERE active = 1"),
-    all(db, "SELECT * FROM user_roles"),
-    all(
-      db,
+    rows("SELECT * FROM brands WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM branches WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM warehouses WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM departments WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM stations WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM service_areas WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM restaurant_tables WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM payment_methods WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM order_channels WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM provider_connections WHERE tenant_id=?"),
+    rows("SELECT * FROM hardware_devices WHERE tenant_id=? AND trust_status != 'REVOKED'"),
+    rows("SELECT * FROM print_routes WHERE tenant_id=?"),
+    rows("SELECT * FROM document_identities WHERE tenant_id=?"),
+    rows("SELECT * FROM document_templates WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM roles WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM role_permissions WHERE tenant_id=?"),
+    rows("SELECT * FROM users WHERE tenant_id=? AND active = 1"),
+    rows("SELECT * FROM user_roles WHERE tenant_id=?"),
+    rows(
       `SELECT ub.*,
               CASE WHEN pb.branch_id=ub.branch_id THEN 1 ELSE 0 END AS is_primary
        FROM user_branches ub
        LEFT JOIN user_primary_branches pb
          ON pb.tenant_id=ub.tenant_id AND pb.user_id=ub.user_id
+       WHERE ub.tenant_id=?
        ORDER BY is_primary DESC,ub.branch_id`,
     ),
-    all(
-      db,
+    rows(
       `SELECT tenant_id,mapping_key,account_id FROM setup_account_mappings
-       WHERE branch_id IS NULL AND status='CONFIGURED' AND account_id IS NOT NULL
+       WHERE tenant_id=? AND branch_id IS NULL AND status='CONFIGURED' AND account_id IS NOT NULL
          AND mapping_key IN ('CUSTOMER_RECEIVABLE','CASH','PAYMENT_CLEARING')`,
     ),
   ]);
@@ -361,9 +510,7 @@ export async function loadAuthoritativePlatformState(
         metadata: {},
       }),
     ),
-    providers: createDefaultProviderRegistry(env)
-      .list()
-      .map((adapter) => adapter.definition),
+    providers: providerDefinitions(env),
     connections: connections.map((row) =>
       mergePayload<IntegrationConnection>(row, {
         id: string(row, "id"),
@@ -481,8 +628,8 @@ export async function loadAuthoritativePlatformState(
   };
 }
 
-async function all(db: D1Database, query: string) {
-  return (await db.prepare(query).all<Row>()).results ?? [];
+async function all(db: D1Database, query: string, tenantId: string) {
+  return (await db.prepare(query).bind(tenantId).all<Row>()).results ?? [];
 }
 
 function mergePayload<T>(row: Row, defaults: Record<string, unknown>): T {

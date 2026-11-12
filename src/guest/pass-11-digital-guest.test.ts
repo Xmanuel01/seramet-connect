@@ -9,7 +9,7 @@ import { handleSerametApiRequest } from "@/lib/seramet-api";
 import { PaymentOrchestrator } from "@/payments/payment-orchestrator";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { createDemoFixtureDatabase } from "@/server/database/local-development-database";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import type { SqliteD1TestDatabase } from "@/server/database/sqlite-test-adapter";
@@ -46,7 +46,7 @@ describe("Pass 11 digital guest experience", () => {
         ),
         tenantId,
       );
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     repo = new D1AuthoritativeTransactionRepository(db);
     capturedEvents = 0;
     service = new GuestExperienceService(db, repo, secret, async () => {
@@ -367,7 +367,7 @@ describe("Pass 11 digital guest experience", () => {
     db.sqlite
       .prepare("UPDATE order_channels SET active=0 WHERE tenant_id=? AND channel_type='QR'")
       .run(tenantId);
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     const beforeTokens = await service.listQrTokens(manager(), branchId);
     const beforeSessions = db.sqlite
       .prepare("SELECT COUNT(*) count FROM guest_table_sessions WHERE tenant_id=?")
@@ -898,7 +898,7 @@ describe("Pass 11 digital guest experience", () => {
           metadata: { guestEnabled: true },
         }),
       );
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     expect(
       getConfigurationRepository()
         .listPaymentMethods(tenantId, false)
@@ -1012,7 +1012,7 @@ describe("Pass 11 digital guest experience", () => {
       (candidate) => candidate.guestContext?.trackingReference === order.orderReference,
     );
     expect(reservationOrder).toBeTruthy();
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     const applied = await service.applyReservationDeposit(manager(), {
       branchId,
       reservationId: reservation.id,

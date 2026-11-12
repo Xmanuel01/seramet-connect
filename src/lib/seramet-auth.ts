@@ -3,6 +3,7 @@ import type { ProviderRuntimeEnv } from "@/integrations/runtime-env";
 import { LOCAL_PILOT_TENANT_ID, LOCAL_PILOT_USER_ID } from "@/platform/pilot-defaults";
 import { mutationPermission, permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
+import { hydrateTenantConfiguration } from "@/server/database/authoritative-configuration";
 import type { BranchScope, PermissionCode } from "@/platform/types";
 import type { D1Database } from "@/server/database/d1";
 import { retryAuthMetadata } from "@/server/auth-metadata-retry";
@@ -82,6 +83,14 @@ export async function authenticateSerametRequest(
   request: Request,
   env: SerametEnv,
 ): Promise<ServerActor> {
+  const actor = await resolveSerametActor(request, env);
+  // Configuration is loaded per restaurant, so the actor's restaurant is made available here,
+  // where every authenticated request first learns which restaurant it acts for.
+  if (env.SERAMET_DB) await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId);
+  return actor;
+}
+
+async function resolveSerametActor(request: Request, env: SerametEnv): Promise<ServerActor> {
   const runtime = resolveRuntimeConfiguration(env);
   const auth = request.headers.get("authorization") ?? "";
   const token = auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? readCookie(request, "seramet_access");
@@ -110,7 +119,7 @@ export async function authenticateSerametRequest(
     isLocalDevelopmentRequest(request, env) &&
     request.headers.get("x-seramet-dev-auth") === "enabled"
   ) {
-    return authenticateDevelopmentRequest(request);
+    return authenticateDevelopmentRequest(request, env);
   }
 
   throw new SerametHttpError(401, "Bearer authentication required");
@@ -488,13 +497,18 @@ async function authenticateStoredSession(
   };
 }
 
-function authenticateDevelopmentRequest(request: Request): ServerActor {
-  const repository = getConfigurationRepository();
-  const state = repository.snapshot();
+async function authenticateDevelopmentRequest(
+  request: Request,
+  env: SerametEnv,
+): Promise<ServerActor> {
   const tenantId =
     request.headers.get("x-seramet-tenant-id") ??
-    state.tenants.find((tenant) => tenant.active)?.id ??
+    (env.SERAMET_DB ? await firstActiveTenantId(env.SERAMET_DB) : undefined) ??
     LOCAL_PILOT_TENANT_ID;
+  const repository = env.SERAMET_DB
+    ? await hydrateTenantConfiguration(env.SERAMET_DB, env, tenantId)
+    : getConfigurationRepository();
+  const state = repository.snapshot();
   const userId =
     request.headers.get("x-seramet-user-id") ??
     state.users.find((user) => user.tenantId === tenantId && user.active)?.id ??
@@ -540,6 +554,14 @@ function authenticateDevelopmentRequest(request: Request): ServerActor {
     branch: branch.name,
     authLevel: "DEVELOPMENT",
   };
+}
+
+/** Local development only: the restaurant a request without an explicit tenant acts for. */
+export async function firstActiveTenantId(db: D1Database) {
+  const row = await db
+    .prepare("SELECT id FROM tenants WHERE active = 1 ORDER BY created_at,id LIMIT 1")
+    .first<{ id: string }>();
+  return row?.id;
 }
 
 async function verifyJwt(token: string, secret: string, issuer: string, audience: string) {

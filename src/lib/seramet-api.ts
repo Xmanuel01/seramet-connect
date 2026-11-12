@@ -7,6 +7,7 @@ import {
   authenticateSerametRequest,
   authorizeBranchRead,
   authorizeSerametMutation,
+  firstActiveTenantId,
   type SerametEnv,
   type ServerActor,
 } from "@/lib/seramet-auth";
@@ -38,7 +39,7 @@ import { createIntegrationRuntime } from "@/integrations/runtime/create-runtime"
 import { IntegrationError } from "@/integrations/runtime/integration-errors";
 import { assertDatabaseAvailable } from "@/server/database/d1";
 import {
-  hydrateAuthoritativeConfiguration,
+  hydrateTenantConfiguration,
   invalidateAuthoritativeConfiguration,
 } from "@/server/database/authoritative-configuration";
 import {
@@ -254,9 +255,9 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     const repo = createTransactionRepository(env.SERAMET_DB, env);
     if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
     else await repo.migrate();
-    // Uses the cached configuration unless the shared revision says it changed, so a payment
-    // method or permission disabled on another server is honoured on the very next request.
-    if (env.SERAMET_DB) await hydrateAuthoritativeConfiguration(env.SERAMET_DB, env);
+    // Configuration is loaded per restaurant once a request knows which one it acts for
+    // (authentication, a public restaurant link, a webhook connection), each time checking the
+    // shared revision, so a change made on another server is honoured on the very next request.
     const closingReportResponse = await handleDailyClosingApi(request, env, repo);
     if (closingReportResponse) return closingReportResponse;
     const documentEmailResponse = await handleDocumentEmailApi(request, env, repo);
@@ -681,6 +682,7 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
             resolveLegacyWebhookSecret(legacyWebhook, env),
             legacyWebhook.providerCode,
             repo,
+            env,
           );
     }
 
@@ -714,16 +716,36 @@ async function receiveIntegrationWebhook(
   connectionId: string,
   pathKey?: string,
 ) {
-  const configuration = getConfigurationRepository();
-  const candidates = configuration.listTenants().flatMap((tenant) =>
-    configuration
-      .listConnections(tenant.id)
-      .filter((connection) => connection.id === connectionId)
-      .map((connection) => ({ tenant, connection })),
-  );
-  if (candidates.length !== 1)
+  // Connection ids are unique per restaurant only: the webhook is accepted only when exactly
+  // one active restaurant owns the connection, and only that restaurant's configuration loads.
+  const owners = env.SERAMET_DB
+    ? (
+        (
+          await env.SERAMET_DB.prepare(
+            `SELECT c.tenant_id FROM provider_connections c
+           JOIN tenants t ON t.id=c.tenant_id AND t.active=1
+           WHERE c.id=? LIMIT 2`,
+          )
+            .bind(connectionId)
+            .all<{ tenant_id: string }>()
+        ).results ?? []
+      ).map((row) => row.tenant_id)
+    : // Without a database (local development) the in-memory configuration is all there is.
+      getConfigurationRepository()
+        .listTenants()
+        .filter((tenant) =>
+          getConfigurationRepository()
+            .listConnections(tenant.id)
+            .some((connection) => connection.id === connectionId),
+        )
+        .map((tenant) => tenant.id);
+  if (owners.length !== 1) throw new SerametHttpError(404, "Integration connection was not found");
+  const tenantId = owners[0]!;
+  const configuration = env.SERAMET_DB
+    ? await hydrateTenantConfiguration(env.SERAMET_DB, env, tenantId)
+    : getConfigurationRepository();
+  if (!configuration.listConnections(tenantId).some((connection) => connection.id === connectionId))
     throw new SerametHttpError(404, "Integration connection was not found");
-  const tenantId = candidates[0]!.tenant.id;
   const assertedTenant = request.headers.get("x-seramet-tenant-id")?.trim();
   if (assertedTenant && assertedTenant !== tenantId)
     throw new SerametHttpError(403, "Webhook tenant does not match its connection");
@@ -1106,7 +1128,7 @@ async function receiveConfiguredWebhook(
   repo: TransactionRepository,
   connectionIdOrProviderCode: string,
 ) {
-  const tenantId = webhookTenantId(request);
+  const tenantId = await webhookTenantId(request, env);
   const configuration = getConfigurationRepository();
   const providerDefinition = configuration
     .listProviders()
@@ -1141,9 +1163,10 @@ async function receiveExternalPaymentWebhook(
   secret: string | undefined,
   providerCode: string,
   repo: TransactionRepository,
+  env: SerametEnv,
 ) {
   assertSharedSecret(request, secret, "Configured provider");
-  const tenantId = webhookTenantId(request);
+  const tenantId = await webhookTenantId(request, env);
   const configuration = getConfigurationRepository();
   const definition = configuration
     .listProviders()
@@ -1650,13 +1673,18 @@ async function saveIdempotency(
   });
 }
 
-function webhookTenantId(request: Request) {
-  const tenantId = request.headers.get("x-seramet-tenant-id")?.trim();
+async function webhookTenantId(request: Request, env: SerametEnv) {
+  let tenantId = request.headers.get("x-seramet-tenant-id")?.trim();
   if (!tenantId && request.headers.get("x-seramet-dev-auth") === "enabled") {
-    return getConfigurationRepository().listTenants()[0]?.id ?? LOCAL_PILOT_TENANT_ID;
+    tenantId =
+      (env.SERAMET_DB ? await firstActiveTenantId(env.SERAMET_DB) : undefined) ??
+      LOCAL_PILOT_TENANT_ID;
   }
   if (!tenantId) throw new SerametHttpError(400, "x-seramet-tenant-id is required");
-  getConfigurationRepository().getTenant(tenantId);
+  const configuration = env.SERAMET_DB
+    ? await hydrateTenantConfiguration(env.SERAMET_DB, env, tenantId)
+    : getConfigurationRepository();
+  configuration.getTenant(tenantId);
   return tenantId;
 }
 

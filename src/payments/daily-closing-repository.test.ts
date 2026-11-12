@@ -5,7 +5,7 @@ import {
   type SqliteD1TestDatabase,
 } from "@/server/database/sqlite-test-adapter";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
 import { allPermissionCodes } from "@/platform/permissions";
 import type { ServerActor } from "@/lib/seramet-auth";
@@ -60,7 +60,7 @@ beforeEach(async () => {
     .run();
   await db.prepare("INSERT INTO user_roles VALUES (?,?,?)").bind(tenantId, id, roleId).run();
   await db.prepare("INSERT INTO user_branches VALUES (?,?,?)").bind(tenantId, id, branchId).run();
-  await hydrateAuthoritativeConfiguration(db, {}, true);
+  await hydrateSeededTenantsForTests(db, {});
   actor = {
     id,
     tenantId,

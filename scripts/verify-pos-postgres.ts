@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { D1AuthoritativeTransactionRepository } from "../src/server/database/authoritative-transaction-repository";
-import { hydrateAuthoritativeConfiguration } from "../src/server/database/authoritative-configuration";
+import { hydrateTenantConfiguration } from "../src/server/database/authoritative-configuration";
 import { PostgresD1Database } from "../src/server/database/postgres-database";
 import type { ServerActor } from "../src/lib/seramet-auth";
 import {
@@ -38,7 +38,7 @@ const cashMethodId = `cash-${randomUUID()}`;
 
 try {
   await seed(firstDb);
-  await hydrateAuthoritativeConfiguration(firstDb, {}, true);
+  await hydrateTenantConfiguration(firstDb, {}, tenantId, true);
   const first = new D1AuthoritativeTransactionRepository(firstDb);
   const second = new D1AuthoritativeTransactionRepository(secondDb);
 
@@ -436,7 +436,7 @@ async function verifyTransactionClosingRace() {
     .prepare("INSERT INTO user_branches VALUES (?,?,?)")
     .bind(tenantId, userId, isolatedBranch)
     .run();
-  await hydrateAuthoritativeConfiguration(firstDb, {}, true);
+  await hydrateTenantConfiguration(firstDb, {}, tenantId, true);
   const scopedActor = {
     ...actor(),
     branchId: isolatedBranch,

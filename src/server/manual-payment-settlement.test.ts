@@ -7,7 +7,7 @@ import type { ServerActor } from "@/lib/seramet-auth";
 import { LocationCurrencyService } from "@/onboarding/location-currency-service";
 import { allPermissionCodes } from "@/platform/permissions";
 import { setConfigurationRepositoryForTests } from "@/platform/repositories/configuration-repository";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
 import {
   createMigratedTestDatabase,
@@ -124,7 +124,7 @@ it("settles by M-Pesa code, card and bank reference through the database", async
           metadata: {},
         }),
       );
-  await hydrateAuthoritativeConfiguration(db, { SERAMET_ENVIRONMENT: "test" }, true);
+  await hydrateSeededTenantsForTests(db, { SERAMET_ENVIRONMENT: "test" });
 
   const repository = new D1AuthoritativeTransactionRepository(db);
   const results: Record<string, string> = {};

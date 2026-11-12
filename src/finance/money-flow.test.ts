@@ -11,7 +11,7 @@ import {
   DEMO_TENANT_ID,
   DEMO_WESTLANDS_BRANCH_ID,
 } from "@/platform/demo/default-demo-data";
-import { hydrateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
+import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import {
   createMigratedTestDatabase,
   type SqliteD1TestDatabase,
@@ -180,7 +180,7 @@ beforeEach(async () => {
       metadata: {},
     }),
   );
-  await hydrateAuthoritativeConfiguration(db, {}, true);
+  await hydrateSeededTenantsForTests(db, {});
   repo = new D1AuthoritativeTransactionRepository(db, { requireInvoiceLedger: true });
 });
 
@@ -288,7 +288,7 @@ describe("one sale, from the till to the reports", () => {
     for (const template of Object.values(profile.templateSettings)) template.width = "80mm";
     for (const route of Object.values(profile.documentRoutes)) route.template = "80mm";
     const printed = SerametPrintService.createDocumentJob(profile, order, "RECEIPT").content;
-    await hydrateAuthoritativeConfiguration(db, {}, true);
+    await hydrateSeededTenantsForTests(db, {});
     expect(printed).toMatch(/\|CASH\s+\|\s*\|\s+150\.00\|/);
     expect(printed).toMatch(/\|Change\s+\|\s*\|\s+28\.78\|/);
     expect(printed).toMatch(/\|TOTAL\s+\|\s+121\.22\|/);

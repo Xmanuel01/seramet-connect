@@ -5,7 +5,7 @@ import { FinancialLedgerService } from "../src/finance/financial-ledger-service"
 import { allPermissionCodes, permissions } from "../src/platform/permissions";
 import type { ServerActor } from "../src/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "../src/server/database/authoritative-transaction-repository";
-import { hydrateAuthoritativeConfiguration } from "../src/server/database/authoritative-configuration";
+import { hydrateTenantConfiguration } from "../src/server/database/authoritative-configuration";
 import { createEmptyTransactionState, type BillingRecord } from "../src/lib/transaction-engine";
 import { businessDateForTimestamp } from "../src/lib/business-date";
 import { PaymentOrchestrator } from "../src/payments/payment-orchestrator";
@@ -160,7 +160,7 @@ try {
     )
     .bind(tenantId)
     .run();
-  await hydrateAuthoritativeConfiguration(db, {}, true);
+  await hydrateTenantConfiguration(db, {}, tenantId, true);
   const repository = new D1AuthoritativeTransactionRepository(db, { requireInvoiceLedger: true });
   const businessDate = businessDateForTimestamp(stamp, "Africa/Nairobi", 240);
   const invoice: BillingRecord = {
