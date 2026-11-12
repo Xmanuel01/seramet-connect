@@ -4,6 +4,7 @@ import { expect, test, type BrowserContext, type Page, type Response } from "@pl
 import { createDefaultDemoPlatformState } from "../../src/platform/demo/default-demo-data";
 import { buildModuleAccessProfile } from "../../src/platform/module-access-registry";
 import type { OnboardingWizardState } from "../../src/onboarding/location-currency-types";
+import { expectFitsViewport } from "./layout-helpers";
 
 type Fixture = {
   tenantId: string;
@@ -223,6 +224,88 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   // The server's own wording stays out of the page; the user gets a way forward.
   await expect(page.getByText(/Setup summary is temporarily unavailable/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+  await context.close();
+});
+
+test("a role's access is set by area and level, and a custom mix is kept", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await authorize(context);
+  const page = await context.newPage();
+  await establishSession(page);
+  const roleName = `Floor lead ${Date.now()}`;
+  const saved: string[][] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && /\/access\/roles\/[^/]+\/permissions$/.test(request.url()))
+      saved.push((request.postDataJSON() as { permissions: string[] }).permissions);
+  });
+  const level = (name: string) => page.getByRole("radio", { name, exact: true });
+  const choose = (name: string) =>
+    page
+      .locator("label")
+      .filter({ has: level(name) })
+      .click();
+  const save = async () => {
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByText(`Saved. ${roleName} staff get the new access`)).toBeVisible();
+  };
+
+  await page.goto("/settings");
+  await page.getByPlaceholder("Add role").fill(roleName);
+  await page.getByRole("button", { name: "Add role" }).click();
+  await expect(page.getByText(`${roleName} was saved.`)).toBeVisible();
+  await page.getByLabel("Role", { exact: true }).selectOption({ label: roleName });
+  await expect(page.getByText(`What ${roleName} can do`)).toBeVisible();
+
+  // One choice per area, in everyday words, with the detail folded away.
+  await expect(page.getByRole("group")).toHaveCount(11);
+  await expect(level("Sales & POS: No access")).toBeChecked();
+  await expect(page.getByText(/[a-z]+\.[a-z_]+\.(view|manage|approve)/)).toHaveCount(0);
+  await expect(page.locator("details[open]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await expectFitsViewport(page);
+
+  await choose("Sales & POS: Sell");
+  await expect(page.getByText(/Use the POS: take and serve orders/)).toBeVisible();
+  await expect(page.getByText("Not saved yet:")).toBeVisible();
+  await save();
+  expect([...saved.at(-1)!].sort()).toEqual(
+    [
+      "cash.close",
+      "cash.open",
+      "invoice.create",
+      "invoice.view",
+      "invoices.manage",
+      "orders.create",
+      "orders.serve",
+      "orders.update",
+      "orders.view",
+      "payments.collect",
+      "payments.record",
+      "payments.view",
+      "pos.access",
+    ].sort(),
+  );
+
+  // Taking one permission away under Advanced makes the area Custom.
+  const sales = page.getByRole("group", { name: "Sales & POS" });
+  await sales.getByText("Advanced: pick one by one").click();
+  await sales.getByLabel("Take payment for a bill").uncheck();
+  await expect(level("Sales & POS: Custom")).toBeChecked();
+  await save();
+  const custom = saved.at(-1)!;
+  expect(custom).toHaveLength(12);
+  expect(custom).not.toContain("payments.collect");
+
+  // After a reload the mix is still Custom, and changing another area does not disturb it.
+  await page.reload();
+  await page.getByLabel("Role", { exact: true }).selectOption({ label: roleName });
+  await expect(level("Sales & POS: Custom")).toBeChecked();
+  await choose("Kitchen & recipes: View");
+  await save();
+  expect([...saved.at(-1)!].sort()).toEqual([...custom, "cookbook.view", "kitchen.view"].sort());
+  await expect(level("Sales & POS: Custom")).toBeChecked();
+  await expect(level("Kitchen & recipes: View")).toBeChecked();
+  await expectFitsViewport(page);
   await context.close();
 });
 

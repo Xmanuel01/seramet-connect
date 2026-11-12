@@ -5,15 +5,10 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
-import { StaffRolePreset } from "@/components/app/StaffRolePreset";
+import { RoleAccessEditor, type RoleAccessSaveResult } from "@/components/app/RoleAccessEditor";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { cn } from "@/lib/utils";
-import {
-  canNavigateToPath,
-  moduleAccessRegistry,
-  permissionCodes,
-  type PermissionRequirement,
-} from "@/platform/module-access-registry";
+import { canNavigateToPath } from "@/platform/module-access-registry";
 import { permissions as platformPermissions } from "@/platform/permissions";
 import { pilotUnavailable } from "@/lib/pilot-unavailable";
 import { settingsGroups } from "@/platform/settings-navigation";
@@ -33,16 +28,6 @@ export const Route = createFileRoute("/settings")({
   }),
   component: Settings,
 });
-
-const accessColumns = [
-  { key: "navigationPermission", label: "In menu" },
-  { key: "routePermission", label: "Open page" },
-  { key: "READ", label: "View" },
-  { key: "CREATE", label: "Create" },
-  { key: "EDIT", label: "Edit" },
-  { key: "APPROVE", label: "Approve" },
-  { key: "SENSITIVE", label: "Sensitive" },
-] as const;
 
 function Settings() {
   const {
@@ -78,7 +63,6 @@ function Settings() {
   });
   const [configSaving, setConfigSaving] = useState("");
   const [selectedAccessRoleId, setSelectedAccessRoleId] = useState(roleRecords[0]?.id ?? "");
-  const [accessSaving, setAccessSaving] = useState(false);
   const tenantUsers = platformState.users.filter(
     (user) => user.tenantId === activeTenantId && user.active,
   );
@@ -322,14 +306,13 @@ function Settings() {
     }
   };
 
-  const togglePermission = async (roleId: string, permission: string) => {
+  const saveRolePermissions = async (
+    roleId: string,
+    nextPermissions: string[],
+  ): Promise<RoleAccessSaveResult> => {
     const roleRecord = roleRecords.find((role) => role.id === roleId);
-    if (!roleRecord || accessSaving) return;
-    const nextPermissions = roleRecord.permissions.includes(permission)
-      ? roleRecord.permissions.filter((item) => item !== permission)
-      : [...roleRecord.permissions, permission];
+    if (!roleRecord) return { ok: false, message: "This role no longer exists." };
     const token = getSerametAccessToken();
-    setAccessSaving(true);
     try {
       const response = await fetch(
         `/api/seramet/access/roles/${encodeURIComponent(roleId)}/permissions`,
@@ -343,7 +326,7 @@ function Settings() {
           },
           body: JSON.stringify({
             permissions: nextPermissions,
-            reason: `Module access matrix updated for ${roleRecord.name}`,
+            reason: `Access changed for ${roleRecord.name} in Settings`,
           }),
         },
       );
@@ -351,17 +334,15 @@ function Settings() {
       if (!response.ok)
         throw new Error(payload.message ?? `Access update failed (${response.status})`);
       await refreshAccess();
-      setConfigNotice({
-        kind: "success",
-        message: `${roleRecord.name} permissions were updated and active access was refreshed.`,
-      });
+      return {
+        ok: true,
+        message: `Saved. ${roleRecord.name} staff get the new access straight away.`,
+      };
     } catch (error) {
-      setConfigNotice({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Permission update failed.",
-      });
-    } finally {
-      setAccessSaving(false);
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : "Couldn't save the changes. Try again.",
+      };
     }
   };
 
@@ -573,73 +554,19 @@ function Settings() {
                     </label>
                   </div>
                   {selectedAccessRole && (
-                    <StaffRolePreset
+                    <RoleAccessEditor
                       key={selectedAccessRole.id}
-                      roleId={selectedAccessRole.id}
-                      disabled={!canManageRoleAccess || accessSaving}
+                      roleName={selectedAccessRole.name}
+                      permissions={selectedAccessRole.permissions}
+                      grantable={
+                        hasPermission(platformPermissions.enterpriseAccessManage)
+                          ? "all"
+                          : currentUser.permissions
+                      }
+                      readOnly={!canManageRoleAccess}
+                      onSave={(next) => saveRolePermissions(selectedAccessRole.id, next)}
                     />
                   )}
-                  <details className="mt-3 rounded-lg border border-border">
-                    <summary className="cursor-pointer px-3 py-2.5 text-[13px] font-semibold">
-                      Fine-tune permissions
-                    </summary>
-                    <div className="overflow-x-auto border-t border-border">
-                      <table className="w-full min-w-[1100px]">
-                        <thead>
-                          <tr>
-                            <th className="border-b border-border px-3 py-2 text-left text-[11px] font-bold uppercase text-muted-foreground">
-                              Area
-                            </th>
-                            {accessColumns.map((column) => (
-                              <th
-                                key={column.key}
-                                className="border-b border-border px-2 py-2 text-center text-[11px] font-bold uppercase text-muted-foreground"
-                              >
-                                {column.label}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {moduleAccessRegistry.map((module) => (
-                            <tr key={module.key}>
-                              <td className="border-b border-border px-3 py-3 align-top">
-                                <div className="text-[12px] font-semibold">{module.label}</div>
-                              </td>
-                              {accessColumns.map((column) => {
-                                const requirement =
-                                  column.key === "navigationPermission" ||
-                                  column.key === "routePermission"
-                                    ? module[column.key]
-                                    : module.actionPermissions[column.key];
-                                return (
-                                  <td
-                                    key={column.key}
-                                    className="border-b border-border px-2 py-3 align-top"
-                                  >
-                                    <AccessPermissionCell
-                                      moduleLabel={module.label}
-                                      columnLabel={column.label}
-                                      requirement={requirement}
-                                      rolePermissions={selectedAccessRole?.permissions ?? []}
-                                      disabled={
-                                        !selectedAccessRole || accessSaving || !canManageRoleAccess
-                                      }
-                                      onToggle={(permission) =>
-                                        selectedAccessRole
-                                          ? void togglePermission(selectedAccessRole.id, permission)
-                                          : undefined
-                                      }
-                                    />
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </details>
                 </div>
               </Panel>
 
@@ -999,57 +926,6 @@ function Settings() {
   );
 }
 
-function AccessPermissionCell({
-  moduleLabel,
-  columnLabel,
-  requirement,
-  rolePermissions,
-  disabled,
-  onToggle,
-}: {
-  moduleLabel: string;
-  columnLabel: string;
-  requirement: PermissionRequirement;
-  rolePermissions: string[];
-  disabled: boolean;
-  onToggle: (permission: string) => void;
-}) {
-  const codes = permissionCodes(requirement);
-  if (!codes.length) {
-    return <div className="py-1 text-center text-[11px] text-muted-foreground">—</div>;
-  }
-  const mode =
-    typeof requirement === "object" && requirement && "allOf" in requirement
-      ? "Needs all"
-      : codes.length > 1
-        ? "Any one"
-        : undefined;
-  return (
-    <div className="grid gap-1.5">
-      {mode && (
-        <div className="text-center text-[9px] font-semibold text-muted-foreground">{mode}</div>
-      )}
-      {codes.map((permission) => (
-        <label
-          key={permission}
-          title={permission}
-          className="flex min-h-7 items-center justify-center gap-1 rounded border border-border px-1.5 text-[9px] font-medium"
-        >
-          <input
-            type="checkbox"
-            aria-label={`${moduleLabel} ${columnLabel} ${plainPermission(permission)}`}
-            checked={rolePermissions.includes(permission)}
-            disabled={disabled}
-            onChange={() => onToggle(permission)}
-            className="h-3.5 w-3.5 shrink-0 accent-primary"
-          />
-          <span className="max-w-[110px] truncate">{plainPermission(permission)}</span>
-        </label>
-      ))}
-    </div>
-  );
-}
-
 function ConfigField({
   label,
   value,
@@ -1072,13 +948,4 @@ function ConfigField({
       />
     </label>
   );
-}
-
-/** "orders.create" → "Create orders"; the code itself stays in the cell's tooltip. */
-function plainPermission(value: string) {
-  const segments = value.split(".");
-  const verb = (segments.pop() ?? "").replaceAll("_", " ");
-  const noun = segments.join(" ").replaceAll("_", " ").replaceAll("-", " ");
-  const phrase = noun ? `${verb} ${noun}` : verb;
-  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
 }
