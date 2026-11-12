@@ -542,10 +542,16 @@ function timestamp() {
   return formatDateTime(new Date(), { hour12: false });
 }
 
+/**
+ * Branch columns for the signed-in restaurant. The browser holds only that restaurant's
+ * configuration; a server holds several, so with more than one there is no single answer and
+ * no branch columns are assumed (callers pass the restaurant's branch names instead).
+ */
 function configuredBranchNames() {
   const repository = getConfigurationRepository();
-  const tenant = repository.snapshot().tenants.find((candidate) => candidate.active);
-  return tenant ? repository.listBranches(tenant.id).map((branch) => branch.name) : [];
+  const tenants = repository.listTenants();
+  if (tenants.length !== 1) return [];
+  return repository.listBranches(tenants[0]!.id).map((branch) => branch.name);
 }
 
 function branchColumnPrefix(branchName: string) {

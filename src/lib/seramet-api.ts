@@ -5,9 +5,11 @@ import type { PaymentOperationsState } from "@/payments/types";
 import {
   SerametHttpError,
   authenticateSerametRequest,
+  authenticatedTenantOf,
   authorizeBranchRead,
   authorizeSerametMutation,
   firstActiveTenantId,
+  isDevelopmentAuthRequest,
   type SerametEnv,
   type ServerActor,
 } from "@/lib/seramet-auth";
@@ -125,8 +127,9 @@ function changesConfiguration(path: string) {
 
 export async function handleSerametApiRequest(request: Request, env: SerametEnv) {
   const response = await routeSerametApiRequest(request, env);
-  // Every server caches configuration until the shared revision moves; a successful change
-  // bumps it so all of them read it fresh on their next request.
+  // Every server caches configuration until a shared revision moves; a successful change
+  // bumps it so all of them read it fresh on their next request. A change made by a signed-in
+  // user bumps only their restaurant; one with no known restaurant bumps every restaurant.
   const path = new URL(request.url).pathname;
   if (
     env?.SERAMET_DB &&
@@ -134,7 +137,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     response.status < 400 &&
     changesConfiguration(path)
   )
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, authenticatedTenantOf(request));
   return response;
 }
 
@@ -1675,7 +1678,8 @@ async function saveIdempotency(
 
 async function webhookTenantId(request: Request, env: SerametEnv) {
   let tenantId = request.headers.get("x-seramet-tenant-id")?.trim();
-  if (!tenantId && request.headers.get("x-seramet-dev-auth") === "enabled") {
+  // Only local development may omit the tenant; elsewhere a webhook must name its restaurant.
+  if (!tenantId && isDevelopmentAuthRequest(request, env)) {
     tenantId =
       (env.SERAMET_DB ? await firstActiveTenantId(env.SERAMET_DB) : undefined) ??
       LOCAL_PILOT_TENANT_ID;
