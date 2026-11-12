@@ -233,7 +233,7 @@ async function settingsMutationActor(request: Request, env: SerametEnv, bucket: 
 }
 
 async function refreshConfiguration(db: D1Database, env: SerametEnv, tenantId: string) {
-  await invalidateAuthoritativeConfiguration(db);
+  await invalidateAuthoritativeConfiguration(db, tenantId);
   await hydrateTenantConfiguration(db, env, tenantId, true);
 }
 

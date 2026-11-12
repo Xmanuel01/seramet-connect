@@ -458,7 +458,7 @@ export async function handleOnboardingApi(
       await parse<StationSetupInput>(request, stationSetupSchema),
     );
     // Order routing and kitchen screens read stations from the cached configuration.
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
     return json({ ok: true, station }, station.created ? 201 : 200);
   }
   if (url.pathname === "/api/seramet/setup/provider-connections" && request.method === "POST") {

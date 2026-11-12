@@ -32,9 +32,18 @@ type Row = Record<string, unknown>;
 type TenantSlice = {
   state: PlatformState;
   loadedAt: number;
-  /** The shared configuration revision read just before this copy was loaded. */
-  revision: number | undefined;
+  /** The shared revisions read just before this copy was loaded. */
+  revision: SliceRevision | undefined;
 };
+
+/**
+ * A slice is current while both revisions it was loaded at are unchanged: the platform one
+ * (a change that can affect every restaurant) and its own restaurant's.
+ */
+type SliceRevision = { platform: number; tenant: number };
+
+/** Shared revisions read from the database: the platform one and some restaurants' own. */
+type Revisions = { platform: number; tenants: Map<string, number> };
 
 /**
  * What one server holds for one database: a slice per restaurant it has served, loaded on
@@ -63,16 +72,42 @@ const sharedCache = new Map<string, DatabaseCache>();
 const cacheLifetimeMs = 15_000;
 const revisionedLifetimeMs = 5 * 60_000;
 
-/** The shared configuration revision, or undefined where the table doesn't exist yet. */
-async function configurationRevision(db: D1Database) {
+const tenantScope = (tenantId: string) => `tenant:${tenantId}`;
+
+/**
+ * The platform revision and the given restaurants' own revisions, in one query. A restaurant
+ * without a row has never recorded a change of its own (revision 0). Undefined where the table
+ * doesn't exist yet, in which case copies expire by age instead.
+ */
+async function configurationRevisions(
+  db: D1Database,
+  tenantIds: string[],
+): Promise<Revisions | undefined> {
   try {
-    const row = await db
-      .prepare("SELECT revision FROM configuration_revisions WHERE scope='platform'")
-      .first<{ revision: number }>();
-    return row ? Number(row.revision) : undefined;
+    const scopes = ["platform", ...tenantIds.map(tenantScope)];
+    const placeholders = scopes.map(() => "?").join(",");
+    const rows = await db
+      .prepare(
+        `SELECT scope,revision FROM configuration_revisions WHERE scope IN (${placeholders})`,
+      )
+      .bind(...scopes)
+      .all<{ scope: string; revision: number }>();
+    const byScope = new Map((rows.results ?? []).map((row) => [row.scope, Number(row.revision)]));
+    const platform = byScope.get("platform");
+    if (platform === undefined) return undefined;
+    return {
+      platform,
+      tenants: new Map(tenantIds.map((id) => [id, byScope.get(tenantScope(id)) ?? 0])),
+    };
   } catch {
     return undefined;
   }
+}
+
+function sliceRevision(revisions: Revisions | undefined, tenantId: string) {
+  return revisions
+    ? { platform: revisions.platform, tenant: revisions.tenants.get(tenantId) ?? 0 }
+    : undefined;
 }
 
 function cacheIdentity(db: D1Database) {
@@ -97,19 +132,21 @@ function databaseCache(db: D1Database) {
   return created;
 }
 
-function isCurrent(slice: TenantSlice | undefined, revision: number | undefined) {
-  if (!slice) return false;
+function isCurrent(slice: TenantSlice, tenantId: string, revisions: Revisions | undefined) {
   const age = Date.now() - slice.loadedAt;
-  return revision !== undefined
-    ? slice.revision === revision && age < revisionedLifetimeMs
-    : age < cacheLifetimeMs;
+  if (!revisions || !slice.revision) return age < cacheLifetimeMs;
+  if (age >= revisionedLifetimeMs || slice.revision.platform !== revisions.platform) return false;
+  // Only restaurants whose own revision was read are checked against it; the others are
+  // checked when a request next asks for them.
+  const tenant = revisions.tenants.get(tenantId);
+  return tenant === undefined || slice.revision.tenant === tenant;
 }
 
-/** Drops slices the shared revision (or their age) says are out of date. */
-function dropStaleSlices(entry: DatabaseCache, revision: number | undefined) {
+/** Drops slices the shared revisions (or their age) say are out of date. */
+function dropStaleSlices(entry: DatabaseCache, revisions: Revisions | undefined) {
   let dropped = false;
   for (const [tenantId, slice] of entry.slices) {
-    if (isCurrent(slice, revision)) continue;
+    if (isCurrent(slice, tenantId, revisions)) continue;
     entry.slices.delete(tenantId);
     dropped = true;
   }
@@ -203,8 +240,8 @@ export async function hydrateTenantConfiguration(
   const entry = databaseCache(db);
   rememberProviders(entry, env);
   // Read before loading, so a change that lands during the load makes the next request reload.
-  const revision = await configurationRevision(db);
-  dropStaleSlices(entry, revision);
+  const revisions = await configurationRevisions(db, [tenantId]);
+  dropStaleSlices(entry, revisions);
   if (!force && entry.slices.has(tenantId)) return publish(entry);
   if (force) entry.generations.set(tenantId, (entry.generations.get(tenantId) ?? 0) + 1);
   const generation = entry.generations.get(tenantId) ?? 0;
@@ -214,7 +251,11 @@ export async function hydrateTenantConfiguration(
     // A change was recorded while this was loading: serve it to this request only.
     return publish(entry, { tenantId, state });
   }
-  entry.slices.set(tenantId, { state, loadedAt: Date.now(), revision });
+  entry.slices.set(tenantId, {
+    state,
+    loadedAt: Date.now(),
+    revision: sliceRevision(revisions, tenantId),
+  });
   entry.repository = undefined;
   return publish(entry);
 }
@@ -232,7 +273,7 @@ export async function hydrateAuthoritativeConfiguration(
   const entry = databaseCache(db);
   rememberProviders(entry, env);
   if (!force) {
-    dropStaleSlices(entry, await configurationRevision(db));
+    dropStaleSlices(entry, await configurationRevisions(db, [...entry.slices.keys()]));
     return publish(entry);
   }
   let repository = publish(entry);
@@ -243,20 +284,37 @@ export async function hydrateAuthoritativeConfiguration(
 }
 
 /**
- * Records a configuration change: drops this server's copies and bumps the shared revision so
- * every other server reloads on its next request. A failed bump only delays other servers
- * until their copy expires; it never fails the change itself.
+ * Records a configuration change so every server reloads on its next request. With a
+ * restaurant, only that restaurant's copy is dropped and only its own revision moves, so other
+ * restaurants keep their cached configuration everywhere. Without one (a change not known to
+ * belong to a single restaurant) every restaurant's copy is dropped. A failed bump only delays
+ * other servers until their copy expires; it never fails the change itself.
  */
-export async function invalidateAuthoritativeConfiguration(db: D1Database) {
+export async function invalidateAuthoritativeConfiguration(db: D1Database, tenantId?: string) {
   const entry = databaseCache(db);
-  entry.slices.clear();
   entry.repository = undefined;
+  const stamp = new Date().toISOString();
+  if (tenantId) {
+    entry.slices.delete(tenantId);
+    entry.generations.set(tenantId, (entry.generations.get(tenantId) ?? 0) + 1);
+    await db
+      .prepare(
+        `INSERT INTO configuration_revisions (scope,revision,updated_at) VALUES (?,1,?)
+         ON CONFLICT(scope) DO UPDATE SET revision=configuration_revisions.revision+1,
+           updated_at=excluded.updated_at`,
+      )
+      .bind(tenantScope(tenantId), stamp)
+      .run()
+      .catch(() => undefined);
+    return;
+  }
+  entry.slices.clear();
   entry.epoch += 1;
   await db
     .prepare(
       "UPDATE configuration_revisions SET revision=revision+1,updated_at=? WHERE scope='platform'",
     )
-    .bind(new Date().toISOString())
+    .bind(stamp)
     .run()
     .catch(() => undefined);
 }

@@ -84,10 +84,21 @@ export async function authenticateSerametRequest(
   env: SerametEnv,
 ): Promise<ServerActor> {
   const actor = await resolveSerametActor(request, env);
+  authenticatedTenants.set(request, actor.tenantId);
   // Configuration is loaded per restaurant, so the actor's restaurant is made available here,
   // where every authenticated request first learns which restaurant it acts for.
   if (env.SERAMET_DB) await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId);
   return actor;
+}
+
+const authenticatedTenants = new WeakMap<Request, string>();
+
+/**
+ * The restaurant a request authenticated as, once it has; undefined for unauthenticated
+ * requests. A configuration change recorded after the response bumps only that restaurant.
+ */
+export function authenticatedTenantOf(request: Request) {
+  return authenticatedTenants.get(request);
 }
 
 async function resolveSerametActor(request: Request, env: SerametEnv): Promise<ServerActor> {
@@ -113,12 +124,7 @@ async function resolveSerametActor(request: Request, env: SerametEnv): Promise<S
     return applyStaffDevicePolicy(actor, env.SERAMET_DB);
   }
 
-  if (
-    runtime.environment === "development" &&
-    runtime.devAuthEnabled &&
-    isLocalDevelopmentRequest(request, env) &&
-    request.headers.get("x-seramet-dev-auth") === "enabled"
-  ) {
+  if (isDevelopmentAuthRequest(request, env)) {
     return authenticateDevelopmentRequest(request, env);
   }
 
@@ -554,6 +560,17 @@ async function authenticateDevelopmentRequest(
     branch: branch.name,
     authLevel: "DEVELOPMENT",
   };
+}
+
+/** True only for a local request to a development server with development auth enabled. */
+export function isDevelopmentAuthRequest(request: Request, env: SerametEnv) {
+  const runtime = resolveRuntimeConfiguration(env);
+  return (
+    runtime.environment === "development" &&
+    runtime.devAuthEnabled &&
+    isLocalDevelopmentRequest(request, env) &&
+    request.headers.get("x-seramet-dev-auth") === "enabled"
+  );
 }
 
 /** Local development only: the restaurant a request without an explicit tenant acts for. */
