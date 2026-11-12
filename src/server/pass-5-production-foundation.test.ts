@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "@/server/database/schema-version";
 import { authenticateSerametRequest, type SerametEnv, type ServerActor } from "@/lib/seramet-auth";
 import { D1AuthoritativeTransactionRepository } from "@/server/database/authoritative-transaction-repository";
+import type { D1Database } from "@/server/database/d1";
 import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
 import {
   createMigratedTestDatabase,
@@ -410,6 +411,93 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(duplicate.duplicate).toBe(true);
     expect(duplicate.state.orders).toHaveLength(1);
     expect(await count("mutation_commits", tenantA)).toBe(1);
+  });
+
+  it("reads the tenant's state history once for a load followed by a mutation", async () => {
+    await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "history-seed",
+      "history-seed-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Seed"), targetStatus: "OPEN" },
+    );
+    const reads = { history: 0 };
+    const repository = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads));
+
+    const loaded = await repository.loadState(tenantA);
+    const revision = await repository.revision(tenantA);
+    const committed = await repository.commitMutation({
+      actor: actor(),
+      action: "upsertOrderDraft",
+      payload: { draft: orderDraft("Second"), targetStatus: "OPEN" },
+      idempotencyKey: "history-second",
+      requestHash: "history-second-hash",
+      correlationId: "history-second-correlation",
+      expectedRevision: revision,
+    });
+
+    expect(loaded.orders).toHaveLength(1);
+    expect(committed.state.orders).toHaveLength(2);
+    expect(reads.history).toBe(1);
+    // The commit moved the revision on, so the next load reads the rows again.
+    expect((await repository.loadState(tenantA)).orders).toHaveLength(2);
+    expect(reads.history).toBe(2);
+  });
+
+  it("rereads state history when another terminal committed after it was loaded", async () => {
+    const reads = { history: 0 };
+    const terminalA = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads));
+    const terminalB = new D1AuthoritativeTransactionRepository(database);
+    await terminalA.loadState(tenantA);
+    const fromB = await mutation(terminalB, "terminal-b", "terminal-b-hash", "upsertOrderDraft", {
+      draft: orderDraft("Terminal B"),
+      targetStatus: "OPEN",
+    });
+
+    const fromA = await terminalA.commitMutation({
+      actor: actor(),
+      action: "upsertOrderDraft",
+      payload: { draft: orderDraft("Terminal A"), targetStatus: "OPEN" },
+      idempotencyKey: "terminal-a",
+      requestHash: "terminal-a-hash",
+      correlationId: "terminal-a-correlation",
+      expectedRevision: fromB.revision,
+    });
+
+    expect(reads.history).toBe(2);
+    expect(fromA.revision).toBe(fromB.revision + 1);
+    expect(fromA.state.orders.map((order) => order.id).sort()).toEqual(
+      (await new D1AuthoritativeTransactionRepository(database).loadState(tenantA)).orders
+        .map((order) => order.id)
+        .sort(),
+    );
+    expect(fromA.state.orders).toHaveLength(2);
+  });
+
+  it("rejects a mutation whose expected revision predates a commit made after the load", async () => {
+    const terminalA = new D1AuthoritativeTransactionRepository(database);
+    const loadedRevision = await terminalA.revision(tenantA);
+    await terminalA.loadState(tenantA);
+    await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "other-terminal",
+      "other-terminal-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Other"), targetStatus: "OPEN" },
+    );
+
+    await expect(
+      terminalA.commitMutation({
+        actor: actor(),
+        action: "upsertOrderDraft",
+        payload: { draft: orderDraft("Stale"), targetStatus: "OPEN" },
+        idempotencyKey: "stale-terminal",
+        requestHash: "stale-terminal-hash",
+        correlationId: "stale-terminal-correlation",
+        expectedRevision: loadedRevision,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+    expect((await terminalA.loadState(tenantA)).orders).toHaveLength(1);
   });
 
   it("projects authoritative POS orders and invoices and records refresh events atomically", async () => {
@@ -1405,6 +1493,18 @@ function mutation(
     correlationId: `correlation-${idempotencyKey}`,
     deviceId: deviceA,
   });
+}
+
+// The test database, counting reads of a tenant's whole state history.
+function countingHistoryReads(reads: { history: number }): D1Database {
+  return {
+    provider: database.provider,
+    prepare(query) {
+      if (/FROM authoritative_records[\s\S]*LIKE 'state:%'/.test(query)) reads.history += 1;
+      return database.prepare(query);
+    },
+    batch: (statements) => database.batch(statements),
+  };
 }
 
 function orderDraft(label = "Order") {
