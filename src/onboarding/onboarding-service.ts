@@ -20,6 +20,8 @@ import { createSecretStore } from "@/server/secrets";
 import { resolveRuntimeConfiguration, validateRuntimeConfiguration } from "@/server/environment";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { parseMajorAmount } from "@/payments/money";
+import type { RealtimeEvent } from "@/server/realtime";
+import { notifyRealtimeHub } from "@/server/realtime-hub";
 import {
   MENU_IMPORTER_VERSION,
   MENU_IMPORT_TEMPLATE_VERSION,
@@ -2796,6 +2798,17 @@ export class OnboardingService {
       ]);
       throw invalidTransition("Complete menu import plan could not be verified for publication");
     }
+    const menuEvent: RealtimeEvent = {
+      id: crypto.randomUUID(),
+      branchId: null,
+      topic: "menu",
+      entityType: "SETUP_IMPORT",
+      entityId: importId,
+      eventType: "MENU_IMPORT_PUBLISHED",
+      correlationId: crypto.randomUUID(),
+      payload: { importId, branchIds },
+      createdAt: stamp,
+    };
     await this.db.batch([
       ...this.publishMenuPlanStatements(importId, stamp),
       this.db
@@ -2821,10 +2834,10 @@ export class OnboardingService {
         )
         .bind(
           this.actor.tenantId,
-          crypto.randomUUID(),
+          menuEvent.id,
           importId,
-          crypto.randomUUID(),
-          json({ importId, branchIds }),
+          menuEvent.correlationId,
+          json(menuEvent.payload),
           stamp,
           new Date(Date.parse(stamp) + 24 * 60 * 60 * 1000).toISOString(),
         ),
@@ -2834,6 +2847,7 @@ export class OnboardingService {
         evidence: publicationInvariant,
       }),
     ]);
+    await notifyRealtimeHub(this.env.SERAMET_REALTIME_HUB, this.actor.tenantId, [menuEvent]);
     const verification = await this.verifyMenuImport(
       completion.expectedEntityIds,
       completion.expectedBranchSettings,

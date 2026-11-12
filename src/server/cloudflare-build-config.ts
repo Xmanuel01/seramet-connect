@@ -1,5 +1,17 @@
 type BuildEnvironment = Record<string, string | undefined>;
 
+/**
+ * The realtime hub: one hibernating WebSocket Durable Object per restaurant. Every build
+ * declares it (previews hold no data, so their hubs are empty). Migration tags are permanent:
+ * add new entries, never edit or remove one that has been deployed.
+ */
+export const realtimeHubDurableObjects = {
+  durable_objects: {
+    bindings: [{ name: "SERAMET_REALTIME_HUB", class_name: "SerametRealtimeHub" }],
+  },
+  migrations: [{ tag: "v1-realtime-hub", new_sqlite_classes: ["SerametRealtimeHub"] }],
+};
+
 /** Preview builds must never inherit the production database or durable resources. */
 export function cloudflareBuildConfig(env: BuildEnvironment) {
   const production = env.WORKERS_CI === "1" && env.WORKERS_CI_BRANCH === "main";
@@ -35,6 +47,7 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
     // one crossed to Europe and back.
     ...(production ? { placement: { region: "aws:eu-west-1" } } : {}),
     vars,
+    ...realtimeHubDurableObjects,
     hyperdrive: production
       ? [{ binding: "SERAMET_HYPERDRIVE", id: "4538af733065451c94d47beb2028390e" }]
       : [],

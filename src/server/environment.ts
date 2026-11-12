@@ -1,6 +1,7 @@
 import type { D1Database } from "@/server/database/d1";
 import type { HyperdriveBinding } from "@/server/database/postgres-database";
 import type { ExternalIdentityVerifier } from "@/server/identity/supabase-identity";
+import type { RealtimeHubNamespace } from "@/server/realtime-hub";
 
 export type DeploymentEnvironment = "development" | "test" | "staging" | "production";
 
@@ -65,6 +66,8 @@ export type ProductionRuntimeEnv = {
   SERAMET_WORK_QUEUE?: DurableQueue;
   SERAMET_SCAN_QUEUE?: DurableQueue<FileScanQueueMessage>;
   SERAMET_OBJECTS?: ObjectStoreBinding;
+  // Durable Object namespace: one hibernating WebSocket hub per restaurant for live updates.
+  SERAMET_REALTIME_HUB?: RealtimeHubNamespace;
   SERAMET_CLOSING_EMAIL_API_KEY?: string;
   SERAMET_CLOSING_EMAIL_FROM?: string;
   // Protected server secret: tenant-id -> { apiKey, from }. Never exposed to clients.
@@ -239,6 +242,16 @@ export function validateRuntimeConfiguration(
     issues.push({
       code: "OBJECT_STORAGE_REQUIRED",
       message: "Production R2 object storage is required",
+    });
+  }
+  if (
+    !env.SERAMET_REALTIME_HUB ||
+    typeof env.SERAMET_REALTIME_HUB.idFromName !== "function" ||
+    typeof env.SERAMET_REALTIME_HUB.get !== "function"
+  ) {
+    issues.push({
+      code: "REALTIME_HUB_REQUIRED",
+      message: "The SERAMET_REALTIME_HUB Durable Object binding is required for live updates",
     });
   }
   if (env.SERAMET_IDENTITY_PROVIDER !== "supabase") {

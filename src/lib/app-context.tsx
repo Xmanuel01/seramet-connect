@@ -557,17 +557,15 @@ function ConfiguredAppProvider({
 
 function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: string }) {
   useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    const endpoint = `/api/seramet/realtime/events?tenant=${encodeURIComponent(tenantId)}&branchId=${encodeURIComponent(branchId)}`;
-    const stream = new EventSource(endpoint, { withCredentials: true });
-    let streamHealthy = false;
+    const query = `tenant=${encodeURIComponent(tenantId)}&branchId=${encodeURIComponent(branchId)}`;
+    let transportHealthy = false;
     let lastFallbackRefresh = 0;
-    // SSE reconnects can repeat recent events: dispatch each server event once
-    // per active branch stream, without a separate expensive transaction fetch.
+    let stopped = false;
+    // Reconnects (and the SSE fallback) can repeat recent events: dispatch each once.
     const seenEventIds = new Set<string>();
     const requestRefresh = (reason: string) => {
-      // A 25-second SSE stream reconnect should not trigger repeated competing
-      // full transaction refreshes on an otherwise healthy cashier terminal.
+      // A transport reconnect should not trigger repeated competing full transaction
+      // refreshes on an otherwise healthy cashier terminal.
       const now = Date.now();
       if (reason !== "focus" && reason !== "online" && now - lastFallbackRefresh < 5_000) {
         return;
@@ -575,54 +573,149 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       lastFallbackRefresh = now;
       window.dispatchEvent(new CustomEvent("seramet:refresh", { detail: { reason } }));
     };
-    const message = (event: MessageEvent<string>) => {
-      try {
-        const detail = JSON.parse(event.data) as Record<string, unknown>;
-        const eventId = typeof detail["id"] === "string" ? detail["id"] : "";
-        if (eventId) {
-          if (seenEventIds.has(eventId)) return;
-          seenEventIds.add(eventId);
-          if (seenEventIds.size > 256) {
-            const oldest = seenEventIds.values().next().value;
-            if (oldest) seenEventIds.delete(oldest);
-          }
+    const deliver = (detail: Record<string, unknown>) => {
+      const eventId = typeof detail["id"] === "string" ? detail["id"] : "";
+      if (eventId) {
+        if (seenEventIds.has(eventId)) return;
+        seenEventIds.add(eventId);
+        if (seenEventIds.size > 256) {
+          const oldest = seenEventIds.values().next().value;
+          if (oldest) seenEventIds.delete(oldest);
         }
-        window.dispatchEvent(new CustomEvent("seramet:realtime", { detail }));
-      } catch {
-        // Ignore malformed transport data; authoritative refresh remains available.
       }
+      window.dispatchEvent(new CustomEvent("seramet:realtime", { detail }));
     };
-    stream.addEventListener("seramet", message as EventListener);
-    stream.onopen = () => {
-      streamHealthy = true;
+
+    let closeTransport = () => {};
+
+    // Fallback for one release: the 25-second SSE stream the server polls for.
+    const startEventSource = () => {
+      if (stopped || typeof EventSource === "undefined") return;
+      const stream = new EventSource(`/api/seramet/realtime/events?${query}`, {
+        withCredentials: true,
+      });
+      stream.addEventListener("seramet", ((event: MessageEvent<string>) => {
+        try {
+          deliver(JSON.parse(event.data) as Record<string, unknown>);
+        } catch {
+          // Ignore malformed transport data; authoritative refresh remains available.
+        }
+      }) as EventListener);
+      stream.onopen = () => {
+        transportHealthy = true;
+      };
+      stream.addEventListener("unavailable", () => {
+        transportHealthy = false;
+        requestRefresh("stream-unavailable");
+      });
+      stream.onerror = () => {
+        // The server routinely closes long-lived SSE responses for reconnect.
+        transportHealthy = false;
+      };
+      closeTransport = () => stream.close();
     };
-    stream.addEventListener("unavailable", () => {
-      streamHealthy = false;
-      requestRefresh("stream-unavailable");
-    });
-    stream.onerror = () => {
-      // The server routinely closes long-lived SSE responses for reconnect.
-      // A brief reconnect is not a reason to reload every transaction snapshot.
-      streamHealthy = false;
+
+    // Server push: one hibernating WebSocket per tab. On reconnect the cursor of the last
+    // event seen lets the server replay exactly what was missed.
+    let cursor: string | undefined;
+    let failedOpens = 0;
+    let retryDelay = 1_000;
+    let reconnectTimer: number | undefined;
+    const startWebSocket = () => {
+      if (stopped) return;
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const resume = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(
+          `${protocol}//${window.location.host}/api/seramet/realtime/socket?${query}${resume}`,
+        );
+      } catch {
+        startEventSource();
+        return;
+      }
+      let opened = false;
+      let lastMessageAt = Date.now();
+      const heartbeat = window.setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        // A dead connection (sleeping laptop, dropped Wi-Fi) is noticed within a minute.
+        if (Date.now() - lastMessageAt > 65_000) {
+          socket.close();
+          return;
+        }
+        socket.send("ping");
+      }, 30_000);
+      socket.onopen = () => {
+        opened = true;
+        failedOpens = 0;
+        retryDelay = 1_000;
+        transportHealthy = true;
+      };
+      socket.onmessage = (message: MessageEvent<unknown>) => {
+        lastMessageAt = Date.now();
+        if (typeof message.data !== "string" || message.data === "pong") return;
+        try {
+          const data = JSON.parse(message.data) as {
+            type?: string;
+            cursor?: string;
+            event?: Record<string, unknown>;
+          };
+          if (data.type === "event" && data.event) {
+            if (data.cursor && (!cursor || data.cursor > cursor)) cursor = data.cursor;
+            deliver(data.event);
+          } else if (data.type === "ready") {
+            if (data.cursor && (!cursor || data.cursor > cursor)) cursor = data.cursor;
+          } else if (data.type === "resync") {
+            requestRefresh("realtime-resync");
+          }
+        } catch {
+          // Ignore malformed transport data; authoritative refresh remains available.
+        }
+      };
+      socket.onclose = () => {
+        window.clearInterval(heartbeat);
+        transportHealthy = false;
+        if (stopped) return;
+        if (!opened) failedOpens += 1;
+        // The upgrade is refused (no push on this server, old proxy): use the SSE stream.
+        if (failedOpens >= 2) {
+          startEventSource();
+          return;
+        }
+        // Jitter spreads the reconnects of every open device after a deploy.
+        reconnectTimer = window.setTimeout(startWebSocket, retryDelay + Math.random() * 1_000);
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      };
+      closeTransport = () => {
+        window.clearInterval(heartbeat);
+        socket.onclose = null;
+        socket.close();
+      };
     };
+
+    if (typeof WebSocket !== "undefined") startWebSocket();
+    else startEventSource();
+
     const focus = () => requestRefresh("focus");
     const visible = () => {
       if (document.visibilityState === "visible") requestRefresh("visible");
     };
     const interval = window.setInterval(() => {
       // Poll only when the realtime transport is unavailable, never alongside
-      // an established SSE connection.
-      if (!streamHealthy && document.visibilityState === "visible" && navigator.onLine) {
+      // an established connection.
+      if (!transportHealthy && document.visibilityState === "visible" && navigator.onLine) {
         requestRefresh("fallback-poll");
       }
     }, 30_000);
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", visible);
     return () => {
+      stopped = true;
       window.clearInterval(interval);
+      window.clearTimeout(reconnectTimer);
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", visible);
-      stream.close();
+      closeTransport();
     };
   }, [branchId, tenantId]);
   return null;
