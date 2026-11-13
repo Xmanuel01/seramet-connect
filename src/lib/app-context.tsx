@@ -618,10 +618,12 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
     // Server push: one hibernating WebSocket per tab. On reconnect the cursor of the last
     // event seen lets the server replay exactly what was missed.
     let cursor: string | undefined;
-    let failedOpens = 0;
     let everOpened = false;
-    let retryDelay = 1_000;
+    let retryDelay = 2_000;
     let reconnectTimer: number | undefined;
+    // A hidden tab does not hold a socket after it drops: it reconnects (and catches up from
+    // its cursor) when shown again, so a deploy only reconnects the screens people look at.
+    let reconnectWhenVisible = false;
     const startWebSocket = () => {
       if (stopped) return;
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -655,8 +657,7 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
         opened = true;
         everOpened = true;
         window.clearTimeout(openTimer);
-        failedOpens = 0;
-        retryDelay = 1_000;
+        retryDelay = 2_000;
         transportHealthy = true;
       };
       socket.onmessage = (message: MessageEvent<unknown>) => {
@@ -685,16 +686,18 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
         window.clearTimeout(openTimer);
         transportHealthy = false;
         if (stopped) return;
-        if (!opened) failedOpens += 1;
-        // The upgrade is refused (no push on this server, old proxy): use the SSE stream at
-        // once if push never worked in this tab, or after repeated failures if it did.
-        if ((!everOpened && failedOpens >= 1) || failedOpens >= 3) {
+        // Push never worked in this tab (no hub on this server, a proxy, a dev server): use
+        // the SSE stream. Once push has worked, keep retrying it; the 30-second fallback
+        // refresh covers the gap, and no tab is left on the costlier stream.
+        if (!everOpened) {
           startEventSource();
           return;
         }
-        // Jitter spreads the reconnects of every open device after a deploy.
-        reconnectTimer = window.setTimeout(startWebSocket, retryDelay + Math.random() * 1_000);
-        retryDelay = Math.min(retryDelay * 2, 30_000);
+        if (document.visibilityState === "hidden") {
+          reconnectWhenVisible = true;
+          return;
+        }
+        scheduleReconnect(opened);
       };
       closeTransport = () => {
         window.clearInterval(heartbeat);
@@ -704,12 +707,29 @@ function RealtimeBridge({ tenantId, branchId }: { tenantId: string; branchId: st
       };
     };
 
+    const scheduleReconnect = (droppedAfterOpen: boolean) => {
+      window.clearTimeout(reconnectTimer);
+      // A connection that was working dropped: usually a deploy restarting every hub, so
+      // every device of every restaurant reconnects at once. Spread them over ~8 seconds;
+      // after that, back off exponentially (with jitter) while the server stays unreachable.
+      const delay = droppedAfterOpen
+        ? 500 + Math.random() * 7_500
+        : retryDelay + Math.random() * 1_000;
+      if (!droppedAfterOpen) retryDelay = Math.min(retryDelay * 2, 30_000);
+      reconnectTimer = window.setTimeout(startWebSocket, delay);
+    };
+
     if (typeof WebSocket !== "undefined") startWebSocket();
     else startEventSource();
 
     const focus = () => requestRefresh("focus");
     const visible = () => {
-      if (document.visibilityState === "visible") requestRefresh("visible");
+      if (document.visibilityState !== "visible") return;
+      requestRefresh("visible");
+      if (reconnectWhenVisible) {
+        reconnectWhenVisible = false;
+        scheduleReconnect(false);
+      }
     };
     const interval = window.setInterval(() => {
       // Poll only when the realtime transport is unavailable, never alongside

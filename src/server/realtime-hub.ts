@@ -34,8 +34,19 @@ export type RealtimeHubStub = {
 
 export type RealtimeHubNamespace = {
   idFromName(name: string): unknown;
-  get(id: unknown): RealtimeHubStub;
+  get(id: unknown, options?: { locationHint?: string }): RealtimeHubStub;
 };
+
+/**
+ * A Durable Object lives where it is first created. Every caller (requests placed next to
+ * the database, queue and cron runs anywhere) asks for Western Europe, so each restaurant's
+ * hub sits beside the Workers and the database (Supabase eu-west-1) that notify it.
+ */
+const HUB_LOCATION = { locationHint: "weur" };
+
+function hubStub(hub: RealtimeHubNamespace, tenantId: string) {
+  return hub.get(hub.idFromName(realtimeHubName(tenantId)), HUB_LOCATION);
+}
 
 /** What an authenticated socket may see, fixed at upgrade time and kept across hibernation. */
 export type RealtimeSocketScope = {
@@ -105,14 +116,15 @@ export async function notifyRealtimeHub(
 ) {
   if (!hub || !events.length) return;
   try {
-    const stub = hub.get(hub.idFromName(realtimeHubName(tenantId)));
+    const stub = hubStub(hub, tenantId);
     const response = await withTimeout(
       stub.fetch("https://realtime-hub/publish", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ tenantId, events }),
       }),
-      2_000,
+      // The write has committed; never hold its response long for a push.
+      1_500,
     );
     await response.body?.cancel();
   } catch (error) {
@@ -121,6 +133,17 @@ export async function notifyRealtimeHub(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/**
+ * JSON as a header value: JSON.stringify already escapes control characters, and escaping
+ * everything outside ASCII keeps the value legal without the 2-3x growth of percent-encoding.
+ */
+function headerJson(value: unknown) {
+  return JSON.stringify(value).replace(
+    /[^ -~]/g,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number) {
@@ -146,21 +169,20 @@ export function connectToRealtimeHub(
   scope: RealtimeSocketScope,
   replay: RealtimeReplay,
 ) {
-  let encodedReplay = JSON.stringify(replay);
+  let encodedReplay = headerJson(replay);
   if (encodedReplay.length > REPLAY_HEADER_LIMIT) {
-    encodedReplay = JSON.stringify({ events: [], truncated: true, cursor: replay.cursor });
+    encodedReplay = headerJson({ events: [], truncated: true, cursor: replay.cursor });
   }
   const headers = new Headers({
     upgrade: "websocket",
-    "x-seramet-realtime-scope": encodeURIComponent(JSON.stringify(scope)),
-    "x-seramet-realtime-replay": encodeURIComponent(encodedReplay),
+    "x-seramet-realtime-scope": headerJson(scope),
+    "x-seramet-realtime-replay": encodedReplay,
   });
   for (const name of ["sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  const stub = hub.get(hub.idFromName(realtimeHubName(scope.tenantId)));
-  return stub.fetch("https://realtime-hub/connect", { headers });
+  return hubStub(hub, scope.tenantId).fetch("https://realtime-hub/connect", { headers });
 }
 
 // ---------------------------------------------------------------------------------------
@@ -244,14 +266,23 @@ export class SerametRealtimeHub {
     }
     if (this.recent.length > RECENT_LIMIT) this.recent.splice(0, this.recent.length - RECENT_LIMIT);
 
+    // Serialise each event once, however many devices receive it.
+    const messages = events.map((event) => ({
+      event,
+      text: JSON.stringify({
+        type: "event",
+        cursor: realtimeCursor(event),
+        event,
+      } satisfies RealtimeServerMessage),
+    }));
     let delivered = 0;
     for (const socket of this.state.getWebSockets()) {
       const scope = socketScope(socket);
       // Defence in depth: the object name is the tenant, and so is every socket's scope.
       if (!scope || scope.tenantId !== tenantId) continue;
-      for (const event of events) {
-        if (!eventVisibleTo(event, scope)) continue;
-        if (send(socket, { type: "event", cursor: realtimeCursor(event), event })) delivered += 1;
+      for (const message of messages) {
+        if (!eventVisibleTo(message.event, scope)) continue;
+        if (sendText(socket, message.text)) delivered += 1;
       }
     }
     return Response.json({ ok: true, delivered });
@@ -323,8 +354,12 @@ function socketScope(socket: HubSocket) {
 }
 
 function send(socket: HubSocket, message: RealtimeServerMessage) {
+  return sendText(socket, JSON.stringify(message));
+}
+
+function sendText(socket: HubSocket, text: string) {
   try {
-    socket.send(JSON.stringify(message));
+    socket.send(text);
     return true;
   } catch {
     return false;
@@ -335,7 +370,7 @@ function parseHeader<T>(request: Request, name: string): T | null {
   const value = request.headers.get(name);
   if (!value) return null;
   try {
-    return JSON.parse(decodeURIComponent(value)) as T;
+    return JSON.parse(value) as T;
   } catch {
     return null;
   }

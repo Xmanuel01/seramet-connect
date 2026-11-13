@@ -219,6 +219,23 @@ describe("realtime hub fan-out", () => {
     await expect(notifyRealtimeHub(undefined, "tenant-a", [event()])).resolves.toBeUndefined();
   });
 
+  it("carries a full replay with non-ASCII text to the hub intact", async () => {
+    const hub = new FakeNamespace();
+    const replayed = Array.from({ length: 50 }, (_, index) =>
+      event({
+        createdAt: new Date(Date.UTC(2026, 10, 12, 10, 0, index)).toISOString(),
+        payload: { revision: index, note: "Café ☕ – שלום" },
+      }),
+    );
+    const socket = await openSocket(hub, scope({ actorId: "åctor-✓", branchId: "branch-a1" }), {
+      events: replayed,
+      truncated: false,
+      cursor: "2026-11-12T09:59:59.000Z|00000000-0000-0000-0000-000000000000",
+    });
+    expect(socket.messages()[0]).not.toEqual({ type: "resync" });
+    expect(socket.events()).toEqual(replayed);
+  });
+
   it("answers heartbeats", () => {
     const hubObject = new SerametRealtimeHub(new FakeState());
     const socket = new FakeSocket();
@@ -343,12 +360,22 @@ describe.sequential("realtime catch-up from the event log", () => {
     await publish(hub, tenantA, "order-3");
 
     const second = await reconnect(hub, scopeA, cursor);
-    expect(second.events().map((item) => item.entityId)).toEqual(["order-2", "order-3"]);
+    // Exactly the missed events, in log order. Writes in the same millisecond are ordered by
+    // id, as the log query orders them, so compare the set and check the cursors ascend.
+    const replayed = second.messages().filter((message) => message.type === "event");
+    expect(replayed.map((message) => message.event.entityId).sort()).toEqual([
+      "order-2",
+      "order-3",
+    ]);
+    const cursors = replayed.map((message) => message.cursor);
+    expect(cursors).toEqual([...cursors].sort());
+    expect(cursors.every((value) => value > cursor)).toBe(true);
     const ready = second.messages().at(-1);
-    expect(ready?.type).toBe("ready");
+    expect(ready).toEqual({ type: "ready", cursor: cursors.at(-1) });
 
     await publish(hub, tenantA, "order-4");
-    expect(second.events().map((item) => item.entityId)).toEqual(["order-2", "order-3", "order-4"]);
+    expect(second.events().map((item) => item.entityId)).toHaveLength(3);
+    expect(second.events().at(-1)?.entityId).toBe("order-4");
   });
 
   it("asks for a snapshot reload when the gap exceeds the replay", async () => {
