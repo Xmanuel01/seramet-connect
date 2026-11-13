@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangle, Clock3, CloudCog, RefreshCw, Store } from "lucide-react";
+import { AlertTriangle, Clock3, RefreshCw, Store } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
 import { formatMoney } from "@/lib/currency";
+import { marketplaceProgress } from "@/integrations/marketplace/order-progress";
+import { businessDateForTimestamp } from "@/lib/business-date";
 import type {
   MarketplaceSyncPreview,
   NormalizedMarketplaceMenu,
@@ -51,7 +53,8 @@ const emptyDiagnostics: Diagnostics = {
 };
 
 function MarketplaceControlCentre() {
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch } = useAppContext();
+  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, timeZone } =
+    useAppContext();
   const { state } = useTransactionEngine();
   const configuration = useMemo(() => getConfigurationRepository(), []);
   const providers = useMemo(
@@ -67,7 +70,12 @@ function MarketplaceControlCentre() {
         ),
     [activeTenantId, branchId, configuration, providers],
   );
-  const [tab, setTab] = useState<"ORDERS" | "MENU_SYNC" | "EXCEPTIONS">("ORDERS");
+  const [tab, setTab] = useState<"ORDERS" | "MENU_SYNC" | "RECONCILIATION" | "EXCEPTIONS">(
+    "ORDERS",
+  );
+  const [history, setHistory] = useState(false);
+  const [search, setSearch] = useState("");
+  const [now, setNow] = useState(() => new Date());
   const [providerFilter, setProviderFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [selectedConnectionId, setSelectedConnectionId] = useState(connections[0]?.id ?? "");
@@ -109,6 +117,11 @@ function MarketplaceControlCentre() {
     void loadDiagnostics();
   }, [loadDiagnostics]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const connectionScopeKey = connections.map((connection) => connection.id).join("|");
   useEffect(() => {
     if (connections.some((connection) => connection.id === selectedConnectionId)) return;
@@ -130,11 +143,12 @@ function MarketplaceControlCentre() {
         (candidate) => candidate.connectionId === source.connectionId,
       );
       const receivedAt = new Date(source.receivedAt).getTime();
-      const ageMinutes = Math.max(0, Math.floor((Date.now() - receivedAt) / 60_000));
+      const ageMinutes = Math.max(0, Math.floor((now.getTime() - receivedAt) / 60_000));
       const connection = connections.find((candidate) => candidate.id === source.connectionId);
       const slaMinutes = Number(connection?.configuration["slaWarningMinutes"] ?? 20);
       return {
         ...order,
+        progress: marketplaceProgress(order, diagnostics.outbox),
         source,
         provider,
         receivable,
@@ -146,7 +160,19 @@ function MarketplaceControlCentre() {
       };
     })
     .filter((order) => providerFilter === "ALL" || order.source.connectionId === providerFilter)
-    .filter((order) => statusFilter === "ALL" || statusGroup(order.status) === statusFilter);
+    .filter((order) => statusFilter === "ALL" || order.progress.progress === statusFilter)
+    .filter(
+      (order) =>
+        history ||
+        !order.progress.closed ||
+        businessDateForTimestamp(order.source.receivedAt, timeZone) ===
+          businessDateForTimestamp(now, timeZone),
+    )
+    .filter((order) =>
+      `${order.id} ${order.source.externalOrderId} ${order.source.providerDisplayReference ?? ""} ${order.customer}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+    );
 
   const totalReceivable = state.marketplaceReceivables
     .filter((item) => matchesBranch(item.branchId))
@@ -216,6 +242,7 @@ function MarketplaceControlCentre() {
             ? {
                 branchId,
                 internalItemId: item.internalId,
+                connectionIds: [selectedConnectionId],
                 available: item.available,
                 quantityAvailable: item.quantityAvailable,
               }
@@ -251,13 +278,6 @@ function MarketplaceControlCentre() {
       `Store ${status.toLowerCase().replace("_", " ")} queued.`,
     );
 
-  const runWorker = () =>
-    postAction(
-      "/api/seramet/integrations/workers/outbox",
-      { limit: 100 },
-      "Due provider work processed.",
-    );
-
   const recoverOrders = () =>
     postAction(
       "/api/seramet/integrations/workers/recover-marketplace-orders",
@@ -285,8 +305,8 @@ function MarketplaceControlCentre() {
       title="Marketplace"
       subtitle={`Two-way order and catalog operations - ${branchLabel}`}
       actions={
-        <Btn onClick={() => void runWorker()} disabled={working}>
-          <CloudCog className="h-4 w-4" /> Process queue
+        <Btn onClick={() => void loadDiagnostics()} disabled={working}>
+          <RefreshCw className="h-4 w-4" /> Refresh
         </Btn>
       }
     >
@@ -307,13 +327,20 @@ function MarketplaceControlCentre() {
       </div>
 
       <div className="mt-4 flex gap-1 overflow-x-auto border-b border-border pb-2">
-        {(["ORDERS", "MENU_SYNC", "EXCEPTIONS"] as const).map((item) => (
+        {(["ORDERS", "MENU_SYNC", "RECONCILIATION", "EXCEPTIONS"] as const).map((item) => (
           <button
             key={item}
             onClick={() => setTab(item)}
             className={`h-9 whitespace-nowrap rounded-md px-3 text-[12px] font-semibold ${tab === item ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary"}`}
           >
-            {item.replace("_", " ")}
+            {
+              {
+                ORDERS: "Orders",
+                MENU_SYNC: "Menu",
+                RECONCILIATION: "Reconciliation",
+                EXCEPTIONS: "Needs attention",
+              }[item]
+            }
           </button>
         ))}
       </div>
@@ -337,16 +364,32 @@ function MarketplaceControlCentre() {
               onChange={setStatusFilter}
               options={[
                 "ALL",
-                "NEW",
-                "ACCEPTED",
-                "PREPARING",
-                "READY",
-                "DISPATCHED",
-                "COMPLETED",
-                "CANCELLED",
-                "EXCEPTION",
+                "Review",
+                "Accepted",
+                "Scheduled",
+                "Kitchen queued",
+                "Preparing",
+                "Ready",
+                "Collected",
+                "Fulfilled",
+                "Cancelled",
               ].map((value) => ({ value, label: value.replace("_", " ") }))}
             />
+            <input
+              aria-label="Search marketplace orders"
+              placeholder="Order reference or customer"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="h-9 min-w-0 rounded-md border border-border bg-card px-3 text-sm"
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={history}
+                onChange={(event) => setHistory(event.target.checked)}
+              />{" "}
+              All history
+            </label>
           </div>
           <Panel>
             <PanelHead
@@ -364,7 +407,8 @@ function MarketplaceControlCentre() {
                   { l: "Amount", r: true },
                   "Received",
                   "Prep timer",
-                  "Status",
+                  "Kitchen / handover",
+                  "Provider confirmation",
                   "Payment",
                   "Health",
                 ]}
@@ -383,7 +427,10 @@ function MarketplaceControlCentre() {
                       {order.ageMinutes} min
                     </TD>
                     <TD>
-                      <Status>{statusGroup(order.status)}</Status>
+                      <Status>{order.progress.progress}</Status>
+                    </TD>
+                    <TD>
+                      <Status>{order.progress.provider}</Status>
                     </TD>
                     <TD>
                       <Status>{order.receivable?.status ?? order.paymentStatus}</Status>
@@ -395,7 +442,7 @@ function MarketplaceControlCentre() {
                 ))}
                 {!marketplaceOrders.length && (
                   <tr>
-                    <TD colSpan={10} className="text-muted-foreground">
+                    <TD colSpan={11} className="text-muted-foreground">
                       No marketplace orders match these filters.
                     </TD>
                   </tr>
@@ -415,9 +462,10 @@ function MarketplaceControlCentre() {
                         {order.id} · {order.customer}
                       </div>
                     </div>
-                    <Status>{statusGroup(order.status)}</Status>
+                    <Status>{order.progress.progress}</Status>
                   </div>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-[11px]">
+                    <Mini label="Provider confirmation" value={order.progress.provider} />
                     <Mini label="Amount" value={formatMoney(order.total)} />
                     <Mini
                       label="Prep"
@@ -615,6 +663,54 @@ function MarketplaceControlCentre() {
         </div>
       )}
 
+      {tab === "RECONCILIATION" && (
+        <Panel className="mt-4">
+          <PanelHead title="Marketplace balances" sub={branchLabel} />
+          <div className="overflow-x-auto">
+            <DataTable cols={["Marketplace", "Gross", "Settled", "Outstanding", "Open balances"]}>
+              {connections.map((connection) => {
+                const balances = state.marketplaceReceivables.filter(
+                  (balance) =>
+                    matchesBranch(balance.branchId) &&
+                    balance.connectionId === connection.id &&
+                    balance.status !== "CANCELLED",
+                );
+                return (
+                  <tr key={connection.id}>
+                    <TD>{connection.displayName}</TD>
+                    <TD>
+                      {formatMoney(balances.reduce((sum, balance) => sum + balance.grossAmount, 0))}
+                    </TD>
+                    <TD>
+                      {formatMoney(
+                        balances.reduce((sum, balance) => sum + balance.settledAmount, 0),
+                      )}
+                    </TD>
+                    <TD>
+                      {formatMoney(
+                        balances.reduce((sum, balance) => sum + balance.outstandingAmount, 0),
+                      )}
+                    </TD>
+                    <TD>{balances.filter((balance) => balance.outstandingAmount > 0).length}</TD>
+                  </tr>
+                );
+              })}
+            </DataTable>
+          </div>
+          <div className="flex flex-wrap gap-4 p-4">
+            <a href="/payments" className="text-primary">
+              Payments and reconciliation
+            </a>
+            <a href="/invoices" className="text-primary">
+              Invoices
+            </a>
+            <a href="/receipts" className="text-primary">
+              Receipts
+            </a>
+          </div>
+        </Panel>
+      )}
+
       {tab === "EXCEPTIONS" && (
         <Panel className="mt-4">
           <PanelHead
@@ -720,14 +816,4 @@ function relativeAge(minutes: number) {
   if (minutes < 1) return "Now";
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ago`;
-}
-function statusGroup(status: string) {
-  if (status === "HELD" || status === "OPEN") return "NEW";
-  if (status === "SENT_TO_KITCHEN") return "ACCEPTED";
-  if (status === "IN_PROGRESS") return "PREPARING";
-  if (status === "READY") return "READY";
-  if (status === "SERVED") return "COMPLETED";
-  if (status === "CANCELLED") return "CANCELLED";
-  if (status === "PAID") return "COMPLETED";
-  return status.replaceAll("_", " ");
 }

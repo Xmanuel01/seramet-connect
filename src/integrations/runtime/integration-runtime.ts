@@ -587,6 +587,27 @@ export class IntegrationRuntime {
         "Bidirectional synchronization is not enabled without provider conflict guarantees",
       );
     const { menu, preview } = await this.previewMenuSync(tenantId, connectionId);
+    const existingMappings = await this.dependencies.repository.listMappings(
+      tenantId,
+      connectionId,
+    );
+    const exportedGroups = new Set(menu.modifierGroups.map((group) => group.internalId));
+    const exportedModifiers = new Set(
+      menu.modifierGroups.flatMap((group) =>
+        group.modifiers.map((modifier) => modifier.internalId),
+      ),
+    );
+    if (
+      existingMappings.some(
+        (mapping) =>
+          mapping.status !== "DISABLED" &&
+          ((mapping.resourceType === "MODIFIER_GROUP" && !exportedGroups.has(mapping.internalId)) ||
+            (mapping.resourceType === "MODIFIER" && !exportedModifiers.has(mapping.internalId))),
+      )
+    )
+      throw new IntegrationValidationError(
+        "Menu publishing would remove mapped modifiers. Preserve those choices before publishing.",
+      );
     if (preview.menuHash !== input.confirmedMenuHash)
       throw new IntegrationValidationError("Menu changed after preview; preview it again");
     if (preview.counts.conflicts)
@@ -677,19 +698,28 @@ export class IntegrationRuntime {
     internalItemId: string;
     available: boolean;
     quantityAvailable?: number;
+    manual?: boolean;
+    connectionIds?: string[];
   }) {
-    const connections = this.marketplaceConnections(input.tenantId, input.branchId).filter(
-      (connection) => {
-        const config = parseMarketplaceConnectionConfig(connection.configuration);
-        return (
-          config.availabilitySyncEnabled &&
-          config.auto86Enabled &&
-          this.dependencies.registry
-            .resolve(connection)
-            .definition.capabilities.includes("SYNC_AVAILABILITY")
-        );
-      },
-    );
+    const eligible = this.marketplaceConnections(input.tenantId, input.branchId);
+    if (input.connectionIds?.some((id) => !eligible.some((connection) => connection.id === id)))
+      throw new IntegrationValidationError("Selected marketplace is not enabled for this branch");
+    if (
+      input.quantityAvailable !== undefined &&
+      (!Number.isInteger(input.quantityAvailable) || input.quantityAvailable < 0)
+    )
+      throw new IntegrationValidationError("Available quantity must be a non-negative integer");
+    const connections = eligible.filter((connection) => {
+      const config = parseMarketplaceConnectionConfig(connection.configuration);
+      return (
+        config.availabilitySyncEnabled &&
+        (input.manual || config.auto86Enabled) &&
+        (!input.connectionIds || input.connectionIds.includes(connection.id)) &&
+        this.dependencies.registry
+          .resolve(connection)
+          .definition.capabilities.includes("SYNC_AVAILABILITY")
+      );
+    });
     const results = [];
     for (const connection of connections) {
       const mapping = (
@@ -698,7 +728,7 @@ export class IntegrationRuntime {
         (candidate) =>
           candidate.resourceType === "ITEM" &&
           candidate.internalId === input.internalItemId &&
-          candidate.status !== "DISABLED",
+          ["MAPPED", "AUTO_MATCHED"].includes(candidate.status),
       );
       if (!mapping) continue;
       results.push(
@@ -1153,11 +1183,19 @@ export class IntegrationRuntime {
 
   async releaseDueScheduledOrders(tenantId: string, at = new Date()) {
     const state = await this.dependencies.transactions.loadState(tenantId);
+    const outbox = await this.dependencies.repository.listOutbox(tenantId);
     let next = state;
     const released: string[] = [];
     for (const order of state.orders) {
       if (
         order.status !== "HELD" ||
+        !outbox.some(
+          (record) =>
+            record.connectionId === order.externalSource?.connectionId &&
+            record.resourceId === order.externalSource?.externalOrderId &&
+            record.eventType === "ORDER_ACCEPTED" &&
+            record.status === "PROCESSED",
+        ) ||
         !order.externalSource?.scheduledReleaseAt ||
         new Date(order.externalSource.scheduledReleaseAt).getTime() > at.getTime()
       )

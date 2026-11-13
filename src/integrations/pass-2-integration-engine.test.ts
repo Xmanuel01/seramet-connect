@@ -767,6 +767,78 @@ describe("Pass 2 failure injection", () => {
 });
 
 describe("Pass 3 marketplace acceptance", () => {
+  it("blocks a full menu upload that would drop known modifiers", async () => {
+    const f = fixture();
+    await f.ready;
+    const { preview } = await f.runtime.previewMenuSync(DEMO_TENANT_ID, connectionId);
+    await expect(
+      f.runtime.queueMenuSync(DEMO_TENANT_ID, connectionId, {
+        confirmedMenuHash: preview.menuHash,
+        allowDestructive: true,
+      }),
+    ).rejects.toThrow("remove mapped modifiers");
+    expect(await f.repository.listOutbox(DEMO_TENANT_ID)).toHaveLength(0);
+  });
+  it("never releases a manual scheduled order merely because its preparation time arrived", async () => {
+    const f = fixture({}, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(
+      webhook(order({ scheduledFor: new Date(Date.now() + 3_600_000).toISOString() })),
+    );
+    expect(
+      await f.runtime.releaseDueScheduledOrders(DEMO_TENANT_ID, new Date(Date.now() + 7_200_000)),
+    ).toEqual({ released: [] });
+    expect(f.transactions.state.orders[0]?.status).toBe("HELD");
+  });
+
+  it("holds an auto-accepted scheduled order until the provider acknowledgement succeeds", async () => {
+    const f = fixture();
+    await f.ready;
+    await f.runtime.handleWebhook(
+      webhook(order({ scheduledFor: new Date(Date.now() + 3_600_000).toISOString() })),
+    );
+    expect(
+      await f.runtime.releaseDueScheduledOrders(DEMO_TENANT_ID, new Date(Date.now() + 7_200_000)),
+    ).toEqual({ released: [] });
+  });
+
+  it("allows explicit manual availability without enabling stock automation", async () => {
+    const f = fixture();
+    await f.ready;
+    const connection = f.configuration
+      .listConnections(DEMO_TENANT_ID)
+      .find((item) => item.id === connectionId)!;
+    f.configuration.upsertConnection(DEMO_TENANT_ID, {
+      ...connection,
+      configuration: { ...connection.configuration, auto86Enabled: false },
+    });
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId,
+      available: false,
+    };
+    expect(await f.runtime.queueAvailabilitySync(input)).toEqual([]);
+    expect(
+      await f.runtime.queueAvailabilitySync({
+        ...input,
+        manual: true,
+        connectionIds: [connectionId],
+      }),
+    ).toHaveLength(1);
+    expect(f.transactions.state.orders).toHaveLength(0);
+    await expect(
+      f.runtime.queueAvailabilitySync({
+        ...input,
+        manual: true,
+        connectionIds: ["foreign-connection"],
+      }),
+    ).rejects.toThrow("not enabled for this branch");
+    await expect(
+      f.runtime.queueAvailabilitySync({ ...input, quantityAvailable: -1 }),
+    ).rejects.toThrow("non-negative integer");
+  });
+
   it("AA. posts marketplace-paid orders to a provider receivable without cash settlement", async () => {
     const f = fixture();
     await f.ready;
@@ -1019,6 +1091,7 @@ describe("Pass 3 marketplace acceptance", () => {
       webhook(order({ providerOrderId: "scheduled-order", scheduledFor }), "scheduled-event"),
     );
     expect(f.transactions.state.orders[0]?.status).toBe("HELD");
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
     await f.runtime.releaseDueScheduledOrders(DEMO_TENANT_ID, new Date(Date.now() + 61 * 60_000));
     expect(f.transactions.state.orders[0]?.status).toBe("SENT_TO_KITCHEN");
 
@@ -1075,6 +1148,8 @@ describe("Pass 3 marketplace acceptance", () => {
     const controls: TestDeliveryControls = { menuSyncs: [] };
     const f = fixture(controls);
     await f.ready;
+    // This synchronization case is a plain menu without modifier choices.
+    await f.repository.deleteMapping(DEMO_TENANT_ID, "mapping-modifier");
     const product = products[0]!;
     const stamp = new Date().toISOString();
     await f.repository.upsertMapping({

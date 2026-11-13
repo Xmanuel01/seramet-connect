@@ -492,15 +492,25 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         internalItemId?: string;
         available?: boolean;
         quantityAvailable?: number;
+        connectionIds?: string[];
       }>(request);
       if (!input.branchId || !input.internalItemId || typeof input.available !== "boolean")
         throw new SerametHttpError(400, "branchId, internalItemId and available are required");
       authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      if (
+        input.connectionIds !== undefined &&
+        (!Array.isArray(input.connectionIds) ||
+          !input.connectionIds.length ||
+          input.connectionIds.some((id) => typeof id !== "string" || !id))
+      )
+        throw new SerametHttpError(400, "Select at least one valid marketplace connection");
       const queued = await createIntegrationRuntime(env).queueAvailabilitySync({
         tenantId: actor.tenantId,
         branchId: input.branchId,
         internalItemId: input.internalItemId,
         available: input.available,
+        manual: true,
+        ...(input.connectionIds ? { connectionIds: input.connectionIds } : {}),
         ...(input.quantityAvailable === undefined
           ? {}
           : { quantityAvailable: input.quantityAvailable }),
