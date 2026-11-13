@@ -13,6 +13,36 @@ type QueryExecutor = {
   ): Promise<{ rows: T[]; rowCount: number | null }>;
 };
 
+// The database refuses a new connection when the runtime role or the server is at its
+// connection limit. That happens before any statement runs, so waiting briefly and asking again
+// is safe for reads and writes alike; without it the request failed and the page showed
+// "Try again" during a short burst.
+const capacityCodes = new Set(["53300", "53400", "57P03"]);
+const capacityMessage = /too many connections|remaining connection slots|too many clients/i;
+const capacityRetryDelaysMs = [50, 150, 400];
+
+export function isConnectionCapacityError(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && capacityCodes.has(code)) return true;
+  const message = error instanceof Error ? error.message : "";
+  return capacityMessage.test(message);
+}
+
+export async function retryConnectionCapacity<T>(
+  attempt: () => Promise<T>,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+): Promise<T> {
+  for (let retry = 0; ; retry++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      const delay = capacityRetryDelaysMs[retry];
+      if (delay === undefined || !isConnectionCapacityError(error)) throw error;
+      await wait(delay + Math.floor(Math.random() * delay));
+    }
+  }
+}
+
 /**
  * Compatibility adapter used while domain repositories retain the small D1-style statement
  * contract. SQL is executed by PostgreSQL through Hyperdrive; browser code never receives the
@@ -55,7 +85,7 @@ export class PostgresD1Database implements D1Database {
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    const client = await this.pool.connect();
+    const client = await retryConnectionCapacity(() => this.pool.connect());
     try {
       // Match D1's serialized writers: aggregate balance guards must not both
       // commit after reading the same stock, points or stored-value balance.
@@ -86,7 +116,9 @@ export class PostgresD1Database implements D1Database {
   }
 
   async exec(query: string): Promise<D1Result> {
-    const result = await this.pool.query(normalizePostgresSql(query));
+    const result = await retryConnectionCapacity(() =>
+      this.pool.query(normalizePostgresSql(query)),
+    );
     return { success: true, meta: { changes: result.rowCount ?? 0 } };
   }
 
@@ -108,14 +140,18 @@ class PostgresPreparedStatement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
-    const result = await this.executor.query(this.query, this.values);
+    const result = await retryConnectionCapacity(() =>
+      this.executor.query(this.query, this.values),
+    );
     const row = result.rows[0] as Record<string, unknown> | undefined;
     if (!row) return null;
     return (column ? (row[column] ?? null) : row) as T | null;
   }
 
   async all<T = unknown>(): Promise<D1Result<T>> {
-    const result = await this.executor.query(this.query, this.values);
+    const result = await retryConnectionCapacity(() =>
+      this.executor.query(this.query, this.values),
+    );
     return {
       success: true,
       results: result.rows as T[],

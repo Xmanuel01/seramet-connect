@@ -6,6 +6,7 @@ import {
   type TransactionMutationResult,
   type TransactionRepository,
 } from "@/lib/seramet-repository";
+import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
 import {
   createEmptyTransactionState,
   normalizeTransactionState,
@@ -2445,7 +2446,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     // A repository lives for one request, and a single read used to check the schema and
     // tenant up to three times, each a database round trip. Only a passing check is kept.
     if (this.verifiedTenants.has(tenantId)) return;
-    await this.migrate();
+    // The schema is checked once per server instance (see schema-check-cache).
+    await withCachedSchemaCheck(this.db, "at-least", () => this.migrate());
     const tenant = await this.db
       .prepare("SELECT id FROM tenants WHERE id = ? AND active = 1")
       .bind(tenantId)
