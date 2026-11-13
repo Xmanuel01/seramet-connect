@@ -184,7 +184,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
           "Idempotency key was already used for a different request",
         );
       }
-      return { state: cached.state, revision: cached.revision, duplicate: true };
+      return { ...(await this.replayState(input.actor.tenantId)), duplicate: true };
     }
 
     const {
@@ -227,7 +227,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
             "Idempotency key was already used for a different request",
           );
         }
-        return { state: duplicate.state, revision: duplicate.revision, duplicate: true };
+        return { ...(await this.replayState(input.actor.tenantId)), duplicate: true };
       }
       if (isConstraintError(error)) {
         throw new ServerOperationError(
@@ -334,7 +334,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     const nextKeys = new Set(nextEntities.map((item) => `${item.entityType}:${item.entityId}`));
     const stamp = new Date().toISOString();
     const newRevision = baseRevision + 1;
-    const responseJson = JSON.stringify({ state: input.state, revision: newRevision });
+    // Replay answers from the current state (see replayState), so a commit stores only
+    // its revision rather than another full copy of the tenant's state.
+    const responseJson = JSON.stringify({ revision: newRevision });
     const statements: D1PreparedStatement[] = [];
 
     statements.push(
@@ -455,7 +457,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         .bind(
           tenantId,
           newRevision,
-          JSON.stringify(input.state),
+          // The read model is kept for its revision (conflict detection and the snapshot
+          // cache); nothing reads its payload, so the full state is no longer copied there.
+          "{}",
           input.actor.id,
           stamp,
           baseRevision,
@@ -2460,18 +2464,22 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     await this.assertTenant(tenantId);
     const row = await this.db
       .prepare(
-        `SELECT request_hash, response_json, new_revision
-         FROM mutation_commits WHERE tenant_id = ? AND idempotency_key = ?`,
+        // response_json is not selected: older rows still hold a full state copy.
+        "SELECT request_hash FROM mutation_commits WHERE tenant_id = ? AND idempotency_key = ?",
       )
       .bind(tenantId, idempotencyKey)
-      .first<{ request_hash: string; response_json: string; new_revision: number }>();
-    if (!row) return null;
-    const parsed = JSON.parse(row.response_json) as { state: TransactionState; revision?: number };
-    return {
-      requestHash: row.request_hash,
-      state: normalizeTransactionState(parsed.state),
-      revision: parsed.revision ?? row.new_revision,
-    };
+      .first<{ request_hash: string }>();
+    return row ? { requestHash: row.request_hash } : null;
+  }
+
+  /**
+   * The answer to a replayed idempotency key: the current state and the revision it was read
+   * at. The original commit is part of it, because a key is only recorded by a commit that
+   * landed. Reusing the request's snapshot, this costs no extra history read.
+   */
+  private async replayState(tenantId: string) {
+    const { state, revision } = await this.loadStateAtStableRevision(tenantId);
+    return { state, revision };
   }
 
   private async authoritativeMutationInput(
