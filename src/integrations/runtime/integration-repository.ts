@@ -54,6 +54,10 @@ export type IntegrationRepository = {
     result: unknown,
   ): Promise<void>;
   upsertMapping(mapping: ExternalResourceMapping): Promise<void>;
+  replaceMapping(
+    expected: ExternalResourceMapping,
+    next: ExternalResourceMapping,
+  ): Promise<boolean>;
   getMapping(
     tenantId: string,
     connectionId: string,
@@ -180,6 +184,15 @@ class MemoryIntegrationRepository implements IntegrationRepository {
   }
   async upsertMapping(mapping: ExternalResourceMapping) {
     this.records.MAPPING.set(key(mapping.tenantId, mapping.id), clone(mapping));
+  }
+  async replaceMapping(expected: ExternalResourceMapping, next: ExternalResourceMapping) {
+    const current = this.records.MAPPING.get(key(expected.tenantId, expected.id));
+    if (JSON.stringify(current) !== JSON.stringify(expected)) return false;
+    this.records.MAPPING.set(
+      key(expected.tenantId, expected.id),
+      clone({ ...next, id: expected.id, tenantId: expected.tenantId }),
+    );
+    return true;
   }
   async getMapping(
     tenantId: string,
@@ -322,6 +335,22 @@ class MemoryIntegrationRepository implements IntegrationRepository {
 
 class D1IntegrationRepository implements IntegrationRepository {
   constructor(private db: D1Database) {}
+  async replaceMapping(expected: ExternalResourceMapping, next: ExternalResourceMapping) {
+    const result = await this.db
+      .prepare(
+        `UPDATE provider_mappings SET metadata_json = ?, sync_status = ?, updated_at = ? WHERE tenant_id = ? AND id = ? AND metadata_json = ?`,
+      )
+      .bind(
+        JSON.stringify({ ...next, id: expected.id, tenantId: expected.tenantId }),
+        next.syncStatus ?? null,
+        next.updatedAt,
+        expected.tenantId,
+        expected.id,
+        JSON.stringify(expected),
+      )
+      .run();
+    return result.meta?.changes === 1;
+  }
   async migrate() {
     const schema = await this.db
       .prepare("SELECT MAX(version) AS version FROM schema_migrations")
@@ -487,11 +516,14 @@ class D1IntegrationRepository implements IntegrationRepository {
     try {
       await this.insert("IDEMPOTENCY", stored);
       return { claimed: true, record: stored };
-    } catch {
-      return {
-        claimed: false,
-        record: (await this.getIdempotency(record.tenantId, record.connectionId, record.key))!,
-      };
+    } catch (error) {
+      const concurrent = await this.getIdempotency(
+        record.tenantId,
+        record.connectionId,
+        record.key,
+      );
+      if (!concurrent) throw error;
+      return { claimed: false, record: concurrent };
     }
   }
   async completeIdempotency(
@@ -546,32 +578,24 @@ class D1IntegrationRepository implements IntegrationRepository {
     resourceType: string,
     externalId: string,
   ) {
-    return (
-      (
-        await this.listJsonRecords<ExternalResourceMapping>(
-          "provider_mappings",
-          tenantId,
-          "updated_at",
-          "metadata_json",
-        )
-      ).find(
-        (row) =>
-          row.connectionId === connectionId &&
-          row.resourceType === resourceType &&
-          row.externalId === externalId &&
-          row.status !== "DISABLED",
-      ) ?? null
-    );
+    const row = await this.db
+      .prepare(
+        "SELECT metadata_json FROM provider_mappings WHERE tenant_id = ? AND connection_id = ? AND resource_type = ? AND external_id = ? AND status <> 'DISABLED' ORDER BY updated_at DESC LIMIT 1",
+      )
+      .bind(tenantId, connectionId, resourceType, externalId)
+      .first<{ metadata_json: string }>();
+    return row ? (JSON.parse(row.metadata_json) as ExternalResourceMapping) : null;
   }
   async listMappings(tenantId: string, connectionId?: string) {
-    return (
-      await this.listJsonRecords<ExternalResourceMapping>(
-        "provider_mappings",
-        tenantId,
-        "updated_at",
-        "metadata_json",
+    const result = await this.db
+      .prepare(
+        `SELECT metadata_json FROM provider_mappings WHERE tenant_id = ?${connectionId ? " AND connection_id = ?" : ""} ORDER BY updated_at, id`,
       )
-    ).filter((row) => !connectionId || row.connectionId === connectionId);
+      .bind(...(connectionId ? [tenantId, connectionId] : [tenantId]))
+      .all<{ metadata_json: string }>();
+    return (result.results ?? []).map(
+      (row) => JSON.parse(row.metadata_json) as ExternalResourceMapping,
+    );
   }
   async deleteMapping(tenantId: string, id: string) {
     await this.db
@@ -580,12 +604,24 @@ class D1IntegrationRepository implements IntegrationRepository {
       .run();
   }
   async enqueueOutbox(record: IntegrationOutbox) {
-    const existing = (await this.listOutbox(record.tenantId)).find(
-      (row) =>
-        row.connectionId === record.connectionId && row.idempotencyKey === record.idempotencyKey,
-    );
+    const find = async () => {
+      const row = await this.db
+        .prepare(
+          "SELECT payload_json FROM integration_outbox WHERE tenant_id = ? AND connection_id = ? AND idempotency_key = ?",
+        )
+        .bind(record.tenantId, record.connectionId, record.idempotencyKey)
+        .first<{ payload_json: string }>();
+      return row ? (JSON.parse(row.payload_json) as IntegrationOutbox) : null;
+    };
+    const existing = await find();
     if (existing) return { created: false, record: existing };
-    await this.writeOutbox(record, false);
+    try {
+      await this.writeOutbox(record, false);
+    } catch (error) {
+      const concurrent = await find();
+      if (concurrent) return { created: false, record: concurrent };
+      throw error;
+    }
     return { created: true, record };
   }
   async coalesceOutbox(record: IntegrationOutbox) {

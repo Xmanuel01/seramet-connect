@@ -50,7 +50,10 @@ export async function buildMarketplaceMenu(
       (candidate) => candidate.internalItemId === product.id && candidate.active,
     )?.price;
     const branchPrice = product.branchPrices?.[input.branch.name];
+    const persistedOverride = mapping?.metadata["availabilityOverride"] as
+      { available?: boolean } | undefined;
     const available =
+      persistedOverride?.available ??
       override?.available ??
       (product.branchAvailability?.[input.branch.name] !== false &&
         !product.out &&

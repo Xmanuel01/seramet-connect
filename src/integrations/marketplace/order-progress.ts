@@ -13,9 +13,11 @@ export function marketplaceProgress(order: Order, outbox: IntegrationOutbox[]) {
       ["ORDER_ACCEPTED", "ORDER_REJECTED"].includes(record.eventType),
   );
   const failed = actions.some((record) => record.status === "DEAD_LETTER");
-  const accepted = actions.some(
-    (record) => record.eventType === "ORDER_ACCEPTED" && record.status === "PROCESSED",
-  );
+  const accepted =
+    Boolean(source?.metadata?.["acceptanceConfirmedAt"]) ||
+    actions.some(
+      (record) => record.eventType === "ORDER_ACCEPTED" && record.status === "PROCESSED",
+    );
   const rejected = actions.some(
     (record) => record.eventType === "ORDER_REJECTED" && record.status === "PROCESSED",
   );

@@ -767,6 +767,299 @@ describe("Pass 2 failure injection", () => {
 });
 
 describe("Pass 3 marketplace acceptance", () => {
+  it("recovers a provider-confirmed uncertain decision without resending acceptance", async () => {
+    const controls: TestDeliveryControls = { acceptedOrders: [] };
+    const f = fixture(controls, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    const created = f.transactions.state.orders[0]!;
+    const queued = await f.runtime.decideMarketplaceOrder({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: created.id,
+      actorId: "manager",
+      decision: "ACCEPT",
+      prepMinutes: 20,
+    });
+    controls.failuresRemaining = 4;
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id);
+    const externalId = created.externalSource!.externalOrderId;
+    controls.ordersById = {
+      [externalId]: order({ providerOrderId: externalId, providerStatus: "CREATED" }),
+    };
+    await expect(
+      f.runtime.recoverMarketplaceDecision(
+        DEMO_TENANT_ID,
+        DEMO_WESTLANDS_BRANCH_ID,
+        queued.record.id,
+        "manager",
+      ),
+    ).rejects.toThrow("not confirmed");
+    controls.ordersById[externalId]!.providerStatus = "ACCEPTED";
+    await f.runtime.recoverMarketplaceDecision(
+      DEMO_TENANT_ID,
+      DEMO_WESTLANDS_BRANCH_ID,
+      queued.record.id,
+      "manager",
+    );
+    await f.runtime.recoverMarketplaceDecision(
+      DEMO_TENANT_ID,
+      DEMO_WESTLANDS_BRANCH_ID,
+      queued.record.id,
+      "manager",
+    );
+    expect(controls.acceptedOrders).toEqual([]);
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(1);
+    expect(f.transactions.state.orders[0]?.status).toBe("SENT_TO_KITCHEN");
+    expect(
+      (await f.repository.listDeadLetters(DEMO_TENANT_ID)).every(
+        (row) => row.status === "RESOLVED",
+      ),
+    ).toBe(true);
+    await expect(
+      f.runtime.recoverMarketplaceDecision(
+        DEMO_TENANT_ID,
+        "wrong-branch",
+        queued.record.id,
+        "manager",
+      ),
+    ).rejects.toThrow("not found");
+  });
+
+  it("allows only one of two concurrent conflicting decisions", async () => {
+    const f = fixture({}, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: f.transactions.state.orders[0]!.id,
+      actorId: "manager",
+    };
+    const results = await Promise.allSettled([
+      f.runtime.decideMarketplaceOrder({ ...input, decision: "ACCEPT", prepMinutes: 20 }),
+      f.runtime.decideMarketplaceOrder({ ...input, decision: "REJECT", reason: "Sold out" }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(await f.repository.listOutbox(DEMO_TENANT_ID)).toHaveLength(1);
+  });
+
+  it("does not send a superseded availability request or overwrite the current result", async () => {
+    const controls: TestDeliveryControls = { availabilitySyncs: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId,
+      manual: true,
+      actorId: "manager",
+    };
+    const old = await f.runtime.queueAvailabilitySync({ ...input, available: false });
+    const current = await f.runtime.queueAvailabilitySync({ ...input, available: true });
+    expect(old[0]!.record.id).not.toBe(current[0]!.record.id);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, current[0]!.record.id);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, old[0]!.record.id);
+    expect(controls.availabilitySyncs).toHaveLength(1);
+    expect(controls.availabilitySyncs![0]).toMatchObject({ available: true });
+    const saved = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    );
+    expect(saved?.syncStatus).toBe("SYNCED");
+    expect(saved?.metadata["availabilityOverride"]).toMatchObject({ available: true });
+  });
+
+  it("recovers a saved timer once and preserves a later manual override", async () => {
+    const f = fixture();
+    await f.ready;
+    const mapping = (await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    ))!;
+    await f.repository.upsertMapping({ ...mapping, internalId: products[0]!.id });
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId: products[0]!.id,
+      manual: true,
+      actorId: "manager",
+    };
+    const restoreAt = new Date(Date.now() + 60_000);
+    await f.runtime.queueAvailabilitySync({
+      ...input,
+      available: false,
+      restoreAt: restoreAt.toISOString(),
+    });
+    await f.runtime.recoverMarketplaceAvailability(DEMO_TENANT_ID, restoreAt);
+    const restored = (await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    ))!;
+    expect(restored.metadata["availabilityOverride"]).toMatchObject({
+      actorId: "system:scheduled-restoration",
+    });
+    expect(restored.metadata["availabilityOverride"]).not.toHaveProperty("restoreAt");
+    const count = (await f.repository.listOutbox(DEMO_TENANT_ID)).length;
+    await f.runtime.recoverMarketplaceAvailability(DEMO_TENANT_ID, restoreAt);
+    expect(await f.repository.listOutbox(DEMO_TENANT_ID)).toHaveLength(count);
+    await f.runtime.queueAvailabilitySync({ ...input, available: false });
+    await f.runtime.recoverMarketplaceAvailability(
+      DEMO_TENANT_ID,
+      new Date(restoreAt.getTime() + 600_000),
+    );
+    expect(
+      (await f.repository.getMapping(DEMO_TENANT_ID, connectionId, "ITEM", externalItemId))
+        ?.metadata["availabilityOverride"],
+    ).toMatchObject({ available: false, actorId: "manager" });
+  });
+
+  it("defers catalog writes while another worker owns the store lease", async () => {
+    const controls: TestDeliveryControls = { availabilitySyncs: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const queued = await f.runtime.queueAvailabilitySync({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId,
+      available: false,
+      manual: true,
+    });
+    const mapping = (await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "STORE",
+      externalStoreId,
+    ))!;
+    await f.repository.upsertMapping({
+      ...mapping,
+      metadata: {
+        catalogWriteLease: {
+          token: "another-worker",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      },
+    });
+    const result = await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued[0]!.record.id);
+    expect(result.status).toBe("RETRY_PENDING");
+    expect(result.attemptCount).toBe(0);
+    expect(controls.availabilitySyncs).toHaveLength(0);
+    await f.repository.upsertMapping(mapping);
+    expect((await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued[0]!.record.id)).status).toBe(
+      "PROCESSED",
+    );
+    expect(controls.availabilitySyncs).toHaveLength(1);
+  });
+
+  it("queues one staff decision and posts financials/kitchen only after provider confirmation", async () => {
+    const controls: TestDeliveryControls = { acceptedOrders: [] };
+    const f = fixture(controls, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    const created = f.transactions.state.orders[0]!;
+    expect(created.status).toBe("HELD");
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(0);
+    expect(f.transactions.state.journalEntries).toHaveLength(0);
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: created.id,
+      actorId: "manager",
+      decision: "ACCEPT" as const,
+      prepMinutes: 20,
+    };
+    const first = await f.runtime.decideMarketplaceOrder(input);
+    const duplicate = await f.runtime.decideMarketplaceOrder(input);
+    expect(first.record.id).toBe(duplicate.record.id);
+    expect(controls.acceptedOrders).toEqual([]);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, first.record.id);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, first.record.id);
+    expect(controls.acceptedOrders).toHaveLength(1);
+    expect(f.transactions.state.orders[0]?.status).toBe("SENT_TO_KITCHEN");
+    expect(
+      f.transactions.state.orders[0]?.externalSource?.metadata["acceptanceConfirmedAt"],
+    ).toBeTruthy();
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(1);
+    expect(f.transactions.state.receipts).toHaveLength(0);
+    await expect(
+      f.runtime.decideMarketplaceOrder({ ...input, decision: "REJECT", reason: "Sold out" }),
+    ).rejects.toThrow("Another decision");
+    await expect(
+      f.runtime.decideMarketplaceOrder({ ...input, branchId: "another-branch" }),
+    ).rejects.toThrow("not found");
+  });
+
+  it("rejects a reviewed order without creating revenue or cash", async () => {
+    const f = fixture({}, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    const queued = await f.runtime.decideMarketplaceOrder({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: f.transactions.state.orders[0]!.id,
+      actorId: "manager",
+      decision: "REJECT",
+      reason: "Item unavailable",
+    });
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id);
+    expect(f.transactions.state.orders[0]?.status).toBe("CANCELLED");
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(0);
+    expect(f.transactions.state.payments).toHaveLength(0);
+  });
+
+  it("holds uncertain staff decisions instead of blindly repeating acceptance", async () => {
+    const controls: TestDeliveryControls = {};
+    const f = fixture(controls, { acceptancePolicy: "MANUAL" });
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    controls.failuresRemaining = 5;
+    const queued = await f.runtime.decideMarketplaceOrder({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: f.transactions.state.orders[0]!.id,
+      actorId: "manager",
+      decision: "ACCEPT",
+      prepMinutes: 20,
+    });
+    const result = await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id);
+    expect(result.status).toBe("DEAD_LETTER");
+    expect(controls.failuresRemaining).toBe(4);
+    expect(f.transactions.state.orders[0]?.status).toBe("HELD");
+  });
+
+  it("persists availability and rejects a stale mapping write", async () => {
+    const f = fixture();
+    await f.ready;
+    const before = (await f.repository.listMappings(DEMO_TENANT_ID, connectionId)).find(
+      (row) => row.id === "mapping-item",
+    )!;
+    await f.runtime.queueAvailabilitySync({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId,
+      available: false,
+      manual: true,
+      actorId: "manager",
+      restoreAt: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    const saved = (await f.repository.listMappings(DEMO_TENANT_ID, connectionId)).find(
+      (row) => row.id === before.id,
+    )!;
+    expect(saved.metadata["availabilityOverride"]).toMatchObject({
+      available: false,
+      actorId: "manager",
+    });
+    expect(await f.repository.replaceMapping(before, { ...before, syncStatus: "SYNCED" })).toBe(
+      false,
+    );
+    expect(f.transactions.state.inventory).toEqual([]);
+  });
   it("blocks a full menu upload that would drop known modifiers", async () => {
     const f = fixture();
     await f.ready;

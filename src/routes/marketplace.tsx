@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangle, Clock3, RefreshCw, Store } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, Clock3, RefreshCw, Store, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD } from "@/components/app/ui";
 import { DataTable } from "@/components/app/Tabs";
 import { formatMoney } from "@/lib/currency";
 import { marketplaceProgress } from "@/integrations/marketplace/order-progress";
 import { businessDateForTimestamp } from "@/lib/business-date";
+import { permissions } from "@/platform/permissions";
 import type {
   MarketplaceSyncPreview,
   NormalizedMarketplaceMenu,
@@ -22,6 +23,7 @@ import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { ProviderCapability } from "@/platform/types";
+import { parseMarketplaceConnectionConfig } from "@/integrations/marketplace/types";
 
 export const Route = createFileRoute("/marketplace")({
   head: () => ({
@@ -53,8 +55,15 @@ const emptyDiagnostics: Diagnostics = {
 };
 
 function MarketplaceControlCentre() {
-  const { activeTenantId, branchId, branchLabel, currentUser, matchesBranch, timeZone } =
-    useAppContext();
+  const {
+    activeTenantId,
+    branchId,
+    branchLabel,
+    currentUser,
+    matchesBranch,
+    timeZone,
+    hasPermission,
+  } = useAppContext();
   const { state } = useTransactionEngine();
   const configuration = useMemo(() => getConfigurationRepository(), []);
   const providers = useMemo(
@@ -84,6 +93,45 @@ function MarketplaceControlCentre() {
   const [previewMenu, setPreviewMenu] = useState<NormalizedMarketplaceMenu | null>(null);
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState(false);
+  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [prepMinutes, setPrepMinutes] = useState(25);
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [restoreAt, setRestoreAt] = useState("");
+  const [allMarketplaces, setAllMarketplaces] = useState(true);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
+  const currentScope = useRef(scope);
+  const selectedOrder = state.orders.find(
+    (order) => order.id === selectedOrderId && matchesBranch(order.branchId ?? order.branch),
+  );
+  const orderProvider = providers.find(
+    (provider) => provider.id === selectedOrder?.externalSource?.providerId,
+  );
+  const orderConnection = connections.find(
+    (connection) => connection.id === selectedOrder?.externalSource?.connectionId,
+  );
+  const maximumPrepMinutes = parseMarketplaceConnectionConfig(
+    orderConnection?.configuration ?? {},
+  ).maximumPrepMinutes;
+  const decision = diagnostics.outbox.find(
+    (record) =>
+      record.connectionId === selectedOrder?.externalSource?.connectionId &&
+      record.resourceId === selectedOrder?.externalSource?.externalOrderId &&
+      ["ORDER_ACCEPTED", "ORDER_REJECTED"].includes(record.eventType),
+  );
+
+  useEffect(() => {
+    currentScope.current = scope;
+    setSelectedOrderId("");
+    setRejectionReason("");
+    setRestoreAt("");
+    setSelectedItems([]);
+    setDiagnostics(emptyDiagnostics);
+    setPreview(null);
+    setPreviewMenu(null);
+    setNotice("");
+    setWorking(false);
+  }, [scope]);
 
   const headers = useMemo(
     () => ({
@@ -101,6 +149,7 @@ function MarketplaceControlCentre() {
       const payload = (await response.json()) as Diagnostics & { ok?: boolean; message?: string };
       if (!response.ok || payload.ok === false)
         throw new Error(payload.message ?? "Marketplace diagnostics could not be loaded");
+      if (currentScope.current !== scope) return;
       setDiagnostics({
         events: payload.events ?? [],
         mappings: payload.mappings ?? [],
@@ -109,12 +158,17 @@ function MarketplaceControlCentre() {
         health: payload.health ?? [],
       });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Marketplace diagnostics failed");
+      if (currentScope.current === scope)
+        setNotice(error instanceof Error ? error.message : "Marketplace diagnostics failed");
     }
-  }, [headers]);
+  }, [headers, scope]);
 
   useEffect(() => {
     void loadDiagnostics();
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadDiagnostics();
+    }, 15_000);
+    return () => window.clearInterval(timer);
   }, [loadDiagnostics]);
 
   useEffect(() => {
@@ -207,6 +261,7 @@ function MarketplaceControlCentre() {
       };
       if (!response.ok || !payload.menu || !payload.preview)
         throw new Error(payload.message ?? "Menu preview failed");
+      if (currentScope.current !== scope) return;
       setPreview(payload.preview);
       setPreviewMenu(payload.menu);
       setNotice("Preview generated from the current Seramet menu and mappings.");
@@ -291,12 +346,55 @@ function MarketplaceControlCentre() {
       const response = await fetch(path, { method: "POST", headers, body: JSON.stringify(body) });
       const payload = (await response.json()) as { ok?: boolean; message?: string };
       if (!response.ok || payload.ok === false) throw new Error(payload.message ?? "Action failed");
+      if (currentScope.current !== scope) return;
       setNotice(success);
       await loadDiagnostics();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Marketplace action failed");
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function setAvailability(itemIds: string[], available: boolean) {
+    const restore = !available && restoreAt ? new Date(restoreAt) : null;
+    if (restore && (!Number.isFinite(restore.getTime()) || restore.getTime() <= Date.now())) {
+      setNotice("Choose a future restoration time.");
+      return;
+    }
+    setWorking(true);
+    let queued = 0;
+    const errors: string[] = [];
+    try {
+      for (const internalItemId of itemIds) {
+        if (currentScope.current !== scope) break;
+        const response = await fetch("/api/seramet/integrations/marketplace/availability", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            branchId,
+            internalItemId,
+            available,
+            ...(!allMarketplaces ? { connectionIds: [selectedConnectionId] } : {}),
+            ...(restore ? { restoreAt: restore.toISOString() } : {}),
+          }),
+        });
+        const payload = (await response.json()) as { ok?: boolean; message?: string };
+        if (!response.ok || payload.ok === false)
+          errors.push(`${internalItemId}: ${payload.message ?? "Update failed"}`);
+        else queued++;
+      }
+      if (currentScope.current === scope) {
+        setNotice(`${queued} item updates queued.${errors.length ? ` ${errors.join("; ")}` : ""}`);
+        await loadDiagnostics();
+      }
+    } catch (error) {
+      if (currentScope.current === scope)
+        setNotice(
+          `${queued} updates queued. ${error instanceof Error ? error.message : "Connection interrupted"}`,
+        );
+    } finally {
+      if (currentScope.current === scope) setWorking(false);
     }
   }
 
@@ -347,6 +445,131 @@ function MarketplaceControlCentre() {
 
       {tab === "ORDERS" && (
         <>
+          {selectedOrder?.externalSource && (
+            <section className="my-4 border-y border-border py-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">
+                  Order{" "}
+                  {selectedOrder.externalSource.providerDisplayReference ??
+                    selectedOrder.externalSource.externalOrderId}
+                </h2>
+                <Btn onClick={() => setSelectedOrderId("")}>Close</Btn>
+              </div>
+              <div>
+                {selectedOrder.customer} · {formatMoney(selectedOrder.total)} ·{" "}
+                {selectedOrder.externalSource.externallyPaid
+                  ? "Paid to marketplace"
+                  : "Collection due"}
+              </div>
+              <ul className="space-y-1">
+                {selectedOrder.lines.map((line) => (
+                  <li key={line.id}>
+                    {line.quantity} × {line.name}
+                    {line.itemNote ? ` — ${line.itemNote}` : ""}
+                  </li>
+                ))}
+              </ul>
+              {selectedOrder.kitchenNote && <p>{selectedOrder.kitchenNote}</p>}
+              <div className="flex flex-wrap gap-4">
+                <Status>{marketplaceProgress(selectedOrder, diagnostics.outbox).provider}</Status>
+                <Status>{marketplaceProgress(selectedOrder, diagnostics.outbox).progress}</Status>
+                <span>Saved in POS: {selectedOrder.id}</span>
+              </div>
+              {selectedOrder.status === "HELD" &&
+                !decision &&
+                hasPermission(permissions.integrationsOrdersManage) && (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-sm">
+                      Preparation minutes
+                      <input
+                        aria-label="Preparation minutes"
+                        type="number"
+                        min={1}
+                        max={maximumPrepMinutes}
+                        value={prepMinutes}
+                        onChange={(event) => setPrepMinutes(Number(event.target.value))}
+                        className="block h-10 w-28 rounded-md border border-border bg-card px-3"
+                      />
+                    </label>
+                    <Btn
+                      disabled={
+                        working ||
+                        !orderProvider?.capabilities.includes("ACCEPT_ORDER") ||
+                        !Number.isInteger(prepMinutes) ||
+                        prepMinutes < 1 ||
+                        prepMinutes > maximumPrepMinutes
+                      }
+                      onClick={() =>
+                        void postAction(
+                          "/api/seramet/integrations/marketplace/decision",
+                          { branchId, orderId: selectedOrder.id, decision: "ACCEPT", prepMinutes },
+                          "Acceptance queued. Awaiting marketplace confirmation.",
+                        )
+                      }
+                    >
+                      <Check className="h-4 w-4" />
+                      Accept
+                    </Btn>
+                    <label className="text-sm">
+                      Rejection reason
+                      <input
+                        maxLength={500}
+                        value={rejectionReason}
+                        onChange={(event) => setRejectionReason(event.target.value)}
+                        className="block h-10 w-full rounded-md border border-border bg-card px-3"
+                      />
+                    </label>
+                    <Btn
+                      disabled={
+                        working ||
+                        !orderProvider?.capabilities.includes("REJECT_ORDER") ||
+                        !rejectionReason.trim()
+                      }
+                      onClick={() =>
+                        void postAction(
+                          "/api/seramet/integrations/marketplace/decision",
+                          {
+                            branchId,
+                            orderId: selectedOrder.id,
+                            decision: "REJECT",
+                            reason: rejectionReason,
+                          },
+                          "Rejection queued. Awaiting marketplace confirmation.",
+                        )
+                      }
+                    >
+                      <X className="h-4 w-4" />
+                      Reject
+                    </Btn>
+                  </div>
+                )}
+              {decision &&
+                decision.status !== "PROCESSED" &&
+                hasPermission(permissions.integrationsOrdersManage) && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Status>{decision.status}</Status>
+                    <Btn
+                      disabled={working || !orderProvider?.capabilities.includes("GET_ORDER")}
+                      onClick={() =>
+                        void postAction(
+                          "/api/seramet/integrations/marketplace/decision/recover",
+                          { branchId, recordId: decision.id },
+                          "Provider decision verified and POS updated.",
+                        )
+                      }
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                      Verify with provider
+                    </Btn>
+                    {decision.lastError && (
+                      <p className="w-full break-words text-sm text-destructive">
+                        {decision.lastError}
+                      </p>
+                    )}
+                  </div>
+                )}
+            </section>
+          )}
           <div className="my-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <Select
               value={providerFilter}
@@ -419,7 +642,14 @@ function MarketplaceControlCentre() {
                     <TD className="num">
                       {order.source.providerDisplayReference ?? order.source.externalOrderId}
                     </TD>
-                    <TD className="num font-semibold">{order.id}</TD>
+                    <TD className="num font-semibold">
+                      <button
+                        className="text-primary underline"
+                        onClick={() => setSelectedOrderId(order.id)}
+                      >
+                        {order.id}
+                      </button>
+                    </TD>
                     <TD>{order.customer}</TD>
                     <TD className="num text-right font-semibold">{formatMoney(order.total)}</TD>
                     <TD>{relativeAge(order.ageMinutes)}</TD>
@@ -452,6 +682,12 @@ function MarketplaceControlCentre() {
             <div className="divide-y divide-border md:hidden">
               {marketplaceOrders.map((order) => (
                 <div key={order.id} className="p-4">
+                  <button
+                    className="mb-2 text-primary underline"
+                    onClick={() => setSelectedOrderId(order.id)}
+                  >
+                    Review {order.id}
+                  </button>
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[13px] font-semibold">
@@ -502,6 +738,7 @@ function MarketplaceControlCentre() {
                   setSelectedConnectionId(value);
                   setPreview(null);
                   setPreviewMenu(null);
+                  setSelectedItems([]);
                 }}
                 options={connections.map((connection) => ({
                   value: connection.id,
@@ -533,12 +770,153 @@ function MarketplaceControlCentre() {
               </div>
               {selectedProvider && !supports("SYNC_MENU") && (
                 <div className="rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[11px] text-warning">
-                  {selectedProvider.displayName} catalog writes are unavailable until an official
-                  production contract supports them.
+                  {selectedProvider.displayName} does not support full menu publishing on this
+                  connection.
                 </div>
               )}
               {preview ? (
                 <>
+                  {previewMenu && hasPermission(permissions.integrationsMenuSync) && (
+                    <section className="space-y-3 border-y border-border py-3">
+                      <div className="flex flex-wrap gap-3 items-end">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={allMarketplaces}
+                            onChange={(event) => setAllMarketplaces(event.target.checked)}
+                          />
+                          All marketplaces in this branch
+                        </label>
+                        <label className="text-sm">
+                          Restore at (optional, device time)
+                          <input
+                            type="datetime-local"
+                            value={restoreAt}
+                            onChange={(event) => setRestoreAt(event.target.value)}
+                            className="block h-10 max-w-full rounded-md border border-border bg-card px-2"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <label className="flex gap-2 items-center text-sm">
+                          <input
+                            type="checkbox"
+                            checked={
+                              previewMenu.items.length > 0 &&
+                              selectedItems.length === previewMenu.items.length
+                            }
+                            onChange={(event) =>
+                              setSelectedItems(
+                                event.target.checked
+                                  ? previewMenu.items.map((item) => item.internalId)
+                                  : [],
+                              )
+                            }
+                          />
+                          Select all items
+                        </label>
+                        <Btn
+                          disabled={working || !selectedItems.length}
+                          onClick={() => void setAvailability(selectedItems, false)}
+                        >
+                          <X className="h-4 w-4" />
+                          Mark selected unavailable
+                        </Btn>
+                        <Btn
+                          disabled={working || !selectedItems.length}
+                          onClick={() => void setAvailability(selectedItems, true)}
+                        >
+                          <Check className="h-4 w-4" />
+                          Restore selected
+                        </Btn>
+                      </div>
+                      {previewMenu.items.map((item) => {
+                        const mapping = selectedMappings.find(
+                          (row) =>
+                            row.resourceType === "ITEM" && row.internalId === item.internalId,
+                        );
+                        const desired = mapping?.metadata["availabilityOverride"] as
+                          { available?: boolean; restoreAt?: string } | undefined;
+                        const available = desired?.available ?? item.available;
+                        return (
+                          <div
+                            key={item.internalId}
+                            className="flex flex-wrap items-center justify-between gap-2 border-b border-border py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <label className="flex gap-2 items-center text-sm font-semibold break-words">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedItems.includes(item.internalId)}
+                                  onChange={(event) =>
+                                    setSelectedItems((current) =>
+                                      event.target.checked
+                                        ? [...current, item.internalId]
+                                        : current.filter((id) => id !== item.internalId),
+                                    )
+                                  }
+                                />
+                                {item.name}
+                              </label>
+                              <div className="text-xs text-muted-foreground">
+                                {available ? "Available" : "Unavailable"} ·{" "}
+                                {mapping?.syncStatus ?? "Not published"}
+                              </div>
+                              {desired?.restoreAt && (
+                                <div className="text-xs text-muted-foreground">
+                                  Restoration check:{" "}
+                                  {new Date(desired.restoreAt).toLocaleString(undefined, {
+                                    timeZone,
+                                  })}{" "}
+                                  ({timeZone})
+                                </div>
+                              )}
+                              <ul className="text-xs space-y-1 mt-1">
+                                {connections
+                                  .filter(
+                                    (connection) =>
+                                      allMarketplaces || connection.id === selectedConnectionId,
+                                  )
+                                  .map((connection) => {
+                                    const channel = diagnostics.mappings.find(
+                                      (row) =>
+                                        row.connectionId === connection.id &&
+                                        row.resourceType === "ITEM" &&
+                                        row.internalId === item.internalId,
+                                    );
+                                    const override = channel?.metadata["availabilityOverride"] as
+                                      { available?: boolean } | undefined;
+                                    return (
+                                      <li key={connection.id} className="break-words">
+                                        {connection.displayName}:{" "}
+                                        {channel
+                                          ? `${override ? (override.available ? "Available requested" : "Unavailable requested") : "Catalog default"} · ${channel.syncStatus ?? "Not synced"}`
+                                          : "No item mapping"}
+                                        {channel?.lastError ? ` · ${channel.lastError}` : ""}
+                                      </li>
+                                    );
+                                  })}
+                              </ul>
+                            </div>
+                            <Btn
+                              disabled={
+                                working ||
+                                (!allMarketplaces && (!mapping || !supports("SYNC_AVAILABILITY")))
+                              }
+                              onClick={() => void setAvailability([item.internalId], !available)}
+                            >
+                              {available ? (
+                                <X className="h-4 w-4" />
+                              ) : (
+                                <Check className="h-4 w-4" />
+                              )}
+                              {available ? "Mark unavailable" : "Restore item"}
+                            </Btn>
+                          </div>
+                        );
+                      })}
+                    </section>
+                  )}
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <Mini label="Unchanged" value={String(preview.counts.unchanged)} />
                     <Mini label="Price changes" value={String(preview.counts.priceChanges)} />

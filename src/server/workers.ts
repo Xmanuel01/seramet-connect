@@ -372,12 +372,16 @@ export async function findTenantsWithSweepWork(
     return new Set((rows.results ?? []).map((row) => row.tenant_id));
   };
   const probes: Record<SweepJobType, () => Promise<TenantSet>> = {
-    // Held marketplace orders waiting for their release time.
+    // Scheduled orders and durable availability timers must run even with no open orders.
     SCHEDULED_ORDER_RELEASE: () =>
       tenants(
         `SELECT DISTINCT tenant_id FROM authoritative_records
          WHERE ${activeTenantFilter} AND entity_type = 'state:orders' AND status = 'HELD'
-           AND payload_json LIKE '%scheduledReleaseAt%'`,
+           AND payload_json LIKE '%scheduledReleaseAt%'
+         UNION SELECT DISTINCT tenant_id FROM provider_mappings
+         WHERE ${activeTenantFilter} AND resource_type = 'ITEM' AND status IN ('MAPPED','AUTO_MATCHED')
+           AND metadata_json LIKE '%availabilityOverride%'
+           AND (sync_status = 'PENDING' OR metadata_json LIKE '%restoreAt%')`,
       ),
     INTEGRATION_OUTBOX_RECOVERY: () =>
       tenants(
@@ -760,6 +764,7 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
     }
     case "SCHEDULED_ORDER_RELEASE":
       await runtime.releaseDueScheduledOrders(job.tenant_id);
+      await runtime.recoverMarketplaceAvailability(job.tenant_id);
       return;
     case "PAYMENT_PROMPT_STATUS_CHECK": {
       // Most minutes nothing is waiting; avoid loading the restaurant's state for nothing.

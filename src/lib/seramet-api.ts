@@ -447,6 +447,55 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
     }
 
     if (
+      url.pathname === "/api/seramet/integrations/marketplace/decision/recover" &&
+      request.method === "POST"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const input = await readJson<{ branchId?: string; recordId?: string }>(request);
+      if (!input.branchId || !input.recordId)
+        throw new SerametHttpError(400, "Branch and decision record are required");
+      authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      const record = await createIntegrationRuntime(env).recoverMarketplaceDecision(
+        actor.tenantId,
+        input.branchId,
+        input.recordId,
+        actor.id,
+      );
+      return json({ ok: true, record });
+    }
+    if (
+      url.pathname === "/api/seramet/integrations/marketplace/decision" &&
+      request.method === "POST"
+    ) {
+      const actor = await requirePermission(request, env, permissions.integrationsOrdersManage);
+      const input = await readJson<{
+        branchId?: string;
+        orderId?: string;
+        decision?: string;
+        prepMinutes?: number;
+        reason?: string;
+      }>(request);
+      if (
+        !input.branchId ||
+        !input.orderId ||
+        !["ACCEPT", "REJECT"].includes(input.decision ?? "") ||
+        (input.reason !== undefined && typeof input.reason !== "string")
+      )
+        throw new SerametHttpError(400, "Order, branch and a supported decision are required");
+      authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      const queued = await createIntegrationRuntime(env).decideMarketplaceOrder({
+        tenantId: actor.tenantId,
+        branchId: input.branchId,
+        orderId: input.orderId,
+        actorId: actor.id,
+        decision: input.decision as "ACCEPT" | "REJECT",
+        ...(input.prepMinutes !== undefined ? { prepMinutes: input.prepMinutes } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
+      });
+      return json({ ok: true, queued }, 202);
+    }
+
+    if (
       url.pathname === "/api/seramet/integrations/marketplace/menu-preview" &&
       request.method === "GET"
     ) {
@@ -493,10 +542,18 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         available?: boolean;
         quantityAvailable?: number;
         connectionIds?: string[];
+        restoreAt?: string;
+        reason?: string;
       }>(request);
       if (!input.branchId || !input.internalItemId || typeof input.available !== "boolean")
         throw new SerametHttpError(400, "branchId, internalItemId and available are required");
       authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      if (
+        (input.restoreAt !== undefined && typeof input.restoreAt !== "string") ||
+        (input.reason !== undefined &&
+          (typeof input.reason !== "string" || input.reason.length > 500))
+      )
+        throw new SerametHttpError(400, "Invalid restoration time or reason");
       if (
         input.connectionIds !== undefined &&
         (!Array.isArray(input.connectionIds) ||
@@ -510,6 +567,9 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         internalItemId: input.internalItemId,
         available: input.available,
         manual: true,
+        actorId: actor.id,
+        ...(input.restoreAt ? { restoreAt: input.restoreAt } : {}),
+        ...(input.reason ? { reason: input.reason } : {}),
         ...(input.connectionIds ? { connectionIds: input.connectionIds } : {}),
         ...(input.quantityAvailable === undefined
           ? {}

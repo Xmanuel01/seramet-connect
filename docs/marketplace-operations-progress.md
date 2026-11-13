@@ -1,5 +1,38 @@
 # Marketplace operations implementation
 
+## Verification update: 2026-11-14
+
+Still not release-certified. All work remains on `codex/marketplace-operations`.
+No production changes, migrations, live orders, activation or printing changes.
+
+New implementation:
+- Permission-gated accept/reject with persistent mutually exclusive decisions and provider read-back recovery.
+- Manual orders enter accounting and kitchen only after provider confirmation; scheduled release uses durable order metadata.
+- Persistent versioned availability overrides, bulk controls, per-connection results and optional restoration timers.
+- Catalog write serialization and stale-version guards. Timer recovery runs without scheduled orders and rechecks item availability.
+- Marketplace closing snapshots and exports: order counts, charges, receivables and outstanding carry-forward by currency.
+- Manual acceptance fallback; existing explicitly configured automatic policies remain unchanged.
+
+Verification:
+- 137 targeted tests passed across integrations, provider contracts, progress, payments, daily closing and scheduler.
+- Four embedded PostgreSQL worker tests passed, including mapping compare-and-swap and concurrent outbox deduplication.
+- TypeScript and full ESLint passed (25 existing warnings, zero errors).
+- Production build, compiled Queue/Cron registration and production audit passed (zero vulnerabilities).
+- Playwright daily-closing test passed: combined close, PDF download and mobile layout. Evidence under `.seramet/daily-closing/`.
+- Full validation was interrupted during tests due to memory pressure. The single-worker rerun passed: 1,664 tests across 169 suites in 1,143 seconds. Results are recorded in `.seramet/marketplace-tests.log`; build and Worker verification passed separately.
+
+Still required: exact-commit CI/review, authenticated browser acceptance of the new marketplace controls,
+real provider sandbox certification, multi-session PostgreSQL contention beyond the embedded harness,
+legacy automatic-order review, large-history pagination and complete existing-provider-menu modifier preservation.
+Snapshots freeze balances at report preparation/closing time; they do not reconstruct historical provider balances.
+
+Provider requirements rechecked against [Uber sandbox](https://developer.uber.com/docs/eats/guides/sandbox),
+[Uber orders](https://developer.uber.com/docs/eats/guides/order-integration) and
+[Glovo Partner API](https://qcommerce.developer.glovoapp.com/en/documentation/api-partner-api-overview).
+Mock contract tests are not live provider certification. No credentials are recorded here.
+
+## Previous implementation record (superseded where updated above)
+
 Status: PARTIAL, not a release candidate. Production has not been changed.
 
 Branch: `codex/marketplace-operations`, based on main
