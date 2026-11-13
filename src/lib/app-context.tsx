@@ -675,11 +675,40 @@ async function bootstrapAuthoritativeSession(
   previousActor?: AuthoritativeActor,
   refreshConfiguration = false,
 ): Promise<{ status: "DEVELOPMENT" } | { status: "AUTHENTICATED"; actor: AuthoritativeActor }> {
-  if (!previousActor) {
-    const healthResponse = await fetch("/api/seramet/health/operational", {
-      cache: "no-store",
+  const token = getSerametAccessToken();
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const selectedTenant =
+    typeof window === "undefined"
+      ? undefined
+      : window.localStorage.getItem(sessionTenantStorageKey)?.trim();
+  if (selectedTenant) headers["x-seramet-tenant-id"] = selectedTenant;
+  const readSession = () =>
+    authenticatedFetch("/api/seramet/auth/session", {
+      headers,
       signal: AbortSignal.timeout(12_000),
     });
+  const readConfiguration = () =>
+    authenticatedFetch("/api/seramet/configuration", {
+      headers,
+      signal: AbortSignal.timeout(12_000),
+    });
+  // Opening the app needs readiness, the session and the configuration. They used to be asked
+  // for one after another (three round trips before the page could draw); now they are asked
+  // for together and still checked in that order. The server authenticates each request.
+  const startup = previousActor
+    ? undefined
+    : {
+        health: fetch("/api/seramet/health/operational", {
+          cache: "no-store",
+          signal: AbortSignal.timeout(12_000),
+        }),
+        session: readSession(),
+        configuration: readConfiguration(),
+      };
+  // A failure is reported by the step that awaits it; never as an unhandled rejection.
+  if (startup) for (const pending of Object.values(startup)) pending.catch(() => undefined);
+  if (startup) {
+    const healthResponse = await startup.health;
     if (!healthResponse.ok) {
       throw new SerametBootstrapError(
         "SERVICE_UNAVAILABLE",
@@ -697,17 +726,7 @@ async function bootstrapAuthoritativeSession(
       );
     }
   }
-  const token = getSerametAccessToken();
-  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-  const selectedTenant =
-    typeof window === "undefined"
-      ? undefined
-      : window.localStorage.getItem(sessionTenantStorageKey)?.trim();
-  if (selectedTenant) headers["x-seramet-tenant-id"] = selectedTenant;
-  const sessionResponse = await authenticatedFetch("/api/seramet/auth/session", {
-    headers,
-    signal: AbortSignal.timeout(12_000),
-  });
+  const sessionResponse = await (startup?.session ?? readSession());
   if (!sessionResponse.ok) {
     if (sessionResponse.status === 401 || sessionResponse.status === 403) {
       throw new SerametBootstrapError(
@@ -736,10 +755,7 @@ async function bootstrapAuthoritativeSession(
     JSON.stringify(previousActor) === JSON.stringify(session.actor)
   )
     return { status: "AUTHENTICATED", actor: previousActor };
-  const configurationResponse = await authenticatedFetch("/api/seramet/configuration", {
-    headers,
-    signal: AbortSignal.timeout(12_000),
-  });
+  const configurationResponse = await (startup?.configuration ?? readConfiguration());
   if (!configurationResponse.ok) {
     if (configurationResponse.status === 401 || configurationResponse.status === 403) {
       throw new SerametBootstrapError(

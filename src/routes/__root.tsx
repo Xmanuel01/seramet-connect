@@ -9,11 +9,16 @@ import {
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { AppProvider } from "@/lib/app-context";
 import { RouteAccessBoundary } from "@/components/app/RouteAccessBoundary";
+import {
+  installStaleBuildRecovery,
+  isStaleBuildError,
+  reloadForNewBuild,
+} from "@/lib/stale-build-recovery";
 
 function NotFoundComponent() {
   return (
@@ -40,19 +45,31 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
+  // A page whose code changed in a deploy since this tab opened: load the current version.
+  const staleBuild = isStaleBuildError(error);
+  useEffect(() => {
+    if (staleBuild) reloadForNewBuild();
+  }, [staleBuild]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          This page didn't load
+          {staleBuild ? "Seramet was updated" : "This page didn't load"}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
+          {staleBuild
+            ? "Loading the latest version. If this page stays here, choose Try again."
+            : "Something went wrong on our end. You can try refreshing or head back home."}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
+              // Retrying in place can't fetch code that was replaced; a reload can.
+              if (staleBuild) {
+                window.location.reload();
+                return;
+              }
               router.invalidate();
               reset();
             }}
@@ -147,6 +164,7 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useEffect(() => installStaleBuildRecovery(), []);
   const isGuestRoute = useRouterState({
     select: (state: { location: { pathname: string } }) =>
       state.location.pathname.startsWith("/guest/"),

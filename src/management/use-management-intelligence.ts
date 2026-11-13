@@ -41,6 +41,9 @@ export function useManagementIntelligence(enabled = true) {
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState("");
   const [asOf, setAsOf] = useState<string | null>(null);
+  // The scope whose figures are on screen: a refresh that fails keeps them instead of
+  // replacing a loaded page with an error.
+  const loadedScope = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (scopeRef.current !== scopeKey) return;
@@ -51,7 +54,8 @@ export function useManagementIntelligence(enabled = true) {
       setStatus("idle");
       return;
     }
-    setStatus("loading");
+    const refreshing = loadedScope.current === scopeKey;
+    if (!refreshing) setStatus("loading");
     setError("");
     try {
       const branchIds = branchKey.split("|").filter(Boolean);
@@ -91,10 +95,17 @@ export function useManagementIntelligence(enabled = true) {
       if (!read.isCurrent()) return;
       setControls(controlRows);
       setOwner(ownerPayload);
+      loadedScope.current = scopeKey;
       setStatus("ready");
       setAsOf(new Date().toISOString());
     } catch (cause) {
       if (!read.isCurrent()) return;
+      if (refreshing) {
+        // Keep the figures already shown; the next refresh brings them up to date.
+        reportError(cause, "");
+        setStatus("ready");
+        return;
+      }
       setControls([]);
       setOwner(null);
       setError(reportError(cause, "Something went wrong on our side. Try again in a moment."));
@@ -106,6 +117,7 @@ export function useManagementIntelligence(enabled = true) {
     setControls([]);
     setOwner(null);
     setAsOf(null);
+    loadedScope.current = null;
     void refresh();
     return () => readGuard.cancel();
   }, [readGuard, refresh]);
