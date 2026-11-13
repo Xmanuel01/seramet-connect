@@ -15,6 +15,8 @@ import type { ServerActor } from "@/lib/seramet-auth";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { D1Database, D1PreparedStatement } from "@/server/database/d1";
 import { ServerOperationError } from "@/server/errors";
+import type { RealtimeEvent } from "@/server/realtime";
+import { notifyRealtimeHub, type RealtimeHubNamespace } from "@/server/realtime-hub";
 import { authoritativeBusinessDate } from "@/server/business-date";
 import { QUANTITY_SCALE, quantityCostMinor } from "@/inventory/quantity";
 import { parseMajorAmount } from "@/payments/money";
@@ -124,7 +126,10 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
 
   constructor(
     private readonly db: D1Database,
-    private readonly options: { requireInvoiceLedger?: boolean } = {},
+    private readonly options: {
+      requireInvoiceLedger?: boolean;
+      realtimeHub?: RealtimeHubNamespace;
+    } = {},
   ) {}
 
   async migrate() {
@@ -398,6 +403,17 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
           stamp,
         ),
     );
+    const realtimeEvent: RealtimeEvent = {
+      id: crypto.randomUUID(),
+      branchId: input.actor.branchId ?? null,
+      topic: "transactions",
+      entityType: "TRANSACTION_COMMAND",
+      entityId: input.idempotencyKey,
+      eventType: input.action,
+      correlationId: input.correlationId,
+      payload: { revision: newRevision },
+      createdAt: stamp,
+    };
     statements.push(
       this.db
         .prepare(
@@ -408,14 +424,14 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         )
         .bind(
           tenantId,
-          crypto.randomUUID(),
-          input.actor.branchId ?? null,
-          "transactions",
-          "TRANSACTION_COMMAND",
-          input.idempotencyKey,
-          input.action,
-          input.correlationId,
-          JSON.stringify({ revision: newRevision }),
+          realtimeEvent.id,
+          realtimeEvent.branchId,
+          realtimeEvent.topic,
+          realtimeEvent.entityType,
+          realtimeEvent.entityId,
+          realtimeEvent.eventType,
+          realtimeEvent.correlationId,
+          JSON.stringify(realtimeEvent.payload),
           stamp,
           new Date(Date.parse(stamp) + 24 * 60 * 60 * 1_000).toISOString(),
         ),
@@ -489,6 +505,8 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     // Whether the batch commits or fails, the rows read before it are no longer known current.
     this.snapshots.delete(tenantId);
     await this.db.batch(statements);
+    // Committed: push the event to the restaurant's open devices (the row is the catch-up log).
+    await notifyRealtimeHub(this.options.realtimeHub, tenantId, [realtimeEvent]);
     return newRevision;
   }
 

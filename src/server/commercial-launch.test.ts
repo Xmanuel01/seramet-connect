@@ -677,6 +677,10 @@ describe.sequential("commercial launch foundation", () => {
       SERAMET_DATABASE_PROVIDER: "postgres",
       SERAMET_HYPERDRIVE: { connectionString: "postgresql://staging.example.test/seramet" },
       SERAMET_WORK_QUEUE: { send: async () => undefined },
+      SERAMET_REALTIME_HUB: {
+        idFromName: (name: string) => name,
+        get: () => ({ fetch: async () => new Response(null, { status: 404 }) }),
+      },
       SERAMET_OBJECTS: {
         head: async () => null,
         get: async () => null,

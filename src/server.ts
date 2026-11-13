@@ -154,6 +154,10 @@ function isAllowedBrowserOrigin(request: Request, env: SerametEnv) {
 }
 
 async function secureResponse(response: Response, env: SerametEnv, api: boolean) {
+  // An accepted WebSocket upgrade carries the socket on the response; rebuilding it would
+  // drop the socket, and 101 responses have no body or page headers to secure.
+  if (response.status === 101) return response;
+
   const headers = new Headers(response.headers);
 
   const productionLike = resolveRuntimeConfiguration(env).productionLike;

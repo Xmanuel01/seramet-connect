@@ -110,6 +110,11 @@ const config = {
     ],
   },
   triggers: { crons: ["*/1 * * * *"] },
+  // Keep in step with realtimeHubDurableObjects in src/server/cloudflare-build-config.ts.
+  durable_objects: {
+    bindings: [{ name: "SERAMET_REALTIME_HUB", class_name: "SerametRealtimeHub" }],
+  },
+  migrations: [{ tag: "v1-realtime-hub", new_sqlite_classes: ["SerametRealtimeHub"] }],
   vars,
 };
 
