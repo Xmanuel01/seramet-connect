@@ -253,11 +253,11 @@ test("a role's access is set by area and level, and a custom mix is kept", async
   await page.getByPlaceholder("Add role").fill(roleName);
   await page.getByRole("button", { name: "Add role" }).click();
   await expect(page.getByText(`${roleName} was saved.`)).toBeVisible();
-  await page.getByLabel("Role", { exact: true }).selectOption({ label: roleName });
+  await page.getByRole("combobox", { name: "Role", exact: true }).selectOption({ label: roleName });
   await expect(page.getByText(`What ${roleName} can do`)).toBeVisible();
 
   // One choice per area, in everyday words, with the detail folded away.
-  await expect(page.getByRole("group")).toHaveCount(11);
+  await expect(page.locator("fieldset")).toHaveCount(11);
   await expect(level("Sales & POS: No access")).toBeChecked();
   await expect(page.getByText(/[a-z]+\.[a-z_]+\.(view|manage|approve)/)).toHaveCount(0);
   await expect(page.locator("details[open]")).toHaveCount(0);
@@ -298,7 +298,7 @@ test("a role's access is set by area and level, and a custom mix is kept", async
 
   // After a reload the mix is still Custom, and changing another area does not disturb it.
   await page.reload();
-  await page.getByLabel("Role", { exact: true }).selectOption({ label: roleName });
+  await page.getByRole("combobox", { name: "Role", exact: true }).selectOption({ label: roleName });
   await expect(level("Sales & POS: Custom")).toBeChecked();
   await choose("Kitchen & recipes: View");
   await save();
