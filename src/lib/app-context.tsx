@@ -695,6 +695,9 @@ async function bootstrapAuthoritativeSession(
   // Opening the app needs readiness, the session and the configuration. They used to be asked
   // for one after another (three round trips before the page could draw); now they are asked
   // for together and still checked in that order. The server authenticates each request.
+  // The early configuration read is a plain request: a rejected one must not refresh the
+  // session or leave the page, since the session result decides what happens next. It is used
+  // only if it succeeded; otherwise the configuration is asked for again once the session holds.
   const startup = previousActor
     ? undefined
     : {
@@ -703,7 +706,11 @@ async function bootstrapAuthoritativeSession(
           signal: AbortSignal.timeout(12_000),
         }),
         session: readSession(),
-        configuration: readConfiguration(),
+        configuration: fetch("/api/seramet/configuration", {
+          headers,
+          credentials: "same-origin",
+          signal: AbortSignal.timeout(12_000),
+        }),
       };
   // A failure is reported by the step that awaits it; never as an unhandled rejection.
   if (startup) for (const pending of Object.values(startup)) pending.catch(() => undefined);
@@ -755,7 +762,8 @@ async function bootstrapAuthoritativeSession(
     JSON.stringify(previousActor) === JSON.stringify(session.actor)
   )
     return { status: "AUTHENTICATED", actor: previousActor };
-  const configurationResponse = await (startup?.configuration ?? readConfiguration());
+  const early = await startup?.configuration.catch(() => undefined);
+  const configurationResponse = early?.ok ? early : await readConfiguration();
   if (!configurationResponse.ok) {
     if (configurationResponse.status === 401 || configurationResponse.status === 403) {
       throw new SerametBootstrapError(
