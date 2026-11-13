@@ -413,6 +413,81 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(await count("mutation_commits", tenantA)).toBe(1);
   });
 
+  it("commits store only the revision, not another copy of the full state", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const committed = await mutation(
+      repository,
+      "compact-a",
+      "compact-a-hash",
+      "upsertOrderDraft",
+      {
+        draft: orderDraft("Compact"),
+        targetStatus: "OPEN",
+      },
+    );
+    const commitRow = await database
+      .prepare(
+        "SELECT response_json, new_revision FROM mutation_commits WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(tenantA, "compact-a")
+      .first<{ response_json: string; new_revision: number }>();
+    const readModel = await database
+      .prepare("SELECT revision, payload_json FROM tenant_state_read_models WHERE tenant_id=?")
+      .bind(tenantA)
+      .first<{ revision: number; payload_json: string }>();
+
+    expect(JSON.parse(commitRow!.response_json)).toEqual({ revision: committed.revision });
+    expect(commitRow!.new_revision).toBe(committed.revision);
+    // The read model still carries the revision that conflict detection relies on.
+    expect(readModel).toEqual({ revision: committed.revision, payload_json: "{}" });
+    expect(JSON.stringify(committed.state).length).toBeGreaterThan(100);
+  });
+
+  it("replays an idempotency key from the current state without a stored state copy", async () => {
+    await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "replay-a",
+      "replay-a-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Replay A"), targetStatus: "OPEN" },
+    );
+    const later = await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "replay-b",
+      "replay-b-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Replay B"), targetStatus: "OPEN" },
+    );
+    // A row written before this change still holds the full state; replay must not need it.
+    await database
+      .prepare(
+        "UPDATE mutation_commits SET response_json=? WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(JSON.stringify({ state: { stale: true }, revision: 1 }), tenantA, "replay-a")
+      .run();
+
+    const reads = { history: 0 };
+    const terminal = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads));
+    await terminal.loadState(tenantA);
+    const replay = await mutation(terminal, "replay-a", "replay-a-hash", "upsertOrderDraft", {
+      draft: orderDraft("Replay A"),
+      targetStatus: "OPEN",
+    });
+
+    expect(replay.duplicate).toBe(true);
+    expect(replay.revision).toBe(later.revision);
+    expect(replay.state.orders).toHaveLength(2);
+    // The replay reuses the request's snapshot rather than reading the history again.
+    expect(reads.history).toBe(1);
+    expect(await count("mutation_commits", tenantA)).toBe(2);
+    await expect(
+      mutation(terminal, "replay-a", "different-hash", "upsertOrderDraft", {
+        draft: orderDraft("Other"),
+        targetStatus: "OPEN",
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE", status: 409 });
+  });
+
   it("reads the tenant's state history once for a load followed by a mutation", async () => {
     await mutation(
       new D1AuthoritativeTransactionRepository(database),
