@@ -360,22 +360,62 @@ describe.sequential("realtime catch-up from the event log", () => {
     await publish(hub, tenantA, "order-3");
 
     const second = await reconnect(hub, scopeA, cursor);
-    // Exactly the missed events, in log order. Writes in the same millisecond are ordered by
-    // id, as the log query orders them, so compare the set and check the cursors ascend.
-    const replayed = second.messages().filter((message) => message.type === "event");
-    expect(replayed.map((message) => message.event.entityId).sort()).toEqual([
-      "order-2",
-      "order-3",
-    ]);
-    const cursors = replayed.map((message) => message.cursor);
+    // The replay re-reads a short overlap, so it may repeat events the tab already has; the
+    // browser drops those by id. What is new to the tab is exactly what it missed.
+    const seen = new Set(live.map((message) => message.event.id));
+    const fresh = () => second.events().filter((item) => !seen.has(item.id));
+    expect(
+      fresh()
+        .map((item) => item.entityId)
+        .sort(),
+    ).toEqual(["order-2", "order-3"]);
+    const cursors = second
+      .messages()
+      .flatMap((message) => (message.type === "event" ? [message.cursor] : []));
     expect(cursors).toEqual([...cursors].sort());
-    expect(cursors.every((value) => value > cursor)).toBe(true);
-    const ready = second.messages().at(-1);
-    expect(ready).toEqual({ type: "ready", cursor: cursors.at(-1) });
+    expect(second.messages().at(-1)).toEqual({ type: "ready", cursor: cursors.at(-1) });
 
     await publish(hub, tenantA, "order-4");
-    expect(second.events().map((item) => item.entityId)).toHaveLength(3);
+    expect(fresh()).toHaveLength(3);
     expect(second.events().at(-1)?.entityId).toBe("order-4");
+  });
+
+  it("replays an event that sorts before the cursor but became visible after it", async () => {
+    const scopeA = scope({ tenantId: tenantA.tenantId, branchId: tenantA.branchId });
+    const stamp = new Date(Date.now() - 2_000).toISOString();
+    const insert = (id: string, entityId: string, createdAt: string) =>
+      database
+        .prepare(
+          `INSERT INTO realtime_events
+            (tenant_id,id,branch_id,topic,entity_type,entity_id,event_type,correlation_id,
+             payload_json,created_at,expires_at)
+           VALUES (?,?,?,'orders','ORDER',?,'UPDATED','c','{}',?,?)`,
+        )
+        .bind(
+          tenantA.tenantId,
+          id,
+          tenantA.branchId,
+          entityId,
+          createdAt,
+          new Date(Date.now() + 60_000).toISOString(),
+        )
+        .run();
+    // The tab's last event has the higher id of two written in the same millisecond...
+    const seenId = "ffffffff-0000-4000-8000-000000000001";
+    await insert(seenId, "seen", stamp);
+    // ...then the lower id, and an event stamped a second earlier, commit afterwards.
+    await insert("00000000-0000-4000-8000-000000000002", "same-millisecond", stamp);
+    await insert(
+      "88888888-0000-4000-8000-000000000003",
+      "late-commit",
+      new Date(Date.parse(stamp) - 1_000).toISOString(),
+    );
+    const replay = await realtimeReplay(database, scopeA, `${stamp}|${seenId}`);
+    expect(replay.events.map((item) => item.entityId).sort()).toEqual([
+      "late-commit",
+      "same-millisecond",
+      "seen",
+    ]);
   });
 
   it("asks for a snapshot reload when the gap exceeds the replay", async () => {

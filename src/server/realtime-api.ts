@@ -17,6 +17,8 @@ import {
 
 /** Catch-up older than this may already be pruned from the log: reload a snapshot instead. */
 const REPLAY_RETENTION_MS = 23 * 60 * 60 * 1_000;
+/** How far before the client's cursor a replay re-reads, to catch late-committing events. */
+const REPLAY_OVERLAP_MS = 5_000;
 
 export async function handleRealtimeApi(request: Request, env: SerametEnv) {
   const url = new URL(request.url);
@@ -174,11 +176,14 @@ export async function realtimeReplay(
   if (Date.now() - Date.parse(resume.after) > REPLAY_RETENTION_MS) {
     return { events: [], truncated: true, cursor };
   }
+  // Resume a little before the cursor, not exactly after it. An event is stamped before its
+  // transaction commits, so one with an earlier stamp (or the same millisecond and a lower
+  // id) can become visible after the client's last event. The client drops repeats by id.
   const events = await listRealtimeEvents(database, {
     tenantId: scope.tenantId,
     ...(scope.branchId ? { branchId: scope.branchId } : {}),
-    after: resume.after,
-    afterId: resume.afterId,
+    after: new Date(Date.parse(resume.after) - REPLAY_OVERLAP_MS).toISOString(),
+    afterId: "",
     limit: REALTIME_REPLAY_LIMIT + 1,
   });
   const truncated = events.length > REALTIME_REPLAY_LIMIT;

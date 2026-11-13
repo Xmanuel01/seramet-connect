@@ -311,12 +311,15 @@ export class SerametRealtimeHub {
       sent.add(event.id);
       if (compareCursor(eventCursor, cursor) > 0) cursor = eventCursor;
     }
+    // A resuming client gets every recently announced event the replay did not carry (it
+    // drops repeats by id); a fresh one, which has just loaded its data, only the newest.
+    const recentFloor = replay.cursor ? "" : cursor;
     for (const entry of this.recent) {
-      if (sent.has(entry.event.id) || compareCursor(entry.cursor, cursor) <= 0) continue;
+      if (sent.has(entry.event.id) || compareCursor(entry.cursor, recentFloor) <= 0) continue;
       if (!eventVisibleTo(entry.event, scope)) continue;
       send(server, { type: "event", cursor: entry.cursor, event: entry.event });
       sent.add(entry.event.id);
-      cursor = entry.cursor;
+      if (compareCursor(entry.cursor, cursor) > 0) cursor = entry.cursor;
     }
     send(server, { type: "ready", cursor });
     return realtimeHubRuntime.upgradeResponse(client);
