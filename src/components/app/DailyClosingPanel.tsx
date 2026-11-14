@@ -27,7 +27,15 @@ import { MpesaDaySummaryView } from "@/components/app/MpesaDaySummaryView";
 import { mpesaDaySummary } from "@/payments/mpesa-day-summary";
 
 type Engine = ReturnType<typeof useTransactionEngine>;
-export function DailyClosingPanel({ engine }: { engine: Engine }) {
+export function DailyClosingPanel({
+  engine,
+  selectedBusinessDate,
+  onBusinessDateChange,
+}: {
+  engine: Engine;
+  selectedBusinessDate?: string;
+  onBusinessDateChange?: (date: string) => void;
+}) {
   const {
     activeTenantId,
     branchId,
@@ -46,7 +54,8 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   const [currentDate, setCurrentDate] = useState("");
   const [contextRefresh, setContextRefresh] = useState(0);
   const policy = closingPolicy(state, activeTenantId, branchId);
-  const [date, setDate] = useState("");
+  const [localDate, setDate] = useState("");
+  const date = selectedBusinessDate ?? localDate;
   const [open, setOpen] = useState(false);
   const [targetShift, setTargetShift] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<string, string>>({});
@@ -64,6 +73,12 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
   const settingsVersion = useRef("");
   const lock = useRef(false);
   const cancel = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    setCounts({});
+    setReasons({});
+    setOpen(false);
+    setConfirmFingerprint(null);
+  }, [date, activeTenantId, branchId]);
   function beginSettingsEdit() {
     if (!settingsDirty) {
       settingsVersion.current = policy.updatedAt;
@@ -294,6 +309,7 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
             value={date}
             onChange={(e) => {
               setDate(e.target.value);
+              onBusinessDateChange?.(e.target.value);
               setCounts({});
               setReasons({});
             }}
@@ -369,6 +385,8 @@ export function DailyClosingPanel({ engine }: { engine: Engine }) {
             .map((snapshot) => (
               <div
                 key={`${day.id}:${snapshot.revision}`}
+                role="group"
+                aria-label={`Closing report ${day.businessDate} revision ${snapshot.revision}`}
                 className="flex flex-wrap items-center justify-between gap-3 border-b py-3"
               >
                 <div>

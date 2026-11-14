@@ -38,6 +38,7 @@ import { tracePos } from "@/lib/pos-lifecycle-trace";
 import { useCrmApi } from "@/crm/use-crm";
 import type { CustomerProfile } from "@/crm/types";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
+import { posMenuPrice } from "@/lib/pos-menu-pricing";
 import {
   INITIAL_POS_MENU_ITEMS,
   POS_MENU_PAGE_SIZE,
@@ -338,7 +339,6 @@ function POS() {
     ) ?? (offlineStorageAvailable ? null : "Offline storage unavailable");
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
-  const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
   const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
@@ -449,20 +449,14 @@ function POS() {
       operationalMenu.items
         .filter((product) => product.branchAvailability?.[branch] !== false)
         .map((product) => {
-          const branchPrice = product.branchPrices?.[branch] ?? product.price;
           const availability = TransactionEngine.getProductAvailability(
             transactionState,
             branchId,
             product.id,
           );
-          const price = isOnlineSource
-            ? Math.round(branchPrice * onlinePriceMultiplier)
-            : branchPrice;
           return {
             ...product,
-            price,
-            priceMinor: parseMajorAmount(price, tenant.defaultCurrency),
-            currency: tenant.defaultCurrency,
+            ...posMenuPrice(product, selectedChannel, branch, tenant.defaultCurrency),
             out: product.out === true || !availability.available,
             availabilityPortions: availability.portions,
           };
@@ -470,8 +464,7 @@ function POS() {
     [
       branch,
       branchId,
-      isOnlineSource,
-      onlinePriceMultiplier,
+      selectedChannel,
       operationalMenu.items,
       tenant.defaultCurrency,
       transactionState,
@@ -1594,8 +1587,11 @@ function POS() {
             </div>
             {isOnlineSource && (
               <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-                {selectedChannel?.displayName} selected: menu cards now use online prices and
-                settlement defaults to partner credit where required.
+                {selectedChannel?.displayName}:{" "}
+                {selectedChannel?.metadata["useOnlinePrice"] === true
+                  ? "Online pricing where configured"
+                  : "Standard pricing"}
+                .
               </div>
             )}
             {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (

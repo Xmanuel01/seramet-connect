@@ -179,7 +179,7 @@ export function parseMarketplaceConnectionConfig(
     acceptancePolicy: enumValue(
       value["acceptancePolicy"],
       ["MANUAL", "AUTO_ACCEPT_VALID", "AUTO_ACCEPT_ALL_MAPPED"] as const,
-      "AUTO_ACCEPT_VALID",
+      "MANUAL",
     ),
     unmappedItemPolicy: enumValue(
       value["unmappedItemPolicy"],

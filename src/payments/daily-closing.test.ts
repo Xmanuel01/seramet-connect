@@ -12,6 +12,7 @@ import {
 import { paymentOrchestrator } from "./payment-orchestrator";
 import { applyServerMutation } from "@/lib/seramet-repository";
 import { ReconciliationEngine } from "./reconciliation-engine";
+import { closingReportSections } from "@/server/daily-closing-report";
 import { allPermissionCodes, permissions } from "@/platform/permissions";
 import {
   createDefaultDemoPlatformState,
@@ -88,6 +89,48 @@ function multi(initial = createEmptyTransactionState(tenantId)) {
 }
 
 describe("unified daily closing", () => {
+  it("freezes marketplace carry-forward in the closing snapshot and exported report", () => {
+    const state = opened();
+    state.marketplaceReceivables.push({
+      id: "marketplace-balance",
+      tenantId,
+      branchId,
+      branch: branchId,
+      orderId: "external-order",
+      invoiceId: "external-invoice",
+      connectionId: "uber-test",
+      providerId: "provider-uber-eats",
+      externalOrderId: "provider-order",
+      currency: "KES",
+      grossAmount: 1000,
+      externallyCollectedAmount: 1000,
+      settledAmount: 0,
+      outstandingAmount: 1000,
+      status: "OPEN",
+      receivableAccount: "Marketplace receivables",
+      createdAt: "2026-10-15T09:00:00Z",
+      updatedAt: "2026-10-15T09:00:00Z",
+      metadata: {},
+    });
+    const closed = close(state);
+    const snapshot = closed.paymentOperations!.dayCloses[0]!.snapshot!;
+    expect(snapshot.dailyReport?.marketplace?.[0]).toMatchObject({
+      connectionId: "uber-test",
+      grossMinor: 100000,
+      outstandingMinor: 100000,
+      carriedOutstandingMinor: 100000,
+    });
+    expect(
+      closingReportSections(snapshot).find((section) => section.title === "Marketplace uber-test")
+        ?.rows,
+    ).toContainEqual([
+      "Total outstanding carried forward",
+      expect.stringMatching(/KES\s1,000\.00/),
+    ]);
+    closed.marketplaceReceivables[0]!.outstandingAmount = 0;
+    expect(snapshot.dailyReport?.marketplace?.[0]?.carriedOutstandingMinor).toBe(100000);
+    expect(closed.receipts).toHaveLength(0);
+  });
   it("keeps subsequently created employee records explicitly tenant and branch scoped", () => {
     const next = applyServerMutation(
       createEmptyTransactionState(tenantId),

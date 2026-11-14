@@ -14,6 +14,8 @@ import { handleWorkerQueue } from "@/server/workers";
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import type { ServerActor } from "@/lib/seramet-auth";
 import { allPermissionCodes } from "@/platform/permissions";
+import { createIntegrationRepository } from "@/integrations/runtime/integration-repository";
+import type { ExternalResourceMapping, IntegrationOutbox } from "@/integrations/runtime/models";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -36,9 +38,27 @@ async function postgresFixture() {
       const result = await postgres.query(sql, values);
       return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
     };
+    // PGlite has one physical session; a pool checkout must own it until release.
+    let pending = Promise.resolve();
+    const acquire = async () => {
+      const previous = pending;
+      let release!: () => void;
+      pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await previous;
+      return release;
+    };
     const db = new PostgresD1Database({
-      query,
-      connect: async () => ({ query, release() {} }),
+      query: async (sql: string, values?: unknown[]) => {
+        const release = await acquire();
+        try {
+          return await query(sql, values);
+        } finally {
+          release();
+        }
+      },
+      connect: async () => ({ query, release: await acquire() }),
     } as unknown as Pool);
     return { postgres, db };
   } catch (error) {
@@ -46,6 +66,69 @@ async function postgresFixture() {
     throw error;
   }
 }
+
+it("atomically claims marketplace mappings and deduplicates concurrent outbox publication on PostgreSQL", async () => {
+  const { postgres, db } = await postgresFixture();
+  try {
+    const stamp = new Date().toISOString();
+    await postgres.query(
+      `INSERT INTO tenants (id,slug,legal_name,trading_name,default_currency,timezone,locale,active,payload_json,created_at,updated_at)
+      VALUES ('marketplace-test','marketplace-test','Test','Test','KES','Africa/Nairobi','en-KE',1,'{}',$1,$1)`,
+      [stamp],
+    );
+    await postgres.query(
+      `INSERT INTO provider_connections (tenant_id,id,provider_id,environment,status,payload_json,created_at,updated_at)
+      VALUES ('marketplace-test','connection','provider','SANDBOX','CONFIGURED','{}',$1,$1)`,
+      [stamp],
+    );
+    const repository = createIntegrationRepository(db);
+    const mapping: ExternalResourceMapping = {
+      id: "item",
+      tenantId: "marketplace-test",
+      connectionId: "connection",
+      providerId: "provider",
+      resourceType: "ITEM",
+      internalId: "item",
+      externalId: "external",
+      status: "MAPPED",
+      metadata: {},
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    await repository.upsertMapping(mapping);
+    const claims = await Promise.all([
+      repository.replaceMapping(mapping, { ...mapping, metadata: { version: "first" } }),
+      repository.replaceMapping(mapping, { ...mapping, metadata: { version: "second" } }),
+    ]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await repository.replaceMapping({ ...mapping, tenantId: "other" }, mapping)).toBe(false);
+    const record: IntegrationOutbox = {
+      id: "outbox-a",
+      tenantId: mapping.tenantId,
+      connectionId: mapping.connectionId,
+      providerId: mapping.providerId,
+      eventType: "ITEM_AVAILABILITY",
+      resourceType: "ITEM",
+      resourceId: "external",
+      payload: { available: false },
+      idempotencyKey: "availability:one",
+      correlationId: "test",
+      status: "PENDING",
+      attemptCount: 0,
+      maxAttempts: 4,
+      createdAt: stamp,
+    };
+    const publications = await Promise.all([
+      repository.enqueueOutbox(record),
+      repository.enqueueOutbox({ ...record, id: "outbox-b" }),
+    ]);
+    expect(publications.filter((result) => result.created)).toHaveLength(1);
+    expect(publications[0]!.record.id).toBe(publications[1]!.record.id);
+    expect(await repository.getMapping("other", "connection", "ITEM", "external")).toBeNull();
+  } finally {
+    await postgres.close();
+  }
+}, 60_000);
 
 it("runs inventory expiry SQL on PostgreSQL, preserving UTC cutoff, tenant isolation and redelivery safety", async () => {
   const { postgres, db } = await postgresFixture();

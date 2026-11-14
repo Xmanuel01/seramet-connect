@@ -24,6 +24,7 @@ import {
 } from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
+import { permissions } from "@/platform/permissions";
 
 const tenantA = "tenant-a";
 const tenantB = "tenant-b";
@@ -721,6 +722,122 @@ describe.sequential("Pass 5 production foundation", () => {
       .bind(new Date().toISOString(), tenantA, sessionA)
       .run();
     expect((await read(branchA)).status).toBe(401);
+  });
+
+  it("protects marketplace alerts and controls with permissions and branch scope", async () => {
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const env = {
+      ...testEnv(),
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_IDENTITY_PROVIDER: "internal",
+    };
+    const request = (path: string, body?: object, bearer = token) =>
+      handleSerametApiRequest(
+        new Request(`http://localhost/api/seramet/integrations/marketplace/${path}`, {
+          method: body ? "POST" : "GET",
+          headers: {
+            authorization: `Bearer ${bearer}`,
+            "x-seramet-branch-id": branchA,
+            "content-type": "application/json",
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+        env,
+      );
+    expect((await request(`attention?branchId=${branchA}`)).status).toBe(403);
+    expect(
+      (
+        await request("ready-time", {
+          branchId: branchA,
+          orderId: "missing",
+          readyAt: new Date().toISOString(),
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await request("store-status", { connectionId: "missing", status: "OPEN" })).status,
+    ).toBe(403);
+    await database
+      .prepare("INSERT INTO role_permissions VALUES (?,?,?)")
+      .bind(tenantA, `role-${tenantA}`, permissions.integrationsOrdersManage)
+      .run();
+    await hydrateSeededTenantsForTests(database, env);
+    expect((await request(`attention?branchId=${branchA}`)).status).toBe(200);
+    expect((await request("attention?branchId=branch-b")).status).toBe(403);
+    expect(
+      (
+        await request("ready-time", {
+          branchId: "branch-b",
+          orderId: "missing",
+          readyAt: new Date().toISOString(),
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request("decision", {
+          branchId: "branch-b",
+          orderId: "missing",
+          decision: "ACCEPT",
+          prepMinutes: 10,
+        })
+      ).status,
+    ).toBe(403);
+    expect((await request(`attention?branchId=${branchA}`, undefined, "invalid")).status).toBe(401);
+  });
+
+  it("returns saved online prices to the POS without exposing import metadata or other branches", async () => {
+    const stamp = new Date().toISOString();
+    await database
+      .prepare(
+        `INSERT INTO menu_catalog_items
+      (tenant_id,id,code,name,category_code,selling_price_minor,currency,payload_json,created_at,updated_at)
+      VALUES (?,'pilau','00069','Beef Pilau','PILAU',90000,'KES',?,?,?)`,
+      )
+      .bind(
+        tenantA,
+        JSON.stringify({ onlinePriceMinor: 109000, privateImportNote: "not-for-pos" }),
+        stamp,
+        stamp,
+      )
+      .run();
+    await database
+      .prepare(
+        `INSERT INTO menu_item_branch_settings
+      (tenant_id,branch_id,menu_item_id,available,updated_at) VALUES (?,?,'pilau',1,?)`,
+      )
+      .bind(tenantA, branchA, stamp)
+      .run();
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const env = {
+      ...testEnv(),
+      SERAMET_ENVIRONMENT: "development",
+      SERAMET_IDENTITY_PROVIDER: "internal",
+    };
+    const read = (branch = branchA) =>
+      handleSerametApiRequest(
+        new Request(`http://localhost/api/seramet/menu/catalog?branchId=${branch}`, {
+          headers: { authorization: `Bearer ${token}`, "x-seramet-branch-id": branchA },
+        }),
+        env,
+      );
+    const response = await read();
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({
+      id: "pilau",
+      effective_price_minor: 90000,
+      online_price_minor: 109000,
+    });
+    expect(body.items[0]).not.toHaveProperty("payload_json");
+    expect(JSON.stringify(body)).not.toContain("not-for-pos");
+    expect((await read("branch-b")).status).toBe(403);
+    await database
+      .prepare("UPDATE menu_catalog_items SET payload_json=? WHERE tenant_id=? AND id='pilau'")
+      .bind(JSON.stringify({ onlinePriceMinor: -1 }), tenantA)
+      .run();
+    const malformed = (await (await read()).json()) as { items: Array<Record<string, unknown>> };
+    expect(malformed.items[0]?.online_price_minor).toBeNull();
   });
 
   it("rejects development headers in production", async () => {

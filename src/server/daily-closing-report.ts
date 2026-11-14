@@ -67,6 +67,22 @@ export function closingReportSections(snapshot: ClosingSnapshot): ClosingReportS
       rows: snapshot.tenders.map((t) => [t.method, money(t.amountMinor)]),
     },
   ];
+  for (const marketplace of report.marketplace ?? []) {
+    const money = (minor: number) => formatMinor(minor, marketplace.currency);
+    sections.push({
+      title: `Marketplace ${marketplace.connectionId}`,
+      rows: [
+        ["Received / confirmed accepted", `${marketplace.received} / ${marketplace.accepted}`],
+        ["Fulfilled / cancelled", `${marketplace.fulfilled} / ${marketplace.cancelled}`],
+        ["Open orders carried forward", marketplace.openOrderIds.join(", ") || "None"],
+        ["Today's receivables (gross)", money(marketplace.grossMinor)],
+        ["Settled against today's receivables", money(marketplace.settledMinor)],
+        ["Outstanding against today's receivables", money(marketplace.outstandingMinor)],
+        ["Recorded charges", money(marketplace.feesMinor)],
+        ["Total outstanding carried forward", money(marketplace.carriedOutstandingMinor)],
+      ],
+    });
+  }
   for (const drawer of report.drawers) {
     sections.push({
       title: `Cashier ${report.operatorNames?.[drawer.employeeId] ?? drawer.employeeId}`,
