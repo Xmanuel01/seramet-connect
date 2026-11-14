@@ -17,6 +17,7 @@ export const testDeliveryDefinition: ProviderDefinition = {
     "ORDER_MODIFICATIONS",
     "WEBHOOK_CONFIRMATION",
     "MARK_ORDER_READY",
+    "UPDATE_READY_TIME",
     "CANCEL_ORDER",
     "SYNC_MENU",
     "SYNC_PRICES",
@@ -49,6 +50,7 @@ export type TestDeliveryControls = {
   availabilitySyncs?: unknown[];
   priceSyncs?: unknown[];
   storeStatuses?: string[];
+  readyTimes?: string[];
   recoverableOrders?: Array<{
     externalOrderId: string;
     providerEventId?: string;
@@ -140,6 +142,10 @@ export function createTestDeliveryAdapter(controls: TestDeliveryControls = {}): 
     markOrderReady: async (id) => {
       (controls.readyOrders ??= []).push(id);
       return { ok: true, value: { ready: true } };
+    },
+    updateReadyTime: async (_id, readyAt) => {
+      (controls.readyTimes ??= []).push(readyAt);
+      return { ok: true, value: { readyAt } };
     },
     cancelOrder: async (id) => {
       (controls.cancelledOrders ??= []).push(id);

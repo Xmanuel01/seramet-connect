@@ -397,6 +397,7 @@ export class IntegrationRuntime {
     payload: unknown;
     idempotencyKey: string;
     coalescingKey?: string;
+    nextAttemptAt?: string;
   }) {
     const connection = this.requireTenantConnection(input.tenantId, input.connectionId);
     const record = {
@@ -697,6 +698,7 @@ export class IntegrationRuntime {
             `Preparation time must be between 1 and ${config.maximumPrepMinutes} minutes`,
           );
         if (
+          config.unmappedItemPolicy !== "USE_EXTERNAL_DESCRIPTION" &&
           order.lines.some(
             (line) => !line.productId || line.itemNote?.includes("[UNMAPPED MODIFIER]"),
           )
@@ -754,6 +756,7 @@ export class IntegrationRuntime {
     input: { confirmedMenuHash: string; allowDestructive?: boolean },
   ) {
     const connection = this.requireTenantConnection(tenantId, connectionId);
+    this.assertConnectionEnabled(connection);
     const adapter = this.dependencies.registry.resolve(connection, "SYNC_MENU");
     if (!adapter.syncMenu)
       throw new UnsupportedCapabilityError("Provider does not implement menu synchronization");
@@ -835,7 +838,7 @@ export class IntegrationRuntime {
         });
         continue;
       }
-      await this.dependencies.repository.upsertMapping({
+      await this.dependencies.repository.replaceMapping(current, {
         ...current,
         syncStatus: existing?.operation === "CONFLICT" ? "CONFLICT" : "PENDING",
         lastInternalHash: internalHash,
@@ -881,6 +884,7 @@ export class IntegrationRuntime {
     restoreAt?: string;
     actorId?: string;
     reason?: string;
+    resourceType?: "ITEM" | "MODIFIER";
   }) {
     if (
       input.restoreAt &&
@@ -902,6 +906,10 @@ export class IntegrationRuntime {
     const connections = eligible.filter((connection) => {
       const config = parseMarketplaceConnectionConfig(connection.configuration);
       return (
+        (input.resourceType !== "MODIFIER" ||
+          this.dependencies.registry
+            .resolve(connection)
+            .definition.capabilities.includes("SYNC_MODIFIERS")) &&
         config.availabilitySyncEnabled &&
         (input.manual || config.auto86Enabled) &&
         (!input.connectionIds || input.connectionIds.includes(connection.id)) &&
@@ -916,7 +924,7 @@ export class IntegrationRuntime {
         await this.dependencies.repository.listMappings(input.tenantId, connection.id)
       ).find(
         (candidate) =>
-          candidate.resourceType === "ITEM" &&
+          candidate.resourceType === (input.resourceType ?? "ITEM") &&
           candidate.internalId === input.internalItemId &&
           ["MAPPED", "AUTO_MATCHED"].includes(candidate.status),
       );
@@ -952,7 +960,7 @@ export class IntegrationRuntime {
           branchId: input.branchId,
           connectionId: connection.id,
           eventType: "ITEM_AVAILABILITY",
-          resourceType: "ITEM",
+          resourceType: input.resourceType ?? "ITEM",
           resourceId: mapping.externalId,
           payload: {
             externalItemId: mapping.externalId,
@@ -970,7 +978,7 @@ export class IntegrationRuntime {
               ? {}
               : { quantityAvailable: input.quantityAvailable }),
           },
-          idempotencyKey: `availability:${connection.id}:${input.internalItemId}:${version}`,
+          idempotencyKey: `availability:${connection.id}:${input.resourceType ?? "ITEM"}:${input.internalItemId}:${version}`,
           ...(!input.manual
             ? { coalescingKey: `availability:${connection.id}:${input.internalItemId}` }
             : {}),
@@ -989,7 +997,7 @@ export class IntegrationRuntime {
     const recovered: string[] = [];
     for (let mapping of mappings) {
       if (
-        mapping.resourceType !== "ITEM" ||
+        !["ITEM", "MODIFIER"].includes(mapping.resourceType) ||
         !["MAPPED", "AUTO_MATCHED"].includes(mapping.status) ||
         !mapping.branchId
       )
@@ -1007,12 +1015,16 @@ export class IntegrationRuntime {
       if (override.restoreAt && Date.parse(override.restoreAt) <= at.getTime()) {
         const context = await this.marketplaceContext(tenantId, connection);
         const product = context.catalog.find((item) => item.id === mapping.internalId);
-        if (!product) continue;
+        if (!product && mapping.resourceType === "ITEM") continue;
         const available =
-          product.branchAvailability?.[context.branch.name] !== false &&
-          !product.out &&
-          TransactionEngine.getProductAvailability(context.state, context.branch.name, product.id)
-            .available;
+          mapping.resourceType === "MODIFIER" ||
+          (product!.branchAvailability?.[context.branch.name] !== false &&
+            !product!.out &&
+            TransactionEngine.getProductAvailability(
+              context.state,
+              context.branch.name,
+              product!.id,
+            ).available);
         override = { version: crypto.randomUUID(), available };
         const next = {
           ...mapping,
@@ -1030,13 +1042,15 @@ export class IntegrationRuntime {
         if (!(await this.dependencies.repository.replaceMapping(mapping, next))) continue;
         mapping = next;
       }
-      if (mapping.syncStatus !== "PENDING") continue;
+      const lastAvailability = (mapping.metadata["lastAvailabilitySync"] ??
+        mapping.metadata["lastIncrementalSync"]) as { availabilityVersion?: string } | undefined;
+      if (lastAvailability?.availabilityVersion === override.version) continue;
       await this.enqueueOutbound({
         tenantId,
         branchId: mapping.branchId,
         connectionId: connection.id,
         eventType: "ITEM_AVAILABILITY",
-        resourceType: "ITEM",
+        resourceType: mapping.resourceType,
         resourceId: mapping.externalId,
         payload: {
           externalItemId: mapping.externalId,
@@ -1044,7 +1058,7 @@ export class IntegrationRuntime {
           available: override.available,
           availabilityVersion: override.version,
         },
-        idempotencyKey: `availability:${connection.id}:${mapping.internalId}:${override.version}`,
+        idempotencyKey: `availability:${connection.id}:${mapping.resourceType}:${mapping.internalId}:${override.version}`,
       });
       recovered.push(mapping.internalId);
     }
@@ -1057,18 +1071,53 @@ export class IntegrationRuntime {
     internalItemId: string;
     price: number;
     currency: string;
+    actorId?: string;
   }) {
     const connection = this.requireTenantConnection(input.tenantId, input.connectionId);
+    this.assertConnectionEnabled(connection);
     const config = parseMarketplaceConnectionConfig(connection.configuration);
     if (!config.priceSyncEnabled)
       throw new IntegrationValidationError("Price synchronization is disabled");
     this.dependencies.registry.resolve(connection, "SYNC_PRICES");
-    const externalItemId = await this.mappings.resolveExternalItem(
+    const tenantCurrency = this.dependencies.configuration.getTenant(
       input.tenantId,
-      input.connectionId,
-      input.internalItemId,
+    ).defaultCurrency;
+    if (!Number.isFinite(input.price) || input.price < 0 || input.currency !== tenantCurrency)
+      throw new IntegrationValidationError(
+        "Price must be non-negative and use the business currency",
+      );
+    parseMajorAmount(input.price, input.currency);
+    const mapping = (
+      await this.dependencies.repository.listMappings(input.tenantId, input.connectionId)
+    ).find(
+      (row) =>
+        row.resourceType === "ITEM" &&
+        row.internalId === input.internalItemId &&
+        ["MAPPED", "AUTO_MATCHED"].includes(row.status),
     );
+    const externalItemId = mapping?.externalId;
     if (!externalItemId) throw new MappingError("Item is not mapped for this provider");
+    const version = crypto.randomUUID();
+    if (
+      !(await this.dependencies.repository.replaceMapping(mapping!, {
+        ...mapping!,
+        syncStatus: "PENDING",
+        updatedAt: new Date().toISOString(),
+        metadata: {
+          ...mapping!.metadata,
+          priceOverride: {
+            version,
+            price: input.price,
+            currency: input.currency,
+            actorId: input.actorId,
+            changedAt: new Date().toISOString(),
+          },
+        },
+      }))
+    )
+      throw new IntegrationValidationError(
+        "Price changed on another terminal; refresh before retrying",
+      );
     return this.enqueueOutbound({
       tenantId: input.tenantId,
       ...(connection.branchId ? { branchId: connection.branchId } : {}),
@@ -1081,19 +1130,145 @@ export class IntegrationRuntime {
         internalItemId: input.internalItemId,
         price: input.price,
         currency: input.currency,
+        priceVersion: version,
       },
-      idempotencyKey: `price:${input.connectionId}:${input.internalItemId}:${input.price}`,
-      coalescingKey: `price:${input.connectionId}:${input.internalItemId}`,
+      idempotencyKey: `price:${input.connectionId}:${input.internalItemId}:${version}`,
     });
   }
 
-  async queueStoreStatus(tenantId: string, connectionId: string, status: MarketplaceStoreStatus) {
+  async queueReadyTime(input: {
+    tenantId: string;
+    branchId: string;
+    orderId: string;
+    readyAt: string;
+    actorId: string;
+  }) {
+    const state = await this.dependencies.transactions.loadState(input.tenantId);
+    const order = state.orders.find(
+      (row) => row.id === input.orderId && row.branchId === input.branchId,
+    );
+    if (
+      !order?.externalSource?.metadata["acceptanceConfirmedAt"] ||
+      order.externalSource.pickedUpAt ||
+      order.externalSource.completedAt ||
+      ["CANCELLED", "READY"].includes(order.status)
+    )
+      throw new IntegrationValidationError(
+        "Only accepted orders still being prepared can change preparation time",
+      );
+    const connection = this.requireTenantConnection(
+      input.tenantId,
+      order.externalSource.connectionId,
+    );
+    this.dependencies.registry.resolve(connection, "UPDATE_READY_TIME");
+    this.assertConnectionEnabled(connection);
+    const readyAt = Date.parse(input.readyAt);
+    const max =
+      parseMarketplaceConnectionConfig(connection.configuration).maximumPrepMinutes * 60_000;
+    if (!Number.isFinite(readyAt) || readyAt <= Date.now() || readyAt > Date.now() + max)
+      throw new IntegrationValidationError(
+        "Choose a future ready time within the preparation limit",
+      );
+    const mapping = await this.dependencies.repository.getMapping(
+      input.tenantId,
+      connection.id,
+      "ORDER",
+      order.externalSource.externalOrderId,
+    );
+    if (!mapping) throw new MappingError("Order mapping is missing");
+    const version = crypto.randomUUID();
+    if (
+      !(await this.dependencies.repository.replaceMapping(mapping, {
+        ...mapping,
+        metadata: {
+          ...mapping.metadata,
+          readyTimeOverride: {
+            version,
+            readyAt: new Date(readyAt).toISOString(),
+            actorId: input.actorId,
+          },
+        },
+      }))
+    )
+      throw new IntegrationValidationError("Preparation time changed on another terminal; refresh");
+    return this.enqueueOutbound({
+      tenantId: input.tenantId,
+      branchId: input.branchId,
+      connectionId: connection.id,
+      eventType: "ORDER_READY_TIME",
+      resourceType: "ORDER",
+      resourceId: order.externalSource.externalOrderId,
+      payload: {
+        readyAt: new Date(readyAt).toISOString(),
+        actorId: input.actorId,
+        readyVersion: version,
+      },
+      idempotencyKey: `ready-time:${connection.id}:${mapping.internalId}:${version}`,
+    });
+  }
+
+  async queueStoreStatus(
+    tenantId: string,
+    connectionId: string,
+    status: MarketplaceStoreStatus,
+    options: {
+      startsAt?: string;
+      resumeAt?: string;
+      actorId?: string;
+      expectedVersion?: string;
+    } = {},
+  ) {
     const connection = this.requireTenantConnection(tenantId, connectionId);
+    this.assertConnectionEnabled(connection);
     const config = parseMarketplaceConnectionConfig(connection.configuration);
     if (!config.storeStatusSyncEnabled)
       throw new IntegrationValidationError("Store status synchronization is disabled");
     this.dependencies.registry.resolve(connection, "UPDATE_STORE_STATUS");
     const context = await this.marketplaceContext(tenantId, connection);
+    const startsAt = options.startsAt ? Date.parse(options.startsAt) : Date.now();
+    if (
+      !Number.isFinite(startsAt) ||
+      (options.startsAt && (status === "OPEN" || startsAt <= Date.now()))
+    )
+      throw new IntegrationValidationError("Choose a future start time for a scheduled pause");
+    if (
+      options.resumeAt &&
+      (status === "OPEN" ||
+        !Number.isFinite(Date.parse(options.resumeAt)) ||
+        Date.parse(options.resumeAt) <= startsAt)
+    )
+      throw new IntegrationValidationError("Choose a future reopening time for a paused store");
+    const mapping = (await this.dependencies.repository.listMappings(tenantId, connectionId)).find(
+      (row) =>
+        row.resourceType === "STORE" &&
+        row.externalId === context.externalStoreId &&
+        row.branchId === context.branch.id,
+    );
+    if (!mapping) throw new MappingError("Store mapping is required");
+    const previous = mapping.metadata["storeOverride"] as { version?: string } | undefined;
+    if (options.expectedVersion && options.expectedVersion !== previous?.version)
+      throw new IntegrationValidationError("Store settings changed; refresh before retrying");
+    const version = crypto.randomUUID();
+    const changedAt = new Date().toISOString();
+    if (
+      !(await this.dependencies.repository.replaceMapping(mapping, {
+        ...mapping,
+        syncStatus: "PENDING",
+        updatedAt: changedAt,
+        metadata: {
+          ...mapping.metadata,
+          storeOverride: {
+            version,
+            status,
+            startsAt: options.startsAt,
+            resumeAt: options.resumeAt,
+            actorId: options.actorId,
+            changedAt,
+          },
+        },
+      }))
+    )
+      throw new IntegrationValidationError("Store settings changed; refresh before retrying");
     return this.enqueueOutbound({
       tenantId,
       branchId: context.branch.id,
@@ -1101,16 +1276,111 @@ export class IntegrationRuntime {
       eventType: "STORE_STATUS",
       resourceType: "STORE",
       resourceId: context.externalStoreId,
-      payload: { status },
-      idempotencyKey: `store:${connectionId}:${status}:${Date.now()}`,
-      coalescingKey: `store:${connectionId}`,
+      payload: { status, storeVersion: version, startsAt: options.startsAt },
+      ...(options.startsAt ? { nextAttemptAt: options.startsAt } : {}),
+      idempotencyKey: `store:${connectionId}:${version}`,
     });
+  }
+
+  async recoverMarketplaceStores(tenantId: string, at = new Date()) {
+    for (const mapping of await this.dependencies.repository.listMappings(tenantId)) {
+      if (mapping.resourceType !== "STORE" || mapping.status !== "MAPPED") continue;
+      const desired = mapping.metadata["storeOverride"] as
+        | { version: string; status: MarketplaceStoreStatus; startsAt?: string; resumeAt?: string }
+        | undefined;
+      if (!desired?.version) continue;
+      const connection = this.requireTenantConnection(tenantId, mapping.connectionId);
+      if (["DISABLED", "UNCONFIGURED", "CREDENTIALS_REQUIRED"].includes(connection.status))
+        continue;
+      if (desired.resumeAt && Date.parse(desired.resumeAt) <= at.getTime()) {
+        await this.queueStoreStatus(tenantId, mapping.connectionId, "OPEN", {
+          actorId: "system:scheduled-reopening",
+          expectedVersion: desired.version,
+        });
+      } else if (mapping.syncStatus === "PENDING") {
+        await this.enqueueOutbound({
+          tenantId,
+          branchId: mapping.branchId,
+          connectionId: mapping.connectionId,
+          eventType: "STORE_STATUS",
+          resourceType: "STORE",
+          resourceId: mapping.externalId,
+          payload: {
+            status: desired.status,
+            storeVersion: desired.version,
+            startsAt: desired.startsAt,
+          },
+          ...(desired.startsAt ? { nextAttemptAt: desired.startsAt } : {}),
+          idempotencyKey: `store:${mapping.connectionId}:${desired.version}`,
+        });
+      }
+    }
+  }
+
+  async recoverMarketplaceEdits(tenantId: string) {
+    for (const mapping of await this.dependencies.repository.listMappings(tenantId)) {
+      if (!mapping.branchId || !["MAPPED", "AUTO_MATCHED"].includes(mapping.status)) continue;
+      const connection = this.requireTenantConnection(tenantId, mapping.connectionId);
+      if (["DISABLED", "UNCONFIGURED", "CREDENTIALS_REQUIRED"].includes(connection.status))
+        continue;
+      const price = mapping.metadata["priceOverride"] as
+        { version: string; price: number; currency: string } | undefined;
+      const ready = mapping.metadata["readyTimeOverride"] as
+        { version: string; readyAt: string; actorId: string } | undefined;
+      if (
+        mapping.resourceType === "ITEM" &&
+        price &&
+        mapping.metadata["confirmedPriceVersion"] !== price.version
+      ) {
+        await this.enqueueOutbound({
+          tenantId,
+          branchId: mapping.branchId,
+          connectionId: mapping.connectionId,
+          eventType: "ITEM_PRICE",
+          resourceType: "ITEM",
+          resourceId: mapping.externalId,
+          payload: {
+            externalItemId: mapping.externalId,
+            internalItemId: mapping.internalId,
+            price: price.price,
+            currency: price.currency,
+            priceVersion: price.version,
+          },
+          idempotencyKey: `price:${mapping.connectionId}:${mapping.internalId}:${price.version}`,
+        });
+      }
+      if (
+        mapping.resourceType === "ORDER" &&
+        ready &&
+        mapping.metadata["confirmedReadyVersion"] !== ready.version
+      ) {
+        await this.enqueueOutbound({
+          tenantId,
+          branchId: mapping.branchId,
+          connectionId: mapping.connectionId,
+          eventType: "ORDER_READY_TIME",
+          resourceType: "ORDER",
+          resourceId: mapping.externalId,
+          payload: { readyAt: ready.readyAt, actorId: ready.actorId, readyVersion: ready.version },
+          idempotencyKey: `ready-time:${mapping.connectionId}:${mapping.internalId}:${ready.version}`,
+        });
+      }
+    }
   }
 
   async processOutboxRecord(tenantId: string, recordId: string) {
     const record = await this.dependencies.repository.getOutbox(tenantId, recordId);
     if (!record) throw new IntegrationValidationError("Outbox record was not found");
     const connection = this.requireTenantConnection(tenantId, record.connectionId);
+    if (record.status === "PROCESSED") return record;
+    this.assertConnectionEnabled(connection);
+    const scheduledStart = (record.payload as { startsAt?: string }).startsAt;
+    if (
+      record.eventType === "STORE_STATUS" &&
+      scheduledStart &&
+      Date.parse(scheduledStart) > Date.now()
+    )
+      return record;
     const adapter = this.dependencies.registry.resolve(connection);
     const credentials = await this.resolveCredentials(connection);
     const storeMapping = (
@@ -1141,7 +1411,6 @@ export class IntegrationRuntime {
     const executionKey = `outbound-confirmation:${record.id}`;
     let alreadyConfirmed = false;
     let attempted = false;
-    if (record.status === "PROCESSED") return record;
     if (decisionOperation) {
       const claim = await this.dependencies.repository.claimIdempotency({
         id: crypto.randomUUID(),
@@ -1160,9 +1429,13 @@ export class IntegrationRuntime {
       }
     }
     // Serialize menu and item writes for one store across workers, not just one browser.
-    const catalogWrite = ["MENU_SYNC", "ITEM_AVAILABILITY", "ITEM_PRICE"].includes(
-      record.eventType,
-    );
+    const catalogWrite = [
+      "MENU_SYNC",
+      "ITEM_AVAILABILITY",
+      "ITEM_PRICE",
+      "STORE_STATUS",
+      "ORDER_READY_TIME",
+    ].includes(record.eventType);
     const leaseToken = crypto.randomUUID();
     if (catalogWrite) {
       if (!storeMapping)
@@ -1211,16 +1484,63 @@ export class IntegrationRuntime {
               "Catalog synchronization ownership changed. Refresh before retrying.",
             );
         }
+        if (record.eventType === "STORE_STATUS") {
+          const current = (
+            await this.dependencies.repository.listMappings(tenantId, connection.id)
+          ).find((row) => row.resourceType === "STORE" && row.externalId === record.resourceId);
+          const desired = current?.metadata["storeOverride"] as { version?: string } | undefined;
+          if (desired?.version !== (record.payload as { storeVersion?: string }).storeVersion)
+            return { superseded: true };
+        }
+        if (record.eventType === "ORDER_READY_TIME") {
+          const mapping = await this.dependencies.repository.getMapping(
+            tenantId,
+            connection.id,
+            "ORDER",
+            record.resourceId,
+          );
+          if (
+            (mapping?.metadata["readyTimeOverride"] as { version?: string } | undefined)
+              ?.version !== (record.payload as { readyVersion?: string }).readyVersion
+          )
+            return { superseded: true };
+          const state = await this.dependencies.transactions.loadState(tenantId);
+          const order = state.orders.find(
+            (row) =>
+              row.externalSource?.connectionId === connection.id &&
+              row.externalSource.externalOrderId === record.resourceId,
+          );
+          if (
+            !order ||
+            ["CANCELLED", "READY"].includes(order.status) ||
+            order.externalSource?.pickedUpAt ||
+            order.externalSource?.completedAt
+          )
+            return { superseded: true };
+        }
         if (record.eventType === "ITEM_AVAILABILITY") {
           const payload = record.payload as { availabilityVersion?: string };
           const mapping = (
             await this.dependencies.repository.listMappings(tenantId, connection.id)
-          ).find((item) => item.resourceType === "ITEM" && item.externalId === record.resourceId);
+          ).find(
+            (item) =>
+              item.resourceType === record.resourceType && item.externalId === record.resourceId,
+          );
           const desired = mapping?.metadata["availabilityOverride"] as
             { version?: string } | undefined;
           if (
             (desired?.version || payload.availabilityVersion) &&
             desired?.version !== payload.availabilityVersion
+          )
+            return { superseded: true };
+        }
+        if (record.eventType === "ITEM_PRICE") {
+          const mapping = (
+            await this.dependencies.repository.listMappings(tenantId, connection.id)
+          ).find((row) => row.resourceType === "ITEM" && row.externalId === record.resourceId);
+          if (
+            (mapping?.metadata["priceOverride"] as { version?: string } | undefined)?.version !==
+            (record.payload as { priceVersion?: string }).priceVersion
           )
             return { superseded: true };
         }
@@ -1232,6 +1552,13 @@ export class IntegrationRuntime {
           ).menu;
           const mappings = await this.dependencies.repository.listMappings(tenantId, connection.id);
           for (const item of menu.items) {
+            const price = mappings.find(
+              (row) => row.resourceType === "ITEM" && row.internalId === item.internalId,
+            )?.metadata["priceOverride"] as { price?: number } | undefined;
+            if (price && price.price !== item.price)
+              throw new IntegrationValidationError(
+                "Price changed after preview; review the menu again",
+              );
             const override = mappings.find(
               (mapping) =>
                 mapping.resourceType === "ITEM" && mapping.internalId === item.internalId,
@@ -1241,6 +1568,18 @@ export class IntegrationRuntime {
                 "Availability changed after menu preview. Review the menu again before publishing.",
               );
           }
+        }
+        if (record.eventType === "ORDER_ACCEPTED" && !alreadyConfirmed) {
+          const state = await this.dependencies.transactions.loadState(tenantId);
+          const order = state.orders.find(
+            (row) =>
+              row.externalSource?.connectionId === connection.id &&
+              row.externalSource.externalOrderId === record.resourceId,
+          );
+          if (order?.status === "CANCELLED")
+            throw new IntegrationValidationError(
+              "Order was cancelled before acceptance; do not replay acceptance",
+            );
         }
         const circuitOpenFor = await this.dependencies.health.assertCircuitClosed(
           tenantId,
@@ -1275,7 +1614,7 @@ export class IntegrationRuntime {
       });
       if (
         processed?.status === "DEAD_LETTER" &&
-        ["MENU_SYNC", "ITEM_AVAILABILITY", "ITEM_PRICE"].includes(record.eventType)
+        ["MENU_SYNC", "ITEM_AVAILABILITY", "ITEM_PRICE", "STORE_STATUS"].includes(record.eventType)
       ) {
         await this.recordOutboundFailure(
           record,
@@ -1447,7 +1786,7 @@ export class IntegrationRuntime {
               : ("DEGRADED" as const);
     this.dependencies.configuration.upsertConnection(tenantId, {
       ...connection,
-      status: nextStatus,
+      status: connection.status === "DISABLED" ? "DISABLED" : nextStatus,
       statusMessage: health.message,
       consecutiveFailures: health.consecutiveFailures,
       lastHealthCheckAt: health.checkedAt,
@@ -1715,6 +2054,11 @@ export class IntegrationRuntime {
     if (!connection.secretReference)
       throw new IntegrationValidationError("Provider secret reference is required");
     return this.dependencies.credentials.getSecret(connection.secretReference);
+  }
+
+  private assertConnectionEnabled(connection: IntegrationConnection) {
+    if (["DISABLED", "UNCONFIGURED", "CREDENTIALS_REQUIRED"].includes(connection.status))
+      throw new IntegrationValidationError("Marketplace connection is disabled or not configured");
   }
 
   private async processEvent(
@@ -2074,19 +2418,75 @@ export class IntegrationRuntime {
     const normalized = await adapter.normalizeIncomingOrder(rawOrder, connection, context);
     if (!normalized.ok) throw resultToError(normalized);
     const order = normalized.value;
-    const existingOrder = await this.mappings.resolveExternal(
+    let existingOrder = await this.mappings.resolveExternal(
       event.tenantId,
       connection.id,
       "ORDER",
       order.providerOrderId,
     );
+    if (!existingOrder) {
+      // A previous attempt may have committed the order before its mapping write failed.
+      const saved = await this.dependencies.transactions.loadState(event.tenantId);
+      const imported = saved.orders.find(
+        (row) =>
+          row.externalSource?.connectionId === connection.id &&
+          row.externalSource.externalOrderId === order.providerOrderId,
+      );
+      if (imported) {
+        const stamp = new Date().toISOString();
+        await this.mappings.upsert({
+          id: crypto.randomUUID(),
+          tenantId: event.tenantId,
+          branchId: imported.branchId,
+          connectionId: connection.id,
+          providerId: connection.providerId,
+          resourceType: "ORDER",
+          internalId: imported.id,
+          externalId: order.providerOrderId,
+          status: "MAPPED",
+          metadata: {
+            externalItems: order.items.map((item) => ({
+              externalItemId: item.externalItemId,
+              quantity: item.quantity,
+            })),
+            providerStatus: order.providerStatus ?? "RECEIVED",
+            recoveredAfterInterruptedImport: true,
+          },
+          createdAt: stamp,
+          updatedAt: stamp,
+        });
+        existingOrder = await this.mappings.resolveExternal(
+          event.tenantId,
+          connection.id,
+          "ORDER",
+          order.providerOrderId,
+        );
+      }
+    }
     if (existingOrder) {
       const cancelledBeforeCreate =
         existingOrder.metadata["providerStatus"] === "CANCELLED" &&
         existingOrder.metadata["outOfOrder"] === true;
+      const state = await this.dependencies.transactions.loadState(event.tenantId);
+      const local = state.orders.find((row) => row.id === existingOrder.internalId);
+      if (
+        local?.status === "HELD" &&
+        !local.externalSource?.metadata["acceptanceConfirmedAt"] &&
+        local.externalSource?.metadata["automaticAcceptance"] === true &&
+        local.branchId
+      ) {
+        await this.decideMarketplaceOrder({
+          tenantId: event.tenantId,
+          branchId: local.branchId,
+          orderId: local.id,
+          actorId: "system:automatic-acceptance",
+          decision: "ACCEPT",
+          prepMinutes: Number(local.externalSource.metadata["estimatedPrepMinutes"]),
+        });
+      }
       return {
         ...(cancelledBeforeCreate ? {} : { orderId: existingOrder.internalId }),
-        accepted: !cancelledBeforeCreate,
+        accepted: Boolean(local?.externalSource?.metadata["acceptanceConfirmedAt"]),
         duplicate: true,
         ...(cancelledBeforeCreate ? { cancelled: true } : {}),
         branchId: existingOrder.branchId,
@@ -2199,7 +2599,7 @@ export class IntegrationRuntime {
       0,
       cashAmountDue - merchantCashPortion - marketplaceFeeDue,
     );
-    let next = TransactionEngine.createOrder(
+    const next = TransactionEngine.createOrder(
       state,
       {
         tenantId: event.tenantId,
@@ -2242,21 +2642,21 @@ export class IntegrationRuntime {
           receivedAt: order.createdAt,
           metadata: {
             ...(order.fulfilmentMetadata ?? {}),
-            ...(!shouldAutoAccept
-              ? {
-                  pendingMarketplaceFinancials: {
-                    platformExpectedAmount,
-                    cashAmountDue,
-                    merchantCashPortion,
-                    marketplaceFeeDue,
-                    unclassifiedCashDue,
-                    collectionMode: order.payment.collectionMode ?? "PLATFORM_PREPAID",
-                    providerPaymentReference: order.payment.providerPaymentReference,
-                    externallyPaid: order.payment.externallyPaid,
-                    charges: order.charges ?? [],
-                  },
-                }
-              : {}),
+            automaticAcceptance: shouldAutoAccept,
+            estimatedPrepMinutes,
+            ...{
+              pendingMarketplaceFinancials: {
+                platformExpectedAmount,
+                cashAmountDue,
+                merchantCashPortion,
+                marketplaceFeeDue,
+                unclassifiedCashDue,
+                collectionMode: order.payment.collectionMode ?? "PLATFORM_PREPAID",
+                providerPaymentReference: order.payment.providerPaymentReference,
+                externallyPaid: order.payment.externallyPaid,
+                charges: order.charges ?? [],
+              },
+            },
             externalCustomerId: order.customer.externalCustomerId,
             deliveryAddress: order.delivery.address,
             deliveryInstructions: order.delivery.instructions,
@@ -2272,87 +2672,9 @@ export class IntegrationRuntime {
             : {}),
         },
       },
-      shouldAutoAccept && !holdForSchedule ? "OPEN" : "HELD",
+      "HELD",
     );
     const created = next.orders[0]!;
-    if (shouldAutoAccept && !holdForSchedule)
-      next = TransactionEngine.sendToKitchen(next, created.id, adapter.definition.displayName);
-    if (shouldAutoAccept && created.externalSource) {
-      created.externalSource.acceptedAt = new Date().toISOString();
-    }
-    if (shouldAutoAccept && (order.payment.externallyPaid || cashAmountDue > 0)) {
-      next = TransactionEngine.recordMarketplaceReceivable(next, created.id, {
-        connectionId: connection.id,
-        providerId: connection.providerId,
-        externalOrderId: order.providerOrderId,
-        ...(order.rawExternalReference
-          ? { providerDisplayReference: order.rawExternalReference }
-          : {}),
-        currency: order.currency,
-        externallyCollectedAmount: platformExpectedAmount,
-        receivableAccount: marketplaceConfig.settlementAccountId ?? "Marketplace Receivables",
-        metadata: {
-          externalPaymentReference: order.payment.providerPaymentReference,
-          collectionMode: order.payment.collectionMode ?? "PLATFORM_PREPAID",
-          cashAmountDue,
-          merchantCashPortion,
-          marketplaceFeeDue,
-          unclassifiedCashDue,
-        },
-      });
-    }
-    if (shouldAutoAccept && cashAmountDue > 0) {
-      const receivable = next.marketplaceReceivables.find(
-        (candidate) => candidate.orderId === created.id && candidate.connectionId === connection.id,
-      );
-      const rawAccounts = connection.configuration["cashDueAccounts"];
-      const accountConfig =
-        rawAccounts && typeof rawAccounts === "object" && !Array.isArray(rawAccounts)
-          ? (rawAccounts as Record<string, unknown>)
-          : {};
-      const account = (key: string) => {
-        const value = accountConfig[key];
-        return typeof value === "string" && value.trim() ? value.trim() : undefined;
-      };
-      next = custodyLedger.createObligation(next, {
-        tenantId: event.tenantId,
-        branchId: branch.id,
-        orderId: created.id,
-        ...(receivable?.invoiceId ? { invoiceId: receivable.invoiceId } : {}),
-        connectionId: connection.id,
-        providerId: connection.providerId,
-        externalOrderId: order.providerOrderId,
-        currency: order.currency,
-        collectionMode: order.payment.collectionMode === "MIXED" ? "MIXED" : "CASH_DUE",
-        amountDueMinor: parseMajorAmount(cashAmountDue, order.currency),
-        merchantAmountDueMinor: parseMajorAmount(merchantCashPortion, order.currency),
-        marketplaceFeeDueMinor: parseMajorAmount(marketplaceFeeDue, order.currency),
-        unclassifiedDueMinor: parseMajorAmount(unclassifiedCashDue, order.currency),
-        ...(account("riderCustodyAccountId")
-          ? { custodyAccountId: account("riderCustodyAccountId") }
-          : {}),
-        ...(account("marketplacePayableAccountId")
-          ? { marketplacePayableAccountId: account("marketplacePayableAccountId") }
-          : {}),
-        ...(account("suspenseAccountId")
-          ? { suspenseAccountId: account("suspenseAccountId") }
-          : {}),
-      });
-      const obligation = next.paymentOperations?.custodyObligations.find(
-        (candidate) => candidate.orderId === created.id,
-      );
-      const currentOrder = next.orders.find((candidate) => candidate.id === created.id);
-      if (obligation && currentOrder?.externalSource) {
-        currentOrder.externalSource.custodyObligationId = obligation.id;
-      }
-    }
-    if (shouldAutoAccept && order.charges?.length) {
-      next = TransactionEngine.recordMarketplaceCharges(
-        next,
-        created.id,
-        order.charges.map((charge) => ({ ...charge, connectionId: connection.id })),
-      );
-    }
     await this.dependencies.transactions.saveState(
       next,
       systemActor(event.tenantId, branch.id, branch.name),
@@ -2380,27 +2702,19 @@ export class IntegrationRuntime {
       updatedAt: now,
     });
     if (shouldAutoAccept && adapter.definition.capabilities.includes("ACCEPT_ORDER")) {
-      await this.enqueueOutbound({
+      await this.decideMarketplaceOrder({
         tenantId: event.tenantId,
         branchId: branch.id,
-        connectionId: connection.id,
-        eventType: "ORDER_ACCEPTED",
-        resourceType: "ORDER",
-        resourceId: order.providerOrderId,
-        payload: {
-          estimatedReadyAt,
-          estimatedPrepMinutes,
-          items: order.items.map((item) => ({
-            externalItemId: item.externalItemId,
-            quantity: item.quantity,
-          })),
-        },
-        idempotencyKey: `accept:${connection.id}:${order.providerOrderId}`,
+        orderId: created.id,
+        actorId: "system:automatic-acceptance",
+        decision: "ACCEPT",
+        prepMinutes: estimatedPrepMinutes,
       });
     }
     return {
       orderId: created.id,
-      accepted: shouldAutoAccept,
+      accepted: false,
+      acceptanceQueued: shouldAutoAccept,
       branchId: branch.id,
       scheduled: holdForSchedule,
       paymentStatus:
@@ -2508,6 +2822,31 @@ export class IntegrationRuntime {
         ? { providerStatus: normalized.value.providerStatus }
         : {}),
     });
+    const changedOrder = next.orders.find((row) => row.id === mapping.internalId);
+    if (changedOrder?.externalSource?.metadata["pendingMarketplaceFinancials"]) {
+      const incoming = normalized.value;
+      const cashAmountDue = Math.max(0, incoming.payment.cashAmountDue ?? 0);
+      const marketplaceFeeDue = Math.max(0, incoming.payment.marketplaceFeeDueToProvider ?? 0);
+      const merchantCashPortion = Math.min(
+        changedOrder.total,
+        Math.max(0, cashAmountDue - marketplaceFeeDue),
+      );
+      changedOrder.externalSource.metadata["pendingMarketplaceFinancials"] = {
+        platformExpectedAmount: incoming.payment.externallyPaid
+          ? (incoming.payment.platformCollectedAmount ??
+            incoming.payment.amountPaid ??
+            changedOrder.total)
+          : Math.max(0, changedOrder.total - merchantCashPortion),
+        cashAmountDue,
+        marketplaceFeeDue,
+        merchantCashPortion,
+        unclassifiedCashDue: Math.max(0, cashAmountDue - merchantCashPortion - marketplaceFeeDue),
+        collectionMode: incoming.payment.collectionMode ?? "PLATFORM_PREPAID",
+        providerPaymentReference: incoming.payment.providerPaymentReference,
+        externallyPaid: incoming.payment.externallyPaid,
+        charges: incoming.charges ?? [],
+      };
+    }
     const branchId = mapping.branchId ?? connection.branchId;
     if (!branchId) throw new MappingError("Mapped provider order has no branch assignment");
     await this.dependencies.transactions.saveState(
@@ -2790,6 +3129,17 @@ export class IntegrationRuntime {
               )
           : undefined,
       },
+      ORDER_READY_TIME: {
+        capability: "UPDATE_READY_TIME",
+        run: adapter.updateReadyTime
+          ? () =>
+              adapter.updateReadyTime!(
+                resourceId,
+                (payload as { readyAt: string }).readyAt,
+                context,
+              )
+          : undefined,
+      },
       STORE_STATUS: {
         capability: "UPDATE_STORE_STATUS",
         run: adapter.setStoreStatus
@@ -2818,6 +3168,62 @@ export class IntegrationRuntime {
     record: import("@/integrations/runtime/models").IntegrationOutbox,
   ) {
     const stamp = new Date().toISOString();
+    if (record.eventType === "ORDER_READY_TIME") {
+      const mapping = await this.dependencies.repository.getMapping(
+        record.tenantId,
+        record.connectionId,
+        "ORDER",
+        record.resourceId,
+      );
+      const version = (record.payload as { readyVersion?: string }).readyVersion;
+      if (
+        !mapping ||
+        (mapping.metadata["readyTimeOverride"] as { version?: string } | undefined)?.version !==
+          version
+      )
+        return;
+      const state = await this.dependencies.transactions.loadState(record.tenantId);
+      const order = state.orders.find(
+        (row) =>
+          row.externalSource?.connectionId === record.connectionId &&
+          row.externalSource.externalOrderId === record.resourceId,
+      );
+      if (order?.externalSource) {
+        order.externalSource.estimatedReadyAt = (record.payload as { readyAt: string }).readyAt;
+        await this.dependencies.transactions.saveState(
+          state,
+          systemActor(record.tenantId, order.branchId!, order.branch),
+          "Confirmed preparation time",
+        );
+        await this.dependencies.repository.replaceMapping(mapping, {
+          ...mapping,
+          metadata: { ...mapping.metadata, confirmedReadyVersion: version },
+        });
+      }
+      return;
+    }
+    if (record.eventType === "STORE_STATUS") {
+      const mapping = (
+        await this.dependencies.repository.listMappings(record.tenantId, record.connectionId)
+      ).find((row) => row.resourceType === "STORE" && row.externalId === record.resourceId);
+      if (
+        !mapping ||
+        (mapping.metadata["storeOverride"] as { version?: string } | undefined)?.version !==
+          (record.payload as { storeVersion?: string }).storeVersion
+      )
+        return;
+      await this.dependencies.repository.replaceMapping(mapping, {
+        ...mapping,
+        syncStatus: "SYNCED",
+        lastSyncedAt: stamp,
+        lastError: undefined,
+        metadata: {
+          ...mapping.metadata,
+          confirmedStoreStatus: (record.payload as { status: string }).status,
+        },
+      });
+      return;
+    }
     if (["ORDER_ACCEPTED", "ORDER_REJECTED"].includes(record.eventType)) {
       const state = await this.dependencies.transactions.loadState(record.tenantId);
       const order = state.orders.find(
@@ -2842,6 +3248,8 @@ export class IntegrationRuntime {
           );
         order.externalSource.metadata["acceptanceConfirmedAt"] ??= stamp;
         order.externalSource.acceptedAt ??= stamp;
+        if (typeof payload["estimatedReadyAt"] === "string")
+          order.externalSource.estimatedReadyAt = payload["estimatedReadyAt"];
         const pending = order.externalSource.metadata["pendingMarketplaceFinancials"] as
           | {
               platformExpectedAmount: number;
@@ -2973,10 +3381,16 @@ export class IntegrationRuntime {
         );
         if (!mapping) continue;
         const hash = await itemSyncHash(item);
+        const availability = mapping.metadata["availabilityOverride"] as
+          { available: boolean; version: string } | undefined;
+        const price = mapping.metadata["priceOverride"] as
+          { price: number; version: string } | undefined;
+        const availabilityMatches = !availability || availability.available === item.available;
+        const priceMatches = !price || price.price === item.price;
         const { lastError: _lastError, ...mappingWithoutError } = mapping;
         await this.dependencies.repository.replaceMapping(mapping, {
           ...mappingWithoutError,
-          syncStatus: "SYNCED",
+          syncStatus: availabilityMatches && priceMatches ? "SYNCED" : "PENDING",
           lastSyncedAt: stamp,
           lastInternalHash: hash,
           lastExternalHash: hash,
@@ -2984,6 +3398,13 @@ export class IntegrationRuntime {
           metadata: {
             ...mapping.metadata,
             lastSyncedSnapshot: marketplaceItemSnapshot(item),
+            lastAvailabilitySync: {
+              available: item.available,
+              availabilityVersion: availabilityMatches ? availability?.version : undefined,
+            },
+            confirmedPriceVersion: priceMatches
+              ? price?.version
+              : mapping.metadata["confirmedPriceVersion"],
             pendingSnapshot: undefined,
           },
           updatedAt: stamp,
@@ -2996,7 +3417,8 @@ export class IntegrationRuntime {
         await this.dependencies.repository.listMappings(record.tenantId, record.connectionId)
       ).find(
         (candidate) =>
-          candidate.resourceType === "ITEM" && candidate.externalId === record.resourceId,
+          candidate.resourceType === record.resourceType &&
+          candidate.externalId === record.resourceId,
       );
       if (!mapping) return;
       const payloadVersion = (record.payload as { availabilityVersion?: string })
@@ -3005,12 +3427,27 @@ export class IntegrationRuntime {
         mapping.metadata["availabilityOverride"] as { version?: string } | undefined
       )?.version;
       if (record.eventType === "ITEM_AVAILABILITY" && currentVersion !== payloadVersion) return;
+      if (
+        record.eventType === "ITEM_PRICE" &&
+        (mapping.metadata["priceOverride"] as { version?: string } | undefined)?.version !==
+          (record.payload as { priceVersion?: string }).priceVersion
+      )
+        return;
       const { lastError: _lastError, ...mappingWithoutError } = mapping;
       await this.dependencies.repository.replaceMapping(mapping, {
         ...mappingWithoutError,
         syncStatus: "SYNCED",
         lastSyncedAt: stamp,
-        metadata: { ...mapping.metadata, lastIncrementalSync: record.payload },
+        metadata: {
+          ...mapping.metadata,
+          ...(record.eventType === "ITEM_AVAILABILITY"
+            ? { lastAvailabilitySync: record.payload }
+            : {
+                lastPriceSync: record.payload,
+                confirmedPriceVersion: (record.payload as { priceVersion?: string }).priceVersion,
+              }),
+          lastIncrementalSync: record.payload,
+        },
         updatedAt: stamp,
       });
     }
@@ -3029,9 +3466,22 @@ export class IntegrationRuntime {
         ? mappings.filter((mapping) => mapping.resourceType === "ITEM")
         : mappings.filter(
             (mapping) =>
-              mapping.resourceType === "ITEM" && mapping.externalId === record.resourceId,
+              mapping.resourceType === record.resourceType &&
+              mapping.externalId === record.resourceId,
           );
     for (const mapping of affected) {
+      if (
+        record.eventType === "ITEM_PRICE" &&
+        (mapping.metadata["priceOverride"] as { version?: string } | undefined)?.version !==
+          (record.payload as { priceVersion?: string }).priceVersion
+      )
+        continue;
+      if (
+        record.eventType === "STORE_STATUS" &&
+        (mapping.metadata["storeOverride"] as { version?: string } | undefined)?.version !==
+          (record.payload as { storeVersion?: string }).storeVersion
+      )
+        continue;
       if (record.eventType === "ITEM_AVAILABILITY") {
         const expected = (record.payload as { availabilityVersion?: string }).availabilityVersion;
         const current = (

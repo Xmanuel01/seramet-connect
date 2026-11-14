@@ -213,6 +213,7 @@ function fixture(
     transactions,
     configuration,
     controls,
+    registry,
     ready: Promise.all(mappings.map((mapping) => repository.upsertMapping(mapping))),
   };
 }
@@ -957,6 +958,265 @@ describe("Pass 3 marketplace acceptance", () => {
     expect(controls.availabilitySyncs).toHaveLength(1);
   });
 
+  it("persists timed store pauses, skips superseded writes and restores only the current pause", async () => {
+    const controls: TestDeliveryControls = { storeStatuses: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const resumeAt = new Date(Date.now() + 60_000).toISOString();
+    const pause = await f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "PAUSED", {
+      resumeAt,
+      actorId: "manager",
+    });
+    const close = await f.runtime.queueStoreStatus(
+      DEMO_TENANT_ID,
+      connectionId,
+      "CLOSED_TEMPORARILY",
+      { actorId: "manager" },
+    );
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, pause.record.id);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, close.record.id);
+    await f.runtime.recoverMarketplaceStores(DEMO_TENANT_ID, new Date(Date.parse(resumeAt) + 1));
+    expect(controls.storeStatuses).toEqual(["CLOSED_TEMPORARILY"]);
+    await f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "PAUSED", {
+      resumeAt,
+      actorId: "manager",
+    });
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    await f.runtime.recoverMarketplaceStores(DEMO_TENANT_ID, new Date(Date.parse(resumeAt) + 1));
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect(controls.storeStatuses).toEqual(["CLOSED_TEMPORARILY", "PAUSED", "OPEN"]);
+    const mapping = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "STORE",
+      externalStoreId,
+    );
+    expect(mapping?.metadata["confirmedStoreStatus"]).toBe("OPEN");
+    expect(mapping?.metadata["storeOverride"]).not.toHaveProperty("resumeAt", resumeAt);
+  });
+
+  it("persists future pauses without dispatching early and cancels superseded schedules", async () => {
+    const controls: TestDeliveryControls = { storeStatuses: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const start = Date.now() + 900_000;
+    const startsAt = new Date(start).toISOString();
+    const resumeAt = new Date(start + 1_800_000).toISOString();
+    await expect(
+      f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "PAUSED", {
+        startsAt,
+        resumeAt: new Date(start - 1).toISOString(),
+      }),
+    ).rejects.toThrow("reopening time");
+    const queued = await f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "PAUSED", {
+      startsAt,
+      resumeAt,
+      actorId: "manager",
+    });
+    expect(queued.record.nextAttemptAt).toBe(startsAt);
+    await f.runtime.recoverMarketplaceStores(DEMO_TENANT_ID);
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect((await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id)).status).toBe(
+      "PENDING",
+    );
+    expect(controls.storeStatuses).toEqual([]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start + 1);
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect(controls.storeStatuses).toEqual(["PAUSED"]);
+    await f.runtime.recoverMarketplaceStores(DEMO_TENANT_ID, new Date(Date.parse(resumeAt) + 1));
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect(controls.storeStatuses).toEqual(["PAUSED", "OPEN"]);
+    const second = await f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "PAUSED", {
+      startsAt: new Date(start + 3_600_000).toISOString(),
+    });
+    const reopen = await f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "OPEN");
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, reopen.record.id);
+    clock.mockReturnValue(start + 3_600_001);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, second.record.id);
+    expect(controls.storeStatuses).toEqual(["PAUSED", "OPEN", "OPEN"]);
+  });
+
+  it("updates preparation time only after acceptance and provider confirmation", async () => {
+    const controls: TestDeliveryControls = { readyTimes: [] };
+    const f = fixture(controls);
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    const input = {
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      orderId: f.transactions.state.orders[0]!.id,
+      actorId: "manager",
+      readyAt: new Date(Date.now() + 900_000).toISOString(),
+    };
+    await expect(f.runtime.queueReadyTime(input)).rejects.toThrow("Only accepted");
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    const before = f.transactions.state.orders[0]!.externalSource!.estimatedReadyAt;
+    const queued = await f.runtime.queueReadyTime(input);
+    expect(f.transactions.state.orders[0]!.externalSource!.estimatedReadyAt).toBe(before);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id);
+    expect(controls.readyTimes).toEqual([input.readyAt]);
+    expect(f.transactions.state.orders[0]!.externalSource!.estimatedReadyAt).toBe(input.readyAt);
+    await expect(f.runtime.queueReadyTime({ ...input, branchId: "another" })).rejects.toThrow();
+  });
+
+  it("does not send a queued update after its connection is disabled", async () => {
+    const controls: TestDeliveryControls = { priceSyncs: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const queued = await f.runtime.queuePriceSync({
+      tenantId: DEMO_TENANT_ID,
+      connectionId,
+      internalItemId,
+      price: 600,
+      currency: "KES",
+    });
+    const connection = f.configuration
+      .listConnections(DEMO_TENANT_ID)
+      .find((row) => row.id === connectionId)!;
+    f.configuration.upsertConnection(DEMO_TENANT_ID, { ...connection, status: "DISABLED" });
+    await expect(f.runtime.processOutboxRecord(DEMO_TENANT_ID, queued.record.id)).rejects.toThrow(
+      "disabled",
+    );
+    await expect(f.runtime.queueStoreStatus(DEMO_TENANT_ID, connectionId, "OPEN")).rejects.toThrow(
+      "disabled",
+    );
+    await expect(
+      f.runtime.queuePriceSync({
+        tenantId: DEMO_TENANT_ID,
+        connectionId,
+        internalItemId,
+        price: 700,
+        currency: "KES",
+      }),
+    ).rejects.toThrow("disabled");
+    expect(controls.priceSyncs).toEqual([]);
+  });
+
+  it("does not confirm newer edits when an older menu upload finishes", async () => {
+    const f = fixture();
+    await f.ready;
+    await f.repository.deleteMapping(DEMO_TENANT_ID, "mapping-modifier");
+    const linked = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    );
+    const itemId = products[0]!.id;
+    await f.repository.upsertMapping({ ...linked!, internalId: itemId });
+    const { preview } = await f.runtime.previewMenuSync(DEMO_TENANT_ID, connectionId);
+    const upload = await f.runtime.queueMenuSync(DEMO_TENANT_ID, connectionId, {
+      confirmedMenuHash: preview.menuHash,
+    });
+    vi.spyOn(f.registry.get(testDeliveryDefinition.id), "syncMenu").mockImplementationOnce(
+      async () => {
+        await f.runtime.queuePriceSync({
+          tenantId: DEMO_TENANT_ID,
+          connectionId,
+          internalItemId: itemId,
+          price: 701,
+          currency: "KES",
+        });
+        await f.runtime.queueAvailabilitySync({
+          tenantId: DEMO_TENANT_ID,
+          branchId: DEMO_WESTLANDS_BRANCH_ID,
+          internalItemId: itemId,
+          available: false,
+          manual: true,
+        });
+        return { ok: true, value: { synced: true } };
+      },
+    );
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, upload.queued.record.id);
+    const mapping = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    );
+    expect(mapping?.syncStatus).toBe("PENDING");
+    expect(mapping?.metadata["confirmedPriceVersion"]).not.toBe(
+      (mapping?.metadata["priceOverride"] as { version: string }).version,
+    );
+    expect(
+      (mapping?.metadata["lastAvailabilitySync"] as { availabilityVersion?: string })
+        .availabilityVersion,
+    ).not.toBe((mapping?.metadata["availabilityOverride"] as { version: string }).version);
+    await f.runtime.recoverMarketplaceEdits(DEMO_TENANT_ID);
+    await f.runtime.recoverMarketplaceAvailability(DEMO_TENANT_ID);
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    const latest = await f.runtime.previewMenuSync(DEMO_TENANT_ID, connectionId);
+    expect(latest.menu.items.find((item) => item.internalId === itemId)).toMatchObject({
+      price: 701,
+      available: false,
+    });
+  });
+
+  it("keeps the latest channel price and availability independently confirmed", async () => {
+    const controls: TestDeliveryControls = { priceSyncs: [] };
+    const f = fixture(controls);
+    await f.ready;
+    const internalItemId = products[0]!.id;
+    const linked = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    );
+    await f.repository.upsertMapping({ ...linked!, internalId: internalItemId });
+    const old = await f.runtime.queuePriceSync({
+      tenantId: DEMO_TENANT_ID,
+      connectionId,
+      internalItemId,
+      price: 650,
+      currency: "KES",
+    });
+    const latest = await f.runtime.queuePriceSync({
+      tenantId: DEMO_TENANT_ID,
+      connectionId,
+      internalItemId,
+      price: 700,
+      currency: "KES",
+    });
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, latest.record.id);
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, old.record.id);
+    expect(controls.priceSyncs).toHaveLength(1);
+    expect(
+      (await f.runtime.previewMenuSync(DEMO_TENANT_ID, connectionId)).menu.items[0]?.price,
+    ).toBe(700);
+    const availability = await f.runtime.queueAvailabilitySync({
+      tenantId: DEMO_TENANT_ID,
+      branchId: DEMO_WESTLANDS_BRANCH_ID,
+      internalItemId,
+      available: false,
+      manual: true,
+    });
+    await f.runtime.processOutboxRecord(DEMO_TENANT_ID, availability[0]!.record.id);
+    await f.runtime.recoverMarketplaceEdits(DEMO_TENANT_ID);
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect(controls.priceSyncs).toHaveLength(1);
+    const mapping = await f.repository.getMapping(
+      DEMO_TENANT_ID,
+      connectionId,
+      "ITEM",
+      externalItemId,
+    );
+    expect(mapping?.metadata["lastAvailabilitySync"]).toMatchObject({ available: false });
+    expect(mapping?.metadata["lastPriceSync"]).toMatchObject({ price: 700 });
+  });
+
+  it("does not accept an order that was cancelled while its decision was queued", async () => {
+    const controls: TestDeliveryControls = { acceptedOrders: [] };
+    const f = fixture(controls);
+    await f.ready;
+    await f.runtime.handleWebhook(webhook());
+    await f.runtime.handleWebhook(webhook(order(), "cancel-before-accept", "ORDER_CANCELLED"));
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
+    expect(controls.acceptedOrders).toHaveLength(0);
+    expect(f.transactions.state.orders[0]?.status).toBe("CANCELLED");
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(0);
+  });
+
   it("queues one staff decision and posts financials/kitchen only after provider confirmation", async () => {
     const controls: TestDeliveryControls = { acceptedOrders: [] };
     const f = fixture(controls, { acceptancePolicy: "MANUAL" });
@@ -1136,6 +1396,9 @@ describe("Pass 3 marketplace acceptance", () => {
     const f = fixture();
     await f.ready;
     await f.runtime.handleWebhook(webhook());
+    expect(f.transactions.state.orders[0]?.status).toBe("HELD");
+    expect(f.transactions.state.marketplaceReceivables).toHaveLength(0);
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
 
     expect(f.transactions.state.orders[0]).toMatchObject({
       total: 1000,
@@ -1187,6 +1450,7 @@ describe("Pass 3 marketplace acceptance", () => {
         }),
       ),
     );
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
     expect(f.transactions.state.orders[0]?.total).toBe(1000);
     expect(f.transactions.state.marketplaceReceivables[0]).toMatchObject({
       grossAmount: 1000,
@@ -1299,6 +1563,7 @@ describe("Pass 3 marketplace acceptance", () => {
     const f = fixture();
     await f.ready;
     await f.runtime.handleWebhook(webhook());
+    await f.runtime.processDueOutbox(DEMO_TENANT_ID);
     await f.runtime.handleWebhook(
       webhook(
         order({

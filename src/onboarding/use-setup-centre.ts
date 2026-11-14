@@ -1,6 +1,7 @@
 import type { PersistedImportProgress } from "@/onboarding/menu-import-progress";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createScopedReadGuard } from "@/lib/scoped-read-guard";
+import { invalidateOperationalMenu } from "@/hooks/operational-menu-cache";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useAppContext } from "@/lib/app-context";
@@ -819,6 +820,7 @@ export function useSetupCentre() {
       const result = await command<{
         item: { id: string; code: string; branchId: string; status: "ACTIVE"; duplicate: boolean };
       }>("/api/seramet/setup/manual-menu-items", input);
+      invalidateOperationalMenu();
       await refreshMenuCatalog();
       return result.item;
     },
@@ -832,6 +834,7 @@ export function useSetupCentre() {
         input,
         "PATCH",
       );
+      invalidateOperationalMenu();
       await refreshMenuCatalog();
       return result.item;
     },

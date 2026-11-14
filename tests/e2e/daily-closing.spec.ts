@@ -91,8 +91,19 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
   try {
     await expect(dialog).not.toBeVisible();
     await expect(page.getByText("Day closed. The report is below.")).toBeVisible();
+    const revision = await page.evaluate(async (branchId) => {
+      const payload = await (await fetch("/api/seramet/transactions")).json();
+      return payload.state.paymentOperations.dayCloses.find(
+        (day: { branchId: string; status: string }) =>
+          day.branchId === branchId && day.status === "CLOSED",
+      ).snapshot.revision as number;
+    }, branchId);
     const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+    const date = await page.getByLabel("Closing business date", { exact: true }).inputValue();
+    await page
+      .getByRole("group", { name: `Closing report ${date} revision ${revision}`, exact: true })
+      .getByRole("button", { name: "Download PDF", exact: true })
+      .click();
     const report = await download;
     expect(report.suggestedFilename()).toMatch(/daily-closing.*\.pdf/);
     await report.saveAs(resolve(".seramet/daily-closing/disposable-report.pdf"));
@@ -112,8 +123,14 @@ test("supervisor confirms one combined close, downloads the snapshot and retains
     expect(stored.drawerSessions.find((d: { id: string }) => d.id === opened).status).toBe(
       "CLOSED",
     );
-    const prior = before.find((day: { branchId: string }) => day.branchId === branchId);
-    const closed = stored.dayCloses.find((day: { branchId: string }) => day.branchId === branchId);
+    const prior = before.find(
+      (day: { branchId: string; businessDate: string }) =>
+        day.branchId === branchId && day.businessDate === date,
+    );
+    const closed = stored.dayCloses.find(
+      (day: { branchId: string; businessDate: string }) =>
+        day.branchId === branchId && day.businessDate === date,
+    );
     expect(closed.snapshots).toHaveLength((prior?.snapshots.length ?? 0) + 1);
     expect(closed.snapshots.slice(0, -1)).toEqual(prior?.snapshots ?? []);
   } finally {

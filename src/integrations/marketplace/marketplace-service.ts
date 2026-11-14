@@ -63,7 +63,11 @@ export async function buildMarketplaceMenu(
       ...(mapping?.externalId ? { externalId: mapping.externalId } : {}),
       ...(product.sku || product.itemCode ? { sku: product.sku ?? product.itemCode } : {}),
       name: product.name,
-      price: configuredPrice ?? branchPrice ?? product.price,
+      price:
+        (mapping?.metadata["priceOverride"] as { price?: number } | undefined)?.price ??
+        configuredPrice ??
+        branchPrice ??
+        product.price,
       available,
       ...(override?.quantityAvailable !== undefined
         ? { quantityAvailable: override.quantityAvailable }

@@ -765,6 +765,8 @@ async function executeWorkerJob(env: SerametEnv, job: WorkerJobRow) {
     case "SCHEDULED_ORDER_RELEASE":
       await runtime.releaseDueScheduledOrders(job.tenant_id);
       await runtime.recoverMarketplaceAvailability(job.tenant_id);
+      await runtime.recoverMarketplaceStores(job.tenant_id);
+      await runtime.recoverMarketplaceEdits(job.tenant_id);
       return;
     case "PAYMENT_PROMPT_STATUS_CHECK": {
       // Most minutes nothing is waiting; avoid loading the restaurant's state for nothing.

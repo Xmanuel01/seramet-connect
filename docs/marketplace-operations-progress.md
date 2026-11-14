@@ -1,5 +1,55 @@
 # Marketplace operations implementation
 
+## Experience expansion: 2026-11-14
+
+Implemented locally on `codex/marketplace-operations`; not production-certified or deployed.
+No main merge, production database changes, real orders, live marketplace calls, credentials,
+printing changes or paid resources were used.
+
+- Unified order stages, detailed accept/reject controls, preparation deadlines and next actions.
+- Provider acceptance remains separate from receipt, local posting, kitchen release and payout.
+  Automatic orders are held until acceptance is confirmed, just like manually accepted orders.
+- Versioned item/modifier availability, timed restoration, per-channel prices and reviewed publishing.
+- Store pauses now support immediate or future starts and timed reopening, retained across reloads.
+  Superseded schedules cannot subsequently pause a reopened store.
+- Notification-bell order alerts and opt-in audio, scoped to the authorized user and branch.
+- Recoverable interrupted imports and edits, disabled-connection guards, and catalog-write ownership.
+  An older menu upload cannot falsely confirm newer price or availability edits.
+- Connection readiness checklist and provider-confirmed test-order evidence.
+- Shared closing date, frozen closed-day balances, outstanding carry-forward and payout comparisons.
+  Different currencies are never added into one overview amount.
+
+Local browser preview: `http://127.0.0.1:4197/preview-access`.
+This uses disposable local data and fake provider adapters. Its loopback-only access bypass remains
+outside production; remove it when the owner finishes reviewing and requests removal.
+
+Verification evidence is in ignored `.seramet/marketplace-*` logs and screenshots. TypeScript,
+production build, compiled Queue/Cron registration, bundle audit and dependency audit passed.
+The production dependency audit reported zero vulnerabilities. ESLint passed with 25 existing warnings.
+The combined daily-closing browser test passed, including PDF download and mobile rendering.
+
+The broad test run began before the last edits and finished with 1,672 passes and three failures
+in newly added runtime regression tests. Fresh focused execution passed those tests; this is not
+a claim of a clean, fresh full-suite/CI run on the final candidate.
+
+Final focused run: **121 tests passed across six suites**, including integration-engine regressions,
+provider contracts, embedded PostgreSQL workers, daily closing and timezone-aware staff controls
+(`.seramet/marketplace-final-focused.log`). The permission/branch-scope API regression also passed.
+The browser walkthrough passed fresh order acceptance and rejection with reload, notification-bell
+alerts, availability changes, immediate/scheduled pauses with reload, reopening, connection/closing
+views and 390/768px overflow checks. Screenshots are in `.seramet/marketplace-walkthrough/`.
+Desktop and mobile screenshots were visually inspected. Audio playback on a physical device and
+real provider response timing are not certified by this headless walkthrough.
+
+Release boundaries remain: exact-commit full CI/review, real provider sandbox certification,
+multi-session PostgreSQL contention beyond the embedded harness, large-history pagination,
+and complete preservation of unknown existing provider-menu modifiers. Do not use full-menu
+replacement against a live store until that preservation is verified.
+
+The owner confirmed Uber Test Store 01 is **not configured**. Protected Testing credentials and
+the isolated QA store link are required before a real Uber order can be certified. Mock provider
+tests do not establish Uber or Glovo live readiness. Never enter provider secrets in this document.
+
 ## Verification update: 2026-11-14
 
 Still not release-certified. All work remains on `codex/marketplace-operations`.
