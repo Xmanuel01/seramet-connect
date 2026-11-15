@@ -64,6 +64,10 @@ const cacheLifetimeMs = 15_000;
 const revisionedLifetimeMs = 5 * 60_000;
 
 /** The shared configuration revision, or undefined where the table doesn't exist yet. */
+export async function readConfigurationRevision(db: D1Database) {
+  return configurationRevision(db);
+}
+
 async function configurationRevision(db: D1Database) {
   try {
     const row = await db
@@ -199,11 +203,13 @@ export async function hydrateTenantConfiguration(
   env: SerametEnv,
   tenantId: string,
   force = false,
+  // A revision the caller started reading earlier (alongside authentication).
+  revisionRead?: Promise<number | undefined>,
 ) {
   const entry = databaseCache(db);
   rememberProviders(entry, env);
   // Read before loading, so a change that lands during the load makes the next request reload.
-  const revision = await configurationRevision(db);
+  const revision = await (revisionRead ?? configurationRevision(db));
   dropStaleSlices(entry, revision);
   if (!force && entry.slices.has(tenantId)) return publish(entry);
   if (force) entry.generations.set(tenantId, (entry.generations.get(tenantId) ?? 0) + 1);

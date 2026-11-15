@@ -168,9 +168,10 @@ export async function handleConfigurationApi(
   if (isRead && request.method === "GET") {
     const actor = await authenticateSerametRequest(request, env);
     const db = requireDatabase(env);
-    // The app reads this after its own changes, so it always reflects the database; other
-    // requests may use configuration cached for a few seconds.
-    const repository = await hydrateTenantConfiguration(db, env, actor.tenantId, true);
+    // Every configuration change bumps the shared revision, and hydrating checks it, so the
+    // copy this server holds is reloaded exactly when something changed (on any server).
+    // Reloading it on every read cost about twenty queries each time the app opened.
+    const repository = await hydrateTenantConfiguration(db, env, actor.tenantId);
     const state = scopeState(repository.snapshot(), actor.tenantId);
     if (url.pathname.endsWith("/export")) {
       requireAny(actor, [permissions.settingsOrganisationManage, permissions.auditView]);
