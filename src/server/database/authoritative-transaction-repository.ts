@@ -184,7 +184,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
           "Idempotency key was already used for a different request",
         );
       }
-      return { ...(await this.replayState(input.actor.tenantId)), duplicate: true };
+      return { ...(await this.replayState(input.actor.tenantId, cached)), duplicate: true };
     }
 
     const {
@@ -227,7 +227,7 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
             "Idempotency key was already used for a different request",
           );
         }
-        return { ...(await this.replayState(input.actor.tenantId)), duplicate: true };
+        return { ...(await this.replayState(input.actor.tenantId, duplicate)), duplicate: true };
       }
       if (isConstraintError(error)) {
         throw new ServerOperationError(
@@ -2465,21 +2465,25 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     const row = await this.db
       .prepare(
         // response_json is not selected: older rows still hold a full state copy.
-        "SELECT request_hash FROM mutation_commits WHERE tenant_id = ? AND idempotency_key = ?",
+        `SELECT request_hash, new_revision FROM mutation_commits
+         WHERE tenant_id = ? AND idempotency_key = ?`,
       )
       .bind(tenantId, idempotencyKey)
-      .first<{ request_hash: string }>();
-    return row ? { requestHash: row.request_hash } : null;
+      .first<{ request_hash: string; new_revision: number }>();
+    return row ? { requestHash: row.request_hash, revision: row.new_revision } : null;
   }
 
   /**
-   * The answer to a replayed idempotency key: the current state and the revision it was read
-   * at. The original commit is part of it, because a key is only recorded by a commit that
-   * landed. Reusing the request's snapshot, this costs no extra history read.
+   * The answer to a replayed idempotency key: the revision that commit produced, as before, and
+   * the current state, which contains that commit because a key is only recorded by a batch
+   * that landed. Keeping the commit's own revision means a later command built on the old
+   * state (an offline batch, say) still meets a revision conflict. The state comes from the
+   * request's snapshot when it is current, so a replay normally adds no history read, and it
+   * needs no stable revision, so a busy tenant can't turn a committed retry into a conflict.
    */
-  private async replayState(tenantId: string) {
-    const { state, revision } = await this.loadStateAtStableRevision(tenantId);
-    return { state, revision };
+  private async replayState(tenantId: string, commit: { revision: number }) {
+    const snapshot = await this.currentSnapshot(tenantId);
+    return { state: reconstructState(tenantId, snapshot.rows), revision: commit.revision };
   }
 
   private async authoritativeMutationInput(

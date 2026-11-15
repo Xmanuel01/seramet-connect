@@ -444,7 +444,7 @@ describe.sequential("Pass 5 production foundation", () => {
   });
 
   it("replays an idempotency key from the current state without a stored state copy", async () => {
-    await mutation(
+    const original = await mutation(
       new D1AuthoritativeTransactionRepository(database),
       "replay-a",
       "replay-a-hash",
@@ -467,7 +467,8 @@ describe.sequential("Pass 5 production foundation", () => {
       .run();
 
     const reads = { history: 0 };
-    const terminal = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads));
+    const queries: string[] = [];
+    const terminal = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads, queries));
     await terminal.loadState(tenantA);
     const replay = await mutation(terminal, "replay-a", "replay-a-hash", "upsertOrderDraft", {
       draft: orderDraft("Replay A"),
@@ -475,10 +476,16 @@ describe.sequential("Pass 5 production foundation", () => {
     });
 
     expect(replay.duplicate).toBe(true);
-    expect(replay.revision).toBe(later.revision);
+    // The revision is the one that commit produced, so a command built on the state it
+    // returned still conflicts; the state is current and includes the later commit.
+    expect(replay.revision).toBe(original.revision);
+    expect(later.revision).toBe(original.revision + 1);
     expect(replay.state.orders).toHaveLength(2);
-    // The replay reuses the request's snapshot rather than reading the history again.
+    // The replay reuses the request's snapshot rather than reading the history again,
+    // and never reads the stored response (old rows hold a full state copy).
     expect(reads.history).toBe(1);
+    expect(queries.filter((query) => /response_json/.test(query))).toEqual([]);
+    expect(queries.some((query) => /FROM mutation_commits/.test(query))).toBe(true);
     expect(await count("mutation_commits", tenantA)).toBe(2);
     await expect(
       mutation(terminal, "replay-a", "different-hash", "upsertOrderDraft", {
@@ -1571,10 +1578,11 @@ function mutation(
 }
 
 // The test database, counting reads of a tenant's whole state history.
-function countingHistoryReads(reads: { history: number }): D1Database {
+function countingHistoryReads(reads: { history: number }, queries: string[] = []): D1Database {
   return {
     provider: database.provider,
     prepare(query) {
+      queries.push(query);
       if (/FROM authoritative_records[\s\S]*LIKE 'state:%'/.test(query)) reads.history += 1;
       return database.prepare(query);
     },
