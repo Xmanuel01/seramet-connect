@@ -74,6 +74,21 @@ const revisionedLifetimeMs = 5 * 60_000;
 
 const tenantScope = (tenantId: string) => `tenant:${tenantId}`;
 
+/** At most this many cached restaurants are checked alongside authentication. */
+const earlyRevisionTenantLimit = 64;
+
+/**
+ * Starts the revision read before the request's restaurant is known (alongside the identity
+ * checks): the platform revision plus the hinted restaurant and the restaurants this server
+ * already holds, so a warm request needs no second read. A restaurant not covered here is read
+ * again by `hydrateTenantConfiguration`, only when it is about to be loaded anyway.
+ */
+export async function readConfigurationRevision(db: D1Database, tenantHint?: string) {
+  const held = [...databaseCache(db).slices.keys()].slice(0, earlyRevisionTenantLimit);
+  const tenantIds = [...new Set([...(tenantHint ? [tenantHint] : []), ...held])];
+  return configurationRevisions(db, tenantIds);
+}
+
 /**
  * The platform revision and the given restaurants' own revisions, in one query. A restaurant
  * without a row has never recorded a change of its own (revision 0). Undefined where the table
@@ -236,11 +251,17 @@ export async function hydrateTenantConfiguration(
   env: SerametEnv,
   tenantId: string,
   force = false,
+  // A revision the caller started reading earlier (alongside authentication).
+  revisionRead?: Promise<Revisions | undefined>,
 ) {
   const entry = databaseCache(db);
   rememberProviders(entry, env);
   // Read before loading, so a change that lands during the load makes the next request reload.
-  const revisions = await configurationRevisions(db, [tenantId]);
+  let revisions = await (revisionRead ?? configurationRevisions(db, [tenantId]));
+  // The early read didn't cover this restaurant: read its own revision before using or
+  // loading its configuration.
+  if (revisions && !revisions.tenants.has(tenantId))
+    revisions = await configurationRevisions(db, [tenantId]);
   dropStaleSlices(entry, revisions);
   if (!force && entry.slices.has(tenantId)) return publish(entry);
   if (force) entry.generations.set(tenantId, (entry.generations.get(tenantId) ?? 0) + 1);

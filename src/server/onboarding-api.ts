@@ -53,6 +53,7 @@ import type {
 } from "@/onboarding/types";
 import { invalidateAuthoritativeConfiguration } from "@/server/database/authoritative-configuration";
 import { ServerOperationError } from "@/server/errors";
+import { IntegrationError } from "@/integrations/runtime/integration-errors";
 import { DatabaseRateLimiter, sensitiveRateLimits } from "@/server/rate-limit";
 import { HistoricalSalesMigrationService } from "@/onboarding/historical-sales-migration-service";
 import { scannerPipelineConfigured } from "@/server/malware-scanner";
@@ -61,6 +62,63 @@ import { scannerPipelineConfigured } from "@/server/malware-scanner";
 const maxEncodedImportRequestBytes = 14 * 1024 * 1024;
 import type { ZodTypeAny } from "zod";
 import { requireFullAuthentication } from "@/server/pos-auth-service";
+
+function fileImportCapability(env: SerametEnv) {
+  const available = scannerPipelineConfigured({
+    scanQueue: env.SERAMET_SCAN_QUEUE,
+    workQueue: env.SERAMET_WORK_QUEUE,
+    objectStorage: env.SERAMET_OBJECTS,
+    evidenceSecret: env.SERAMET_SCANNER_EVIDENCE_SECRET,
+  });
+  return {
+    available,
+    reason: available
+      ? null
+      : "File imports are unavailable until security scanning, quarantine storage and durable workers are configured",
+  };
+}
+
+async function readMenuCatalog(service: OnboardingService, branchId: string | undefined) {
+  try {
+    return await service.listMenuCatalog(branchId);
+  } catch (cause) {
+    if (cause instanceof ServerOperationError) throw cause;
+    const correlationId = crypto.randomUUID();
+    console.error("Authoritative menu catalogue query failed", { correlationId, cause });
+    throw new ServerOperationError(
+      "DATABASE_UNAVAILABLE",
+      503,
+      "Menu catalogue unavailable; support reference " + correlationId,
+      correlationId,
+    );
+  }
+}
+
+type SetupSection<T> =
+  | { ok: true; status: 200; value: T }
+  | { ok: false; status: number; code?: string; message: string; correlationId?: string };
+
+/** One bootstrap section: its value, or the status and public message its endpoint would give. */
+async function section<T>(read: () => Promise<T>): Promise<SetupSection<T>> {
+  try {
+    return { ok: true, status: 200, value: await read() };
+  } catch (error) {
+    if (error instanceof SerametHttpError)
+      return { ok: false, status: error.status, message: error.message };
+    if (error instanceof IntegrationError)
+      return { ok: false, status: error.statusCode, code: error.code, message: error.message };
+    if (error instanceof ServerOperationError)
+      return {
+        ok: false,
+        status: error.status,
+        code: error.code,
+        message: error.message,
+        ...(error.correlationId ? { correlationId: error.correlationId } : {}),
+      };
+    console.error("Setup bootstrap section failed", error);
+    return { ok: false, status: 500, message: "Seramet API failure" };
+  }
+}
 
 export async function handleOnboardingApi(
   request: Request,
@@ -139,6 +197,70 @@ export async function handleOnboardingApi(
     );
   }
 
+  if (url.pathname === "/api/seramet/setup/bootstrap" && request.method === "GET") {
+    // Everything Setup Centre shows when it opens, for one authentication instead of fifteen.
+    // Each section succeeds or fails on its own, with the status its own endpoint would give,
+    // and the per-section endpoints stay for targeted refreshes.
+    const branchId = optional(url, "branchId");
+    // Diagnostics include integration and device health: read them once for both sections.
+    const integrations = service.integrationHealth();
+    const devices = service.deviceHealth();
+    integrations.catch(() => undefined);
+    devices.catch(() => undefined);
+    const [
+      centre,
+      integrationHealth,
+      deviceHealth,
+      providers,
+      organisationStructure,
+      businessProfile,
+      options,
+      providerMappings,
+      openingStock,
+      menuCatalog,
+      diagnostics,
+      onboarding,
+      references,
+      historicalSalesState,
+      importCapability,
+    ] = await Promise.all([
+      section(async () => ({ setup: await service.getSetupCentre(branchId) })),
+      section(async () => ({ integrations: await integrations })),
+      section(async () => ({ devices: await devices })),
+      section(async () => ({ providers: service.providerDefinitions() })),
+      section(async () => await service.listBrandsAndBranches()),
+      section(async () => ({ profile: await service.getBusinessProfile() })),
+      section(async () => ({ options: await service.setupOptions(branchId) })),
+      section(async () => ({ mappings: await service.listExternalMappings() })),
+      section(async () => ({ batches: await service.listOpeningStock(branchId) })),
+      section(async () => ({ items: await readMenuCatalog(service, branchId) })),
+      section(async () => ({ diagnostics: await service.diagnostics({ integrations, devices }) })),
+      section(async () => ({ onboarding: await locationCurrency.getOnboardingState() })),
+      section(async () => await locationCurrency.listReferences()),
+      section(async () => ({ state: await historicalSales.getState() })),
+      section(async () => ({ capability: fileImportCapability(env) })),
+    ]);
+    return json({
+      ok: true,
+      sections: {
+        centre,
+        integrationHealth,
+        deviceHealth,
+        providers,
+        organisationStructure,
+        businessProfile,
+        options,
+        providerMappings,
+        openingStock,
+        menuCatalog,
+        diagnostics,
+        onboarding,
+        references,
+        historicalSales: historicalSalesState,
+        importCapability,
+      },
+    });
+  }
   if (url.pathname === "/api/seramet/setup/centre" && request.method === "GET") {
     return json({ ok: true, setup: await service.getSetupCentre(optional(url, "branchId")) });
   }
@@ -289,21 +411,7 @@ export async function handleOnboardingApi(
     });
   }
   if (url.pathname === "/api/seramet/setup/imports/capability" && request.method === "GET") {
-    const available = scannerPipelineConfigured({
-      scanQueue: env.SERAMET_SCAN_QUEUE,
-      workQueue: env.SERAMET_WORK_QUEUE,
-      objectStorage: env.SERAMET_OBJECTS,
-      evidenceSecret: env.SERAMET_SCANNER_EVIDENCE_SECRET,
-    });
-    return json({
-      ok: true,
-      capability: {
-        available,
-        reason: available
-          ? null
-          : "File imports are unavailable until security scanning, quarantine storage and durable workers are configured",
-      },
-    });
+    return json({ ok: true, capability: fileImportCapability(env) });
   }
   if (url.pathname === "/api/seramet/setup/imports/recent" && request.method === "GET") {
     return json({ ok: true, imports: await service.recentMenuImports() });
@@ -590,19 +698,7 @@ export async function handleOnboardingApi(
     );
   }
   if (url.pathname === "/api/seramet/setup/menu-catalog" && request.method === "GET") {
-    try {
-      return json({ ok: true, items: await service.listMenuCatalog(optional(url, "branchId")) });
-    } catch (cause) {
-      if (cause instanceof ServerOperationError) throw cause;
-      const correlationId = crypto.randomUUID();
-      console.error("Authoritative menu catalogue query failed", { correlationId, cause });
-      throw new ServerOperationError(
-        "DATABASE_UNAVAILABLE",
-        503,
-        "Menu catalogue unavailable; support reference " + correlationId,
-        correlationId,
-      );
-    }
+    return json({ ok: true, items: await readMenuCatalog(service, optional(url, "branchId")) });
   }
   if (url.pathname === "/api/seramet/setup/exports" && request.method === "POST") {
     return json(

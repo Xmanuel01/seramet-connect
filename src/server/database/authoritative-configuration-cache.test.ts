@@ -3,6 +3,7 @@ import {
   hydrateAuthoritativeConfiguration,
   hydrateTenantConfiguration,
   invalidateAuthoritativeConfiguration,
+  readConfigurationRevision,
 } from "@/server/database/authoritative-configuration";
 import {
   getConfigurationRepository,
@@ -278,6 +279,55 @@ describe("per-restaurant configuration cache", () => {
       const platformB = recordingPool(sqlite, "server-a");
       await hydrateTenantConfiguration(platformB.db, {}, "tenant-b");
       expect(platformB.configurationQueries().length).toBeGreaterThan(0);
+    } finally {
+      sqlite.close();
+    }
+  }, 30_000);
+
+  it("an early revision read covers held restaurants; others read their own before loading", async () => {
+    const sqlite = createMigratedTestDatabase();
+    try {
+      await seedRestaurants(sqlite, ["tenant-a", "tenant-b"]);
+      await hydrateTenantConfiguration(recordingPool(sqlite, "early-db").db, {}, "tenant-a");
+
+      // Warm: the early read (started before the restaurant is known) is the only query.
+      const warm = recordingPool(sqlite, "early-db");
+      const early = readConfigurationRevision(warm.db);
+      await hydrateTenantConfiguration(warm.db, {}, "tenant-a", false, early);
+      expect(warm.calls).toHaveLength(1);
+      expect(warm.calls[0]?.values).toEqual(["platform", "tenant:tenant-a"]);
+
+      // A change at tenant A is still seen through the early read.
+      await invalidateAuthoritativeConfiguration(recordingPool(sqlite, "other").db, "tenant-a");
+      const changed = recordingPool(sqlite, "early-db");
+      await hydrateTenantConfiguration(
+        changed.db,
+        {},
+        "tenant-a",
+        false,
+        readConfigurationRevision(changed.db),
+      );
+      expect(changed.configurationQueries().length).toBeGreaterThan(0);
+
+      // Cold: tenant B wasn't covered, so its own revision is read before its rows load.
+      const cold = recordingPool(sqlite, "early-db");
+      await hydrateTenantConfiguration(
+        cold.db,
+        {},
+        "tenant-b",
+        false,
+        readConfigurationRevision(cold.db),
+      );
+      const revisionReads = cold.calls.filter((call) =>
+        call.query.includes("configuration_revisions"),
+      );
+      expect(revisionReads.at(-1)?.values).toEqual(["platform", "tenant:tenant-b"]);
+      for (const call of cold.configurationQueries()) expect(call.values).toEqual(["tenant-b"]);
+
+      // A token's restaurant hint is read early too.
+      const hinted = recordingPool(sqlite, "fresh-db");
+      await readConfigurationRevision(hinted.db, "tenant-b");
+      expect(hinted.calls[0]?.values).toEqual(["platform", "tenant:tenant-b"]);
     } finally {
       sqlite.close();
     }
