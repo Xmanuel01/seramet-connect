@@ -10,8 +10,40 @@ type QueryExecutor = {
   query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: unknown[],
-  ): Promise<{ rows: T[]; rowCount: number | null }>;
+  ): Promise<{
+    rows: T[];
+    rowCount: number | null;
+    fields?: Array<{ name: string; dataTypeID: number }>;
+  }>;
 };
+
+// PostgreSQL returns NUMERIC as text, and SUM() over a BIGINT column is NUMERIC. The domain
+// code is written for numbers (as SQLite and D1 return them): a summed total arriving as "125000"
+// failed integer checks and broke pages once a restaurant had real sales. Whole values become
+// numbers here, with the same safe-range guard as BIGINT; fractional values become floats.
+const NUMERIC_TYPE_ID = 1700;
+
+export function numericRows<T>(result: {
+  rows: T[];
+  fields?: Array<{ name: string; dataTypeID: number }>;
+}): T[] {
+  const columns = (result.fields ?? [])
+    .filter((field) => field.dataTypeID === NUMERIC_TYPE_ID)
+    .map((field) => field.name);
+  if (!columns.length) return result.rows;
+  for (const row of result.rows as Array<Record<string, unknown>>) {
+    for (const column of columns) {
+      const value = row[column];
+      if (typeof value !== "string") continue;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) continue;
+      if (/^-?\d+$/.test(value) && !Number.isSafeInteger(parsed))
+        throw new Error("PostgreSQL integer exceeds Seramet safe range");
+      row[column] = parsed;
+    }
+  }
+  return result.rows;
+}
 
 // The database refuses a new connection when the runtime role or the server is at its
 // connection limit. That happens before any statement runs, so waiting briefly and asking again
@@ -143,7 +175,7 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     const result = await retryConnectionCapacity(() =>
       this.executor.query(this.query, this.values),
     );
-    const row = result.rows[0] as Record<string, unknown> | undefined;
+    const row = numericRows(result)[0] as Record<string, unknown> | undefined;
     if (!row) return null;
     return (column ? (row[column] ?? null) : row) as T | null;
   }
@@ -154,7 +186,7 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     );
     return {
       success: true,
-      results: result.rows as T[],
+      results: numericRows(result) as T[],
       meta: { rows_read: result.rows.length },
     };
   }
@@ -169,7 +201,7 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     const result = await executor.query(this.query, this.values);
     return {
       success: true,
-      results: result.rows as T[],
+      results: numericRows(result) as T[],
       meta: { changes: result.rowCount ?? 0, rows_written: result.rowCount ?? 0 },
     };
   }
