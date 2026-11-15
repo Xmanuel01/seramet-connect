@@ -51,6 +51,48 @@ it("summarises inventory on PostgreSQL for a restaurant that has sold something"
       )
       .bind("tenant-sold", "invoice-1", "branch-sold", "INV-1", 125_000, 125_000, stamp, stamp)
       .run();
+    // Stock consumed by those sales: 50,000 against 125,000 of revenue is a 40% food cost.
+    await db
+      .prepare(
+        `INSERT INTO inventory_movements
+           (tenant_id,id,branch_id,warehouse_id,item_id,movement_type,quantity_minor,source_type,
+            source_id,idempotency_key,correlation_id,payload_json,created_at,total_cost_minor)
+         VALUES (?,?,?,?,?,'SALE_CONSUMPTION',?,'SALE','sale-1','move-1','corr-1','{}',?,?)`,
+      )
+      .bind("tenant-sold", "move-1", "branch-sold", "store-1", "item-1", -2_000_000, stamp, -50_000)
+      .run();
+    // A balance whose average cost is not a whole number (10 / 3), and a period with
+    // unexplained variance, so the summary prices that variance at the weighted cost.
+    await db
+      .prepare(
+        `INSERT INTO inventory_balances
+           (tenant_id,branch_id,warehouse_id,item_id,quantity_minor,total_value_minor,updated_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      )
+      .bind("tenant-sold", "branch-sold", "store-1", "item-1", 3_000_000, 10, stamp)
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO inventory_consumption_periods
+           (tenant_id,id,branch_id,warehouse_id,inventory_item_id,period_start,period_end,
+            theoretical_quantity_minor,actual_quantity_minor,variance_quantity_minor,
+            variance_value_minor,unexplained_quantity_minor,quality,generated_at)
+         VALUES (?,?,?,?,?,'2026-11-01','2026-11-15',?,?,?,?,?,'HIGH',?)`,
+      )
+      .bind(
+        "tenant-sold",
+        "period-1",
+        "branch-sold",
+        "store-1",
+        "item-1",
+        2_000_000,
+        5_000_000,
+        3_000_000,
+        10,
+        3_000_000,
+        stamp,
+      )
+      .run();
 
     const actor = {
       id: "user-sold",
@@ -68,10 +110,12 @@ it("summarises inventory on PostgreSQL for a restaurant that has sold something"
       branchId: "branch-sold",
       inventoryValueMinor: 0,
       itemCount: 0,
-      actualFoodCostBps: 0,
-      theoreticalFoodCostBps: 0,
-      varianceMinor: 0,
-      unexplainedVarianceMinor: 0,
+      // The paid invoice's total is the denominator: 50,000 / 125,000.
+      actualFoodCostBps: 4_000,
+      theoreticalFoodCostBps: 4_000,
+      varianceMinor: 10,
+      // Three units at the weighted cost of 10 / 3, rounded to whole minor units (3 each).
+      unexplainedVarianceMinor: 9,
     });
   } finally {
     await postgres.close();
@@ -89,6 +133,14 @@ it("turns NUMERIC text into numbers and refuses unsafe integers", () => {
   expect(numericRows({ rows: [{ total: "12.5", label: "x" }], fields })).toEqual([
     { total: 12.5, label: "x" },
   ]);
+  // A whole value written with decimals is still an exact integer.
+  expect(numericRows({ rows: [{ total: "125000.00" }], fields })).toEqual([{ total: 125_000 }]);
+  expect(() => numericRows({ rows: [{ total: "9007199254740993.0" }], fields })).toThrow(
+    /safe range/,
+  );
+  // A fraction too long to convert exactly, and non-decimal forms, stay as they came.
+  for (const kept of ["0.1234567890123456789", "1e25", "NaN"])
+    expect(numericRows({ rows: [{ total: kept }], fields })).toEqual([{ total: kept }]);
   expect(numericRows({ rows: [{ total: null, label: "x" }], fields })).toEqual([
     { total: null, label: "x" },
   ]);

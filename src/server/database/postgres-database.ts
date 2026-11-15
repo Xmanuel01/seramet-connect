@@ -19,8 +19,10 @@ type QueryExecutor = {
 
 // PostgreSQL returns NUMERIC as text, and SUM() over a BIGINT column is NUMERIC. The domain
 // code is written for numbers (as SQLite and D1 return them): a summed total arriving as "125000"
-// failed integer checks and broke pages once a restaurant had real sales. Whole values become
-// numbers here, with the same safe-range guard as BIGINT; fractional values become floats.
+// failed integer checks and broke pages once a restaurant had real sales. A value becomes a
+// number only when the number is exactly the value: whole values (also written "125000.00")
+// within the safe integer range, and fractions short enough to survive the conversion. A whole
+// value outside the safe range is refused, like BIGINT; a longer fraction stays text.
 const NUMERIC_TYPE_ID = 1700;
 
 export function numericRows<T>(result: {
@@ -35,10 +37,15 @@ export function numericRows<T>(result: {
     for (const column of columns) {
       const value = row[column];
       if (typeof value !== "string") continue;
+      const whole = /^-?\d+(\.0+)?$/.test(value);
       const parsed = Number(value);
-      if (!Number.isFinite(parsed)) continue;
-      if (/^-?\d+$/.test(value) && !Number.isSafeInteger(parsed))
-        throw new Error("PostgreSQL integer exceeds Seramet safe range");
+      if (whole) {
+        if (!Number.isSafeInteger(parsed))
+          throw new Error("PostgreSQL integer exceeds Seramet safe range");
+      } else if (!/^-?\d+\.\d+$/.test(value) || value.replace(/[-.]/g, "").length > 15) {
+        // Exponent forms, NaN and fractions too long to convert exactly are left as they came.
+        continue;
+      }
       row[column] = parsed;
     }
   }
