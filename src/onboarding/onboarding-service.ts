@@ -457,7 +457,7 @@ export class OnboardingService {
   }
 
   async getSetupCentre(branchId?: string): Promise<SetupSummary> {
-    if (branchId) await this.assertBranch(branchId);
+    // recalculateReadiness checks the branch itself.
     return this.recalculateReadiness(branchId, false);
   }
 
@@ -3203,31 +3203,61 @@ export class OnboardingService {
     this.require(permissions.setupView);
     const issues: RecipeValidationIssue[] = [];
     const inventory = new InventoryIntelligenceService(this.db, this.actor);
-    const menu = await this.db
-      .prepare(
-        "SELECT id,name,selling_price_minor,recipe_reference FROM menu_catalog_items WHERE tenant_id=? AND active=1",
-      )
-      .bind(this.actor.tenantId)
-      .all<{
-        id: string;
-        name: string;
-        selling_price_minor: number;
-        recipe_reference: string | null;
-      }>();
-    for (const item of menu.results ?? []) {
-      const recipe = await this.db
+    // The independent reads run together, with one read for every item's recipe instead of one
+    // per item and the recipe costs together: one after another they took a database round
+    // trip (or several) per menu item.
+    const [menu, recipeRows, invalidConversions, cycles] = await Promise.all([
+      this.db
         .prepare(
-          `SELECT r.id,r.current_version_id,rv.yield_quantity_minor
-           FROM recipes r LEFT JOIN recipe_versions rv
-             ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
-           WHERE r.tenant_id=? AND r.menu_item_id=? AND r.active=1`,
+          "SELECT id,name,selling_price_minor,recipe_reference FROM menu_catalog_items WHERE tenant_id=? AND active=1",
         )
-        .bind(this.actor.tenantId, item.id)
-        .first<{
+        .bind(this.actor.tenantId)
+        .all<{
+          id: string;
+          name: string;
+          selling_price_minor: number;
+          recipe_reference: string | null;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT r.menu_item_id,r.id,r.current_version_id,rv.yield_quantity_minor
+         FROM recipes r LEFT JOIN recipe_versions rv
+           ON rv.tenant_id=r.tenant_id AND rv.id=r.current_version_id
+         WHERE r.tenant_id=? AND r.active=1
+           AND r.menu_item_id IN (SELECT id FROM menu_catalog_items WHERE tenant_id=? AND active=1)`,
+        )
+        .bind(this.actor.tenantId, this.actor.tenantId)
+        .all<{
+          menu_item_id: string;
           id: string;
           current_version_id: string | null;
           yield_quantity_minor: number | null;
-        }>();
+        }>(),
+      this.db
+        .prepare(
+          `SELECT id,inventory_item_id FROM item_unit_conversions
+         WHERE tenant_id=? AND (factor_numerator<=0 OR factor_denominator<=0 OR from_unit_id=to_unit_id AND factor_numerator<>factor_denominator)`,
+        )
+        .bind(this.actor.tenantId)
+        .all<{ id: string; inventory_item_id: string }>(),
+      this.detectRecipeCycles(),
+    ]);
+    const recipes = new Map<string, NonNullable<typeof recipeRows.results>[number]>();
+    for (const row of recipeRows.results ?? [])
+      if (!recipes.has(row.menu_item_id)) recipes.set(row.menu_item_id, row);
+    const costs = await Promise.all(
+      (menu.results ?? []).map(async (item) => {
+        const versionId = recipes.get(item.id)?.current_version_id;
+        if (!versionId) return null;
+        try {
+          return await inventory.recipeCostMinor(versionId);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    for (const [index, item] of (menu.results ?? []).entries()) {
+      const recipe = recipes.get(item.id);
       if (!recipe) {
         issues.push(
           issue(
@@ -3252,14 +3282,7 @@ export class OnboardingService {
           ),
         );
       }
-      let totalCostMinor: number | null = null;
-      if (recipe.current_version_id) {
-        try {
-          totalCostMinor = await inventory.recipeCostMinor(recipe.current_version_id);
-        } catch {
-          totalCostMinor = null;
-        }
-      }
+      const totalCostMinor: number | null = costs[index] ?? null;
       if (totalCostMinor === null) {
         issues.push(
           issue(
@@ -3284,19 +3307,11 @@ export class OnboardingService {
         );
       }
     }
-    const invalidConversions = await this.db
-      .prepare(
-        `SELECT id,inventory_item_id FROM item_unit_conversions
-         WHERE tenant_id=? AND (factor_numerator<=0 OR factor_denominator<=0 OR from_unit_id=to_unit_id AND factor_numerator<>factor_denominator)`,
-      )
-      .bind(this.actor.tenantId)
-      .all<{ id: string; inventory_item_id: string }>();
     for (const conversion of invalidConversions.results ?? []) {
       issues.push(
         issue("INVALID_UOM_CONVERSION", "CRITICAL", "An item conversion is invalid", conversion),
       );
     }
-    const cycles = await this.detectRecipeCycles();
     for (const cycle of cycles)
       issues.push(
         issue("RECIPE_CYCLE", "CRITICAL", "Recipe dependency cycle detected", { path: cycle }),
@@ -4094,26 +4109,35 @@ export class OnboardingService {
     }
   }
 
-  async diagnostics() {
+  /** `known` reuses integration and device health a caller already read in this request. */
+  async diagnostics(known?: {
+    integrations?: Promise<IntegrationHealthRow[]>;
+    devices?: Promise<DeviceHealthRow[]>;
+  }) {
     this.require(permissions.setupDiagnosticsView);
     const runtime = resolveRuntimeConfiguration(this.env);
-    const schemaVersion = await this.db
-      .prepare("SELECT MAX(version) version FROM schema_migrations")
-      .first<{ version: number }>();
-    const queue = await this.db
-      .prepare("SELECT status,COUNT(*) count FROM worker_jobs WHERE tenant_id=? GROUP BY status")
-      .bind(this.actor.tenantId)
-      .all<{ status: string; count: number }>();
-    const flags = await this.db
-      .prepare("SELECT key,enabled FROM feature_flags WHERE tenant_id=? ORDER BY key LIMIT 500")
-      .bind(this.actor.tenantId)
-      .all<{ key: string; enabled: number }>();
-    const backup = await this.db
-      .prepare(
-        "SELECT status,completed_at,verified_at FROM backup_records WHERE tenant_id=? ORDER BY started_at DESC LIMIT 1",
-      )
-      .bind(this.actor.tenantId)
-      .first<Row>();
+    // Independent reads run together: each one is a database round trip.
+    const [schemaVersion, queue, flags, backup, integrations, devices] = await Promise.all([
+      this.db
+        .prepare("SELECT MAX(version) version FROM schema_migrations")
+        .first<{ version: number }>(),
+      this.db
+        .prepare("SELECT status,COUNT(*) count FROM worker_jobs WHERE tenant_id=? GROUP BY status")
+        .bind(this.actor.tenantId)
+        .all<{ status: string; count: number }>(),
+      this.db
+        .prepare("SELECT key,enabled FROM feature_flags WHERE tenant_id=? ORDER BY key LIMIT 500")
+        .bind(this.actor.tenantId)
+        .all<{ key: string; enabled: number }>(),
+      this.db
+        .prepare(
+          "SELECT status,completed_at,verified_at FROM backup_records WHERE tenant_id=? ORDER BY started_at DESC LIMIT 1",
+        )
+        .bind(this.actor.tenantId)
+        .first<Row>(),
+      known?.integrations ?? this.integrationHealth(),
+      known?.devices ?? this.deviceHealth(),
+    ]);
     return {
       appVersion: runtime.appVersion,
       buildId: runtime.buildId,
@@ -4126,8 +4150,8 @@ export class OnboardingService {
       runtimeIssues: validateRuntimeConfiguration(this.env).map((value) => value.code),
       database: this.env.SERAMET_DB ? "READY" : "UNKNOWN",
       workers: Object.fromEntries((queue.results ?? []).map((row) => [row.status, row.count])),
-      integrations: await this.integrationHealth(),
-      devices: await this.deviceHealth(),
+      integrations,
+      devices,
       featureFlags: (flags.results ?? []).map((row) => ({
         key: row.key,
         enabled: Boolean(row.enabled),
@@ -4486,21 +4510,25 @@ export class OnboardingService {
 
   async recalculateReadiness(branchId?: string, persist = true): Promise<SetupSummary> {
     this.require(permissions.setupView);
-    if (branchId) await this.assertBranch(branchId);
     const scopeKey = branchId ? `BRANCH:${branchId}` : "TENANT";
     const stamp = now();
-    const tenant = await this.db
-      .prepare(
-        `SELECT t.legal_name,t.trading_name,t.default_currency,t.timezone,t.locale,
-                p.country_code,p.accounting_mode,p.go_live_state,p.demo_mode
-         FROM tenants t LEFT JOIN tenant_onboarding_profiles p ON p.tenant_id=t.id WHERE t.id=?`,
-      )
-      .bind(this.actor.tenantId)
-      .first<Row>();
+    // Independent reads run together: each one is a database round trip.
+    // The branch check runs alongside: these reads are harmless if it fails.
+    const [tenant, counts, weights] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT t.legal_name,t.trading_name,t.default_currency,t.timezone,t.locale,
+                  p.country_code,p.accounting_mode,p.go_live_state,p.demo_mode
+           FROM tenants t LEFT JOIN tenant_onboarding_profiles p ON p.tenant_id=t.id WHERE t.id=?`,
+        )
+        .bind(this.actor.tenantId)
+        .first<Row>(),
+      this.countSetupFacts(branchId),
+      this.sectionWeights(),
+      branchId ? this.assertBranch(branchId) : undefined,
+    ]);
     if (!tenant) throw notFound("Tenant not found");
-    const counts = await this.countSetupFacts(branchId);
     const results = await this.buildReadinessResults(branchId, tenant, counts);
-    const weights = await this.sectionWeights();
     const stages: SetupStage[] = setupSections.map((section) => {
       const sectionResults = results.filter((row) => row.section === section);
       const blockers = sectionResults.filter((row) => row.status === "BLOCKED").length;
@@ -4597,6 +4625,7 @@ export class OnboardingService {
   ): Promise<ReadinessResult[]> {
     // Independent counts run together: each is a database round trip, and run one after
     // another they made Setup Centre take many seconds to load.
+    const batch = new CountBatch(this.db);
     const [
       activeAdmins,
       unassignedBranches,
@@ -4609,9 +4638,9 @@ export class OnboardingService {
       documentCount,
       successfulTests,
       verifiedBackups,
+      branchPolicy,
     ] = await Promise.all([
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(DISTINCT u.id) count FROM users u
          JOIN user_roles ur ON ur.tenant_id=u.tenant_id AND ur.user_id=u.id
          JOIN roles r ON r.tenant_id=ur.tenant_id AND r.id=ur.role_id AND r.active=1
@@ -4620,8 +4649,7 @@ export class OnboardingService {
         this.actor.tenantId,
         permissions.setupManage,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM branches b WHERE b.tenant_id=? AND b.active=1
          AND NOT EXISTS (
            SELECT 1 FROM user_branches ub JOIN users u ON u.tenant_id=ub.tenant_id AND u.id=ub.user_id AND u.active=1
@@ -4629,62 +4657,104 @@ export class OnboardingService {
          )`,
         this.actor.tenantId,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM tax_service_rules WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
         this.actor.tenantId,
         branchId ?? null,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM payment_methods WHERE tenant_id=? AND active=1`,
         this.actor.tenantId,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM payment_methods pm
          LEFT JOIN provider_connections pc ON pc.tenant_id=pm.tenant_id AND pc.id=pm.provider_connection_id
          WHERE pm.tenant_id=? AND pm.active=1 AND pm.provider_connection_id IS NOT NULL
          AND (pc.id IS NULL OR pc.status NOT IN ('CONFIGURED','CONNECTED') OR pc.secret_reference IS NULL)`,
         this.actor.tenantId,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM order_channels WHERE tenant_id=? AND active=1 AND channel_type='MARKETPLACE'`,
         this.actor.tenantId,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM stations WHERE tenant_id=? AND active=1 AND (? IS NULL OR branch_id=?)`,
         this.actor.tenantId,
         branchId ?? null,
         branchId ?? null,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=? AND trust_status='ACTIVE' AND (? IS NULL OR branch_id=?)`,
         this.actor.tenantId,
         branchId ?? null,
         branchId ?? null,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM document_templates WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)`,
         this.actor.tenantId,
         branchId ?? null,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM setup_test_runs WHERE tenant_id=? AND status='SUCCESS' AND (? IS NULL OR branch_id=?)`,
         this.actor.tenantId,
         branchId ?? null,
         branchId ?? null,
       ),
-      count(
-        this.db,
+      batch.count(
         `SELECT COUNT(*) count FROM backup_records WHERE tenant_id=? AND status IN ('SUCCEEDED','VERIFIED') AND verified_at IS NOT NULL`,
         this.actor.tenantId,
       ),
+      branchId ? this.branchPolicy(branchId) : this.combinedBranchPolicy(),
+      batch.run(),
+    ]);
+    const inventoryApplicable = branchPolicy?.inventory_enabled !== 0;
+    const printingRequired = branchPolicy?.printing_required !== 0;
+    // The checks that depend on the branch policy also run together, the counts as one statement.
+    const policyBatch = new CountBatch(this.db);
+    const [
+      recipeValidation,
+      mappingCounts,
+      noTaxSignedOff,
+      openingCount,
+      printTests,
+      kdsDevices,
+      schema,
+    ] = await Promise.all([
+      inventoryApplicable && branchPolicy?.recipes_required !== 0
+        ? this.validateRecipes()
+        : undefined,
+      policyBatch.count(
+        `SELECT COUNT(*) count FROM setup_account_mappings WHERE tenant_id=? AND status='CONFIGURED' AND finance_signoff_status='APPROVED' AND requirement='REQUIRED' AND (branch_id=? OR branch_id IS NULL)`,
+        this.actor.tenantId,
+        branchId ?? null,
+      ),
+      taxCount === 0 ? this.ownerSignedOffNoTax() : false,
+      inventoryApplicable
+        ? policyBatch.count(
+            `SELECT COUNT(*) count FROM opening_stock_batches WHERE tenant_id=? AND status='POSTED' AND (? IS NULL OR branch_id=?)`,
+            this.actor.tenantId,
+            branchId ?? null,
+            branchId ?? null,
+          )
+        : 0,
+      printingRequired
+        ? policyBatch.count(
+            `SELECT COUNT(*) count FROM setup_test_runs WHERE tenant_id=? AND test_type='PRINT' AND status='SUCCESS' AND (? IS NULL OR branch_id=?)`,
+            this.actor.tenantId,
+            branchId ?? null,
+            branchId ?? null,
+          )
+        : 0,
+      branchPolicy?.kds_required
+        ? policyBatch.count(
+            `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=? AND device_type='KDS' AND trust_status='ACTIVE' AND (? IS NULL OR branch_id=?)`,
+            this.actor.tenantId,
+            branchId ?? null,
+            branchId ?? null,
+          )
+        : 0,
+      policyBatch.count("SELECT MAX(version) version FROM schema_migrations"),
+      policyBatch.run(),
     ]);
     const rows: ReadinessResult[] = [];
     const add = (
@@ -4765,10 +4835,6 @@ export class OnboardingService {
       "Preview and commit the menu import",
       { evidence: { count: counts.menuItems } },
     );
-    const branchPolicy = branchId
-      ? await this.branchPolicy(branchId)
-      : await this.combinedBranchPolicy();
-    const inventoryApplicable = branchPolicy?.inventory_enabled !== 0;
     if (inventoryApplicable)
       add(
         "INVENTORY",
@@ -4779,8 +4845,8 @@ export class OnboardingService {
         { evidence: { count: counts.inventoryItems } },
       );
     else rows.push(notApplicable("INVENTORY", "INVENTORY_NOT_ENABLED", branchId));
-    if (inventoryApplicable && branchPolicy?.recipes_required !== 0) {
-      const validationResult = await this.validateRecipes();
+    if (recipeValidation) {
+      const validationResult = recipeValidation;
       const critical = validationResult.issues.filter((value) => value.severity === "CRITICAL");
       add(
         "RECIPES_UOM",
@@ -4804,26 +4870,19 @@ export class OnboardingService {
         { warning: true, evidence: { count: counts.suppliers } },
       );
     else rows.push(notApplicable("SUPPLIERS", "SUPPLIERS_NOT_REQUIRED", branchId));
-    const mappingCounts = await this.db
-      .prepare(
-        `SELECT COUNT(*) count FROM setup_account_mappings WHERE tenant_id=? AND status='CONFIGURED' AND finance_signoff_status='APPROVED' AND requirement='REQUIRED' AND (branch_id=? OR branch_id IS NULL)`,
-      )
-      .bind(this.actor.tenantId, branchId ?? null)
-      .first<CountRow>();
     add(
       "ACCOUNTING",
       "ACCOUNT_MAPPINGS_COMPLETE",
-      number(mappingCounts?.count) >= requiredAccountMappings.length,
-      `${number(mappingCounts?.count)} of ${requiredAccountMappings.length} required account mappings configured and approved`,
+      mappingCounts >= requiredAccountMappings.length,
+      `${mappingCounts} of ${requiredAccountMappings.length} required account mappings configured and approved`,
       "Configure and obtain finance sign-off for required accounts",
       {
         evidence: {
-          configuredAndApproved: number(mappingCounts?.count),
+          configuredAndApproved: mappingCounts,
           required: requiredAccountMappings.length,
         },
       },
     );
-    const noTaxSignedOff = taxCount === 0 && (await this.ownerSignedOffNoTax());
     add(
       "TAX_SERVICE",
       "TAX_SERVICE_REVIEWED",
@@ -4866,7 +4925,6 @@ export class OnboardingService {
       "Configure production stations and KDS routing",
       { evidence: { count: stationCount } },
     );
-    const printingRequired = branchPolicy?.printing_required !== 0;
     if (printingRequired)
       add(
         "PRINTERS_DEVICES",
@@ -4886,13 +4944,6 @@ export class OnboardingService {
       { evidence: { count: documentCount } },
     );
     if (inventoryApplicable) {
-      const openingCount = await count(
-        this.db,
-        `SELECT COUNT(*) count FROM opening_stock_batches WHERE tenant_id=? AND status='POSTED' AND (? IS NULL OR branch_id=?)`,
-        this.actor.tenantId,
-        branchId ?? null,
-        branchId ?? null,
-      );
       add(
         "OPENING_STOCK",
         "OPENING_STOCK_POSTED",
@@ -4911,13 +4962,6 @@ export class OnboardingService {
       { evidence: { count: successfulTests } },
     );
     if (printingRequired) {
-      const printTests = await count(
-        this.db,
-        `SELECT COUNT(*) count FROM setup_test_runs WHERE tenant_id=? AND test_type='PRINT' AND status='SUCCESS' AND (? IS NULL OR branch_id=?)`,
-        this.actor.tenantId,
-        branchId ?? null,
-        branchId ?? null,
-      );
       add(
         "TESTING",
         "PRINT_TEST_PASSED",
@@ -4928,13 +4972,6 @@ export class OnboardingService {
       );
     }
     if (branchPolicy?.kds_required) {
-      const kdsDevices = await count(
-        this.db,
-        `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=? AND device_type='KDS' AND trust_status='ACTIVE' AND (? IS NULL OR branch_id=?)`,
-        this.actor.tenantId,
-        branchId ?? null,
-        branchId ?? null,
-      );
       add(
         "TESTING",
         "KDS_DEVICE_READY",
@@ -4946,18 +4983,15 @@ export class OnboardingService {
     }
     const runtime = resolveRuntimeConfiguration(this.env);
     const runtimeIssues = validateRuntimeConfiguration(this.env);
-    const schema = await this.db
-      .prepare("SELECT MAX(version) version FROM schema_migrations")
-      .first<{ version: number }>();
     add(
       "READINESS",
       "SCHEMA_VERSION_CURRENT",
-      number(schema?.version) >= CURRENT_SCHEMA_VERSION,
-      `Schema version ${number(schema?.version)}; required ${CURRENT_SCHEMA_VERSION}`,
+      schema >= CURRENT_SCHEMA_VERSION,
+      `Schema version ${schema}; required ${CURRENT_SCHEMA_VERSION}`,
       "Apply deployment-controlled migrations",
       {
         severity: "SCHEMA",
-        evidence: { current: number(schema?.version), required: CURRENT_SCHEMA_VERSION },
+        evidence: { current: schema, required: CURRENT_SCHEMA_VERSION },
         overrideAllowed: false,
       },
     );
@@ -5002,64 +5036,54 @@ export class OnboardingService {
   private async countSetupFacts(branchId?: string): Promise<SetupSummary["counts"]> {
     const scoped = branchId ? " AND branch_id=?" : "";
     const branchArgs = branchId ? [branchId] : [];
-    // Started together and awaited once; see buildReadinessResults.
+    // Read as one statement; see CountBatch.
+    const counts = new CountBatch(this.db);
     const pending = {
       branches: branchId
-        ? count(
-            this.db,
+        ? counts.count(
             "SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND id=? AND active=1",
             this.actor.tenantId,
             branchId,
           )
-        : count(
-            this.db,
+        : counts.count(
             "SELECT COUNT(*) count FROM branches WHERE tenant_id=? AND active=1",
             this.actor.tenantId,
           ),
-      users: count(
-        this.db,
+      users: counts.count(
         "SELECT COUNT(*) count FROM users WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      menuItems: count(
-        this.db,
+      menuItems: counts.count(
         "SELECT COUNT(*) count FROM menu_catalog_items WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      inventoryItems: count(
-        this.db,
+      inventoryItems: counts.count(
         "SELECT COUNT(*) count FROM inventory_items WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      suppliers: count(
-        this.db,
+      suppliers: counts.count(
         "SELECT COUNT(*) count FROM suppliers WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      recipes: count(
-        this.db,
+      recipes: counts.count(
         "SELECT COUNT(*) count FROM recipes WHERE tenant_id=? AND active=1",
         this.actor.tenantId,
       ),
-      providerConnections: count(
-        this.db,
+      providerConnections: counts.count(
         `SELECT COUNT(*) count FROM provider_connections WHERE tenant_id=?${scoped}`,
         this.actor.tenantId,
         ...branchArgs,
       ),
-      devices: count(
-        this.db,
+      devices: counts.count(
         `SELECT COUNT(*) count FROM hardware_devices WHERE tenant_id=?${scoped}`,
         this.actor.tenantId,
         ...branchArgs,
       ),
-      openImports: count(
-        this.db,
+      openImports: counts.count(
         "SELECT COUNT(*) count FROM setup_imports WHERE tenant_id=? AND status NOT IN ('COMMITTED','REJECTED','FAILED')",
         this.actor.tenantId,
       ),
-      deadLetters: count(
-        this.db,
+      deadLetters: counts.count(
         `SELECT
           (SELECT COUNT(*) FROM integration_dead_letters WHERE tenant_id=? AND status='OPEN') +
           (SELECT COUNT(*) FROM worker_jobs WHERE tenant_id=? AND status='DEAD_LETTER') count`,
@@ -5067,7 +5091,7 @@ export class OnboardingService {
         this.actor.tenantId,
       ),
     };
-    const values = await Promise.all(Object.values(pending));
+    const [values] = await Promise.all([Promise.all(Object.values(pending)), counts.run()]);
     return Object.fromEntries(
       Object.keys(pending).map((key, index) => [key, values[index]]),
     ) as SetupSummary["counts"];
@@ -6942,9 +6966,22 @@ export class OnboardingService {
     );
   }
 
-  private async assertBranch(branchId: string) {
+  private readonly checkedBranches = new Map<string, Promise<void>>();
+
+  private assertBranch(branchId: string) {
     if (!this.canReadBranch(branchId))
-      throw denied("Branch is outside the authenticated assignment");
+      return Promise.reject(denied("Branch is outside the authenticated assignment"));
+    // A service lives for one request: sections read together share one passing check.
+    let check = this.checkedBranches.get(branchId);
+    if (!check) {
+      check = this.readBranch(branchId);
+      this.checkedBranches.set(branchId, check);
+      check.catch(() => this.checkedBranches.delete(branchId));
+    }
+    return check;
+  }
+
+  private async readBranch(branchId: string) {
     const branch = await this.db
       .prepare("SELECT id FROM branches WHERE tenant_id=? AND id=? AND active=1")
       .bind(this.actor.tenantId, branchId)
@@ -7284,6 +7321,42 @@ function mapTestRun(row: Row): TestRun {
     createdAt: string(row.created_at),
   };
 }
+/**
+ * Collects single-value COUNT queries and reads them as one statement of scalar subqueries:
+ * one database round trip (and one connection) instead of one per count.
+ */
+class CountBatch {
+  private readonly items: Array<{
+    query: string;
+    values: unknown[];
+    resolve: (value: number) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+
+  constructor(private readonly db: D1Database) {}
+
+  count(query: string, ...values: unknown[]) {
+    return new Promise<number>((resolve, reject) =>
+      this.items.push({ query, values, resolve, reject }),
+    );
+  }
+
+  async run() {
+    if (!this.items.length) return;
+    try {
+      const row = await this.db
+        .prepare(
+          `SELECT ${this.items.map((item, index) => `(${item.query}) AS c${index}`).join(",")}`,
+        )
+        .bind(...this.items.flatMap((item) => item.values))
+        .first<Record<string, unknown>>();
+      this.items.forEach((item, index) => item.resolve(number(row?.[`c${index}`])));
+    } catch (error) {
+      this.items.forEach((item) => item.reject(error));
+    }
+  }
+}
+
 async function count(db: D1Database, query: string, ...values: unknown[]) {
   const row = await db
     .prepare(query)
