@@ -2,6 +2,7 @@ import {
   applyServerMutation,
   type IdempotencyRecord,
   type ProviderWebhookEvent,
+  type StateRecordRef,
   type TransactionMutationCommit,
   type TransactionMutationResult,
   type TransactionRepository,
@@ -87,6 +88,120 @@ const paymentCollections = [
   "fraudFlags",
 ] as const;
 
+const ROW_COLUMNS = `entity_type, entity_id, branch_id, business_date, status, payload_json,
+                version, created_at, updated_at`;
+
+// ---- Working set: the tenant's open and recent records -------------------------------------
+//
+// A row is in the working set when it belongs to a small collection that is always read
+// whole, or its status is not terminal, or it was dated or written inside the lookback window.
+// A status this table does not name counts as open, so a new status is never dropped; rows
+// with no status at all (payments, receipts, audit events, journals, movements, entries) are
+// in by date only.
+
+/** Collections that stay small, read whole. */
+const ALWAYS_LOADED_ENTITIES = [
+  ROOT_ENTITY,
+  "state:inventory",
+  "state:recipes",
+  "state:employees",
+  "payments:accounts",
+  "payments:closingPolicies",
+  "payments:reconciliationRules",
+  "payments:storedValueAccounts",
+  "payments:customerAccounts",
+] as const;
+
+/** Statuses after which a record needs no more work; such a row is in only while recent. */
+const TERMINAL_STATUSES: Record<string, readonly string[]> = {
+  "state:orders": ["PAID", "CANCELLED", "REFUNDED"],
+  "state:bills": ["PAID", "VOID", "MERGED", "SPLIT"],
+  "state:paymentIntents": ["SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"],
+  "state:kitchenPrintObligations": ["BRIDGE_ACCEPTED", "BYPASSED"],
+  "state:marketplaceReceivables": ["SETTLED", "CANCELLED"],
+  "state:reconciliationMatches": ["APPROVED", "REJECTED"],
+  "state:journalEntries": ["POSTED", "REVERSED"],
+  "state:cashDrawers": ["APPROVED"],
+  "state:refunds": ["REJECTED", "COMPLETED"],
+  "state:purchaseOrders": ["RECEIVED", "CANCELLED"],
+  "state:wastageRecords": ["APPROVED", "REJECTED"],
+  "state:breakageRecords": ["APPROVED", "REJECTED"],
+  "state:attendanceRecords": ["PRESENT", "LATE", "ABSENT", "OFF", "ON_LEAVE"],
+  "payments:intents": ["CONFIRMED", "FAILED", "CANCELLED", "EXPIRED", "REFUNDED"],
+  "payments:transactions": [
+    "CONFIRMED",
+    "MANUALLY_CONFIRMED",
+    "NOT_FOUND",
+    "AMOUNT_MISMATCH",
+    "ALREADY_USED",
+    "FAILED",
+    "REVERSED",
+  ],
+  "payments:drawerSessions": ["CLOSED", "APPROVED"],
+  "payments:bankTransactions": ["MATCHED", "DUPLICATE", "IGNORED"],
+  "payments:settlementBatches": ["POSTED", "REVERSED"],
+  "payments:reconciliationSessions": ["COMPLETE", "REVERSED"],
+  "payments:matches": ["APPROVED", "REJECTED", "REVERSED"],
+  "payments:exceptions": ["RESOLVED", "IGNORED"],
+  "payments:custodyObligations": ["REMITTED", "CANCELLED"],
+  "payments:refunds": ["CONFIRMED", "FAILED", "REJECTED"],
+  "payments:disputes": ["WON", "LOST", "CLOSED"],
+  "payments:journals": ["POSTED", "REVERSED"],
+  "payments:dayCloses": ["CLOSED"],
+  "payments:fraudFlags": ["RESOLVED"],
+};
+
+/** Covers the current and the previous business day in any time zone. */
+const WORKING_SET_LOOKBACK_MS = 48 * 60 * 60 * 1_000;
+
+const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
+
+// The first two conditions are exactly the predicate of idx_authoritative_records_working_set
+// (migration 0038), which is what lets the planner use that index. The last condition keeps
+// confirmed money that is not yet applied to a bill: it still waits for a person, however old.
+// Binds: tenant, earliest business date, earliest update time.
+const WORKING_SET_SQL = `SELECT ${ROW_COLUMNS}
+         FROM authoritative_records
+         WHERE tenant_id = ? AND (entity_type LIKE 'state:%' OR entity_type LIKE 'payments:%')
+           AND (entity_type IN (${sqlList(ALWAYS_LOADED_ENTITIES)})
+             OR business_date >= ?
+             OR updated_at >= ?
+${Object.entries(TERMINAL_STATUSES)
+  .map(
+    ([entityType, statuses]) =>
+      `             OR (entity_type = '${entityType}' AND status NOT IN (${sqlList(statuses)}))`,
+  )
+  .join("\n")}
+             OR (entity_type = 'payments:transactions'
+                 AND status IN ('CONFIRMED', 'MANUALLY_CONFIRMED')
+                 AND CAST(json_extract(payload_json, '$.unallocatedAmountMinor') AS NUMERIC) > 0))`;
+
+// ---- By-id reads: a record and what it links to -------------------------------------------
+
+/** Records found by an id held inside their payload, checked exactly after the read. */
+const REVERSE_LINKS = {
+  billsOfOrder: {
+    entityType: "state:bills",
+    matches: (value: Record<string, unknown>, id: string) =>
+      Array.isArray(value["orderIds"]) && value["orderIds"].includes(id),
+  },
+  paymentsOfBill: {
+    entityType: "state:payments",
+    matches: (value: Record<string, unknown>, id: string) => value["invoiceId"] === id,
+  },
+  receiptsOfBill: {
+    entityType: "state:receipts",
+    matches: (value: Record<string, unknown>, id: string) => value["invoiceId"] === id,
+  },
+} as const;
+
+type ReverseLink = keyof typeof REVERSE_LINKS;
+
+/** Keys or links per query, well inside every driver's bind limit. */
+const LOOKUP_CHUNK = 40;
+/** Links are at most three steps deep (receipt, bill, order, the order's bill). */
+const MAX_LINK_PASSES = 4;
+
 type AuthoritativeRow = {
   entity_type: string;
   entity_id: string;
@@ -122,6 +237,9 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
   // same transaction, so while a fresh revision read still returns that number the rows are
   // exactly the rows at that revision and need not be read again.
   private readonly snapshots = new Map<string, StateSnapshot>();
+  // Tenants whose last read through this repository was partial (working set or by id). A
+  // state built from such a read lacks the rows outside it, and saving it would delete them.
+  private readonly partialReads = new Set<string>();
 
   constructor(
     private readonly db: D1Database,
@@ -153,7 +271,82 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
   async loadState(tenantId: string) {
     await this.assertTenant(tenantId);
     const snapshot = await this.currentSnapshot(tenantId);
+    this.partialReads.delete(tenantId);
     return reconstructState(tenantId, snapshot.rows);
+  }
+
+  /**
+   * The tenant's open and recent records (see WORKING_SET_SQL) instead of its whole history.
+   * Read-only: nothing here feeds a write. Commits and saves still read every row, and the
+   * snapshot cache they share is not touched.
+   */
+  async loadWorkingSet(tenantId: string, now = new Date()) {
+    await this.assertTenant(tenantId);
+    const cutoff = new Date(now.getTime() - WORKING_SET_LOOKBACK_MS).toISOString();
+    const result = await this.db
+      .prepare(WORKING_SET_SQL)
+      .bind(tenantId, cutoff.slice(0, 10), cutoff)
+      .all<AuthoritativeRow>();
+    this.partialReads.add(tenantId);
+    return reconstructState(tenantId, result.results ?? []);
+  }
+
+  /**
+   * Only the named records and the records they link to, read by key however old they are:
+   * a kitchen ticket's order; a receipt's bill, order and payments; a bill's orders, payments
+   * and receipts; an order's bills. Read-only, like the working set.
+   */
+  async loadRecords(tenantId: string, refs: StateRecordRef[]) {
+    await this.assertTenant(tenantId);
+    const rows = new Map<string, AuthoritativeRow>();
+    const askedKeys = new Set<string>();
+    const askedLinks = new Set<string>();
+    let keys = refs.map((ref) => ({ entityType: `state:${ref.collection}`, entityId: ref.id }));
+    let links: Array<{ link: ReverseLink; id: string }> = [];
+    for (let pass = 0; pass < MAX_LINK_PASSES && (keys.length || links.length); pass += 1) {
+      const newKeys = keys.filter((key) => {
+        const id = `${key.entityType}:${key.entityId}`;
+        if (!key.entityId || rows.has(id) || askedKeys.has(id)) return false;
+        askedKeys.add(id);
+        return true;
+      });
+      const newLinks = links.filter((item) => {
+        const id = `${item.link}:${item.id}`;
+        if (!item.id || askedLinks.has(id)) return false;
+        askedLinks.add(id);
+        return true;
+      });
+      const [byKey, byLink] = await Promise.all([
+        this.loadRowsByKey(tenantId, newKeys),
+        this.loadRowsByLink(tenantId, newLinks),
+      ]);
+      keys = [];
+      links = [];
+      for (const row of [...byKey, ...byLink]) {
+        const id = `${row.entity_type}:${row.entity_id}`;
+        if (rows.has(id)) continue;
+        rows.set(id, row);
+        const value = parseObject(row.payload_json);
+        const order = (entityId: unknown) =>
+          keys.push({ entityType: "state:orders", entityId: stringValue(entityId) ?? "" });
+        if (row.entity_type === "state:kitchenPrintObligations") order(value["orderId"]);
+        if (row.entity_type === "state:receipts") {
+          const invoiceId = stringValue(value["invoiceId"]) ?? "";
+          order(value["orderId"]);
+          keys.push({ entityType: "state:bills", entityId: invoiceId });
+          links.push({ link: "paymentsOfBill", id: invoiceId });
+        }
+        if (row.entity_type === "state:bills") {
+          if (Array.isArray(value["orderIds"])) value["orderIds"].forEach(order);
+          links.push({ link: "paymentsOfBill", id: row.entity_id });
+          links.push({ link: "receiptsOfBill", id: row.entity_id });
+        }
+        if (row.entity_type === "state:orders")
+          links.push({ link: "billsOfOrder", id: row.entity_id });
+      }
+    }
+    this.partialReads.add(tenantId);
+    return reconstructState(tenantId, [...rows.values()]);
   }
 
   async saveState(state: TransactionState, actor: ServerActor, reason: string) {
@@ -162,6 +355,14 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
         "TENANT_SCOPE_VIOLATION",
         403,
         "Cross-tenant state write denied",
+      );
+    }
+    // saveState replaces the tenant's state with the one given, deleting rows it leaves out.
+    if (this.partialReads.has(actor.tenantId)) {
+      throw new ServerOperationError(
+        "CONFLICT",
+        409,
+        "A partial read of the transaction state cannot be saved; load the full state first",
       );
     }
     await this.persistState({
@@ -428,7 +629,14 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       const key = `${entity.entityType}:${entity.entityId}`;
       const current = currentByKey.get(key);
       if (current?.payload_json === entity.payloadJson) continue;
-      statements.push(upsertEntity(this.db, tenantId, entity, current?.version ?? 0));
+      // A record that was not among the rows read is new, so it is inserted strictly: if a
+      // row with its key exists after all, the whole batch fails as a conflict. The guarded
+      // upsert would skip that row silently and let the commit report success without it.
+      statements.push(
+        current
+          ? upsertEntity(this.db, tenantId, entity, current.version)
+          : insertEntity(this.db, tenantId, entity),
+      );
     }
     for (const row of currentDomainRows) {
       if (nextKeys.has(`${row.entity_type}:${row.entity_id}`)) continue;
@@ -2433,11 +2641,72 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     ];
   }
 
+  private async loadRowsByKey(
+    tenantId: string,
+    keys: Array<{ entityType: string; entityId: string }>,
+  ) {
+    const rows: AuthoritativeRow[] = [];
+    for (let index = 0; index < keys.length; index += LOOKUP_CHUNK) {
+      const chunk = keys.slice(index, index + LOOKUP_CHUNK);
+      const result = await this.db
+        .prepare(
+          `SELECT ${ROW_COLUMNS}
+           FROM authoritative_records
+           WHERE tenant_id = ?
+             AND (${chunk.map(() => "(entity_type = ? AND entity_id = ?)").join(" OR ")})`,
+        )
+        .bind(tenantId, ...chunk.flatMap((key) => [key.entityType, key.entityId]))
+        .all<AuthoritativeRow>();
+      rows.push(...(result.results ?? []));
+    }
+    return rows;
+  }
+
+  /**
+   * Rows of one collection that hold an id inside their payload (a bill's order ids, a
+   * payment's invoice id). The database narrows by the quoted id as text; the exact field is
+   * checked here, so a row that merely mentions the id elsewhere is not returned.
+   */
+  private async loadRowsByLink(tenantId: string, links: Array<{ link: ReverseLink; id: string }>) {
+    const rows: AuthoritativeRow[] = [];
+    for (let index = 0; index < links.length; index += LOOKUP_CHUNK) {
+      const chunk = links.slice(index, index + LOOKUP_CHUNK);
+      const result = await this.db
+        .prepare(
+          `SELECT ${ROW_COLUMNS}
+           FROM authoritative_records
+           WHERE tenant_id = ?
+             AND (${chunk
+               .map(() => "(entity_type = ? AND payload_json LIKE ? ESCAPE '\\')")
+               .join(" OR ")})`,
+        )
+        .bind(
+          tenantId,
+          ...chunk.flatMap((item) => [
+            REVERSE_LINKS[item.link].entityType,
+            `%${JSON.stringify(item.id).replace(/[\\%_]/g, "\\$&")}%`,
+          ]),
+        )
+        .all<AuthoritativeRow>();
+      for (const row of result.results ?? []) {
+        const value = parseObject(row.payload_json);
+        if (
+          chunk.some(
+            (item) =>
+              REVERSE_LINKS[item.link].entityType === row.entity_type &&
+              REVERSE_LINKS[item.link].matches(value, item.id),
+          )
+        )
+          rows.push(row);
+      }
+    }
+    return rows;
+  }
+
   private async loadRows(tenantId: string) {
     const result = await this.db
       .prepare(
-        `SELECT entity_type, entity_id, branch_id, business_date, status, payload_json,
-                version, created_at, updated_at
+        `SELECT ${ROW_COLUMNS}
          FROM authoritative_records
          WHERE tenant_id = ? AND (entity_type LIKE 'state:%' OR entity_type LIKE 'payments:%')`,
       )
@@ -3588,6 +3857,28 @@ function upsertEntity(
       entity.createdAt,
       entity.updatedAt,
       currentVersion,
+    );
+}
+
+/** A record the commit did not read: a plain insert, so an existing key fails the batch. */
+function insertEntity(db: D1Database, tenantId: string, entity: PersistedEntity) {
+  return db
+    .prepare(
+      `INSERT INTO authoritative_records
+        (tenant_id, entity_type, entity_id, branch_id, business_date, status, payload_json,
+         version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .bind(
+      tenantId,
+      entity.entityType,
+      entity.entityId,
+      entity.branchId ?? null,
+      entity.businessDate ?? null,
+      entity.status ?? null,
+      entity.payloadJson,
+      entity.createdAt,
+      entity.updatedAt,
     );
 }
 

@@ -24,6 +24,9 @@ import {
 } from "@/platform/repositories/configuration-repository";
 import { handleOperationsApi } from "@/server/operations-api";
 import { handleSerametApiRequest } from "@/lib/seramet-api";
+import { createIntegrationRuntime } from "@/integrations/runtime/create-runtime";
+import { billingRecordToPrintOrder, receiptRecordToPrintOrder } from "@/lib/print-order-adapter";
+import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 
 const tenantA = "tenant-a";
 const tenantB = "tenant-b";
@@ -580,6 +583,314 @@ describe.sequential("Pass 5 production foundation", () => {
       }),
     ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
     expect((await terminalA.loadState(tenantA)).orders).toHaveLength(1);
+  });
+
+  it("loads only open, recent and unapplied records into the working set", async () => {
+    const live = await seedLiveOrderWithBill();
+    await seedClosedHistory(30, { documents: false });
+    const old = daysAgo(60);
+    await insertStateRow("state:bills", { ...live.bill, id: "INV-OLD-OPEN", orderIds: ["x"] }, old);
+    await insertStateRow(
+      "state:orders",
+      { ...live.order, id: "ORD-NEW-STATUS", status: "SOME_LATER_STATUS" },
+      old,
+    );
+    await insertStateRow(
+      "state:orders",
+      { ...live.order, id: "ORD-CLOSED-TODAY", status: "PAID" },
+      { businessDate: old.businessDate, updatedAt: new Date().toISOString() },
+    );
+    await insertStateRow("payments:transactions", directPayment("PAY-UNAPPLIED", 100_000), old);
+    await insertStateRow("payments:transactions", directPayment("PAY-APPLIED", 0), old);
+    const reads = readMeter();
+    const repository = new D1AuthoritativeTransactionRepository(reads.db);
+
+    const working = await repository.loadWorkingSet(tenantA);
+
+    expect(working.orders.map((order) => order.id).sort()).toEqual(
+      [live.order.id, "ORD-CLOSED-TODAY", "ORD-NEW-STATUS"].sort(),
+    );
+    expect(working.bills.map((bill) => bill.id).sort()).toEqual(
+      [live.bill.id, "INV-OLD-OPEN"].sort(),
+    );
+    expect(working.paymentOperations!.transactions.map((item) => item.id)).toEqual([
+      "PAY-UNAPPLIED",
+    ]);
+    expect(reads.fullHistoryReads).toBe(0);
+    // 30 closed orders and their 30 paid bills, plus the applied payment, stay unread.
+    const full = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    expect(full.orders).toHaveLength(working.orders.length + 30);
+    expect(full.bills).toHaveLength(working.bills.length + 30);
+    expect(full.paymentOperations!.transactions).toHaveLength(2);
+    expect(reads.rows).toBeLessThan(full.orders.length);
+
+    // The partial read left the commit path alone: a mutation through the same repository
+    // still reads everything, and the closed history is neither deleted nor rewritten.
+    const committed = await mutation(repository, "after-working-set", "h", "upsertOrderDraft", {
+      draft: orderDraft("After working set"),
+      targetStatus: "OPEN",
+    });
+    expect(committed.state.orders).toHaveLength(full.orders.length + 1);
+    expect(reads.fullHistoryReads).toBe(1);
+    const after = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    expect(after.orders).toHaveLength(full.orders.length + 1);
+    expect(after.bills).toHaveLength(full.bills.length);
+  });
+
+  it("refuses to save a state built from a partial read", async () => {
+    await seedLiveOrderWithBill();
+    await seedClosedHistory(5, { documents: false });
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const rowsBefore = await count("authoritative_records", tenantA);
+    const revision = await repository.revision(tenantA);
+
+    for (const partial of [
+      await repository.loadWorkingSet(tenantA),
+      await repository.loadRecords(tenantA, [{ collection: "bills", id: "INV-HIST-1" }]),
+    ]) {
+      await expect(repository.saveState(partial, actor(), "must not delete")).rejects.toMatchObject(
+        { code: "CONFLICT", status: 409 },
+      );
+    }
+    expect(await count("authoritative_records", tenantA)).toBe(rowsBefore);
+    expect(await repository.revision(tenantA)).toBe(revision);
+
+    // A full load is still saved as before.
+    const full = await repository.loadState(tenantA);
+    await repository.saveState(full, actor(), "full state");
+    expect(await count("authoritative_records", tenantA)).toBe(rowsBefore);
+    expect(await repository.revision(tenantA)).toBe(revision + 1);
+  });
+
+  it("fails a write as a conflict when a record it treats as new already exists", async () => {
+    const seeded = await seedLiveOrderWithBill();
+    const revision = await new D1AuthoritativeTransactionRepository(database).revision(tenantA);
+    const commits = await count("mutation_commits", tenantA);
+    const stored = () =>
+      database
+        .prepare(
+          `SELECT entity_type, entity_id, version, payload_json FROM authoritative_records
+           WHERE tenant_id=? AND entity_type LIKE 'state:%' ORDER BY entity_type, entity_id`,
+        )
+        .bind(tenantA)
+        .all();
+    const before = await stored();
+
+    // The commit's read misses the root record, as a read bounded to a working set could
+    // miss an old one. The guarded upsert used to skip such a row and report success.
+    const missingRoot = new D1AuthoritativeTransactionRepository(
+      hidingStateRow("state:root", "root"),
+    );
+    await expect(
+      mutation(missingRoot, "strict-root", "strict-root", "upsertOrderDraft", {
+        draft: orderDraft("Strict"),
+        targetStatus: "OPEN",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT", status: 409 });
+
+    // The same for a whole-state save that would re-create an order it did not read.
+    const full = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    const missingOrder = new D1AuthoritativeTransactionRepository(
+      hidingStateRow("state:orders", seeded.order.id),
+    );
+    await expect(missingOrder.saveState(full, actor(), "re-create")).rejects.toThrow();
+
+    expect(await stored()).toEqual(before);
+    expect(await count("mutation_commits", tenantA)).toBe(commits);
+    expect(await new D1AuthoritativeTransactionRepository(database).revision(tenantA)).toBe(
+      revision,
+    );
+  });
+
+  it("reads an old closed receipt or bill by id with only the records it links to", async () => {
+    await seedLiveOrderWithBill();
+    await seedClosedHistory(30);
+    const full = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    const reads = readMeter();
+    const repository = new D1AuthoritativeTransactionRepository(reads.db);
+
+    // What the printing API reads to render a receipt.
+    const forReceipt = await repository.loadRecords(tenantA, [
+      { collection: "receipts", id: "RCP-HIST-7" },
+    ]);
+    expect(forReceipt.receipts.map((item) => item.id)).toEqual(["RCP-HIST-7"]);
+    expect(forReceipt.bills.map((item) => item.id)).toEqual(["INV-HIST-7"]);
+    expect(forReceipt.orders.map((item) => item.id)).toEqual(["ORD-HIST-7"]);
+    expect(forReceipt.payments.map((item) => item.id)).toEqual(["PAYREC-HIST-7"]);
+    expect(reads.fullHistoryReads).toBe(0);
+    // Four records; the bill and the receipt come back once more through their links.
+    expect(reads.rows).toBeLessThanOrEqual(6);
+    expect(receiptRecordToPrintOrder(forReceipt.receipts[0]!, forReceipt)).toEqual(
+      receiptRecordToPrintOrder(
+        full.receipts.find((item) => item.id === "RCP-HIST-7")!,
+        full,
+      ),
+    );
+
+    // ... and a bill or invoice.
+    const forBill = await repository.loadRecords(tenantA, [
+      { collection: "bills", id: "INV-HIST-9" },
+    ]);
+    expect(billingRecordToPrintOrder(forBill.bills[0]!, forBill.payments, forBill.orders)).toEqual(
+      billingRecordToPrintOrder(
+        full.bills.find((item) => item.id === "INV-HIST-9")!,
+        full.payments,
+        full.orders,
+      ),
+    );
+    expect(forBill.receipts.map((item) => item.id)).toEqual(["RCP-HIST-9"]);
+
+    // What the guest service reads for order tracking and the digital receipt.
+    const forOrder = await repository.loadRecords(tenantA, [
+      { collection: "orders", id: "ORD-HIST-3" },
+    ]);
+    expect(forOrder.orders.map((item) => item.id)).toEqual(["ORD-HIST-3"]);
+    expect(forOrder.bills.map((item) => item.id)).toEqual(["INV-HIST-3"]);
+    expect(forOrder.receipts.map((item) => item.id)).toEqual(["RCP-HIST-3"]);
+
+    const missing = await repository.loadRecords(tenantA, [
+      { collection: "orders", id: "no-such-order" },
+      { collection: "receipts", id: "ORD-HIST-3" },
+    ]);
+    expect([missing.orders, missing.bills, missing.receipts]).toEqual([[], [], []]);
+    expect(reads.fullHistoryReads).toBe(0);
+  });
+
+  it("matches linked records on the exact id, not on text that resembles it", async () => {
+    const live = await seedLiveOrderWithBill();
+    const old = daysAgo(40);
+    await insertStateRow("state:orders", { ...live.order, id: "ORD_1", status: "PAID" }, old);
+    await insertStateRow(
+      "state:bills",
+      { ...live.bill, id: "INV-A", orderIds: ["ORD_1"], status: "PAID" },
+      old,
+    );
+    // "_" and "%" are wildcards to LIKE; neither bill below belongs to ORD_1.
+    await insertStateRow(
+      "state:bills",
+      { ...live.bill, id: "INV-B", orderIds: ["ORDX1"], status: "PAID" },
+      old,
+    );
+    await insertStateRow(
+      "state:bills",
+      { ...live.bill, id: "INV-C", orderIds: ["other"], customer: "ORD_1", status: "PAID" },
+      old,
+    );
+    const repository = new D1AuthoritativeTransactionRepository(database);
+
+    const state = await repository.loadRecords(tenantA, [{ collection: "orders", id: "ORD_1" }]);
+
+    expect(state.bills.map((bill) => bill.id)).toEqual(["INV-A"]);
+    expect(
+      (await repository.loadRecords(tenantA, [{ collection: "orders", id: "ORD%1" }])).orders,
+    ).toEqual([]);
+  });
+
+  it("reads a kitchen ticket by id with its order", async () => {
+    const accepted = await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "ticket-by-id",
+      "ticket-by-id",
+      "upsertAndSendKitchen",
+      { draft: orderDraft("Ticket") },
+    );
+    await seedClosedHistory(10);
+    const obligation = accepted.state.kitchenPrintObligations![0]!;
+    const reads = readMeter();
+
+    const state = await new D1AuthoritativeTransactionRepository(reads.db).loadRecords(tenantA, [
+      { collection: "kitchenPrintObligations", id: obligation.id },
+    ]);
+
+    expect(state.kitchenPrintObligations).toEqual([obligation]);
+    expect(state.orders.map((order) => order.id)).toEqual([obligation.orderId]);
+    expect(reads.fullHistoryReads).toBe(0);
+  });
+
+  it("lists unmatched M-Pesa payments from the working set, old ones included", async () => {
+    const live = await seedLiveOrderWithBill();
+    await seedClosedHistory(30);
+    await insertStateRow(
+      "payments:transactions",
+      directPayment("PAY-WAITING", 100_000),
+      daysAgo(12),
+    );
+    await insertStateRow("payments:transactions", directPayment("PAY-DONE", 0), daysAgo(12));
+    for (const code of ["payments.match"]) {
+      await database
+        .prepare("INSERT INTO permissions (code,description) VALUES (?,?) ON CONFLICT DO NOTHING")
+        .bind(code, code)
+        .run();
+      await database
+        .prepare("INSERT INTO role_permissions VALUES (?,?,?)")
+        .bind(tenantA, `role-${tenantA}`, code)
+        .run();
+    }
+    const token = await signToken({ tid: tenantA, sub: userA, sid: sessionA, deviceId: deviceA });
+    const reads = readMeter();
+
+    const response = await handleSerametApiRequest(
+      new Request("http://localhost/api/seramet/payments/mpesa/unmatched", {
+        headers: { authorization: `Bearer ${token}`, "x-seramet-branch-id": branchA },
+      }),
+      {
+        ...testEnv(),
+        SERAMET_DB: reads.db,
+        SERAMET_ENVIRONMENT: "development",
+        SERAMET_IDENTITY_PROVIDER: "internal",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const full = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+    const expected = unmatchedDirectPayments(full, tenantA, branchA);
+    expect(expected.map((payment) => payment.transactionId)).toEqual(["PAY-WAITING"]);
+    expect(expected[0]!.suggestions).toEqual([]);
+    expect(await response.json()).toEqual({ ok: true, payments: expected });
+    expect(reads.fullHistoryReads).toBe(0);
+    expect(full.bills.some((bill) => bill.id === live.bill.id)).toBe(true);
+  });
+
+  it("checks unanswered payment prompts without reading history when none is waiting", async () => {
+    await seedLiveOrderWithBill();
+    await seedClosedHistory(30);
+    const reads = readMeter();
+    const runtime = () => createIntegrationRuntime({ ...testEnv(), SERAMET_DB: reads.db });
+
+    expect(await runtime().checkPendingPrompts(tenantA)).toEqual({ checked: 0, results: [] });
+    expect(reads.fullHistoryReads).toBe(0);
+
+    // A prompt that has waiting long enough is found in the working set; the check then
+    // runs on the full state as before, because its outcome is saved as a whole state.
+    const asked = new Date(Date.now() - 5 * 60_000).toISOString();
+    await insertStateRow(
+      "payments:intents",
+      {
+        id: "INTENT-WAITING",
+        tenantId: tenantA,
+        branchId: branchA,
+        invoiceIds: [],
+        paymentMethodId: `wallet-${tenantA}`,
+        providerConnectionId: "connection-that-is-gone",
+        providerReference: "ws_CO_1",
+        currency: "KES",
+        amountRequestedMinor: 100_000,
+        amountAuthorizedMinor: 0,
+        amountCollectedMinor: 0,
+        status: "AWAITING_CUSTOMER",
+        idempotencyKey: "intent-waiting",
+        createdBy: userA,
+        createdAt: asked,
+        updatedAt: asked,
+        metadata: {},
+      },
+      { businessDate: asked.slice(0, 10), updatedAt: asked },
+    );
+    expect(await runtime().checkPendingPrompts(tenantA)).toEqual({
+      checked: 1,
+      results: [{ intentId: "INTENT-WAITING", outcome: "UNSUPPORTED" }],
+    });
+    expect(reads.fullHistoryReads).toBe(1);
   });
 
   it("projects authoritative POS orders and invoices and records refresh events atomically", async () => {
@@ -1583,10 +1894,223 @@ function countingHistoryReads(reads: { history: number }, queries: string[] = []
     provider: database.provider,
     prepare(query) {
       queries.push(query);
-      if (/FROM authoritative_records[\s\S]*LIKE 'state:%'/.test(query)) reads.history += 1;
+      if (isFullHistoryRead(query)) reads.history += 1;
       return database.prepare(query);
     },
     batch: (statements) => database.batch(statements),
+  };
+}
+
+function isFullHistoryRead(query: string) {
+  return (
+    /FROM authoritative_records[\s\S]*LIKE 'state:%'/.test(query) &&
+    !/business_date >= \?/.test(query) &&
+    /^\s*SELECT entity_type, entity_id, branch_id/.test(query)
+  );
+}
+
+/** The test database, metering what reads of transaction-state rows bring back. */
+function readMeter() {
+  const meter = {
+    fullHistoryReads: 0,
+    rows: 0,
+    bytes: 0,
+    db: undefined as unknown as D1Database,
+  };
+  const wrap = (statement: ReturnType<D1Database["prepare"]>, query: string): typeof statement => ({
+    bind: (...values: unknown[]) => wrap(statement.bind(...values), query),
+    first: (column?: string) => statement.first(column),
+    run: () => statement.run(),
+    all: async <T>() => {
+      const result = await statement.all<T>();
+      if (/^\s*SELECT entity_type, entity_id, branch_id/.test(query)) {
+        if (isFullHistoryRead(query)) meter.fullHistoryReads += 1;
+        for (const row of (result.results ?? []) as Array<{ payload_json: string }>) {
+          meter.rows += 1;
+          meter.bytes += row.payload_json.length;
+        }
+      }
+      return result;
+    },
+  });
+  meter.db = {
+    provider: database.provider,
+    prepare: (query) => wrap(database.prepare(query), query),
+    batch: (statements) => database.batch(statements),
+  };
+  return meter;
+}
+
+/** The test database with one state row missing from every full-history read. */
+function hidingStateRow(entityType: string, entityId: string): D1Database {
+  const wrap = (statement: ReturnType<D1Database["prepare"]>, query: string): typeof statement => ({
+    bind: (...values: unknown[]) => wrap(statement.bind(...values), query),
+    first: (column?: string) => statement.first(column),
+    run: () => statement.run(),
+    all: async <T>() => {
+      const result = await statement.all<T>();
+      if (!isFullHistoryRead(query)) return result;
+      return {
+        ...result,
+        results: (result.results as Array<{ entity_type: string; entity_id: string }>).filter(
+          (row) => !(row.entity_type === entityType && row.entity_id === entityId),
+        ) as T[],
+      };
+    },
+  });
+  return {
+    provider: database.provider,
+    prepare: (query) => wrap(database.prepare(query), query),
+    batch: (statements) => database.batch(statements),
+  };
+}
+
+function daysAgo(days: number) {
+  const updatedAt = new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString();
+  return { businessDate: updatedAt.slice(0, 10), updatedAt };
+}
+
+/** A state row written directly, dated as given, as history left by earlier commits. */
+async function insertStateRow(
+  entityType: string,
+  payload: Record<string, unknown>,
+  dated: { businessDate: string; updatedAt: string },
+) {
+  await database
+    .prepare(
+      `INSERT INTO authoritative_records
+        (tenant_id, entity_type, entity_id, branch_id, business_date, status, payload_json,
+         version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    )
+    .bind(
+      tenantA,
+      entityType,
+      String(payload["id"]),
+      branchA,
+      dated.businessDate,
+      typeof payload["status"] === "string" ? payload["status"] : null,
+      JSON.stringify(payload),
+      dated.updatedAt,
+      dated.updatedAt,
+    )
+    .run();
+}
+
+/** One open order with its unpaid bill, committed through the repository. */
+async function seedLiveOrderWithBill() {
+  const repository = new D1AuthoritativeTransactionRepository(database);
+  const created = await mutation(repository, "live-order", "live-order", "upsertOrderDraft", {
+    draft: orderDraft("Live"),
+    targetStatus: "OPEN",
+  });
+  const orderId = created.state.orders[0]!.id;
+  await mutation(repository, "live-kitchen", "live-kitchen", "sendToKitchen", { orderId });
+  const billed = await mutation(repository, "live-bill", "live-bill", "prepareInvoiceForPayment", {
+    orderId,
+  });
+  return { order: billed.state.orders[0]!, bill: billed.state.bills[0]! };
+}
+
+/** `count` paid orders from a month ago, each with its bill and, unless left out, its payment and receipt. */
+async function seedClosedHistory(count: number, options: { documents?: boolean } = {}) {
+  const state = await new D1AuthoritativeTransactionRepository(database).loadState(tenantA);
+  const order = state.orders[0]!;
+  const bill = state.bills[0] ?? {
+    id: "",
+    tenantId: tenantA,
+    branchId: branchA,
+    branch: branchA,
+    customer: "History",
+    issuedAt: order.createdAt,
+    dueAt: order.createdAt,
+    subtotal: order.subtotal,
+    tax: order.tax,
+    total: order.total,
+    lines: order.lines,
+  };
+  const old = daysAgo(30);
+  for (let index = 1; index <= count; index += 1) {
+    const orderId = `ORD-HIST-${index}`;
+    const invoiceId = `INV-HIST-${index}`;
+    await insertStateRow("state:orders", { ...order, id: orderId, status: "PAID" }, old);
+    await insertStateRow(
+      "state:bills",
+      {
+        ...bill,
+        id: invoiceId,
+        orderIds: [orderId],
+        status: "PAID",
+        paymentStatus: "PAID",
+        paid: bill.total,
+      },
+      old,
+    );
+    // Hand-written payments and receipts are for reading only; a commit would project them.
+    if (options.documents === false) continue;
+    await insertStateRow(
+      "state:payments",
+      {
+        id: `PAYREC-HIST-${index}`,
+        tenantId: tenantA,
+        branchId: branchA,
+        invoiceId,
+        orderId,
+        branch: branchA,
+        method: "CASH",
+        provider: "CASH",
+        amount: bill.total,
+        currency: "KES",
+        reference: `CASH-${index}`,
+        cashier: userA,
+        terminal: "POS-01",
+        timestamp: old.updatedAt,
+      },
+      old,
+    );
+    await insertStateRow(
+      "state:receipts",
+      {
+        id: `RCP-HIST-${index}`,
+        tenantId: tenantA,
+        branchId: branchA,
+        orderId,
+        invoiceId,
+        branch: branchA,
+        cashier: userA,
+        customer: "History",
+        issuedAt: old.updatedAt,
+        total: bill.total,
+        paidAmount: bill.total,
+        change: 0,
+        paymentBreakdown: [{ method: "CASH", amount: bill.total, reference: `CASH-${index}` }],
+      },
+      old,
+    );
+  }
+}
+
+/** A confirmed M-Pesa payment that arrived without a prompt. */
+function directPayment(id: string, unallocatedAmountMinor: number) {
+  const occurredAt = daysAgo(12).updatedAt;
+  return {
+    id,
+    tenantId: tenantA,
+    branchId: branchA,
+    paymentMethodId: `wallet-${tenantA}`,
+    providerConnectionId: `provider-${tenantA}`,
+    direction: "COLLECTION",
+    amountMinor: 100_000,
+    unallocatedAmountMinor,
+    currency: "KES",
+    status: "CONFIRMED",
+    providerTransactionId: `RCPT${id.replace(/[^A-Z0-9]/g, "")}`,
+    merchantReference: `RCPT${id.replace(/[^A-Z0-9]/g, "")}`,
+    occurredAt,
+    confirmedAt: occurredAt,
+    createdAt: occurredAt,
+    createdBy: "mpesa",
+    metadata: { directPayment: true },
   };
 }
 
