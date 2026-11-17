@@ -13,6 +13,7 @@ import {
   riderOutstandingForOrder,
   type DeliveryFulfilment,
 } from "@/delivery/delivery-model";
+import { ridersCarryCash } from "@/delivery/delivery-charge";
 import { formatMoney } from "@/lib/currency";
 import { useTransactionEngine } from "@/hooks/use-transaction-engine";
 import { useAppContext } from "@/lib/app-context";
@@ -40,6 +41,7 @@ type DeliveryTask = {
   riderCollected: number;
   toRemit: number;
   orderRecord: TransactionOrder;
+  ridersCarryCash: boolean;
 };
 
 type CollectionMethod = "COMPANY_TILL" | "RIDER_CASH" | "RIDER_MPESA";
@@ -85,7 +87,7 @@ const lifecycle = [
 ];
 
 const collectionLabels: Record<CollectionMethod, string> = {
-  COMPANY_TILL: "Customer paid company Till",
+  COMPANY_TILL: "Paid to the restaurant",
   RIDER_CASH: "Cash collected by rider",
   RIDER_MPESA: "Customer paid rider M-Pesa",
 };
@@ -132,8 +134,12 @@ function Delivery() {
   const companyPaymentMethods = repository
     .listPaymentMethods(activeTenantId, false)
     .filter(
-      (method) => method.enabled && ["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category),
+      (method) =>
+        method.enabled &&
+        ["CASH", "DIGITAL_WALLET", "CARD", "BANK_TRANSFER"].includes(method.category),
     );
+  const paidInCash = (paymentMethodId: string) =>
+    companyPaymentMethods.find((method) => method.id === paymentMethodId)?.category === "CASH";
   const defaultCompanyPaymentMethodId = companyPaymentMethods[0]?.id ?? "";
   const deliveryChannels = repository
     .listOrderChannels(activeTenantId, true)
@@ -190,10 +196,14 @@ function Delivery() {
           ownDispatch,
           fulfilment,
           deliveryState: ownDispatch ? (order.delivery?.status ?? "UNASSIGNED") : "PLATFORM",
-          fundsStatus: ownDispatch ? deliveryFundsStatus(state, order) : "Platform managed",
+          fundsStatus:
+            ownDispatch || custodyObligationForOrder(state, order)
+              ? deliveryFundsStatus(state, order)
+              : "Platform managed",
           riderCollected: ownDispatch ? riderHeldAmount(state, order) : 0,
           toRemit: ownDispatch ? riderOutstandingForOrder(state, order) : 0,
           orderRecord: order,
+          ridersCarryCash: ownDispatch && ridersCarryCash(channel),
         },
       ];
     });
@@ -298,8 +308,9 @@ function Delivery() {
     }
 
     const reference = draft.reference.trim().toUpperCase();
-    if (draft.method !== "RIDER_CASH" && !reference) {
-      setNotice("A transaction reference is required for M-Pesa/Till collections.");
+    const cashAtCounter = draft.method === "COMPANY_TILL" && paidInCash(draft.paymentMethodId);
+    if (draft.method !== "RIDER_CASH" && !cashAtCounter && !reference) {
+      setNotice("Enter the transaction reference, unless the customer paid cash.");
       return;
     }
     if (draft.method === "COMPANY_TILL" && !draft.paymentMethodId) {
@@ -318,7 +329,7 @@ function Delivery() {
             obligationId: obligation.id,
             amountMinor,
             paymentMethodId: draft.paymentMethodId,
-            reference,
+            ...(reference ? { reference } : {}),
           },
         });
       } else {
@@ -338,7 +349,7 @@ function Delivery() {
       });
       setNotice(
         draft.method === "COMPANY_TILL"
-          ? `${formatMoney(amount)} recorded directly to the company collection path for ${row.orderId}.`
+          ? `${formatMoney(amount)} received at the restaurant for ${row.orderId}.`
           : `${formatMoney(amount)} recorded in ${row.rider}'s custody for ${row.orderId}.`,
       );
     } catch (error) {
@@ -347,6 +358,82 @@ function Delivery() {
       );
     }
   };
+
+  const collectionForm = (row: DeliveryTask, draft: CollectionDraft) => (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="grid gap-1 font-semibold text-muted-foreground">
+        Customer paid via
+        <select
+          value={draft.method}
+          onChange={(event) =>
+            updateDraft(row.orderId, {
+              method: event.target.value as CollectionMethod,
+            })
+          }
+          className="h-9 rounded-md border border-border bg-card px-2 text-foreground"
+        >
+          {Object.entries(collectionLabels)
+            .filter(([method]) => method === "COMPANY_TILL" || row.ridersCarryCash)
+            .map(([method, label]) => (
+              <option key={method} value={method}>
+                {label}
+              </option>
+            ))}
+        </select>
+      </label>
+      {draft.method === "COMPANY_TILL" && (
+        <label className="grid gap-1 font-semibold text-muted-foreground">
+          How it was paid
+          <select
+            value={draft.paymentMethodId}
+            onChange={(event) => updateDraft(row.orderId, { paymentMethodId: event.target.value })}
+            className="h-9 min-w-44 rounded-md border border-border bg-card px-2 text-foreground"
+          >
+            <option value="">Choose configured method</option>
+            {companyPaymentMethods.map((method) => (
+              <option key={method.id} value={method.id}>
+                {method.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="grid gap-1 font-semibold text-muted-foreground">
+        Amount
+        <input
+          inputMode="decimal"
+          value={draft.amount}
+          onChange={(event) => updateDraft(row.orderId, { amount: event.target.value })}
+          className="h-9 w-32 rounded-md border border-border bg-card px-2 text-foreground"
+        />
+      </label>
+      <label className="grid min-w-52 flex-1 gap-1 font-semibold text-muted-foreground">
+        Reference
+        <input
+          value={draft.reference}
+          onChange={(event) => updateDraft(row.orderId, { reference: event.target.value })}
+          placeholder={
+            draft.method === "RIDER_CASH" ||
+            (draft.method === "COMPANY_TILL" && paidInCash(draft.paymentMethodId))
+              ? "Optional note"
+              : "Required transaction reference"
+          }
+          className="h-9 rounded-md border border-border bg-card px-2 text-foreground"
+        />
+      </label>
+      <Btn
+        variant="primary"
+        onClick={() => void recordCollection(row)}
+        disabled={
+          !canCollect ||
+          (draft.method !== "COMPANY_TILL" && row.rider === "Unassigned") ||
+          (draft.method === "COMPANY_TILL" && !draft.paymentMethodId)
+        }
+      >
+        Record collection
+      </Btn>
+    </div>
+  );
 
   const columns: EnterpriseColumn<DeliveryTask>[] = [
     { key: "id", label: "Task", sortable: true },
@@ -451,17 +538,19 @@ function Delivery() {
                 : "Fulfilment: All delivery",
           ]}
           renderExpanded={(row) => {
+            const draft = draftFor(row);
             if (!row.ownDispatch) {
               return (
-                <div className="text-[12px] text-muted-foreground">
-                  {row.channel} controls the courier. Seramet tracks restaurant preparation and
-                  handoff, but this order does not contribute to Mona rider value, workload or
-                  remittance.
+                <div className="grid gap-3 text-[12px]">
+                  <div className="text-muted-foreground">
+                    {row.channel} controls the courier. Seramet tracks restaurant preparation and
+                    handoff, but this order does not count towards your riders' workload.
+                  </div>
+                  {cashDueRemaining(state, row.orderRecord) > 0 && collectionForm(row, draft)}
                 </div>
               );
             }
 
-            const draft = draftFor(row);
             const recorded = customerCollectedAmount(state, row.orderRecord);
             return (
               <div className="grid gap-3 text-[12px]">
@@ -545,89 +634,12 @@ function Delivery() {
                   </div>
                 </div>
 
-                {cashDueRemaining(state, row.orderRecord) > 0 && (
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="grid gap-1 font-semibold text-muted-foreground">
-                      Customer paid via
-                      <select
-                        value={draft.method}
-                        onChange={(event) =>
-                          updateDraft(row.orderId, {
-                            method: event.target.value as CollectionMethod,
-                          })
-                        }
-                        className="h-9 rounded-md border border-border bg-card px-2 text-foreground"
-                      >
-                        {Object.entries(collectionLabels).map(([method, label]) => (
-                          <option key={method} value={method}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {draft.method === "COMPANY_TILL" && (
-                      <label className="grid gap-1 font-semibold text-muted-foreground">
-                        Company payment method
-                        <select
-                          value={draft.paymentMethodId}
-                          onChange={(event) =>
-                            updateDraft(row.orderId, { paymentMethodId: event.target.value })
-                          }
-                          className="h-9 min-w-44 rounded-md border border-border bg-card px-2 text-foreground"
-                        >
-                          <option value="">Choose configured method</option>
-                          {companyPaymentMethods.map((method) => (
-                            <option key={method.id} value={method.id}>
-                              {method.displayName}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                    <label className="grid gap-1 font-semibold text-muted-foreground">
-                      Amount
-                      <input
-                        inputMode="decimal"
-                        value={draft.amount}
-                        onChange={(event) =>
-                          updateDraft(row.orderId, { amount: event.target.value })
-                        }
-                        className="h-9 w-32 rounded-md border border-border bg-card px-2 text-foreground"
-                      />
-                    </label>
-                    <label className="grid min-w-52 flex-1 gap-1 font-semibold text-muted-foreground">
-                      Reference
-                      <input
-                        value={draft.reference}
-                        onChange={(event) =>
-                          updateDraft(row.orderId, { reference: event.target.value })
-                        }
-                        placeholder={
-                          draft.method === "RIDER_CASH"
-                            ? "Optional handover/customer note"
-                            : "Required transaction reference"
-                        }
-                        className="h-9 rounded-md border border-border bg-card px-2 text-foreground"
-                      />
-                    </label>
-                    <Btn
-                      variant="primary"
-                      onClick={() => void recordCollection(row)}
-                      disabled={
-                        !canCollect ||
-                        (draft.method !== "COMPANY_TILL" && row.rider === "Unassigned") ||
-                        (draft.method === "COMPANY_TILL" && !draft.paymentMethodId)
-                      }
-                    >
-                      Record collection
-                    </Btn>
-                  </div>
-                )}
+                {cashDueRemaining(state, row.orderRecord) > 0 && collectionForm(row, draft)}
 
                 <p className="text-muted-foreground">
-                  Rider-held cash and personal M-Pesa create custody until remitted. Direct company
-                  Till collections bypass rider custody, clear the cash-due obligation directly, and
-                  remain available for ordinary Till/bank reconciliation.
+                  {row.ridersCarryCash
+                    ? "Money the rider carries is held against the rider until it is handed in. Money paid straight to the restaurant clears the invoice directly."
+                    : "Riders only deliver on this channel. Record what the customer paid and how; it clears the invoice directly."}
                 </p>
               </div>
             );

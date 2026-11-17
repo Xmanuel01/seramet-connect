@@ -13,9 +13,17 @@ export function posInvoicePricing(input: {
 }) {
   const deliveryChargeMinor = input.deliveryChargeMinor ?? 0;
   const totalMinor = sumMinor([input.itemsMinor, input.exclusiveChargesMinor, deliveryChargeMinor]);
-  const netSalesMinor = sumMinor([totalMinor, -input.taxMinor, -input.serviceMinor, -deliveryChargeMinor]);
+  const netSalesMinor = sumMinor([
+    totalMinor,
+    -input.taxMinor,
+    -input.serviceMinor,
+    -deliveryChargeMinor,
+  ]);
   const amounts = {
-    subtotal: majorFromMinor(sumMinor([netSalesMinor, input.serviceMinor, deliveryChargeMinor]), input.currency),
+    subtotal: majorFromMinor(
+      sumMinor([netSalesMinor, input.serviceMinor, deliveryChargeMinor]),
+      input.currency,
+    ),
     tax: majorFromMinor(input.taxMinor, input.currency),
     total: majorFromMinor(totalMinor, input.currency),
   };
@@ -30,7 +38,9 @@ export function posInvoicePricing(input: {
         netSalesMinor,
         serviceChargeMinor: input.serviceMinor,
         ...(input.deliveryChargeMinor !== undefined ? { deliveryChargeMinor } : {}),
-        ...(input.deliveryPayableMinor !== undefined ? { deliveryPayableMinor: input.deliveryPayableMinor } : {}),
+        ...(input.deliveryPayableMinor !== undefined
+          ? { deliveryPayableMinor: input.deliveryPayableMinor }
+          : {}),
         taxMinor: input.taxMinor,
         totalMinor,
       },

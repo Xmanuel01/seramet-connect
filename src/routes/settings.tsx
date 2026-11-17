@@ -278,7 +278,12 @@ function Settings() {
   const updateConfiguredChannel = async (
     channelId: string,
     displayName: string,
-    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean; deliverySettings?: DeliverySettings },
+    change: {
+      enabled?: boolean;
+      useOnlinePrice?: boolean;
+      requiresTable?: boolean;
+      deliverySettings?: DeliverySettings;
+    },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
     try {
@@ -850,9 +855,20 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
-                      <DeliverySettingsDialog channel={channel} currency={tenant?.defaultCurrency ?? "KES"} branches={branchRecords} disabled={!canManageOrderChannels || Boolean(configSaving)} onSave={(deliverySettings) => updateConfiguredChannel(channel.id, channel.displayName, { deliverySettings })} />
+                      <DeliverySettingsDialog
+                        channel={channel}
+                        currency={tenant?.defaultCurrency ?? "KES"}
+                        branches={branchRecords}
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onSave={(deliverySettings) =>
+                          updateConfiguredChannel(channel.id, channel.displayName, {
+                            deliverySettings,
+                          })
+                        }
+                      />
                       <Btn
                         disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        title="On: orders on this channel, and the menu sent to its delivery app, use each item's online price where one is set. Off: the store price."
                         onClick={() =>
                           void updateConfiguredChannel(channel.id, channel.displayName, {
                             useOnlinePrice: channel.metadata["useOnlinePrice"] !== true,

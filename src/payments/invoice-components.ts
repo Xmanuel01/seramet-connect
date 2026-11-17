@@ -46,8 +46,12 @@ export function verifyInvoiceComponents(
     sumMinor([components.netSalesMinor, components.serviceChargeMinor, delivery]) !==
       parseMajorAmount(totals.subtotal, currency) ||
     components.taxMinor !== parseMajorAmount(totals.tax, currency) ||
-    sumMinor([components.netSalesMinor, components.serviceChargeMinor, components.taxMinor, delivery]) !==
-      components.totalMinor ||
+    sumMinor([
+      components.netSalesMinor,
+      components.serviceChargeMinor,
+      components.taxMinor,
+      delivery,
+    ]) !== components.totalMinor ||
     components.totalMinor !== parseMajorAmount(totals.total, currency)
   )
     throw new Error("Invoice components do not reconcile with authoritative totals");
@@ -84,10 +88,14 @@ export function splitInvoiceComponents(
       : allocateInvoiceMinor(source.serviceChargeMinor, remaining);
   const discounts = allocateInvoiceMinor(source.discountsMinor, totals);
   const afterService = remaining.map((amount, i) => amount - services[i]!);
-  const deliveries = sumMinor(afterService) === 0 ? afterService :
-    allocateInvoiceMinor(source.deliveryChargeMinor ?? 0, afterService);
-  const payables = sumMinor(deliveries) === 0 ? deliveries :
-    allocateInvoiceMinor(source.deliveryPayableMinor ?? 0, deliveries);
+  const deliveries =
+    sumMinor(afterService) === 0
+      ? afterService
+      : allocateInvoiceMinor(source.deliveryChargeMinor ?? 0, afterService);
+  const payables =
+    sumMinor(deliveries) === 0
+      ? deliveries
+      : allocateInvoiceMinor(source.deliveryPayableMinor ?? 0, deliveries);
   return totals.map((totalMinor, i) => {
     const netSalesMinor = totalMinor - taxes[i]! - services[i]! - deliveries[i]!;
     return {

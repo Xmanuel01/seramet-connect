@@ -82,7 +82,8 @@ export const updateOrderChannelInputSchema = z
     (value) =>
       value.enabled !== undefined ||
       value.useOnlinePrice !== undefined ||
-      value.requiresTable !== undefined || value.deliverySettings !== undefined,
+      value.requiresTable !== undefined ||
+      value.deliverySettings !== undefined,
     { message: "At least one channel setting is required" },
   );
 
@@ -423,10 +424,15 @@ export async function updateOrderChannel(
     orderChannelId,
   );
   if (!current) throw new SerametHttpError(404, "Order channel was not found");
-  for (const branchId of new Set(parsed.deliverySettings?.rates.flatMap((rate) => rate.branchIds) ?? [])) {
-    const branch = await db.prepare("SELECT id FROM branches WHERE tenant_id=? AND id=? AND active=1")
-      .bind(actor.tenantId, branchId).first();
-    if (!branch) throw new SerametHttpError(422, "Delivery rates must use active branches in this business");
+  for (const branchId of new Set(
+    parsed.deliverySettings?.rates.flatMap((rate) => rate.branchIds) ?? [],
+  )) {
+    const branch = await db
+      .prepare("SELECT id FROM branches WHERE tenant_id=? AND id=? AND active=1")
+      .bind(actor.tenantId, branchId)
+      .first();
+    if (!branch)
+      throw new SerametHttpError(422, "Delivery rates must use active branches in this business");
   }
   const next: OrderChannelDefinition = {
     ...current,
@@ -435,10 +441,12 @@ export async function updateOrderChannel(
     metadata: {
       ...current.metadata,
       ...(parsed.useOnlinePrice === undefined ? {} : { useOnlinePrice: parsed.useOnlinePrice }),
-      ...(parsed.deliverySettings === undefined ? {} : {
-        deliverySettings: parsed.deliverySettings,
-        defaultFulfilment: parsed.deliverySettings.fulfilment,
-      }),
+      ...(parsed.deliverySettings === undefined
+        ? {}
+        : {
+            deliverySettings: parsed.deliverySettings,
+            defaultFulfilment: parsed.deliverySettings.fulfilment,
+          }),
     },
   };
   if (JSON.stringify(current) === JSON.stringify(next)) {

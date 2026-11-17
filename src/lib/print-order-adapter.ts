@@ -27,7 +27,9 @@ function printedSubtotal(components: InvoiceComponents | undefined, subtotal: nu
   const major = (minor: number) => majorFromMinor(minor, components.currency);
   return {
     subtotal: major(components.grossSalesMinor),
-    ...(components.deliveryChargeMinor ? { deliveryCharge: major(components.deliveryChargeMinor) } : {}),
+    ...(components.deliveryChargeMinor
+      ? { deliveryCharge: major(components.deliveryChargeMinor) }
+      : {}),
     ...(components.serviceChargeMinor
       ? { serviceCharge: major(components.serviceChargeMinor) }
       : {}),
@@ -73,7 +75,11 @@ export function billingRecordToPrintOrder(
     waiter: operator,
     createdAt: row.issuedAt,
     customer: row.customer,
-    deliveryDetails: row.deliveryDetails ?? orders.filter((order) => row.orderIds.includes(order.id)).flatMap((order) => order.delivery ? [order.delivery] : []),
+    deliveryDetails:
+      row.deliveryDetails ??
+      orders
+        .filter((order) => row.orderIds.includes(order.id))
+        .flatMap((order) => (order.delivery ? [order.delivery] : [])),
     ...(row.paymentStatus === "PAID" ? { receiptNumber: row.id.replace(/^INV/i, "RCP") } : {}),
     invoiceNumber: row.id,
     ...(invoicePayments[0]

@@ -6,6 +6,8 @@ import { DocumentEmailDialog } from "@/components/app/DocumentEmailDialog";
 import { DocumentTextPreview } from "@/components/app/DocumentTextPreview";
 import { InvoiceSplitDialog } from "@/components/app/InvoiceSplitDialog";
 import { invoiceDisplayName } from "@/lib/invoice-split";
+import { AppOrderCollect } from "@/components/app/AppOrderCollect";
+import { appOrderBalance, appOrderBalanceLabel } from "@/payments/app-order-balance";
 import { permissions } from "@/platform/permissions";
 import { AlertTriangle, CheckCircle2, Download, FileText, Mail, MessageCircle } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
@@ -189,6 +191,7 @@ function Invoices() {
   );
   const periodDate = chosenDate ?? businessToday;
   const canSplit = hasPermission(permissions.invoicesManage);
+  const canCollect = hasPermission(permissions.paymentsCollect);
   const scope = `${activeTenantId}:${branchId}:${currentUser.id}`;
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
@@ -308,9 +311,26 @@ function Invoices() {
   const overdue = activeRows
     .filter((row) => row.paymentStatus !== "PAID")
     .reduce((sum, row) => sum + row.total - row.paid, 0);
-  const showSettleColumn = activeRows.some((row) =>
-    ["UNPAID", "PARTIAL"].includes(row.paymentStatus),
+  const showSettleColumn = activeRows.some(
+    (row) =>
+      ["UNPAID", "PARTIAL"].includes(row.paymentStatus) ||
+      (appOrderBalance(state, row.id)?.toCollect ?? 0) > 0,
   );
+  // The pay-on-delivery part of a delivery-app invoice, cleared with what was actually paid.
+  const collectAction = (row: BillingRecord) => {
+    const balance = appOrderBalance(state, row.id);
+    return balance ? (
+      <AppOrderCollect
+        invoice={row}
+        invoiceName={invoiceDisplayName(row.id)}
+        balance={balance}
+        tenantId={activeTenantId}
+        canCollect={canCollect}
+        mutate={mutate}
+        onDone={setWarning}
+      />
+    ) : null;
+  };
 
   const logDelivery = (entry: DeliveryLogEntry) => {
     setDeliveryLog((current) => [entry, ...current].slice(0, 8));
@@ -327,7 +347,10 @@ function Invoices() {
   };
 
   const settlementLabel = (invoice: BillingRecord) => {
-    if (invoice.paymentStatus === "PROVIDER_RECEIVABLE") return "Provider receivable";
+    if (invoice.paymentStatus === "PROVIDER_RECEIVABLE") {
+      const balance = appOrderBalance(state, invoice.id);
+      return balance ? appOrderBalanceLabel(balance) : "Owed by app";
+    }
     if (invoice.status === "PENDING") return "Pending";
     const methods = state.payments
       .filter((payment) => payment.invoiceId === invoice.id)
@@ -827,6 +850,7 @@ function Invoices() {
                     {["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
                       <Btn onClick={() => openSettle(row)}>Settle</Btn>
                     )}
+                    {collectAction(row)}
                   </TD>
                 )}
                 <TD>
@@ -889,6 +913,7 @@ function Invoices() {
                   {showSettleColumn && ["UNPAID", "PARTIAL"].includes(row.paymentStatus) && (
                     <Btn onClick={() => openSettle(row)}>Settle</Btn>
                   )}
+                  {collectAction(row)}
                   <InvoiceDeliveryActions
                     row={row}
                     openPrintTemplate={openPrintTemplate}

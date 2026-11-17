@@ -1,5 +1,9 @@
 import { LOCAL_PILOT_TENANT_ID } from "@/platform/pilot-defaults";
-import { deliveryContactSchema, deliveryChargeSchema, type DeliveryCharge } from "@/delivery/delivery-charge";
+import {
+  deliveryContactSchema,
+  deliveryChargeSchema,
+  type DeliveryCharge,
+} from "@/delivery/delivery-charge";
 import {
   orderChannelDispatchError,
   OrderChannelValidationError,
@@ -837,8 +841,10 @@ function pricedTotals(
   const currency = configurationRepository.getTenant(tenantId).defaultCurrency;
   if (override) {
     const { financialComponents, ...amounts } = override;
-    if ((financialComponents?.deliveryChargeMinor ?? 0) !== deliveryMinor ||
-      (financialComponents?.deliveryPayableMinor ?? 0) !== deliveryPayableMinor)
+    if (
+      (financialComponents?.deliveryChargeMinor ?? 0) !== deliveryMinor ||
+      (financialComponents?.deliveryPayableMinor ?? 0) !== deliveryPayableMinor
+    )
       throw new Error("Delivery charge does not reconcile with invoice components");
     return {
       ...amounts,
@@ -1886,7 +1892,12 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride, draft.delivery);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery,
+    );
     const {
       delivery,
       externalSource,
@@ -2387,7 +2398,12 @@ export const TransactionEngine = {
       });
     }
 
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride, draft.delivery ?? order.delivery);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery ?? order.delivery,
+    );
     if (draft.delivery) order.delivery = { ...order.delivery, ...draft.delivery };
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
@@ -3011,7 +3027,12 @@ export const TransactionEngine = {
           : line.productionStatus;
       return productionStatus ? { ...line, productionStatus } : { ...line };
     });
-    const total = pricedTotals(normalizedLines, scope.tenantId, draft.financialOverride, draft.delivery ?? order.delivery);
+    const total = pricedTotals(
+      normalizedLines,
+      scope.tenantId,
+      draft.financialOverride,
+      draft.delivery ?? order.delivery,
+    );
     order.tenantId = scope.tenantId;
     order.branchId = scope.branchId;
     order.branch = scope.branch;
@@ -3452,7 +3473,8 @@ export const TransactionEngine = {
                 sumMinor(
                   bills.map(
                     (bill) =>
-                      verifyInvoiceComponents(bill.financialComponents!, bill, currency)[field] ?? 0,
+                      verifyInvoiceComponents(bill.financialComponents!, bill, currency)[field] ??
+                      0,
                   ),
                 ),
               ]),

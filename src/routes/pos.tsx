@@ -732,7 +732,11 @@ function POS() {
       { reported: 0, added: 0 },
     );
   const configuredDelivery = deliverySettings(selectedChannel);
-  const showDelivery = configuredDelivery?.fulfilment === "RESTAURANT" || configuredDelivery?.fulfilment === "PROVIDER" || selectedChannel?.channelType === "OWN_DELIVERY" || selectedChannel?.requiresAddress;
+  const showDelivery =
+    configuredDelivery?.fulfilment === "RESTAURANT" ||
+    configuredDelivery?.fulfilment === "PROVIDER" ||
+    selectedChannel?.channelType === "OWN_DELIVERY" ||
+    selectedChannel?.requiresAddress;
   const deliveryAmountMinor = deliveryCharge?.amountMinor ?? 0;
   const invoicePricing = posInvoicePricing({
     currency: tenant.defaultCurrency,
@@ -740,7 +744,12 @@ function POS() {
     taxMinor: taxTotals.reported,
     serviceMinor: serviceTotals.reported,
     exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
-    ...(deliveryCharge ? { deliveryChargeMinor: deliveryAmountMinor, deliveryPayableMinor: deliveryCharge.beneficiary === "RIDER" ? deliveryAmountMinor : 0 } : {}),
+    ...(deliveryCharge
+      ? {
+          deliveryChargeMinor: deliveryAmountMinor,
+          deliveryPayableMinor: deliveryCharge.beneficiary === "RIDER" ? deliveryAmountMinor : 0,
+        }
+      : {}),
   });
   const subtotal = majorFromMinor(
     invoicePricing.financialComponents.netSalesMinor,
@@ -803,7 +812,9 @@ function POS() {
     })),
     subtotal: invoicePricing.subtotal,
     deliveryCharge: majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency),
-    deliveryDetails: showDelivery ? [{ recipientName, phone: deliveryPhone, address: deliveryAddress, doorNumber }] : [],
+    deliveryDetails: showDelivery
+      ? [{ recipientName, phone: deliveryPhone, address: deliveryAddress, doorNumber }]
+      : [],
     tax: invoicePricing.tax,
     total,
   });
@@ -1645,17 +1656,44 @@ function POS() {
                     />
                   </label>
                 )}
-                {showDelivery && <>
-                  <label className="grid gap-1 text-xs font-semibold">Phone number (optional)
-                    <input type="tel" maxLength={64} value={deliveryPhone} disabled={!!activeOrder?.externalSource} onChange={(event) => setDeliveryPhone(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal" />
-                  </label>
-                  <label className="grid gap-1 text-xs font-semibold">Door / unit number (optional)
-                    <input maxLength={40} value={doorNumber} disabled={!!activeOrder?.externalSource} onChange={(event) => setDoorNumber(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal" />
-                  </label>
-                </>}
+                {showDelivery && (
+                  <>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Phone number (optional)
+                      <input
+                        type="tel"
+                        maxLength={64}
+                        value={deliveryPhone}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDeliveryPhone(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Door / unit number (optional)
+                      <input
+                        maxLength={40}
+                        value={doorNumber}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDoorNumber(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                  </>
+                )}
               </div>
             )}
-            {configuredDelivery && <DeliveryChargeFields settings={configuredDelivery} branchId={branchId} currency={tenant.defaultCurrency} value={deliveryCharge} onChange={setDeliveryCharge} disabled={channelLocked || !!activeOrder?.externalSource} canOverride={hasPermission(permissions.paymentsReconcile)} />}
+            {configuredDelivery && (
+              <DeliveryChargeFields
+                settings={configuredDelivery}
+                branchId={branchId}
+                currency={tenant.defaultCurrency}
+                value={deliveryCharge}
+                onChange={setDeliveryCharge}
+                disabled={channelLocked || !!activeOrder?.externalSource}
+                canOverride={hasPermission(permissions.paymentsReconcile)}
+              />
+            )}
             {operationalMenu.status === "error" && (
               <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                 Authoritative menu unavailable: {operationalMenu.error}

@@ -277,13 +277,15 @@ export interface DeliveryDetails {
 }
 
 function deliveryFields(width: number, deliveries: DeliveryDetails[] = []) {
-  return deliveries.flatMap((delivery) => fields(width, [
-    ["Deliver to", delivery.recipientName],
-    ["Delivery phone", delivery.phone],
-    ["Phone code", delivery.phoneCode],
-    ["Delivery address", delivery.address],
-    ["Door / unit", delivery.doorNumber],
-  ]));
+  return deliveries.flatMap((delivery) =>
+    fields(width, [
+      ["Deliver to", delivery.recipientName],
+      ["Delivery phone", delivery.phone],
+      ["Phone code", delivery.phoneCode],
+      ["Delivery address", delivery.address],
+      ["Door / unit", delivery.doorNumber],
+    ]),
+  );
 }
 
 export interface LoyaltyDetails {

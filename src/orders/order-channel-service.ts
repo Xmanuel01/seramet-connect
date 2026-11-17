@@ -9,10 +9,18 @@ import { deliverySettings, deliveryContactSchema } from "@/delivery/delivery-cha
 export class OrderChannelValidationError extends Error {}
 
 export function orderChannelDispatchError(
-  channel: (Pick<OrderChannelDefinition, "requiresCustomer" | "requiresAddress"> & Partial<Pick<OrderChannelDefinition, "metadata">>) | undefined,
+  channel:
+    | (Pick<OrderChannelDefinition, "requiresCustomer" | "requiresAddress"> &
+        Partial<Pick<OrderChannelDefinition, "metadata">>)
+    | undefined,
   details: { customerId?: string; delivery?: { recipientName?: string; address?: string } },
 ) {
-  if (channel?.metadata && ["RESTAURANT", "PROVIDER"].includes(deliverySettings({ metadata: channel.metadata })?.fulfilment ?? "")) {
+  if (
+    channel?.metadata &&
+    ["RESTAURANT", "PROVIDER"].includes(
+      deliverySettings({ metadata: channel.metadata })?.fulfilment ?? "",
+    )
+  ) {
     const parsed = deliveryContactSchema.safeParse(details.delivery ?? {});
     return parsed.success ? null : "Delivery contact details are invalid or too long.";
   }

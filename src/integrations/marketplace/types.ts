@@ -6,6 +6,7 @@ export type MarketplaceAcceptancePolicy = "MANUAL" | "AUTO_ACCEPT_VALID" | "AUTO
 export type MarketplaceUnmappedItemPolicy =
   "AUTO_REJECT" | "MANAGER_REVIEW" | "USE_EXTERNAL_DESCRIPTION";
 
+export type MarketplaceMenuPriceSource = "ONLINE" | "STORE";
 export type MarketplaceCapacityMode = "NORMAL" | "BUSY" | "VERY_BUSY" | "PAUSED";
 export type MarketplaceStoreStatus = "OPEN" | "PAUSED" | "CLOSED_TEMPORARILY";
 
@@ -16,6 +17,11 @@ export type MarketplaceConnectionConfig = {
   menuSyncMode: MarketplaceMenuSyncMode;
   availabilitySyncEnabled: boolean;
   priceSyncEnabled: boolean;
+  /**
+   * Which Seramet price the app's menu carries. Unset: follow the order channel's saved
+   * "Online price" setting, so the app and the POS never disagree by accident.
+   */
+  menuPriceSource?: MarketplaceMenuPriceSource;
   auto86Enabled: boolean;
   storeStatusSyncEnabled: boolean;
   defaultPrepMinutes: number;
@@ -193,6 +199,9 @@ export function parseMarketplaceConnectionConfig(
     ),
     availabilitySyncEnabled: booleanValue(value["availabilitySyncEnabled"], true),
     priceSyncEnabled: booleanValue(value["priceSyncEnabled"], true),
+    ...(value["menuPriceSource"] === "ONLINE" || value["menuPriceSource"] === "STORE"
+      ? { menuPriceSource: value["menuPriceSource"] }
+      : {}),
     auto86Enabled: booleanValue(value["auto86Enabled"], true),
     storeStatusSyncEnabled: booleanValue(value["storeStatusSyncEnabled"], false),
     defaultPrepMinutes: boundedNumber(value["defaultPrepMinutes"], 25, 1, 240),
