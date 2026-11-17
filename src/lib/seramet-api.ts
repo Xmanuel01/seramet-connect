@@ -1,13 +1,16 @@
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
+import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { PaymentOperationsState } from "@/payments/types";
 import {
   SerametHttpError,
   authenticateSerametRequest,
+  authenticatedTenantOf,
   authorizeBranchRead,
   authorizeSerametMutation,
   firstActiveTenantId,
+  isDevelopmentAuthRequest,
   type SerametEnv,
   type ServerActor,
 } from "@/lib/seramet-auth";
@@ -125,8 +128,9 @@ function changesConfiguration(path: string) {
 
 export async function handleSerametApiRequest(request: Request, env: SerametEnv) {
   const response = await routeSerametApiRequest(request, env);
-  // Every server caches configuration until the shared revision moves; a successful change
-  // bumps it so all of them read it fresh on their next request.
+  // Every server caches configuration until a shared revision moves; a successful change
+  // bumps it so all of them read it fresh on their next request. A change made by a signed-in
+  // user bumps only their restaurant; one with no known restaurant bumps every restaurant.
   const path = new URL(request.url).pathname;
   if (
     env?.SERAMET_DB &&
@@ -134,7 +138,7 @@ export async function handleSerametApiRequest(request: Request, env: SerametEnv)
     response.status < 400 &&
     changesConfiguration(path)
   )
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, authenticatedTenantOf(request));
   return response;
 }
 
@@ -253,7 +257,14 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
 
     if (runtime.productionLike) assertProductionOperationalReady(env);
     const repo = createTransactionRepository(env.SERAMET_DB, env);
-    if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
+    // Checked once per server instance (re-checked every minute), not on every request; the
+    // health probes above still read the version each time.
+    if (env.SERAMET_DB)
+      await withCachedSchemaCheck(
+        env.SERAMET_DB,
+        runtime.productionLike ? "exact" : "at-least",
+        () => (runtime.productionLike ? assertCurrentSchema(env.SERAMET_DB!) : repo.migrate()),
+      );
     else await repo.migrate();
     // Configuration is loaded per restaurant once a request knows which one it acts for
     // (authentication, a public restaurant link, a webhook connection), each time checking the
@@ -1009,7 +1020,9 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     }
     throw error;
   }
-  assertBranchSafeSnapshotReplace(current, result.state, actor);
+  // A replay writes nothing, and its original request already passed this check; its state is
+  // read now, so other branches' later changes would look like this command's.
+  if (!result.duplicate) assertBranchSafeSnapshotReplace(current, result.state, actor);
   // Closing already commits its report/email jobs with the financial state. A later
   // optional management refresh must not turn a successful close into a failed acknowledgement.
   const closingCommand = closingMutationActions.has(body.action);
@@ -1675,7 +1688,8 @@ async function saveIdempotency(
 
 async function webhookTenantId(request: Request, env: SerametEnv) {
   let tenantId = request.headers.get("x-seramet-tenant-id")?.trim();
-  if (!tenantId && request.headers.get("x-seramet-dev-auth") === "enabled") {
+  // Only local development may omit the tenant; elsewhere a webhook must name its restaurant.
+  if (!tenantId && isDevelopmentAuthRequest(request, env)) {
     tenantId =
       (env.SERAMET_DB ? await firstActiveTenantId(env.SERAMET_DB) : undefined) ??
       LOCAL_PILOT_TENANT_ID;

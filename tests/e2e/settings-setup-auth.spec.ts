@@ -108,6 +108,72 @@ test("employee entry is default and administrator access is explicit on any devi
   });
 });
 
+// Setup Centre loads every section with one bootstrap request. Tests that stub or delay a single
+// section endpoint answer the bootstrap from those endpoints, fetched from the page so the
+// stubs still apply; anything not stubbed reaches the real server.
+const bootstrapSections: Array<[name: string, path: string, branchScoped: boolean]> = [
+  ["centre", "/api/seramet/setup/centre", true],
+  ["integrationHealth", "/api/seramet/setup/integration-health", false],
+  ["deviceHealth", "/api/seramet/setup/device-health", false],
+  ["providers", "/api/seramet/setup/providers", false],
+  ["organisationStructure", "/api/seramet/setup/organisation-structure", false],
+  ["businessProfile", "/api/seramet/setup/business-profile", false],
+  ["options", "/api/seramet/setup/options", true],
+  ["providerMappings", "/api/seramet/setup/provider-mappings", false],
+  ["openingStock", "/api/seramet/setup/opening-stock", true],
+  ["menuCatalog", "/api/seramet/setup/menu-catalog", true],
+  ["diagnostics", "/api/seramet/setup/diagnostics", false],
+  ["onboarding", "/api/seramet/setup/onboarding", false],
+  ["references", "/api/seramet/setup/reference/location-currency", false],
+  ["historicalSales", "/api/seramet/setup/historical-sales", false],
+  ["importCapability", "/api/seramet/setup/imports/capability", false],
+];
+
+async function composeSetupBootstrap(page: Page) {
+  await page.route("**/api/seramet/setup/bootstrap**", async (route) => {
+    const url = new URL(route.request().url());
+    const headers = Object.fromEntries(
+      Object.entries(route.request().headers()).filter(
+        ([name]) => name === "authorization" || name.startsWith("x-seramet-"),
+      ),
+    );
+    try {
+      const results = await page.evaluate(
+        ({ paths, headers }) =>
+          Promise.all(
+            paths.map(async (path) => {
+              const response = await fetch(path, { headers });
+              const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+              return { status: response.status, body };
+            }),
+          ),
+        {
+          paths: bootstrapSections.map(
+            ([, path, branchScoped]) => path + (branchScoped ? url.search : ""),
+          ),
+          headers,
+        },
+      );
+      const sections = Object.fromEntries(
+        bootstrapSections.map(([name], index) => {
+          const { status, body } = results[index]!;
+          const { ok: _ok, ...value } = body;
+          return [
+            name,
+            status < 300
+              ? { ok: true, status, value }
+              : { ok: false, status, message: String(body.message ?? "unavailable") },
+          ];
+        }),
+      );
+      await route.fulfill({ json: { ok: true, sections } });
+    } catch {
+      // The page moved on (a branch switch aborts the read); nothing is waiting for it.
+      await route.abort().catch(() => undefined);
+    }
+  });
+}
+
 async function authorize(context: BrowserContext) {
   await context.route("**/api/seramet/**", async (route) => {
     await route.continue({
@@ -211,6 +277,7 @@ test("settings waits for authoritative persistence and Setup Centre fails visibl
   await page.getByRole("button", { name: "Finance", exact: true }).click();
   await expect(page.getByText(methodName, { exact: true })).toHaveCount(0);
 
+  await composeSetupBootstrap(page);
   await page.route("**/api/seramet/setup/centre**", (route) =>
     route.fulfill({
       status: 503,
@@ -389,6 +456,7 @@ test("a delayed Setup Centre response cannot replace the selected branch", async
   const delivered = new Promise<void>((resolve) => {
     attempted = resolve;
   });
+  await composeSetupBootstrap(page);
   await page.route("**/api/seramet/setup/centre?**", async (route) => {
     const response = await route.fetch({
       headers: {
@@ -433,6 +501,7 @@ test("returning to Setup Centre shows the last data at once while it refreshes",
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  await composeSetupBootstrap(page);
   await page.route("**/api/seramet/setup/centre?**", async (route) => {
     const holding = returning;
     const response = await route.fetch({
@@ -850,8 +919,10 @@ async function mockOwnerOnboarding(page: Page, overrides: Partial<OnboardingWiza
       currencies: [{ code: "KES", name: "Kenyan Shilling", symbol: "KES", minorDigits: 2 }],
     },
   };
+  await composeSetupBootstrap(page);
   await page.route("**/api/seramet/**", (route) => {
     const path = new URL(route.request().url()).pathname.replace("/api/seramet", "");
+    if (path === "/setup/bootstrap") return route.fallback();
     const json = responses[path];
     return route.fulfill(
       json ? { json } : { status: 503, json: { message: "Outside onboarding navigation fixture" } },

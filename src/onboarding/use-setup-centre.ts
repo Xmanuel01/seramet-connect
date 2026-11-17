@@ -167,6 +167,9 @@ type SetupSnapshot = {
   fileImportCapability: FileImportCapability;
 };
 const lastSnapshot = new Map<string, SetupSnapshot>();
+/** One section of `GET /api/seramet/setup/bootstrap`. */
+type SetupBootstrapSection =
+  { ok: true; status: number; value: unknown } | { ok: false; status: number; message?: string };
 
 export function useSetupCentre() {
   const { activeTenantId, branchId, currentUser, isAllBranches, role } = useAppContext();
@@ -273,66 +276,46 @@ export function useSetupCentre() {
     }
     setError("");
     setMenuCatalogError("");
-    // The page can draw once the summary, structure and options are in; the rest fills in.
-    let essentials = 0;
-    const essential = () => {
-      if (++essentials === 3 && read.isCurrent()) setStatus("ready");
-    };
     const query = isAllBranches ? "" : `?branchId=${encodeURIComponent(branchId)}`;
-    const [
-      summary,
-      providerHealth,
-      deviceHealth,
-      providerDefinitions,
-      organisation,
-      business,
-      setupOptions,
-      providerMappings,
-      opening,
-      catalog,
-      diagnosticState,
-      onboardingState,
-      referenceState,
-      historicalSales,
-      importCapability,
-    ] = await Promise.allSettled([
-      readGet<{ setup: SetupSummary }>(`/api/seramet/setup/centre${query}`).then((value) => {
-        if (read.isCurrent()) setSetup(value.setup);
-        essential();
-        return value;
-      }),
-      readGet<{ integrations: IntegrationHealthRow[] }>("/api/seramet/setup/integration-health"),
-      readGet<{ devices: DeviceHealthRow[] }>("/api/seramet/setup/device-health"),
-      readGet<{ providers: SetupProviderDefinition[] }>("/api/seramet/setup/providers"),
-      readGet<SetupStructure>("/api/seramet/setup/organisation-structure").then((value) => {
-        if (read.isCurrent()) setStructure({ brands: value.brands, branches: value.branches });
-        essential();
-        return value;
-      }),
-      readGet<{ profile: SetupBusinessProfile }>("/api/seramet/setup/business-profile").then(
-        (value) => {
-          if (read.isCurrent()) setProfile(value.profile);
-          return value;
-        },
-      ),
-      readGet<{ options: SetupOptions }>(`/api/seramet/setup/options${query}`).then((value) => {
-        if (read.isCurrent()) setOptions(value.options);
-        essential();
-        return value;
-      }),
-      readGet<{ mappings: Array<Record<string, unknown>> }>("/api/seramet/setup/provider-mappings"),
-      readGet<{ batches: Array<Record<string, unknown>> }>(
-        `/api/seramet/setup/opening-stock${query}`,
-      ),
-      readGet<{ items: SetupMenuCatalogItem[] }>(`/api/seramet/setup/menu-catalog${query}`),
-      readGet<{ diagnostics: SetupDiagnostics }>("/api/seramet/setup/diagnostics"),
-      readGet<{ onboarding: OnboardingWizardState }>("/api/seramet/setup/onboarding"),
-      readGet<{ countries: CountryReference[]; currencies: CurrencyReference[] }>(
-        "/api/seramet/setup/reference/location-currency",
-      ),
-      readGet<{ state: HistoricalSalesMigrationState }>("/api/seramet/setup/historical-sales"),
-      readGet<{ capability: FileImportCapability }>("/api/seramet/setup/imports/capability"),
-    ] as const);
+    // One request for every section the page shows: one authentication on the server instead
+    // of fifteen. Each section succeeds or fails on its own, as its own endpoint would.
+    const sections = await readGet<{ sections: Record<string, SetupBootstrapSection> }>(
+      `/api/seramet/setup/bootstrap${query}`,
+    ).then(
+      (body) => body.sections,
+      (reason: unknown) => (reason instanceof Error ? reason : new Error(String(reason))),
+    );
+    const settle = <T>(name: string): PromiseSettledResult<T> => {
+      if (sections instanceof Error) return { status: "rejected", reason: sections };
+      const section = sections[name];
+      if (section?.ok) return { status: "fulfilled", value: section.value as T };
+      return {
+        status: "rejected",
+        reason: Object.assign(new Error(section?.message ?? "Setup section unavailable"), {
+          status: section?.status,
+        }),
+      };
+    };
+    const summary = settle<{ setup: SetupSummary }>("centre");
+    const providerHealth = settle<{ integrations: IntegrationHealthRow[] }>("integrationHealth");
+    const deviceHealth = settle<{ devices: DeviceHealthRow[] }>("deviceHealth");
+    const providerDefinitions = settle<{ providers: SetupProviderDefinition[] }>("providers");
+    const organisation = settle<SetupStructure>("organisationStructure");
+    const business = settle<{ profile: SetupBusinessProfile }>("businessProfile");
+    const setupOptions = settle<{ options: SetupOptions }>("options");
+    const providerMappings = settle<{ mappings: Array<Record<string, unknown>> }>(
+      "providerMappings",
+    );
+    const opening = settle<{ batches: Array<Record<string, unknown>> }>("openingStock");
+    const catalog = settle<{ items: SetupMenuCatalogItem[] }>("menuCatalog");
+    const diagnosticState = settle<{ diagnostics: SetupDiagnostics }>("diagnostics");
+    const onboardingState = settle<{ onboarding: OnboardingWizardState }>("onboarding");
+    const referenceState = settle<{
+      countries: CountryReference[];
+      currencies: CurrencyReference[];
+    }>("references");
+    const historicalSales = settle<{ state: HistoricalSalesMigrationState }>("historicalSales");
+    const importCapability = settle<{ capability: FileImportCapability }>("importCapability");
     if (!read.isCurrent()) return;
     if (summary.status === "fulfilled") setSetup(summary.value.setup);
     else setSetup(null);
