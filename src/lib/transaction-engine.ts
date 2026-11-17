@@ -834,7 +834,8 @@ function pricedTotals(
   override?: OrderDraft["financialOverride"],
   delivery?: TransactionOrder["delivery"],
 ) {
-  if (delivery) deliveryContactSchema.parse(delivery);
+  if (delivery && !deliveryContactSchema.safeParse(delivery).success)
+    throw new OrderChannelValidationError("Delivery contact details are invalid or too long.");
   const charge = delivery?.charge ? deliveryChargeSchema.parse(delivery.charge) : undefined;
   const deliveryMinor = charge?.amountMinor ?? 0;
   const deliveryPayableMinor = charge?.beneficiary === "RIDER" ? deliveryMinor : 0;

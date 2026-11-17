@@ -1653,7 +1653,8 @@ function POS() {
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 {(showDelivery || selectedChannel?.requiresCustomer) && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Customer name{showDelivery ? " (optional)" : ""}
+                    Customer name
+                    {showDelivery && !selectedChannel?.requiresCustomer ? " (optional)" : ""}
                     <input
                       value={recipientName}
                       onChange={(event) => setRecipientName(event.target.value)}
@@ -1668,7 +1669,7 @@ function POS() {
                 )}
                 {showDelivery && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Delivery address (optional)
+                    Delivery address{selectedChannel?.requiresAddress ? "" : " (optional)"}
                     <input
                       value={deliveryAddress}
                       onChange={(event) => setDeliveryAddress(event.target.value)}

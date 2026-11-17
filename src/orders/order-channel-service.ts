@@ -22,8 +22,9 @@ export function orderChannelDispatchError(
     )
   ) {
     const parsed = deliveryContactSchema.safeParse(details.delivery ?? {});
-    return parsed.success ? null : "Delivery contact details are invalid or too long.";
+    if (!parsed.success) return "Delivery contact details are invalid or too long.";
   }
+  // The channel's required customer and address still apply on delivery channels.
   const recipient = details.delivery?.recipientName;
   if (
     channel?.requiresCustomer &&
