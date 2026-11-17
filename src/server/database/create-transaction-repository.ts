@@ -10,6 +10,7 @@ export function createTransactionRepository(
   if (db)
     return new D1AuthoritativeTransactionRepository(db, {
       requireInvoiceLedger: env ? resolveRuntimeConfiguration(env).productionLike : false,
+      ...(env?.SERAMET_REALTIME_HUB ? { realtimeHub: env.SERAMET_REALTIME_HUB } : {}),
     });
   const runtime = typeof process !== "undefined" ? process.env["NODE_ENV"] : undefined;
   if (runtime !== "development" && runtime !== "test") {

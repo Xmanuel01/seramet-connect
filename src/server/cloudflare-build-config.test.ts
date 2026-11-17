@@ -26,6 +26,12 @@ describe("native Cloudflare production configuration", () => {
     expect(config.queues.consumers[0].dead_letter_queue).toBe("seramet-production-live-dlq");
     expect(config.preview_urls).toBe(false);
     expect(config.placement).toEqual({ region: "aws:eu-west-1" });
+    expect(config.durable_objects?.bindings).toEqual([
+      { name: "SERAMET_REALTIME_HUB", class_name: "SerametRealtimeHub" },
+    ]);
+    expect(config.migrations).toEqual([
+      { tag: "v1-realtime-hub", new_sqlite_classes: ["SerametRealtimeHub"] },
+    ]);
     expect(config.keep_vars).toBe(true);
     expect(JSON.stringify(config)).not.toMatch(/password|service_role|postgresql:\/\//);
   });
@@ -42,6 +48,9 @@ describe("native Cloudflare production configuration", () => {
     expect(config.placement).toBeUndefined();
     expect(config.r2_buckets).toEqual([]);
     expect(config.queues).toEqual({ producers: [], consumers: [] });
+    // versions upload cannot apply Durable Object migrations; main's deploy does.
+    expect(config).not.toHaveProperty("durable_objects");
+    expect(config).not.toHaveProperty("migrations");
     expect(config.vars.SERAMET_SUPABASE_URL).toBeUndefined();
     expect(config.vars.SERAMET_ENABLE_DEV_AUTH).toBe("false");
   });
