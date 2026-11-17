@@ -413,6 +413,88 @@ describe.sequential("Pass 5 production foundation", () => {
     expect(await count("mutation_commits", tenantA)).toBe(1);
   });
 
+  it("commits store only the revision, not another copy of the full state", async () => {
+    const repository = new D1AuthoritativeTransactionRepository(database);
+    const committed = await mutation(
+      repository,
+      "compact-a",
+      "compact-a-hash",
+      "upsertOrderDraft",
+      {
+        draft: orderDraft("Compact"),
+        targetStatus: "OPEN",
+      },
+    );
+    const commitRow = await database
+      .prepare(
+        "SELECT response_json, new_revision FROM mutation_commits WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(tenantA, "compact-a")
+      .first<{ response_json: string; new_revision: number }>();
+    const readModel = await database
+      .prepare("SELECT revision, payload_json FROM tenant_state_read_models WHERE tenant_id=?")
+      .bind(tenantA)
+      .first<{ revision: number; payload_json: string }>();
+
+    expect(JSON.parse(commitRow!.response_json)).toEqual({ revision: committed.revision });
+    expect(commitRow!.new_revision).toBe(committed.revision);
+    // The read model still carries the revision that conflict detection relies on.
+    expect(readModel).toEqual({ revision: committed.revision, payload_json: "{}" });
+    expect(JSON.stringify(committed.state).length).toBeGreaterThan(100);
+  });
+
+  it("replays an idempotency key from the current state without a stored state copy", async () => {
+    const original = await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "replay-a",
+      "replay-a-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Replay A"), targetStatus: "OPEN" },
+    );
+    const later = await mutation(
+      new D1AuthoritativeTransactionRepository(database),
+      "replay-b",
+      "replay-b-hash",
+      "upsertOrderDraft",
+      { draft: orderDraft("Replay B"), targetStatus: "OPEN" },
+    );
+    // A row written before this change still holds the full state; replay must not need it.
+    await database
+      .prepare(
+        "UPDATE mutation_commits SET response_json=? WHERE tenant_id=? AND idempotency_key=?",
+      )
+      .bind(JSON.stringify({ state: { stale: true }, revision: 1 }), tenantA, "replay-a")
+      .run();
+
+    const reads = { history: 0 };
+    const queries: string[] = [];
+    const terminal = new D1AuthoritativeTransactionRepository(countingHistoryReads(reads, queries));
+    await terminal.loadState(tenantA);
+    const replay = await mutation(terminal, "replay-a", "replay-a-hash", "upsertOrderDraft", {
+      draft: orderDraft("Replay A"),
+      targetStatus: "OPEN",
+    });
+
+    expect(replay.duplicate).toBe(true);
+    // The revision is the one that commit produced, so a command built on the state it
+    // returned still conflicts; the state is current and includes the later commit.
+    expect(replay.revision).toBe(original.revision);
+    expect(later.revision).toBe(original.revision + 1);
+    expect(replay.state.orders).toHaveLength(2);
+    // The replay reuses the request's snapshot rather than reading the history again,
+    // and never reads the stored response (old rows hold a full state copy).
+    expect(reads.history).toBe(1);
+    expect(queries.filter((query) => /response_json/.test(query))).toEqual([]);
+    expect(queries.some((query) => /FROM mutation_commits/.test(query))).toBe(true);
+    expect(await count("mutation_commits", tenantA)).toBe(2);
+    await expect(
+      mutation(terminal, "replay-a", "different-hash", "upsertOrderDraft", {
+        draft: orderDraft("Other"),
+        targetStatus: "OPEN",
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE", status: 409 });
+  });
+
   it("reads the tenant's state history once for a load followed by a mutation", async () => {
     await mutation(
       new D1AuthoritativeTransactionRepository(database),
@@ -1496,10 +1578,11 @@ function mutation(
 }
 
 // The test database, counting reads of a tenant's whole state history.
-function countingHistoryReads(reads: { history: number }): D1Database {
+function countingHistoryReads(reads: { history: number }, queries: string[] = []): D1Database {
   return {
     provider: database.provider,
     prepare(query) {
+      queries.push(query);
       if (/FROM authoritative_records[\s\S]*LIKE 'state:%'/.test(query)) reads.history += 1;
       return database.prepare(query);
     },
