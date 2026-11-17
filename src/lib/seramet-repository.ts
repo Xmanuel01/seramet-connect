@@ -1,5 +1,6 @@
 import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
 import { channelPayoutAccounts } from "@/payments/payout-accounts";
+import { scheduledOrderTimes } from "@/orders/scheduled-orders";
 import {
   appReceivableAccount,
   parseManualAppOrder,
@@ -299,17 +300,35 @@ export function applyServerMutation(
         throw new Error(
           `Enter the ${channel!.displayName} order number before sending to the kitchen`,
         );
-      next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      // A scheduled app order waits for the kitchen until prep time before its ready-by time.
+      const schedule =
+        appOrder?.readyBy && channel
+          ? scheduledOrderTimes({
+              scheduledReadyAt: appOrder.readyBy,
+              pickup: false,
+              travelMinutes: 0,
+              prepMinutes: deliverySettings(channel)?.scheduledPrepMinutes ?? 25,
+              bufferMinutes: 0,
+            })
+          : undefined;
+      if (!schedule?.hold) next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
       if (!appOrder || !channel) return next;
       const tenant = configuration.getTenant(actor.tenantId);
-      return recordManualAppOrder(next, createdOrderId, appOrder, {
+      next = recordManualAppOrder(next, createdOrderId, appOrder, {
         channel,
         currency: tenant.defaultCurrency,
         receivableAccount: appReceivableAccount(
           configuration.listPaymentMethods(actor.tenantId, false),
           channelPayoutAccounts(channel)?.marketplaceReceivableAccountId,
         ),
+        ...(schedule ? { schedule } : {}),
       });
+      if (schedule?.hold) {
+        const held = next.orders.find((row) => row.id === createdOrderId)!;
+        held.status = "HELD";
+        held.updatedAt = new Date().toISOString();
+      }
+      return next;
     }
     case "claimKitchenPrintObligations":
       return TransactionEngine.claimKitchenPrintObligations(

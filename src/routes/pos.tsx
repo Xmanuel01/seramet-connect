@@ -18,6 +18,7 @@ import {
 import { AppShell } from "@/components/app/AppShell";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
+import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
 import {
   linkedOrderCustomer,
   resolvePosCustomer,
@@ -229,6 +230,8 @@ function POS() {
   // A delivery-app order typed in by hand: the app's number and any part due on delivery.
   const [appOrderNumber, setAppOrderNumber] = useState("");
   const [dueOnDelivery, setDueOnDelivery] = useState("");
+  // Scheduled app order: when the app's rider collects it (empty: cook now).
+  const [appReadyBy, setAppReadyBy] = useState("");
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
@@ -545,6 +548,7 @@ function POS() {
     setDeliveryCharge(undefined);
     setAppOrderNumber("");
     setDueOnDelivery("");
+    setAppReadyBy("");
     setPreferredChannelId(id);
     setOrderSource(id);
     window.sessionStorage.setItem(channelPreferenceKey, id);
@@ -950,6 +954,7 @@ function POS() {
     setDeliveryCharge(undefined);
     setAppOrderNumber("");
     setDueOnDelivery("");
+    setAppReadyBy("");
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -994,16 +999,21 @@ function POS() {
     const draft = buildTransactionDraft(tableNo);
     const channelError = orderChannelDispatchError(selectedChannel, draft);
     if (channelError) throw new Error(channelError);
-    let appOrder: { externalOrderId: string; dueOnDeliveryMinor: number } | undefined;
+    let appOrder:
+      { externalOrderId: string; dueOnDeliveryMinor: number; readyBy?: string } | undefined;
     if (takesAppOrderNumber) {
       const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
       if (!appOrderNumber.trim())
         throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
       if (!Number.isFinite(due) || due < 0 || due > total)
         throw new Error("The amount due on delivery must be between 0 and the order total.");
+      const readyBy = appReadyBy ? new Date(appReadyBy) : undefined;
+      if (readyBy && !(readyBy.getTime() > Date.now()))
+        throw new Error("The ready-by time must be later than now.");
       appOrder = {
         externalOrderId: appOrderNumber.trim(),
         dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
+        ...(readyBy ? { readyBy: readyBy.toISOString() } : {}),
       };
     }
     const previewLines = items.flatMap((line) => {
@@ -1079,7 +1089,17 @@ function POS() {
     if (ticketLines.length === 0) {
       setActiveOrderId(authoritativeOrder.id);
       setSelectedTableNo(authoritativeOrder.table ?? tableNo ?? null);
-      setPrintNotice("No new kitchen items require a KOT amendment.");
+      const releaseAt = authoritativeOrder.externalSource?.scheduledReleaseAt;
+      setPrintNotice(
+        authoritativeOrder.status === "HELD" && releaseAt
+          ? `Scheduled. The kitchen gets it at ${new Date(releaseAt).toLocaleString(undefined, {
+              timeZone: clockTimeZone,
+              weekday: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })}.`
+          : "No new kitchen items require a KOT amendment.",
+      );
       setPrintNoticeType("idle");
       return {
         order: authoritativeOrder,
@@ -1640,6 +1660,11 @@ function POS() {
                 }}
               />
             </div>
+            <UpcomingScheduledOrders
+              orders={transactionState.orders}
+              branchId={branchId}
+              timeZone={clockTimeZone}
+            />
             {isOnlineSource && (
               <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
                 {selectedChannel?.displayName}:{" "}
@@ -1729,9 +1754,19 @@ function POS() {
                     className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
                   />
                 </label>
+                <label className="grid gap-1 text-xs font-semibold sm:col-span-2">
+                  Ready by (scheduled orders only)
+                  <input
+                    type="datetime-local"
+                    value={appReadyBy}
+                    onChange={(event) => setAppReadyBy(event.target.value)}
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
                 <p className="text-[11px] text-muted-foreground sm:col-span-2">
                   The app pays the rest with its payout. Anything due on delivery is collected on
-                  Invoices.
+                  Invoices. With a ready-by time, the kitchen gets the order when its prep should
+                  start.
                 </p>
               </div>
             )}

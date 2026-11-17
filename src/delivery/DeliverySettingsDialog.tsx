@@ -27,6 +27,8 @@ export function DeliverySettingsDialog({
     beneficiary: "BUSINESS",
     allowManual: false,
     cashHandledBy: "COUNTER",
+    scheduledTravelMinutes: 15,
+    scheduledPrepMinutes: 25,
     rates: [],
   });
   const inputClass = "h-10 min-w-0 rounded-md border border-border bg-card px-3 text-sm";
@@ -42,6 +44,8 @@ export function DeliverySettingsDialog({
                 beneficiary: "BUSINESS",
                 allowManual: false,
                 cashHandledBy: "COUNTER",
+                scheduledTravelMinutes: 15,
+                scheduledPrepMinutes: 25,
                 rates: [],
               },
             ),
@@ -259,6 +263,51 @@ export function DeliverySettingsDialog({
                   </Btn>
                 </>
               )}
+              <div className="grid gap-3 rounded-md border border-border p-3">
+                <p className="text-sm font-semibold">Scheduled orders</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {draft.fulfilment !== "PICKUP" && (
+                    <label className="grid gap-1 text-sm">
+                      Rider's trip to the customer (minutes)
+                      <input
+                        type="number"
+                        min={0}
+                        max={240}
+                        inputMode="numeric"
+                        className={inputClass}
+                        value={draft.scheduledTravelMinutes}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            scheduledTravelMinutes: Number(event.target.value || 0),
+                          })
+                        }
+                      />
+                    </label>
+                  )}
+                  <label className="grid gap-1 text-sm">
+                    Kitchen prep for orders typed in (minutes)
+                    <input
+                      type="number"
+                      min={1}
+                      max={480}
+                      inputMode="numeric"
+                      className={inputClass}
+                      value={draft.scheduledPrepMinutes}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          scheduledPrepMinutes: Number(event.target.value || 0),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  The kitchen gets a scheduled order this long before it is due. When the app gives
+                  a pickup time, that is used instead of the trip.
+                </span>
+              </div>
               {error && (
                 <p role="alert" className="text-sm text-destructive">
                   {error}

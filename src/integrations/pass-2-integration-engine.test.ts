@@ -1690,6 +1690,29 @@ describe("Pass 3 marketplace acceptance", () => {
     expect(controls.storeStatuses).toEqual(["PAUSED"]);
   });
 
+  it("tells the app the scheduled ready time and leaves the rider's trip before it", async () => {
+    const f = fixture();
+    await f.ready;
+    const scheduledFor = new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+    await f.runtime.handleWebhook(
+      webhook(order({ providerOrderId: "scheduled-ready", scheduledFor }), "scheduled-ready-event"),
+    );
+    const source = f.transactions.state.orders[0]!.externalSource!;
+    expect(f.transactions.state.orders[0]!.status).toBe("HELD");
+    // Delivery orders are ready before the delivery time, by the rider's trip.
+    expect(Date.parse(source.scheduledReadyAt!)).toBeLessThan(Date.parse(scheduledFor));
+    expect(Date.parse(source.scheduledReleaseAt!)).toBeLessThan(
+      Date.parse(source.scheduledReadyAt!),
+    );
+    expect(source.estimatedReadyAt).toBe(source.scheduledReadyAt);
+    const accepted = (await f.repository.listOutbox(DEMO_TENANT_ID)).find(
+      (record) => record.eventType === "ORDER_ACCEPTED",
+    );
+    expect((accepted?.payload as Record<string, unknown> | undefined)?.["estimatedReadyAt"]).toBe(
+      source.scheduledReadyAt,
+    );
+  });
+
   it("recovers missed active orders through the same idempotent ingestion path", async () => {
     const recovered = order({ providerOrderId: "recovered-order" });
     const controls: TestDeliveryControls = {

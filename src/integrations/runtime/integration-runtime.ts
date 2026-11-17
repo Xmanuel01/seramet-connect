@@ -52,6 +52,7 @@ import { billNamedByReference, unverifiedByReceipt } from "@/payments/mpesa-matc
 import { custodyLedger } from "@/payments/custody-ledger";
 import { parseMajorAmount } from "@/payments/money";
 import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
+import { scheduledOrderTimes } from "@/orders/scheduled-orders";
 
 export type WebhookEnvelope = {
   tenantId: string;
@@ -749,9 +750,13 @@ export class IntegrationRuntime {
         actorId: decision.actorId,
         decisionKey: key,
         estimatedPrepMinutes: decision.prepMinutes,
-        estimatedReadyAt: new Date(
-          new Date(claimed.record.createdAt).getTime() + (decision.prepMinutes ?? 0) * 60_000,
-        ).toISOString(),
+        // The app's rider is booked for the scheduled ready time, not prep minutes from now.
+        estimatedReadyAt:
+          source.isScheduled && source.scheduledReadyAt
+            ? source.scheduledReadyAt
+            : new Date(
+                new Date(claimed.record.createdAt).getTime() + (decision.prepMinutes ?? 0) * 60_000,
+              ).toISOString(),
         reason: "OTHER",
         reasonDetail: decision.reason,
       },
@@ -2635,22 +2640,27 @@ export class IntegrationRuntime {
         quantity: item.quantity,
       })),
     );
-    const estimatedReadyAt = new Date(Date.now() + estimatedPrepMinutes * 60_000).toISOString();
-    const scheduledReleaseAt = order.scheduledFor
-      ? new Date(
-          new Date(order.scheduledFor).getTime() -
-            (estimatedPrepMinutes + marketplaceConfig.scheduledOrderBufferMinutes) * 60_000,
-        ).toISOString()
-      : undefined;
-    if (order.scheduledFor && !marketplaceConfig.allowScheduledOrders) {
+    const schedule = scheduledOrderTimes({
+      ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
+      ...(order.scheduledReadyAt ? { scheduledReadyAt: order.scheduledReadyAt } : {}),
+      pickup: order.delivery.type === "PICKUP",
+      // Only the app's rider or ours needs travel time; the channel's delivery settings say how long.
+      travelMinutes: deliverySettings(channel)?.scheduledTravelMinutes ?? 15,
+      prepMinutes: estimatedPrepMinutes,
+      bufferMinutes: marketplaceConfig.scheduledOrderBufferMinutes,
+    });
+    const scheduledReleaseAt = schedule?.scheduledReleaseAt;
+    // A scheduled order is ready at its scheduled time, not prep minutes from now.
+    const estimatedReadyAt =
+      schedule?.scheduledReadyAt ??
+      new Date(Date.now() + estimatedPrepMinutes * 60_000).toISOString();
+    if (schedule && !marketplaceConfig.allowScheduledOrders) {
       await this.queueRejection(event, connection, order.providerOrderId, "INVALID_ORDER");
       throw new IntegrationValidationError("Scheduled marketplace orders are disabled");
     }
     const requiresReview = missingRequired && unmappedPolicy === "MANAGER_REVIEW";
     const shouldAutoAccept = acceptancePolicy !== "MANUAL" && !requiresReview;
-    const holdForSchedule = Boolean(
-      scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
-    );
+    const holdForSchedule = Boolean(schedule?.hold);
     const fulfilmentType =
       order.delivery.type === "PICKUP"
         ? "PICKUP"
@@ -2719,8 +2729,9 @@ export class IntegrationRuntime {
             ? {}
             : { marketplaceFeeDueToProvider: order.payment.marketplaceFeeDueToProvider }),
           fulfilmentType,
-          isScheduled: Boolean(order.scheduledFor),
+          isScheduled: Boolean(schedule),
           ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
+          ...(schedule ? { scheduledReadyAt: schedule.scheduledReadyAt } : {}),
           ...(scheduledReleaseAt ? { scheduledReleaseAt } : {}),
           estimatedReadyAt,
           receivedAt: order.createdAt,
