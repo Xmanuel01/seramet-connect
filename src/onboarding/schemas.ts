@@ -168,7 +168,11 @@ export const importPreviewRequestSchema = z
   .strict();
 
 export const importCommitRequestSchema = z
-  .object({ idempotencyKey: z.string().trim().min(8).max(200) })
+  .object({
+    idempotencyKey: z.string().trim().min(8).max(200),
+    // Add the items to the menu as soon as the saved import passes its checks.
+    publishWhenVerified: z.boolean().optional(),
+  })
   .strict();
 
 const optionalMoney = z

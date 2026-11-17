@@ -19,7 +19,7 @@ const fixture = JSON.parse(
 
 test.describe.configure({ mode: "serial" });
 
-test("authenticated manager completes scan, staging, recovery, publication and POS visibility", async ({
+test("authenticated manager imports a menu in one step, through a reload, onto the POS", async ({
   browser,
 }) => {
   const manager = await browser.newContext();
@@ -31,8 +31,9 @@ test("authenticated manager completes scan, staging, recovery, publication and P
   await page.getByRole("button", { name: "Import menu" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Import menu" });
-  await dialog.getByLabel("Existing-code policy").selectOption("CREATE");
-  await dialog.getByLabel("Import target").selectOption("SELECTED_BRANCHES");
+  await dialog.getByRole("button", { name: "More options" }).click();
+  await dialog.getByLabel("If an item is already on your menu").selectOption("CREATE");
+  await dialog.getByLabel("Where the items go").selectOption("SELECTED_BRANCHES");
   const branchA = dialog.getByLabel(/Pilot Branch A/);
   if (!(await branchA.isChecked())) await branchA.check();
   await dialog.locator('input[type="file"]').setInputFiles({
@@ -42,18 +43,13 @@ test("authenticated manager completes scan, staging, recovery, publication and P
   });
 
   await expect(dialog.getByText("Browser imported 01", { exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toBeEnabled();
-  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Import 41 items" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Import 41 items" }).click();
   await expect(dialog.getByText(/Importing your menu/)).toBeVisible();
 
-  // Simulate navigation interruption. Recovery must inspect the same import instead of re-uploading.
+  // Simulate navigation interruption. The page must pick the same import back up, and the
+  // items reach the menu without a second confirmation or a re-upload.
   await page.reload();
-  const publishDialog = page.getByRole("dialog", { name: "Add to your menu" });
-  const publishButton = publishDialog.getByRole("button", { name: "Publish menu" });
-  await expect(publishButton).toBeEnabled({
-    timeout: 45_000,
-  });
-  await publishButton.click();
   await expect(page.getByText("Menu imported. Your items are ready.")).toBeVisible({
     timeout: 45_000,
   });
