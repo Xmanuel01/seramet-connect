@@ -220,7 +220,7 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
     );
     const body = parse(employeeCreateSchema, await request.json().catch(() => null));
     const employee = await service.createEmployee(actor, body);
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
     return Response.json({ ok: true, employee }, { status: 201, headers: noStore() });
   }
   const employment = /^\/api\/seramet\/employees\/([^/]+)\/(end-employment|reinstate)$/.exec(
@@ -235,7 +235,7 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
       reason: body.reason,
       note: body.note,
     });
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
     return Response.json({ ok: true, ...result }, { headers: noStore() });
   }
   const employeeRoute = /^\/api\/seramet\/employees\/([^/]+)$/.exec(url.pathname);
@@ -248,7 +248,7 @@ export async function handleIdentityDeviceApi(request: Request, env: SerametEnv)
       decodeURIComponent(employeeRoute[1]!),
       body,
     );
-    await invalidateAuthoritativeConfiguration(env.SERAMET_DB);
+    await invalidateAuthoritativeConfiguration(env.SERAMET_DB, actor.tenantId);
     return Response.json({ ok: true, employee }, { headers: noStore() });
   }
   const creationAttempt = /^\/api\/seramet\/employees\/creation-attempts\/([^/]+)$/.exec(

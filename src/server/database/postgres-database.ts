@@ -10,8 +10,77 @@ type QueryExecutor = {
   query<T extends QueryResultRow = QueryResultRow>(
     text: string,
     values?: unknown[],
-  ): Promise<{ rows: T[]; rowCount: number | null }>;
+  ): Promise<{
+    rows: T[];
+    rowCount: number | null;
+    fields?: Array<{ name: string; dataTypeID: number }>;
+  }>;
 };
+
+// PostgreSQL returns NUMERIC as text, and SUM() over a BIGINT column is NUMERIC. The domain
+// code is written for numbers (as SQLite and D1 return them): a summed total arriving as "125000"
+// failed integer checks and broke pages once a restaurant had real sales. A value becomes a
+// number only when the number is exactly the value: whole values (also written "125000.00")
+// within the safe integer range, and fractions short enough to survive the conversion. A whole
+// value outside the safe range is refused, like BIGINT; a longer fraction stays text.
+const NUMERIC_TYPE_ID = 1700;
+
+export function numericRows<T>(result: {
+  rows: T[];
+  fields?: Array<{ name: string; dataTypeID: number }>;
+}): T[] {
+  const columns = (result.fields ?? [])
+    .filter((field) => field.dataTypeID === NUMERIC_TYPE_ID)
+    .map((field) => field.name);
+  if (!columns.length) return result.rows;
+  for (const row of result.rows as Array<Record<string, unknown>>) {
+    for (const column of columns) {
+      const value = row[column];
+      if (typeof value !== "string") continue;
+      const whole = /^-?\d+(\.0+)?$/.test(value);
+      const parsed = Number(value);
+      if (whole) {
+        if (!Number.isSafeInteger(parsed))
+          throw new Error("PostgreSQL integer exceeds Seramet safe range");
+      } else if (!/^-?\d+\.\d+$/.test(value) || value.replace(/[-.]/g, "").length > 15) {
+        // Exponent forms, NaN and fractions too long to convert exactly are left as they came.
+        continue;
+      }
+      row[column] = parsed;
+    }
+  }
+  return result.rows;
+}
+
+// The database refuses a new connection when the runtime role or the server is at its
+// connection limit. That happens before any statement runs, so waiting briefly and asking again
+// is safe for reads and writes alike; without it the request failed and the page showed
+// "Try again" during a short burst.
+const capacityCodes = new Set(["53300", "53400", "57P03"]);
+const capacityMessage = /too many connections|remaining connection slots|too many clients/i;
+const capacityRetryDelaysMs = [50, 150, 400];
+
+export function isConnectionCapacityError(error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && capacityCodes.has(code)) return true;
+  const message = error instanceof Error ? error.message : "";
+  return capacityMessage.test(message);
+}
+
+export async function retryConnectionCapacity<T>(
+  attempt: () => Promise<T>,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+): Promise<T> {
+  for (let retry = 0; ; retry++) {
+    try {
+      return await attempt();
+    } catch (error) {
+      const delay = capacityRetryDelaysMs[retry];
+      if (delay === undefined || !isConnectionCapacityError(error)) throw error;
+      await wait(delay + Math.floor(Math.random() * delay));
+    }
+  }
+}
 
 /**
  * Compatibility adapter used while domain repositories retain the small D1-style statement
@@ -55,7 +124,7 @@ export class PostgresD1Database implements D1Database {
   }
 
   async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    const client = await this.pool.connect();
+    const client = await retryConnectionCapacity(() => this.pool.connect());
     try {
       // Match D1's serialized writers: aggregate balance guards must not both
       // commit after reading the same stock, points or stored-value balance.
@@ -86,7 +155,9 @@ export class PostgresD1Database implements D1Database {
   }
 
   async exec(query: string): Promise<D1Result> {
-    const result = await this.pool.query(normalizePostgresSql(query));
+    const result = await retryConnectionCapacity(() =>
+      this.pool.query(normalizePostgresSql(query)),
+    );
     return { success: true, meta: { changes: result.rowCount ?? 0 } };
   }
 
@@ -108,17 +179,21 @@ class PostgresPreparedStatement implements D1PreparedStatement {
   }
 
   async first<T = unknown>(column?: string): Promise<T | null> {
-    const result = await this.executor.query(this.query, this.values);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
+    const result = await retryConnectionCapacity(() =>
+      this.executor.query(this.query, this.values),
+    );
+    const row = numericRows(result)[0] as Record<string, unknown> | undefined;
     if (!row) return null;
     return (column ? (row[column] ?? null) : row) as T | null;
   }
 
   async all<T = unknown>(): Promise<D1Result<T>> {
-    const result = await this.executor.query(this.query, this.values);
+    const result = await retryConnectionCapacity(() =>
+      this.executor.query(this.query, this.values),
+    );
     return {
       success: true,
-      results: result.rows as T[],
+      results: numericRows(result) as T[],
       meta: { rows_read: result.rows.length },
     };
   }
@@ -133,7 +208,7 @@ class PostgresPreparedStatement implements D1PreparedStatement {
     const result = await executor.query(this.query, this.values);
     return {
       success: true,
-      results: result.rows as T[],
+      results: numericRows(result) as T[],
       meta: { changes: result.rowCount ?? 0, rows_written: result.rowCount ?? 0 },
     };
   }

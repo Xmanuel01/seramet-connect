@@ -3,6 +3,7 @@ import {
   hydrateAuthoritativeConfiguration,
   hydrateTenantConfiguration,
   invalidateAuthoritativeConfiguration,
+  readConfigurationRevision,
 } from "@/server/database/authoritative-configuration";
 import {
   getConfigurationRepository,
@@ -224,6 +225,114 @@ describe("per-restaurant configuration cache", () => {
     }
   }, 30_000);
 
+  it("a change at one restaurant reloads only that restaurant, on every server", async () => {
+    const sqlite = createMigratedTestDatabase();
+    try {
+      await seedRestaurants(sqlite, ["tenant-a", "tenant-b"]);
+      // Server A holds both restaurants.
+      const a = await hydrateTenantConfiguration(
+        recordingPool(sqlite, "server-a").db,
+        {},
+        "tenant-a",
+      );
+      await hydrateTenantConfiguration(recordingPool(sqlite, "server-a").db, {}, "tenant-b");
+
+      // Server B records a change for restaurant A only.
+      await sqlite
+        .prepare("UPDATE branches SET name='Renamed' WHERE tenant_id=? AND id=?")
+        .bind("tenant-a", "tenant-a-main")
+        .run();
+      await invalidateAuthoritativeConfiguration(recordingPool(sqlite, "server-b").db, "tenant-a");
+
+      // Restaurant B is untouched: only the revision check runs, and it stays cached.
+      const b = recordingPool(sqlite, "server-a");
+      const forB = await hydrateTenantConfiguration(b.db, {}, "tenant-b");
+      expect(b.configurationQueries()).toEqual([]);
+      expect(forB.getBranch("tenant-b", "tenant-b-main").name).toBe("tenant-b main branch");
+
+      // Restaurant A reloads its own rows and sees the change.
+      const reloadA = recordingPool(sqlite, "server-a");
+      const forA = await hydrateTenantConfiguration(reloadA.db, {}, "tenant-a");
+      expect(forA).not.toBe(a);
+      expect(forA.getBranch("tenant-a", "tenant-a-main").name).toBe("Renamed");
+      expect(reloadA.configurationQueries().length).toBeGreaterThan(0);
+      for (const call of reloadA.configurationQueries()) expect(call.values).toEqual(["tenant-a"]);
+      // Both are still served from the one repository.
+      expect(
+        forA
+          .listTenants()
+          .map((tenant) => tenant.id)
+          .sort(),
+      ).toEqual(["tenant-a", "tenant-b"]);
+
+      // A second change at A moves its revision again; B is still not reloaded.
+      await invalidateAuthoritativeConfiguration(recordingPool(sqlite, "server-b").db, "tenant-a");
+      const again = recordingPool(sqlite, "server-a");
+      await hydrateTenantConfiguration(again.db, {}, "tenant-b");
+      expect(again.configurationQueries()).toEqual([]);
+      const againA = recordingPool(sqlite, "server-a");
+      await hydrateTenantConfiguration(againA.db, {}, "tenant-a");
+      expect(againA.configurationQueries().length).toBeGreaterThan(0);
+
+      // A platform-wide change still reloads every restaurant.
+      await invalidateAuthoritativeConfiguration(recordingPool(sqlite, "server-b").db);
+      const platformB = recordingPool(sqlite, "server-a");
+      await hydrateTenantConfiguration(platformB.db, {}, "tenant-b");
+      expect(platformB.configurationQueries().length).toBeGreaterThan(0);
+    } finally {
+      sqlite.close();
+    }
+  }, 30_000);
+
+  it("an early revision read covers held restaurants; others read their own before loading", async () => {
+    const sqlite = createMigratedTestDatabase();
+    try {
+      await seedRestaurants(sqlite, ["tenant-a", "tenant-b"]);
+      await hydrateTenantConfiguration(recordingPool(sqlite, "early-db").db, {}, "tenant-a");
+
+      // Warm: the early read (started before the restaurant is known) is the only query.
+      const warm = recordingPool(sqlite, "early-db");
+      const early = readConfigurationRevision(warm.db);
+      await hydrateTenantConfiguration(warm.db, {}, "tenant-a", false, early);
+      expect(warm.calls).toHaveLength(1);
+      expect(warm.calls[0]?.values).toEqual(["platform", "tenant:tenant-a"]);
+
+      // A change at tenant A is still seen through the early read.
+      await invalidateAuthoritativeConfiguration(recordingPool(sqlite, "other").db, "tenant-a");
+      const changed = recordingPool(sqlite, "early-db");
+      await hydrateTenantConfiguration(
+        changed.db,
+        {},
+        "tenant-a",
+        false,
+        readConfigurationRevision(changed.db),
+      );
+      expect(changed.configurationQueries().length).toBeGreaterThan(0);
+
+      // Cold: tenant B wasn't covered, so its own revision is read before its rows load.
+      const cold = recordingPool(sqlite, "early-db");
+      await hydrateTenantConfiguration(
+        cold.db,
+        {},
+        "tenant-b",
+        false,
+        readConfigurationRevision(cold.db),
+      );
+      const revisionReads = cold.calls.filter((call) =>
+        call.query.includes("configuration_revisions"),
+      );
+      expect(revisionReads.at(-1)?.values).toEqual(["platform", "tenant:tenant-b"]);
+      for (const call of cold.configurationQueries()) expect(call.values).toEqual(["tenant-b"]);
+
+      // A token's restaurant hint is read early too.
+      const hinted = recordingPool(sqlite, "fresh-db");
+      await readConfigurationRevision(hinted.db, "tenant-b");
+      expect(hinted.calls[0]?.values).toEqual(["platform", "tenant:tenant-b"]);
+    } finally {
+      sqlite.close();
+    }
+  }, 30_000);
+
   it("revalidating without a restaurant never loads one this server has not served", async () => {
     const sqlite = createMigratedTestDatabase();
     try {
@@ -243,47 +352,56 @@ describe("per-restaurant configuration cache", () => {
     }
   }, 30_000);
 
-  it("does not let a load that started before a change replace the newer configuration", async () => {
-    const sqlite = createMigratedTestDatabase();
-    try {
-      await seedRestaurants(sqlite, ["tenant-a"]);
-      let release!: () => void;
-      const held = new Promise<void>((resolve) => (release = resolve));
-      const slow = {
-        ...sqlite,
-        cacheIdentity: "race-db",
-        batch: sqlite.batch.bind(sqlite),
-        prepare: (query: string) => {
-          const statement = sqlite.prepare(query);
-          const bind = statement.bind.bind(statement);
-          return Object.assign(statement, {
-            bind: (...values: unknown[]) => {
-              const bound = bind(...values);
-              const boundAll = bound.all.bind(bound);
-              return Object.assign(bound, {
-                all: async () => {
-                  await held;
-                  return boundAll();
-                },
-              });
-            },
-          });
-        },
-      } as unknown as D1Database;
-      const fast = {
-        ...sqlite,
-        cacheIdentity: "race-db",
-        prepare: sqlite.prepare.bind(sqlite),
-        batch: sqlite.batch.bind(sqlite),
-      } as unknown as D1Database;
-      const stale = hydrateTenantConfiguration(slow, {}, "tenant-a", true);
-      await invalidateAuthoritativeConfiguration(fast);
-      const fresh = await hydrateTenantConfiguration(fast, {}, "tenant-a", true);
-      release();
-      await stale;
-      expect(await hydrateTenantConfiguration(fast, {}, "tenant-a")).toBe(fresh);
-    } finally {
-      sqlite.close();
-    }
-  }, 30_000);
+  it.each([
+    ["every restaurant", undefined],
+    ["one restaurant", "tenant-a"],
+  ] as const)(
+    "does not let a load that started before a change (%s) replace the newer configuration",
+    async (_scope, changed) => {
+      const sqlite = createMigratedTestDatabase();
+      try {
+        await seedRestaurants(sqlite, ["tenant-a"]);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const slow = {
+          ...sqlite,
+          cacheIdentity: `race-db-${changed ?? "platform"}`,
+          batch: sqlite.batch.bind(sqlite),
+          prepare: (query: string) => {
+            const statement = sqlite.prepare(query);
+            // The revision check runs before the change; only the configuration load is slow.
+            if (query.includes("configuration_revisions")) return statement;
+            const bind = statement.bind.bind(statement);
+            return Object.assign(statement, {
+              bind: (...values: unknown[]) => {
+                const bound = bind(...values);
+                const boundAll = bound.all.bind(bound);
+                return Object.assign(bound, {
+                  all: async () => {
+                    await held;
+                    return boundAll();
+                  },
+                });
+              },
+            });
+          },
+        } as unknown as D1Database;
+        const fast = {
+          ...sqlite,
+          cacheIdentity: `race-db-${changed ?? "platform"}`,
+          prepare: sqlite.prepare.bind(sqlite),
+          batch: sqlite.batch.bind(sqlite),
+        } as unknown as D1Database;
+        const stale = hydrateTenantConfiguration(slow, {}, "tenant-a", true);
+        await invalidateAuthoritativeConfiguration(fast, changed);
+        const fresh = await hydrateTenantConfiguration(fast, {}, "tenant-a", true);
+        release();
+        await stale;
+        expect(await hydrateTenantConfiguration(fast, {}, "tenant-a")).toBe(fresh);
+      } finally {
+        sqlite.close();
+      }
+    },
+    30_000,
+  );
 });
