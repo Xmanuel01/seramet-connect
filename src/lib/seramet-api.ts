@@ -1017,7 +1017,9 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     }
     throw error;
   }
-  assertBranchSafeSnapshotReplace(current, result.state, actor);
+  // A replay writes nothing, and its original request already passed this check; its state is
+  // read now, so other branches' later changes would look like this command's.
+  if (!result.duplicate) assertBranchSafeSnapshotReplace(current, result.state, actor);
   // Closing already commits its report/email jobs with the financial state. A later
   // optional management refresh must not turn a successful close into a failed acknowledgement.
   const closingCommand = closingMutationActions.has(body.action);

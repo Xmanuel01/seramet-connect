@@ -122,12 +122,10 @@ export class MemoryTransactionRepository implements TransactionRepository {
       if (cached.requestHash !== input.requestHash) {
         throw new Error("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST");
       }
-      const result = JSON.parse(cached.responseJson) as {
-        state: TransactionState;
-        revision: number;
-      };
+      // Like the database repository: the commit's own revision with the current state.
+      const result = JSON.parse(cached.responseJson) as { revision: number };
       return {
-        state: normalizeTransactionState(result.state),
+        state: await this.loadState(input.actor.tenantId),
         revision: result.revision,
         duplicate: true,
       };
@@ -149,7 +147,7 @@ export class MemoryTransactionRepository implements TransactionRepository {
       actorId: input.actor.id,
       action: input.action,
       requestHash: input.requestHash,
-      responseJson: JSON.stringify({ state: next, revision }),
+      responseJson: JSON.stringify({ revision }),
       createdAt: new Date().toISOString(),
     });
     return { state: next, revision, duplicate: false };
