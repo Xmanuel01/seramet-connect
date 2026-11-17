@@ -94,14 +94,25 @@ export async function authenticateSerametRequest(
   // identity checks instead of after them: one round trip fewer on every request.
   const revision =
     env.SERAMET_DB && (request.headers.has("authorization") || request.headers.has("cookie"))
-      ? readConfigurationRevision(env.SERAMET_DB)
+      ? readConfigurationRevision(env.SERAMET_DB, unverifiedTenantHint(request))
       : undefined;
   const actor = await resolveSerametActor(request, env);
+  authenticatedTenants.set(request, actor.tenantId);
   // Configuration is loaded per restaurant, so the actor's restaurant is made available here,
   // where every authenticated request first learns which restaurant it acts for.
   if (env.SERAMET_DB)
     await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId, false, revision);
   return actor;
+}
+
+const authenticatedTenants = new WeakMap<Request, string>();
+
+/**
+ * The restaurant a request authenticated as, once it has; undefined for unauthenticated
+ * requests. A configuration change recorded after the response bumps only that restaurant.
+ */
+export function authenticatedTenantOf(request: Request) {
+  return authenticatedTenants.get(request);
 }
 
 async function resolveSerametActor(request: Request, env: SerametEnv): Promise<ServerActor> {
@@ -125,12 +136,7 @@ async function resolveSerametActor(request: Request, env: SerametEnv): Promise<S
     return applyStaffDevicePolicy(actor, env.SERAMET_DB);
   }
 
-  if (
-    runtime.environment === "development" &&
-    runtime.devAuthEnabled &&
-    isLocalDevelopmentRequest(request, env) &&
-    request.headers.get("x-seramet-dev-auth") === "enabled"
-  ) {
+  if (isDevelopmentAuthRequest(request, env)) {
     return authenticateDevelopmentRequest(request, env);
   }
 
@@ -558,6 +564,17 @@ async function authenticateDevelopmentRequest(
   };
 }
 
+/** True only for a local request to a development server with development auth enabled. */
+export function isDevelopmentAuthRequest(request: Request, env: SerametEnv) {
+  const runtime = resolveRuntimeConfiguration(env);
+  return (
+    runtime.environment === "development" &&
+    runtime.devAuthEnabled &&
+    isLocalDevelopmentRequest(request, env) &&
+    request.headers.get("x-seramet-dev-auth") === "enabled"
+  );
+}
+
 /** Local development only: the restaurant a request without an explicit tenant acts for. */
 export async function firstActiveTenantId(db: D1Database) {
   const row = await db
@@ -621,6 +638,24 @@ function resolveActorBranchId(actor: ServerActor, branchIdOrName: string) {
     }
   }
   return input;
+}
+
+/**
+ * The restaurant named in an access token, read without verifying it. It only chooses which
+ * revision row to read early; the verified actor decides everything else, and a wrong hint
+ * costs one extra read.
+ */
+function unverifiedTenantHint(request: Request) {
+  const auth = request.headers.get("authorization") ?? "";
+  const token = auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? readCookie(request, "seramet_access");
+  const payload = token?.split(".")[1];
+  if (!payload) return undefined;
+  try {
+    const claims = JSON.parse(decodeBase64UrlText(payload)) as { tid?: unknown };
+    return typeof claims.tid === "string" && claims.tid.length <= 128 ? claims.tid : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function decodeBase64UrlText(value: string) {
