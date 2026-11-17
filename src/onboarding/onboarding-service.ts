@@ -20,6 +20,8 @@ import { createSecretStore } from "@/server/secrets";
 import { resolveRuntimeConfiguration, validateRuntimeConfiguration } from "@/server/environment";
 import { InventoryIntelligenceService } from "@/inventory/inventory-intelligence-service";
 import { parseMajorAmount } from "@/payments/money";
+import type { RealtimeEvent } from "@/server/realtime";
+import { notifyRealtimeHub } from "@/server/realtime-hub";
 import {
   MENU_IMPORTER_VERSION,
   MENU_IMPORT_TEMPLATE_VERSION,
@@ -246,6 +248,13 @@ const requiredAccountMappings = [
   "PAYMENT_CLEARING",
   "OPENING_BALANCE",
 ] as const;
+
+/**
+ * How long one worker run keeps saving import batches before handing over to the queue. It
+ * stays well under the two-minute job lease, so a second consumer never picks the job up
+ * while the first is still saving.
+ */
+const defaultImportRunBudgetMs = 20_000;
 
 export class OnboardingService {
   constructor(
@@ -1819,8 +1828,37 @@ export class OnboardingService {
     return this.getImport(id);
   }
 
-  async commitImport(importId: string, idempotencyKey: string, options: { worker?: boolean } = {}) {
+  /**
+   * A worker keeps saving batches in the same run for a short while, instead of waiting in the
+   * queue between every batch; a large menu then takes seconds rather than minutes.
+   */
+  async commitImport(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; autoPublish?: boolean } = {},
+  ) {
+    const deadline = Date.now() + this.importRunBudgetMs();
+    for (;;) {
+      const step = await this.commitImportStep(importId, idempotencyKey, { ...options, deadline });
+      if (!("continueRun" in step)) return step;
+    }
+  }
+
+  private importRunBudgetMs() {
+    const configured = this.env.SERAMET_IMPORT_RUN_BUDGET_MS;
+    const value = configured === undefined || configured === "" ? NaN : Number(configured);
+    return Number.isFinite(value) && value >= 0
+      ? Math.min(value, defaultImportRunBudgetMs)
+      : defaultImportRunBudgetMs;
+  }
+
+  private async commitImportStep(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; autoPublish?: boolean; deadline: number },
+  ) {
     this.require(permissions.setupImport);
+    const deadline = options.deadline;
     const record = await this.db
       .prepare(
         `SELECT i.branch_id,i.import_kind,i.duplicate_strategy,i.status,i.idempotency_key,i.row_count,
@@ -1944,6 +1982,7 @@ export class OnboardingService {
           importId,
           commitKey: idempotencyKey,
           planDigest,
+          autoPublish: options.autoPublish === true,
         }),
         this.audit("SETUP_IMPORT_PLAN_APPROVED", "SETUP_IMPORT", importId, {
           rows: record.row_count,
@@ -2132,6 +2171,14 @@ export class OnboardingService {
       );
       if (remaining > 0) {
         const processed = record.row_count - remaining;
+        if (options.worker && Date.now() < deadline) {
+          await this.audit("SETUP_IMPORT_BATCH_COMMITTED", "SETUP_IMPORT", importId, {
+            processed,
+            remaining,
+            batchSize: rows.results?.length ?? 0,
+          }).run();
+          return { continueRun: true as const };
+        }
         const nextKey = `setup-import-commit:${importId}:${processed}`;
         const correlationId = crypto.randomUUID();
         await this.db.batch([
@@ -2139,6 +2186,7 @@ export class OnboardingService {
             importId,
             commitKey: idempotencyKey,
             planDigest: record.approved_plan_digest,
+            autoPublish: options.autoPublish === true,
           }),
           this.audit("SETUP_IMPORT_BATCH_COMMITTED", "SETUP_IMPORT", importId, {
             processed,
@@ -2547,7 +2595,20 @@ export class OnboardingService {
     idempotencyKey: string,
     options: { worker?: boolean } = {},
   ) {
+    const deadline = Date.now() + this.importRunBudgetMs();
+    for (;;) {
+      const step = await this.publishImportStep(importId, idempotencyKey, { ...options, deadline });
+      if (!("continueRun" in step)) return step;
+    }
+  }
+
+  private async publishImportStep(
+    importId: string,
+    idempotencyKey: string,
+    options: { worker?: boolean; deadline: number },
+  ) {
     this.require(permissions.setupImport);
+    const deadline = options.deadline;
     const kind = await this.db
       .prepare("SELECT import_kind FROM setup_imports WHERE tenant_id=? AND id=?")
       .bind(this.actor.tenantId, importId)
@@ -2693,6 +2754,13 @@ export class OnboardingService {
         this.actor.tenantId,
         importId,
       );
+      if (options.worker && Date.now() < deadline) {
+        await this.audit("SETUP_IMPORT_PUBLISH_BATCH_COMPLETED", "SETUP_IMPORT", importId, {
+          published,
+          remaining,
+        }).run();
+        return { continueRun: true as const };
+      }
       const key = `setup-import-publish:${importId}:${published}`;
       const correlationId = crypto.randomUUID();
       await this.db.batch([
@@ -2796,6 +2864,17 @@ export class OnboardingService {
       ]);
       throw invalidTransition("Complete menu import plan could not be verified for publication");
     }
+    const menuEvent: RealtimeEvent = {
+      id: crypto.randomUUID(),
+      branchId: null,
+      topic: "menu",
+      entityType: "SETUP_IMPORT",
+      entityId: importId,
+      eventType: "MENU_IMPORT_PUBLISHED",
+      correlationId: crypto.randomUUID(),
+      payload: { importId, branchIds },
+      createdAt: stamp,
+    };
     await this.db.batch([
       ...this.publishMenuPlanStatements(importId, stamp),
       this.db
@@ -2821,10 +2900,10 @@ export class OnboardingService {
         )
         .bind(
           this.actor.tenantId,
-          crypto.randomUUID(),
+          menuEvent.id,
           importId,
-          crypto.randomUUID(),
-          json({ importId, branchIds }),
+          menuEvent.correlationId,
+          json(menuEvent.payload),
           stamp,
           new Date(Date.parse(stamp) + 24 * 60 * 60 * 1000).toISOString(),
         ),
@@ -2834,6 +2913,7 @@ export class OnboardingService {
         evidence: publicationInvariant,
       }),
     ]);
+    await notifyRealtimeHub(this.env.SERAMET_REALTIME_HUB, this.actor.tenantId, [menuEvent]);
     const verification = await this.verifyMenuImport(
       completion.expectedEntityIds,
       completion.expectedBranchSettings,
