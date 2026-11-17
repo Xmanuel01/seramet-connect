@@ -29,6 +29,8 @@ import { closingPolicy } from "@/payments/daily-closing";
 import { RequestError, reportError } from "@/lib/user-facing-error";
 import { humanize } from "@/finance/finance-labels";
 import { RefundsWorkspace } from "@/components/app/RefundsWorkspace";
+import { parseDeliveryAppPayout } from "@/payments/delivery-app-payout-files";
+import { appSettlementConnectionId, channelPayoutAccounts } from "@/payments/payout-accounts";
 
 const tabs = [
   { id: "payments", label: "Payments" },
@@ -91,10 +93,18 @@ function PaymentControlCentre() {
   const [manualReason, setManualReason] = useState("");
   const [bankPreview, setBankPreview] =
     useState<StatementPreview<NormalizedBankStatementRow> | null>(null);
-  const [settlementPreview, setSettlementPreview] =
-    useState<StatementPreview<NormalizedSettlementImport> | null>(null);
+  const [settlementPreview, setSettlementPreview] = useState<
+    (StatementPreview<NormalizedSettlementImport> & { layoutName?: string }) | null
+  >(null);
   const operations = state.paymentOperations;
   const configuration = getConfigurationRepository();
+  // Delivery apps a payout file can come from, whether connected or typed in at the POS.
+  const appChannels = configuration
+    .listOrderChannels(activeTenantId, false)
+    .filter((channel) => channel.channelType === "MARKETPLACE");
+  const [settlementAppId, setSettlementAppId] = useState("");
+  const settlementApp =
+    appChannels.find((channel) => channel.id === settlementAppId) ?? appChannels[0];
   useEffect(() => setPeriodDate(currentBusinessDate), [branchId, currentBusinessDate]);
   const currency = configuration.getTenant(activeTenantId).defaultCurrency;
   const scoped = useCallback(
@@ -329,23 +339,29 @@ function PaymentControlCentre() {
   };
 
   const handleSettlementFile = async (file: File) => {
-    const connection = configuration
-      .listConnections(activeTenantId, isAllBranches ? undefined : branchId)
-      .find((candidate) => {
-        const provider = configuration
-          .listProviders()
-          .find((item) => item.id === candidate.providerId);
-        return provider?.category === "DELIVERY";
-      });
-    if (!connection) {
-      setNotice("Connect a delivery platform in Integrations before importing its settlements.");
+    if (!settlementApp) {
+      setNotice(
+        "Add the delivery app as an order channel in Settings before importing its payouts.",
+      );
       return;
     }
     const source = file.name.toLowerCase().endsWith(".xlsx")
       ? await file.arrayBuffer()
       : await file.text();
+    const context = {
+      connectionId: appSettlementConnectionId(settlementApp),
+      currency,
+      fileName: file.name,
+    };
+    // The app's own report first; the Seramet settlement template still works as before.
+    const appFile = await parseDeliveryAppPayout(source, context);
     setSettlementPreview(
-      await genericSettlementAdapter.parse(source, { connectionId: connection.id, currency }),
+      appFile.adapterCode === "UNRECOGNISED"
+        ? {
+            ...(await genericSettlementAdapter.parse(source, context)),
+            layoutName: "Seramet template",
+          }
+        : appFile,
     );
   };
 
@@ -360,6 +376,16 @@ function PaymentControlCentre() {
         ...(isAllBranches ? {} : { branchId }),
         importedBy: currentUser.name,
         normalized,
+        ...(settlementApp
+          ? {
+              alsoMatchConnectionIds: [
+                `manual:${settlementApp.id}`,
+                ...(settlementApp.deliveryProviderConnectionId
+                  ? [settlementApp.deliveryProviderConnectionId]
+                  : []),
+              ],
+            }
+          : {}),
       })),
     });
     setSettlementPreview(null);
@@ -394,9 +420,15 @@ function PaymentControlCentre() {
           .listConnections(activeTenantId, settlement.branchId)
           .find((candidate) => candidate.id === settlement.connectionId)
       : undefined;
-    const accountConfig = connection?.configuration["settlementAccounts"];
+    const app = appChannels.find(
+      (channel) => settlement && appSettlementConnectionId(channel) === settlement.connectionId,
+    );
+    const accountConfig =
+      channelPayoutAccounts(app) ?? connection?.configuration["settlementAccounts"];
     if (!isSettlementAccountMappings(accountConfig)) {
-      setNotice("Set the accounts for this platform's settlements in Integrations, then post.");
+      setNotice(
+        `Choose the payout accounts for ${app?.displayName ?? "this app"} in Settings, Order channels, then post.`,
+      );
       return;
     }
     runMutation(
@@ -623,13 +655,58 @@ function PaymentControlCentre() {
 
         {tab === "settlements" && (
           <div className="p-4">
+            {appChannels.length > 1 && (
+              <label className="mb-2 grid max-w-xs gap-1 text-[12px] font-semibold text-muted-foreground">
+                Payout file from
+                <select
+                  value={settlementApp?.id ?? ""}
+                  onChange={(event) => {
+                    setSettlementAppId(event.target.value);
+                    setSettlementPreview(null);
+                  }}
+                  className="h-9 rounded-md border border-border bg-card px-2 text-[13px] text-foreground"
+                >
+                  {appChannels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      {channel.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <ImportBar
-              label="Import settlement file (CSV or Excel)"
+              label={`Import ${settlementApp?.displayName ?? "delivery app"} payout file (CSV or Excel)`}
               onFile={handleSettlementFile}
               canPost={Boolean(settlementPreview?.canPost)}
               onPost={importSettlementPreview}
             />
-            {settlementPreview && <PreviewSummary preview={settlementPreview} />}
+            {settlementPreview && (
+              <>
+                {settlementPreview.layoutName && (
+                  <p className="mt-2 text-[12px] text-muted-foreground">
+                    Read as: {settlementPreview.layoutName}
+                  </p>
+                )}
+                <PreviewSummary preview={settlementPreview} />
+                {settlementPreview.issues.length > 0 && (
+                  <ul className="mt-2 grid gap-1 text-[12px]">
+                    {settlementPreview.issues.slice(0, 8).map((issue, index) => (
+                      <li
+                        key={index}
+                        className={issue.severity === "ERROR" ? "text-destructive" : "text-warning"}
+                      >
+                        Row {issue.row}: {issue.message}
+                      </li>
+                    ))}
+                    {settlementPreview.issues.length > 8 && (
+                      <li className="text-muted-foreground">
+                        and {settlementPreview.issues.length - 8} more
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </>
+            )}
             <div className="mt-4 grid gap-3">
               {settlements.map((settlement) => (
                 <div

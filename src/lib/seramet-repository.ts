@@ -1,4 +1,15 @@
 import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
+import { channelPayoutAccounts } from "@/payments/payout-accounts";
+import {
+  appReceivableAccount,
+  parseManualAppOrder,
+  recordManualAppOrder,
+} from "@/payments/manual-app-order";
+import {
+  deliverySettings,
+  ridersCarryCash,
+  validateLocalDeliveryCharge,
+} from "@/delivery/delivery-charge";
 import {
   TransactionEngine,
   createEmptyTransactionState,
@@ -177,6 +188,26 @@ export function applyServerMutation(
   actor: ServerActor,
 ) {
   const input = payload as Record<string, unknown>;
+  if (input["draft"] && typeof input["draft"] === "object") {
+    const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+    const channel = getConfigurationRepository()
+      .listOrderChannels(actor.tenantId, false)
+      .find(
+        (row) =>
+          row.id === draft.channel ||
+          row.code === draft.channel ||
+          row.displayName === draft.channel,
+      );
+    const existing = state.orders.find((row) => row.id === input["orderId"]);
+    const charge = (draft.delivery ?? existing?.delivery)?.charge;
+    if (!existing?.externalSource) {
+      validateLocalDeliveryCharge(charge, deliverySettings(channel), actor.branchId);
+      if (charge?.source === "MANUAL" && !actor.permissions.includes(permissions.paymentsReconcile))
+        throw new Error("Delivery charge overrides require reconciliation permission");
+    } else if (JSON.stringify(existing.delivery?.charge) !== JSON.stringify(charge)) {
+      throw new Error("Provider delivery charges cannot be changed by a local draft");
+    }
+  }
   switch (action) {
     case "configureDailyClosing":
       return configureClosing(
@@ -247,7 +278,38 @@ export function applyServerMutation(
         next.orders.find((order) => !state.orders.some((current) => current.id === order.id))?.id;
       if (!createdOrderId)
         throw new Error("Kitchen order did not receive an authoritative identity");
-      return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      const configuration = getConfigurationRepository();
+      const channel = configuration
+        .listOrderChannels(actor.tenantId, false)
+        .find(
+          (row) =>
+            row.id === draft.channel ||
+            row.code === draft.channel ||
+            row.displayName === draft.channel,
+        );
+      const existingOrder = state.orders.find((order) => order.id === createdOrderId);
+      // A delivery-app order typed in by hand is owed by the app, not a till sale.
+      const isAppOrder = channel?.channelType === "MARKETPLACE" && !existingOrder?.externalSource;
+      if (existingOrder?.externalSource?.metadata["manualEntry"] === true)
+        throw new Error(
+          "This delivery-app order is already booked to the app. Ring extra items as a new order.",
+        );
+      const appOrder = isAppOrder ? parseManualAppOrder(input["appOrder"]) : undefined;
+      if (isAppOrder && !appOrder)
+        throw new Error(
+          `Enter the ${channel!.displayName} order number before sending to the kitchen`,
+        );
+      next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      if (!appOrder || !channel) return next;
+      const tenant = configuration.getTenant(actor.tenantId);
+      return recordManualAppOrder(next, createdOrderId, appOrder, {
+        channel,
+        currency: tenant.defaultCurrency,
+        receivableAccount: appReceivableAccount(
+          configuration.listPaymentMethods(actor.tenantId, false),
+          channelPayoutAccounts(channel)?.marketplaceReceivableAccountId,
+        ),
+      });
     }
     case "claimKitchenPrintObligations":
       return TransactionEngine.claimKitchenPrintObligations(
@@ -852,6 +914,20 @@ export function applyServerMutation(
         (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
       );
       if (!obligation) throw new Error("Rider custody obligation was not found");
+      const collectedOrder = state.orders.find((row) => row.id === obligation.orderId);
+      const collectedChannel = getConfigurationRepository()
+        .listOrderChannels(actor.tenantId, false)
+        .find(
+          (row) =>
+            row.id === collectedOrder?.channel ||
+            row.code === collectedOrder?.channel ||
+            row.displayName === collectedOrder?.channel,
+        );
+      if (!ridersCarryCash(collectedChannel)) {
+        throw new Error(
+          "Riders do not carry money on this channel. Record the payment on the invoice instead.",
+        );
+      }
       if (!obligation.custodyAccountId) {
         throw new Error("Configure the rider custody account before recording collection");
       }
@@ -961,28 +1037,35 @@ export function applyServerMutation(
       if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
         throw new Error("Direct collection amount must be a positive integer in minor units");
       }
-      if (!reference) throw new Error("Company collection requires a transaction reference");
-
       const operations = state.paymentOperations;
       const obligation = operations?.custodyObligations.find(
         (candidate) => candidate.id === obligationId && candidate.tenantId === actor.tenantId,
       );
       if (!obligation) throw new Error("Cash-due obligation was not found");
 
+      // The money is recorded as it actually arrived at the restaurant: cash to the
+      // drawer, or a Till, card or bank payment. Nobody is assumed to have carried it.
       const configuration = getConfigurationRepository();
       const method = configuration
         .listPaymentMethods(actor.tenantId, false)
         .find(
           (candidate) => candidate.id === paymentMethodId || candidate.code === paymentMethodId,
         );
-      if (!method?.enabled || !["DIGITAL_WALLET", "BANK_TRANSFER"].includes(method.category)) {
-        throw new Error("Choose an enabled company Till or bank payment method");
+      if (
+        !method?.enabled ||
+        !["CASH", "DIGITAL_WALLET", "CARD", "BANK_TRANSFER"].includes(method.category)
+      ) {
+        throw new Error("Choose an enabled cash, Till, card or bank payment method");
       }
-      const destinationAccountId = method.clearingAccountId ?? method.settlementAccountId;
+      const receivedInCash = method.category === "CASH";
+      if (!receivedInCash && !reference) {
+        throw new Error("A transaction reference is required unless the customer paid cash");
+      }
+      const destinationAccountId = receivedInCash
+        ? (method.cashAccountId ?? method.settlementAccountId)
+        : (method.clearingAccountId ?? method.settlementAccountId);
       if (!destinationAccountId) {
-        throw new Error(
-          "Company collection payment method requires a clearing or settlement account",
-        );
+        throw new Error("This payment method has no account to receive the money yet");
       }
 
       let remaining = amountMinor;
@@ -1034,7 +1117,7 @@ export function applyServerMutation(
           collectionCreditAccountId: receivable.receivableAccount,
           collectionPurpose: "DIRECT_COMPANY_COLLECTION",
           actor: actor.name,
-          reference,
+          ...(reference ? { reference } : {}),
           ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
         });
         paymentTransactionId = next.paymentOperations?.transactions.find(
@@ -1049,12 +1132,22 @@ export function applyServerMutation(
         merchantAppliedMinor,
         marketplaceFeeAppliedMinor,
         unclassifiedAppliedMinor,
-        tender: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY",
-        toHolder: method.category === "BANK_TRANSFER" ? "BANK" : "MOBILE_MONEY_TILL",
+        tender: receivedInCash
+          ? "CASH"
+          : method.category === "DIGITAL_WALLET"
+            ? "MOBILE_MONEY"
+            : method.category === "BANK_TRANSFER"
+              ? "BANK"
+              : "OTHER",
+        toHolder: receivedInCash
+          ? "CASH_DRAWER"
+          : method.category === "DIGITAL_WALLET"
+            ? "MOBILE_MONEY_TILL"
+            : "BANK",
         destinationAccountId,
         actor: actor.name,
         ...(paymentTransactionId ? { paymentTransactionId } : {}),
-        reference,
+        ...(reference ? { reference } : {}),
         ...(requested["occurredAt"] ? { occurredAt: String(requested["occurredAt"]) } : {}),
       });
     }
@@ -1119,7 +1212,11 @@ export function applyServerMutation(
             left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
         );
       const totalOutstanding = obligations.reduce(
-        (sum, obligation) => sum + (obligation.collectedMinor - obligation.remittedMinor),
+        (sum, obligation) =>
+          sum +
+          (obligation.collectedMinor -
+            obligation.remittedMinor -
+            (obligation.retainedFeeMinor ?? 0)),
         0,
       );
       if (amountMinor > totalOutstanding) {
@@ -1134,7 +1231,10 @@ export function applyServerMutation(
           (candidate) => candidate.id === obligation.id,
         );
         if (!current) continue;
-        const outstanding = Math.max(0, current.collectedMinor - current.remittedMinor);
+        const outstanding = Math.max(
+          0,
+          current.collectedMinor - current.remittedMinor - (current.retainedFeeMinor ?? 0),
+        );
         const allocated = Math.min(remaining, outstanding);
         if (allocated <= 0) continue;
         next = custodyLedger.recordRemittance(next, {

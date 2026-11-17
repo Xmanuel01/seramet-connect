@@ -28,7 +28,10 @@ export class IntegrationOutboxService {
       createdAt: new Date().toISOString(),
     };
     const result = await this.repository.enqueueOutbox(record);
-    if (result.created)
+    if (
+      result.created &&
+      (!result.record.nextAttemptAt || Date.parse(result.record.nextAttemptAt) <= Date.now())
+    )
       await this.queue.enqueue({
         kind: "integration-outbox",
         tenantId: result.record.tenantId,

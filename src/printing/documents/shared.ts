@@ -137,6 +137,7 @@ export function saleItemsTable(width: number, lines: SaleLine[]) {
 }
 
 export interface SaleTotals {
+  deliveryCharge?: number;
   subtotal: number;
   serviceCharge: number;
   discount: number;
@@ -225,7 +226,7 @@ export function levyRows(totals: SaleTotals): AmountRow[] {
 }
 
 export function saleTotalsTable(width: number, totals: SaleTotals, ctx: PrintContext) {
-  const extras = totals.serviceCharge !== 0 || totals.discount !== 0;
+  const extras = totals.serviceCharge !== 0 || totals.discount !== 0 || !!totals.deliveryCharge;
   // Tax added on top of the subtotal needs the subtotal shown to add up.
   const taxOnTop = totals.vat !== undefined && totals.net === undefined;
   const vatLabel = totals.vatRate !== undefined ? `VAT ${totals.vatRate}%` : "VAT";
@@ -233,6 +234,7 @@ export function saleTotalsTable(width: number, totals: SaleTotals, ctx: PrintCon
     ...amountsTable(width, [
       (extras || taxOnTop) && ["Subtotal", money(totals.subtotal)],
       totals.serviceCharge !== 0 && ["Service charge", money(totals.serviceCharge)],
+      !!totals.deliveryCharge && ["Delivery", money(totals.deliveryCharge)],
       totals.discount !== 0 && ["Discount", `(${money(totals.discount)})`],
       totals.net !== undefined && ["Net (excl. VAT)", money(totals.net)],
       totals.vat !== undefined && [vatLabel, money(totals.vat)],

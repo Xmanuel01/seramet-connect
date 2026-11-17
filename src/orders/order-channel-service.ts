@@ -4,13 +4,27 @@ import {
   type ConfigurationRepository,
 } from "@/platform/repositories/configuration-repository";
 import type { OrderChannelDefinition } from "@/platform/types";
+import { deliverySettings, deliveryContactSchema } from "@/delivery/delivery-charge";
 
 export class OrderChannelValidationError extends Error {}
 
 export function orderChannelDispatchError(
-  channel: Pick<OrderChannelDefinition, "requiresCustomer" | "requiresAddress"> | undefined,
+  channel:
+    | (Pick<OrderChannelDefinition, "requiresCustomer" | "requiresAddress"> &
+        Partial<Pick<OrderChannelDefinition, "metadata">>)
+    | undefined,
   details: { customerId?: string; delivery?: { recipientName?: string; address?: string } },
 ) {
+  if (
+    channel?.metadata &&
+    ["RESTAURANT", "PROVIDER"].includes(
+      deliverySettings({ metadata: channel.metadata })?.fulfilment ?? "",
+    )
+  ) {
+    const parsed = deliveryContactSchema.safeParse(details.delivery ?? {});
+    if (!parsed.success) return "Delivery contact details are invalid or too long.";
+  }
+  // The channel's required customer and address still apply on delivery channels.
   const recipient = details.delivery?.recipientName;
   if (
     channel?.requiresCustomer &&

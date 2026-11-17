@@ -556,8 +556,14 @@ export class ReconciliationEngine {
       branchId?: string;
       importedBy: string;
       normalized: NormalizedSettlementImport;
+      /** Orders filed under these ids also match, e.g. app orders typed into the POS. */
+      alsoMatchConnectionIds?: string[];
     },
   ) {
+    const matchConnections = new Set([
+      input.normalized.connectionId,
+      ...(input.alsoMatchConnectionIds ?? []),
+    ]);
     const next = normalizeTransactionState(state);
     assertTenant(next, input.tenantId);
     const operations = requiredOperations(next);
@@ -602,8 +608,8 @@ export class ReconciliationEngine {
         ? next.marketplaceReceivables.find(
             (candidate) =>
               candidate.tenantId === input.tenantId &&
-              candidate.connectionId === input.normalized.connectionId &&
-              candidate.externalOrderId === line.externalOrderId,
+              matchConnections.has(candidate.connectionId) &&
+              candidate.externalOrderId.toUpperCase() === line.externalOrderId!.toUpperCase(),
           )
         : undefined;
       operations.settlementLines.push(

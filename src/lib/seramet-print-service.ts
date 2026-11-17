@@ -147,6 +147,8 @@ export type OrderLineForPrint = {
 };
 
 export type OrderForPrint = {
+  deliveryDetails?: import("@/printing/documents/front-of-house").DeliveryDetails[];
+  deliveryCharge?: number;
   orderId: string;
   kitchenObligationId?: string;
   branch: string;
@@ -1388,6 +1390,7 @@ function renderTableDocument(
   const tax = order.tax !== 0 && template.showTax ? order.tax : undefined;
   const totals = {
     subtotal: order.subtotal,
+    deliveryCharge: order.deliveryCharge ?? 0,
     serviceCharge: order.serviceCharge ?? 0,
     discount: order.discount ?? 0,
     ...(tax !== undefined ? { vat: tax } : {}),
@@ -1395,6 +1398,7 @@ function renderTableDocument(
     total: order.total,
   };
   const common = {
+    deliveryDetails: order.deliveryDetails,
     business,
     tax: { vatRegistered: tax !== undefined, pricesIncludeVat: false },
     orderNumber: cleanOrderId(order.orderId),

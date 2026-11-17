@@ -7,6 +7,7 @@ export type Product = {
   category: string;
   price: number;
   priceMinor?: number;
+  onlinePriceMinor?: number;
   currency?: string;
   taxRuleId?: string;
   serviceChargeApplicable?: boolean;

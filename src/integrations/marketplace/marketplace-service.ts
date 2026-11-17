@@ -10,7 +10,14 @@ import {
   type PriceList,
 } from "@/integrations/marketplace/types";
 import { TransactionEngine, type TransactionState } from "@/lib/transaction-engine";
-import type { Branch, IntegrationConnection, Tenant } from "@/platform/types";
+import { usesOnlinePrice } from "@/lib/online-order-channels";
+import { majorFromMinor } from "@/payments/money";
+import type {
+  Branch,
+  IntegrationConnection,
+  OrderChannelDefinition,
+  Tenant,
+} from "@/platform/types";
 
 export type MarketplaceMenuBuildInput = {
   tenant: Tenant;
@@ -20,7 +27,35 @@ export type MarketplaceMenuBuildInput = {
   mappings: ExternalResourceMapping[];
   externalStoreId: string;
   catalog: Product[];
+  /** The order channel this connection feeds; its "Online price" setting picks the menu price. */
+  channel?: Pick<OrderChannelDefinition, "metadata">;
 };
+
+/**
+ * The price an app's menu carries for an item: the item's online price where the restaurant
+ * chose online pricing and set one, otherwise the branch (store) price.
+ */
+export function marketplaceMenuPriceSource(
+  connection: Pick<IntegrationConnection, "configuration">,
+  channel: Pick<OrderChannelDefinition, "metadata"> | undefined,
+) {
+  return (
+    parseMarketplaceConnectionConfig(connection.configuration).menuPriceSource ??
+    (usesOnlinePrice(channel) ? "ONLINE" : "STORE")
+  );
+}
+
+function menuPrice(product: Product, branch: string, source: "ONLINE" | "STORE", currency: string) {
+  const online = product.onlinePriceMinor;
+  if (
+    source === "ONLINE" &&
+    typeof online === "number" &&
+    Number.isSafeInteger(online) &&
+    online >= 0
+  )
+    return majorFromMinor(online, product.currency ?? currency);
+  return product.branchPrices?.[branch] ?? product.price;
+}
 
 export async function buildMarketplaceMenu(
   input: MarketplaceMenuBuildInput,
@@ -32,6 +67,7 @@ export async function buildMarketplaceMenu(
   if (input.catalog.length === 0) {
     throw new Error("The authoritative menu catalog is empty; marketplace sync was not prepared");
   }
+  const priceSource = marketplaceMenuPriceSource(input.connection, input.channel);
   const categories = Array.from(new Set(input.catalog.map((product) => product.category)));
   const items: MarketplaceMenuItem[] = input.catalog.map((product) => {
     const mapping = findMapping(input.mappings, "ITEM", product.id);
@@ -49,8 +85,10 @@ export async function buildMarketplaceMenu(
     const configuredPrice = priceList?.items.find(
       (candidate) => candidate.internalItemId === product.id && candidate.active,
     )?.price;
-    const branchPrice = product.branchPrices?.[input.branch.name];
+    const persistedOverride = mapping?.metadata["availabilityOverride"] as
+      { available?: boolean } | undefined;
     const available =
+      persistedOverride?.available ??
       override?.available ??
       (product.branchAvailability?.[input.branch.name] !== false &&
         !product.out &&
@@ -60,7 +98,10 @@ export async function buildMarketplaceMenu(
       ...(mapping?.externalId ? { externalId: mapping.externalId } : {}),
       ...(product.sku || product.itemCode ? { sku: product.sku ?? product.itemCode } : {}),
       name: product.name,
-      price: configuredPrice ?? branchPrice ?? product.price,
+      price:
+        (mapping?.metadata["priceOverride"] as { price?: number } | undefined)?.price ??
+        configuredPrice ??
+        menuPrice(product, input.branch.name, priceSource, input.tenant.defaultCurrency),
       available,
       ...(override?.quantityAvailable !== undefined
         ? { quantityAvailable: override.quantityAvailable }
@@ -107,6 +148,7 @@ export async function buildMarketplaceMenu(
       branchId: input.branch.id,
       connectionId: input.connection.id,
       sourceOfTruth: parseMarketplaceConnectionConfig(input.connection.configuration).menuSyncMode,
+      priceSource,
     },
   };
 }

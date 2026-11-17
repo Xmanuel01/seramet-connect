@@ -1,4 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
+import { PayoutAccountsDialog } from "@/components/app/PayoutAccountsDialog";
+import type { PayoutAccounts } from "@/payments/payout-accounts";
+import type { DeliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -276,7 +280,13 @@ function Settings() {
   const updateConfiguredChannel = async (
     channelId: string,
     displayName: string,
-    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean },
+    change: {
+      enabled?: boolean;
+      useOnlinePrice?: boolean;
+      requiresTable?: boolean;
+      deliverySettings?: DeliverySettings;
+      payoutAccounts?: PayoutAccounts;
+    },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
     try {
@@ -286,11 +296,13 @@ function Settings() {
         { ...change, reason: "Updated from Settings order channels" },
       );
       setConfigNotice({ kind: "success", message: `${displayName} was updated.` });
+      return true;
     } catch (error) {
       setConfigNotice({
         kind: "error",
         message: error instanceof Error ? error.message : "Order channel update failed.",
       });
+      return false;
     } finally {
       setConfigSaving("");
     }
@@ -846,8 +858,33 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      {channel.channelType === "MARKETPLACE" && (
+                        <PayoutAccountsDialog
+                          channel={channel}
+                          tenantId={activeTenantId}
+                          userId={currentUser.id}
+                          disabled={!canManageOrderChannels || Boolean(configSaving)}
+                          onSave={(payoutAccounts) =>
+                            updateConfiguredChannel(channel.id, channel.displayName, {
+                              payoutAccounts,
+                            })
+                          }
+                        />
+                      )}
+                      <DeliverySettingsDialog
+                        channel={channel}
+                        currency={tenant?.defaultCurrency ?? "KES"}
+                        branches={branchRecords}
+                        disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        onSave={(deliverySettings) =>
+                          updateConfiguredChannel(channel.id, channel.displayName, {
+                            deliverySettings,
+                          })
+                        }
+                      />
                       <Btn
                         disabled={!canManageOrderChannels || Boolean(configSaving)}
+                        title="On: orders on this channel, and the menu sent to its delivery app, use each item's online price where one is set. Off: the store price."
                         onClick={() =>
                           void updateConfiguredChannel(channel.id, channel.displayName, {
                             useOnlinePrice: channel.metadata["useOnlinePrice"] !== true,

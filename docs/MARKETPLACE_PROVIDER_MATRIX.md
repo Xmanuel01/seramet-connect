@@ -7,29 +7,29 @@ Status values are evidence based:
 - `SPEC_REQUIRED`: no precise official merchant contract was available during implementation.
 - `NOT_SUPPORTED`: the reviewed provider contract does not expose the operation used by Seramet.
 
-| Capability                   | Uber Eats                | Glovo                                  | Bolt Food     |
-| ---------------------------- | ------------------------ | -------------------------------------- | ------------- |
-| OAuth/client credentials     | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Verified order webhook       | IMPLEMENTED              | IMPLEMENTED (configured secret header) | SPEC_REQUIRED |
-| Retrieve order               | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Recover missed active orders | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Accept order                 | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Reject order                 | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Restaurant cancellation      | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Mark ready                   | IMPLEMENTED              | IMPLEMENTED (Glovo courier orders)     | SPEC_REQUIRED |
-| Update ready time            | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Incoming order edits         | SUPPORTED_NOT_CONFIGURED | IMPLEMENTED                            | SPEC_REQUIRED |
-| Product catalog read         | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Full menu upload             | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Category synchronization     | IMPLEMENTED              | SUPPORTED_NOT_CONFIGURED               | SPEC_REQUIRED |
-| Modifier synchronization     | IMPLEMENTED              | NOT_SUPPORTED                          | SPEC_REQUIRED |
-| Item price update            | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Item availability/86         | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Quantity update              | NOT_SUPPORTED            | IMPLEMENTED                            | SPEC_REQUIRED |
-| Read store status            | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Open/pause store             | IMPLEMENTED              | IMPLEMENTED                            | SPEC_REQUIRED |
-| Provider settlement import   | SUPPORTED_NOT_CONFIGURED | SUPPORTED_NOT_CONFIGURED               | SPEC_REQUIRED |
-| Production connection        | SUPPORTED_NOT_CONFIGURED | SUPPORTED_NOT_CONFIGURED               | SPEC_REQUIRED |
+| Capability                   | Uber Eats                            | Glovo                                                                      | Bolt Food     |
+| ---------------------------- | ------------------------------------ | -------------------------------------------------------------------------- | ------------- |
+| OAuth/client credentials     | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Verified order webhook       | IMPLEMENTED                          | IMPLEMENTED (configured secret header)                                     | SPEC_REQUIRED |
+| Retrieve order               | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Recover missed active orders | IMPLEMENTED                          | NOT_SUPPORTED                                                              | SPEC_REQUIRED |
+| Accept order                 | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Reject order                 | IMPLEMENTED                          | NOT_SUPPORTED (staff reject on tablet; Seramet cancels after confirmation) | SPEC_REQUIRED |
+| Restaurant cancellation      | IMPLEMENTED                          | NOT_SUPPORTED                                                              | SPEC_REQUIRED |
+| Mark ready                   | IMPLEMENTED                          | IMPLEMENTED (Glovo courier orders)                                         | SPEC_REQUIRED |
+| Update ready time            | IMPLEMENTED                          | NOT_SUPPORTED                                                              | SPEC_REQUIRED |
+| Incoming order edits         | SUPPORTED_NOT_CONFIGURED             | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Product catalog read         | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Full menu upload             | IMPLEMENTED                          | NOT_SUPPORTED                                                              | SPEC_REQUIRED |
+| Category synchronization     | IMPLEMENTED                          | SUPPORTED_NOT_CONFIGURED                                                   | SPEC_REQUIRED |
+| Modifier synchronization     | IMPLEMENTED                          | NOT_SUPPORTED                                                              | SPEC_REQUIRED |
+| Item price update            | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Item availability/86         | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Quantity update              | NOT_SUPPORTED                        | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Read store status            | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Open/pause store             | IMPLEMENTED                          | IMPLEMENTED                                                                | SPEC_REQUIRED |
+| Provider settlement import   | IMPLEMENTED (payment details report) | IMPLEMENTED (column names unconfirmed against a real file)                 | SPEC_REQUIRED |
+| Production connection        | SUPPORTED_NOT_CONFIGURED             | SUPPORTED_NOT_CONFIGURED                                                   | SPEC_REQUIRED |
 
 ## Official references
 

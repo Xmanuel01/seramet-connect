@@ -268,6 +268,26 @@ export interface CustomerDetails {
   email?: string;
 }
 
+export interface DeliveryDetails {
+  recipientName?: string;
+  phone?: string;
+  phoneCode?: string;
+  address?: string;
+  doorNumber?: string;
+}
+
+function deliveryFields(width: number, deliveries: DeliveryDetails[] = []) {
+  return deliveries.flatMap((delivery) =>
+    fields(width, [
+      ["Deliver to", delivery.recipientName],
+      ["Delivery phone", delivery.phone],
+      ["Phone code", delivery.phoneCode],
+      ["Delivery address", delivery.address],
+      ["Door / unit", delivery.doorNumber],
+    ]),
+  );
+}
+
 export interface LoyaltyDetails {
   memberCode?: string;
   tier?: string;
@@ -305,6 +325,7 @@ function loyaltyFields(width: number, loyalty: LoyaltyDetails | undefined) {
 }
 
 export interface CustomerBillInput {
+  deliveryDetails?: DeliveryDetails[];
   business: BusinessIdentity;
   tax: TaxSettings;
   billNumber: string;
@@ -348,6 +369,7 @@ export function renderCustomerBill(input: CustomerBillInput, ctx: PrintContext):
       input.issuedAt,
     ]),
     customerFields(width, input.customer),
+    deliveryFields(width, input.deliveryDetails),
     saleItemsTable(width, input.lines),
     saleTotalsTable(width, totals, ctx),
     mobileMoneyBlock(width, payment, totals.total, qrCodes),
@@ -361,6 +383,7 @@ export function renderCustomerBill(input: CustomerBillInput, ctx: PrintContext):
 // Sales receipt (paid), with eTIMS when the restaurant has it on
 
 export interface SalesReceiptInput {
+  deliveryDetails?: DeliveryDetails[];
   business: BusinessIdentity;
   tax: TaxSettings;
   receiptNumber: string;
@@ -408,6 +431,7 @@ export function renderSalesReceipt(input: SalesReceiptInput, ctx: PrintContext):
       input.cashier && `Cashier ${input.cashier}`,
     ]),
     customerFields(width, input.customer),
+    deliveryFields(width, input.deliveryDetails),
     saleItemsTable(width, input.lines),
     saleTotalsTable(width, totals, ctx),
     paymentsTable(width, input.payments, change),
@@ -428,6 +452,7 @@ export interface InvoiceLine extends SaleLine {
 }
 
 export interface TaxInvoiceInput {
+  deliveryDetails?: DeliveryDetails[];
   business: BusinessIdentity;
   tax: TaxSettings;
   client: Party;
@@ -487,7 +512,7 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
   const totals = input.totals ?? computeSaleTotals(input.lines, input.tax, input);
   const paid = input.paidToDate ?? 0;
   const instructions = (input.paymentInstructions ?? []).filter((line) => clean(line));
-  const extras = totals.serviceCharge !== 0 || totals.discount !== 0;
+  const extras = totals.serviceCharge !== 0 || totals.discount !== 0 || !!totals.deliveryCharge;
   // Tax added on top of the subtotal needs the subtotal shown to add up.
   const taxOnTop = totals.vat !== undefined && totals.net === undefined;
   const balance = sum([totals.total, -paid]);
@@ -520,10 +545,12 @@ export function renderTaxInvoice(input: TaxInvoiceInput, ctx: PrintContext): Pri
         ["Cashier", input.cashier],
       ],
     ),
+    deliveryFields(width, input.deliveryDetails),
     invoiceItemsTable(width, input.lines, totals.vatRate ? `${totals.vatRate}%` : undefined),
     amountsTable(width, [
       (extras || taxOnTop) && ["Subtotal", money(totals.subtotal)],
       totals.serviceCharge !== 0 && ["Service charge", money(totals.serviceCharge)],
+      !!totals.deliveryCharge && ["Delivery", money(totals.deliveryCharge)],
       totals.discount !== 0 && ["Discount", `(${money(totals.discount)})`],
       totals.net !== undefined && ["Net (excl. VAT)", money(totals.net)],
       totals.vat !== undefined && [

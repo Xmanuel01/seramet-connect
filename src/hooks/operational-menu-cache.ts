@@ -5,6 +5,21 @@
 export const POS_MENU_FRESH_MS = 12_000;
 export const POS_MENU_MAX_AGE_MS = 60_000;
 
+let menuRevision = 0;
+const menuListeners = new Set<() => void>();
+export const getOperationalMenuRevision = () => menuRevision;
+export function subscribeOperationalMenu(listener: () => void) {
+  menuListeners.add(listener);
+  return () => {
+    menuListeners.delete(listener);
+  };
+}
+export function invalidateOperationalMenu() {
+  // A new cache key also isolates any old request still in flight during an edit.
+  menuRevision += 1;
+  menuListeners.forEach((listener) => listener());
+}
+
 export type OperationalMenuSnapshot<T> = {
   value: T;
   storedAt: number;

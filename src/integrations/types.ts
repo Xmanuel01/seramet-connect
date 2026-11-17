@@ -105,11 +105,13 @@ export type NormalizedExternalOrder = {
     externalCustomerId?: string;
     name?: string;
     phone?: string;
+    phoneCode?: string;
     notes?: string;
   };
   delivery: {
     type: "PROVIDER" | "RESTAURANT" | "PICKUP" | "NONE";
     address?: string;
+    doorNumber?: string;
     instructions?: string;
     coordinates?: { latitude: number; longitude: number };
     providerManaged: boolean;

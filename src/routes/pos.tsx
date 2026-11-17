@@ -1,4 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
+import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -38,6 +40,7 @@ import { tracePos } from "@/lib/pos-lifecycle-trace";
 import { useCrmApi } from "@/crm/use-crm";
 import type { CustomerProfile } from "@/crm/types";
 import { useOperationalMenu } from "@/hooks/use-operational-menu";
+import { posMenuPrice } from "@/lib/pos-menu-pricing";
 import {
   INITIAL_POS_MENU_ITEMS,
   POS_MENU_PAGE_SIZE,
@@ -220,6 +223,12 @@ function POS() {
   const [lines, setLines] = useState<Record<string, number>>(recoveredDraft?.lines ?? {});
   const [recipientName, setRecipientName] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [doorNumber, setDoorNumber] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  // A delivery-app order typed in by hand: the app's number and any part due on delivery.
+  const [appOrderNumber, setAppOrderNumber] = useState("");
+  const [dueOnDelivery, setDueOnDelivery] = useState("");
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
@@ -338,7 +347,6 @@ function POS() {
     ) ?? (offlineStorageAvailable ? null : "Offline storage unavailable");
   const isOnlineSource =
     selectedChannel?.channelType === "MARKETPLACE" || selectedChannel?.channelType === "WEB";
-  const onlinePriceMultiplier = Number(selectedChannel?.metadata["priceMultiplier"] ?? 1);
   const terminalId = `${branchRecord.code}-POS-01`;
   const branchServiceAreas = useMemo(
     () =>
@@ -394,6 +402,9 @@ function POS() {
     deliveryHydratedOrderRef.current = key;
     setRecipientName(activeOrder.delivery?.recipientName ?? "");
     setDeliveryAddress(activeOrder.delivery?.address ?? "");
+    setDeliveryPhone(activeOrder.delivery?.phone ?? "");
+    setDoorNumber(activeOrder.delivery?.doorNumber ?? "");
+    setDeliveryCharge(activeOrder.delivery?.charge);
   }, [activeOrder, activeOrderId, activeTenantId, branchId]);
   const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
   const mutateTransaction: typeof mutateBackendTransaction = async (
@@ -449,20 +460,14 @@ function POS() {
       operationalMenu.items
         .filter((product) => product.branchAvailability?.[branch] !== false)
         .map((product) => {
-          const branchPrice = product.branchPrices?.[branch] ?? product.price;
           const availability = TransactionEngine.getProductAvailability(
             transactionState,
             branchId,
             product.id,
           );
-          const price = isOnlineSource
-            ? Math.round(branchPrice * onlinePriceMultiplier)
-            : branchPrice;
           return {
             ...product,
-            price,
-            priceMinor: parseMajorAmount(price, tenant.defaultCurrency),
-            currency: tenant.defaultCurrency,
+            ...posMenuPrice(product, selectedChannel, branch, tenant.defaultCurrency),
             out: product.out === true || !availability.available,
             availabilityPortions: availability.portions,
           };
@@ -470,8 +475,7 @@ function POS() {
     [
       branch,
       branchId,
-      isOnlineSource,
-      onlinePriceMultiplier,
+      selectedChannel,
       operationalMenu.items,
       tenant.defaultCurrency,
       transactionState,
@@ -538,6 +542,9 @@ function POS() {
 
   const chooseChannel = (id: string) => {
     if (channelLocked) return;
+    setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
     setPreferredChannelId(id);
     setOrderSource(id);
     window.sessionStorage.setItem(channelPreferenceKey, id);
@@ -690,7 +697,10 @@ function POS() {
   );
   const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
   // An order is billed once it has been to the kitchen and nothing new is waiting to go.
-  const billReady = canPrintBill && !hasUnsentItems;
+  const appBooked = activeOrder?.paymentStatus === "PROVIDER_RECEIVABLE";
+  const billReady = canPrintBill && !hasUnsentItems && !appBooked;
+  const takesAppOrderNumber =
+    selectedChannel?.channelType === "MARKETPLACE" && !activeOrder?.externalSource;
   const workflowState = !activeOrder
     ? "New"
     : activeOrder.status === "HELD"
@@ -729,12 +739,25 @@ function POS() {
       },
       { reported: 0, added: 0 },
     );
+  const configuredDelivery = deliverySettings(selectedChannel);
+  const showDelivery =
+    configuredDelivery?.fulfilment === "RESTAURANT" ||
+    configuredDelivery?.fulfilment === "PROVIDER" ||
+    selectedChannel?.channelType === "OWN_DELIVERY" ||
+    selectedChannel?.requiresAddress;
+  const deliveryAmountMinor = deliveryCharge?.amountMinor ?? 0;
   const invoicePricing = posInvoicePricing({
     currency: tenant.defaultCurrency,
     itemsMinor: subtotalMinor,
     taxMinor: taxTotals.reported,
     serviceMinor: serviceTotals.reported,
     exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
+    ...(deliveryCharge
+      ? {
+          deliveryChargeMinor: deliveryAmountMinor,
+          deliveryPayableMinor: deliveryCharge.beneficiary === "RIDER" ? deliveryAmountMinor : 0,
+        }
+      : {}),
   });
   const subtotal = majorFromMinor(
     invoicePricing.financialComponents.netSalesMinor,
@@ -742,7 +765,7 @@ function POS() {
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
   const total = majorFromMinor(
-    subtotalMinor + taxTotals.added + serviceTotals.added,
+    subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
   );
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
@@ -796,6 +819,10 @@ function POS() {
       ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
     })),
     subtotal: invoicePricing.subtotal,
+    deliveryCharge: majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency),
+    deliveryDetails: showDelivery
+      ? [{ recipientName, phone: deliveryPhone, address: deliveryAddress, doorNumber }]
+      : [],
     tax: invoicePricing.tax,
     total,
   });
@@ -866,12 +893,15 @@ function POS() {
                 ? `Table ${tableNo}`
                 : "Unassigned table",
       ),
-      ...(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress
+      ...(showDelivery || selectedChannel?.requiresCustomer
         ? {
             delivery: {
               ...(activeOrder?.delivery ?? { status: "UNASSIGNED" as const }),
               recipientName: recipientName.trim(),
               address: deliveryAddress.trim(),
+              phone: deliveryPhone.trim(),
+              doorNumber: doorNumber.trim(),
+              charge: deliveryCharge,
             },
             ...(!linkedCustomer && recipientName.trim() ? { customer: recipientName.trim() } : {}),
           }
@@ -915,6 +945,11 @@ function POS() {
     setSelectedTableNo(null);
     setRecipientName("");
     setDeliveryAddress("");
+    setDeliveryPhone("");
+    setDoorNumber("");
+    setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -959,6 +994,18 @@ function POS() {
     const draft = buildTransactionDraft(tableNo);
     const channelError = orderChannelDispatchError(selectedChannel, draft);
     if (channelError) throw new Error(channelError);
+    let appOrder: { externalOrderId: string; dueOnDeliveryMinor: number } | undefined;
+    if (takesAppOrderNumber) {
+      const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
+      if (!appOrderNumber.trim())
+        throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
+      if (!Number.isFinite(due) || due < 0 || due > total)
+        throw new Error("The amount due on delivery must be between 0 and the order total.");
+      appOrder = {
+        externalOrderId: appOrderNumber.trim(),
+        dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
+      };
+    }
     const previewLines = items.flatMap((line) => {
       const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
       if (unsentQuantity <= 0) return [];
@@ -1011,6 +1058,7 @@ function POS() {
     const resultState = await mutateTransaction("upsertAndSendKitchen", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
+      ...(appOrder ? { appOrder } : {}),
     });
     if (resultState && "offline" in resultState && resultState.offline) {
       throw new Error(
@@ -1594,15 +1642,19 @@ function POS() {
             </div>
             {isOnlineSource && (
               <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
-                {selectedChannel?.displayName} selected: menu cards now use online prices and
-                settlement defaults to partner credit where required.
+                {selectedChannel?.displayName}:{" "}
+                {selectedChannel?.metadata["useOnlinePrice"] === true
+                  ? "Online pricing where configured"
+                  : "Standard pricing"}
+                .
               </div>
             )}
-            {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
+            {(showDelivery || selectedChannel?.requiresCustomer) && (
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                {selectedChannel.requiresCustomer && !linkedCustomer && (
+                {(showDelivery || selectedChannel?.requiresCustomer) && (
                   <label className="grid gap-1 text-xs font-semibold">
                     Customer name
+                    {showDelivery && !selectedChannel?.requiresCustomer ? " (optional)" : ""}
                     <input
                       value={recipientName}
                       onChange={(event) => setRecipientName(event.target.value)}
@@ -1615,9 +1667,9 @@ function POS() {
                     />
                   </label>
                 )}
-                {selectedChannel.requiresAddress && (
+                {showDelivery && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Delivery address
+                    Delivery address{selectedChannel?.requiresAddress ? "" : " (optional)"}
                     <input
                       value={deliveryAddress}
                       onChange={(event) => setDeliveryAddress(event.target.value)}
@@ -1628,7 +1680,77 @@ function POS() {
                     />
                   </label>
                 )}
+                {showDelivery && (
+                  <>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Phone number (optional)
+                      <input
+                        type="tel"
+                        maxLength={64}
+                        value={deliveryPhone}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDeliveryPhone(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                    <label className="grid gap-1 text-xs font-semibold">
+                      Door / unit number (optional)
+                      <input
+                        maxLength={40}
+                        value={doorNumber}
+                        disabled={!!activeOrder?.externalSource}
+                        onChange={(event) => setDoorNumber(event.target.value)}
+                        className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                      />
+                    </label>
+                  </>
+                )}
               </div>
+            )}
+            {takesAppOrderNumber && (
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-semibold">
+                  {selectedChannel?.displayName} order number
+                  <input
+                    value={appOrderNumber}
+                    maxLength={80}
+                    onChange={(event) => setAppOrderNumber(event.target.value)}
+                    placeholder="As shown on the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Due on delivery ({tenant.defaultCurrency})
+                  <input
+                    inputMode="decimal"
+                    value={dueOnDelivery}
+                    onChange={(event) => setDueOnDelivery(event.target.value)}
+                    placeholder="0 if paid in the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  The app pays the rest with its payout. Anything due on delivery is collected on
+                  Invoices.
+                </p>
+              </div>
+            )}
+            {appBooked && activeOrder?.externalSource && (
+              <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
+                {selectedChannel?.displayName} order {activeOrder.externalSource.externalOrderId}:
+                paid through the app. Collect anything due on delivery on Invoices.
+              </div>
+            )}
+            {configuredDelivery && (
+              <DeliveryChargeFields
+                settings={configuredDelivery}
+                branchId={branchId}
+                currency={tenant.defaultCurrency}
+                value={deliveryCharge}
+                onChange={setDeliveryCharge}
+                disabled={channelLocked || !!activeOrder?.externalSource}
+                canOverride={hasPermission(permissions.paymentsReconcile)}
+              />
             )}
             {operationalMenu.status === "error" && (
               <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">

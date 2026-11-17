@@ -522,7 +522,8 @@ export class CustodyLedger {
     if (!obligation.custodyAccountId) {
       throw new Error("Rider custody account is required before remittance");
     }
-    const remaining = obligation.collectedMinor - obligation.remittedMinor;
+    const remaining =
+      obligation.collectedMinor - obligation.remittedMinor - (obligation.retainedFeeMinor ?? 0);
     if (input.amountMinor > remaining) {
       throw new Error("Remittance exceeds rider-held funds");
     }
@@ -627,10 +628,13 @@ function updateStatus(obligation: CustodyObligation) {
   if (["CANCELLED", "DISPUTED"].includes(obligation.status)) return;
   if (
     obligation.collectedMinor >= obligation.amountDueMinor &&
-    obligation.remittedMinor >= obligation.collectedMinor
+    obligation.remittedMinor + (obligation.retainedFeeMinor ?? 0) >= obligation.collectedMinor
   ) {
     obligation.status = "REMITTED";
-  } else if (obligation.remittedMinor > 0 && obligation.remittedMinor < obligation.collectedMinor) {
+  } else if (
+    obligation.remittedMinor + (obligation.retainedFeeMinor ?? 0) > 0 &&
+    obligation.remittedMinor + (obligation.retainedFeeMinor ?? 0) < obligation.collectedMinor
+  ) {
     obligation.status = "PARTIALLY_REMITTED";
   } else if (obligation.collectedMinor >= obligation.amountDueMinor) {
     obligation.status = "COLLECTED";

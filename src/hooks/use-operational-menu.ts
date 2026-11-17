@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { getSerametAccessToken } from "@/lib/access-token";
 import type { Product } from "@/lib/menu-product";
 import { majorFromMinor } from "@/payments/money";
-import { createOperationalMenuCache } from "./operational-menu-cache";
+import {
+  createOperationalMenuCache,
+  getOperationalMenuRevision,
+  subscribeOperationalMenu,
+} from "./operational-menu-cache";
 
 type CatalogRow = {
   id: string;
@@ -14,6 +18,7 @@ type CatalogRow = {
   description: string | null;
   selling_price_minor: number;
   effective_price_minor: number;
+  online_price_minor?: number | null;
   currency: string;
   tax_rule_id: string | null;
   service_charge_applicable: number;
@@ -48,7 +53,19 @@ export function useOperationalMenu(input: {
   role: string;
 }) {
   const token = getSerametAccessToken();
-  const key = JSON.stringify([input.tenantId, input.branchId, input.userId, input.role, token]);
+  const revision = useSyncExternalStore(
+    subscribeOperationalMenu,
+    getOperationalMenuRevision,
+    () => 0,
+  );
+  const key = JSON.stringify([
+    input.tenantId,
+    input.branchId,
+    input.userId,
+    input.role,
+    token,
+    revision,
+  ]);
   const headers = useMemo(
     () => ({
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -109,6 +126,7 @@ export function useOperationalMenu(input: {
           category: row.category_code.replaceAll("_", " "),
           price: majorFromMinor(row.effective_price_minor, row.currency),
           priceMinor: row.effective_price_minor,
+          ...(row.online_price_minor != null ? { onlinePriceMinor: row.online_price_minor } : {}),
           currency: row.currency,
           ...(row.tax_rule_id ? { taxRuleId: row.tax_rule_id } : {}),
           serviceChargeApplicable: row.service_charge_applicable === 1,
