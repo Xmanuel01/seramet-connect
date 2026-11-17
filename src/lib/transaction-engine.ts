@@ -2617,7 +2617,11 @@ export const TransactionEngine = {
     const order = next.orders.find((item) => item.id === orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
     const existing = next.bills.filter((bill) => bill.orderIds.includes(orderId));
-    if (existing.some((bill) => ["OPEN", "PARTIAL", "PENDING", "PAID"].includes(bill.status))) {
+    if (
+      existing.some((bill) =>
+        ["OPEN", "PARTIAL", "PENDING", "PAID", "PROVIDER_RECEIVABLE"].includes(bill.status),
+      )
+    ) {
       return next;
     }
     if (existing.some((bill) => bill.status === "SPLIT" || bill.status === "MERGED")) {
@@ -2679,6 +2683,11 @@ export const TransactionEngine = {
     }
     if (["CANCELLED", "PAID", "REFUNDED"].includes(order.status)) {
       throw new Error(`Order ${orderId} cannot enter payment from ${order.status}`);
+    }
+    if (order.paymentStatus === "PROVIDER_RECEIVABLE") {
+      throw new Error(
+        "This delivery-app order is paid through the app. Collect any amount due on delivery on Invoices.",
+      );
     }
     if (["HELD", "OPEN"].includes(order.status)) {
       throw new Error(`Order ${orderId} must be sent to kitchen before payment can be prepared`);

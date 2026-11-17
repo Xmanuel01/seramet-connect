@@ -226,6 +226,9 @@ function POS() {
   const [deliveryPhone, setDeliveryPhone] = useState("");
   const [doorNumber, setDoorNumber] = useState("");
   const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
+  // A delivery-app order typed in by hand: the app's number and any part due on delivery.
+  const [appOrderNumber, setAppOrderNumber] = useState("");
+  const [dueOnDelivery, setDueOnDelivery] = useState("");
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
@@ -540,6 +543,8 @@ function POS() {
   const chooseChannel = (id: string) => {
     if (channelLocked) return;
     setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
     setPreferredChannelId(id);
     setOrderSource(id);
     window.sessionStorage.setItem(channelPreferenceKey, id);
@@ -692,7 +697,10 @@ function POS() {
   );
   const hasUnsentItems = items.some((line) => line.qty > (sentQuantities[line.p.id] ?? 0));
   // An order is billed once it has been to the kitchen and nothing new is waiting to go.
-  const billReady = canPrintBill && !hasUnsentItems;
+  const appBooked = activeOrder?.paymentStatus === "PROVIDER_RECEIVABLE";
+  const billReady = canPrintBill && !hasUnsentItems && !appBooked;
+  const takesAppOrderNumber =
+    selectedChannel?.channelType === "MARKETPLACE" && !activeOrder?.externalSource;
   const workflowState = !activeOrder
     ? "New"
     : activeOrder.status === "HELD"
@@ -940,6 +948,8 @@ function POS() {
     setDeliveryPhone("");
     setDoorNumber("");
     setDeliveryCharge(undefined);
+    setAppOrderNumber("");
+    setDueOnDelivery("");
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -1033,9 +1043,22 @@ function POS() {
       }
     }
 
+    let appOrder: { externalOrderId: string; dueOnDeliveryMinor: number } | undefined;
+    if (takesAppOrderNumber) {
+      const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
+      if (!appOrderNumber.trim())
+        throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
+      if (!Number.isFinite(due) || due < 0 || due > total)
+        throw new Error("The amount due on delivery must be between 0 and the order total.");
+      appOrder = {
+        externalOrderId: appOrderNumber.trim(),
+        dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
+      };
+    }
     const resultState = await mutateTransaction("upsertAndSendKitchen", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
+      ...(appOrder ? { appOrder } : {}),
     });
     if (resultState && "offline" in resultState && resultState.offline) {
       throw new Error(
@@ -1681,6 +1704,40 @@ function POS() {
                     </label>
                   </>
                 )}
+              </div>
+            )}
+            {takesAppOrderNumber && (
+              <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-semibold">
+                  {selectedChannel?.displayName} order number
+                  <input
+                    value={appOrderNumber}
+                    maxLength={80}
+                    onChange={(event) => setAppOrderNumber(event.target.value)}
+                    placeholder="As shown on the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <label className="grid gap-1 text-xs font-semibold">
+                  Due on delivery ({tenant.defaultCurrency})
+                  <input
+                    inputMode="decimal"
+                    value={dueOnDelivery}
+                    onChange={(event) => setDueOnDelivery(event.target.value)}
+                    placeholder="0 if paid in the app"
+                    className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal"
+                  />
+                </label>
+                <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                  The app pays the rest with its payout. Anything due on delivery is collected on
+                  Invoices.
+                </p>
+              </div>
+            )}
+            {appBooked && activeOrder?.externalSource && (
+              <div className="mb-3 rounded-lg border border-info/30 bg-info-soft px-3 py-2 text-[12px] font-semibold text-info">
+                {selectedChannel?.displayName} order {activeOrder.externalSource.externalOrderId}:
+                paid through the app. Collect anything due on delivery on Invoices.
               </div>
             )}
             {configuredDelivery && (

@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
+import { PayoutAccountsDialog } from "@/components/app/PayoutAccountsDialog";
+import type { PayoutAccounts } from "@/payments/payout-accounts";
 import type { DeliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -283,6 +285,7 @@ function Settings() {
       useOnlinePrice?: boolean;
       requiresTable?: boolean;
       deliverySettings?: DeliverySettings;
+      payoutAccounts?: PayoutAccounts;
     },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
@@ -855,6 +858,19 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      {channel.channelType === "MARKETPLACE" && (
+                        <PayoutAccountsDialog
+                          channel={channel}
+                          tenantId={activeTenantId}
+                          userId={currentUser.id}
+                          disabled={!canManageOrderChannels || Boolean(configSaving)}
+                          onSave={(payoutAccounts) =>
+                            updateConfiguredChannel(channel.id, channel.displayName, {
+                              payoutAccounts,
+                            })
+                          }
+                        />
+                      )}
                       <DeliverySettingsDialog
                         channel={channel}
                         currency={tenant?.defaultCurrency ?? "KES"}

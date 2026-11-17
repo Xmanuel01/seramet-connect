@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { deliverySettingsSchema } from "@/delivery/delivery-charge";
+import { payoutAccountsSchema } from "@/payments/payout-accounts";
 import { SerametHttpError, type ServerActor } from "@/lib/seramet-auth";
 import { permissions } from "@/platform/permissions";
 import { roleCodeForName } from "@/platform/standard-roles";
@@ -75,6 +76,7 @@ export const updateOrderChannelInputSchema = z
     useOnlinePrice: z.boolean().optional(),
     requiresTable: z.boolean().optional(),
     deliverySettings: deliverySettingsSchema.optional(),
+    payoutAccounts: payoutAccountsSchema.optional(),
     reason,
   })
   .strict()
@@ -83,7 +85,8 @@ export const updateOrderChannelInputSchema = z
       value.enabled !== undefined ||
       value.useOnlinePrice !== undefined ||
       value.requiresTable !== undefined ||
-      value.deliverySettings !== undefined,
+      value.deliverySettings !== undefined ||
+      value.payoutAccounts !== undefined,
     { message: "At least one channel setting is required" },
   );
 
@@ -434,6 +437,14 @@ export async function updateOrderChannel(
     if (!branch)
       throw new SerametHttpError(422, "Delivery rates must use active branches in this business");
   }
+  for (const accountId of new Set(Object.values(parsed.payoutAccounts ?? {}))) {
+    const account = await db
+      .prepare("SELECT id FROM accounts WHERE tenant_id=? AND id=? AND active=1")
+      .bind(actor.tenantId, accountId)
+      .first();
+    if (!account)
+      throw new SerametHttpError(422, "Payout accounts must be active accounts in this business");
+  }
   const next: OrderChannelDefinition = {
     ...current,
     enabled: parsed.enabled ?? current.enabled,
@@ -441,6 +452,7 @@ export async function updateOrderChannel(
     metadata: {
       ...current.metadata,
       ...(parsed.useOnlinePrice === undefined ? {} : { useOnlinePrice: parsed.useOnlinePrice }),
+      ...(parsed.payoutAccounts === undefined ? {} : { payoutAccounts: parsed.payoutAccounts }),
       ...(parsed.deliverySettings === undefined
         ? {}
         : {

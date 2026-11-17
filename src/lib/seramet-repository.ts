@@ -1,4 +1,10 @@
 import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
+import { channelPayoutAccounts } from "@/payments/payout-accounts";
+import {
+  appReceivableAccount,
+  parseManualAppOrder,
+  recordManualAppOrder,
+} from "@/payments/manual-app-order";
 import {
   deliverySettings,
   ridersCarryCash,
@@ -272,7 +278,38 @@ export function applyServerMutation(
         next.orders.find((order) => !state.orders.some((current) => current.id === order.id))?.id;
       if (!createdOrderId)
         throw new Error("Kitchen order did not receive an authoritative identity");
-      return TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      const configuration = getConfigurationRepository();
+      const channel = configuration
+        .listOrderChannels(actor.tenantId, false)
+        .find(
+          (row) =>
+            row.id === draft.channel ||
+            row.code === draft.channel ||
+            row.displayName === draft.channel,
+        );
+      const existingOrder = state.orders.find((order) => order.id === createdOrderId);
+      // A delivery-app order typed in by hand is owed by the app, not a till sale.
+      const isAppOrder = channel?.channelType === "MARKETPLACE" && !existingOrder?.externalSource;
+      if (existingOrder?.externalSource?.metadata["manualEntry"] === true)
+        throw new Error(
+          "This delivery-app order is already booked to the app. Ring extra items as a new order.",
+        );
+      const appOrder = isAppOrder ? parseManualAppOrder(input["appOrder"]) : undefined;
+      if (isAppOrder && !appOrder)
+        throw new Error(
+          `Enter the ${channel!.displayName} order number before sending to the kitchen`,
+        );
+      next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      if (!appOrder || !channel) return next;
+      const tenant = configuration.getTenant(actor.tenantId);
+      return recordManualAppOrder(next, createdOrderId, appOrder, {
+        channel,
+        currency: tenant.defaultCurrency,
+        receivableAccount: appReceivableAccount(
+          configuration.listPaymentMethods(actor.tenantId, false),
+          channelPayoutAccounts(channel)?.marketplaceReceivableAccountId,
+        ),
+      });
     }
     case "claimKitchenPrintObligations":
       return TransactionEngine.claimKitchenPrintObligations(
