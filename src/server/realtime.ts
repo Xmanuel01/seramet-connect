@@ -1,4 +1,5 @@
 import type { D1Database } from "@/server/database/d1";
+import { notifyRealtimeHub, type RealtimeHubNamespace } from "@/server/realtime-hub";
 
 export type RealtimeEvent = {
   id: string;
@@ -24,6 +25,7 @@ export async function publishRealtimeEvent(
     correlationId: string;
     payload?: Record<string, unknown>;
   },
+  hub?: RealtimeHubNamespace,
 ) {
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -49,6 +51,20 @@ export async function publishRealtimeEvent(
       expiresAt,
     )
     .run();
+  // The row is the durable catch-up log; the hub push is what makes it instant.
+  await notifyRealtimeHub(hub, input.tenantId, [
+    {
+      id,
+      branchId: input.branchId ?? null,
+      topic: input.topic,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      eventType: input.eventType,
+      correlationId: input.correlationId,
+      payload: input.payload ?? {},
+      createdAt,
+    },
+  ]);
   return id;
 }
 

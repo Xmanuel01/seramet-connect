@@ -810,17 +810,13 @@ function SetupCentre() {
           )}
           {section === "MENU" ? (
             <Panel>
-              <PanelHead
-                title="Menu import"
-                sub="Upload a file, check it, then publish it to your menu"
-              />
+              <PanelHead title="Menu import" sub="Upload a file, check the preview, then import" />
               <div className="flex flex-wrap items-center justify-between gap-3 p-4">
                 <p className="text-sm text-muted-foreground">
-                  Importing here uses the secure Menu Import workflow, including publication and
-                  branch activation checks.
+                  Bring your whole menu in from a CSV or Excel file on the Imports page.
                 </p>
                 <Btn variant="primary" onClick={() => navigate({ to: "/menu-import" })}>
-                  Open Menu Import
+                  Open Imports
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Btn>
               </div>
