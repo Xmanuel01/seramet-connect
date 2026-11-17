@@ -170,6 +170,7 @@ function Invoices() {
   const [printPreview, setPrintPreview] = useState<PrintPreviewState | null>(null);
   const [emailInvoice, setEmailInvoice] = useState<{ id: string; scope: string } | null>(null);
   const [warning, setWarning] = useState("");
+  const [notice, setNotice] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Paid" | "Unpaid" | "Pending">("Unpaid");
   const {
     activeTenantId,
@@ -306,7 +307,13 @@ function Invoices() {
       if (statusFilter === "Pending") return row.status === "PENDING";
       return true;
     });
-  const outstanding = activeRows.reduce((sum, row) => sum + row.total - row.paid, 0);
+  // A delivery-app invoice is open for what the customer still has to pay plus what the app
+  // still owes; neither counts as an ordinary invoice payment.
+  const rowOutstanding = (row: BillingRecord) => {
+    const balance = appOrderBalance(state, row.id);
+    return balance ? balance.toCollect + balance.appOwes : row.total - row.paid;
+  };
+  const outstanding = activeRows.reduce((sum, row) => sum + rowOutstanding(row), 0);
   const paid = activeRows.reduce((sum, row) => sum + row.paid, 0);
   const overdue = activeRows
     .filter((row) => row.paymentStatus !== "PAID")
@@ -327,7 +334,7 @@ function Invoices() {
         tenantId={activeTenantId}
         canCollect={canCollect}
         mutate={mutate}
-        onDone={setWarning}
+        onDone={setNotice}
       />
     ) : null;
   };
@@ -751,6 +758,17 @@ function Invoices() {
           value={activeRows.filter((row) => row.paymentStatus !== "PAID").length}
         />
       </div>
+      {notice && (
+        <div
+          role="status"
+          className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success-soft px-4 py-3 text-[13px] font-semibold text-success"
+        >
+          <span>{notice}</span>
+          <button type="button" className="underline" onClick={() => setNotice("")}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {server.error && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning-soft px-4 py-3 text-[13px] text-warning">
           <span>{server.error} Records made on this till are still shown.</span>
@@ -836,9 +854,7 @@ function Invoices() {
                 <TD className="num text-muted-foreground">{row.orderIds.join(", ")}</TD>
                 <TD>{row.customer}</TD>
                 <TD className="num text-right">{formatMoney(row.total)}</TD>
-                <TD className="num text-right font-semibold">
-                  {formatMoney(row.total - row.paid)}
-                </TD>
+                <TD className="num text-right font-semibold">{formatMoney(rowOutstanding(row))}</TD>
                 <TD>
                   <Status>{row.status}</Status>
                 </TD>
@@ -900,7 +916,7 @@ function Invoices() {
                 </div>
                 <div className="text-right">
                   <span className="block text-muted-foreground">Outstanding</span>
-                  <span className="num font-bold">{formatMoney(row.total - row.paid)}</span>
+                  <span className="num font-bold">{formatMoney(rowOutstanding(row))}</span>
                 </div>
                 <div className="col-span-2 min-w-0">
                   <span className="block text-muted-foreground">Orders</span>

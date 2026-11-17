@@ -3036,6 +3036,30 @@ export class IntegrationRuntime {
     });
   }
 
+  /**
+   * The ledger account for money a delivery app owes: the one chosen on the connection, else
+   * the receivable of its payment method, else the restaurant's customer receivables account
+   * that every payment method posts to. Collections and payouts post journal lines against it,
+   * so it must be a real account, never a display name.
+   */
+  private marketplaceReceivableAccount(
+    tenantId: string,
+    chosen: string | undefined,
+    paymentMethodId: string | undefined,
+  ) {
+    if (chosen) return chosen;
+    const methods = this.dependencies.configuration.listPaymentMethods(tenantId, false);
+    const account =
+      methods.find((method) => method.id === paymentMethodId || method.code === paymentMethodId)
+        ?.receivableAccountId ??
+      methods.find((method) => method.enabled && method.receivableAccountId)?.receivableAccountId;
+    if (!account)
+      throw new IntegrationValidationError(
+        "Choose the account for money owed by delivery apps before accepting their orders",
+      );
+    return account;
+  }
+
   private resolveChannel(tenantId: string, connection: IntegrationConnection, requested?: string) {
     const channels = this.dependencies.configuration.listOrderChannels(tenantId);
     const configured = String(
@@ -3296,7 +3320,11 @@ export class IntegrationRuntime {
               externalOrderId: record.resourceId,
               currency,
               externallyCollectedAmount: pending.platformExpectedAmount,
-              receivableAccount: config.settlementAccountId ?? "Marketplace Receivables",
+              receivableAccount: this.marketplaceReceivableAccount(
+                record.tenantId,
+                config.settlementAccountId,
+                config.externalPaymentMethodId,
+              ),
               metadata: {
                 ...pending,
                 charges: undefined,
