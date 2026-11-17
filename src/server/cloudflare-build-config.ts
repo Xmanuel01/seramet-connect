@@ -1,5 +1,19 @@
 type BuildEnvironment = Record<string, string | undefined>;
 
+/**
+ * The realtime hub: one hibernating WebSocket Durable Object per restaurant. Only the main
+ * build declares it: branch builds run `wrangler versions upload`, which refuses a pending
+ * Durable Object migration, so the migration is applied by the main `wrangler deploy`.
+ * Previews without the binding fall back to the SSE stream. Migration tags are permanent:
+ * add new entries, never edit or remove one that has been deployed.
+ */
+export const realtimeHubDurableObjects = {
+  durable_objects: {
+    bindings: [{ name: "SERAMET_REALTIME_HUB", class_name: "SerametRealtimeHub" }],
+  },
+  migrations: [{ tag: "v1-realtime-hub", new_sqlite_classes: ["SerametRealtimeHub"] }],
+};
+
 /** Preview builds must never inherit the production database or durable resources. */
 export function cloudflareBuildConfig(env: BuildEnvironment) {
   const production = env.WORKERS_CI === "1" && env.WORKERS_CI_BRANCH === "main";
@@ -35,6 +49,7 @@ export function cloudflareBuildConfig(env: BuildEnvironment) {
     // one crossed to Europe and back.
     ...(production ? { placement: { region: "aws:eu-west-1" } } : {}),
     vars,
+    ...(production ? realtimeHubDurableObjects : {}),
     hyperdrive: production
       ? [{ binding: "SERAMET_HYPERDRIVE", id: "4538af733065451c94d47beb2028390e" }]
       : [],

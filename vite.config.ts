@@ -57,7 +57,11 @@ export default defineConfig(({ command }) => ({
       ? [
           nitro({
             defaultPreset: "cloudflare-module",
-            cloudflare: { wrangler: cloudflareBuildConfig(process.env) },
+            cloudflare: {
+              wrangler: cloudflareBuildConfig(process.env),
+              // Durable Object classes the Worker must export (the realtime hub).
+              exports: "./src/server/cloudflare-exports.ts",
+            },
             plugins: ["./src/server/nitro-cloudflare-events.ts"],
           }),
         ]
