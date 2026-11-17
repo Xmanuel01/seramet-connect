@@ -118,6 +118,7 @@ function MarketplaceControlCentre() {
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [prepMinutes, setPrepMinutes] = useState(25);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [rejectedOnApp, setRejectedOnApp] = useState(false);
   const [allMarketplaces, setAllMarketplaces] = useState(true);
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [prices, setPrices] = useState<Record<string, string>>({});
@@ -146,6 +147,7 @@ function MarketplaceControlCentre() {
     currentScope.current = scope;
     setSelectedOrderId("");
     setRejectionReason("");
+    setRejectedOnApp(false);
     setDuration("MANUAL");
     setStage("All active");
     setSelectedItems([]);
@@ -645,11 +647,28 @@ function MarketplaceControlCentre() {
                         className="block h-10 w-full rounded-md border border-border bg-card px-3"
                       />
                     </label>
+                    {orderProvider && !orderProvider.capabilities.includes("REJECT_ORDER") && (
+                      <label className="flex max-w-sm items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={rejectedOnApp}
+                          onChange={(event) => setRejectedOnApp(event.target.checked)}
+                        />
+                        <span>
+                          I have rejected it on the {orderProvider.displayName} tablet.{" "}
+                          <span className="text-muted-foreground">
+                            {orderProvider.displayName} can&apos;t be told from Seramet.
+                          </span>
+                        </span>
+                      </label>
+                    )}
                     <Btn
                       disabled={
                         working ||
-                        !orderProvider?.capabilities.includes("REJECT_ORDER") ||
-                        !rejectionReason.trim()
+                        !orderProvider ||
+                        !rejectionReason.trim() ||
+                        (!orderProvider.capabilities.includes("REJECT_ORDER") && !rejectedOnApp)
                       }
                       onClick={() =>
                         void postAction(
@@ -659,8 +678,13 @@ function MarketplaceControlCentre() {
                             orderId: selectedOrder.id,
                             decision: "REJECT",
                             reason: rejectionReason,
+                            ...(orderProvider?.capabilities.includes("REJECT_ORDER")
+                              ? {}
+                              : { rejectedInProviderApp: true }),
                           },
-                          "Rejection queued. Awaiting marketplace confirmation.",
+                          orderProvider?.capabilities.includes("REJECT_ORDER")
+                            ? "Rejection queued. Awaiting marketplace confirmation."
+                            : "Order rejected and removed from the kitchen.",
                         )
                       }
                     >

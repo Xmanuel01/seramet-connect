@@ -1273,6 +1273,38 @@ describe("Pass 3 marketplace acceptance", () => {
     expect(f.transactions.state.payments).toHaveLength(0);
   });
 
+  it("rejects on an app that cannot be told, only after staff confirm they rejected it there", async () => {
+    const capabilities = testDeliveryDefinition.capabilities;
+    const index = capabilities.indexOf("REJECT_ORDER");
+    capabilities.splice(index, 1);
+    try {
+      const f = fixture({}, { acceptancePolicy: "MANUAL" });
+      await f.ready;
+      await f.runtime.handleWebhook(webhook());
+      const input = {
+        tenantId: DEMO_TENANT_ID,
+        branchId: DEMO_WESTLANDS_BRANCH_ID,
+        orderId: f.transactions.state.orders[0]!.id,
+        actorId: "manager",
+        reason: "Out of chicken",
+      };
+      await expect(
+        f.runtime.decideMarketplaceOrder({ ...input, decision: "REJECT" }),
+      ).rejects.toThrow(/Reject it on the .* tablet/);
+      await expect(f.runtime.rejectInProviderApp(input)).rejects.toThrow(/tablet first/);
+      const outboxBefore = (await f.repository.listOutbox(DEMO_TENANT_ID)).length;
+      await f.runtime.rejectInProviderApp({ ...input, rejectedInProviderApp: true });
+      const order = f.transactions.state.orders[0]!;
+      expect(order.status).toBe("CANCELLED");
+      expect(order.externalSource?.metadata["rejectedInProviderAppBy"]).toBe("manager");
+      expect(f.transactions.state.marketplaceReceivables).toHaveLength(0);
+      // Nothing is sent to an app that cannot receive it.
+      expect((await f.repository.listOutbox(DEMO_TENANT_ID)).length).toBe(outboxBefore);
+    } finally {
+      capabilities.splice(index, 0, "REJECT_ORDER");
+    }
+  });
+
   it("holds uncertain staff decisions instead of blindly repeating acceptance", async () => {
     const controls: TestDeliveryControls = {};
     const f = fixture(controls, { acceptancePolicy: "MANUAL" });

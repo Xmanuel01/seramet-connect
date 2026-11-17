@@ -557,6 +557,7 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
         decision?: string;
         prepMinutes?: number;
         reason?: string;
+        rejectedInProviderApp?: boolean;
       }>(request);
       if (
         !input.branchId ||
@@ -566,6 +567,17 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
       )
         throw new SerametHttpError(400, "Order, branch and a supported decision are required");
       authorizeBranchRead(actor, actor.tenantId, input.branchId);
+      if (input.decision === "REJECT" && input.rejectedInProviderApp === true) {
+        const rejected = await createIntegrationRuntime(env).rejectInProviderApp({
+          tenantId: actor.tenantId,
+          branchId: input.branchId,
+          orderId: input.orderId,
+          actorId: actor.id,
+          rejectedInProviderApp: true,
+          ...(input.reason ? { reason: input.reason } : {}),
+        });
+        return json({ ok: true, rejected }, 200);
+      }
       const queued = await createIntegrationRuntime(env).decideMarketplaceOrder({
         tenantId: actor.tenantId,
         branchId: input.branchId,

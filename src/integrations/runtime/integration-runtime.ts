@@ -672,6 +672,14 @@ export class IntegrationRuntime {
       ["DISABLED", "UNCONFIGURED", "CREDENTIALS_REQUIRED"].includes(connection.status)
     )
       throw new IntegrationValidationError("Marketplace connection is not enabled for this branch");
+    const providerAdapter = this.dependencies.registry.resolve(connection);
+    if (
+      input.decision === "REJECT" &&
+      !providerAdapter.definition.capabilities.includes("REJECT_ORDER")
+    )
+      throw new IntegrationValidationError(
+        `${providerAdapter.definition.displayName} cannot be told about a rejection from Seramet. Reject it on the ${providerAdapter.definition.displayName} tablet, then confirm here.`,
+      );
     this.dependencies.registry.resolve(
       connection,
       input.decision === "ACCEPT" ? "ACCEPT_ORDER" : "REJECT_ORDER",
@@ -749,6 +757,66 @@ export class IntegrationRuntime {
       },
       idempotencyKey: key,
     });
+  }
+
+  /**
+   * Some apps (Glovo) give restaurants no way to reject through their API. Staff reject on the
+   * app's own tablet and confirm it here; Seramet then cancels the order without sending
+   * anything, so nothing is cooked or booked as owed by the app.
+   */
+  async rejectInProviderApp(input: {
+    tenantId: string;
+    branchId: string;
+    orderId: string;
+    actorId: string;
+    reason?: string;
+    rejectedInProviderApp?: boolean;
+  }) {
+    const state = await this.dependencies.transactions.loadState(input.tenantId);
+    const order = state.orders.find(
+      (row) => row.id === input.orderId && row.branchId === input.branchId,
+    );
+    if (!order?.externalSource)
+      throw new IntegrationValidationError("Marketplace order not found in this branch");
+    const connection = this.requireTenantConnection(
+      input.tenantId,
+      order.externalSource.connectionId,
+    );
+    if (connection.branchId !== input.branchId)
+      throw new IntegrationValidationError("Marketplace connection is not enabled for this branch");
+    const definition = this.dependencies.registry.resolve(connection).definition;
+    const providerName = definition.displayName;
+    if (definition.capabilities.includes("REJECT_ORDER"))
+      throw new IntegrationValidationError(
+        `${providerName} can be told about rejections; reject it from Seramet instead`,
+      );
+    if (order.status !== "HELD" || order.externalSource?.metadata["acceptanceConfirmedAt"])
+      throw new IntegrationValidationError("Only unaccepted held orders can be reviewed");
+    if (!input.reason?.trim() || input.reason.length > 500)
+      throw new IntegrationValidationError(
+        "A rejection reason of up to 500 characters is required",
+      );
+    if (input.rejectedInProviderApp !== true)
+      throw new IntegrationValidationError(
+        `${providerName} cannot be told about a rejection from Seramet. Reject it on the ${providerName} tablet first, then confirm here.`,
+      );
+    const next = TransactionEngine.cancelOrder(state, order.id, {
+      user: input.actorId,
+      reason: `Rejected on ${providerName}: ${input.reason.trim()}`,
+      affectedItems: order.lines.map((line) => line.id),
+    });
+    const saved = next.orders.find((row) => row.id === order.id);
+    if (saved?.externalSource) {
+      saved.externalSource.metadata["rejectedInProviderAppAt"] = new Date().toISOString();
+      saved.externalSource.metadata["rejectedInProviderAppBy"] = input.actorId;
+      delete saved.externalSource.metadata["pendingMarketplaceFinancials"];
+    }
+    await this.dependencies.transactions.saveState(
+      next,
+      systemActor(input.tenantId, input.branchId, order.branch),
+      `Rejected ${providerName} order ${order.externalSource?.externalOrderId ?? order.id} on the app`,
+    );
+    return { localOnly: true as const, orderId: order.id };
   }
 
   async queueMenuSync(
