@@ -994,6 +994,18 @@ function POS() {
     const draft = buildTransactionDraft(tableNo);
     const channelError = orderChannelDispatchError(selectedChannel, draft);
     if (channelError) throw new Error(channelError);
+    let appOrder: { externalOrderId: string; dueOnDeliveryMinor: number } | undefined;
+    if (takesAppOrderNumber) {
+      const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
+      if (!appOrderNumber.trim())
+        throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
+      if (!Number.isFinite(due) || due < 0 || due > total)
+        throw new Error("The amount due on delivery must be between 0 and the order total.");
+      appOrder = {
+        externalOrderId: appOrderNumber.trim(),
+        dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
+      };
+    }
     const previewLines = items.flatMap((line) => {
       const unsentQuantity = line.qty - (sentQuantities[line.p.id] ?? 0);
       if (unsentQuantity <= 0) return [];
@@ -1043,18 +1055,6 @@ function POS() {
       }
     }
 
-    let appOrder: { externalOrderId: string; dueOnDeliveryMinor: number } | undefined;
-    if (takesAppOrderNumber) {
-      const due = dueOnDelivery.trim() ? Number(dueOnDelivery) : 0;
-      if (!appOrderNumber.trim())
-        throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
-      if (!Number.isFinite(due) || due < 0 || due > total)
-        throw new Error("The amount due on delivery must be between 0 and the order total.");
-      appOrder = {
-        externalOrderId: appOrderNumber.trim(),
-        dueOnDeliveryMinor: parseMajorAmount(due, tenant.defaultCurrency),
-      };
-    }
     const resultState = await mutateTransaction("upsertAndSendKitchen", {
       ...(activeOrder?.id ? { orderId: activeOrder.id } : {}),
       draft,
