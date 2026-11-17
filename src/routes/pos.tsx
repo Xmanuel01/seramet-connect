@@ -1,4 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
+import { DeliveryChargeFields } from "@/delivery/DeliveryChargeFields";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
@@ -221,6 +223,9 @@ function POS() {
   const [lines, setLines] = useState<Record<string, number>>(recoveredDraft?.lines ?? {});
   const [recipientName, setRecipientName] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [doorNumber, setDoorNumber] = useState("");
+  const [deliveryCharge, setDeliveryCharge] = useState<DeliveryCharge>();
   const deliveryHydratedOrderRef = useRef<string | null>(null);
   const [printNotice, setPrintNotice] = useState(IDLE_PRINT_NOTICE);
   const [printNoticeType, setPrintNoticeType] = useState<"idle" | "success" | "warning">("idle");
@@ -394,6 +399,9 @@ function POS() {
     deliveryHydratedOrderRef.current = key;
     setRecipientName(activeOrder.delivery?.recipientName ?? "");
     setDeliveryAddress(activeOrder.delivery?.address ?? "");
+    setDeliveryPhone(activeOrder.delivery?.phone ?? "");
+    setDoorNumber(activeOrder.delivery?.doorNumber ?? "");
+    setDeliveryCharge(activeOrder.delivery?.charge);
   }, [activeOrder, activeOrderId, activeTenantId, branchId]);
   const selectedOrderUnavailable = Boolean(activeOrderId && !activeOrder);
   const mutateTransaction: typeof mutateBackendTransaction = async (
@@ -531,6 +539,7 @@ function POS() {
 
   const chooseChannel = (id: string) => {
     if (channelLocked) return;
+    setDeliveryCharge(undefined);
     setPreferredChannelId(id);
     setOrderSource(id);
     window.sessionStorage.setItem(channelPreferenceKey, id);
@@ -722,12 +731,16 @@ function POS() {
       },
       { reported: 0, added: 0 },
     );
+  const configuredDelivery = deliverySettings(selectedChannel);
+  const showDelivery = configuredDelivery?.fulfilment === "RESTAURANT" || configuredDelivery?.fulfilment === "PROVIDER" || selectedChannel?.channelType === "OWN_DELIVERY" || selectedChannel?.requiresAddress;
+  const deliveryAmountMinor = deliveryCharge?.amountMinor ?? 0;
   const invoicePricing = posInvoicePricing({
     currency: tenant.defaultCurrency,
     itemsMinor: subtotalMinor,
     taxMinor: taxTotals.reported,
     serviceMinor: serviceTotals.reported,
     exclusiveChargesMinor: taxTotals.added + serviceTotals.added,
+    ...(deliveryCharge ? { deliveryChargeMinor: deliveryAmountMinor, deliveryPayableMinor: deliveryCharge.beneficiary === "RIDER" ? deliveryAmountMinor : 0 } : {}),
   });
   const subtotal = majorFromMinor(
     invoicePricing.financialComponents.netSalesMinor,
@@ -735,7 +748,7 @@ function POS() {
   );
   const tax = majorFromMinor(taxTotals.reported + serviceTotals.reported, tenant.defaultCurrency);
   const total = majorFromMinor(
-    subtotalMinor + taxTotals.added + serviceTotals.added,
+    subtotalMinor + taxTotals.added + serviceTotals.added + deliveryAmountMinor,
     tenant.defaultCurrency,
   );
   const predictedNextOrderId = () => nextTransactionRecordId("ORD", transactionState.orders);
@@ -789,6 +802,8 @@ function POS() {
       ...(itemNotes[line.p.id]?.trim() ? { itemNote: itemNotes[line.p.id]!.trim() } : {}),
     })),
     subtotal: invoicePricing.subtotal,
+    deliveryCharge: majorFromMinor(deliveryAmountMinor, tenant.defaultCurrency),
+    deliveryDetails: showDelivery ? [{ recipientName, phone: deliveryPhone, address: deliveryAddress, doorNumber }] : [],
     tax: invoicePricing.tax,
     total,
   });
@@ -859,12 +874,15 @@ function POS() {
                 ? `Table ${tableNo}`
                 : "Unassigned table",
       ),
-      ...(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress
+      ...(showDelivery || selectedChannel?.requiresCustomer
         ? {
             delivery: {
               ...(activeOrder?.delivery ?? { status: "UNASSIGNED" as const }),
               recipientName: recipientName.trim(),
               address: deliveryAddress.trim(),
+              phone: deliveryPhone.trim(),
+              doorNumber: doorNumber.trim(),
+              charge: deliveryCharge,
             },
             ...(!linkedCustomer && recipientName.trim() ? { customer: recipientName.trim() } : {}),
           }
@@ -908,6 +926,9 @@ function POS() {
     setSelectedTableNo(null);
     setRecipientName("");
     setDeliveryAddress("");
+    setDeliveryPhone("");
+    setDoorNumber("");
+    setDeliveryCharge(undefined);
     setPrintNotice(message);
     setPrintNoticeType(noticeType);
   };
@@ -1594,11 +1615,11 @@ function POS() {
                 .
               </div>
             )}
-            {(selectedChannel?.requiresCustomer || selectedChannel?.requiresAddress) && (
+            {(showDelivery || selectedChannel?.requiresCustomer) && (
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                {selectedChannel.requiresCustomer && !linkedCustomer && (
+                {(showDelivery || selectedChannel?.requiresCustomer) && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Customer name
+                    Customer name{showDelivery ? " (optional)" : ""}
                     <input
                       value={recipientName}
                       onChange={(event) => setRecipientName(event.target.value)}
@@ -1611,9 +1632,9 @@ function POS() {
                     />
                   </label>
                 )}
-                {selectedChannel.requiresAddress && (
+                {showDelivery && (
                   <label className="grid gap-1 text-xs font-semibold">
-                    Delivery address
+                    Delivery address (optional)
                     <input
                       value={deliveryAddress}
                       onChange={(event) => setDeliveryAddress(event.target.value)}
@@ -1624,8 +1645,17 @@ function POS() {
                     />
                   </label>
                 )}
+                {showDelivery && <>
+                  <label className="grid gap-1 text-xs font-semibold">Phone number (optional)
+                    <input type="tel" maxLength={64} value={deliveryPhone} disabled={!!activeOrder?.externalSource} onChange={(event) => setDeliveryPhone(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal" />
+                  </label>
+                  <label className="grid gap-1 text-xs font-semibold">Door / unit number (optional)
+                    <input maxLength={40} value={doorNumber} disabled={!!activeOrder?.externalSource} onChange={(event) => setDoorNumber(event.target.value)} className="h-10 min-w-0 rounded-md border border-border bg-card px-3 font-normal" />
+                  </label>
+                </>}
               </div>
             )}
+            {configuredDelivery && <DeliveryChargeFields settings={configuredDelivery} branchId={branchId} currency={tenant.defaultCurrency} value={deliveryCharge} onChange={setDeliveryCharge} disabled={channelLocked || !!activeOrder?.externalSource} canOverride={hasPermission(permissions.paymentsReconcile)} />}
             {operationalMenu.status === "error" && (
               <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                 Authoritative menu unavailable: {operationalMenu.error}

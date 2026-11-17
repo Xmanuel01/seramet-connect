@@ -1,4 +1,5 @@
 import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
+import { deliverySettings, validateLocalDeliveryCharge } from "@/delivery/delivery-charge";
 import {
   TransactionEngine,
   createEmptyTransactionState,
@@ -177,6 +178,21 @@ export function applyServerMutation(
   actor: ServerActor,
 ) {
   const input = payload as Record<string, unknown>;
+  if (input["draft"] && typeof input["draft"] === "object") {
+    const draft = input["draft"] as Parameters<typeof TransactionEngine.createOrder>[1];
+    const channel = getConfigurationRepository().listOrderChannels(actor.tenantId, false)
+      .find((row) => row.id === draft.channel || row.code === draft.channel || row.displayName === draft.channel);
+    const existing = state.orders.find((row) => row.id === input["orderId"]);
+    const charge = (draft.delivery ?? existing?.delivery)?.charge;
+    if (!existing?.externalSource) {
+      validateLocalDeliveryCharge(charge, deliverySettings(channel), actor.branchId);
+      if (charge?.source === "MANUAL" &&
+        !actor.permissions.includes(permissions.paymentsReconcile))
+        throw new Error("Delivery charge overrides require reconciliation permission");
+    } else if (JSON.stringify(existing.delivery?.charge) !== JSON.stringify(charge)) {
+      throw new Error("Provider delivery charges cannot be changed by a local draft");
+    }
+  }
   switch (action) {
     case "configureDailyClosing":
       return configureClosing(
@@ -1119,7 +1135,7 @@ export function applyServerMutation(
             left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
         );
       const totalOutstanding = obligations.reduce(
-        (sum, obligation) => sum + (obligation.collectedMinor - obligation.remittedMinor),
+        (sum, obligation) => sum + (obligation.collectedMinor - obligation.remittedMinor - (obligation.retainedFeeMinor ?? 0)),
         0,
       );
       if (amountMinor > totalOutstanding) {
@@ -1134,7 +1150,7 @@ export function applyServerMutation(
           (candidate) => candidate.id === obligation.id,
         );
         if (!current) continue;
-        const outstanding = Math.max(0, current.collectedMinor - current.remittedMinor);
+        const outstanding = Math.max(0, current.collectedMinor - current.remittedMinor - (current.retainedFeeMinor ?? 0));
         const allocated = Math.min(remaining, outstanding);
         if (allocated <= 0) continue;
         next = custodyLedger.recordRemittance(next, {

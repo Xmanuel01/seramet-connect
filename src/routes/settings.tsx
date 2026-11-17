@@ -1,4 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DeliverySettingsDialog } from "@/delivery/DeliverySettingsDialog";
+import type { DeliverySettings } from "@/delivery/delivery-charge";
 import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app/AppShell";
@@ -276,7 +278,7 @@ function Settings() {
   const updateConfiguredChannel = async (
     channelId: string,
     displayName: string,
-    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean },
+    change: { enabled?: boolean; useOnlinePrice?: boolean; requiresTable?: boolean; deliverySettings?: DeliverySettings },
   ) => {
     setConfigSaving(`channel-update:${channelId}`);
     try {
@@ -286,11 +288,13 @@ function Settings() {
         { ...change, reason: "Updated from Settings order channels" },
       );
       setConfigNotice({ kind: "success", message: `${displayName} was updated.` });
+      return true;
     } catch (error) {
       setConfigNotice({
         kind: "error",
         message: error instanceof Error ? error.message : "Order channel update failed.",
       });
+      return false;
     } finally {
       setConfigSaving("");
     }
@@ -846,6 +850,7 @@ function Settings() {
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Status>{channel.enabled ? "Active" : "Disabled"}</Status>
+                      <DeliverySettingsDialog channel={channel} currency={tenant?.defaultCurrency ?? "KES"} branches={branchRecords} disabled={!canManageOrderChannels || Boolean(configSaving)} onSave={(deliverySettings) => updateConfiguredChannel(channel.id, channel.displayName, { deliverySettings })} />
                       <Btn
                         disabled={!canManageOrderChannels || Boolean(configSaving)}
                         onClick={() =>

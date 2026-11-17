@@ -450,11 +450,13 @@ function normalizeUberOrder(
   );
   const discount =
     promotionalSubtotal === undefined ? 0 : Math.max(0, subtotal - promotionalSubtotal);
-  const taxes = moneyAt(order, factor, "payment", "charges", "tax", "amount") ?? 0;
+  const deliveryFee = moneyAt(order, factor, "payment", "charges", "delivery_fee", "amount") ?? 0;
+  const taxes = (moneyAt(order, factor, "payment", "charges", "tax", "amount") ?? 0) +
+    (moneyAt(order, factor, "payment", "charges", "delivery_fee_tax", "amount") ?? 0);
   const serviceFee = moneyAt(order, factor, "payment", "charges", "total_fee", "amount") ?? 0;
   const total =
     moneyAt(order, factor, "payment", "charges", "total", "amount") ??
-    subtotal - discount + taxes + serviceFee;
+    subtotal - discount + taxes + serviceFee + deliveryFee;
   const cashAmountDue =
     moneyAt(order, factor, "payment", "charges", "cash_amount_due", "amount") ?? 0;
   const marketplaceFeeDueToProvider =
@@ -474,6 +476,7 @@ function normalizeUberOrder(
     .filter(Boolean)
     .join(" ");
   const address =
+    stringAt(order, "deliveries", "0", "location", "street_address") ??
     stringAt(order, "deliveries", "0", "location", "formatted_address") ??
     stringAt(order, "delivery", "location", "formatted_address");
   const instructions = stringAt(order, "special_instructions");
@@ -496,6 +499,7 @@ function normalizeUberOrder(
       ...(scheduledFor ? { scheduledFor } : {}),
       currency,
       customer: {
+        ...(stringAt(order, "eater", "phone_code") ? { phoneCode: stringAt(order, "eater", "phone_code") } : {}),
         ...(externalCustomerId ? { externalCustomerId } : {}),
         ...(customerName ? { name: customerName } : {}),
         ...(customerPhone ? { phone: customerPhone } : {}),
@@ -504,6 +508,7 @@ function normalizeUberOrder(
         type: pickup ? "PICKUP" : restaurantDelivery ? "RESTAURANT" : dineIn ? "NONE" : "PROVIDER",
         providerManaged: !pickup && !restaurantDelivery && !dineIn,
         ...(address ? { address } : {}),
+        ...(stringAt(order, "deliveries", "0", "location", "unit_number") ? { doorNumber: stringAt(order, "deliveries", "0", "location", "unit_number") } : {}),
       },
       items,
       pricing: {
@@ -511,6 +516,7 @@ function normalizeUberOrder(
         discounts: discount,
         taxes,
         ...(serviceFee ? { serviceFee } : {}),
+        ...(deliveryFee ? { deliveryFee } : {}),
         total,
       },
       payment: {

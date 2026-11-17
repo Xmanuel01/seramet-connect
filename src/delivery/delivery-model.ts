@@ -2,11 +2,16 @@ import type { TransactionOrder, TransactionState } from "@/lib/transaction-engin
 import { majorFromMinor } from "@/payments/money";
 import type { CustodyObligation } from "@/payments/types";
 import type { OrderChannelDefinition } from "@/platform/types";
+import { deliverySettings } from "./delivery-charge";
 
 export type DeliveryFulfilment = "OWN_DELIVERY" | "PROVIDER_DELIVERY" | "PICKUP" | "NOT_DELIVERY";
 
 function configuredFulfilment(channel?: OrderChannelDefinition): DeliveryFulfilment | undefined {
   if (!channel) return undefined;
+  const settings = deliverySettings(channel);
+  if (settings) return settings.fulfilment === "RESTAURANT" ? "OWN_DELIVERY" :
+    settings.fulfilment === "PROVIDER" ? "PROVIDER_DELIVERY" :
+    settings.fulfilment === "PICKUP" ? "PICKUP" : "NOT_DELIVERY";
   const configured = String(
     channel.metadata["defaultFulfilment"] ?? channel.metadata["fulfilmentOwner"] ?? "",
   ).toUpperCase();
@@ -26,10 +31,9 @@ export function resolveDeliveryFulfilment(
   if (order.externalSource?.fulfilmentType === "PICKUP") return "PICKUP";
   if (order.guestContext?.serviceMode === "PICKUP") return "PICKUP";
 
+  if (order.externalSource?.fulfilmentType) return order.externalSource.fulfilmentType;
   const configured = configuredFulfilment(channel);
   if (configured) return configured;
-
-  if (order.externalSource?.fulfilmentType) return order.externalSource.fulfilmentType;
   if (order.guestContext?.serviceMode === "DIRECT_DELIVERY") return "OWN_DELIVERY";
   if (channel?.channelType === "OWN_DELIVERY") return "OWN_DELIVERY";
   if (channel?.channelType === "MARKETPLACE") return "PROVIDER_DELIVERY";
@@ -95,7 +99,9 @@ export function riderRemittedForOrder(state: TransactionState, order: Transactio
 }
 
 export function riderOutstandingForOrder(state: TransactionState, order: TransactionOrder) {
-  return Math.max(0, riderHeldAmount(state, order) - riderRemittedForOrder(state, order));
+  const obligation = custodyObligationForOrder(state, order);
+  const retained = obligation ? majorFromMinor(obligation.retainedFeeMinor ?? 0, obligation.currency) : 0;
+  return Math.max(0, riderHeldAmount(state, order) - riderRemittedForOrder(state, order) - retained);
 }
 
 export function directCompanyCollectedAmount(state: TransactionState, order: TransactionOrder) {

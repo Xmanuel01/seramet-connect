@@ -8,6 +8,8 @@ export type InvoiceComponents = {
   discountsMinor: number;
   netSalesMinor: number;
   serviceChargeMinor: number;
+  deliveryChargeMinor?: number;
+  deliveryPayableMinor?: number;
   taxMinor: number;
   totalMinor: number;
 };
@@ -19,6 +21,12 @@ export function verifyInvoiceComponents(
   totals: InvoiceTotals,
   currency: string,
 ): InvoiceComponents {
+  const delivery = components.deliveryChargeMinor ?? 0;
+  const payable = components.deliveryPayableMinor ?? 0;
+  assertMinorAmount(delivery);
+  assertMinorAmount(payable);
+  if (delivery < 0 || payable < 0 || payable > delivery)
+    throw new Error("Invalid delivery component allocation");
   if (components.version !== 1 || components.currency !== currency)
     throw new Error("Invoice component version or currency mismatch");
   for (const field of [
@@ -35,10 +43,10 @@ export function verifyInvoiceComponents(
   if (
     sumMinor([components.grossSalesMinor, -components.discountsMinor]) !==
       components.netSalesMinor ||
-    sumMinor([components.netSalesMinor, components.serviceChargeMinor]) !==
+    sumMinor([components.netSalesMinor, components.serviceChargeMinor, delivery]) !==
       parseMajorAmount(totals.subtotal, currency) ||
     components.taxMinor !== parseMajorAmount(totals.tax, currency) ||
-    sumMinor([components.netSalesMinor, components.serviceChargeMinor, components.taxMinor]) !==
+    sumMinor([components.netSalesMinor, components.serviceChargeMinor, components.taxMinor, delivery]) !==
       components.totalMinor ||
     components.totalMinor !== parseMajorAmount(totals.total, currency)
   )
@@ -75,8 +83,13 @@ export function splitInvoiceComponents(
       ? remaining
       : allocateInvoiceMinor(source.serviceChargeMinor, remaining);
   const discounts = allocateInvoiceMinor(source.discountsMinor, totals);
+  const afterService = remaining.map((amount, i) => amount - services[i]!);
+  const deliveries = sumMinor(afterService) === 0 ? afterService :
+    allocateInvoiceMinor(source.deliveryChargeMinor ?? 0, afterService);
+  const payables = sumMinor(deliveries) === 0 ? deliveries :
+    allocateInvoiceMinor(source.deliveryPayableMinor ?? 0, deliveries);
   return totals.map((totalMinor, i) => {
-    const netSalesMinor = totalMinor - taxes[i]! - services[i]!;
+    const netSalesMinor = totalMinor - taxes[i]! - services[i]! - deliveries[i]!;
     return {
       ...source,
       totalMinor,
@@ -84,6 +97,8 @@ export function splitInvoiceComponents(
       discountsMinor: discounts[i]!,
       grossSalesMinor: sumMinor([netSalesMinor, discounts[i]!]),
       serviceChargeMinor: services[i]!,
+      ...(source.deliveryChargeMinor !== undefined ? { deliveryChargeMinor: deliveries[i]! } : {}),
+      ...(source.deliveryPayableMinor !== undefined ? { deliveryPayableMinor: payables[i]! } : {}),
       taxMinor: taxes[i]!,
     };
   });
@@ -104,11 +119,13 @@ export function summarizeInvoiceComponents(
     "discountsMinor",
     "netSalesMinor",
     "serviceChargeMinor",
+    "deliveryChargeMinor",
+    "deliveryPayableMinor",
     "taxMinor",
     "totalMinor",
   ] as const;
   const totals = Object.fromEntries(
-    fields.map((field) => [field, sumMinor(verified.map((row) => row[field]))]),
+    fields.map((field) => [field, sumMinor(verified.map((row) => row[field] ?? 0))]),
   ) as Pick<InvoiceComponents, (typeof fields)[number]>;
   return { status: "COMPLETE" as const, missing: 0, invoiceCount: invoices.length, totals };
 }

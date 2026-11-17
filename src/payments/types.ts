@@ -373,6 +373,7 @@ export type CustodyObligation = {
   marketplaceFeeCollectedMinor: MinorAmount;
   unclassifiedCollectedMinor: MinorAmount;
   remittedMinor: MinorAmount;
+  retainedFeeMinor?: MinorAmount;
   paymentTransactionIds: string[];
   custodyAccountId?: string;
   marketplacePayableAccountId?: string;
@@ -400,6 +401,7 @@ export type CustodyMovement = Readonly<{
   type:
     | "CUSTOMER_COLLECTION"
     | "RIDER_REMITTANCE"
+    | "RIDER_FEE_RETAINED"
     | "CASHIER_HANDOVER"
     | "TILL_TRANSFER"
     | "BANK_DEPOSIT"
@@ -508,7 +510,8 @@ export type FinancialJournal = {
     | "PAYMENT_RECONCILIATION"
     | "CASH_MOVEMENT"
     | "CUSTODY_COLLECTION"
-    | "CUSTODY_REMITTANCE";
+    | "CUSTODY_REMITTANCE"
+    | "DELIVERY_FEE_SETTLEMENT";
   sourceId: string;
   businessDate: string;
   description: string;

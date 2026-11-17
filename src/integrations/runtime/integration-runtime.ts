@@ -51,6 +51,7 @@ import { invoiceBalanceMinor, PaymentOrchestrator } from "@/payments/payment-orc
 import { billNamedByReference, unverifiedByReceipt } from "@/payments/mpesa-matching";
 import { custodyLedger } from "@/payments/custody-ledger";
 import { parseMajorAmount } from "@/payments/money";
+import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
 
 export type WebhookEnvelope = {
   tenantId: string;
@@ -2574,18 +2575,18 @@ export class IntegrationRuntime {
     const holdForSchedule = Boolean(
       scheduledReleaseAt && new Date(scheduledReleaseAt).getTime() > Date.now(),
     );
-    const configuredFulfilment = String(channel.metadata["defaultFulfilment"] ?? "").toUpperCase();
     const fulfilmentType =
       order.delivery.type === "PICKUP"
         ? "PICKUP"
-        : ["RESTAURANT", "OWN_DELIVERY", "OWN"].includes(configuredFulfilment)
+        : order.delivery.type === "RESTAURANT" && !order.delivery.providerManaged
           ? "OWN_DELIVERY"
-          : ["PROVIDER", "PLATFORM", "PROVIDER_DELIVERY"].includes(configuredFulfilment)
-            ? "PROVIDER_DELIVERY"
-            : order.delivery.type === "RESTAURANT"
-              ? "OWN_DELIVERY"
-              : "PROVIDER_DELIVERY";
-    const financials = marketplaceFinancials(order);
+          : "PROVIDER_DELIVERY";
+    const charge: DeliveryCharge | undefined = (order.pricing.deliveryFee ?? 0) > 0 ? {
+      amountMinor: parseMajorAmount(order.pricing.deliveryFee!, order.currency),
+      source: "PROVIDER",
+      beneficiary: fulfilmentType === "OWN_DELIVERY" && deliverySettings(channel)?.beneficiary === "RIDER" ? "RIDER" : "BUSINESS",
+    } : undefined;
+    const financials = marketplaceFinancials(order, charge);
     const cashAmountDue = Math.max(0, order.payment.cashAmountDue ?? 0);
     const marketplaceFeeDue = Math.max(0, order.payment.marketplaceFeeDueToProvider ?? 0);
     const merchantCashPortion = Math.min(
@@ -2666,6 +2667,10 @@ export class IntegrationRuntime {
         delivery: {
           status: "UNASSIGNED",
           recipientName: order.customer.name ?? "External customer",
+          ...(order.customer.phone ? { phone: order.customer.phone } : {}),
+          ...(order.customer.phoneCode ? { phoneCode: order.customer.phoneCode } : {}),
+          ...(order.delivery.doorNumber ? { doorNumber: order.delivery.doorNumber } : {}),
+          ...(charge ? { charge } : {}),
           ...(order.delivery.address ? { address: order.delivery.address } : {}),
           ...(fulfilmentType === "PROVIDER_DELIVERY" && order.delivery.rider?.name
             ? { rider: order.delivery.rider.name }
@@ -3590,7 +3595,7 @@ function validateOrderTotals(order: NormalizedExternalOrder) {
   if (Math.abs(expectedTotal - order.pricing.total) > 1)
     throw new IntegrationValidationError("Provider order total is inconsistent");
 }
-function marketplaceFinancials(order: NormalizedExternalOrder) {
+function marketplaceFinancials(order: NormalizedExternalOrder, charge?: DeliveryCharge) {
   const nonTaxRevenue =
     order.pricing.subtotal +
     (order.pricing.deliveryFee ?? 0) +
@@ -3600,6 +3605,18 @@ function marketplaceFinancials(order: NormalizedExternalOrder) {
     subtotal: nonTaxRevenue,
     tax: order.pricing.taxes,
     total: nonTaxRevenue + order.pricing.taxes,
+    ...(charge ? { financialComponents: {
+      version: 1 as const,
+      currency: order.currency,
+      grossSalesMinor: parseMajorAmount(order.pricing.subtotal + (order.pricing.tip ?? 0), order.currency),
+      discountsMinor: 0,
+      netSalesMinor: parseMajorAmount(order.pricing.subtotal + (order.pricing.tip ?? 0), order.currency),
+      serviceChargeMinor: parseMajorAmount(order.pricing.serviceFee ?? 0, order.currency),
+      deliveryChargeMinor: charge.amountMinor,
+      deliveryPayableMinor: charge.beneficiary === "RIDER" ? charge.amountMinor : 0,
+      taxMinor: parseMajorAmount(order.pricing.taxes, order.currency),
+      totalMinor: parseMajorAmount(nonTaxRevenue + order.pricing.taxes, order.currency),
+    } } : {}),
   };
 }
 function estimatePrepMinutes(
