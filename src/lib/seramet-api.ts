@@ -1,5 +1,6 @@
 import { unmatchedDirectPayments } from "@/payments/mpesa-matching";
 import { parseMajorAmount } from "@/payments/money";
+import { withCachedSchemaCheck } from "@/server/database/schema-check-cache";
 import { emptyPaymentOperationsState } from "@/payments/payment-state";
 import type { PaymentOperationsState } from "@/payments/types";
 import {
@@ -261,7 +262,14 @@ async function routeSerametApiRequest(request: Request, env: SerametEnv) {
 
     if (runtime.productionLike) assertProductionOperationalReady(env);
     const repo = createTransactionRepository(env.SERAMET_DB, env);
-    if (runtime.productionLike) await assertCurrentSchema(env.SERAMET_DB!);
+    // Checked once per server instance (re-checked every minute), not on every request; the
+    // health probes above still read the version each time.
+    if (env.SERAMET_DB)
+      await withCachedSchemaCheck(
+        env.SERAMET_DB,
+        runtime.productionLike ? "exact" : "at-least",
+        () => (runtime.productionLike ? assertCurrentSchema(env.SERAMET_DB!) : repo.migrate()),
+      );
     else await repo.migrate();
     // Configuration is loaded per restaurant once a request knows which one it acts for
     // (authentication, a public restaurant link, a webhook connection), each time checking the
@@ -1182,7 +1190,9 @@ async function mutateTransactions(request: Request, env: SerametEnv, repo: Trans
     }
     throw error;
   }
-  assertBranchSafeSnapshotReplace(current, result.state, actor);
+  // A replay writes nothing, and its original request already passed this check; its state is
+  // read now, so other branches' later changes would look like this command's.
+  if (!result.duplicate) assertBranchSafeSnapshotReplace(current, result.state, actor);
   // Closing already commits its report/email jobs with the financial state. A later
   // optional management refresh must not turn a successful close into a failed acknowledgement.
   const closingCommand = closingMutationActions.has(body.action);

@@ -3,7 +3,10 @@ import type { ProviderRuntimeEnv } from "@/integrations/runtime-env";
 import { LOCAL_PILOT_TENANT_ID, LOCAL_PILOT_USER_ID } from "@/platform/pilot-defaults";
 import { mutationPermission, permissions } from "@/platform/permissions";
 import { getConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import { hydrateTenantConfiguration } from "@/server/database/authoritative-configuration";
+import {
+  hydrateTenantConfiguration,
+  readConfigurationRevision,
+} from "@/server/database/authoritative-configuration";
 import type { BranchScope, PermissionCode } from "@/platform/types";
 import type { D1Database } from "@/server/database/d1";
 import { retryAuthMetadata } from "@/server/auth-metadata-retry";
@@ -14,7 +17,11 @@ import {
 } from "@/server/environment";
 import { verifyExternalIdentity } from "@/server/identity/supabase-identity";
 import { PosIdentityService, readCookie as readPosCookie } from "@/server/pos-auth-service";
-import { applyStaffDevicePolicy, terminalPermissions } from "@/server/staff-device-policy";
+import {
+  applyStaffDevicePolicy,
+  loadActorFacts,
+  terminalPermissions,
+} from "@/server/staff-device-policy";
 
 export type ServerActor = {
   id: string;
@@ -83,10 +90,17 @@ export async function authenticateSerametRequest(
   request: Request,
   env: SerametEnv,
 ): Promise<ServerActor> {
+  // The configuration revision doesn't depend on who is asking, so it is read alongside the
+  // identity checks instead of after them: one round trip fewer on every request.
+  const revision =
+    env.SERAMET_DB && (request.headers.has("authorization") || request.headers.has("cookie"))
+      ? readConfigurationRevision(env.SERAMET_DB)
+      : undefined;
   const actor = await resolveSerametActor(request, env);
   // Configuration is loaded per restaurant, so the actor's restaurant is made available here,
   // where every authenticated request first learns which restaurant it acts for.
-  if (env.SERAMET_DB) await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId);
+  if (env.SERAMET_DB)
+    await hydrateTenantConfiguration(env.SERAMET_DB, env, actor.tenantId, false, revision);
   return actor;
 }
 
@@ -97,10 +111,8 @@ async function resolveSerametActor(request: Request, env: SerametEnv): Promise<S
   if (token) {
     if (!env.SERAMET_DB)
       throw new SerametHttpError(503, "Authoritative identity store unavailable");
-    return applyStaffDevicePolicy(
-      await authenticateBearer(token, request, env.SERAMET_DB, runtime, env),
-      env.SERAMET_DB,
-    );
+    // Applies the staff device policy from the facts it reads with the session.
+    return authenticateBearer(token, request, env.SERAMET_DB, runtime, env);
   }
 
   const posSession = readPosCookie(request, "seramet_pos_session");
@@ -219,16 +231,20 @@ async function authenticateBearer(
     const requestedTenantId =
       request.headers.get("x-seramet-tenant-id")?.trim() ||
       new URL(request.url).searchParams.get("tenant")?.trim();
+    // The stored session comes with the link, so a routine request needs no separate read.
     const links = await db
       .prepare(
-        `SELECT i.tenant_id,i.user_id,u.name AS user_name,u.password_version
+        `SELECT i.tenant_id,i.user_id,u.name AS user_name,u.password_version,
+                i.last_authenticated_at,s.user_id AS session_user_id,s.expires_at AS session_expires_at
          FROM identity_accounts i
          JOIN users u ON u.tenant_id=i.tenant_id AND u.id=i.user_id AND u.active=1
+         LEFT JOIN auth_sessions s ON s.tenant_id=i.tenant_id AND s.id=?
          WHERE i.provider=? AND i.subject=?
            AND (CAST(? AS text) IS NULL OR i.tenant_id=CAST(? AS text))
          ORDER BY i.tenant_id LIMIT 2`,
       )
       .bind(
+        identity.sessionId,
         identity.provider,
         identity.subject,
         requestedTenantId ?? null,
@@ -239,6 +255,9 @@ async function authenticateBearer(
         user_id: string;
         user_name: string;
         password_version: number;
+        last_authenticated_at: string | null;
+        session_user_id: string | null;
+        session_expires_at: string | null;
       }>();
     const memberships = links.results ?? [];
     if (!memberships.length) throw new SerametHttpError(403, "Identity is not linked to Seramet");
@@ -248,17 +267,28 @@ async function authenticateBearer(
     const membership = memberships[0]!;
     const stamp = new Date().toISOString();
     const authenticatedCutoff = new Date(Date.now() - 60_000).toISOString();
+    let prefetched = true;
     await retryAuthMetadata(async () => {
-      const stored = await db
-        .prepare(
-          `SELECT s.user_id,s.expires_at,
+      // The first attempt uses the session read with the link; a retry reads it again.
+      const stored = prefetched
+        ? membership.session_user_id && membership.session_expires_at
+          ? {
+              user_id: membership.session_user_id,
+              expires_at: membership.session_expires_at,
+              last_authenticated_at: membership.last_authenticated_at,
+            }
+          : null
+        : await db
+            .prepare(
+              `SELECT s.user_id,s.expires_at,
                   (SELECT a.last_authenticated_at FROM identity_accounts a
                    WHERE a.tenant_id=s.tenant_id AND a.user_id=s.user_id
                      AND a.provider=? AND a.subject=?) AS last_authenticated_at
            FROM auth_sessions s WHERE s.tenant_id=? AND s.id=?`,
-        )
-        .bind(identity.provider, identity.subject, membership.tenant_id, identity.sessionId)
-        .first<{ user_id: string; expires_at: string; last_authenticated_at: string | null }>();
+            )
+            .bind(identity.provider, identity.subject, membership.tenant_id, identity.sessionId)
+            .first<{ user_id: string; expires_at: string; last_authenticated_at: string | null }>();
+      prefetched = false;
       if (stored && stored.user_id !== membership.user_id)
         throw new SerametHttpError(401, "Session identity mismatch");
       // Persist only new sessions or verified token refreshes. Authorization below
@@ -353,9 +383,13 @@ async function authenticateStoredSession(
     tokenId?: string;
   },
 ): Promise<ServerActor> {
-  const session = await db
-    .prepare(
-      `SELECT s.tenant_id, s.id AS session_id, s.user_id, u.name AS user_name,
+  // The session (revocation, expiry, password version) and the actor's roles, branches, device
+  // and station access are read together; every check below still runs on every request.
+  const requestedBranchId = request.headers.get("x-seramet-branch-id")?.trim();
+  const [session, facts] = await Promise.all([
+    db
+      .prepare(
+        `SELECT s.tenant_id, s.id AS session_id, s.user_id, u.name AS user_name,
               s.device_id AS session_device_id, s.expires_at, s.revoked_at, s.last_seen_at,
               s.token_version, u.password_version
        FROM auth_sessions s
@@ -364,15 +398,22 @@ async function authenticateStoredSession(
          AND u.employment_status = 'ACTIVE'
          AND (u.effective_from IS NULL OR u.effective_from <= ?)
          AND (u.effective_until IS NULL OR u.effective_until > ?)`,
-    )
-    .bind(
-      identity.tenantId,
-      identity.sessionId,
-      identity.userId,
-      new Date().toISOString(),
-      new Date().toISOString(),
-    )
-    .first<SessionIdentityRow>();
+      )
+      .bind(
+        identity.tenantId,
+        identity.sessionId,
+        identity.userId,
+        new Date().toISOString(),
+        new Date().toISOString(),
+      )
+      .first<SessionIdentityRow>(),
+    loadActorFacts(db, {
+      tenantId: identity.tenantId,
+      userId: identity.userId,
+      ...(identity.deviceId ? { deviceId: identity.deviceId } : {}),
+      ...(requestedBranchId ? { branchId: requestedBranchId } : {}),
+    }),
+  ]);
   if (!session || session.revoked_at)
     throw new SerametHttpError(401, "Session is invalid or revoked");
   if (Date.parse(session.expires_at) <= Date.now())
@@ -385,51 +426,12 @@ async function authenticateStoredSession(
   if (session.session_device_id && identity.deviceId !== session.session_device_id) {
     throw new SerametHttpError(401, "Token device does not match the session device");
   }
-  if (tokenDeviceId) {
-    const device = await db
-      .prepare(
-        `SELECT id FROM hardware_devices
-         WHERE tenant_id = ? AND id = ? AND trust_status = 'ACTIVE' AND revoked_at IS NULL`,
-      )
-      .bind(session.tenant_id, tokenDeviceId)
-      .first<{ id: string }>();
-    if (!device) throw new SerametHttpError(401, "Device is not active");
-  }
+  // A session bound to a device is refused above unless the token names that same device, so
+  // the device read with the facts (the token's) is the one to check.
+  if (tokenDeviceId && !facts.device) throw new SerametHttpError(401, "Device is not active");
 
-  const [rolesResult, permissionsResult, branchesResult] = await Promise.all([
-    db
-      .prepare(
-        `SELECT r.id, r.name FROM user_roles ur
-         JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
-         WHERE ur.tenant_id = ? AND ur.user_id = ? AND r.active = 1`,
-      )
-      .bind(session.tenant_id, session.user_id)
-      .all<{ id: string; name: string }>(),
-    db
-      .prepare(
-        `SELECT DISTINCT rp.permission_code FROM user_roles ur
-         JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id AND r.active = 1
-         JOIN role_permissions rp ON rp.tenant_id = ur.tenant_id AND rp.role_id = ur.role_id
-         WHERE ur.tenant_id = ? AND ur.user_id = ?`,
-      )
-      .bind(session.tenant_id, session.user_id)
-      .all<{ permission_code: string }>(),
-    db
-      .prepare(
-        `SELECT b.id, b.name,
-                CASE WHEN pb.branch_id=b.id THEN 1 ELSE 0 END AS is_primary
-         FROM user_branches ub
-         JOIN branches b ON b.tenant_id = ub.tenant_id AND b.id = ub.branch_id
-         LEFT JOIN user_primary_branches pb
-           ON pb.tenant_id=ub.tenant_id AND pb.user_id=ub.user_id
-         WHERE ub.tenant_id = ? AND ub.user_id = ? AND b.active = 1
-         ORDER BY is_primary DESC,b.name,b.id`,
-      )
-      .bind(session.tenant_id, session.user_id)
-      .all<{ id: string; name: string; is_primary: number }>(),
-  ]);
-
-  const assignedBranches = branchesResult.results ?? [];
+  const roles = facts.roles;
+  const assignedBranches = facts.branches;
   if (!assignedBranches.length)
     throw new SerametHttpError(403, "User has no active branch assignment");
   const normalizedBranches = assignedBranches.map((candidate, index) => ({
@@ -440,8 +442,7 @@ async function authenticateStoredSession(
       (!assignedBranches.some((row) => row.is_primary === 1) && index === 0),
   }));
   const primaryBranch = normalizedBranches.find((candidate) => candidate.isPrimary)!;
-  const actorPermissions = (permissionsResult.results ?? []).map((row) => row.permission_code);
-  const requestedBranchId = request.headers.get("x-seramet-branch-id")?.trim();
+  const actorPermissions = facts.permissionCodes;
   const canUseAllScope = actorPermissions.includes(permissions.tenantScopeAllBranches);
   const canSwitchBranch = actorPermissions.includes(permissions.branchSwitch);
   const requestedBranch = requestedBranchId
@@ -475,13 +476,13 @@ async function authenticateStoredSession(
     });
   }
 
-  return {
+  const actor: ServerActor = {
     id: session.user_id,
     name: session.user_name,
     tenantId: session.tenant_id,
     sessionId: session.session_id,
     ...(tokenDeviceId ? { deviceId: tokenDeviceId } : {}),
-    roleIds: (rolesResult.results ?? []).map((role) => role.id),
+    roleIds: roles.map((role) => role.id),
     permissions: actorPermissions,
     assignedBranchIds: normalizedBranches.map((candidate) => candidate.id),
     assignedBranches: normalizedBranches,
@@ -490,11 +491,12 @@ async function authenticateStoredSession(
       ? { type: "ALL" as const }
       : { type: "BRANCH" as const, branchId: branch.id },
     branchId: branch.id,
-    role: rolesResult.results?.[0]?.name ?? "Configured user",
+    role: roles[0]?.name ?? "Configured user",
     branch: branch.name,
     ...(identity.tokenId ? { tokenId: identity.tokenId } : {}),
     authLevel: "FULL",
   };
+  return applyStaffDevicePolicy(actor, db, facts);
 }
 
 async function authenticateDevelopmentRequest(
