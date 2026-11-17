@@ -9,7 +9,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { Btn, Panel, PanelHead, Status } from "@/components/app/ui";
 import { getSerametAccessToken } from "@/lib/access-token";
 import { useAppContext } from "@/lib/app-context";
-import { StaffRolePreset } from "@/components/app/StaffRolePreset";
+import { RoleAccessEditor } from "@/components/app/RoleAccessEditor";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { cn } from "@/lib/utils";
 import {
@@ -340,6 +340,16 @@ function Settings() {
     const nextPermissions = roleRecord.permissions.includes(permission)
       ? roleRecord.permissions.filter((item) => item !== permission)
       : [...roleRecord.permissions, permission];
+    await saveRolePermissions(
+      roleId,
+      nextPermissions,
+      `Module access matrix updated for ${roleRecord.name}`,
+    );
+  };
+
+  const saveRolePermissions = async (roleId: string, nextPermissions: string[], reason: string) => {
+    const roleRecord = roleRecords.find((role) => role.id === roleId);
+    if (!roleRecord || accessSaving) return false;
     const token = getSerametAccessToken();
     setAccessSaving(true);
     try {
@@ -353,10 +363,7 @@ function Settings() {
             "x-seramet-tenant-id": activeTenantId,
             "x-seramet-user-id": currentUser.id,
           },
-          body: JSON.stringify({
-            permissions: nextPermissions,
-            reason: `Module access matrix updated for ${roleRecord.name}`,
-          }),
+          body: JSON.stringify({ permissions: nextPermissions, reason }),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
@@ -365,13 +372,15 @@ function Settings() {
       await refreshAccess();
       setConfigNotice({
         kind: "success",
-        message: `${roleRecord.name} permissions were updated and active access was refreshed.`,
+        message: `${roleRecord.name} access was saved and is active now.`,
       });
+      return true;
     } catch (error) {
       setConfigNotice({
         kind: "error",
         message: error instanceof Error ? error.message : "Permission update failed.",
       });
+      return false;
     } finally {
       setAccessSaving(false);
     }
@@ -585,15 +594,30 @@ function Settings() {
                     </label>
                   </div>
                   {selectedAccessRole && (
-                    <StaffRolePreset
-                      key={selectedAccessRole.id}
-                      roleId={selectedAccessRole.id}
-                      disabled={!canManageRoleAccess || accessSaving}
+                    <RoleAccessEditor
+                      // A saved change reloads the role, which starts the editor afresh.
+                      key={`${selectedAccessRole.id}:${[...selectedAccessRole.permissions].sort().join(",")}`}
+                      role={selectedAccessRole}
+                      editorPermissions={currentUser.permissions}
+                      editorCanDelegateAll={currentUser.permissions.includes(
+                        platformPermissions.enterpriseAccessManage,
+                      )}
+                      showHeadOffice={
+                        branchRecords.length > 1 ||
+                        selectedAccessRole.permissions.some((code) =>
+                          code.startsWith("enterprise."),
+                        )
+                      }
+                      disabled={!canManageRoleAccess}
+                      saving={accessSaving}
+                      onSave={(next, reason) =>
+                        saveRolePermissions(selectedAccessRole.id, next, reason)
+                      }
                     />
                   )}
                   <details className="mt-3 rounded-lg border border-border">
                     <summary className="cursor-pointer px-3 py-2.5 text-[13px] font-semibold">
-                      Fine-tune permissions
+                      Advanced: individual permissions
                     </summary>
                     <div className="overflow-x-auto border-t border-border">
                       <table className="w-full min-w-[1100px]">
