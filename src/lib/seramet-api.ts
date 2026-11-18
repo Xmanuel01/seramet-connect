@@ -1011,6 +1011,22 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
   const url = new URL(request.url);
   const branchId = url.searchParams.get("branchId")?.trim() || actor.branchId;
   authorizeBranchRead(actor, actor.tenantId, branchId);
+  const canSell = actor.permissions.includes(permissions.ordersCreate);
+  // The tax and service rules load alongside the items rather than after them.
+  const now = new Date().toISOString();
+  const rulesQuery = canSell
+    ? env.SERAMET_DB.prepare(
+        `SELECT id,code,rule_type,rate_bps,calculation_mode
+     FROM tax_service_rules
+     WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)
+       AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)
+     ORDER BY CASE WHEN branch_id=? THEN 0 ELSE 1 END,id`,
+      )
+        .bind(actor.tenantId, branchId, now, now, branchId)
+        .all()
+    : undefined;
+  // Awaited below; this only keeps a failure from going unobserved if the items query fails.
+  void rulesQuery?.catch(() => undefined);
   const rows = await env.SERAMET_DB.prepare(
     `SELECT m.id,m.code,m.sku,m.barcode,m.name,m.category_code,m.description,m.selling_price_minor,
             m.currency,m.tax_rule_id,m.service_charge_applicable,bs.station_id,
@@ -1032,7 +1048,7 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
     ...row,
     ...menuDisplayFields(payload_json),
   }));
-  if (!actor.permissions.includes(permissions.ordersCreate)) {
+  if (!canSell || !rulesQuery) {
     return json({
       ok: true,
       branchId,
@@ -1040,15 +1056,7 @@ async function getOperationalMenuCatalog(request: Request, env: SerametEnv) {
       pricingRules: [],
     });
   }
-  const rules = await env.SERAMET_DB.prepare(
-    `SELECT id,code,rule_type,rate_bps,calculation_mode
-     FROM tax_service_rules
-     WHERE tenant_id=? AND active=1 AND (branch_id=? OR branch_id IS NULL)
-       AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)
-     ORDER BY CASE WHEN branch_id=? THEN 0 ELSE 1 END,id`,
-  )
-    .bind(actor.tenantId, branchId, new Date().toISOString(), new Date().toISOString(), branchId)
-    .all();
+  const rules = await rulesQuery;
   return json({ ok: true, branchId, items, pricingRules: rules.results ?? [] });
 }
 
