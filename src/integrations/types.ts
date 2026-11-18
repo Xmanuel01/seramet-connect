@@ -99,7 +99,10 @@ export type NormalizedExternalOrder = {
   channelId?: string;
   orderType: "DELIVERY" | "PICKUP" | "DINE_IN" | "OTHER";
   createdAt: string;
+  /** When the customer wants it: the delivery time, or the pickup time for pickup orders. */
   scheduledFor?: string;
+  /** When the app wants the food ready for its rider, where the app says so. */
+  scheduledReadyAt?: string;
   currency: string;
   customer: {
     externalCustomerId?: string;

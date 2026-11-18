@@ -9,7 +9,11 @@ export type ManualAppOrderInput = {
   externalOrderId: string;
   /** Part the customer pays on delivery; the rest was paid in the app. */
   dueOnDeliveryMinor?: number;
+  /** For a scheduled app order: when its rider collects it. The kitchen gets it beforehand. */
+  readyBy?: string;
 };
+
+const maxScheduleAheadMs = 7 * 24 * 60 * 60_000;
 
 export function parseManualAppOrder(value: unknown): ManualAppOrderInput | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -21,7 +25,18 @@ export function parseManualAppOrder(value: unknown): ManualAppOrderInput | undef
     throw new Error("Enter the delivery app's order number (up to 80 characters)");
   if (!Number.isSafeInteger(due) || due < 0)
     throw new Error("The amount due on delivery must be zero or more");
-  return { externalOrderId, dueOnDeliveryMinor: due };
+  const readyByText = typeof row["readyBy"] === "string" ? row["readyBy"].trim() : "";
+  if (!readyByText) return { externalOrderId, dueOnDeliveryMinor: due };
+  const readyBy = Date.parse(readyByText);
+  if (!Number.isFinite(readyBy) || readyBy <= Date.now())
+    throw new Error("The ready-by time must be later than now");
+  if (readyBy - Date.now() > maxScheduleAheadMs)
+    throw new Error("A scheduled order can be at most 7 days ahead");
+  return {
+    externalOrderId,
+    dueOnDeliveryMinor: due,
+    readyBy: new Date(readyBy).toISOString(),
+  };
 }
 
 /**
@@ -53,6 +68,8 @@ export function recordManualAppOrder(
     channel: OrderChannelDefinition;
     currency: string;
     receivableAccount: string;
+    /** Set when the order waits for the kitchen until its scheduled time. */
+    schedule?: { scheduledReadyAt: string; scheduledReleaseAt: string };
   },
 ) {
   const order = state.orders.find((row) => row.id === orderId);
@@ -87,9 +104,21 @@ export function recordManualAppOrder(
       dueMinor === 0 ? "PLATFORM_PREPAID" : dueMinor === totalMinor ? "CASH_DUE" : "MIXED",
     ...(dueMinor ? { cashAmountDue: majorFromMinor(dueMinor, context.currency) } : {}),
     fulfilmentType: "PROVIDER_DELIVERY",
-    isScheduled: false,
+    isScheduled: Boolean(input.readyBy),
+    ...(context.schedule
+      ? {
+          scheduledReadyAt: context.schedule.scheduledReadyAt,
+          scheduledReleaseAt: context.schedule.scheduledReleaseAt,
+          estimatedReadyAt: context.schedule.scheduledReadyAt,
+        }
+      : {}),
     receivedAt: order.createdAt,
-    metadata: { manualEntry: true },
+    // Typed in from the app's tablet, so it is already accepted there; the scheduled release
+    // job sends it to the kitchen when its time comes.
+    metadata: {
+      manualEntry: true,
+      ...(context.schedule ? { acceptanceConfirmedAt: order.createdAt } : {}),
+    },
   };
   let next = TransactionEngine.recordMarketplaceReceivable(state, orderId, {
     connectionId,

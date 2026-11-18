@@ -161,7 +161,12 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
     return reconstructState(tenantId, snapshot.rows);
   }
 
-  async saveState(state: TransactionState, actor: ServerActor, reason: string) {
+  async saveState(
+    state: TransactionState,
+    actor: ServerActor,
+    reason: string,
+    options?: { expectedRevision?: number },
+  ) {
     if (state.tenantId !== actor.tenantId) {
       throw new ServerOperationError(
         "TENANT_SCOPE_VIOLATION",
@@ -177,7 +182,15 @@ export class D1AuthoritativeTransactionRepository implements TransactionReposito
       requestHash: await sha256(JSON.stringify({ reason, state })),
       correlationId: crypto.randomUUID(),
       reason,
+      ...(options?.expectedRevision !== undefined
+        ? { requiredBaseRevision: options.expectedRevision }
+        : {}),
     });
+  }
+
+  async loadStateWithRevision(tenantId: string) {
+    const { state, revision } = await this.loadStateAtStableRevision(tenantId);
+    return { state, revision };
   }
 
   async commitMutation(input: TransactionMutationCommit): Promise<TransactionMutationResult> {

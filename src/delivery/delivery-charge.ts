@@ -10,6 +10,11 @@ export const deliverySettingsSchema = z
     // the cashier clears the invoice with whatever was paid. RIDER: the rider carries it and
     // is tracked until it is handed in.
     cashHandledBy: z.enum(["COUNTER", "RIDER"]).default("COUNTER"),
+    // Scheduled orders: minutes for the rider to reach the customer once the food is ready,
+    // used when the app gives only a delivery time; and the kitchen's prep time for scheduled
+    // orders typed in by hand, which have no connection to estimate it.
+    scheduledTravelMinutes: z.number().int().min(0).max(240).default(15),
+    scheduledPrepMinutes: z.number().int().min(1).max(480).default(25),
     rates: z
       .array(
         z

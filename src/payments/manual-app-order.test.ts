@@ -143,8 +143,40 @@ function draft(): OrderDraft {
   };
 }
 
+describe("a scheduled delivery-app order typed into the POS", () => {
+  it("waits for the kitchen until prep time before it must be ready", () => {
+    const readyBy = new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+    const next = send({ externalOrderId: "G-2001", readyBy });
+    const order = next.orders[0]!;
+    expect(order.status).toBe("HELD");
+    expect(order.lines.every((line) => !line.sentAt)).toBe(true);
+    // The channel's default kitchen prep for typed-in scheduled orders is 25 minutes.
+    expect(order.externalSource).toMatchObject({
+      isScheduled: true,
+      scheduledReadyAt: readyBy,
+      scheduledReleaseAt: new Date(Date.parse(readyBy) - 25 * 60_000).toISOString(),
+    });
+    // Already accepted on the app's tablet, so the release job picks it up.
+    expect(order.externalSource?.metadata["acceptanceConfirmedAt"]).toBeTruthy();
+    // The app still owes it from the moment it is booked.
+    expect(next.bills[0]!.status).toBe("PROVIDER_RECEIVABLE");
+  });
+
+  it("goes straight to the kitchen when prep should already have started", () => {
+    const readyBy = new Date(Date.now() + 10 * 60_000).toISOString();
+    const order = send({ externalOrderId: "G-2002", readyBy }).orders[0]!;
+    expect(order.status).toBe("SENT_TO_KITCHEN");
+  });
+
+  it("refuses a ready-by time in the past", () => {
+    expect(() =>
+      send({ externalOrderId: "G-2003", readyBy: new Date(Date.now() - 60_000).toISOString() }),
+    ).toThrow(/later than now/);
+  });
+});
+
 function send(
-  appOrder: { externalOrderId: string; dueOnDeliveryMinor?: number } | undefined,
+  appOrder: { externalOrderId: string; dueOnDeliveryMinor?: number; readyBy?: string } | undefined,
   state: TransactionState = createEmptyTransactionState(tenantId),
 ) {
   return applyServerMutation(

@@ -424,6 +424,9 @@ async function requestUber<T>(
   return response.data;
 }
 
+/** A ready time this far after placement means Uber is holding the order for later. */
+const scheduledReadyLeadMs = 60 * 60_000;
+
 function normalizeUberOrder(
   payload: unknown,
   connection: IntegrationConnection,
@@ -484,9 +487,16 @@ function normalizeUberOrder(
   const externalCustomerId = stringAt(order, "eater", "id");
   const customerPhone = stringAt(order, "eater", "phone");
   const providerPaymentReference = stringAt(order, "payment", "payment_method");
-  const scheduledFor =
-    stringAt(order, "scheduled_order_info", "deliver_at") ??
-    stringAt(order, "estimated_ready_for_pickup_at");
+  // Uber's ready-for-pickup estimate is on every order, so it alone does not make one scheduled:
+  // only Uber's scheduled delivery time does, or a ready time an hour or more after placement.
+  const deliverAt = stringAt(order, "scheduled_order_info", "deliver_at");
+  const uberReadyAt = stringAt(order, "estimated_ready_for_pickup_at");
+  const placedAt = Date.parse(stringAt(order, "placed_at") ?? "");
+  const scheduled =
+    Boolean(deliverAt) ||
+    (Boolean(uberReadyAt) &&
+      Number.isFinite(placedAt) &&
+      Date.parse(uberReadyAt!) - placedAt >= scheduledReadyLeadMs);
   const currency = stringAt(order, "payment", "charges", "total", "currency_code") ?? "KES";
 
   return Promise.resolve({
@@ -497,7 +507,8 @@ function normalizeUberOrder(
       externalStoreId: storeId,
       orderType: pickup ? "PICKUP" : dineIn ? "DINE_IN" : "DELIVERY",
       createdAt: stringAt(order, "placed_at") ?? new Date().toISOString(),
-      ...(scheduledFor ? { scheduledFor } : {}),
+      ...(scheduled && deliverAt ? { scheduledFor: deliverAt } : {}),
+      ...(scheduled && uberReadyAt ? { scheduledReadyAt: uberReadyAt } : {}),
       currency,
       customer: {
         ...(stringAt(order, "eater", "phone_code")
