@@ -2,6 +2,7 @@ import {
   allAccessAreas,
   allRiskyActions,
   areaPermissions,
+  simpleEditorPermissions,
   type AccessLevel,
 } from "@/platform/role-access-catalogue";
 import { staffRolePresets } from "@/platform/staff-role-presets";
@@ -9,6 +10,20 @@ import { accountOwnerPermissions } from "@/platform/standard-roles";
 import type { PermissionCode } from "@/platform/types";
 
 export type RoleTemplate = { key: string; label: string; permissions: PermissionCode[] };
+
+/**
+ * A role's permissions with a template applied: everything the simple editor sets comes from
+ * the template; anything else on the role, including advanced-only permissions such as
+ * ownership transfer, is left exactly as it was.
+ */
+export function applyRoleTemplate(held: readonly PermissionCode[], template: RoleTemplate) {
+  return [
+    ...new Set([
+      ...held.filter((code) => !simpleEditorPermissions.has(code)),
+      ...template.permissions.filter((code) => simpleEditorPermissions.has(code)),
+    ]),
+  ];
+}
 
 /** A role made of area levels and risky-action switches. */
 function fromLevels(levels: Record<string, AccessLevel>, risky: string[] = []): PermissionCode[] {

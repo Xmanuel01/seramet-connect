@@ -83,6 +83,7 @@ function Settings() {
   const [configSaving, setConfigSaving] = useState("");
   const [selectedAccessRoleId, setSelectedAccessRoleId] = useState(roleRecords[0]?.id ?? "");
   const [accessSaving, setAccessSaving] = useState(false);
+  const [accessDraftPending, setAccessDraftPending] = useState(false);
   const tenantUsers = platformState.users.filter(
     (user) => user.tenantId === activeTenantId && user.active,
   );
@@ -344,10 +345,16 @@ function Settings() {
       roleId,
       nextPermissions,
       `Module access matrix updated for ${roleRecord.name}`,
+      roleRecord.permissions,
     );
   };
 
-  const saveRolePermissions = async (roleId: string, nextPermissions: string[], reason: string) => {
+  const saveRolePermissions = async (
+    roleId: string,
+    nextPermissions: string[],
+    reason: string,
+    basePermissions: string[],
+  ) => {
     const roleRecord = roleRecords.find((role) => role.id === roleId);
     if (!roleRecord || accessSaving) return false;
     const token = getSerametAccessToken();
@@ -363,17 +370,25 @@ function Settings() {
             "x-seramet-tenant-id": activeTenantId,
             "x-seramet-user-id": currentUser.id,
           },
-          body: JSON.stringify({ permissions: nextPermissions, reason }),
+          body: JSON.stringify({ permissions: nextPermissions, reason, basePermissions }),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok)
         throw new Error(payload.message ?? `Access update failed (${response.status})`);
-      await refreshAccess();
-      setConfigNotice({
-        kind: "success",
-        message: `${roleRecord.name} access was saved and is active now.`,
-      });
+      // The server has saved it; a failed refresh only means this page shows it late.
+      try {
+        await refreshAccess();
+        setConfigNotice({
+          kind: "success",
+          message: `${roleRecord.name} access was saved and is active now.`,
+        });
+      } catch {
+        setConfigNotice({
+          kind: "success",
+          message: `${roleRecord.name} access was saved. Reload the page to see it here.`,
+        });
+      }
       return true;
     } catch (error) {
       setConfigNotice({
@@ -582,7 +597,17 @@ function Settings() {
                       <span className="text-muted-foreground">Role</span>
                       <select
                         value={selectedAccessRole?.id ?? ""}
-                        onChange={(event) => setSelectedAccessRoleId(event.target.value)}
+                        onChange={(event) => {
+                          // Unsaved changes are never dropped silently by switching roles.
+                          if (
+                            accessDraftPending &&
+                            !window.confirm(
+                              "This role has unsaved access changes. Switch role and discard them?",
+                            )
+                          )
+                            return;
+                          setSelectedAccessRoleId(event.target.value);
+                        }}
                         className="h-9 min-w-[180px] rounded-md border border-border bg-card px-3"
                       >
                         {roleRecords.map((role) => (
@@ -610,15 +635,21 @@ function Settings() {
                       }
                       disabled={!canManageRoleAccess}
                       saving={accessSaving}
-                      onSave={(next, reason) =>
-                        saveRolePermissions(selectedAccessRole.id, next, reason)
+                      onSave={(next, reason, base) =>
+                        saveRolePermissions(selectedAccessRole.id, next, reason, base)
                       }
+                      onPendingChange={setAccessDraftPending}
                     />
                   )}
                   <details className="mt-3 rounded-lg border border-border">
                     <summary className="cursor-pointer px-3 py-2.5 text-[13px] font-semibold">
                       Advanced: individual permissions
                     </summary>
+                    {accessDraftPending && (
+                      <p className="border-t border-border px-3 py-2 text-[12px] text-muted-foreground">
+                        Save or discard the changes above before editing individual permissions.
+                      </p>
+                    )}
                     <div className="overflow-x-auto border-t border-border">
                       <table className="w-full min-w-[1100px]">
                         <thead>
@@ -659,7 +690,10 @@ function Settings() {
                                       requirement={requirement}
                                       rolePermissions={selectedAccessRole?.permissions ?? []}
                                       disabled={
-                                        !selectedAccessRole || accessSaving || !canManageRoleAccess
+                                        !selectedAccessRole ||
+                                        accessSaving ||
+                                        !canManageRoleAccess ||
+                                        accessDraftPending
                                       }
                                       onToggle={(permission) =>
                                         selectedAccessRole

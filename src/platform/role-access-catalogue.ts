@@ -578,7 +578,11 @@ export function roleAccessSummary(held: readonly PermissionCode[]) {
         : `${area.label} (${accessLevelLabels[level].toLowerCase()})`,
     );
   const risky = allRiskyActions
-    .filter((action) => action.permissions.every((code) => has.has(code)))
-    .map((action) => action.label.toLowerCase());
+    .filter((action) => action.permissions.some((code) => has.has(code)))
+    .map(
+      (action) =>
+        action.label.toLowerCase() +
+        (action.permissions.every((code) => has.has(code)) ? "" : " (partly)"),
+    );
   return { can, risky };
 }

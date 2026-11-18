@@ -6,11 +6,12 @@ import {
   allRiskyActions,
   areaLevel,
   areaPermissions,
+  roleAccessSummary,
   simpleEditorPermissions,
   withAreaLevel,
   withRiskyAction,
 } from "@/platform/role-access-catalogue";
-import { roleTemplates } from "@/platform/role-templates";
+import { applyRoleTemplate, roleTemplates } from "@/platform/role-templates";
 import { staffRolePresets } from "@/platform/staff-role-presets";
 
 describe("simple role editor catalogue", () => {
@@ -88,5 +89,34 @@ describe("simple role editor catalogue", () => {
         expect(template.permissions).not.toContain(code);
     }
     expect(simpleEditorPermissions.has(permissions.platformTenantsProvision)).toBe(false);
+  });
+});
+
+describe("role editor review fixes", () => {
+  it("never adds advanced-only permissions when the Owner template is applied", () => {
+    const owner = roleTemplates.find((template) => template.key === "owner")!;
+    expect(owner.permissions).toContain(permissions.ownershipTransfer);
+    const applied = applyRoleTemplate([permissions.posAccess], owner);
+    expect(applied).not.toContain(permissions.ownershipTransfer);
+    expect(applied).not.toContain(permissions.setupEntitlementsManage);
+    expect(applied).toContain(permissions.paymentsRefundApprove);
+    // Advanced permissions a role already has are kept.
+    expect(applyRoleTemplate([permissions.ownershipTransfer], owner)).toContain(
+      permissions.ownershipTransfer,
+    );
+  });
+
+  it("lists a partly held risky action in the summary", () => {
+    expect(roleAccessSummary([permissions.invoicesReprint]).risky).toEqual([
+      "reprint invoices and receipts (partly)",
+    ]);
+    expect(
+      roleAccessSummary([permissions.invoicesReprint, permissions.receiptsReprint]).risky,
+    ).toEqual(["reprint invoices and receipts"]);
+  });
+
+  it("switching a partly held risky action off removes only what is held", () => {
+    const reprint = allRiskyActions.find((action) => action.key === "reprint")!;
+    expect(withRiskyAction([permissions.invoicesReprint], reprint, false)).toEqual([]);
   });
 });
