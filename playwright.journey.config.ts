@@ -52,6 +52,8 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4174",
     trace: "off",
     screenshot: "only-on-failure",
+    actionTimeout: 30_000,
+    navigationTimeout: 60_000,
   },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4174",

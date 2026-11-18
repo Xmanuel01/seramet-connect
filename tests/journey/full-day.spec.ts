@@ -1,6 +1,12 @@
 import { test, expect, type Browser, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
+import { createServer, type Server } from "node:net";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+// @ts-expect-error - plain ESM bridge without type declarations
+import { createBridge } from "../../local-print-bridge/server.mjs";
 import { resolve } from "node:path";
 
 const evidence = resolve(".seramet/journey/evidence");
@@ -246,6 +252,60 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await shot(page, "tables");
   });
 
+  // A stand-in kitchen printer (raw TCP, port 9100 style) behind the real print bridge.
+  const printed: Buffer[] = [];
+  const kitchenPrinter: Server = createServer((socket) =>
+    socket.on("data", (b) => printed.push(b)),
+  );
+  await new Promise<void>((done) => kitchenPrinter.listen(0, "127.0.0.1", done));
+  let bridge: { server: Server; close: () => Promise<void> } | undefined;
+
+  await test.step("3b. Owner adds the kitchen printer and connects the print bridge", async () => {
+    await page.goto("/seramet-printers");
+    await page.getByRole("button", { name: "Add printer", exact: true }).click();
+    await page.getByLabel("Name", { exact: true }).fill("Kitchen printer");
+    await page.getByRole("combobox", { name: "How it connects", exact: true }).selectOption("TCP");
+    await page.getByLabel("Printer IP address", { exact: true }).fill("127.0.0.1");
+    await page
+      .getByLabel("Port", { exact: true })
+      .fill(String((kitchenPrinter.address() as { port: number }).port));
+    for (const role of ["Bills", "Receipts"])
+      await page.getByRole("checkbox", { name: role, exact: true }).uncheck();
+    for (const role of ["Kitchen tickets", "Bar tickets"])
+      await page.getByRole("checkbox", { name: role, exact: true }).check();
+    for (const station of ["Kitchen", "Bar"])
+      await page.getByRole("checkbox", { name: station, exact: true }).check();
+    await page
+      .getByRole("combobox", { name: "This branch sends kitchen orders to" })
+      .selectOption({ label: "Kitchen screens and printers" });
+    if (!(await page.getByLabel("Print bridge ID").isVisible()))
+      await page.getByText("More printer settings", { exact: true }).click();
+    await page.getByLabel("Print bridge ID").fill("journey-kitchen-bridge");
+    await page.getByRole("button", { name: "Save printer", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Printer saved");
+    // Install the bridge by hand: its setup file comes from the Printers page.
+    await page.getByText("Troubleshooting (for technicians)", { exact: true }).click();
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Bridge setup file" }).click();
+    const config = JSON.parse(await readFile((await (await download).path())!, "utf8"));
+    bridge = await createBridge(
+      { ...config, dataDir: await mkdtemp(join(tmpdir(), "journey-bridge-")) },
+      { localTest: true },
+    );
+    await new Promise<void>((done) => bridge!.server.listen(0, "127.0.0.1", () => done()));
+    await page
+      .getByLabel("Local bridge endpoint")
+      .fill(`http://127.0.0.1:${(bridge!.server.address() as { port: number }).port}`);
+    await page.getByLabel("Local bridge token").fill(config.token);
+    await page.getByLabel("Enable installed bridge").check();
+    await page.getByRole("button", { name: "Save local connection", exact: true }).click();
+    await page.getByRole("button", { name: "Test kitchen ticket", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Sent to the printer" })).toBeVisible();
+    await expect.poll(() => Buffer.concat(printed).toString("latin1")).toContain("PRINTER TEST");
+    printed.length = 0;
+    await shot(page, "kitchen-printer");
+  });
+
   const browser = page.context().browser() as Browser;
   const kitchen = await (
     await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -270,7 +330,7 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await staffSignIn(page, "cashier");
     await expect(page).toHaveURL(/\/pos$/);
     await page.goto("/payment-control");
-    await page.getByRole("button", { name: /Cash drawers/ }).click();
+    await page.getByRole("tab", { name: "Cash drawers", exact: true }).click();
     await page.getByLabel("Cash counted into the drawer").fill("5000");
     await page.getByRole("button", { name: "Open drawer", exact: true }).click();
     await expect(page.getByText("Cash drawer opened.")).toBeVisible();
@@ -327,15 +387,21 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
 
   await test.step("7. Chef prepares the tickets on the kitchen screen", async () => {
     await kitchen.reload();
+    await expect(kitchen.getByRole("heading", { name: "Kitchen display" })).toBeVisible();
     for (const id of Object.values(orders)) {
-      const ticket = kitchen.getByRole("article").filter({ hasText: id });
-      if (!(await ticket.count())) continue; // drinks-only or no kitchen items
+      // Every order has a kitchen or bar item, so each must reach the kitchen screen.
+      const ticket = kitchen.getByRole("article").filter({ hasText: id }).first();
+      await expect(ticket).toBeVisible();
       for (const action of ["Start", "Ready", "Served"]) {
-        const button = ticket.getByRole("button", { name: action, exact: true });
-        if (await button.isVisible().catch(() => false)) await button.click();
+        await ticket.getByRole("button", { name: action, exact: true }).click();
+        if (action !== "Served")
+          await expect(ticket.getByRole("button", { name: action, exact: true })).toHaveCount(0);
       }
     }
     await shot(kitchen, "kitchen-served");
+    // Kitchen tickets also printed on the kitchen printer (Kitchen screens and printers).
+    const tickets = Buffer.concat(printed).toString("latin1");
+    for (const id of Object.values(orders)) expect(tickets).toContain(id);
   });
 
   const settle = async (orderId: string, method: string, reference?: string) => {
@@ -359,7 +425,7 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await page.getByLabel("Amount", { exact: true }).fill(bill.total.toFixed(2));
     if (reference)
       await dialog
-        .getByLabel(/Reference|M-Pesa code|Transaction/)
+        .getByLabel(/reference|code|transaction|approval/i)
         .first()
         .fill(reference);
     await dialog.getByRole("button", { name: "Settle invoice", exact: true }).click();
@@ -375,22 +441,19 @@ test("full day: sign-up, onboarding, setup, trading and business-day close", asy
     await shot(page, "invoices-settled");
   });
 
-  await test.step("9. Supervisor ends the cashier's shift and closes the business day", async () => {
-    await staffSignIn(page, "supervisor");
+  await test.step("9. Owner ends the cashier's shift and closes the business day", async () => {
+    // The Supervisor preset has no finance rights (see report), so the owner closes.
+    await ownerSignIn(page);
     await page.goto("/payment-control");
     await page.getByRole("button", { name: "Daily closing", exact: true }).click();
     const drawer = (await state(page)).paymentOperations!.drawerSessions.find(
       (row) => row.status === "OPEN",
     )!;
     const counted = (5000 + takings.cash!).toFixed(2);
-    await page.getByRole("button", { name: "End Shift", exact: true }).click();
-    const shift = page.getByRole("dialog", { name: "End cashier shift", exact: true });
-    await shift.getByLabel(`Counted KES ${drawer.id}`, { exact: true }).fill(counted);
-    await shift.getByRole("button", { name: "Review confirmation", exact: true }).click();
-    await shift.getByRole("button", { name: "Confirm & End Shift", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("Cashier shift closed.");
+    // Default "Supervisor-led daily closing": the drawer is counted while closing the day.
     await page.getByRole("button", { name: "Close Business Day", exact: true }).click();
     const close = page.getByRole("dialog", { name: "Close Business Day", exact: true });
+    await close.getByLabel(`Counted KES ${drawer.id}`, { exact: true }).fill(counted);
     await close.getByRole("button", { name: "Review confirmation", exact: true }).click();
     await shot(page, "close-day-confirm");
     await close.getByRole("button", { name: "Confirm & Close Business Day", exact: true }).click();
