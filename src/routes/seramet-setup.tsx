@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   Upload,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AppShell } from "@/components/app/AppShell";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import type {
@@ -87,6 +87,12 @@ function SetupCentre() {
     kind: "success" | "error" | "info";
     message: string;
   } | null>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  // Forms sit far below the message area; bring an error into view so it is never missed.
+  useEffect(() => {
+    if (notice?.kind === "error")
+      noticeRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  }, [notice]);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [duplicateStrategy, setDuplicateStrategy] = useState<DuplicateStrategy>("ERROR");
@@ -293,7 +299,12 @@ function SetupCentre() {
   const saveDevice = (event: FormEvent) => {
     event.preventDefault();
     void run(
-      () => centre.command("/api/seramet/setup/devices", { ...device, capabilities: [] }),
+      () =>
+        centre.command("/api/seramet/setup/devices", {
+          // Leave out optional fields left blank, such as "No station" for a till.
+          ...Object.fromEntries(Object.entries(device).filter(([, value]) => value.trim() !== "")),
+          capabilities: [],
+        }),
       "Device registered with UNKNOWN health until a trusted agent reports.",
     );
   };
@@ -507,6 +518,7 @@ function SetupCentre() {
       )}
       {notice && (
         <div
+          ref={noticeRef}
           className={cn(
             "mt-3 flex items-start gap-2 rounded-md border px-3 py-2 text-[12px] font-semibold",
             notice.kind === "error"
@@ -1397,12 +1409,14 @@ function Field({
   value,
   onChange,
   type = "text",
+  required = true,
   ...props
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  required?: boolean;
   min?: string;
   max?: string;
   maxLength?: number;
@@ -1411,7 +1425,7 @@ function Field({
     <label className={labelClass}>
       {label}
       <input
-        required
+        required={required}
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -1821,9 +1835,10 @@ function DevicePanel({
             onChange={(value) => setDevice({ ...device, name: value })}
           />
           <Field
-            label="Role"
+            label="Role (optional)"
             value={device.role}
             onChange={(value) => setDevice({ ...device, role: value })}
+            required={false}
           />
           <label className={labelClass}>
             Station
