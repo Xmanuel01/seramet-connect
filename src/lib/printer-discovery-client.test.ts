@@ -34,7 +34,9 @@ describe("scoped local printer inventory", () => {
     request.mockResolvedValueOnce(
       Response.json({ tenantId: "t", branchId: "other", bridgeId: "bridge", printers: [] }),
     );
-    await expect(discoverInstalledPrinters(config, "t", "b")).rejects.toThrow(/not enrolled/);
+    await expect(discoverInstalledPrinters(config, "t", "b")).rejects.toThrow(
+      /different restaurant or branch/,
+    );
     request.mockResolvedValueOnce(
       Response.json({
         tenantId: "t",
@@ -43,10 +45,12 @@ describe("scoped local printer inventory", () => {
         printers: [{ name: "bad\nprinter", driver: "x" }],
       }),
     );
-    await expect(discoverInstalledPrinters(config, "t", "b")).rejects.toThrow(/invalid/);
+    await expect(discoverInstalledPrinters(config, "t", "b")).rejects.toThrow(
+      /unexpected printer list/,
+    );
     request.mockResolvedValueOnce(new Response(null, { status: 503 }));
     await expect(discoverInstalledPrinters(config, "t", "b")).rejects.toThrow(
-      /could not be detected/,
+      /Couldn't list the printers/,
     );
   });
 });

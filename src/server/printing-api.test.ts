@@ -16,6 +16,7 @@ import { permissions } from "@/platform/permissions";
 import { printerConfigurationSchema } from "@/printing/printer-configuration";
 import { createEmptyTransactionState } from "@/lib/transaction-engine";
 import { hydrateSeededTenantsForTests } from "@/testing/configuration-fixture";
+import { loadTenantConfigurationState } from "@/server/database/authoritative-configuration";
 
 vi.mock("@/lib/seramet-auth", async (original) => ({
   ...(await original<object>()),
@@ -904,4 +905,102 @@ it("lets only hardware managers change the printer bypass", async () => {
       repository,
     ),
   ).rejects.toMatchObject({ status: 403 });
+});
+
+const logoRequest = (method: string, body?: unknown, query = "") =>
+  new Request(`http://localhost/api/seramet/printing/receipt-logo${query}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+// 16 x 2 dots, solid top row.
+const sampleLogo = { width: 16, height: 2, data: Buffer.from([255, 255, 0, 0]).toString("base64") };
+
+it("saves company and branch receipt logos, prints the branch one on bills and receipts only", async () => {
+  actor.permissions.push(permissions.settingsOrganisationManage);
+  const saved = await (await handlePrintingApi(
+    logoRequest("PUT", { scope: "COMPANY", logo: sampleLogo }),
+    env(),
+    repository,
+  ))!.json();
+  expect(saved.company).toMatchObject({ ...sampleLogo, updatedBy: actor.id });
+  expect(saved.branch).toBeUndefined();
+  const printer = (
+    await (await handlePrintingApi(request("printers", configuration()), env(), repository))!.json()
+  ).printer;
+  const authorize = async (testKind: string) =>
+    JSON.parse(
+      Buffer.from(
+        (
+          await (await handlePrintingApi(
+            request("authorize", {
+              printerId: printer.id,
+              documentType: "TEST",
+              recordId: crypto.randomUUID(),
+              testKind,
+            }),
+            env(),
+            repository,
+          ))!.json()
+        ).authorization.payload,
+        "base64url",
+      ).toString("utf8"),
+    );
+  expect((await authorize("RECEIPT")).logo).toEqual(sampleLogo);
+  expect((await authorize("FOOD_KOT")).logo).toBeUndefined();
+  const branchLogo = { ...sampleLogo, data: Buffer.from([1, 2, 3, 4]).toString("base64") };
+  await handlePrintingApi(
+    logoRequest("PUT", { scope: "BRANCH", logo: branchLogo }),
+    env(),
+    repository,
+  );
+  expect((await authorize("BILL")).logo).toEqual(branchLogo);
+  const afterRemoval = await (await handlePrintingApi(
+    logoRequest("DELETE", undefined, "?scope=BRANCH"),
+    env(),
+    repository,
+  ))!.json();
+  expect(afterRemoval.branch).toBeUndefined();
+  expect((await authorize("BILL")).logo).toEqual(sampleLogo);
+  const audits = await db
+    .prepare("SELECT action FROM audit_events WHERE tenant_id=? AND action LIKE 'RECEIPT_LOGO_%'")
+    .bind(actor.tenantId)
+    .all<{ action: string }>();
+  expect(audits.results?.map((row) => row.action).sort()).toEqual([
+    "RECEIPT_LOGO_REMOVED",
+    "RECEIPT_LOGO_SAVED",
+    "RECEIPT_LOGO_SAVED",
+  ]);
+});
+
+it("keeps logos out of settings snapshots and refuses bad images and missing rights", async () => {
+  await expect(
+    handlePrintingApi(
+      logoRequest("PUT", { scope: "COMPANY", logo: sampleLogo }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 403 });
+  await expect(
+    handlePrintingApi(
+      logoRequest("PUT", { scope: "BRANCH", logo: { ...sampleLogo, data: "AAAA" } }),
+      env(),
+      repository,
+    ),
+  ).rejects.toMatchObject({ status: 400 });
+  await handlePrintingApi(
+    logoRequest("PUT", { scope: "BRANCH", logo: sampleLogo }),
+    env(),
+    repository,
+  );
+  const state = await loadTenantConfigurationState(db, env() as never, actor.tenantId);
+  expect(JSON.stringify(state)).not.toContain(sampleLogo.data);
+  expect(state.documentTemplates.some((t) => t.documentType === "RECEIPT_LOGO")).toBe(false);
+  actor.permissions = [permissions.settingsHardwareView];
+  await expect(
+    handlePrintingApi(logoRequest("DELETE", undefined, "?scope=BRANCH"), env(), repository),
+  ).rejects.toMatchObject({ status: 403 });
+  // Anyone who can open the Printers page can see the current logo.
+  const seen = await (await handlePrintingApi(logoRequest("GET"), env(), repository))!.json();
+  expect(seen.branch).toMatchObject(sampleLogo);
 });

@@ -31,7 +31,19 @@ import {
   endKitchenPrintBypass,
   startKitchenPrintBypass,
 } from "@/lib/kitchen-print-bypass";
-import { buildThermalLayout, validateRenderJob } from "../../printing-core/thermal-layout.mjs";
+import {
+  buildThermalLayout,
+  LOGO_DOCUMENT_TYPES,
+  validateLogo,
+  validateRenderJob,
+} from "../../printing-core/thermal-layout.mjs";
+import {
+  deleteReceiptLogoStatement,
+  effectiveReceiptLogo,
+  readReceiptLogos,
+  saveReceiptLogoStatement,
+  type ReceiptLogoScope,
+} from "@/server/receipt-logo-store";
 
 const authorizationSchema = z
   .object({
@@ -219,6 +231,18 @@ async function digest(value: unknown) {
     (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
 }
+const receiptLogoSchema = z
+  .object({
+    scope: z.enum(["COMPANY", "BRANCH"]),
+    logo: z
+      .object({
+        width: z.number().int(),
+        height: z.number().int(),
+        data: z.string().max(16000),
+      })
+      .strict(),
+  })
+  .strict();
 const deliverySchema = z
   .object({
     v: z.union([z.literal(1), z.literal(2)]),
@@ -235,7 +259,14 @@ const deliverySchema = z
   .passthrough();
 type Delivery = z.infer<typeof deliverySchema>;
 async function deliveryIdentity(job: Record<string, unknown>) {
-  const { expiresAt: _expires, actorId: _actor, deliveryAttempt: _attempt, ...stable } = job;
+  // The logo is branding, not the document: changing it must not block a retry.
+  const {
+    expiresAt: _expires,
+    actorId: _actor,
+    deliveryAttempt: _attempt,
+    logo: _logo,
+    ...stable
+  } = job;
   return {
     fingerprint: await digest(stable),
     grantId: `PRINT-GRANT:${await digest([job.tenantId, job.branchId, job.id, job.recoveryId ?? "ORIGINAL"])}`,
@@ -681,6 +712,61 @@ export async function handlePrintingApi(
     await invalidateAuthoritativeConfiguration(db, actor.tenantId);
     return respond({ deleted: id });
   }
+  if (url.pathname === "/api/seramet/printing/receipt-logo") {
+    if (request.method === "GET")
+      return respond(await readReceiptLogos(db, actor.tenantId, actor.branchId));
+    if (request.method !== "PUT" && request.method !== "DELETE")
+      return respond({ code: "NOT_FOUND" }, 404);
+    manage(actor);
+    const put =
+      request.method === "PUT" ? receiptLogoSchema.safeParse(await parse(request, 32000)) : null;
+    if (put && !put.success) throw new SerametHttpError(400, "Choose an image to use as the logo.");
+    const scope: ReceiptLogoScope =
+      (put?.data?.scope ?? url.searchParams.get("scope")) === "BRANCH" ? "BRANCH" : "COMPANY";
+    // The company logo prints in every branch, so it also needs organisation rights.
+    if (scope === "COMPANY") requirePermission(actor, permissions.settingsOrganisationManage);
+    if (request.method === "DELETE") {
+      await db.batch([
+        deleteReceiptLogoStatement(db, actor.tenantId, actor.branchId, scope),
+        auditStatement(
+          db,
+          actor,
+          `RECEIPT-LOGO:${crypto.randomUUID()}`,
+          "RECEIPT_LOGO_REMOVED",
+          scope === "BRANCH" ? `Branch ${actor.branchId} logo removed` : "Company logo removed",
+        ),
+      ]);
+      return respond(await readReceiptLogos(db, actor.tenantId, actor.branchId));
+    }
+    const logo = put!.data!.logo;
+    try {
+      validateLogo(logo);
+    } catch {
+      throw new SerametHttpError(
+        400,
+        "This image can't be printed as a receipt logo. Try another.",
+      );
+    }
+    await db.batch([
+      saveReceiptLogoStatement(db, {
+        tenantId: actor.tenantId,
+        branchId: actor.branchId,
+        scope,
+        logo,
+        actorId: actor.id,
+        now: new Date().toISOString(),
+      }),
+      auditStatement(
+        db,
+        actor,
+        `RECEIPT-LOGO:${crypto.randomUUID()}`,
+        "RECEIPT_LOGO_SAVED",
+        scope === "BRANCH" ? `Branch ${actor.branchId} logo saved` : "Company logo saved",
+        { width: logo.width, height: logo.height },
+      ),
+    ]);
+    return respond(await readReceiptLogos(db, actor.tenantId, actor.branchId));
+  }
   if (url.pathname === "/api/seramet/printing/dispatch-bypass") {
     // Lets the active branch send orders to the kitchen without a printer or
     // KDS route for 36 hours. Only hardware managers may turn it on or off.
@@ -907,16 +993,30 @@ export async function handlePrintingApi(
   if (hasRaster && fallback && fallback.paperWidth !== printer.paperWidth)
     throw new SerametHttpError(400, "Raster fallback requires the same paper profile");
   let document: ReturnType<typeof buildThermalLayout> | undefined;
+  // Bills, receipts and invoices (and their test prints) carry the branch's logo.
+  const logoKind = input.documentType === "TEST" ? (input.testKind ?? "BILL") : input.documentType;
+  let logo = LOGO_DOCUMENT_TYPES.includes(logoKind)
+    ? await effectiveReceiptLogo(db, actor.tenantId, actor.branchId)
+    : undefined;
   try {
     document = hasRaster ? buildThermalLayout(content, printer.paperWidth) : undefined;
-    validateRenderJob({
+    const renderJob = {
       v: hasRaster ? 2 : 1,
       content,
       document,
       target: printerTarget(printer),
       profile,
       ...(fallback ? { fallbackTarget: printerTarget(fallback), fallbackProfile } : {}),
-    });
+    };
+    if (logo) {
+      try {
+        validateRenderJob({ ...renderJob, logo });
+      } catch {
+        // A logo too big for this printer's image limits is left off; the document still prints.
+        logo = undefined;
+      }
+    }
+    validateRenderJob(renderJob);
   } catch {
     throw new SerametHttpError(400, "Unsupported or oversized document rendering profile");
   }
@@ -934,6 +1034,7 @@ export async function handlePrintingApi(
     documentType: input.documentType,
     content,
     ...(document ? { document } : {}),
+    ...(logo ? { logo } : {}),
     target: printerTarget(printer),
     printerConfigurationHash: await digest(printer),
     ...(fallback

@@ -1,5 +1,12 @@
 export type LogoScope = "Company" | "Branch";
 
+/** Matches MAX_LOGO_WIDTH and MAX_LOGO_HEIGHT in printing-core/thermal-layout.mjs. */
+export const RECEIPT_LOGO_MAX_WIDTH = 384;
+export const RECEIPT_LOGO_MAX_HEIGHT = 200;
+
+/** The printable form saved on the server: packed 1-bit rows, base64. */
+export type PrintableReceiptLogo = { width: number; height: number; data: string };
+
 export type ReceiptLogoAsset = {
   id: string;
   scope: LogoScope;
@@ -67,9 +74,13 @@ export async function processReceiptLogoFile(
 ): Promise<ReceiptLogoAsset> {
   const originalDataUrl = await fileToDataUrl(file);
   const image = await createImageBitmap(file);
-  const maxWidth = 384;
-  const scale = image.width > maxWidth ? maxWidth / image.width : 1;
-  const width = Math.max(1, Math.round(image.width * scale));
+  // Fits 58mm paper and every 80mm printer, and about 25mm tall at 203 dpi.
+  const scale = Math.min(
+    1,
+    RECEIPT_LOGO_MAX_WIDTH / image.width,
+    RECEIPT_LOGO_MAX_HEIGHT / image.height,
+  );
+  const width = Math.max(8, Math.round(image.width * scale));
   const height = Math.max(1, Math.round(image.height * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -113,4 +124,37 @@ function fileToDataUrl(file: File) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+export function toPrintableLogo(asset: ReceiptLogoAsset): PrintableReceiptLogo {
+  const bytes = asset.escposHex.match(/../g)?.map((pair) => parseInt(pair, 16)) ?? [];
+  return {
+    width: asset.width,
+    height: asset.height,
+    data: btoa(String.fromCharCode(...bytes)),
+  };
+}
+
+/** Draws a saved logo as black on white, the way the printer will. */
+export function printableLogoToDataUrl(logo: PrintableReceiptLogo) {
+  const bytes = Uint8Array.from(atob(logo.data), (character) => character.charCodeAt(0));
+  const stride = Math.ceil(logo.width / 8);
+  const canvas = document.createElement("canvas");
+  canvas.width = logo.width;
+  canvas.height = logo.height;
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+  const image = context.createImageData(logo.width, logo.height);
+  for (let y = 0; y < logo.height; y += 1)
+    for (let x = 0; x < logo.width; x += 1) {
+      const black = (bytes[y * stride + (x >> 3)] ?? 0) & (0x80 >> (x & 7));
+      const index = (y * logo.width + x) * 4;
+      const value = black ? 0 : 255;
+      image.data[index] = value;
+      image.data[index + 1] = value;
+      image.data[index + 2] = value;
+      image.data[index + 3] = 255;
+    }
+  context.putImageData(image, 0, 0);
+  return canvas.toDataURL("image/png");
 }

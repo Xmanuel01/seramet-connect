@@ -1,6 +1,6 @@
 import { FONT } from "./font-5x8.mjs";
 import { rasterMetrics, validateRenderJob } from "../printing-core/thermal-layout.mjs";
-import { encodeEscPos, finishCommands } from "./escpos-encoder.mjs";
+import { encodeEscPos, finishCommands, logoCommands } from "./escpos-encoder.mjs";
 
 // Bounded bands, never a full-page pixel allocation. Adjacent GS v 0 bands
 // contain no text line-feed commands, so table borders meet across band seams.
@@ -49,8 +49,16 @@ export function* rasterBands(layout, profile) {
 }
 export function encodePrintDocument(job, profile = job.profile) {
   validateRenderJob(job);
-  if (profile.renderingMode !== "RASTER_ESC_POS") return encodeEscPos(job.content, profile);
+  // The server only attaches a logo to bills, receipts and invoices.
+  const logo = job.logo ? logoCommands(job.logo) : undefined;
+  if (profile.renderingMode !== "RASTER_ESC_POS") {
+    const text = encodeEscPos(job.content, profile);
+    // The image prints as soon as it arrives; the document's own ESC @ after it
+    // only resets the unprinted line, so the logo stays on the paper.
+    return logo ? Buffer.concat([Buffer.from([27, 64]), logo, text]) : text;
+  }
   const chunks = [Buffer.from([27, 64, 27, 97, 0])];
+  if (logo) chunks.push(logo);
   for (const b of rasterBands(job.document, profile)) {
     const stride = b.width / 8;
     chunks.push(

@@ -919,7 +919,7 @@ export const SerametLocalPrintBridge = {
     });
     if (!authorized.ok)
       throw new Error(
-        "Server print authorization failed; inspect printer configuration and the authoritative document/claim",
+        "Seramet couldn't approve this print. Check the printer's settings on the Printers page, then try again.",
       );
     const submission = await authorized.json();
     const deadline = Date.now() + 30000;
@@ -933,7 +933,7 @@ export const SerametLocalPrintBridge = {
       if (!response.ok)
         return {
           accepted: false,
-          message: "Bridge rejected the authorized job; do not blindly retry",
+          message: "The print bridge refused this print. Check the printer before trying again.",
         };
       const payload = (await response.json()) as {
         stage: string;
@@ -944,18 +944,23 @@ export const SerametLocalPrintBridge = {
         return {
           accepted: true,
           bridgeJobId: payload.bridgeJobId,
-          message: "Transport submitted; physical delivery unconfirmed",
+          message: "Sent to the printer. Check that it printed.",
         };
       if (["NOT_SENT", "UNCERTAIN", "CANCELLED"].includes(payload.stage))
         return {
           accepted: false,
-          message: `Delivery ${payload.stage.toLowerCase()}; use authorized recovery`,
+          message:
+            payload.stage === "NOT_SENT"
+              ? "Didn't reach the printer. Check it's switched on and connected."
+              : payload.stage === "CANCELLED"
+                ? "The print was cancelled."
+                : "This may not have printed. Check the printer before printing again.",
         };
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     return {
       accepted: false,
-      message: "Bridge outcome uncertain; inspect recovery before retrying",
+      message: "No answer from the printer yet. Check whether it printed before trying again.",
     };
   },
 };

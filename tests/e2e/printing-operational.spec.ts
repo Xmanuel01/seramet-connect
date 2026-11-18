@@ -215,20 +215,22 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
     // Exercise the real administration form for the primary kitchen printer.
     await manager.getByRole("button", { name: "Add printer", exact: true }).click();
     await manager.getByLabel("Name", { exact: true }).fill("Kitchen Printer");
-    await manager.getByLabel("Enrolled bridge ID").fill(bridgeId);
-    await manager.getByRole("combobox", { name: "Transport", exact: true }).selectOption("TCP");
-    await manager.getByLabel("Printer host").fill("127.0.0.1");
-    await manager.getByLabel("TCP port").fill("9100");
-    await manager.getByRole("checkbox", { name: "BILL", exact: true }).setChecked(false);
-    await manager.getByRole("checkbox", { name: "RECEIPT", exact: true }).setChecked(false);
-    await manager.getByRole("checkbox", { name: "KITCHEN", exact: true }).check();
+    if (!(await manager.getByLabel("Print bridge ID").isVisible()))
+      await manager.getByText("More printer settings", { exact: true }).click();
+    await manager.getByLabel("Print bridge ID").fill(bridgeId);
+    await manager
+      .getByRole("combobox", { name: "How it connects", exact: true })
+      .selectOption("TCP");
+    await manager.getByLabel("Printer IP address", { exact: true }).fill("127.0.0.1");
+    await manager.getByLabel("Port", { exact: true }).fill("9100");
+    await manager.getByRole("checkbox", { name: "Bills", exact: true }).setChecked(false);
+    await manager.getByRole("checkbox", { name: "Receipts", exact: true }).setChecked(false);
+    await manager.getByRole("checkbox", { name: "Kitchen tickets", exact: true }).check();
     await manager.getByRole("checkbox", { name: "Main Kitchen", exact: true }).check();
-    await manager.getByRole("combobox", { name: "Paper", exact: true }).selectOption("80mm");
+    await manager.getByRole("combobox", { name: "Paper width", exact: true }).selectOption("80mm");
     await manager.getByRole("combobox", { name: "Cutter", exact: true }).selectOption("partial");
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(
-      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
-    ).toBeVisible();
+    await expect(manager.getByRole("status").filter({ hasText: "Printer saved" })).toBeVisible();
     const saved = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
@@ -301,7 +303,7 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       device.state.clearHistory();
     };
     await manager.reload();
-    await manager.getByText("Advanced: manual bridge connection", { exact: true }).click();
+    await manager.getByText("Troubleshooting (for technicians)", { exact: true }).click();
     await manager.getByLabel("Local bridge endpoint").fill(local.endpoint);
     await manager.getByLabel("Local bridge token").fill(token);
     await manager.getByLabel("Enable installed bridge").check();
@@ -647,14 +649,12 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       .filter({ hasText: "Kitchen Printer" })
       .getByRole("button", { name: "Edit printer", exact: true })
       .click();
-    await manager.getByRole("combobox", { name: "Paper", exact: true }).selectOption("58mm");
+    await manager.getByRole("combobox", { name: "Paper width", exact: true }).selectOption("58mm");
     await expect(
       manager.getByRole("checkbox", { name: "Main Kitchen", exact: true }),
     ).toBeChecked();
     await manager.getByRole("button", { name: "Save printer", exact: true }).click();
-    await expect(
-      manager.getByRole("status").filter({ hasText: "Printer configuration saved" }),
-    ).toBeVisible();
+    await expect(manager.getByRole("status").filter({ hasText: "Printer saved" })).toBeVisible();
     devices[0].printer = (await api("printing/printers")).printers.find(
       (p: { name: string }) => p.name === "Kitchen Printer",
     );
@@ -760,8 +760,9 @@ test("real employee POS to four independent ESC/POS emulators", async ({ browser
       failureReason: "Controlled emulator listener offline; operator review required",
     });
     await manager.reload();
+    await manager.getByText("Troubleshooting (for technicians)", { exact: true }).click();
     await manager.getByRole("button", { name: "Check print queue", exact: true }).click();
-    await expect(manager.getByText("NOT_SENT", { exact: true })).toBeVisible();
+    await expect(manager.getByText("Didn't reach the printer", { exact: true })).toBeVisible();
     await manager.screenshot({ path: join(evidence, "offline-queue.png"), fullPage: true });
     devices[1].listener = await startServer(devices[1].state, devices[1].port);
     await new Promise((done) => setTimeout(done, 200));
