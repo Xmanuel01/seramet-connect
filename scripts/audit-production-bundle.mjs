@@ -17,6 +17,13 @@ const forbidden = [
   /@cloudflare\/containers/,
   /clamav\/clamav|clamdscan|\/usr\/sbin\/clamd|seramet-scanner-gateway/i,
 ];
+// Build-only audit exceptions hold only while their package stays out of what is deployed.
+const exceptions = JSON.parse(
+  await readFile(new URL("./audit-exceptions.json", import.meta.url), "utf8"),
+);
+for (const exception of exceptions.filter((row) => row.buildOnly === true))
+  for (const marker of exception.bundleMarkers ?? [])
+    forbidden.push(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 const findings = [];
 for (const root of roots) await scan(root);
 if (findings.length) {

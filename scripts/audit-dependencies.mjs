@@ -1,7 +1,10 @@
 // CI dependency audit: fails on any moderate+ advisory except time-boxed
-// dev-only exceptions listed in scripts/audit-exceptions.json. An exception
-// never applies once the advisory reaches the production dependency tree, and
-// an expired exception fails the build.
+// exceptions listed in scripts/audit-exceptions.json. An ordinary exception is
+// dev-only and never applies once the advisory reaches the production dependency
+// tree. A "buildOnly" exception may cover a production-tree package that is used
+// only while building: it must name bundleMarkers, and the production bundle audit
+// (scripts/audit-production-bundle.mjs) fails if any of them appears in what is
+// deployed. An expired exception of either kind fails the build.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -56,6 +59,15 @@ export function evaluateAudit({ devReport, prodReport, exceptions, today }) {
       problems.push(
         `Audit exception ${exception.id} expired on ${exception.expires}; fix or renew it.`,
       );
+    else if (
+      exception.buildOnly === true &&
+      (!Array.isArray(exception.bundleMarkers) ||
+        !exception.bundleMarkers.length ||
+        exception.bundleMarkers.some((marker) => typeof marker !== "string" || marker.length < 6))
+    )
+      problems.push(
+        `Build-only audit exception ${exception.id} needs bundleMarkers the bundle audit can check.`,
+      );
     else active.set(exception.id, exception);
   }
   const prodAdvisories = new Set(
@@ -66,7 +78,9 @@ export function evaluateAudit({ devReport, prodReport, exceptions, today }) {
   for (const name of Object.keys(devReport.vulnerabilities)) {
     const unexcused = [...advisoriesOf(devReport, name)]
       .filter(([, severity]) => atLeastModerate(severity))
-      .filter(([id]) => !active.has(id) || prodAdvisories.has(id))
+      .filter(
+        ([id]) => !active.has(id) || (prodAdvisories.has(id) && active.get(id).buildOnly !== true),
+      )
       .map(([id, severity]) => `${id} (${severity})`);
     if (unexcused.length) problems.push(`${name}: ${unexcused.join(", ")}`);
   }

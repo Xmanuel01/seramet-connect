@@ -89,3 +89,49 @@ test("a missing or failed audit report fails instead of passing as clean", () =>
     assert.match(evaluate({ prodReport: broken })[0], /did not produce a vulnerability report/);
   }
 });
+
+const picomatch = "GHSA-fc5q-39xc-vjpf";
+const buildToolReport = {
+  vulnerabilities: {
+    picomatch: { severity: "high", via: [advisory(picomatch, "high")] },
+    vite: { severity: "high", via: ["picomatch"] },
+  },
+};
+const buildOnly = {
+  id: picomatch,
+  expires: "2026-12-31",
+  buildOnly: true,
+  bundleMarkers: ["POSIX_REGEX_SOURCE"],
+  reason: "build tooling only",
+};
+const evaluateBuildTool = (overrides) =>
+  evaluateAudit({
+    devReport: buildToolReport,
+    prodReport: buildToolReport,
+    exceptions: [buildOnly],
+    today: "2026-11-18",
+    ...overrides,
+  });
+
+test("a build-only exception covers a production-tree build tool", () => {
+  assert.deepEqual(evaluateBuildTool({}), []);
+});
+
+test("a build-only exception without bundle markers is refused", () => {
+  for (const bundleMarkers of [undefined, [], ["abc"]]) {
+    const problems = evaluateBuildTool({ exceptions: [{ ...buildOnly, bundleMarkers }] });
+    assert.match(problems[0], /needs bundleMarkers/);
+    assert.ok(problems.some((problem) => problem.startsWith("picomatch")));
+  }
+});
+
+test("a build-only exception expires like any other", () => {
+  const problems = evaluateBuildTool({ today: "2027-01-01" });
+  assert.match(problems[0], /expired on 2026-12-31/);
+  assert.ok(problems.some((problem) => problem.startsWith("picomatch")));
+});
+
+test("an ordinary exception still never covers a production-tree advisory", () => {
+  const { buildOnly: _ignored, ...ordinary } = buildOnly;
+  assert.equal(evaluateBuildTool({ exceptions: [ordinary] }).length, 2);
+});
