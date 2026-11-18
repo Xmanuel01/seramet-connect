@@ -185,6 +185,9 @@ export type ExternalOrderSource = {
   fulfilmentType: "PROVIDER_DELIVERY" | "OWN_DELIVERY" | "PICKUP";
   isScheduled: boolean;
   scheduledFor?: string;
+  /** When the food must be ready: the app's pickup time, else the delivery time less travel. */
+  scheduledReadyAt?: string;
+  /** When the kitchen gets it: the ready time less prep time and the buffer. */
   scheduledReleaseAt?: string;
   estimatedReadyAt?: string;
   receivedAt: string;

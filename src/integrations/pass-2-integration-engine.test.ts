@@ -57,8 +57,12 @@ class TestTransactionRepository implements TransactionRepository {
   idempotency = new Map<string, import("@/lib/seramet-repository").IdempotencyRecord>();
   providerEvents: import("@/lib/seramet-repository").ProviderWebhookEvent[] = [];
   async migrate() {}
+  currentRevision = 0;
   async revision() {
-    return 0;
+    return this.currentRevision;
+  }
+  async loadStateWithRevision(tenantId: string) {
+    return { revision: this.currentRevision, state: await this.loadState(tenantId) };
   }
   async commitMutation(): Promise<never> {
     throw new Error("Typed transaction commands are not used by this integration fixture");
@@ -68,9 +72,20 @@ class TestTransactionRepository implements TransactionRepository {
       ? structuredClone(this.state)
       : createEmptyTransactionState(tenantId);
   }
-  async saveState(state: TransactionState, actor: ServerActor) {
+  async saveState(
+    state: TransactionState,
+    actor: ServerActor,
+    _reason?: string,
+    options?: { expectedRevision?: number },
+  ) {
     if (state.tenantId !== actor.tenantId) throw new Error("Cross tenant");
+    if (
+      options?.expectedRevision !== undefined &&
+      options.expectedRevision !== this.currentRevision
+    )
+      throw new Error("State changed since it was loaded");
     this.state = structuredClone(state);
+    this.currentRevision += 1;
   }
   async getIdempotency(tenantId: string, key: string) {
     return this.idempotency.get(`${tenantId}:${key}`) ?? null;
@@ -1690,6 +1705,80 @@ describe("Pass 3 marketplace acceptance", () => {
     expect(controls.storeStatuses).toEqual(["PAUSED"]);
   });
 
+  it("tells the app the scheduled ready time and leaves the rider's trip before it", async () => {
+    const f = fixture();
+    await f.ready;
+    const scheduledFor = new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+    await f.runtime.handleWebhook(
+      webhook(order({ providerOrderId: "scheduled-ready", scheduledFor }), "scheduled-ready-event"),
+    );
+    const source = f.transactions.state.orders[0]!.externalSource!;
+    expect(f.transactions.state.orders[0]!.status).toBe("HELD");
+    // Delivery orders are ready before the delivery time, by the rider's trip.
+    expect(Date.parse(source.scheduledReadyAt!)).toBeLessThan(Date.parse(scheduledFor));
+    expect(Date.parse(source.scheduledReleaseAt!)).toBeLessThan(
+      Date.parse(source.scheduledReadyAt!),
+    );
+    expect(source.estimatedReadyAt).toBe(source.scheduledReadyAt);
+    const accepted = (await f.repository.listOutbox(DEMO_TENANT_ID)).find(
+      (record) => record.eventType === "ORDER_ACCEPTED",
+    );
+    expect((accepted?.payload as Record<string, unknown> | undefined)?.["estimatedReadyAt"]).toBe(
+      source.scheduledReadyAt,
+    );
+  });
+
+  it("holds an order with an unreadable scheduled time for staff instead of cooking it", async () => {
+    const f = fixture();
+    await f.ready;
+    await f.runtime.handleWebhook(
+      webhook(order({ providerOrderId: "bad-time", scheduledFor: "not a date" }), "bad-time-event"),
+    );
+    const held = f.transactions.state.orders[0]!;
+    expect(held.status).toBe("HELD");
+    expect(held.lines.every((line) => !line.sentAt)).toBe(true);
+    expect(held.externalSource?.metadata["invalidScheduledTime"]).toBe("not a date");
+    // Not accepted automatically: staff decide.
+    const outbox = await f.repository.listOutbox(DEMO_TENANT_ID);
+    expect(outbox.some((record) => record.eventType === "ORDER_ACCEPTED")).toBe(false);
+  });
+
+  it("leaves no rider trip before a scheduled dine-in or pickup order", async () => {
+    const f = fixture();
+    await f.ready;
+    const scheduledFor = new Date(Date.now() + 3 * 60 * 60_000).toISOString();
+    await f.runtime.handleWebhook(
+      webhook(
+        order({
+          providerOrderId: "dine-in-later",
+          orderType: "DINE_IN",
+          delivery: { type: "NONE", providerManaged: false },
+          scheduledFor,
+        }),
+        "dine-in-later-event",
+      ),
+    );
+    const source = f.transactions.state.orders[0]!.externalSource!;
+    expect(source.scheduledReadyAt).toBe(new Date(scheduledFor).toISOString());
+  });
+
+  it("never lets the scheduled release overwrite a change saved after it loaded", async () => {
+    const f = fixture();
+    await f.ready;
+    const loaded = await f.transactions.loadStateWithRevision!(DEMO_TENANT_ID);
+    // Something else commits after the load.
+    await f.transactions.saveState(
+      { ...loaded.state },
+      systemActorForTest(),
+      "Concurrent till save",
+    );
+    await expect(
+      f.transactions.saveState(loaded.state, systemActorForTest(), "Stale release", {
+        expectedRevision: loaded.revision,
+      }),
+    ).rejects.toThrow(/changed/i);
+  });
+
   it("recovers missed active orders through the same idempotent ingestion path", async () => {
     const recovered = order({ providerOrderId: "recovered-order" });
     const controls: TestDeliveryControls = {
@@ -1810,3 +1899,19 @@ describe("Pass 3 marketplace acceptance", () => {
     expect(failed?.lastError).toContain("AUTHENTICATION");
   });
 });
+
+function systemActorForTest() {
+  return {
+    id: "system:test",
+    name: "Test",
+    tenantId: DEMO_TENANT_ID,
+    branchId: DEMO_WESTLANDS_BRANCH_ID,
+    branch: "Westlands",
+    roleIds: [],
+    permissions: [],
+    assignedBranchIds: [DEMO_WESTLANDS_BRANCH_ID],
+    assignedBranches: [],
+    branchScope: { type: "BRANCH" },
+    role: "System",
+  } as unknown as Parameters<TransactionRepository["saveState"]>[1];
+}

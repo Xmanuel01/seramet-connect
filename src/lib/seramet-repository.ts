@@ -1,5 +1,6 @@
 import { directPaymentByReceipt, openBalanceMinor } from "@/payments/mpesa-matching";
 import { channelPayoutAccounts } from "@/payments/payout-accounts";
+import { scheduledOrderTimes } from "@/orders/scheduled-orders";
 import {
   appReceivableAccount,
   parseManualAppOrder,
@@ -55,7 +56,20 @@ export type IdempotencyRecord = {
 
 export type TransactionRepository = {
   loadState: (tenantId: string) => Promise<TransactionState>;
-  saveState: (state: TransactionState, actor: ServerActor, reason: string) => Promise<void>;
+  /**
+   * With expectedRevision, the save is refused (CONFLICT) if anything was committed since the
+   * state was loaded at that revision, instead of overwriting it.
+   */
+  saveState: (
+    state: TransactionState,
+    actor: ServerActor,
+    reason: string,
+    options?: { expectedRevision?: number },
+  ) => Promise<void>;
+  /** The state together with the revision it was read at, for a revision-checked save. */
+  loadStateWithRevision?: (
+    tenantId: string,
+  ) => Promise<{ state: TransactionState; revision: number }>;
   commitMutation: (input: TransactionMutationCommit) => Promise<TransactionMutationResult>;
   revision: (tenantId: string) => Promise<number>;
   getIdempotency: (tenantId: string, key: string) => Promise<IdempotencyRecord | null>;
@@ -122,9 +136,24 @@ export class MemoryTransactionRepository implements TransactionRepository {
     return normalizeTransactionState(structuredCloneSafe(state));
   }
 
-  async saveState(state: TransactionState, actor: ServerActor, _reason?: string) {
+  async saveState(
+    state: TransactionState,
+    actor: ServerActor,
+    _reason?: string,
+    options?: { expectedRevision?: number },
+  ) {
     if (state.tenantId !== actor.tenantId) throw new Error("Cross-tenant snapshot write denied");
+    if (
+      options?.expectedRevision !== undefined &&
+      options.expectedRevision !== (await this.revision(actor.tenantId))
+    )
+      throw new TransactionConflictError("State changed since it was loaded");
     memory.states.set(actor.tenantId, structuredCloneSafe(state));
+    memoryRevisions.set(actor.tenantId, (await this.revision(actor.tenantId)) + 1);
+  }
+
+  async loadStateWithRevision(tenantId: string) {
+    return { revision: await this.revision(tenantId), state: await this.loadState(tenantId) };
   }
 
   async commitMutation(input: TransactionMutationCommit): Promise<TransactionMutationResult> {
@@ -299,17 +328,35 @@ export function applyServerMutation(
         throw new Error(
           `Enter the ${channel!.displayName} order number before sending to the kitchen`,
         );
-      next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
+      // A scheduled app order waits for the kitchen until prep time before its ready-by time.
+      const schedule =
+        appOrder?.readyBy && channel
+          ? scheduledOrderTimes({
+              scheduledReadyAt: appOrder.readyBy,
+              pickup: false,
+              travelMinutes: 0,
+              prepMinutes: deliverySettings(channel)?.scheduledPrepMinutes ?? 25,
+              bufferMinutes: 0,
+            })
+          : undefined;
+      if (!schedule?.hold) next = TransactionEngine.sendToKitchen(next, createdOrderId, actor.name);
       if (!appOrder || !channel) return next;
       const tenant = configuration.getTenant(actor.tenantId);
-      return recordManualAppOrder(next, createdOrderId, appOrder, {
+      next = recordManualAppOrder(next, createdOrderId, appOrder, {
         channel,
         currency: tenant.defaultCurrency,
         receivableAccount: appReceivableAccount(
           configuration.listPaymentMethods(actor.tenantId, false),
           channelPayoutAccounts(channel)?.marketplaceReceivableAccountId,
         ),
+        ...(schedule ? { schedule } : {}),
       });
+      if (schedule?.hold) {
+        const held = next.orders.find((row) => row.id === createdOrderId)!;
+        held.status = "HELD";
+        held.updatedAt = new Date().toISOString();
+      }
+      return next;
     }
     case "claimKitchenPrintObligations":
       return TransactionEngine.claimKitchenPrintObligations(
