@@ -56,7 +56,20 @@ export type IdempotencyRecord = {
 
 export type TransactionRepository = {
   loadState: (tenantId: string) => Promise<TransactionState>;
-  saveState: (state: TransactionState, actor: ServerActor, reason: string) => Promise<void>;
+  /**
+   * With expectedRevision, the save is refused (CONFLICT) if anything was committed since the
+   * state was loaded at that revision, instead of overwriting it.
+   */
+  saveState: (
+    state: TransactionState,
+    actor: ServerActor,
+    reason: string,
+    options?: { expectedRevision?: number },
+  ) => Promise<void>;
+  /** The state together with the revision it was read at, for a revision-checked save. */
+  loadStateWithRevision?: (
+    tenantId: string,
+  ) => Promise<{ state: TransactionState; revision: number }>;
   commitMutation: (input: TransactionMutationCommit) => Promise<TransactionMutationResult>;
   revision: (tenantId: string) => Promise<number>;
   getIdempotency: (tenantId: string, key: string) => Promise<IdempotencyRecord | null>;
@@ -123,9 +136,24 @@ export class MemoryTransactionRepository implements TransactionRepository {
     return normalizeTransactionState(structuredCloneSafe(state));
   }
 
-  async saveState(state: TransactionState, actor: ServerActor, _reason?: string) {
+  async saveState(
+    state: TransactionState,
+    actor: ServerActor,
+    _reason?: string,
+    options?: { expectedRevision?: number },
+  ) {
     if (state.tenantId !== actor.tenantId) throw new Error("Cross-tenant snapshot write denied");
+    if (
+      options?.expectedRevision !== undefined &&
+      options.expectedRevision !== (await this.revision(actor.tenantId))
+    )
+      throw new TransactionConflictError("State changed since it was loaded");
     memory.states.set(actor.tenantId, structuredCloneSafe(state));
+    memoryRevisions.set(actor.tenantId, (await this.revision(actor.tenantId)) + 1);
+  }
+
+  async loadStateWithRevision(tenantId: string) {
+    return { revision: await this.revision(tenantId), state: await this.loadState(tenantId) };
   }
 
   async commitMutation(input: TransactionMutationCommit): Promise<TransactionMutationResult> {

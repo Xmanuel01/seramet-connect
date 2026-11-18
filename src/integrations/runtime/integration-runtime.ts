@@ -40,8 +40,12 @@ import {
   type MarketplaceStoreStatus,
 } from "@/integrations/marketplace/types";
 import type { ConfigurationRepository } from "@/platform/repositories/configuration-repository";
-import type { IntegrationConnection, ProviderCapability } from "@/platform/types";
-import type { TransactionRepository } from "@/lib/seramet-repository";
+import type {
+  IntegrationConnection,
+  OrderChannelDefinition,
+  ProviderCapability,
+} from "@/platform/types";
+import { TransactionConflictError, type TransactionRepository } from "@/lib/seramet-repository";
 import { TransactionEngine, type TransactionLine } from "@/lib/transaction-engine";
 import type { TransactionState } from "@/lib/transaction-engine";
 import { allPermissionCodes } from "@/platform/permissions";
@@ -52,7 +56,12 @@ import { billNamedByReference, unverifiedByReceipt } from "@/payments/mpesa-matc
 import { custodyLedger } from "@/payments/custody-ledger";
 import { parseMajorAmount } from "@/payments/money";
 import { deliverySettings, type DeliveryCharge } from "@/delivery/delivery-charge";
-import { scheduledOrderTimes } from "@/orders/scheduled-orders";
+import {
+  InvalidScheduledTimeError,
+  isScheduledHold,
+  scheduledOrderTimes,
+  shiftScheduledRelease,
+} from "@/orders/scheduled-orders";
 
 export type WebhookEnvelope = {
   tenantId: string;
@@ -2027,8 +2036,48 @@ export class IntegrationRuntime {
     return { readyQueued, availabilityQueued, cancellationsQueued };
   }
 
+  /** Ready and kitchen times for a scheduled app order; pickup and dine-in need no rider trip. */
+  private orderSchedule(
+    order: NormalizedExternalOrder,
+    channel: OrderChannelDefinition | undefined,
+    prepMinutes: number,
+    config: ReturnType<typeof parseMarketplaceConnectionConfig>,
+  ) {
+    return scheduledOrderTimes({
+      ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
+      ...(order.scheduledReadyAt ? { scheduledReadyAt: order.scheduledReadyAt } : {}),
+      pickup:
+        order.orderType === "PICKUP" ||
+        order.orderType === "DINE_IN" ||
+        order.delivery.type === "PICKUP" ||
+        order.delivery.type === "NONE",
+      travelMinutes: deliverySettings(channel)?.scheduledTravelMinutes ?? 15,
+      prepMinutes,
+      bufferMinutes: config.scheduledOrderBufferMinutes,
+    });
+  }
+
   async releaseDueScheduledOrders(tenantId: string, at = new Date()) {
-    const state = await this.dependencies.transactions.loadState(tenantId);
+    // Saved against the revision it was loaded at, so an order a till saves meanwhile is never
+    // overwritten: on a clash it reloads and tries again.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.releaseDueScheduledOrdersOnce(tenantId, at);
+      } catch (error) {
+        const conflict =
+          error instanceof TransactionConflictError ||
+          (error as { code?: string } | null)?.code === "CONFLICT";
+        if (!conflict || attempt >= 3) throw error;
+      }
+    }
+  }
+
+  private async releaseDueScheduledOrdersOnce(tenantId: string, at: Date) {
+    const transactions = this.dependencies.transactions;
+    const loaded = transactions.loadStateWithRevision
+      ? await transactions.loadStateWithRevision(tenantId)
+      : { state: await transactions.loadState(tenantId), revision: undefined };
+    const state = loaded.state;
     let next = state;
     const released: string[] = [];
     for (const order of state.orders) {
@@ -2053,6 +2102,7 @@ export class IntegrationRuntime {
           first?.branch ?? "Scheduled Orders",
         ),
         `Released ${released.length} scheduled marketplace order(s)`,
+        loaded.revision === undefined ? undefined : { expectedRevision: loaded.revision },
       );
     }
     return { released };
@@ -2640,15 +2690,16 @@ export class IntegrationRuntime {
         quantity: item.quantity,
       })),
     );
-    const schedule = scheduledOrderTimes({
-      ...(order.scheduledFor ? { scheduledFor: order.scheduledFor } : {}),
-      ...(order.scheduledReadyAt ? { scheduledReadyAt: order.scheduledReadyAt } : {}),
-      pickup: order.delivery.type === "PICKUP",
-      // Only the app's rider or ours needs travel time; the channel's delivery settings say how long.
-      travelMinutes: deliverySettings(channel)?.scheduledTravelMinutes ?? 15,
-      prepMinutes: estimatedPrepMinutes,
-      bufferMinutes: marketplaceConfig.scheduledOrderBufferMinutes,
-    });
+    // An unreadable scheduled time is held for staff to review, never cooked straight away.
+    let invalidScheduledTime = false;
+    let schedule: ReturnType<typeof scheduledOrderTimes>;
+    try {
+      schedule = this.orderSchedule(order, channel, estimatedPrepMinutes, marketplaceConfig);
+    } catch (error) {
+      if (!(error instanceof InvalidScheduledTimeError)) throw error;
+      invalidScheduledTime = true;
+      schedule = undefined;
+    }
     const scheduledReleaseAt = schedule?.scheduledReleaseAt;
     // A scheduled order is ready at its scheduled time, not prep minutes from now.
     const estimatedReadyAt =
@@ -2658,7 +2709,8 @@ export class IntegrationRuntime {
       await this.queueRejection(event, connection, order.providerOrderId, "INVALID_ORDER");
       throw new IntegrationValidationError("Scheduled marketplace orders are disabled");
     }
-    const requiresReview = missingRequired && unmappedPolicy === "MANAGER_REVIEW";
+    const requiresReview =
+      (missingRequired && unmappedPolicy === "MANAGER_REVIEW") || invalidScheduledTime;
     const shouldAutoAccept = acceptancePolicy !== "MANUAL" && !requiresReview;
     const holdForSchedule = Boolean(schedule?.hold);
     const fulfilmentType =
@@ -2739,6 +2791,11 @@ export class IntegrationRuntime {
             ...(order.fulfilmentMetadata ?? {}),
             automaticAcceptance: shouldAutoAccept,
             estimatedPrepMinutes,
+            ...(invalidScheduledTime
+              ? {
+                  invalidScheduledTime: order.scheduledFor ?? order.scheduledReadyAt ?? "",
+                }
+              : {}),
             ...{
               pendingMarketplaceFinancials: {
                 platformExpectedAmount,
@@ -2922,6 +2979,25 @@ export class IntegrationRuntime {
         : {}),
     });
     const changedOrder = next.orders.find((row) => row.id === mapping.internalId);
+    // An app that moves a still-held scheduled order moves its ready and kitchen times too.
+    if (changedOrder?.externalSource && isScheduledHold(changedOrder)) {
+      const prep = Number(changedOrder.externalSource.metadata["estimatedPrepMinutes"]);
+      const updated = this.orderSchedule(
+        normalized.value,
+        this.resolveChannel(event.tenantId, connection, normalized.value.channelId),
+        Number.isFinite(prep) && prep > 0
+          ? prep
+          : parseMarketplaceConnectionConfig(connection.configuration).defaultPrepMinutes,
+        parseMarketplaceConnectionConfig(connection.configuration),
+      );
+      if (updated) {
+        const source = changedOrder.externalSource;
+        if (normalized.value.scheduledFor) source.scheduledFor = normalized.value.scheduledFor;
+        source.scheduledReadyAt = updated.scheduledReadyAt;
+        source.scheduledReleaseAt = updated.scheduledReleaseAt;
+        source.estimatedReadyAt = updated.scheduledReadyAt;
+      }
+    }
     if (changedOrder?.externalSource?.metadata["pendingMarketplaceFinancials"]) {
       const incoming = normalized.value;
       const cashAmountDue = Math.max(0, incoming.payment.cashAmountDue ?? 0);
@@ -3312,7 +3388,10 @@ export class IntegrationRuntime {
           row.externalSource.externalOrderId === record.resourceId,
       );
       if (order?.externalSource) {
-        order.externalSource.estimatedReadyAt = (record.payload as { readyAt: string }).readyAt;
+        const readyAt = (record.payload as { readyAt: string }).readyAt;
+        order.externalSource.estimatedReadyAt = readyAt;
+        // A held scheduled order keeps the same prep gap before its new ready time.
+        if (isScheduledHold(order)) shiftScheduledRelease(order.externalSource, readyAt);
         await this.dependencies.transactions.saveState(
           state,
           systemActor(record.tenantId, order.branchId!, order.branch),

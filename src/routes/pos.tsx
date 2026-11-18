@@ -19,6 +19,7 @@ import { AppShell } from "@/components/app/AppShell";
 import { PosCustomerPicker } from "@/components/app/PosCustomerPicker";
 import { orderChannelDispatchError } from "@/orders/order-channel-service";
 import { UpcomingScheduledOrders } from "@/components/app/UpcomingScheduledOrders";
+import { branchLocalTimeToIso } from "@/orders/scheduled-orders";
 import {
   linkedOrderCustomer,
   resolvePosCustomer,
@@ -1041,7 +1042,10 @@ function POS() {
         throw new Error(`Enter the ${selectedChannel?.displayName} order number first.`);
       if (!Number.isFinite(due) || due < 0 || due > total)
         throw new Error("The amount due on delivery must be between 0 and the order total.");
-      const readyBy = appReadyBy ? new Date(appReadyBy) : undefined;
+      // Typed in the branch's time, whatever time zone this device is set to.
+      const readyBy = appReadyBy
+        ? new Date(branchLocalTimeToIso(appReadyBy, clockTimeZone))
+        : undefined;
       if (readyBy && !(readyBy.getTime() > Date.now()))
         throw new Error("The ready-by time must be later than now.");
       appOrder = {

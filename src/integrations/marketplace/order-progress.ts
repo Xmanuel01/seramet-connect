@@ -1,3 +1,4 @@
+import { isScheduledHold } from "@/orders/scheduled-orders";
 import type { TransactionState } from "@/lib/transaction-engine";
 import type { IntegrationOutbox } from "@/integrations/runtime/models";
 
@@ -48,7 +49,7 @@ export function marketplaceProgress(order: Order, outbox: IntegrationOutbox[]) {
             ? "Preparing"
             : order.status === "SENT_TO_KITCHEN"
               ? "Kitchen queued"
-              : order.status === "HELD" && source?.scheduledFor && accepted
+              : isScheduledHold(order) && accepted
                 ? "Scheduled"
                 : accepted
                   ? "Accepted"
