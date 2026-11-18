@@ -125,6 +125,33 @@ describe.sequential("server-authoritative module access", () => {
     expect(moduleDecision(profile, "ai")?.reasons).toContain("ENTITLEMENT_REQUIRED");
   });
 
+  it("refuses a save made from a stale copy of the role instead of erasing another change", async () => {
+    const current = db.sqlite
+      .prepare("SELECT permission_code FROM role_permissions WHERE tenant_id=? AND role_id=?")
+      .all(tenantId, "role-demo-branch-manager")
+      .map((row) => (row as { permission_code: string }).permission_code);
+    await expect(
+      replaceRolePermissions({
+        db,
+        actor: actor([permissions.enterpriseAccessManage]),
+        roleId: "role-demo-branch-manager",
+        permissionCodes: [permissions.dashboardView],
+        reason: "Edited from an older copy",
+        basePermissions: [...current, permissions.platformTenantsProvision],
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    // The same change made from the current copy goes through.
+    const saved = await replaceRolePermissions({
+      db,
+      actor: actor([permissions.enterpriseAccessManage]),
+      roleId: "role-demo-branch-manager",
+      permissionCodes: [permissions.dashboardView],
+      reason: "Saved from the current copy",
+      basePermissions: current,
+    });
+    expect(saved.permissions).toEqual([permissions.dashboardView]);
+  });
+
   it("replaces role permissions atomically, audits the change and increments revision", async () => {
     const before = revision();
     const result = await replaceRolePermissions({

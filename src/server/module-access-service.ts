@@ -48,6 +48,8 @@ export async function replaceRolePermissions(input: {
   roleId: string;
   permissionCodes: PermissionCode[];
   reason: string;
+  /** The role's permissions the change was made from; a different current set is refused. */
+  basePermissions?: string[];
 }) {
   if (
     !input.actor.permissions.includes(permissions.settingsRoleManage) &&
@@ -76,6 +78,16 @@ export async function replaceRolePermissions(input: {
     .bind(input.actor.tenantId, input.roleId)
     .all<{ permission_code: PermissionCode }>();
   const current = new Set((currentRows.results ?? []).map((row) => row.permission_code));
+  if (
+    input.basePermissions &&
+    (new Set(input.basePermissions).size !== current.size ||
+      input.basePermissions.some((code) => !current.has(code as PermissionCode)))
+  ) {
+    throw new SerametHttpError(
+      409,
+      "Someone else changed this role's access since you opened it. Reload to see it, then make your change again.",
+    );
+  }
   const added = next.filter((code) => !current.has(code));
   const removed = [...current].filter((code) => !next.includes(code));
   const changed = [...added, ...removed];
