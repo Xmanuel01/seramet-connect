@@ -17,6 +17,18 @@ const forbidden = [
   /@cloudflare\/containers/,
   /clamav\/clamav|clamdscan|\/usr\/sbin\/clamd|seramet-scanner-gateway/i,
 ];
+// Build-only audit exceptions hold only while their package stays out of what is deployed.
+const exceptions = JSON.parse(
+  await readFile(new URL("./audit-exceptions.json", import.meta.url), "utf8"),
+);
+// Markers are property names and message text, which minifiers keep; a library chunk named
+// after the package is caught by its file name even if every marker were stripped.
+const buildOnlyPackages = [];
+for (const exception of exceptions.filter((row) => row.buildOnly === true)) {
+  if (exception.package) buildOnlyPackages.push(exception.package.toLowerCase());
+  for (const marker of exception.bundleMarkers ?? [])
+    forbidden.push(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
 const findings = [];
 for (const root of roots) await scan(root);
 if (findings.length) {
@@ -28,6 +40,8 @@ async function scan(path) {
   const entries = await readdir(path, { withFileTypes: true });
   for (const entry of entries) {
     const target = join(path, entry.name);
+    if (buildOnlyPackages.some((name) => entry.name.toLowerCase().includes(name)))
+      findings.push(`${target}: build-only package in the deployed output`);
     if (entry.isDirectory()) await scan(target);
     else if (/\.(?:js|mjs|json|html|css|map)$/i.test(entry.name)) {
       if (/local-development-database|default-demo-data|mock/i.test(entry.name)) {

@@ -38,9 +38,9 @@
     "verify:production": "node scripts/verify-production-health.mjs",
     "benchmark:scanner": "vite-node scripts/benchmark-scanner-boundary.ts",
     "scanner:config:staging": "node scripts/render-scanner-cloudflare-config.mjs staging",
-    "deploy:staging": "npm run build && node scripts/render-cloudflare-config.mjs staging && npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json",
+    "deploy:staging": "npm run build && npm run audit:bundle && node scripts/render-cloudflare-config.mjs staging && npx --yes wrangler@4.15.2 deploy --config .seramet/wrangler.generated.json",
     "typecheck": "tsc --noEmit",
-    "validate": "node scripts/assert-no-lovable-source.mjs && npm run typecheck && npm run lint && npm test && npm run build && node scripts/verify-cloudflare-events.mjs",
+    "validate": "node scripts/assert-no-lovable-source.mjs && npm run typecheck && npm run lint && npm test && npm run build && npm run audit:bundle && node scripts/verify-cloudflare-events.mjs",
     "format": "prettier --write .",
     "test:pass6-load": "vitest run --config vitest.load.config.ts src/inventory/pass-6-load.test.ts",
     "bridge:build": "node scripts/build-print-bridge-exe.mjs"

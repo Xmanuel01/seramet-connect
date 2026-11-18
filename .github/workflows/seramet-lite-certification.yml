@@ -70,8 +70,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Audit production dependency vulnerabilities
-        run: npm audit --omit=dev --audit-level=high
+      - name: Audit dependency vulnerabilities (moderate+, dated exceptions)
+        run: node scripts/audit-dependencies.mjs
       - name: Typecheck and lint application
         run: |
           npm run typecheck
