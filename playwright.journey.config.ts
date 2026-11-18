@@ -71,6 +71,11 @@ export default defineConfig({
       SERAMET_JWT_AUDIENCE: "seramet-journey-browser",
       SERAMET_PRINT_SIGNING_KEY: "journey-print-signing-key-0123456789abcdef0123456789",
       NODE_EXTRA_CA_CERTS: trustFile,
+      // Local in-memory object storage (test-only gate) and a disposable key, so
+      // restaurant-entered credentials such as Uber Eats are stored encrypted.
+      SERAMET_ENABLE_DEV_AUTH: "true",
+      SERAMET_E2E_IMPORTS: "true",
+      SERAMET_CREDENTIAL_ENCRYPTION_KEY: "am91cm5leS1jcmVkZW50aWFsLWtleS0zMi1ieXRlcyE=",
       CI: "true",
     },
   },
