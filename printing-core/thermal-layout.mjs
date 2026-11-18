@@ -1,6 +1,31 @@
 // Versioned, printer-independent compatibility adapter for the existing ruled
 // templates. Both renderers consume the same authorized business content.
 export const MAX_LAYOUT_ROWS = 512;
+// A receipt logo is a 1-bit image printed centred above the document. 384 dots
+// fits 58mm paper and every 80mm printer; 200 dots is about 25mm tall at 203 dpi.
+export const MAX_LOGO_WIDTH = 384;
+export const MAX_LOGO_HEIGHT = 200;
+export const LOGO_DOCUMENT_TYPES = ["BILL", "RECEIPT", "INVOICE"];
+/** Checks a logo's shape and returns the size of its image bytes. */
+export function validateLogo(logo) {
+  if (
+    !logo ||
+    typeof logo !== "object" ||
+    Object.keys(logo).sort().join(",") !== "data,height,width" ||
+    !Number.isInteger(logo.width) ||
+    !Number.isInteger(logo.height) ||
+    logo.width < 8 ||
+    logo.width > MAX_LOGO_WIDTH ||
+    logo.height < 1 ||
+    logo.height > MAX_LOGO_HEIGHT ||
+    typeof logo.data !== "string" ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(logo.data)
+  )
+    throw new Error("INVALID_LOGO");
+  const bytes = Math.ceil(logo.width / 8) * logo.height;
+  if (logo.data.length !== 4 * Math.ceil(bytes / 3)) throw new Error("INVALID_LOGO");
+  return bytes;
+}
 export function isStrongLine(line, index) {
   return (
     index === 0 ||
@@ -102,6 +127,8 @@ export function validateRenderJob(job) {
     (!hasRaster && job.document !== undefined)
   )
     throw new Error("UNSUPPORTED_RENDER_ENVELOPE");
+  // ESC a 1, GS v 0 header, the image, a line feed and ESC a 0.
+  const logoBytes = job.logo === undefined ? 0 : validateLogo(job.logo) + 15;
   for (const [target, profile] of [
     [job.target, job.profile],
     [job.fallbackTarget, job.fallbackProfile],
@@ -112,7 +139,13 @@ export function validateRenderJob(job) {
       const expected = buildThermalLayout(job.content, profile.paperWidth);
       if (JSON.stringify(expected) !== JSON.stringify(job.document))
         throw new Error("DOCUMENT_INTEGRITY_MISMATCH");
-      rasterMetrics(expected, profile);
+      const metrics = rasterMetrics(expected, profile);
+      if (
+        logoBytes &&
+        (job.logo.width > profile.raster.printableWidthDots ||
+          metrics.bytes + logoBytes > profile.raster.maxBytes)
+      )
+        throw new Error("RASTER_SIZE_LIMIT");
     }
   }
 }

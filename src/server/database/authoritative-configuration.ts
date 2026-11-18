@@ -387,7 +387,10 @@ export async function loadTenantConfigurationState(
     rows("SELECT * FROM hardware_devices WHERE tenant_id=? AND trust_status != 'REVOKED'"),
     rows("SELECT * FROM print_routes WHERE tenant_id=?"),
     rows("SELECT * FROM document_identities WHERE tenant_id=?"),
-    rows("SELECT * FROM document_templates WHERE tenant_id=? AND active = 1"),
+    // Receipt logos are read only when printing; their image bytes stay out of settings snapshots.
+    rows(
+      "SELECT * FROM document_templates WHERE tenant_id=? AND active = 1 AND document_type <> 'RECEIPT_LOGO'",
+    ),
     rows("SELECT * FROM roles WHERE tenant_id=? AND active = 1"),
     rows("SELECT * FROM role_permissions WHERE tenant_id=?"),
     rows("SELECT * FROM users WHERE tenant_id=? AND active = 1"),

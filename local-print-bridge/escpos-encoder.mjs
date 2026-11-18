@@ -55,6 +55,20 @@ export function finishCommands(cutter) {
   throw new Error("UNSUPPORTED_CUTTER");
 }
 
+/**
+ * A validated 1-bit logo, centred (ESC a 1) as one GS v 0 image, then a line
+ * feed and left alignment again (ESC a 0) for the document below it.
+ */
+export function logoCommands(logo) {
+  const stride = Math.ceil(logo.width / 8);
+  return Buffer.concat([
+    Buffer.from([ESC, 0x61, 1, GS, 0x76, 0x30, 0]),
+    Buffer.from([stride & 255, stride >> 8, logo.height & 255, logo.height >> 8]),
+    Buffer.from(logo.data, "base64"),
+    Buffer.from([0x0a, ESC, 0x61, 0]),
+  ]);
+}
+
 export function encodeEscPos(content, profile) {
   if (!["58mm", "80mm"].includes(profile.paperWidth) || profile.encoding !== "ascii") {
     throw new Error("UNSUPPORTED_PRINTER_PROFILE");

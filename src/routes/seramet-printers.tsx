@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { Activity, ImageIcon, Printer, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Printer } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { PrinterAdministration } from "@/components/app/PrinterAdministration";
+import { ReceiptLogoPanel } from "@/components/app/ReceiptLogoPanel";
 import { Btn, Metric, Panel, PanelHead, Status, TD, TH } from "@/components/app/ui";
 import { KitchenPrintBypassPanel } from "@/components/app/KitchenPrintBypassPanel";
 import { useSerametPrintQueue } from "@/hooks/use-seramet-print-queue";
@@ -11,7 +12,6 @@ import { permissions } from "@/platform/permissions";
 import type { KitchenPrintObligation } from "@/lib/transaction-engine";
 import { businessDateForTimestamp } from "@/lib/business-date";
 import { kitchenPrintRecoveryItems } from "@/lib/kitchen-print-recovery";
-import { processReceiptLogoFile, type LogoScope, type ReceiptLogoAsset } from "@/lib/receipt-logo";
 import { bridgeConfigReady } from "@/lib/print-bridge-client-config";
 import { useAppContext } from "@/lib/app-context";
 import {
@@ -149,8 +149,6 @@ function SerametPrinters() {
     selectedBranchId === activeBranchId && hasPermission(permissions.settingsBranchManage);
   const mayDeliverKot =
     selectedBranchId === activeBranchId && hasPermission(permissions.ordersUpdate);
-  const [logoNotice, setLogoNotice] = useState("");
-  const [logoAssets, setLogoAssets] = useState<Record<string, ReceiptLogoAsset | undefined>>({});
 
   useEffect(() => setBranch(activeBranch), [activeBranch]);
   const {
@@ -316,7 +314,6 @@ function SerametPrinters() {
   const connected =
     profile?.printers.filter((printer) => printer.connection === "Connected").length ?? 0;
   const failures = profile?.printers.reduce((sum, printer) => sum + printer.failures, 0) ?? 0;
-  const activeLogo = logoAssets[`Branch:${branch}`] ?? logoAssets["Company"];
   const previewPaymentMethod =
     getConfigurationRepository().listPaymentMethods(activeTenantId, true)[0]?.displayName ??
     "Configured payment";
@@ -393,31 +390,6 @@ function SerametPrinters() {
         ? `Test ${label} sent. Check that it came out of the printer.`
         : `No printer is set up to print a ${label}.`,
     );
-  };
-
-  const uploadLogo = async (event: ChangeEvent<HTMLInputElement>, scope: LogoScope) => {
-    const file = event.target.files?.[0];
-    if (!file || !profile) return;
-    try {
-      const asset = await processReceiptLogoFile(
-        file,
-        scope,
-        scope === "Branch" ? branch : undefined,
-        150,
-        profile.printIdentity.businessName,
-      );
-      const key = scope === "Branch" ? `Branch:${branch}` : "Company";
-      setLogoAssets((current) => ({ ...current, [key]: asset }));
-      setLogoNotice(
-        `Showing how the ${scope === "Branch" ? branch : "company"} logo looks in black and white.`,
-      );
-    } catch (error) {
-      setLogoNotice(
-        error instanceof Error ? error.message : "Couldn't read this image. Try a PNG or JPG.",
-      );
-    } finally {
-      event.target.value = "";
-    }
   };
 
   const branchPicker = (
@@ -671,81 +643,7 @@ function SerametPrinters() {
         </div>
       </Panel>
 
-      <Panel className="mb-4">
-        <PanelHead
-          title="Logo preview"
-          sub="See how a logo will look in black and white on receipt paper. The preview isn't saved and doesn't change your receipts."
-          right={<ImageIcon className="h-4 w-4 text-primary" />}
-        />
-        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-secondary/30 px-4 py-5 text-[13px] font-semibold hover:bg-secondary">
-                <Upload className="h-4 w-4 text-primary" />
-                Preview company logo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => uploadLogo(event, "Company")}
-                  className="hidden"
-                />
-              </label>
-              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-secondary/30 px-4 py-5 text-[13px] font-semibold hover:bg-secondary">
-                <Upload className="h-4 w-4 text-primary" />
-                Preview {branch} logo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => uploadLogo(event, "Branch")}
-                  className="hidden"
-                />
-              </label>
-            </div>
-            {logoNotice && (
-              <div className="rounded-md bg-card px-3 py-2 text-[12px] text-muted-foreground">
-                {logoNotice}
-              </div>
-            )}
-            <p className="text-[12px] text-muted-foreground">
-              Without a logo, receipts print your business name:{" "}
-              <span className="font-semibold text-foreground">
-                {activeLogo?.fallbackText ?? profile.printIdentity.businessName}
-              </span>
-              .
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="mb-2 text-[12px] font-bold text-muted-foreground">Your image</div>
-              {activeLogo ? (
-                <img
-                  src={activeLogo.originalDataUrl}
-                  alt=""
-                  className="h-36 w-full rounded-md border border-border bg-white object-contain p-3"
-                />
-              ) : (
-                <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-[12px] text-muted-foreground">
-                  No image chosen
-                </div>
-              )}
-            </div>
-            <div className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="mb-2 text-[12px] font-bold text-muted-foreground">How it prints</div>
-              {activeLogo ? (
-                <img
-                  src={activeLogo.monochromeDataUrl}
-                  alt=""
-                  className="h-36 w-full rounded-md border border-border bg-white object-contain p-3 [image-rendering:pixelated]"
-                />
-              ) : (
-                <div className="grid h-36 place-items-center rounded-md border border-dashed border-border text-[12px] text-muted-foreground">
-                  Business name prints instead
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </Panel>
+      <ReceiptLogoPanel businessName={profile.printIdentity.businessName} />
 
       <details className="mb-4 rounded-lg border border-border bg-card">
         <summary className="cursor-pointer px-4 py-3 text-[13px] font-semibold">

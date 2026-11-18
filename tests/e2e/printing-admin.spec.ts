@@ -6,7 +6,39 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { createServer } from "node:net";
 import { randomBytes, randomUUID, createHmac } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { createBridge } from "../../local-print-bridge/server.mjs";
+
+/** A 32 x 16 PNG: black left half, white right half. */
+function logoPng() {
+  const crc = (bytes: Buffer) => {
+    let c = ~0;
+    for (const byte of bytes) {
+      c ^= byte;
+      for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
+    }
+    return ~c >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc(body), 8 + data.length);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(32, 0);
+  header.writeUInt32BE(16, 4);
+  header.set([8, 0, 0, 0, 0], 8); // 8-bit greyscale
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(16, 0), Buffer.alloc(16, 255)]);
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: 16 }, () => row)))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 test("authenticated owner configures TCP, submits a signed diagnostic and cannot substitute another branch", async ({
   browser,
@@ -87,6 +119,14 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await page.getByLabel("Local bridge token").fill(token);
     await page.getByLabel("Enable installed bridge").check();
     await page.getByRole("button", { name: "Save local connection", exact: true }).click();
+    // Save a branch receipt logo; the test receipt must carry it to the printer.
+    await page
+      .locator("label", { hasText: /^Choose .* logo$/ })
+      .last()
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: logoPng() });
+    await page.getByRole("button", { name: "Save logo", exact: true }).click();
+    await expect(page.getByText(/now prints this logo/)).toBeVisible();
     await page.getByRole("button", { name: "Test receipt", exact: true }).click();
     await expect(
       page.getByRole("status").filter({ hasText: "Sent to the printer. Check that it printed." }),
@@ -95,6 +135,12 @@ test("authenticated owner configures TCP, submits a signed diagnostic and cannot
     await expect
       .poll(() => Buffer.concat(chunks).toString("ascii"))
       .toContain("PRINTER TEST - NOT A SALE");
+    // ESC a 1 then GS v 0 with a 4-byte-wide (32 dot), 16-row image, black on the left.
+    const printed = Buffer.concat(chunks);
+    const logoAt = printed.indexOf(Buffer.from([27, 97, 1, 29, 118, 48, 0, 4, 0, 16, 0]));
+    expect(logoAt).toBeGreaterThanOrEqual(0);
+    expect([...printed.subarray(logoAt + 11, logoAt + 15)]).toEqual([255, 255, 0, 0]);
+    expect(logoAt).toBeLessThan(printed.indexOf(Buffer.from("PRINTER TEST - NOT A SALE")));
     expect(Buffer.concat(chunks).toString("ascii")).toContain("RECEIPT");
     await page.getByRole("button", { name: "Check print queue", exact: true }).click();
     await expect(
