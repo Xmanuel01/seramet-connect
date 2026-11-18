@@ -1,6 +1,6 @@
 import { LoyaltyValueService } from "@/crm/loyalty-value-service";
 import type { ServerActor } from "@/lib/seramet-auth";
-import type { TransactionRepository } from "@/lib/seramet-repository";
+import { loadStateRecords, type TransactionRepository } from "@/lib/seramet-repository";
 import type { OrderDraft, TransactionState } from "@/lib/transaction-engine";
 import { majorFromMinor, parseMajorAmount } from "@/payments/money";
 import { permissions } from "@/platform/permissions";
@@ -518,7 +518,9 @@ export class GuestExperienceService {
       .first<Row>();
     if (!submission) throw new GuestDomainError("NOT_FOUND", 404, "Order tracking link is invalid");
     await this.useTenant(String(submission["tenant_id"]));
-    const state = await this.transactions.loadState(String(submission["tenant_id"]));
+    const state = await loadStateRecords(this.transactions, String(submission["tenant_id"]), [
+      { collection: "orders", id: String(submission["order_id"]) },
+    ]);
     const order = state.orders.find(
       (candidate) =>
         candidate.id === submission["order_id"] &&
@@ -588,7 +590,10 @@ export class GuestExperienceService {
       .first<{ order_id: string }>();
     if (!submission)
       throw new GuestDomainError("FORBIDDEN", 403, "Receipt does not belong to this guest session");
-    const state = await this.transactions.loadState(session.tenant_id);
+    // The order brings its bill, and the bill its receipt.
+    const state = await loadStateRecords(this.transactions, session.tenant_id, [
+      { collection: "orders", id: submission.order_id },
+    ]);
     const order = state.orders.find(
       (candidate) =>
         candidate.id === submission.order_id && candidate.branchId === session.branch_id,
@@ -2799,7 +2804,9 @@ export class GuestExperienceService {
         input: { idempotencyKey: String(row["idempotency_key"]) },
       });
     }
-    const state = await this.transactions.loadState(session.tenant_id);
+    const state = await loadStateRecords(this.transactions, session.tenant_id, [
+      { collection: "orders", id: String(row["order_id"]) },
+    ]);
     const order = state.orders.find((candidate) => candidate.id === row["order_id"]);
     return {
       orderReference:

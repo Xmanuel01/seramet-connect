@@ -41,7 +41,7 @@ import {
 } from "@/integrations/marketplace/types";
 import type { ConfigurationRepository } from "@/platform/repositories/configuration-repository";
 import type { IntegrationConnection, ProviderCapability } from "@/platform/types";
-import type { TransactionRepository } from "@/lib/seramet-repository";
+import { loadLiveState, type TransactionRepository } from "@/lib/seramet-repository";
 import { TransactionEngine, type TransactionLine } from "@/lib/transaction-engine";
 import type { TransactionState } from "@/lib/transaction-engine";
 import { allPermissionCodes } from "@/platform/permissions";
@@ -422,20 +422,27 @@ export class IntegrationRuntime {
   ) {
     const olderThan = Date.now() - (options.olderThanMs ?? 45_000);
     const newerThan = Date.now() - 24 * 60 * 60 * 1000;
+    const unanswered = (source: TransactionState) =>
+      (source.paymentOperations?.intents ?? [])
+        .filter(
+          (intent) =>
+            intent.tenantId === tenantId &&
+            intent.providerConnectionId &&
+            intent.providerReference &&
+            ["PENDING", "AWAITING_CUSTOMER", "PROCESSING"].includes(intent.status) &&
+            (options.intentId
+              ? intent.id === options.intentId
+              : Date.parse(intent.createdAt) <= olderThan &&
+                Date.parse(intent.createdAt) >= newerThan),
+        )
+        .slice(0, options.limit ?? 10);
+    // Unanswered prompts are open records, so the working set shows whether there is anything
+    // to ask the provider about. Usually there is not, and the history is never read. When
+    // there is, the full state is loaded, because the outcome is saved back as a whole state.
+    const live = await loadLiveState(this.dependencies.transactions, tenantId);
+    if (unanswered(live).length === 0) return { checked: 0, results: [] };
     let state = await this.dependencies.transactions.loadState(tenantId);
-    const candidates = (state.paymentOperations?.intents ?? [])
-      .filter(
-        (intent) =>
-          intent.tenantId === tenantId &&
-          intent.providerConnectionId &&
-          intent.providerReference &&
-          ["PENDING", "AWAITING_CUSTOMER", "PROCESSING"].includes(intent.status) &&
-          (options.intentId
-            ? intent.id === options.intentId
-            : Date.parse(intent.createdAt) <= olderThan &&
-              Date.parse(intent.createdAt) >= newerThan),
-      )
-      .slice(0, options.limit ?? 10);
+    const candidates = unanswered(state);
     const results: Array<{ intentId: string; outcome: string; reason?: string }> = [];
     let changed = false;
     for (const intent of candidates) {
