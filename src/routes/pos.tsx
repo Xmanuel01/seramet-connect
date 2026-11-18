@@ -712,6 +712,8 @@ function POS() {
           : "New";
   const subtotalMinor = items.reduce((sum, line) => sum + (line.p.priceMinor ?? 0) * line.qty, 0);
   const pricingRules = new Map(operationalMenu.pricingRules.map((rule) => [rule.id, rule]));
+  // A saved menu shows at once, but orders wait for the current one so no old price is charged.
+  const checkingPrices = !operationalMenu.fresh;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -2010,6 +2012,7 @@ function POS() {
                   onClick={holdOrder}
                   disabled={
                     orderActionBusy ||
+                    checkingPrices ||
                     selectedOrderUnavailable ||
                     !items.length ||
                     activeOrderHasSentLines
@@ -2023,15 +2026,23 @@ function POS() {
                   variant={billReady ? undefined : "primary"}
                   className="h-12 text-[15px]"
                   onClick={queueKitchenTickets}
-                  disabled={orderActionBusy || selectedOrderUnavailable || !items.length}
+                  disabled={
+                    orderActionBusy || checkingPrices || selectedOrderUnavailable || !items.length
+                  }
                 >
-                  {orderActionBusy ? "Working..." : "Place Order"}
+                  {orderActionBusy
+                    ? "Working..."
+                    : checkingPrices
+                      ? "Checking prices…"
+                      : "Place Order"}
                 </Btn>
                 <Btn
                   variant={billReady ? "primary" : undefined}
                   className="h-12 text-[15px]"
                   onClick={() => setBillConfirmOpen(true)}
-                  disabled={orderActionBusy || selectedOrderUnavailable || !billReady}
+                  disabled={
+                    orderActionBusy || checkingPrices || selectedOrderUnavailable || !billReady
+                  }
                   title={billReady ? undefined : "Open a sent order from Orders to bill it."}
                 >
                   Bill {formatMoney(total)}

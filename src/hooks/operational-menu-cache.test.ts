@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOperationalMenuCache,
   POS_MENU_FRESH_MS,
@@ -6,6 +6,11 @@ import {
   getOperationalMenuRevision,
   subscribeOperationalMenu,
   invalidateOperationalMenu,
+  clearSavedOperationalMenus,
+  readSavedOperationalMenu,
+  SAVED_MENU_MAX_AGE_MS,
+  savedMenuKey,
+  writeSavedOperationalMenu,
 } from "./operational-menu-cache";
 
 describe("in-tab operational menu cache", () => {
@@ -59,5 +64,60 @@ describe("in-tab operational menu cache", () => {
     );
     expect(await cache.load("same", load)).toBe(20);
     expect(count).toBe(2);
+  });
+});
+
+describe("menu saved on the device", () => {
+  const data: Record<string, string> = {};
+  const fakeStorage = {
+    get length() {
+      return Object.keys(data).length;
+    },
+    key: (index: number) => Object.keys(data)[index] ?? null,
+    getItem: (key: string) => data[key] ?? null,
+    setItem: (key: string, value: string) => {
+      data[key] = value;
+    },
+    removeItem: (key: string) => {
+      delete data[key];
+    },
+  };
+  beforeEach(() => {
+    for (const key of Object.keys(data)) delete data[key];
+    vi.stubGlobal("window", { localStorage: fakeStorage });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const scope = { tenantId: "t1", branchId: "b1", userId: "u1", role: "Cashier" };
+
+  it("keeps each restaurant, branch, person and role apart", () => {
+    writeSavedOperationalMenu(savedMenuKey(scope), { items: 3 });
+    expect(readSavedOperationalMenu(savedMenuKey(scope))).toEqual({ items: 3 });
+    for (const other of [
+      { ...scope, tenantId: "t2" },
+      { ...scope, branchId: "b2" },
+      { ...scope, userId: "u2" },
+      { ...scope, role: "Chef" },
+    ])
+      expect(readSavedOperationalMenu(savedMenuKey(other))).toBeNull();
+  });
+
+  it("ignores a menu saved too long ago", () => {
+    writeSavedOperationalMenu(savedMenuKey(scope), { items: 3 }, 1000);
+    expect(
+      readSavedOperationalMenu(savedMenuKey(scope), 1000 + SAVED_MENU_MAX_AGE_MS + 1),
+    ).toBeNull();
+  });
+
+  it("is removed on sign-out, leaving other saved data alone", () => {
+    writeSavedOperationalMenu(savedMenuKey(scope), { items: 3 });
+    data["seramet.other"] = "keep";
+    clearSavedOperationalMenus();
+    expect(readSavedOperationalMenu(savedMenuKey(scope))).toBeNull();
+    expect(data["seramet.other"]).toBe("keep");
+  });
+
+  it("reads nothing when storage holds something unreadable", () => {
+    data[savedMenuKey(scope)] = "{not json";
+    expect(readSavedOperationalMenu(savedMenuKey(scope))).toBeNull();
   });
 });

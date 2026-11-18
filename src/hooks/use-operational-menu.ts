@@ -5,7 +5,10 @@ import { majorFromMinor } from "@/payments/money";
 import {
   createOperationalMenuCache,
   getOperationalMenuRevision,
+  readSavedOperationalMenu,
+  savedMenuKey,
   subscribeOperationalMenu,
+  writeSavedOperationalMenu,
 } from "./operational-menu-cache";
 
 type CatalogRow = {
@@ -39,6 +42,8 @@ type MenuData = { items: Product[]; pricingRules: OperationalPricingRule[] };
 type ViewState = MenuData & {
   key: string;
   status: "loading" | "ready" | "error";
+  /** False while showing a saved or older menu until the current one arrives. */
+  fresh: boolean;
   error: string;
 };
 
@@ -77,31 +82,30 @@ export function useOperationalMenu(input: {
     }),
     [input.branchId, input.role, input.tenantId, input.userId, input.userName, token],
   );
-  const [view, setView] = useState<ViewState>(() => {
+  const savedKey = savedMenuKey(input);
+  // What can be shown before the current menu arrives: this tab's copy, else the copy saved on
+  // this device for the same restaurant, branch, person and role.
+  const initialView = (): ViewState => {
     const existing = menuCache.get(key);
-    return {
-      key,
-      items: existing?.value.items ?? [],
-      pricingRules: existing?.value.pricingRules ?? [],
-      status: existing ? "ready" : "loading",
-      error: "",
-    };
-  });
+    if (existing)
+      return { key, ...existing.value, status: "ready", fresh: !existing.revalidate, error: "" };
+    const saved = readSavedOperationalMenu<MenuData>(savedKey);
+    if (saved) return { key, ...saved, status: "ready", fresh: false, error: "" };
+    return { key, items: [], pricingRules: [], status: "loading", fresh: false, error: "" };
+  };
+  const [view, setView] = useState<ViewState>(initialView);
 
   useEffect(() => {
     let active = true;
-    const existing = menuCache.get(key);
-    // The previous branch's items must never appear during a context switch.
-    if (!existing) {
-      setView({ key, items: [], pricingRules: [], status: "loading", error: "" });
-    } else {
-      setView({ key, ...existing.value, status: "ready", error: "" });
-      // Navigating back within 12 seconds does not fetch 345 items again.
-      if (!existing.revalidate)
-        return () => {
-          active = false;
-        };
-    }
+    // The previous branch's items must never appear during a context switch: the shown menu
+    // always comes from this exact scope.
+    const shown = initialView();
+    setView(shown);
+    // Navigating back within 12 seconds does not fetch 345 items again.
+    if (shown.fresh)
+      return () => {
+        active = false;
+      };
 
     void menuCache
       .load(key, async () => {
@@ -138,32 +142,38 @@ export function useOperationalMenu(input: {
         }));
         const value = { items, pricingRules: body.pricingRules ?? [] };
         menuCache.set(key, value);
+        writeSavedOperationalMenu(savedKey, value);
         return value;
       })
       .then((data) => {
-        if (active) setView({ key, ...data, status: "ready", error: "" });
+        if (active) setView({ key, ...data, status: "ready", fresh: true, error: "" });
       })
       .catch((cause: unknown) => {
         menuCache.clear(key);
         if (!active) return;
+        // A shown older menu stays visible to browse, but is never treated as current.
         setView({
           key,
-          items: [],
-          pricingRules: [],
+          items: shown.items,
+          pricingRules: shown.pricingRules,
           status: "error",
+          fresh: false,
           error: cause instanceof Error ? cause.message : "Authoritative menu is unavailable",
         });
       });
     return () => {
       active = false;
     };
-  }, [headers, input.branchId, key]);
+    // initialView reads only key and savedKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headers, input.branchId, key, savedKey]);
 
   if (view.key !== key) {
     return {
       items: [] as Product[],
       pricingRules: [] as OperationalPricingRule[],
       status: "loading" as const,
+      fresh: false,
       error: "",
     };
   }
@@ -171,6 +181,7 @@ export function useOperationalMenu(input: {
     items: view.items,
     pricingRules: view.pricingRules,
     status: view.status,
+    fresh: view.fresh,
     error: view.error,
   };
 }
