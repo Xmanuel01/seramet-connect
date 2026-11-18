@@ -93,12 +93,13 @@ test("a missing or failed audit report fails instead of passing as clean", () =>
 const picomatch = "GHSA-fc5q-39xc-vjpf";
 const buildToolReport = {
   vulnerabilities: {
-    picomatch: { severity: "high", via: [advisory(picomatch, "high")] },
+    picomatch: { severity: "high", via: [{ ...advisory(picomatch, "high"), name: "picomatch" }] },
     vite: { severity: "high", via: ["picomatch"] },
   },
 };
 const buildOnly = {
   id: picomatch,
+  package: "picomatch",
   expires: "2026-12-31",
   buildOnly: true,
   bundleMarkers: ["POSIX_REGEX_SOURCE"],
@@ -120,7 +121,7 @@ test("a build-only exception covers a production-tree build tool", () => {
 test("a build-only exception without bundle markers is refused", () => {
   for (const bundleMarkers of [undefined, [], ["abc"]]) {
     const problems = evaluateBuildTool({ exceptions: [{ ...buildOnly, bundleMarkers }] });
-    assert.match(problems[0], /needs bundleMarkers/);
+    assert.match(problems[0], /bundleMarkers the bundle audit can check/);
     assert.ok(problems.some((problem) => problem.startsWith("picomatch")));
   }
 });
@@ -134,4 +135,32 @@ test("a build-only exception expires like any other", () => {
 test("an ordinary exception still never covers a production-tree advisory", () => {
   const { buildOnly: _ignored, ...ordinary } = buildOnly;
   assert.equal(evaluateBuildTool({ exceptions: [ordinary] }).length, 2);
+});
+
+test("a build-only exception excuses only its own package's advisory", () => {
+  const shared = {
+    vulnerabilities: {
+      ...buildToolReport.vulnerabilities,
+      "other-glob": {
+        severity: "high",
+        via: [{ ...advisory(picomatch, "high"), name: "other-glob" }],
+      },
+    },
+  };
+  const named = (report) => ({
+    vulnerabilities: Object.fromEntries(
+      Object.entries(report.vulnerabilities).map(([name, row]) => [
+        name,
+        {
+          ...row,
+          via: row.via.map((via) => (typeof via === "string" || via.name ? via : { ...via, name })),
+        },
+      ]),
+    ),
+  });
+  const problems = evaluateBuildTool({ devReport: named(shared), prodReport: named(shared) });
+  assert.deepEqual(problems, [`other-glob: ${picomatch} (high)`]);
+  // Without a package the exception is refused outright.
+  const { package: _none, ...unbound } = buildOnly;
+  assert.match(evaluateBuildTool({ exceptions: [unbound] })[0], /needs its package/);
 });

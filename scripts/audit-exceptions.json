@@ -10,7 +10,13 @@
     "package": "picomatch",
     "expires": "2026-12-31",
     "buildOnly": true,
-    "bundleMarkers": ["POSIX_REGEX_SOURCE", "REGEX_NON_SPECIAL_CHARS", "extglobChars"],
+    "bundleMarkers": [
+      "POSIX_REGEX_SOURCE",
+      "REGEX_NON_SPECIAL_CHARS",
+      "extglobChars",
+      "Expected pattern to be a non-empty string",
+      "to match literal characters"
+    ],
     "reason": "ReDoS needs an attacker-supplied glob pattern. picomatch <=4.0.7 (no patched release) reaches the production tree only through Vite and TanStack Start build tooling; the production bundle audit fails if its code ever appears in the deployed Worker or assets."
   }
 ]
