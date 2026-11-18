@@ -714,6 +714,30 @@ function POS() {
   const pricingRules = new Map(operationalMenu.pricingRules.map((rule) => [rule.id, rule]));
   // A saved menu shows at once, but orders wait for the current one so no old price is charged.
   const checkingPrices = !operationalMenu.fresh;
+  // Items added from a saved menu that the current menu no longer has: kept visible and
+  // flagged, never silently dropped, and nothing is sent until the cashier removes them.
+  const knownNames = useRef(new Map<string, string>());
+  for (const product of operationalMenu.items) knownNames.current.set(product.id, product.name);
+  const missingLines = operationalMenu.fresh
+    ? Object.entries(lines)
+        .filter(
+          ([id, qty]) =>
+            qty > (sentQuantities[id] ?? 0) && !branchMenu.some((product) => product.id === id),
+        )
+        .map(([id, qty]) => ({
+          id,
+          qty: qty - (sentQuantities[id] ?? 0),
+          name: knownNames.current.get(id) ?? "An item",
+        }))
+    : [];
+  const orderBlocked = checkingPrices || missingLines.length > 0;
+  // Checked again when an action runs, since a dialog may have been opened before.
+  const orderBlockedReason = () =>
+    checkingPrices
+      ? "Checking the latest prices. Try again in a moment."
+      : missingLines.length
+        ? `${missingLines.map((line) => line.name).join(", ")} is no longer on the menu. Remove it first.`
+        : null;
   const taxTotals = items.reduce(
     (totals, line) => {
       const rule = line.p.taxRuleId ? pricingRules.get(line.p.taxRuleId) : undefined;
@@ -974,6 +998,12 @@ function POS() {
   const holdOrder = () =>
     void runOrderAction(async () => {
       if (!items.length) return;
+      const blocked = orderBlockedReason();
+      if (blocked) {
+        setPrintNotice(blocked);
+        setPrintNoticeType("warning");
+        return;
+      }
       try {
         await createOrUpdateActiveOrder("HELD");
         clearCurrentOrder("Order held in active orders.");
@@ -985,6 +1015,8 @@ function POS() {
 
   const queueKitchenTicketsForTable = async (tableNo = orderTable) => {
     if (!items.length) return null;
+    const blocked = orderBlockedReason();
+    if (blocked) throw new Error(blocked);
     if (selectedChannel?.requiresTable && !tableNo) {
       throw new Error("Choose a table before sending this order to the kitchen.");
     }
@@ -1303,6 +1335,12 @@ function POS() {
 
   const moveOrderToInvoice = async (printBill: boolean) => {
     if (orderActionRef.current) return;
+    const blocked = orderBlockedReason();
+    if (blocked) {
+      setPrintNotice(blocked);
+      setPrintNoticeType("warning");
+      return;
+    }
     orderActionRef.current = true;
     setOrderActionBusy(true);
     if (!activeOrder || !canPrintBill) {
@@ -1754,6 +1792,35 @@ function POS() {
                 canOverride={hasPermission(permissions.paymentsReconcile)}
               />
             )}
+            {missingLines.length > 0 && (
+              <div
+                role="alert"
+                className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning"
+              >
+                <span>
+                  No longer on the menu:{" "}
+                  {missingLines.map((line) => `${line.name} ×${line.qty}`).join(", ")}
+                </span>
+                <button
+                  type="button"
+                  className="rounded-md border border-warning/40 bg-card px-2 py-1"
+                  onClick={() =>
+                    setLines((current) =>
+                      Object.fromEntries(
+                        Object.entries(current).flatMap(([id, qty]) => {
+                          const missing = missingLines.find((line) => line.id === id);
+                          if (!missing) return [[id, qty]];
+                          const remaining = qty - missing.qty;
+                          return remaining > 0 ? [[id, remaining]] : [];
+                        }),
+                      ),
+                    )
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            )}
             {operationalMenu.status === "error" && (
               <div className="mb-3 rounded-lg border border-warning/30 bg-warning-soft px-3 py-2 text-[12px] font-semibold text-warning">
                 Authoritative menu unavailable: {operationalMenu.error}
@@ -2012,7 +2079,7 @@ function POS() {
                   onClick={holdOrder}
                   disabled={
                     orderActionBusy ||
-                    checkingPrices ||
+                    orderBlocked ||
                     selectedOrderUnavailable ||
                     !items.length ||
                     activeOrderHasSentLines
@@ -2027,7 +2094,7 @@ function POS() {
                   className="h-12 text-[15px]"
                   onClick={queueKitchenTickets}
                   disabled={
-                    orderActionBusy || checkingPrices || selectedOrderUnavailable || !items.length
+                    orderActionBusy || orderBlocked || selectedOrderUnavailable || !items.length
                   }
                 >
                   {orderActionBusy
@@ -2041,7 +2108,7 @@ function POS() {
                   className="h-12 text-[15px]"
                   onClick={() => setBillConfirmOpen(true)}
                   disabled={
-                    orderActionBusy || checkingPrices || selectedOrderUnavailable || !billReady
+                    orderActionBusy || orderBlocked || selectedOrderUnavailable || !billReady
                   }
                   title={billReady ? undefined : "Open a sent order from Orders to bill it."}
                 >
