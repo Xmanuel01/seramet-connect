@@ -73,6 +73,9 @@ jobs:
           RELEASE_PR: ${{ inputs.release_pr }}
         run: node scripts/solo-release-approval.mjs --pr "$RELEASE_PR" --comment-id "$OWNER_COMMENT_ID" --sha "$GITHUB_SHA" --scope staging
       - run: npm ci
+      # The same dated-exception dependency audit as CI; validate then builds once, checks that
+      # exact output with the bundle audit, and the steps below deploy that output unchanged.
+      - run: node scripts/audit-dependencies.mjs
       - run: npm run validate
       - name: Resolve existing Cloudflare staging bindings
         shell: bash

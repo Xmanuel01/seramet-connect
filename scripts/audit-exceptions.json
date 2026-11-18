@@ -4,5 +4,19 @@
     "package": "minimatch",
     "expires": "2026-12-31",
     "reason": "Dev-only lint tooling (eslint, typescript-eslint) pins minimatch below 11.0.1 and no patched eslint release exists yet; forcing minimatch 11 breaks eslint's default import. Production audit is clean."
+  },
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "expires": "2026-12-31",
+    "buildOnly": true,
+    "bundleMarkers": [
+      "POSIX_REGEX_SOURCE",
+      "REGEX_NON_SPECIAL_CHARS",
+      "extglobChars",
+      "Expected pattern to be a non-empty string",
+      "to match literal characters"
+    ],
+    "reason": "ReDoS needs an attacker-supplied glob pattern. picomatch <=4.0.7 (no patched release) reaches the production tree only through Vite and TanStack Start build tooling; the production bundle audit fails if its code ever appears in the deployed Worker or assets."
   }
 ]
